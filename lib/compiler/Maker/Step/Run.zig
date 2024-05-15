@@ -1602,11 +1602,13 @@ fn populateGeneratedPaths(
 
     for (output_placeholders) |placeholder| {
         const arg = placeholder.arg_index.get(conf);
+
         maker.generatedPath(arg.generated.value.?).* = .{
             .root_dir = cache_root,
             .sub_path = try Dir.path.join(graph.arena, &.{
                 "o", digest, arg.basename.value.?.slice(conf),
             }),
+            .content_hash_name = if (arg.flags.tag == .output_file) arg.basename.value.?.slice(conf) else null,
         };
     }
 }
@@ -1634,6 +1636,7 @@ fn populateGeneratedPathsCreateDirs(
         const generated_path: Path = .{
             .root_dir = cache_root,
             .sub_path = try Dir.path.join(graph.arena, &.{ output_dir_path, basename }),
+            .content_hash_name = if (arg.flags.tag == .output_file) arg.basename.value.?.slice(conf) else null,
         };
         const create_path: Path = .{
             .root_dir = cache_root,

@@ -4481,21 +4481,7 @@ fn floatNeg(cg: *CodeGen, ty: FloatType, arg: WValue) InnerError!WValue {
             try cg.addTag(.f64_neg);
             return .stack;
         },
-        .f80 => {
-            const result = try cg.allocStack(Type.f80);
-            try cg.emitWValue(result);
-            try cg.emitWValue(arg);
-            try cg.addMemArg(.i64_load, .{ .offset = 0 + arg.offset(), .alignment = 2 });
-            try cg.addMemArg(.i64_store, .{ .offset = 0 + result.offset(), .alignment = 2 });
-            try cg.emitWValue(result);
-            try cg.emitWValue(arg);
-            try cg.addMemArg(.i64_load, .{ .offset = 8 + arg.offset(), .alignment = 2 });
-            try cg.addImm64(0x8000);
-            try cg.addTag(.i64_xor);
-            try cg.addMemArg(.i64_store, .{ .offset = 8 + result.offset(), .alignment = 2 });
-            return result;
-        },
-        .f128 => {
+        .f80, .f128 => {
             const result = try cg.allocStack(Type.f128);
             try cg.emitWValue(result);
             try cg.emitWValue(arg);
@@ -4504,7 +4490,11 @@ fn floatNeg(cg: *CodeGen, ty: FloatType, arg: WValue) InnerError!WValue {
             try cg.emitWValue(result);
             try cg.emitWValue(arg);
             try cg.addMemArg(.i64_load, .{ .offset = 8 + arg.offset(), .alignment = 2 });
-            try cg.addImm64(0x8000000000000000);
+            if (ty == .f80) {
+                try cg.addImm64(0x8000);
+            } else {
+                try cg.addImm64(0x8000000000000000);
+            }
             try cg.addTag(.i64_xor);
             try cg.addMemArg(.i64_store, .{ .offset = 8 + result.offset(), .alignment = 2 });
             return result;
@@ -4514,7 +4504,12 @@ fn floatNeg(cg: *CodeGen, ty: FloatType, arg: WValue) InnerError!WValue {
 
 fn floatAbs(cg: *CodeGen, ty: FloatType, arg: WValue) InnerError!WValue {
     switch (ty) {
-        .f16 => return cg.callIntrinsic(.__fabsh, &.{.f16_type}, Type.f16, &.{arg}),
+        .f16 => {
+            try cg.emitWValue(arg);
+            try cg.addImm32(0x7FFF);
+            try cg.addTag(.i32_and);
+            return .stack;
+        },
         .f32 => {
             try cg.emitWValue(arg);
             try cg.addTag(.f32_abs);
@@ -4525,8 +4520,24 @@ fn floatAbs(cg: *CodeGen, ty: FloatType, arg: WValue) InnerError!WValue {
             try cg.addTag(.f64_abs);
             return .stack;
         },
-        .f80 => return cg.callIntrinsic(.__fabsx, &.{.f80_type}, Type.f80, &.{arg}),
-        .f128 => return cg.callIntrinsic(.fabsq, &.{.f128_type}, Type.f128, &.{arg}),
+        .f80, .f128 => {
+            const result = try cg.allocStack(Type.f128);
+            try cg.emitWValue(result);
+            try cg.emitWValue(arg);
+            try cg.addMemArg(.i64_load, .{ .offset = 0 + arg.offset(), .alignment = 2 });
+            try cg.addMemArg(.i64_store, .{ .offset = 0 + result.offset(), .alignment = 2 });
+            try cg.emitWValue(result);
+            try cg.emitWValue(arg);
+            try cg.addMemArg(.i64_load, .{ .offset = 8 + arg.offset(), .alignment = 2 });
+            if (ty == .f80) {
+                try cg.addImm64(0x7FFF);
+            } else {
+                try cg.addImm64(0x7FFFFFFFFFFFFFFF);
+            }
+            try cg.addTag(.i64_and);
+            try cg.addMemArg(.i64_store, .{ .offset = 8 + result.offset(), .alignment = 2 });
+            return result;
+        },
     }
 }
 

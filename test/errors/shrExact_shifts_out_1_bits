@@ -11,5 +11,5 @@ comptime {
 #}
 #update
 #check errors {
-test.zig:2:15: error: exact shift shifted out 1 bits
+test.zig:2:15: error: exact right shift shifted out 1 bits
 #}

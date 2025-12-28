@@ -1066,7 +1066,7 @@ const FuzzTestRunner = struct {
             .stdin_vec = undefined,
             .stdout_vec = undefined,
             .stderr_vec = undefined,
-            .progress_node = undefined,
+            .progress_node = .none,
         });
         for (0.., instances) |id, *instance| {
             errdefer for (instances[0..id]) |*spawned| {

@@ -1235,7 +1235,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
         // big block here to ensure the cleanup gets run when we extract out our argv.
         {
             {
-                const fetch_prog_node = options.parent_progress_node.start("Fetch Packages", 0);
+                const fetch_prog_node = options.parent_progress_node.start("Fetch Packages", 1);
                 defer fetch_prog_node.end();
 
                 // Reset fork match counts.
@@ -2486,14 +2486,21 @@ fn makeSteps(
         var initial_set: std.ArrayList(Configuration.Step.Index) = .empty;
         defer initial_set.deinit(gpa);
         try initial_set.ensureUnusedCapacity(gpa, step_stack.count());
+
+        var step_count: usize = 0;
+
         for (step_stack.keys()) |step_index| {
             const s = maker.stepByIndex(step_index);
-            if (s.state == .precheck_done and s.pending_deps == 0) {
-                initial_set.appendAssumeCapacity(step_index);
+            if (s.state == .precheck_done) {
+                if (s.pending_deps == 0) {
+                    initial_set.appendAssumeCapacity(step_index);
+                }
+
+                step_count += 1;
             }
         }
 
-        const step_prog = parent_progress_node.start("steps", step_stack.count());
+        const step_prog = parent_progress_node.start("steps", step_count);
         defer step_prog.end();
 
         var group: Io.Group = .init;

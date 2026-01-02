@@ -1,49 +1,63 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const math = std.math;
 const mem = std.mem;
 
-/// Describes how pointer types should be hashed.
-pub const HashStrategy = enum {
-    /// Do not follow pointers, only hash their value.
-    Shallow,
+/// Describes how pointer and float types should be hashed.
+pub const HashStrategy = struct {
+    pointers: Pointers,
+    floats: Floats,
 
-    /// Follow pointers, hash the pointee content.
-    /// Only dereferences one level, ie. it is changed into .Shallow when a
-    /// pointer type is encountered.
-    Deep,
+    pub const Pointers = enum {
+        /// Do not follow pointers, only hash their value.
+        shallow,
 
-    /// Follow pointers, hash the pointee content.
-    /// Dereferences all pointers encountered.
-    /// Assumes no cycle.
-    DeepRecursive,
+        /// Follow pointers, hash the pointee content.
+        /// Only dereferences one level, i.e. it is changed into .shallow when a
+        /// pointer type is encountered.
+        deep,
+
+        /// Follow pointers, hash the pointee content.
+        /// Dereferences all pointers encountered.
+        /// Assumes no cycle.
+        deep_recursive,
+    };
+
+    pub const Floats = enum {
+        /// Results in a compile error. Choose a disambiguation strategy.
+        unsupported,
+
+        /// Automatically hash floats by mathematical value.
+        /// -0.0 and 0.0 hash identically.
+        /// Asserts that no key is NaN.
+        normalized,
+    };
 };
 
 /// Helper function to hash a pointer and mutate the strategy if needed.
-pub fn hashPointer(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
+fn hashPointer(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
     const info = @typeInfo(@TypeOf(key));
 
     switch (info.pointer.size) {
-        .one => switch (strat) {
-            .Shallow => hash(hasher, @intFromPtr(key), .Shallow),
-            .Deep => hash(hasher, key.*, .Shallow),
-            .DeepRecursive => hash(hasher, key.*, .DeepRecursive),
+        .one => switch (strat.pointers) {
+            .shallow => hash(hasher, @intFromPtr(key), .{ .pointers = .shallow, .floats = strat.floats }),
+            .deep => hash(hasher, key.*, .{ .pointers = .shallow, .floats = strat.floats }),
+            .deep_recursive => hash(hasher, key.*, .{ .pointers = .deep_recursive, .floats = strat.floats }),
         },
 
         .slice => {
-            switch (strat) {
-                .Shallow => {
-                    hashPointer(hasher, key.ptr, .Shallow);
-                },
-                .Deep => hashArray(hasher, key, .Shallow),
-                .DeepRecursive => hashArray(hasher, key, .DeepRecursive),
+            switch (strat.pointers) {
+                .shallow => hashPointer(hasher, key.ptr, .{ .pointers = .shallow, .floats = strat.floats }),
+                .deep => hashArray(hasher, key, .{ .pointers = .shallow, .floats = strat.floats }),
+                .deep_recursive => hashArray(hasher, key, .{ .pointers = .deep_recursive, .floats = strat.floats }),
             }
-            hash(hasher, key.len, .Shallow);
+            hash(hasher, key.len, .{ .pointers = .shallow, .floats = strat.floats });
         },
 
         .many,
         .c,
-        => switch (strat) {
-            .Shallow => hash(hasher, @intFromPtr(key), .Shallow),
+        => switch (strat.pointers) {
+            .shallow => hash(hasher, @intFromPtr(key), .{ .pointers = .shallow, .floats = strat.floats }),
             else => @compileError(
                 \\ unknown-length pointers and C pointers cannot be hashed deeply.
                 \\ Consider providing your own hash function.
@@ -53,14 +67,13 @@ pub fn hashPointer(hasher: anytype, key: anytype, comptime strat: HashStrategy) 
 }
 
 /// Helper function to hash a set of contiguous objects, from an array or slice.
-pub fn hashArray(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
+fn hashArray(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
     for (key) |element| {
         hash(hasher, element, strat);
     }
 }
 
 /// Provides generic hashing for any eligible type.
-/// Strategy is provided to determine if pointers should be followed or not.
 pub fn hash(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
     const Key = @TypeOf(key);
     const Hasher = switch (@typeInfo(@TypeOf(hasher))) {
@@ -68,7 +81,7 @@ pub fn hash(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
         else => @TypeOf(hasher),
     };
 
-    if (strat == .Shallow and std.meta.hasUniqueRepresentation(Key)) {
+    if (strat.pointers == .shallow and std.meta.hasUniqueRepresentation(Key)) {
         @call(.always_inline, Hasher.update, .{ hasher, mem.asBytes(&key) });
         return;
     }
@@ -84,7 +97,6 @@ pub fn hash(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
         .type,
         .enum_literal,
         .frame,
-        .float,
         => @compileError("unable to hash type " ++ @typeName(Key)),
 
         .void => return,
@@ -103,6 +115,11 @@ pub fn hash(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
                     @call(.always_inline, Hasher.update, .{ hasher, std.mem.asBytes(&key)[0..byte_size] });
                 }
             },
+        },
+
+        .float => switch (strat.floats) {
+            .unsupported => @compileError("std.hash.autoHash does not allow hashing floats because the possible methods for doing so involve restrictions/tradeoffs. Consider using std.hash.autoHashStrat or providing your own hash function instead."),
+            .normalized => hashFloat(hasher, key, strat.floats),
         },
 
         .bool => hash(hasher, @intFromBool(key), strat),
@@ -189,7 +206,29 @@ pub fn autoHash(hasher: anytype, key: anytype) void {
             ") because the intent is unclear. Consider using std.hash.autoHashStrat or providing your own hash function instead.");
     }
 
-    hash(hasher, key, .Shallow);
+    hash(hasher, key, .{ .pointers = .shallow, .floats = .unsupported });
+}
+
+/// Provides either bit-level hashing for floating point numbers or
+/// normalized floating point values (asserts NaN).
+/// This is not a general purpose hashing function, it is only
+/// intended for use with floating point numbers.
+fn hashFloat(hasher: anytype, key: anytype, comptime strat: HashStrategy.Floats) void {
+    const Key = @TypeOf(key);
+
+    if (@typeInfo(Key) != .float) {
+        @compileError("hashFloat only supports floating point numbers, found " ++ @typeName(Key));
+    }
+
+    const norm_key = switch (strat) {
+        .unsupported => unreachable,
+        .normalized => blk: {
+            assert(!math.isNan(key));
+            break :blk if (key == 0.0) 0.0 else key;
+        },
+    };
+    const U = @Int(.unsigned, @bitSizeOf(Key));
+    hash(hasher, @as(U, @bitCast(norm_key)), .{ .pointers = .shallow, .floats = .unsupported });
 }
 
 const testing = std.testing;
@@ -198,28 +237,35 @@ const Wyhash = std.hash.Wyhash;
 fn testHash(key: anytype) u64 {
     // Any hash could be used here, for testing autoHash.
     var hasher = Wyhash.init(0);
-    hash(&hasher, key, .Shallow);
+    hash(&hasher, key, .{ .pointers = .shallow, .floats = .unsupported });
     return hasher.final();
 }
 
 fn testHashShallow(key: anytype) u64 {
     // Any hash could be used here, for testing autoHash.
     var hasher = Wyhash.init(0);
-    hash(&hasher, key, .Shallow);
+    hash(&hasher, key, .{ .pointers = .shallow, .floats = .unsupported });
     return hasher.final();
 }
 
 fn testHashDeep(key: anytype) u64 {
     // Any hash could be used here, for testing autoHash.
     var hasher = Wyhash.init(0);
-    hash(&hasher, key, .Deep);
+    hash(&hasher, key, .{ .pointers = .deep, .floats = .unsupported });
     return hasher.final();
 }
 
 fn testHashDeepRecursive(key: anytype) u64 {
     // Any hash could be used here, for testing autoHash.
     var hasher = Wyhash.init(0);
-    hash(&hasher, key, .DeepRecursive);
+    hash(&hasher, key, .{ .pointers = .deep_recursive, .floats = .unsupported });
+    return hasher.final();
+}
+
+fn testHashFloats(key: anytype) u64 {
+    // Any hash could be used here, for testing autoHash.
+    var hasher = Wyhash.init(0);
+    hashFloat(&hasher, key, .normalized);
     return hasher.final();
 }
 
@@ -421,4 +467,19 @@ test "testHash error union" {
     try testing.expect(testHash(f) != testHash(g));
     try testing.expect(testHash(f) == testHash(Foo{}));
     try testing.expect(testHash(g) == testHash(Errors.Test));
+}
+
+test "testHash float" {
+    inline for (.{
+        f16,
+        f32,
+        f64,
+        f80,
+        f128,
+    }) |F| {
+        const neg: F = -0.0;
+        const pos: F = 0.0;
+        try testing.expect(math.signbit(neg) and !math.signbit(pos));
+        try testing.expect(testHashFloats(neg) == testHashFloats(pos));
+    }
 }

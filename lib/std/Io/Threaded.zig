@@ -1603,6 +1603,11 @@ pub const InitOptions = struct {
     disable_memory_mapping: bool = false,
 };
 
+/// This sets a no-op handler to ignore `posix.SIG.PIPE` and return them as zig
+/// errors instead of crashing. Additionally, in multi-threaded builds, this
+/// also ignores `posix.SIG.IO` so this can interupt Io operations on other
+/// threads.
+///
 /// Related:
 /// * `init_single_threaded`
 pub fn init(
@@ -1616,7 +1621,7 @@ pub fn init(
     gpa: Allocator,
     options: InitOptions,
 ) Threaded {
-    if (builtin.single_threaded) return .{
+    var t: Threaded = if (builtin.single_threaded) .{
         .allocator = gpa,
         .stack_size = options.stack_size,
         .async_limit = options.async_limit orelse init_single_threaded.async_limit,
@@ -1624,30 +1629,30 @@ pub fn init(
         .concurrent_limit = options.concurrent_limit,
         .old_sig_io = undefined,
         .old_sig_pipe = undefined,
-        .have_signal_handler = init_single_threaded.have_signal_handler,
+        .have_signal_handler = false,
         .argv0 = options.argv0,
         .environ_initialized = options.environ.block.isEmpty(),
         .environ = .{ .process_environ = options.environ },
         .worker_threads = init_single_threaded.worker_threads,
         .disable_memory_mapping = options.disable_memory_mapping,
-    };
+    } else t: {
+        const cpu_count = std.Thread.getCpuCount();
 
-    const cpu_count = std.Thread.getCpuCount();
-
-    var t: Threaded = .{
-        .allocator = gpa,
-        .stack_size = options.stack_size,
-        .async_limit = options.async_limit orelse if (cpu_count) |n| .limited(n - 1) else |_| .nothing,
-        .concurrent_limit = options.concurrent_limit,
-        .cpu_count_error = if (cpu_count) |_| null else |e| e,
-        .old_sig_io = undefined,
-        .old_sig_pipe = undefined,
-        .have_signal_handler = false,
-        .argv0 = options.argv0,
-        .environ_initialized = options.environ.block.isEmpty(),
-        .environ = .{ .process_environ = options.environ },
-        .worker_threads = .init(null),
-        .disable_memory_mapping = options.disable_memory_mapping,
+        break :t .{
+            .allocator = gpa,
+            .stack_size = options.stack_size,
+            .async_limit = options.async_limit orelse if (cpu_count) |n| .limited(n - 1) else |_| .nothing,
+            .concurrent_limit = options.concurrent_limit,
+            .cpu_count_error = if (cpu_count) |_| null else |e| e,
+            .old_sig_io = undefined,
+            .old_sig_pipe = undefined,
+            .have_signal_handler = false,
+            .argv0 = options.argv0,
+            .environ_initialized = options.environ.block.isEmpty(),
+            .environ = .{ .process_environ = options.environ },
+            .worker_threads = .init(null),
+            .disable_memory_mapping = options.disable_memory_mapping,
+        };
     };
 
     if (posix.Sigaction != void) {
@@ -1658,7 +1663,7 @@ pub fn init(
             .mask = posix.sigemptyset(),
             .flags = 0,
         };
-        if (have_sig_io) posix.sigaction(.IO, &act, &t.old_sig_io);
+        if (!builtin.single_threaded and have_sig_io) posix.sigaction(.IO, &act, &t.old_sig_io);
         if (have_sig_pipe) posix.sigaction(.PIPE, &act, &t.old_sig_pipe);
         t.have_signal_handler = true;
     }
@@ -1672,6 +1677,7 @@ pub fn init(
 /// When initialized this way:
 /// * cancel requests have no effect.
 /// * `deinit` is safe, but unnecessary to call.
+/// * `posix.SIG.IO` and `posix.SIG.PIPE` signals are not ignored.
 pub const init_single_threaded: Threaded = init: {
     const env_block: process.Environ.Block = if (is_windows) .global else .empty;
     break :init .{

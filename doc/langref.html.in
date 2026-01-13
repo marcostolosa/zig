@@ -2810,11 +2810,13 @@ or
       {#header_close#}
       {#header_open|inline for#}
       <p>
-      For loops can be inlined. This causes the loop to be unrolled, which
-      allows the code to do some things which only work at compile time,
-      such as use types as first class values.
-      The capture value and iterator value of inlined for loops are
-      compile-time known.
+      For loops can be inlined. This causes the loop to be unrolled at compile 
+      time, meaning the iteration of the loop becomes comptime-known within its body.
+      To inline a for loop, at least one of its operands must have a length which is
+      known at compile time. This could be a comptime-known slice value, a
+      runtime-known array value, or a comptime-known range. Because the loop
+      iteration is known at compile time, for any operands which are comptime-known,
+      their captures are also comptime-known.
       </p>
       {#code|test_inline_for.zig#}
 

@@ -399,6 +399,21 @@ test "Random shuffle" {
     }
 }
 
+test "Shuffle with prefetch" {
+    var prng = DefaultPrng.init(0xaeecf86f7878dd75);
+    var prng_prefetch = prng;
+
+    var seq: [1024]usize = undefined;
+    for (seq[0..], 0..) |*item, idx| item.* = idx;
+    var seq_prefetch = seq;
+
+    for (0..128) |_| {
+        prng.random().shuffleWithIndex(usize, seq[0..], u80);
+        prng_prefetch.random().shufflePrefetchWithIndex(usize, seq_prefetch[0..], 32, u80);
+        try expectEqual(seq, seq_prefetch);
+    }
+}
+
 fn sumArray(s: []const u8) u32 {
     var r: u32 = 0;
     for (s) |e|

@@ -397,6 +397,63 @@ pub fn shuffleWithIndex(r: Random, comptime T: type, buf: []T, comptime Index: t
     }
 }
 
+/// Shuffle a slice into a random order with prefetching.
+///
+/// Prefer `shuffle` if the array is likely to reside in cache already.
+pub inline fn shufflePrefetch(r: Random, comptime T: type, buf: []T, comptime prefetch_count: usize) void {
+    shufflePrefetchWithIndex(r, T, buf, prefetch_count, usize);
+}
+
+/// Shuffle a slice into a random order with prefetching, using an index of a
+/// specified type to maintain distribution across targets.
+///
+/// Prefer `shuffleWithIndex` if the array is likely to reside in cache already.
+pub fn shufflePrefetchWithIndex(r: Random, comptime T: type, buf: []T, comptime prefetch_count: usize, comptime Index: type) void {
+    const MinInt = MinArrayIndex(Index);
+    if (buf.len < 2) {
+        return;
+    }
+
+    // Used to generate random indices to swap items with
+    // and prefetch elements at those indices in advance
+    const ShuffleQueue = struct {
+        ringbuf: [prefetch_count]usize = undefined,
+        swap_idx: usize = 0,
+
+        // Prefetch and enqueue a random index, whom <= idx < slice.len
+        fn push(q: *@This(), ra: Random, slice: []T, whom: usize) void {
+            const min: MinInt = @intCast(whom);
+            const max: MinInt = @intCast(slice.len);
+
+            // Index whom to swap with
+            const idx: usize = @intCast(ra.intRangeLessThan(Index, min, max));
+            q.ringbuf[whom % q.ringbuf.len] = idx;
+            @prefetch(&slice[idx], .{ .rw = .write, .locality = 0 });
+        }
+
+        // Pop an index from the queue and perform a swap
+        fn pop(q: *@This(), slice: []T) void {
+            const idx = q.ringbuf[q.swap_idx % q.ringbuf.len];
+            mem.swap(T, &slice[q.swap_idx], &slice[idx]);
+            q.swap_idx += 1;
+        }
+    };
+
+    var q: ShuffleQueue = .{};
+    const q_size = @min(q.ringbuf.len, buf.len - 1);
+
+    for (0..q_size) |idx|
+        q.push(r, buf, idx);
+
+    for (q_size..buf.len - 1) |idx| {
+        q.pop(buf);
+        q.push(r, buf, idx);
+    }
+
+    for (0..q_size) |_|
+        q.pop(buf);
+}
+
 /// Randomly selects an index into `proportions`, where the likelihood of each
 /// index is weighted by that proportion.
 /// It is more likely for the index of the last proportion to be returned

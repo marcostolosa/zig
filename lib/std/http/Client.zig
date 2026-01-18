@@ -531,7 +531,7 @@ pub const Response = struct {
                 else => return error.HttpHeadersInvalid,
             };
             if (first_line[8] != ' ') return error.HttpHeadersInvalid;
-            const status: http.Status = @fromBackingInt(@intCast(parseInt3(first_line[9..12])));
+            const status: http.Status = @fromBackingInt(try parseInt3(first_line[9..12]));
             const reason = mem.trimStart(u8, first_line[12..], " ");
 
             res.version = version;
@@ -694,18 +694,28 @@ pub const Response = struct {
             return @bitCast(array.*);
         }
 
-        fn parseInt3(text: *const [3]u8) u10 {
+        fn parseInt3(text: *const [3]u8) !u10 {
             const nnn: @Vector(3, u8) = text.*;
             const zero: @Vector(3, u8) = .{ '0', '0', '0' };
             const mmm: @Vector(3, u10) = .{ 100, 10, 1 };
-            return @reduce(.Add, (nnn -% zero) *% mmm);
+            const d = nnn -% zero;
+            if (@reduce(.Or, d > @as(@Vector(3, u8), @splat(9)))) {
+                return error.HttpHeadersInvalid;
+            }
+            return @reduce(.Add, d *% mmm);
         }
 
         test parseInt3 {
             const expectEqual = testing.expectEqual;
-            try expectEqual(@as(u10, 0), parseInt3("000"));
-            try expectEqual(@as(u10, 418), parseInt3("418"));
-            try expectEqual(@as(u10, 999), parseInt3("999"));
+            try expectEqual(@as(u10, 0), try parseInt3("000"));
+            try expectEqual(@as(u10, 418), try parseInt3("418"));
+            try expectEqual(@as(u10, 999), try parseInt3("999"));
+            try testing.expectError(error.HttpHeadersInvalid, parseInt3("19:"));
+            try testing.expectError(error.HttpHeadersInvalid, parseInt3("1:9"));
+            try testing.expectError(error.HttpHeadersInvalid, parseInt3(":19"));
+            try testing.expectError(error.HttpHeadersInvalid, parseInt3("20!"));
+            try testing.expectError(error.HttpHeadersInvalid, parseInt3("2!0"));
+            try testing.expectError(error.HttpHeadersInvalid, parseInt3("!20"));
         }
 
         /// Help the programmer avoid bugs by calling this when the string

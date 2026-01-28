@@ -425,6 +425,15 @@ pub const Utf8Iterator = struct {
 
         return it.bytes[original_i..end_ix];
     }
+
+    /// Look ahead at the next codepoints without advancing the iterator.
+    /// If no codepoint exist, then return null.
+    pub fn peekCodepoint(it: *Utf8Iterator) ?u21 {
+        const original_i = it.i;
+        defer it.i = original_i;
+
+        return it.nextCodepoint();
+    }
 };
 
 pub fn utf16IsHighSurrogate(c: u16) bool {
@@ -1757,6 +1766,15 @@ pub const Wtf8Iterator = struct {
         }
 
         return it.bytes[original_i..end_ix];
+    }
+
+    /// Look ahead at the next codepoints without advancing the iterator.
+    /// If no codepoint exist, then return null.
+    pub fn peekCodepoint(it: *Wtf8Iterator) ?u21 {
+        const original_i = it.i;
+        defer it.i = original_i;
+
+        return it.nextCodepoint();
     }
 };
 

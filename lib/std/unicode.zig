@@ -426,8 +426,8 @@ pub const Utf8Iterator = struct {
         return it.bytes[original_i..end_ix];
     }
 
-    /// Look ahead at the next codepoints without advancing the iterator.
-    /// If no codepoint exist, then return null.
+    /// Look ahead at the next codepoint without advancing the iterator.
+    /// If no codepoints exist, then returns null.
     pub fn peekCodepoint(it: *Utf8Iterator) ?u21 {
         const original_i = it.i;
         defer it.i = original_i;
@@ -1785,8 +1785,8 @@ pub const Wtf8Iterator = struct {
         return it.bytes[original_i..end_ix];
     }
 
-    /// Look ahead at the next codepoints without advancing the iterator.
-    /// If no codepoint exist, then return null.
+    /// Look ahead at the next codepoint without advancing the iterator.
+    /// If no codepoints exist, then returns null.
     pub fn peekCodepoint(it: *Wtf8Iterator) ?u21 {
         const original_i = it.i;
         defer it.i = original_i;

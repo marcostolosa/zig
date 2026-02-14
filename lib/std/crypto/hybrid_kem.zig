@@ -108,6 +108,9 @@ pub const Params = struct {
 /// - `EncapsulatedSecret`: A shared secret with its ciphertext
 pub fn HybridKem(comptime params: Params) type {
     return struct {
+        /// Human-readable name of the hybrid KEM.
+        pub const name = params.name;
+
         const is_nist_curve = params.Group == P256Group or params.Group == P384Group;
 
         fn expandRandomnessSeed(seed: [32]u8) ![params.Group.seed_length]u8 {
@@ -277,13 +280,16 @@ pub fn HybridKem(comptime params: Params) type {
 
         /// A hybrid KEM key pair.
         pub const KeyPair = struct {
+            /// Length (in bytes) of a seed for key generation.
+            pub const seed_length: usize = params.Nseed;
+
             public_key: PublicKey,
             secret_key: SecretKey,
 
             /// Deterministically derives a key pair from a cryptographically secure seed.
             ///
             /// Except in tests, applications should generally call `generate()` instead.
-            pub fn generateDeterministic(seed: [params.Nseed]u8) !KeyPair {
+            pub fn generateDeterministic(seed: [seed_length]u8) !KeyPair {
                 const expanded = try expandDecapsKeyG(seed);
                 var ek_bytes: [params.Nek]u8 = undefined;
                 const pq_ek = expanded.ek_pq.toBytes();
@@ -294,7 +300,7 @@ pub fn HybridKem(comptime params: Params) type {
 
             /// Generates a new random key pair.
             pub fn generate(io: std.Io) !KeyPair {
-                var seed: [params.Nseed]u8 = undefined;
+                var seed: [seed_length]u8 = undefined;
                 io.random(&seed);
                 return generateDeterministic(seed);
             }

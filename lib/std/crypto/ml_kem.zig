@@ -379,13 +379,16 @@ fn Kyber(comptime p: Params) type {
 
         /// A Kyber key pair.
         pub const KeyPair = struct {
+            /// Length (in bytes) of a seed required to create a key pair.
+            pub const seed_length = Self.seed_length;
+
             secret_key: SecretKey,
             public_key: PublicKey,
 
             /// Deterministically derive a key pair from a cryptograpically secure secret seed.
             ///
             /// Except in tests, applications should generally call `generate()` instead of this function.
-            pub fn generateDeterministic(seed: [seed_length]u8) !KeyPair {
+            pub fn generateDeterministic(seed: [KeyPair.seed_length]u8) !KeyPair {
                 var ret: KeyPair = undefined;
 
                 // Generate inner key
@@ -397,7 +400,7 @@ fn Kyber(comptime p: Params) type {
                 ret.secret_key.pk = ret.public_key.pk;
 
                 // Copy over z from seed.
-                ret.secret_key.z = seed[inner_seed_length..seed_length].*;
+                ret.secret_key.z = seed[inner_seed_length..KeyPair.seed_length].*;
 
                 // Compute H(pk)
                 sha3.Sha3_256.hash(&ret.public_key.pk.toBytes(), &ret.secret_key.hpk, .{});
@@ -408,7 +411,7 @@ fn Kyber(comptime p: Params) type {
 
             /// Generate a new, random key pair.
             pub fn generate(io: std.Io) KeyPair {
-                var random_seed: [seed_length]u8 = undefined;
+                var random_seed: [KeyPair.seed_length]u8 = undefined;
                 while (true) {
                     io.random(&random_seed);
                     return generateDeterministic(random_seed) catch {

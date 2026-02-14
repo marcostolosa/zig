@@ -18,6 +18,9 @@ pub const Ed25519 = struct {
     /// The underlying elliptic curve.
     pub const Curve = std.crypto.ecc.Edwards25519;
 
+    /// Human-readable name.
+    pub const name = "Ed25519";
+
     /// Length (in bytes) of optional random bytes, for non-deterministic signatures.
     pub const noise_length = 32;
 

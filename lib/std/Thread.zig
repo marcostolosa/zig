@@ -15,7 +15,9 @@ const testing = std.testing;
 
 pub const use_pthreads = native_os != .windows and native_os != .wasi and builtin.link_libc;
 
-const Impl = if (native_os == .windows)
+const Impl = if (std.os_options.Thread) |Custom|
+    Custom
+else if (native_os == .windows)
     WindowsThreadImpl
 else if (use_pthreads)
     PosixThreadImpl
@@ -259,7 +261,7 @@ pub fn getName(self: Thread, buffer_ptr: *[max_name_len:0]u8) GetNameError!?[]co
 }
 
 /// Represents an ID per thread guaranteed to be unique only within a process.
-pub const Id = switch (native_os) {
+pub const Id = if (std.os_options.Thread) |Custom| Custom.Id else switch (native_os) {
     .linux,
     .dragonfly,
     .netbsd,
@@ -300,7 +302,7 @@ pub const SpawnConfig = struct {
     // https://github.com/ziglang/zig/issues/157
 
     /// Size in bytes of the Thread's stack
-    stack_size: usize = default_stack_size,
+    stack_size: usize = if (@hasDecl(Impl, "default_stack_size")) Impl.default_stack_size else default_stack_size,
     /// The allocator to be used to allocate memory for the to-be-spawned thread
     allocator: ?std.mem.Allocator = null,
 
@@ -378,15 +380,7 @@ pub const YieldError = error{
 
 /// Yields the current thread potentially allowing other threads to run.
 pub fn yield() YieldError!void {
-    if (native_os == .windows) switch (windows.ntdll.NtYieldExecution()) {
-        .SUCCESS, .NO_YIELD_PERFORMED => return,
-        else => return error.SystemCannotYield,
-    };
-    switch (posix.errno(posix.system.sched_yield())) {
-        .SUCCESS => return,
-        .NOSYS => return error.SystemCannotYield,
-        else => return error.SystemCannotYield,
-    }
+    try Impl.yield();
 }
 
 /// State to synchronize detachment of spawner thread to spawned thread
@@ -472,6 +466,10 @@ const UnsupportedImpl = struct {
         return unsupported({});
     }
 
+    fn yield() YieldError!void {
+        return unsupported({});
+    }
+
     fn spawn(config: SpawnConfig, comptime f: anytype, args: anytype) !Impl {
         return unsupported(.{ config, f, args });
     }
@@ -504,6 +502,13 @@ const WindowsThreadImpl = struct {
     fn getCpuCount() !usize {
         // Faster than calling into GetSystemInfo(), even if amortized.
         return windows.peb().NumberOfProcessors;
+    }
+
+    fn yield() YieldError!void {
+        switch (windows.ntdll.NtYieldExecution()) {
+            .SUCCESS, .NO_YIELD_PERFORMED => return,
+            else => return error.SystemCannotYield,
+        }
     }
 
     thread: *ThreadCompletion,
@@ -740,6 +745,14 @@ const PosixThreadImpl = struct {
         }
     }
 
+    fn yield() YieldError!void {
+        switch (posix.errno(posix.system.sched_yield())) {
+            .SUCCESS => return,
+            .NOSYS => return error.SystemCannotYield,
+            else => return error.SystemCannotYield,
+        }
+    }
+
     handle: ThreadHandle,
 
     fn spawn(config: SpawnConfig, comptime f: anytype, args: anytype) !Impl {
@@ -860,6 +873,10 @@ const WasiThreadImpl = struct {
 
     fn getCpuCount() error{Unsupported}!noreturn {
         return error.Unsupported;
+    }
+
+    fn yield() YieldError!void {
+        try PosixThreadImpl.yield();
     }
 
     fn getHandle(self: Impl) ThreadHandle {
@@ -1134,6 +1151,10 @@ const LinuxThreadImpl = struct {
     fn getCpuCount() !usize {
         const cpu_set = try posix.sched_getaffinity(0);
         return posix.CPU_COUNT(cpu_set);
+    }
+
+    fn yield() YieldError!void {
+        try PosixThreadImpl.yield();
     }
 
     thread: *ThreadCompletion,

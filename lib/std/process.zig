@@ -232,6 +232,8 @@ fn posixGetUserInfoPasswdStream(name: []const u8, reader: *std.Io.Reader) !UserI
 }
 
 pub fn getBaseAddress() usize {
+    if (std.os_options.process) |proc| return proc.getBaseAddress();
+
     switch (native_os) {
         .linux => {
             const phdrs = std.posix.getSelfPhdrs();
@@ -253,13 +255,13 @@ pub fn getBaseAddress() usize {
 /// Tells whether the target operating system supports replacing the current
 /// process image. If this is `false` then calling `replace` or `replaceFile`
 /// functions will return `error.OperationUnsupported`.
-pub const can_replace = switch (native_os) {
+pub const can_replace = if (std.os_options.process) |proc| proc.can_replace else switch (native_os) {
     .windows, .haiku, .wasi, .tvos, .watchos => false,
     else => true,
 };
 
 /// Tells whether spawning child processes is supported.
-pub const can_spawn = switch (native_os) {
+pub const can_spawn = if (std.os_options.process) |proc| proc.can_spawn else switch (native_os) {
     .wasi, .tvos, .watchos => false,
     else => true,
 };
@@ -568,6 +570,8 @@ pub const TotalSystemMemoryError = error{
 /// and Linux's /proc/meminfo reporting more memory when
 /// using QEMU user mode emulation.
 pub fn totalSystemMemory() TotalSystemMemoryError!u64 {
+    if (std.os_options.process) |proc| return proc.totalSystemMemory();
+
     switch (native_os) {
         .linux => {
             var info: std.os.linux.Sysinfo = undefined;
@@ -807,6 +811,8 @@ pub fn openExecutable(io: Io, flags: Dir.OpenFileOptions) OpenExecutableError!Fi
 /// Invokes the current signal handler for SIGABRT, if any.
 pub fn abort() noreturn {
     @branchHint(.cold);
+    if (std.os_options.process) |proc| proc.abort();
+
     // MSVCRT abort() sometimes opens a popup window which is undesirable, so
     // even when linking libc on Windows we use our own abort implementation.
     // See https://github.com/ziglang/zig/issues/2071 for more details.
@@ -865,6 +871,8 @@ pub fn abort() noreturn {
 pub fn exit(status: u8) noreturn {
     if (builtin.link_libc) {
         std.c.exit(status);
+    } else if (std.os_options.process) |proc| {
+        proc.exit(status);
     } else switch (native_os) {
         .windows => windows.ntdll.RtlExitUserProcess(status),
         .wasi => std.os.wasi.proc_exit(status),
@@ -962,6 +970,8 @@ pub const LockMemoryOptions = struct {
 /// See also:
 /// * unlockMemory
 pub fn lockMemory(memory: []align(std.heap.page_size_min) const u8, options: LockMemoryOptions) LockMemoryError!void {
+    if (std.os_options.process) |proc| return try proc.lockMemory(memory, options);
+
     if (native_os == .windows) {
         // TODO call VirtualLock
         return;
@@ -1003,10 +1013,13 @@ pub const UnlockMemoryError = error{
 /// See also:
 /// * `lockMemory`
 pub fn unlockMemory(memory: []align(std.heap.page_size_min) const u8) UnlockMemoryError!void {
+    if (std.os_options.process) |proc| return try proc.unlockMemory(memory);
+
     if (native_os == .windows) {
         // TODO call VirtualUnlock
         return;
     }
+
     if (@TypeOf(posix.system.munlock) == void) return;
     switch (posix.errno(posix.system.munlock(memory.ptr, memory.len))) {
         .SUCCESS => return,
@@ -1026,7 +1039,9 @@ pub const LockMemoryAllOptions = struct {
 };
 
 pub fn lockMemoryAll(options: LockMemoryAllOptions) LockMemoryError!void {
+    if (std.os_options.process) |proc| return try proc.lockMemoryAll(options);
     if (native_os == .windows) return;
+
     if (@TypeOf(posix.system.mlockall) == void) return error.UnsupportedOperation;
     var flags: posix.MCL = .{
         .CURRENT = options.current,
@@ -1051,7 +1066,9 @@ pub fn lockMemoryAll(options: LockMemoryAllOptions) LockMemoryError!void {
 }
 
 pub fn unlockMemoryAll() UnlockMemoryError!void {
+    if (std.os_options.process) |proc| return try proc.unlockMemoryAll();
     if (native_os == .windows) return;
+
     if (@TypeOf(posix.system.munlockall) == void) return;
     switch (posix.errno(posix.system.munlockall())) {
         .SUCCESS => return,
@@ -1085,6 +1102,8 @@ pub const MemoryProtection = packed struct(u3) {
 };
 
 pub fn protectMemory(memory: []align(std.heap.page_size_min) u8, protection: MemoryProtection) ProtectMemoryError!void {
+    if (std.os_options.process) |proc| return try proc.protectMemory(memory, protection);
+
     if (native_os == .windows) {
         var addr = memory.ptr; // ntdll takes an extra level of indirection here
         var size = memory.len; // ntdll takes an extra level of indirection here

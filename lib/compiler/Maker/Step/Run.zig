@@ -2836,7 +2836,7 @@ fn setColorEnvironmentVariables(
             _ = environ_map.swapRemove("CLICOLOR_FORCE");
         },
         .inherit => switch (terminal_mode) {
-            .no_color, .windows_api => continue :color .disable,
+            .no_color, .windows_api, .platform => continue :color .disable,
             .escape_codes => continue :color .enable,
         },
         .auto => {

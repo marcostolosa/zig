@@ -8,11 +8,12 @@ const std = @import("../std.zig");
 const Io = std.Io;
 const assert = std.debug.assert;
 const Dir = std.Io.Dir;
+const os_options: ?type = if (std.os_options.Io) |io| (if (@hasDecl(io, "File")) io.File else null) else null;
 
 handle: Handle,
 flags: Flags,
 
-pub const Flags = struct {
+pub const Flags = if (os_options) |opts| opts.Flags else struct {
     /// * true:
     ///   - windows: opened with MODE.IO.ASYNCHRONOUS
     ///   - POSIX: O_NONBLOCK is set
@@ -23,7 +24,7 @@ pub const Flags = struct {
     nonblocking: bool,
 };
 
-pub const Handle = if (native_os == .windows) std.os.windows.HANDLE else std.posix.fd_t;
+pub const Handle = if (os_options) |opts| opts.Handle else (if (native_os == .windows) std.os.windows.HANDLE else std.posix.fd_t);
 
 pub const Reader = @import("File/Reader.zig");
 pub const Writer = @import("File/Writer.zig");
@@ -89,6 +90,8 @@ pub const Stat = struct {
 };
 
 pub fn stdout() File {
+    if (os_options) |opts| return opts.stdout();
+
     return switch (native_os) {
         .windows => .{
             .handle = std.os.windows.peb().ProcessParameters.hStdOutput,
@@ -102,6 +105,8 @@ pub fn stdout() File {
 }
 
 pub fn stderr() File {
+    if (os_options) |opts| return opts.stderr();
+
     return switch (native_os) {
         .windows => .{
             .handle = std.os.windows.peb().ProcessParameters.hStdError,
@@ -115,6 +120,8 @@ pub fn stderr() File {
 }
 
 pub fn stdin() File {
+    if (os_options) |opts| return opts.stdin();
+
     return switch (native_os) {
         .windows => .{
             .handle = std.os.windows.peb().ProcessParameters.hStdInput,
@@ -329,7 +336,7 @@ pub fn setOwner(file: File, io: Io, owner: ?Uid, group: ?Gid) SetOwnerError!void
 /// Cross-platform representation of permissions on a file.
 ///
 /// On POSIX systems this corresponds to "mode" and on Windows this corresponds to "attributes".
-pub const Permissions = std.Options.FilePermissions orelse if (is_windows) enum(std.os.windows.DWORD) {
+pub const Permissions = if (os_options) |opts| opts.Permissions else if (is_windows) enum(std.os.windows.DWORD) {
     default_file = 0,
     _,
 

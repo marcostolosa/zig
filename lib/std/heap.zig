@@ -43,7 +43,7 @@ pub const memory_pool = @import("heap/memory_pool.zig");
 ///
 /// On many systems, the actual page size can only be determined at runtime
 /// with `pageSize`.
-pub const page_size_min: usize = std.options.page_size_min orelse (page_size_min_default orelse @compileError(@tagName(builtin.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ " has unknown page_size_min; populate std.options.page_size_min"));
+pub const page_size_min: usize = if (std.os_options.heap) |hp| hp.page_size_min else (page_size_min_default orelse @compileError(@tagName(builtin.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ " has unknown page_size_min; populate std.options.page_size_min"));
 /// comptime-known maximum page size of the target.
 ///
 /// Targeting a system with a larger page size may require overriding
@@ -51,17 +51,18 @@ pub const page_size_min: usize = std.options.page_size_min orelse (page_size_min
 /// option.
 ///
 /// The actual page size can only be determined at runtime with `pageSize`.
-pub const page_size_max: usize = std.options.page_size_max orelse (page_size_max_default orelse if (builtin.os.tag == .freestanding or builtin.os.tag == .other)
-    @compileError("freestanding/other page_size_max must provided with std.options.page_size_max")
+pub const page_size_max: usize = if (std.os_options.heap) |hp| hp.page_size_max else (page_size_max_default orelse if (builtin.os.tag == .freestanding or builtin.os.tag == .other)
+    @compileError("freestanding/other page_size_max must provided with std.os_options.heap")
 else
-    @compileError(@tagName(builtin.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ " has unknown page_size_max; populate std.options.page_size_max"));
+    @compileError(@tagName(builtin.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ " has unknown page_size_max; populate std.os_options.heap"));
 
 /// If the page size is comptime-known, return value is comptime.
 /// Otherwise, calls `std.options.queryPageSize` which by default queries the
 /// host operating system at runtime.
 pub inline fn pageSize() usize {
     if (page_size_min == page_size_max) return page_size_min;
-    return std.options.queryPageSize();
+    if (std.os_options.heap) |hp| return hp.queryPageSize();
+    return defaultQueryPageSize();
 }
 
 test pageSize {
@@ -336,10 +337,8 @@ const c_allocator_impl = struct {
 /// Otherwise, it falls back to the preferred singleton for the target.
 ///
 /// Thread-safe.
-pub const page_allocator: Allocator = if (@hasDecl(root, "os") and
-    @hasDecl(root.os, "heap") and
-    @hasDecl(root.os.heap, "page_allocator"))
-    root.os.heap.page_allocator
+pub const page_allocator: Allocator = if (std.os_options.heap) |hp|
+    hp.page_allocator
 else if (builtin.target.cpu.arch.isWasm()) .{
     .ptr = undefined,
     .vtable = &WasmAllocator.vtable,

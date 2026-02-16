@@ -108,10 +108,138 @@ pub const start = @import("start.zig");
 
 const root = @import("root");
 
+/// Compile-time known OS settings overridable by the root source file.
+pub const os_options: Options.OperatingSystem = if (@hasDecl(root, "std_os_options")) root.std_os_options else .{};
+
 /// Compile-time known settings overridable by the root source file.
 pub const options: Options = if (@hasDecl(root, "std_options")) root.std_options else .{};
 
 pub const Options = struct {
+    /// Provides overrides for underlying system-specific APIs without replacing them.
+    pub const OperatingSystem = struct {
+        /// Will be evaluated automagically by `std`
+        start: ?type = null,
+
+        /// `std.debug` overrides.
+        ///
+        /// This type must expose the following declarations:
+        /// ```
+        /// pub const SelfInfo: type;
+        /// pub fn printLineFromFile(io: Io, writer: *Writer, source_location: SourceLocation) !void;
+        /// pub fn getDebugInfoAllocator() std.mem.Allocator;
+        /// pub fn defaultPanic(msg: []const u8, first_trace_addr: ?usize) noreturn;
+        /// ```
+        debug: ?type = null,
+
+        /// `std.Thread` overrides.
+        ///
+        /// This type must expose the following declarations:
+        /// ```
+        /// pub const Id: type;
+        /// pub const ThreadHandle: type;
+        /// pub fn getCurrentId() Id;
+        /// pub fn getCpuCount() anyerror!usize;
+        /// pub fn yield() std.Thread.YieldError!void;
+        /// pub fn spawn(config: SpawnConfig, comptime f: anytype, args: anytype) std.Thread.SpawnError!@This();
+        /// pub fn getHandle(impl: @This()) ThreadHandle;
+        /// pub fn detach(impl: @This()) void;
+        /// pub fn join(impl: @This()) void;
+        /// ```
+        Thread: ?type = null,
+
+        /// `std.heap` overrides.
+        ///
+        /// This type must expose the following declarations:
+        /// ```
+        /// pub const page_size_min: usize;
+        /// pub const page_size_max: usize;
+        /// pub const page_allocator: std.mem.Allocator;
+        /// pub fn queryPageSize() usize;
+        /// ```
+        heap: ?type = null,
+
+        /// `std.process` overrides.
+        ///
+        /// This type must expose the following declarations:
+        /// ```
+        /// pub const allocator: std.mem.Allocator;
+        /// pub const io: std.Io;
+        /// ```
+        process: ?type = null,
+
+        /// `std.Io` overrides.
+        ///
+        /// This type may expose the following declarations:
+        /// ```
+        /// pub const VTable: type;
+        /// pub const LockedStderr: type;
+        ///
+        /// // All declarations must be present if overridden
+        /// pub const Terminal: type = struct {
+        ///     pub const Mode: type;
+        /// };
+        ///
+        /// // All declarations must be present if overridden
+        /// pub const File: type = struct {
+        ///     pub const Flags: type;
+        ///     pub const Handle: type;
+        ///     pub const Permissions: type;
+        ///     pub fn stdin() std.Io.File;
+        ///     pub fn stdout() std.Io.File;
+        ///     pub fn stderr() std.Io.File;
+        /// };
+        ///
+        /// // All declarations must be present if overridden
+        /// pub const Dir: type = struct {
+        ///     pub const max_path_bytes: usize;
+        ///     pub const max_name_bytes: usize;
+        ///     pub const Handle: type;
+        ///
+        ///     pub fn cwd() std.Io.Dir;
+        ///
+        ///     pub const Reader: type = struct {
+        ///         pub const min_buffer_len: usize;
+        ///     };
+        /// };
+        ///
+        /// // All declarations must be present if overridden
+        /// pub const net: type = struct {
+        ///     pub const has_unix_sockets: bool;
+        ///     pub const cmsg_align: usize;
+        ///
+        ///     pub const Socket: type = struct {
+        ///         pub const Handle: type;
+        ///     };
+        /// };
+        /// ```
+        ///
+        /// This type must expose the following declarations:
+        /// ```
+        /// pub const Operation: type = struct {
+        ///     pub const DeviceIoControl: type;
+        /// };
+        /// ```
+        Io: ?type = null,
+
+        /// `std.testing` overrides.
+        ///
+        /// This type must expose the following declarations:
+        /// ```
+        /// pub const can_replace: bool;
+        /// pub const can_spawn: bool;
+        /// pub fn getBaseAddress() usize;
+        /// pub fn totalSystemMemory() std.process.TotalSystemMemoryError!usize;
+        /// pub fn abort() void;
+        /// pub fn exit() void;
+        /// pub fn lockMemory(memory: []align(std.heap.page_size_min) const u8, options: std.process.LockMemoryOptions) std.process.LockMemoryError!void;
+        /// pub fn unlockMemory(memory: []align(std.heap.page_size_min) const u8) std.process.UnlockMemoryError!void;
+        /// pub fn lockMemoryAll(options: std.process.LockMemoryAllOptions) std.process.LockMemoryError!void;
+        /// pub fn unlockMemoryAll() std.process.UnlockMemoryError!void;
+        /// pub fn protectMemory(memory: []align(std.heap.page_size_min) u8, protection: std.process.MemoryProtection) std.process.ProtectMemoryError!void;
+        /// ```
+        testing: ?type = null,
+    };
+
     enable_segfault_handler: bool = debug.default_enable_segfault_handler,
 
     /// If set, `std.start` and `std.Thread` will configure an per-thread alternative signal stack
@@ -135,13 +263,6 @@ pub const Options = struct {
         comptime format: []const u8,
         args: anytype,
     ) void = log.defaultLog,
-
-    /// Overrides `std.heap.page_size_min`.
-    page_size_min: ?usize = null,
-    /// Overrides `std.heap.page_size_max`.
-    page_size_max: ?usize = null,
-    /// Overrides default implementation for determining OS page size at runtime.
-    queryPageSize: fn () usize = heap.defaultQueryPageSize,
 
     fmt_max_depth: usize = fmt.default_max_depth,
 
@@ -218,10 +339,7 @@ pub const Options = struct {
     /// implementation based on coroutines, one likely wants `std.debug.print`
     /// to directly write to stderr without trying to interact with the code
     /// being debugged.
-    pub const debug_io: Io = if (@hasDecl(root, "std_options_debug_io")) root.std_options_debug_io else debug_threaded_io.?.io();
-
-    /// Overrides `std.Io.File.Permissions`.
-    pub const FilePermissions: ?type = if (@hasDecl(root, "std_options_FilePermissions")) root.std_options_FilePermissions else null;
+    pub const debug_io: Io = if (@hasDecl(root, "std_options_debug_io")) root.std_options_debug_io else (if (os_options.Io) |io| io.debug_io else debug_threaded_io.?.io());
 
     /// Overrides `std.Io.Dir.cwd`.
     pub const cwd: ?fn () Io.Dir = if (@hasDecl(root, "std_options_cwd")) root.std_options_cwd else null;

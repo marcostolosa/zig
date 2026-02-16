@@ -9,10 +9,11 @@ const Io = std.Io;
 const File = Io.File;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
+const os_options: ?type = if (std.os_options.Io) |io| (if (@hasDecl(io, "Dir")) io.Dir else null) else null;
 
 handle: Handle,
 
-pub const Handle = File.Handle;
+pub const Handle = if (os_options) |opts| opts.Handle else File.Handle;
 
 pub const path = std.fs.path;
 
@@ -30,17 +31,14 @@ pub const path = std.fs.path;
 /// * On WASI, `[]u8` file paths are encoded as valid UTF-8.
 /// * On other platforms, `[]u8` file paths are opaque sequences of bytes with
 ///   no particular encoding.
-pub const max_path_bytes = switch (native_os) {
+pub const max_path_bytes = if (os_options) |opts| opts.max_path_bytes else switch (native_os) {
     .linux, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos, .freebsd, .openbsd, .netbsd, .dragonfly, .haiku, .illumos, .plan9, .emscripten, .wasi, .serenity => std.posix.PATH_MAX,
     // Each WTF-16LE code unit may be expanded to 3 WTF-8 bytes.
     // If it would require 4 WTF-8 bytes, then there would be a surrogate
     // pair in the WTF-16LE, and we (over)account 3 bytes for it that way.
     // +1 for the null byte at the end, which can be encoded in 1 byte.
     .windows => std.os.windows.PATH_MAX_WIDE * 3 + 1,
-    else => if (@hasDecl(root, "os") and @hasDecl(root.os, "PATH_MAX"))
-        root.os.PATH_MAX
-    else
-        @compileError("PATH_MAX not implemented for " ++ @tagName(native_os)),
+    else => @compileError("PATH_MAX not implemented for " ++ @tagName(native_os)),
 };
 
 /// This represents the maximum size of a `[]u8` file name component that
@@ -51,7 +49,7 @@ pub const max_path_bytes = switch (native_os) {
 /// On Windows, `[]u8` file name components are encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On WASI, file name components are encoded as valid UTF-8.
 /// On other platforms, `[]u8` components are an opaque sequence of bytes with no particular encoding.
-pub const max_name_bytes = switch (native_os) {
+pub const max_name_bytes = if (os_options) |opts| opts.max_name_bytes else switch (native_os) {
     .linux, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos, .freebsd, .openbsd, .netbsd, .dragonfly, .illumos, .serenity, .psp => std.posix.NAME_MAX,
     // Haiku's NAME_MAX includes the null terminator, so subtract one.
     .haiku => std.posix.NAME_MAX - 1,
@@ -63,10 +61,7 @@ pub const max_name_bytes = switch (native_os) {
     // as large as the largest max_name_bytes (Windows) in order to work on any host OS.
     // TODO determine if this is a reasonable approach
     .wasi => std.os.windows.NAME_MAX * 3,
-    else => if (@hasDecl(root, "os") and @hasDecl(root.os, "NAME_MAX"))
-        root.os.NAME_MAX
-    else
-        @compileError("NAME_MAX not implemented for " ++ @tagName(native_os)),
+    else => @compileError("NAME_MAX not implemented for " ++ @tagName(native_os)),
 };
 
 pub const Entry = struct {
@@ -86,12 +81,14 @@ pub const Entry = struct {
 ///
 /// This function is overridable via `std.Options.cwd`.
 pub fn cwd() Dir {
-    const cwdFn = std.Options.cwd orelse return switch (native_os) {
+    if (std.Options.cwd) |cwdFn| return cwdFn();
+    if (os_options) |opts| return opts.cwd();
+
+    return switch (native_os) {
         .windows => .{ .handle = std.os.windows.peb().ProcessParameters.CurrentDirectory.Handle },
         .wasi => .{ .handle = 3 }, // Expect the first preopen to be current working directory.
         else => .{ .handle = std.posix.AT.FDCWD },
     };
-    return cwdFn();
 }
 
 pub const Reader = struct {
@@ -105,7 +102,7 @@ pub const Reader = struct {
     end: usize,
 
     /// A length for `buffer` that allows all implementations to function.
-    pub const min_buffer_len = switch (native_os) {
+    pub const min_buffer_len = if (os_options) |opts| opts.Reader.min_buffer_len else switch (native_os) {
         .linux => std.mem.alignForward(usize, @sizeOf(std.os.linux.dirent64), 8) +
             std.mem.alignForward(usize, max_name_bytes, 8),
         .windows => len: {

@@ -8,6 +8,7 @@ const is_windows = builtin.os.tag == .windows;
 const std = @import("std");
 const Io = std.Io;
 const File = std.Io.File;
+const os_options: ?type = if (std.os_options.Io) |io| (if (@hasDecl(io, "Terminal")) io.Terminal else null) else null;
 
 writer: *Io.Writer,
 mode: Mode,
@@ -38,12 +39,18 @@ pub const Mode = union(enum) {
     no_color,
     escape_codes,
     windows_api: WindowsApi,
+    // XXX: maybe setColor could require an Io instead of storing it?
+    // That way the windows prong could be merged with this one (and
+    // io could have a "detectTerminalMode" function (replacing both isTty and enableAnsiEscapeCodes maybe)?)
+    platform: Platform,
 
     pub const WindowsApi = if (!is_windows) noreturn else struct {
         io: Io,
         file: File,
         reset_attributes: u16,
     };
+
+    pub const Platform = if (os_options) |opts| opts.Mode else noreturn;
 
     /// Detect suitable TTY configuration options for the given file (commonly
     /// stdout/stderr).
@@ -140,5 +147,6 @@ pub fn setColor(t: Terminal, color: Color) SetColorError!void {
                 else => |status| return windows.unexpectedStatus(status),
             }
         },
+        .platform => |pt| try pt.setColor(color),
     }
 }

@@ -48,9 +48,8 @@ pub const Terminal = @import("Io/Terminal.zig");
 pub const RwLock = @import("Io/RwLock.zig");
 pub const Semaphore = @import("Io/Semaphore.zig");
 
-pub const VTable = struct {
+pub const VTable = if (std.os_options.Io != null and @hasDecl(std.os_options.Io.?, "VTable")) std.os_options.Io.?.VTable else struct {
     crashHandler: *const fn (?*anyopaque) void,
-
     /// If it returns `null` it means `result` has been already populated and
     /// `await` will be a no-op.
     ///
@@ -320,7 +319,7 @@ pub const Operation = union(enum) {
         pub const Result = Error!usize;
     };
 
-    pub const DeviceIoControl = switch (builtin.os.tag) {
+    pub const DeviceIoControl = if (std.os_options.Io) |io| io.Operation.DeviceIoControl else switch (builtin.os.tag) {
         .wasi => noreturn,
         .windows => struct {
             file: File,
@@ -2641,7 +2640,7 @@ pub fn sleep(io: Io, duration: Duration, clock: Clock) Cancelable!void {
     } });
 }
 
-pub const LockedStderr = struct {
+pub const LockedStderr = if (std.os_options.Io != null and @hasDecl(std.os_options.Io.?, "LockedStderr")) std.os_options.Io.?.LockedStderr else struct {
     file_writer: *File.Writer,
     terminal_mode: Terminal.Mode,
 

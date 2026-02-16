@@ -324,7 +324,7 @@ pub fn print(comptime fmt: []const u8, args: anytype) void {
     var buffer: [64]u8 = undefined;
     const stderr = lockStderr(&buffer);
     defer unlockStderr();
-    stderr.file_writer.interface.print(fmt, args) catch return;
+    stderr.terminal().writer.print(fmt, args) catch return;
 }
 
 /// Marked `inline` to propagate a comptime-known error to callers.

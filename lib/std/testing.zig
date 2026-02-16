@@ -342,8 +342,7 @@ pub fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const 
     // Intentionally using the debug Io instance rather than the testing Io instance.
     const stderr = std.debug.lockStderr(&.{});
     defer std.debug.unlockStderr();
-    const w = &stderr.file_writer.interface;
-    failEqualSlices(T, expected, actual, diff_index, w, stderr.terminal_mode) catch {};
+    failEqualSlices(T, expected, actual, diff_index, stderr.terminal()) catch {};
     return error.TestExpectedEqual;
 }
 
@@ -352,9 +351,10 @@ fn failEqualSlices(
     expected: []const T,
     actual: []const T,
     diff_index: usize,
-    w: *Io.Writer,
-    terminal_mode: Io.Terminal.Mode,
+    terminal: Io.Terminal,
 ) !void {
+    const w = terminal.writer;
+    const terminal_mode = terminal.mode;
     try w.print("slices differ. first difference occurs at index {d} (0x{X})\n", .{ diff_index, diff_index });
 
     // TODO: Should this be configurable by the caller?

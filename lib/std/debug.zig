@@ -207,6 +207,10 @@ pub fn FullPanic(comptime panicFn: fn ([]const u8, ?usize) noreturn) type {
             @branchHint(.cold);
             call("'noreturn' function returned", @returnAddress());
         }
+        pub fn logIntZero() noreturn {
+            @branchHint(.cold);
+            call("@log2/@log10 called with zero integer operand", @returnAddress());
+        }
     };
 }
 

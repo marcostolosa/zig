@@ -19470,6 +19470,25 @@ fn zirLog(
     if (!is_comptime_zero)
         try sema.requireRuntimeBlock(block, operand_src, null);
 
+    // Zero safety check for integer operands
+    if (scalar_ty.zigTypeTag(zcu) == .int and block.wantSafety()) {
+        const scalar_zero = try pt.intValue(scalar_ty, 0);
+
+        const ok = if (operand_ty.zigTypeTag(zcu) == .vector) ok: {
+            const zero_val = try sema.splat(operand_ty, scalar_zero);
+            const zero = Air.internedToRef(zero_val.toIntern());
+            const ok = try block.addCmpVector(operand, zero, .neq);
+            break :ok try block.addReduce(ok, .And);
+        } else ok: {
+            const zero = Air.internedToRef(scalar_zero.toIntern());
+            break :ok try block.addBinOp(.cmp_neq, operand, zero);
+        };
+        try sema.addSafetyCheck(block, operand_src, ok, .log_int_zero);
+    }
+
+    // We still emit a safety check, even if the result is a comptime-known 0.
+    // Users should always check for zero when calling @log{2|10} on a runtime value.
+
     if (is_comptime_zero)
         return Air.internedToRef((try sema.splat(result_ty, try pt.intValue(.fromInterned(.u0_type), 0))).toIntern());
 
@@ -34673,6 +34692,7 @@ fn getExpectedBuiltinFnType(sema: *Sema, decl: Zcu.StdLangDecl) CompileError!Typ
         .@"panic.copyLenMismatch",
         .@"panic.memcpyAlias",
         .@"panic.noreturnReturned",
+        .@"panic.logIntZero",
         => try pt.funcType(.{
             .param_types = &.{},
             .return_type = .noreturn_type,

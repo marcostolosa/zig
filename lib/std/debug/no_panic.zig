@@ -134,3 +134,8 @@ pub fn noreturnReturned() noreturn {
     @branchHint(.cold);
     @trap();
 }
+
+pub fn logIntZero() noreturn {
+    @branchHint(.cold);
+    @trap();
+}

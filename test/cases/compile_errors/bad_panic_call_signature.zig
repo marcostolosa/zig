@@ -29,6 +29,7 @@ pub const panic = struct {
     pub const copyLenMismatch = simple_panic.copyLenMismatch;
     pub const memcpyAlias = simple_panic.memcpyAlias;
     pub const noreturnReturned = simple_panic.noreturnReturned;
+    pub const logIntZero = simple_panic.logIntZero;
 };
 
 export fn foo(a: u8) void {

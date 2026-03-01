@@ -126,3 +126,7 @@ pub fn memcpyAlias() noreturn {
 pub fn noreturnReturned() noreturn {
     call("'noreturn' function returned", null);
 }
+
+pub fn logIntZero() noreturn {
+    call("@log2/@log10 called with zero integer operand", null);
+}

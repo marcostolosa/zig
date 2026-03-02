@@ -46,6 +46,7 @@ test {
     _ = @import("behavior/int_comparison_elision.zig");
     _ = @import("behavior/ptrfromint.zig");
     _ = @import("behavior/ir_block_deps.zig");
+    _ = @import("behavior/log_int.zig");
     _ = @import("behavior/lower_strlit_to_vector.zig");
     _ = @import("behavior/math.zig");
     _ = @import("behavior/maximum_minimum.zig");

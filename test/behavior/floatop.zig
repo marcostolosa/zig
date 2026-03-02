@@ -1746,8 +1746,6 @@ test "result location forwarded through unary float builtins" {
     y = @exp(@floatFromInt(S.x));
     y = @exp2(@floatFromInt(S.x));
     y = @log(@floatFromInt(S.x));
-    y = @log2(@floatFromInt(S.x));
-    y = @log10(@floatFromInt(S.x));
     y = @floor(@floatFromInt(S.x));
     y = @ceil(@floatFromInt(S.x));
     y = @trunc(@floatFromInt(S.x));

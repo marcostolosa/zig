@@ -5601,23 +5601,45 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       </p>
       {#header_close#}
       {#header_open|@log2#}
-      <pre>{#syntax#}@log2(value: anytype) @TypeOf(value){#endsyntax#}</pre>
+      <pre>{#syntax#}@log2(value: anytype) anytype{#endsyntax#}</pre>
       <p>
-      Returns the logarithm to the base 2 of a floating point number. Uses a dedicated hardware instruction
-      when available.
+      Returns the logarithm to the base 2 of an unsigned integer, a float, or a vector of either unsigned integers or floats.
+      Uses a dedicated hardware instruction when available.
       </p>
       <p>
-      Supports {#link|Floats#} and {#link|Vectors#} of floats.
+      When the operand scalar type is a floating point number, the result type is the same as the operand's type.
+      </p>
+      <p>
+      When the scalar type is an unsigned integer with {#syntax#}x{#endsyntax#} bits, the result scalar type is an unsigned integer with {#syntax#}ilog2(ilog2(2^x-1)){#endsyntax#} bits.
+      Passing zero is safety-checked {#link|Illegal Behavior#}.
+      </p>
+      <p>
+      If passed an integer with a bit size less than or equal to {#syntax#}u1{#endsyntax#}, the result is a comptime-known {#syntax#}@as(u0, 0){#endsyntax#}.
+      The input is still safety-checked.
+      </p>
+      <p>
+      Supports {#link|Floats#}, unsigned {#link|Integers#}, and {#link|Vectors#} of floats or unsigned integers.
       </p>
       {#header_close#}
       {#header_open|@log10#}
-      <pre>{#syntax#}@log10(value: anytype) @TypeOf(value){#endsyntax#}</pre>
+      <pre>{#syntax#}@log10(value: anytype) anytype{#endsyntax#}</pre>
       <p>
-      Returns the logarithm to the base 10 of a floating point number. Uses a dedicated hardware instruction
-      when available.
+      Returns the logarithm to the base 10 of an unsigned integer, a float, or a vector of either unsigned integers or floats.
+      Uses a dedicated hardware instruction when available.
       </p>
       <p>
-      Supports {#link|Floats#} and {#link|Vectors#} of floats.
+      When the operand scalar type is a floating point number, the result type is the same as the operand's type.
+      </p>
+      <p>
+      When the scalar type is an unsigned integer with {#syntax#}x{#endsyntax#} bits, the result scalar type is an unsigned integer with {#syntax#}ilog2(ilog10(2^x-1)){#endsyntax#} bits.
+      Passing zero is safety-checked {#link|Illegal Behavior#}.
+      </p>
+      <p>
+      If passed an integer with a bit size less than or equal to {#syntax#}u3{#endsyntax#}, the result is a comptime-known {#syntax#}@as(u0, 0){#endsyntax#}.
+      The input is still safety-checked.
+      </p>
+      <p>
+      Supports {#link|Floats#}, unsigned {#link|Integers#}, and {#link|Vectors#} of floats or unsigned integers.
       </p>
       {#header_close#}
       {#header_open|@abs#}
@@ -6303,6 +6325,18 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
 
       <p>At runtime:</p>
       {#code|runtime_invalid_null_pointer_cast.zig#}
+
+      {#header_close#}
+
+      {#header_open|@log2/@log10 with zero integer operand#}
+      <p>
+      This happens when calling {#link|@log2#} or {#link|@log10#} with a 0 integer operand.
+      </p>
+      <p>At compile-time:</p>
+      {#code|test_comptime_log_int_zero_operand.zig#}
+
+      <p>At runtime:</p>
+      {#code|runtime_log_int_zero_operand.zig#}
 
       {#header_close#}
 

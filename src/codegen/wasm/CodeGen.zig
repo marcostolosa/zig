@@ -1687,7 +1687,7 @@ fn genInst(cg: *CodeGen, inst: Air.Inst.Index) InnerError!void {
             try cg.finishAir(inst, result, &.{ty_op.operand});
         },
 
-        .sqrt, .sin, .cos, .tan, .exp, .exp2, .log, .log2, .log10, .floor, .ceil, .round, .trunc_float, .neg => |tag| {
+        .sqrt, .sin, .cos, .tan, .exp, .exp2, .log, .floor, .ceil, .round, .trunc_float, .neg => |tag| {
             const un_op = cg.air.instructions.items(.data)[@intFromEnum(inst)].un_op;
             const operand = try cg.resolveInst(un_op);
             const ty = cg.typeOfIndex(inst);
@@ -1705,8 +1705,6 @@ fn genInst(cg: *CodeGen, inst: Air.Inst.Index) InnerError!void {
                 .exp => try cg.floatExp(float_ty, operand),
                 .exp2 => try cg.floatExp2(float_ty, operand),
                 .log => try cg.floatLog(float_ty, operand),
-                .log2 => try cg.floatLog2(float_ty, operand),
-                .log10 => try cg.floatLog10(float_ty, operand),
                 .floor => try cg.floatFloor(float_ty, operand),
                 .ceil => try cg.floatCeil(float_ty, operand),
                 .round => try cg.floatRound(float_ty, operand),
@@ -1716,6 +1714,31 @@ fn genInst(cg: *CodeGen, inst: Air.Inst.Index) InnerError!void {
             };
 
             try cg.finishAir(inst, result, &.{un_op});
+        },
+
+        .log2, .log10 => |tag| {
+            const ty_op = cg.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+            const operand = try cg.resolveInst(ty_op.operand);
+
+            const ty = cg.typeOf(ty_op.operand);
+            const scalar_ty = ty.scalarType(cg.pt.zcu);
+
+            if (!scalar_ty.isRuntimeFloat()) {
+                return cg.fail("TODO: implement @log2/@log10 int", .{});
+            }
+
+            if (ty.zigTypeTag(zcu) == .vector) {
+                return cg.fail("TODO: implement AIR op: {s} for vectors", .{@tagName(tag)});
+            }
+
+            const float_ty: FloatType = .fromType(cg, ty);
+            const result = switch (tag) {
+                .log2 => try cg.floatLog2(float_ty, operand),
+                .log10 => try cg.floatLog10(float_ty, operand),
+                else => unreachable,
+            };
+
+            try cg.finishAir(inst, result, &.{ty_op.operand});
         },
 
         .cmp_eq => cg.airCmp(inst, .eq),

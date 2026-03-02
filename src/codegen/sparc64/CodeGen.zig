@@ -516,7 +516,7 @@ fn genBody(self: *Self, body: []const Air.Inst.Index) InnerError!void {
             .round,
             .trunc_float,
             .neg,
-            => try self.airUnaryMath(inst),
+            => |air_tag| try self.airUnaryMath(inst, air_tag),
 
             .add_with_overflow => try self.airAddSubWithOverflow(inst),
             .sub_with_overflow => try self.airAddSubWithOverflow(inst),
@@ -2594,12 +2594,26 @@ fn airTry(self: *Self, inst: Air.Inst.Index) !void {
     return self.finishAir(inst, result, .{ unwrapped_try.error_union, .none, .none });
 }
 
-fn airUnaryMath(self: *Self, inst: Air.Inst.Index) !void {
+fn airUnaryMath(self: *Self, inst: Air.Inst.Index, tag: Air.Inst.Tag) !void {
     const un_op = self.air.instructions.items(.data)[@intFromEnum(inst)].un_op;
+
+    const is_log2_or_log10 = switch (tag) {
+        .log2, .log10 => true,
+        else => false,
+    };
+
+    const ty = self.typeOf(un_op);
+    const scalar_ty = ty.scalarType(self.pt.zcu);
+
     const result: MCValue = if (self.liveness.isUnused(inst))
         .dead
-    else
-        return self.fail("TODO implement airUnaryMath for {}", .{self.target.cpu.arch});
+    else {
+        if (is_log2_or_log10 and !scalar_ty.isRuntimeFloat()) {
+            return self.fail("TODO implement log2/log10 int", .{});
+        } else {
+            return self.fail("TODO implement airUnaryMath for {}", .{self.target.cpu.arch});
+        }
+    };
     return self.finishAir(inst, result, .{ un_op, .none, .none });
 }
 

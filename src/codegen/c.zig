@@ -2694,12 +2694,13 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
             .exp         => try airUnBuiltinCall(f, inst, air_datas[@intFromEnum(inst)].un_op, "exp", .none),
             .exp2        => try airUnBuiltinCall(f, inst, air_datas[@intFromEnum(inst)].un_op, "exp2", .none),
             .log         => try airUnBuiltinCall(f, inst, air_datas[@intFromEnum(inst)].un_op, "log", .none),
-            .log2        => try airUnBuiltinCall(f, inst, air_datas[@intFromEnum(inst)].un_op, "log2", .none),
-            .log10       => try airUnBuiltinCall(f, inst, air_datas[@intFromEnum(inst)].un_op, "log10", .none),
             .floor       => try airUnBuiltinCall(f, inst, air_datas[@intFromEnum(inst)].un_op, "floor", .none),
             .ceil        => try airUnBuiltinCall(f, inst, air_datas[@intFromEnum(inst)].un_op, "ceil", .none),
             .round       => try airUnBuiltinCall(f, inst, air_datas[@intFromEnum(inst)].un_op, "round", .none),
             .trunc_float => try airUnBuiltinCall(f, inst, air_datas[@intFromEnum(inst)].un_op, "trunc", .none),
+
+            .log2        => try airLog(f, inst, air_datas[@intFromEnum(inst)].ty_op.operand, .log2),
+            .log10       => try airLog(f, inst, air_datas[@intFromEnum(inst)].ty_op.operand, .log10),
 
             .mul_add => try airMulAdd(f, inst),
 
@@ -5877,6 +5878,25 @@ fn airFloatCast(f: *Function, inst: Air.Inst.Index) !CValue {
     try v.end(f, inst, w);
 
     return local;
+}
+
+const LogOp = enum {
+    log2,
+    log10,
+};
+
+fn airLog(f: *Function, inst: Air.Inst.Index, operand_ref: Air.Inst.Ref, operation: LogOp) !CValue {
+    const pt = f.object.dg.pt;
+    const zcu = pt.zcu;
+
+    const ty = f.typeOf(operand_ref);
+    const scalar_ty = ty.scalarType(zcu);
+
+    if (!scalar_ty.isRuntimeFloat()) {
+        return f.fail("TODO implement log2/log10 int", .{});
+    } else {
+        return airUnBuiltinCall(f, inst, operand_ref, @tagName(operation), .none);
+    }
 }
 
 fn airUnBuiltinCall(

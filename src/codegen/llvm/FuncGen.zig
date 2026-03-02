@@ -422,12 +422,13 @@ fn genBody(self: *FuncGen, body: []const Air.Inst.Index, coverage_point: Air.Cov
             .exp          => try self.airUnaryOp(inst, .exp),
             .exp2         => try self.airUnaryOp(inst, .exp2),
             .log          => try self.airUnaryOp(inst, .log),
-            .log2         => try self.airUnaryOp(inst, .log2),
-            .log10        => try self.airUnaryOp(inst, .log10),
             .floor        => try self.airUnaryOp(inst, .floor),
             .ceil         => try self.airUnaryOp(inst, .ceil),
             .round        => try self.airUnaryOp(inst, .round),
             .trunc_float  => try self.airUnaryOp(inst, .trunc),
+
+            .log2  => try self.airLogOp(inst, .log2),
+            .log10 => try self.airLogOp(inst, .log10),
 
             .neg           => try self.airNeg(inst, .normal),
             .neg_optimized => try self.airNeg(inst, .fast),
@@ -5389,6 +5390,29 @@ fn airUnaryOp(self: *FuncGen, inst: Air.Inst.Index, comptime op: FloatOp) Alloca
     const operand_ty = self.typeOf(un_op);
 
     return self.buildFloatOp(op, .normal, operand_ty, 1, .{operand});
+}
+
+const LogOp = enum {
+    log2,
+    log10,
+
+    fn toFloatOp(op: LogOp) FloatOp {
+        return switch (op) {
+            .log2 => .log2,
+            .log10 => .log10,
+        };
+    }
+};
+
+fn airLogOp(self: *FuncGen, inst: Air.Inst.Index, comptime op: LogOp) TodoError!Builder.Value {
+    const ty_op = self.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const operand = try self.resolveInst(ty_op.operand);
+    const operand_ty = self.typeOf(ty_op.operand);
+    const scalar_ty = operand_ty.scalarType(self.object.zcu);
+
+    if (!scalar_ty.isRuntimeFloat()) {
+        return self.todo("TODO implement log2/log10 int", .{});
+    } else return self.buildFloatOp(comptime op.toFloatOp(), .normal, operand_ty, 1, .{operand});
 }
 
 fn airNeg(self: *FuncGen, inst: Air.Inst.Index, fast: Builder.FastMathKind) Allocator.Error!Builder.Value {

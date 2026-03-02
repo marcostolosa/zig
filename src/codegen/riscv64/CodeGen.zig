@@ -4319,64 +4319,80 @@ fn airBitReverse(func: *Func, inst: Air.Inst.Index) !void {
 fn airUnaryMath(func: *Func, inst: Air.Inst.Index, tag: Air.Inst.Tag) !void {
     const pt = func.pt;
     const zcu = pt.zcu;
-    const un_op = func.air.instructions.items(.data)[@intFromEnum(inst)].un_op;
-    const result: MCValue = if (func.liveness.isUnused(inst)) .unreach else result: {
-        const ty = func.typeOf(un_op);
 
-        const operand = try func.resolveInst(un_op);
-        const operand_bit_size = ty.bitSize(zcu);
-
-        if (!math.isPowerOfTwo(operand_bit_size))
-            return func.fail("TODO: airUnaryMath non-pow 2", .{});
-
-        const operand_reg, const operand_lock = try func.promoteReg(ty, operand);
-        defer if (operand_lock) |lock| func.register_manager.unlockReg(lock);
-
-        const dst_class = func.typeRegClass(ty);
-        const dst_reg, const dst_lock = try func.allocReg(dst_class);
-        defer func.register_manager.unlockReg(dst_lock);
-
-        switch (ty.zigTypeTag(zcu)) {
-            .float => {
-                assert(dst_class == .float);
-
-                switch (operand_bit_size) {
-                    16, 80, 128 => return func.fail("TODO: airUnaryMath Float bit-size {}", .{operand_bit_size}),
-                    32, 64 => {},
-                    else => unreachable,
-                }
-
-                switch (tag) {
-                    .sqrt => {
-                        _ = try func.addInst(.{
-                            .tag = if (operand_bit_size == 64) .fsqrtd else .fsqrts,
-                            .data = .{
-                                .r_type = .{
-                                    .rd = dst_reg,
-                                    .rs1 = operand_reg,
-                                    .rs2 = .f0, // unused, spec says it's 0
-                                },
-                            },
-                        });
-                    },
-
-                    else => return func.fail("TODO: airUnaryMath Float {s}", .{@tagName(tag)}),
-                }
-            },
-            .int => {
-                assert(dst_class == .int);
-
-                switch (tag) {
-                    else => return func.fail("TODO: airUnaryMath Float {s}", .{@tagName(tag)}),
-                }
-            },
-            else => return func.fail("TODO: airUnaryMath ty: {f}", .{ty.fmt(pt)}),
-        }
-
-        break :result MCValue{ .register = dst_reg };
+    const is_log2_or_log10 = switch (tag) {
+        .log2, .log10 => true,
+        else => false,
     };
 
-    return func.finishAir(inst, result, .{ un_op, .none, .none });
+    const op = if (is_log2_or_log10)
+        func.air.instructions.items(.data)[@intFromEnum(inst)].ty_op.operand
+    else
+        func.air.instructions.items(.data)[@intFromEnum(inst)].un_op;
+
+    const result: MCValue = if (func.liveness.isUnused(inst)) .unreach else result: {
+        const ty = func.typeOf(op);
+        const scalar_ty = ty.scalarType(zcu);
+
+        const operand = try func.resolveInst(op);
+
+        if (is_log2_or_log10 and !scalar_ty.isRuntimeFloat()) {
+            return func.fail("TODO implement log2/log10 int", .{});
+        } else {
+            const operand_bit_size = ty.bitSize(zcu);
+
+            if (!math.isPowerOfTwo(operand_bit_size))
+                return func.fail("TODO: airUnaryMath non-pow 2", .{});
+
+            const operand_reg, const operand_lock = try func.promoteReg(ty, operand);
+            defer if (operand_lock) |lock| func.register_manager.unlockReg(lock);
+
+            const dst_class = func.typeRegClass(ty);
+            const dst_reg, const dst_lock = try func.allocReg(dst_class);
+            defer func.register_manager.unlockReg(dst_lock);
+
+            switch (ty.zigTypeTag(zcu)) {
+                .float => {
+                    assert(dst_class == .float);
+
+                    switch (operand_bit_size) {
+                        16, 80, 128 => return func.fail("TODO: airUnaryMath Float bit-size {}", .{operand_bit_size}),
+                        32, 64 => {},
+                        else => unreachable,
+                    }
+
+                    switch (tag) {
+                        .sqrt => {
+                            _ = try func.addInst(.{
+                                .tag = if (operand_bit_size == 64) .fsqrtd else .fsqrts,
+                                .data = .{
+                                    .r_type = .{
+                                        .rd = dst_reg,
+                                        .rs1 = operand_reg,
+                                        .rs2 = .f0, // unused, spec says it's 0
+                                    },
+                                },
+                            });
+                        },
+
+                        else => return func.fail("TODO: airUnaryMath Float {s}", .{@tagName(tag)}),
+                    }
+                },
+                .int => {
+                    assert(dst_class == .int);
+
+                    switch (tag) {
+                        else => return func.fail("TODO: airUnaryMath Float {s}", .{@tagName(tag)}),
+                    }
+                },
+                else => return func.fail("TODO: airUnaryMath ty: {f}", .{ty.fmt(pt)}),
+            }
+
+            break :result MCValue{ .register = dst_reg };
+        }
+    };
+
+    return func.finishAir(inst, result, .{ op, .none, .none });
 }
 
 fn reuseOperand(

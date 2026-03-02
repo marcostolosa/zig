@@ -76693,10 +76693,26 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 try res[0].finish(inst, &.{un_op}, &ops, cg);
             },
             .sin, .cos, .tan, .exp, .exp2, .log, .log2, .log10, .round => |air_tag| {
-                const un_op = air_datas[@intFromEnum(inst)].un_op;
-                var ops = try cg.tempsFromOperands(inst, .{un_op});
+                const is_log2_or_log10 = switch (air_tag) {
+                    .log2, .log10 => true,
+                    else => false,
+                };
+
+                const op = if (is_log2_or_log10)
+                    air_datas[@intFromEnum(inst)].ty_op.operand
+                else
+                    air_datas[@intFromEnum(inst)].un_op;
+
+                const operand_ty = cg.typeOf(op);
+                const scalar_ty = operand_ty.scalarType(zcu);
+
+                if (is_log2_or_log10 and !scalar_ty.isRuntimeFloat()) {
+                    return cg.fail("TODO implement log2/log10 int", .{});
+                }
+
+                var ops = try cg.tempsFromOperands(inst, .{op});
                 var res: [1]Temp = undefined;
-                cg.select(&res, &.{cg.typeOf(un_op)}, &ops, switch (air_tag) {
+                cg.select(&res, &.{operand_ty}, &ops, switch (air_tag) {
                     else => unreachable,
                     inline .sin, .cos, .tan, .exp, .exp2, .log, .log2, .log10, .round => |name| comptime &.{ .{
                         .required_features = .{ .sse, null, null, null },
@@ -77535,12 +77551,12 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }) catch |err| switch (err) {
                     error.SelectFailed => return cg.fail("failed to select {s} {f} {f}", .{
                         @tagName(air_tag),
-                        cg.typeOf(un_op).fmt(pt),
+                        operand_ty.fmt(pt),
                         ops[0].tracking(cg),
                     }),
                     else => |e| return e,
                 };
-                try res[0].finish(inst, &.{un_op}, &ops, cg);
+                try res[0].finish(inst, &.{op}, &ops, cg);
             },
             .abs => |air_tag| {
                 const ty_op = air_datas[@intFromEnum(inst)].ty_op;

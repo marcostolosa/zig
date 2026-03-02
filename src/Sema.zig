@@ -1303,7 +1303,11 @@ fn analyzeBodyInner(
             .clz       => try sema.zirBitCount(block, inst, .clz,      Value.clz),
             .ctz       => try sema.zirBitCount(block, inst, .ctz,      Value.ctz),
             .pop_count => try sema.zirBitCount(block, inst, .popcount, Value.popCount),
+
             .abs       => try sema.zirAbs(block, inst),
+
+            .log2      => try sema.zirLog(block, inst, .log2),
+            .log10     => try sema.zirLog(block, inst, .log10),
 
             .sqrt  => try sema.zirUnaryMath(block, inst, .sqrt, Value.sqrt),
             .sin   => try sema.zirUnaryMath(block, inst, .sin, Value.sin),
@@ -1312,8 +1316,6 @@ fn analyzeBodyInner(
             .exp   => try sema.zirUnaryMath(block, inst, .exp, Value.exp),
             .exp2  => try sema.zirUnaryMath(block, inst, .exp2, Value.exp2),
             .log   => try sema.zirUnaryMath(block, inst, .log, Value.log),
-            .log2  => try sema.zirUnaryMath(block, inst, .log2, Value.log2),
-            .log10 => try sema.zirUnaryMath(block, inst, .log10, Value.log10),
             .floor => try sema.zirUnaryMath(block, inst, .floor, Value.floor),
             .ceil  => try sema.zirUnaryMath(block, inst, .ceil, Value.ceil),
             .round => try sema.zirUnaryMath(block, inst, .round, Value.round),
@@ -19368,6 +19370,110 @@ fn zirAbs(
         try sema.requireRuntimeBlock(block, operand_src, null);
         return block.addTyOp(.abs, result_ty, operand);
     };
+}
+
+fn zirLog(
+    sema: *Sema,
+    block: *Block,
+    inst: Zir.Inst.Index,
+    comptime air_tag: Air.Inst.Tag,
+) CompileError!Air.Inst.Ref {
+    const pt = sema.pt;
+    const zcu = pt.zcu;
+    const inst_data = sema.code.instructions.items(.data)[@intFromEnum(inst)].un_node;
+    const operand = sema.resolveInst(inst_data.operand);
+    const operand_src = block.builtinCallArgSrc(inst_data.src_node, 0);
+    const operand_ty = sema.typeOf(operand);
+    const scalar_ty = operand_ty.scalarType(zcu);
+
+    const result_ty, const is_comptime_zero = switch (scalar_ty.zigTypeTag(zcu)) {
+        .comptime_float, .float, .comptime_int => .{ operand_ty, false },
+        else => check: {
+            if (!scalar_ty.isUnsignedInt(zcu))
+                return sema.fail(
+                    block,
+                    operand_src,
+                    "expected unsigned integer, float, or vector of either unsigned integers or floats, found '{f}'",
+                    .{operand_ty.fmt(pt)},
+                );
+
+            // Check for operand types whose result will always be 0, no matter the value.
+            const bit_size = scalar_ty.bitSize(zcu);
+            const min_bit_size = switch (air_tag) {
+                .log2 => 2,
+                .log10 => 4,
+                else => unreachable,
+            };
+
+            if (bit_size < min_bit_size)
+                break :check if (operand_ty.isVector(zcu))
+                    .{ try pt.vectorType(.{
+                        .child = .u0_type,
+                        .len = operand_ty.vectorLen(zcu),
+                    }), true }
+                else
+                    .{ Type.fromInterned(.u0_type), true };
+
+            var op_max = try std.math.big.int.Managed.init(zcu.gpa);
+            defer op_max.deinit();
+            try op_max.setTwosCompIntLimit(.max, .unsigned, @intCast(bit_size));
+            const res_bits = math.log2(switch (air_tag) {
+                .log2 => op_max.toConst().log2(),
+                .log10 => try op_max.toConst().log10Alloc(zcu.gpa),
+                else => unreachable,
+            }) + 1;
+
+            const new_scalar_ty = try pt.intType(.unsigned, @intCast(res_bits));
+
+            break :check if (operand_ty.isVector(zcu))
+                .{ try pt.vectorType(.{
+                    .child = new_scalar_ty.toIntern(),
+                    .len = operand_ty.vectorLen(zcu),
+                }), false }
+            else
+                .{ new_scalar_ty, false };
+        },
+    };
+
+    if (sema.resolveValue(operand)) |operand_val| {
+        if (operand_val.isUndef(zcu))
+            return try pt.undefRef(result_ty);
+
+        switch (scalar_ty.zigTypeTag(zcu)) {
+            .comptime_int, .int => if (operand_ty.isVector(zcu)) {
+                for (0..operand_ty.vectorLen(zcu)) |i| {
+                    const elem_val = try operand_val.elemValue(pt, i);
+                    if (elem_val.order(.zero_comptime_int, sema.pt.zcu) != .gt) return sema.fail(
+                        block,
+                        operand_src,
+                        "vector operand must contain values greater than zero (got '{f}' at index {d})",
+                        .{ elem_val.fmtValue(pt), i },
+                    );
+                }
+            } else if (operand_val.order(.zero_comptime_int, sema.pt.zcu) != .gt) return sema.fail(
+                block,
+                operand_src,
+                "integer operand must be greater than zero (got '{f}')",
+                .{operand_val.fmtValue(pt)},
+            ),
+            else => {},
+        }
+
+        const result_val = switch (air_tag) {
+            .log2 => try operand_val.log2(result_ty, sema.arena, pt),
+            .log10 => try operand_val.log10(result_ty, sema.arena, pt),
+            else => unreachable,
+        };
+        return Air.internedToRef(result_val.toIntern());
+    }
+
+    if (!is_comptime_zero)
+        try sema.requireRuntimeBlock(block, operand_src, null);
+
+    if (is_comptime_zero)
+        return Air.internedToRef((try sema.splat(result_ty, try pt.intValue(.fromInterned(.u0_type), 0))).toIntern());
+
+    return block.addTyOp(air_tag, result_ty, operand);
 }
 
 fn maybeConstantUnaryMath(

@@ -413,11 +413,11 @@ pub const Inst = struct {
         /// Natural (base e) logarithm of a floating point number.
         /// Uses the `un_op` field.
         log,
-        /// Base 2 logarithm of a floating point number.
-        /// Uses the `un_op` field.
+        /// Base 2 logarithm of an integer, floating point number or vector.
+        /// Uses the `ty_op` field.
         log2,
-        /// Base 10 logarithm of a floating point number.
-        /// Uses the `un_op` field.
+        /// Base 10 logarithm of an integer, floating point number or vector.
+        /// Uses the `ty_op` field.
         log10,
         /// Absolute value of an integer, floating point number or vector.
         /// Result type is always unsigned if the operand is an integer.
@@ -1636,8 +1636,6 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         .exp,
         .exp2,
         .log,
-        .log2,
-        .log10,
         .floor,
         .ceil,
         .round,
@@ -1756,6 +1754,8 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         .c_va_arg,
         .c_va_copy,
         .abs,
+        .log2,
+        .log10,
         => return datas[@intFromEnum(inst)].ty_op.ty.toType(),
 
         .loop,

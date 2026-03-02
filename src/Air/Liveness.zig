@@ -539,6 +539,8 @@ fn analyzeInst(
         .c_va_arg,
         .c_va_copy,
         .abs,
+        .log2,
+        .log10,
         => {
             const o = inst_datas[@intFromEnum(inst)].ty_op;
             return analyzeOperands(a, pass, data, inst, .{ o.operand, .none, .none });
@@ -562,8 +564,6 @@ fn analyzeInst(
         .exp,
         .exp2,
         .log,
-        .log2,
-        .log10,
         .floor,
         .ceil,
         .round,

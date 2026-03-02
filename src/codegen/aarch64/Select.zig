@@ -324,6 +324,8 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         .addrspace_cast,
         .c_va_arg,
         .c_va_copy,
+        .log2,
+        .log10,
         => {
             const ty_op = air_data[@intFromEnum(air_inst_index)].ty_op;
 
@@ -510,8 +512,6 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         .exp,
         .exp2,
         .log,
-        .log2,
-        .log10,
         .floor,
         .ceil,
         .round,
@@ -4115,113 +4115,128 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
             if (isel.live_values.fetchRemove(air.inst_index)) |res_vi| {
                 defer res_vi.value.deref(isel);
 
-                const un_op = air.data(air.inst_index).un_op;
-                const ty = isel.air.typeOf(un_op, ip);
-                const bits = ty.floatBits(isel.target);
-                try call.prepareReturn(isel);
-                switch (bits) {
-                    else => unreachable,
-                    16, 32, 64, 128 => try call.returnLiveIn(isel, res_vi.value, .v0),
-                    80 => {
-                        var res_hi16_it = res_vi.value.field(ty, 8, 8);
-                        const res_hi16_vi = try res_hi16_it.only(isel);
-                        try call.returnLiveIn(isel, res_hi16_vi.?, .r1);
-                        var res_lo64_it = res_vi.value.field(ty, 0, 8);
-                        const res_lo64_vi = try res_lo64_it.only(isel);
-                        try call.returnLiveIn(isel, res_lo64_vi.?, .r0);
-                    },
-                }
-                try call.finishReturn(isel);
+                const is_log2_or_log10 = switch (air_tag) {
+                    .log2, .log10 => true,
+                    else => false,
+                };
 
-                try call.prepareCallee(isel);
-                try isel.global_relocs.append(gpa, .{
-                    .name = switch (air_tag) {
+                const op = if (is_log2_or_log10)
+                    air.data(air.inst_index).ty_op.operand
+                else
+                    air.data(air.inst_index).un_op;
+
+                const ty = isel.air.typeOf(op, ip);
+                const scalar_ty = ty.scalarType(zcu);
+
+                if (is_log2_or_log10 and !scalar_ty.isRuntimeFloat()) {
+                    return isel.fail("TODO implement log2/log10 int", .{});
+                } else {
+                    const bits = ty.floatBits(isel.target);
+                    try call.prepareReturn(isel);
+                    switch (bits) {
                         else => unreachable,
-                        .sin => switch (bits) {
-                            else => unreachable,
-                            16 => "__sinh",
-                            32 => "sinf",
-                            64 => "sin",
-                            80 => "__sinx",
-                            128 => "sinq",
+                        16, 32, 64, 128 => try call.returnLiveIn(isel, res_vi.value, .v0),
+                        80 => {
+                            var res_hi16_it = res_vi.value.field(ty, 8, 8);
+                            const res_hi16_vi = try res_hi16_it.only(isel);
+                            try call.returnLiveIn(isel, res_hi16_vi.?, .r1);
+                            var res_lo64_it = res_vi.value.field(ty, 0, 8);
+                            const res_lo64_vi = try res_lo64_it.only(isel);
+                            try call.returnLiveIn(isel, res_lo64_vi.?, .r0);
                         },
-                        .cos => switch (bits) {
-                            else => unreachable,
-                            16 => "__cosh",
-                            32 => "cosf",
-                            64 => "cos",
-                            80 => "__cosx",
-                            128 => "cosq",
-                        },
-                        .tan => switch (bits) {
-                            else => unreachable,
-                            16 => "__tanh",
-                            32 => "tanf",
-                            64 => "tan",
-                            80 => "__tanx",
-                            128 => "tanq",
-                        },
-                        .exp => switch (bits) {
-                            else => unreachable,
-                            16 => "__exph",
-                            32 => "expf",
-                            64 => "exp",
-                            80 => "__expx",
-                            128 => "expq",
-                        },
-                        .exp2 => switch (bits) {
-                            else => unreachable,
-                            16 => "__exp2h",
-                            32 => "exp2f",
-                            64 => "exp2",
-                            80 => "__exp2x",
-                            128 => "exp2q",
-                        },
-                        .log => switch (bits) {
-                            else => unreachable,
-                            16 => "__logh",
-                            32 => "logf",
-                            64 => "log",
-                            80 => "__logx",
-                            128 => "logq",
-                        },
-                        .log2 => switch (bits) {
-                            else => unreachable,
-                            16 => "__log2h",
-                            32 => "log2f",
-                            64 => "log2",
-                            80 => "__log2x",
-                            128 => "log2q",
-                        },
-                        .log10 => switch (bits) {
-                            else => unreachable,
-                            16 => "__log10h",
-                            32 => "log10f",
-                            64 => "log10",
-                            80 => "__log10x",
-                            128 => "log10q",
-                        },
-                    },
-                    .reloc = .{ .label = @intCast(isel.instructions.items.len) },
-                });
-                try isel.emit(.bl(0));
-                try call.finishCallee(isel);
+                    }
+                    try call.finishReturn(isel);
 
-                try call.prepareParams(isel);
-                const src_vi = try isel.use(un_op);
-                switch (bits) {
-                    else => unreachable,
-                    16, 32, 64, 128 => try call.paramLiveOut(isel, src_vi, .v0),
-                    80 => {
-                        var src_hi16_it = src_vi.field(ty, 8, 8);
-                        const src_hi16_vi = try src_hi16_it.only(isel);
-                        try call.paramLiveOut(isel, src_hi16_vi.?, .r1);
-                        var src_lo64_it = src_vi.field(ty, 0, 8);
-                        const src_lo64_vi = try src_lo64_it.only(isel);
-                        try call.paramLiveOut(isel, src_lo64_vi.?, .r0);
-                    },
+                    try call.prepareCallee(isel);
+                    try isel.global_relocs.append(gpa, .{
+                        .name = switch (air_tag) {
+                            else => unreachable,
+                            .sin => switch (bits) {
+                                else => unreachable,
+                                16 => "__sinh",
+                                32 => "sinf",
+                                64 => "sin",
+                                80 => "__sinx",
+                                128 => "sinq",
+                            },
+                            .cos => switch (bits) {
+                                else => unreachable,
+                                16 => "__cosh",
+                                32 => "cosf",
+                                64 => "cos",
+                                80 => "__cosx",
+                                128 => "cosq",
+                            },
+                            .tan => switch (bits) {
+                                else => unreachable,
+                                16 => "__tanh",
+                                32 => "tanf",
+                                64 => "tan",
+                                80 => "__tanx",
+                                128 => "tanq",
+                            },
+                            .exp => switch (bits) {
+                                else => unreachable,
+                                16 => "__exph",
+                                32 => "expf",
+                                64 => "exp",
+                                80 => "__expx",
+                                128 => "expq",
+                            },
+                            .exp2 => switch (bits) {
+                                else => unreachable,
+                                16 => "__exp2h",
+                                32 => "exp2f",
+                                64 => "exp2",
+                                80 => "__exp2x",
+                                128 => "exp2q",
+                            },
+                            .log => switch (bits) {
+                                else => unreachable,
+                                16 => "__logh",
+                                32 => "logf",
+                                64 => "log",
+                                80 => "__logx",
+                                128 => "logq",
+                            },
+                            .log2 => switch (bits) {
+                                else => unreachable,
+                                16 => "__log2h",
+                                32 => "log2f",
+                                64 => "log2",
+                                80 => "__log2x",
+                                128 => "log2q",
+                            },
+                            .log10 => switch (bits) {
+                                else => unreachable,
+                                16 => "__log10h",
+                                32 => "log10f",
+                                64 => "log10",
+                                80 => "__log10x",
+                                128 => "log10q",
+                            },
+                        },
+                        .reloc = .{ .label = @intCast(isel.instructions.items.len) },
+                    });
+                    try isel.emit(.bl(0));
+                    try call.finishCallee(isel);
+
+                    try call.prepareParams(isel);
+                    const src_vi = try isel.use(op);
+                    switch (bits) {
+                        else => unreachable,
+                        16, 32, 64, 128 => try call.paramLiveOut(isel, src_vi, .v0),
+                        80 => {
+                            var src_hi16_it = src_vi.field(ty, 8, 8);
+                            const src_hi16_vi = try src_hi16_it.only(isel);
+                            try call.paramLiveOut(isel, src_hi16_vi.?, .r1);
+                            var src_lo64_it = src_vi.field(ty, 0, 8);
+                            const src_lo64_vi = try src_lo64_it.only(isel);
+                            try call.paramLiveOut(isel, src_lo64_vi.?, .r0);
+                        },
+                    }
+                    try call.finishParams(isel);
                 }
-                try call.finishParams(isel);
             }
             if (air.next()) |next_air_tag| continue :air_tag next_air_tag;
         },

@@ -512,14 +512,17 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
                     continue :inst l.replaceInst(inst, .block, try l.scalarizeBlockPayload(inst, .ty_op));
                 }
             },
-            .abs => {
+            inline .abs,
+            .log2,
+            .log10,
+            => |air_tag| {
                 const ty_op = l.air_instructions.items(.data)[@intFromEnum(inst)].ty_op;
-                switch (l.wantScalarizeOrSoftFloat(.abs, ty_op.ty.toType())) {
+                switch (l.wantScalarizeOrSoftFloat(air_tag, ty_op.ty.toType())) {
                     .none => {},
                     .scalarize => continue :inst l.replaceInst(inst, .block, try l.scalarizeBlockPayload(inst, .ty_op)),
                     .soft_float => continue :inst try l.compilerRtCall(
                         inst,
-                        softFloatFunc(.abs, ty_op.ty.toType(), zcu),
+                        softFloatFunc(air_tag, ty_op.ty.toType(), zcu),
                         &.{ty_op.operand},
                         ty_op.ty.toType(),
                     ),
@@ -640,8 +643,6 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             .exp,
             .exp2,
             .log,
-            .log2,
-            .log10,
             .floor,
             .ceil,
             .round,

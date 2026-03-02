@@ -197,8 +197,6 @@ const Writer = struct {
             .exp,
             .exp2,
             .log,
-            .log2,
-            .log10,
             .floor,
             .ceil,
             .round,
@@ -279,6 +277,8 @@ const Writer = struct {
             .addrspace_cast,
             .c_va_arg,
             .c_va_copy,
+            .log2,
+            .log10,
             => try w.writeTyOp(s, inst),
 
             .block, .dbg_inline_block => try w.writeBlock(s, tag, inst),

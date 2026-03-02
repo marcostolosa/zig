@@ -4141,14 +4141,15 @@ fn genInst(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
             .exp => try cg.airUnOpSimple(inst, .exp),
             .exp2 => try cg.airUnOpSimple(inst, .exp2),
             .log => try cg.airUnOpSimple(inst, .log),
-            .log2 => try cg.airUnOpSimple(inst, .log2),
-            .log10 => try cg.airUnOpSimple(inst, .log10),
+            .log2 => try cg.airLogOp(inst, .log2),
+            .log10 => try cg.airLogOp(inst, .log10),
             .abs => try cg.airAbs(inst),
             .floor => try cg.airUnOpSimple(inst, .floor),
             .ceil => try cg.airUnOpSimple(inst, .ceil),
             .round => try cg.airUnOpSimple(inst, .round),
             .trunc_float => try cg.airUnOpSimple(inst, .trunc),
             .neg, .neg_optimized => try cg.airUnOpSimple(inst, .f_neg),
+
 
             .div_float, .div_float_optimized => try cg.airArithOp(inst, .OpFDiv, .OpSDiv, .OpUDiv),
             .div_floor, .div_floor_optimized => try cg.airDivFloor(inst),
@@ -4619,6 +4620,32 @@ fn airDivTrunc(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
             return try result.materialize(cg);
         },
         .bool => unreachable,
+    }
+}
+
+const LogOp = enum {
+    log2,
+    log10,
+
+    fn toUnaryOp(op: LogOp) UnaryOp {
+        return switch (op) {
+            .log2 => .log2,
+            .log10 => .log10,
+        };
+    }
+};
+
+fn airLogOp(cg: *CodeGen, inst: Air.Inst.Index, comptime op: LogOp) !?Id {
+    const ty_op = cg.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const operand = try cg.temporary(ty_op.operand);
+    const ty = cg.typeOf(ty_op.operand);
+    const scalar_ty = ty.scalarType(cg.zcu);
+
+    if (!scalar_ty.isRuntimeFloat()) {
+        return cg.todo("TODO implement log2/log10 int", .{});
+    } else {
+        const result = try cg.buildUnary(comptime op.toUnaryOp(), operand);
+        return try result.materialize(cg);
     }
 }
 

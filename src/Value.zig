@@ -1321,66 +1321,84 @@ pub fn logScalar(val: Value, float_type: Type, pt: Zcu.PerThread) Allocator.Erro
     } }));
 }
 
-pub fn log2(val: Value, float_type: Type, arena: Allocator, pt: Zcu.PerThread) !Value {
+pub fn log2(val: Value, ty: Type, arena: Allocator, pt: Zcu.PerThread) !Value {
     const zcu = pt.zcu;
-    if (float_type.zigTypeTag(zcu) == .vector) {
-        const result_data = try arena.alloc(InternPool.Index, float_type.vectorLen(zcu));
-        const scalar_ty = float_type.scalarType(zcu);
+    if (ty.zigTypeTag(zcu) == .vector) {
+        const result_data = try arena.alloc(InternPool.Index, ty.vectorLen(zcu));
+        const scalar_ty = ty.scalarType(zcu);
         for (result_data, 0..) |*scalar, i| {
             const elem_val = try val.elemValue(pt, i);
             scalar.* = (try log2Scalar(elem_val, scalar_ty, pt)).toIntern();
         }
-        return pt.aggregateValue(float_type, result_data);
+        return pt.aggregateValue(ty, result_data);
     }
-    return log2Scalar(val, float_type, pt);
+    return log2Scalar(val, ty, pt);
 }
 
-pub fn log2Scalar(val: Value, float_type: Type, pt: Zcu.PerThread) Allocator.Error!Value {
+pub fn log2Scalar(val: Value, ty: Type, pt: Zcu.PerThread) Allocator.Error!Value {
     const zcu = pt.zcu;
-    const target = zcu.getTarget();
-    const storage: InternPool.Key.Float.Storage = switch (float_type.floatBits(target)) {
-        16 => .{ .f16 = @log2(val.toFloat(f16, zcu)) },
-        32 => .{ .f32 = @log2(val.toFloat(f32, zcu)) },
-        64 => .{ .f64 = @log2(val.toFloat(f64, zcu)) },
-        80 => .{ .f80 = @log2(val.toFloat(f80, zcu)) },
-        128 => .{ .f128 = @log2(val.toFloat(f128, zcu)) },
+    switch (ty.zigTypeTag(zcu)) {
+        .int, .comptime_int => {
+            var buffer: Value.BigIntSpace = undefined;
+            return pt.intValue(ty, val.toBigInt(&buffer, zcu).log2());
+        },
+        .comptime_float, .float => {
+            const target = zcu.getTarget();
+            const storage: InternPool.Key.Float.Storage = switch (ty.floatBits(target)) {
+                16 => .{ .f16 = @log2(val.toFloat(f16, zcu)) },
+                32 => .{ .f32 = @log2(val.toFloat(f32, zcu)) },
+                64 => .{ .f64 = @log2(val.toFloat(f64, zcu)) },
+                80 => .{ .f80 = @log2(val.toFloat(f80, zcu)) },
+                128 => .{ .f128 = @log2(val.toFloat(f128, zcu)) },
+                else => unreachable,
+            };
+            return Value.fromInterned(try pt.intern(.{ .float = .{
+                .ty = ty.toIntern(),
+                .storage = storage,
+            } }));
+        },
         else => unreachable,
-    };
-    return Value.fromInterned(try pt.intern(.{ .float = .{
-        .ty = float_type.toIntern(),
-        .storage = storage,
-    } }));
+    }
 }
 
-pub fn log10(val: Value, float_type: Type, arena: Allocator, pt: Zcu.PerThread) !Value {
+pub fn log10(val: Value, ty: Type, arena: Allocator, pt: Zcu.PerThread) !Value {
     const zcu = pt.zcu;
-    if (float_type.zigTypeTag(zcu) == .vector) {
-        const result_data = try arena.alloc(InternPool.Index, float_type.vectorLen(zcu));
-        const scalar_ty = float_type.scalarType(zcu);
+    if (ty.zigTypeTag(zcu) == .vector) {
+        const result_data = try arena.alloc(InternPool.Index, ty.vectorLen(zcu));
+        const scalar_ty = ty.scalarType(zcu);
         for (result_data, 0..) |*scalar, i| {
             const elem_val = try val.elemValue(pt, i);
-            scalar.* = (try log10Scalar(elem_val, scalar_ty, pt)).toIntern();
+            scalar.* = (try log10Scalar(elem_val, scalar_ty, pt, arena)).toIntern();
         }
-        return pt.aggregateValue(float_type, result_data);
+        return pt.aggregateValue(ty, result_data);
     }
-    return log10Scalar(val, float_type, pt);
+    return log10Scalar(val, ty, pt, arena);
 }
 
-pub fn log10Scalar(val: Value, float_type: Type, pt: Zcu.PerThread) Allocator.Error!Value {
+pub fn log10Scalar(val: Value, ty: Type, pt: Zcu.PerThread, arena: Allocator) Allocator.Error!Value {
     const zcu = pt.zcu;
-    const target = zcu.getTarget();
-    const storage: InternPool.Key.Float.Storage = switch (float_type.floatBits(target)) {
-        16 => .{ .f16 = @log10(val.toFloat(f16, zcu)) },
-        32 => .{ .f32 = @log10(val.toFloat(f32, zcu)) },
-        64 => .{ .f64 = @log10(val.toFloat(f64, zcu)) },
-        80 => .{ .f80 = @log10(val.toFloat(f80, zcu)) },
-        128 => .{ .f128 = @log10(val.toFloat(f128, zcu)) },
+    switch (ty.zigTypeTag(zcu)) {
+        .int, .comptime_int => {
+            var buffer: Value.BigIntSpace = undefined;
+            return pt.intValue(ty, try val.toBigInt(&buffer, zcu).log10Alloc(arena));
+        },
+        .comptime_float, .float => {
+            const target = zcu.getTarget();
+            const storage: InternPool.Key.Float.Storage = switch (ty.floatBits(target)) {
+                16 => .{ .f16 = @log10(val.toFloat(f16, zcu)) },
+                32 => .{ .f32 = @log10(val.toFloat(f32, zcu)) },
+                64 => .{ .f64 = @log10(val.toFloat(f64, zcu)) },
+                80 => .{ .f80 = @log10(val.toFloat(f80, zcu)) },
+                128 => .{ .f128 = @log10(val.toFloat(f128, zcu)) },
+                else => unreachable,
+            };
+            return Value.fromInterned(try pt.intern(.{ .float = .{
+                .ty = ty.toIntern(),
+                .storage = storage,
+            } }));
+        },
         else => unreachable,
-    };
-    return Value.fromInterned(try pt.intern(.{ .float = .{
-        .ty = float_type.toIntern(),
-        .storage = storage,
-    } }));
+    }
 }
 
 pub fn abs(val: Value, ty: Type, arena: Allocator, pt: Zcu.PerThread) !Value {

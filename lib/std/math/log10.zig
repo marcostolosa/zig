@@ -2,6 +2,8 @@ const std = @import("../std.zig");
 const builtin = @import("builtin");
 const testing = std.testing;
 
+/// Deprecated: Use @log10 instead
+///
 /// Returns the base-10 logarithm of x.
 ///
 /// Special Cases:
@@ -37,6 +39,8 @@ pub fn log10(x: anytype) @TypeOf(x) {
 //
 // https://github.com/rust-lang/rust/blob/f63ccaf25f74151a5d8ce057904cd944074b01d2/library/core/src/num/int_log10.rs
 
+/// Deprecated: Use @log10 instead
+///
 /// Return the log base 10 of integer value x, rounding down to the
 /// nearest integer.
 pub fn log10_int(x: anytype) std.math.Log2Int(@TypeOf(x)) {

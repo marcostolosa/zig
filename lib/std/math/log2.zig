@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 const math = std.math;
 const expect = std.testing.expect;
 
+/// Deprecated: Use @log2 instead
+///
 /// Returns the base-2 logarithm of x.
 ///
 /// Special Cases:

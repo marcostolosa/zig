@@ -1379,6 +1379,8 @@ fn testCeilPowerOfTwo() !void {
     try testing.expectError(error.Overflow, ceilPowerOfTwo(u4, 9));
 }
 
+/// Deprecated: Use @log2 instead
+///
 /// Return the log base 2 of integer value x, rounding down to the
 /// nearest integer.
 pub fn log2_int(comptime T: type, x: T) Log2Int(T) {

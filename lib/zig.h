@@ -1792,6 +1792,68 @@ zig_builtin_clz(48)
 #endif
 zig_builtin_clz(64)
 
+#define zig_builtin_log2_int(w) \
+static inline uint8_t zig_log2_u##w(uint##w##_t a) { \
+    return w - 1 - zig_clz_u##w(a, w); \
+}
+
+zig_builtin_log2_int(8);
+zig_builtin_log2_int(16);
+zig_builtin_log2_int(32);
+zig_builtin_log2_int(64);
+
+static inline uint8_t zig_log10_u8(uint8_t a) {
+    return (a >= 100) ? 2 : (a >= 10) ? 1 : 0;
+}
+
+static inline uint8_t zig_log10_u16(uint16_t a) {
+    return (a >= 10000) ? 4 : (a >= 1000) ? 3 : (a >= 100) ? 2 : (a >= 10) ? 1 : 0;
+}
+
+static uint8_t zig_log10_u32(uint32_t a) {
+    static uint32_t const powers[] = {
+        UINT32_C(1),
+        UINT32_C(10),
+        UINT32_C(100),
+        UINT32_C(1000),
+        UINT32_C(10000),
+        UINT32_C(100000),
+        UINT32_C(1000000),
+        UINT32_C(10000000),
+        UINT32_C(100000000),
+        UINT32_C(1000000000)
+    };
+    uint8_t t = (uint32_t)(32 - zig_clz_u32(a, 32)) * 1233 >> 12;
+    return t - (a < powers[t]);
+}
+
+static uint8_t zig_log10_u64(uint64_t a) {
+    static uint64_t const powers[] = {
+        UINT64_C(1),
+        UINT64_C(10),
+        UINT64_C(100),
+        UINT64_C(1000),
+        UINT64_C(10000),
+        UINT64_C(100000),
+        UINT64_C(1000000),
+        UINT64_C(10000000),
+        UINT64_C(100000000),
+        UINT64_C(1000000000),
+        UINT64_C(10000000000),
+        UINT64_C(100000000000),
+        UINT64_C(1000000000000),
+        UINT64_C(10000000000000),
+        UINT64_C(100000000000000),
+        UINT64_C(1000000000000000),
+        UINT64_C(10000000000000000),
+        UINT64_C(100000000000000000),
+        UINT64_C(1000000000000000000),
+        UINT64_C(10000000000000000000)
+    };
+    uint8_t t = (uint32_t)(64 - zig_clz_u64(a, 64)) * 1233 >> 12;
+    return t - (a < powers[t]);
+}
+
 /* ======================== 128-bit Integer Support ========================= */
 
 #if !defined(zig_has_int128)
@@ -2334,6 +2396,56 @@ static inline uint8_t zig_ctz_u128(zig_u128 val, uint8_t bits) {
 
 static inline uint8_t zig_ctz_i128(zig_i128 val, uint8_t bits) {
     return zig_ctz_u128(zig_bitCast_u128(val), bits);
+}
+
+static inline uint8_t zig_log2_u128(zig_u128 a) {
+    return 128 - 1 - zig_clz_u128(a, 128);
+}
+
+static uint8_t zig_log10_u128(zig_u128 a) {
+    static zig_u128 const powers[] = {
+        zig_make_u128(UINT64_C(0), UINT64_C(1)),
+        zig_make_u128(UINT64_C(0), UINT64_C(10)),
+        zig_make_u128(UINT64_C(0), UINT64_C(100)),
+        zig_make_u128(UINT64_C(0), UINT64_C(1000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(10000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(100000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(1000000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(10000000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(100000000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(1000000000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(10000000000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(100000000000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(1000000000000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(10000000000000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(100000000000000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(1000000000000000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(10000000000000000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(100000000000000000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(1000000000000000000)),
+        zig_make_u128(UINT64_C(0), UINT64_C(10000000000000000000)),
+        zig_make_u128(UINT64_C(5), UINT64_C(7766279631452241920)),
+        zig_make_u128(UINT64_C(54), UINT64_C(3875820019684212736)),
+        zig_make_u128(UINT64_C(542), UINT64_C(1864712049423024128)),
+        zig_make_u128(UINT64_C(5421), UINT64_C(200376420520689664)),
+        zig_make_u128(UINT64_C(54210), UINT64_C(2003764205206896640)),
+        zig_make_u128(UINT64_C(542101), UINT64_C(1590897978359414784)),
+        zig_make_u128(UINT64_C(5421010), UINT64_C(15908979783594147840)),
+        zig_make_u128(UINT64_C(54210108), UINT64_C(11515845246265065472)),
+        zig_make_u128(UINT64_C(542101086), UINT64_C(4477988020393345024)),
+        zig_make_u128(UINT64_C(5421010862), UINT64_C(7886392056514347008)),
+        zig_make_u128(UINT64_C(54210108624), UINT64_C(5076944270305263616)),
+        zig_make_u128(UINT64_C(542101086242), UINT64_C(13875954555633532928)),
+        zig_make_u128(UINT64_C(5421010862427), UINT64_C(9632337040368467968)),
+        zig_make_u128(UINT64_C(54210108624275), UINT64_C(4089650035136921600)),
+        zig_make_u128(UINT64_C(542101086242752), UINT64_C(4003012203950112768)),
+        zig_make_u128(UINT64_C(5421010862427522), UINT64_C(3136633892082024448)),
+        zig_make_u128(UINT64_C(54210108624275221), UINT64_C(12919594847110692864)),
+        zig_make_u128(UINT64_C(542101086242752217), UINT64_C(68739955140067328)),
+        zig_make_u128(UINT64_C(5421010862427522170), UINT64_C(687399551400673280))
+    };
+    uint8_t t = (uint32_t)(128 - zig_clz_u128(a, 128)) * 1233 >> 12;
+    return t - (zig_cmp_u128(a, powers[t]) < INT32_C(0));
 }
 
 static inline uint8_t zig_popcount_u128(zig_u128 val, uint8_t bits) {

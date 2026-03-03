@@ -2699,8 +2699,8 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
             .round       => try airUnBuiltinCall(f, inst, air_datas[@intFromEnum(inst)].un_op, "round", .none),
             .trunc_float => try airUnBuiltinCall(f, inst, air_datas[@intFromEnum(inst)].un_op, "trunc", .none),
 
-            .log2        => try airLog(f, inst, air_datas[@intFromEnum(inst)].ty_op.operand, .log2),
-            .log10       => try airLog(f, inst, air_datas[@intFromEnum(inst)].ty_op.operand, .log10),
+            .log2        => try airUnBuiltinCall(f, inst, air_datas[@intFromEnum(inst)].ty_op.operand, "log2", .none),
+            .log10       => try airUnBuiltinCall(f, inst, air_datas[@intFromEnum(inst)].ty_op.operand, "log10", .none),
 
             .mul_add => try airMulAdd(f, inst),
 

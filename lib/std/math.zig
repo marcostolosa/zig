@@ -796,6 +796,102 @@ pub fn Log2IntCeil(comptime T: type) type {
     return @Int(.unsigned, log2_bits);
 }
 
+/// Returns the result type of `@log2(@as(T, ...))`.
+pub fn Log2IntResult(comptime T: type) type {
+    return switch (@typeInfo(T)) {
+        .comptime_int, .comptime_float, .float => T,
+        .vector => |v| switch (@typeInfo(v.child)) {
+            .float => T,
+            .int => @Vector(v.len, Log2IntResultInner(v.child)),
+            else => @compileError("invalid type '" ++ @typeName(T) ++ "'"),
+        },
+        .int => Log2IntResultInner(T),
+        else => @compileError("invalid type '" ++ @typeName(T) ++ "'"),
+    };
+}
+
+fn Log2IntResultInner(comptime T: type) type {
+    if (@typeInfo(T).int.bits <= 1) return u0;
+    return @Int(.unsigned, log2(log2(maxInt(T))) + 1);
+}
+
+test Log2IntResult {
+    try testing.expectEqual(@TypeOf(@log2(1.0)), Log2IntResult(comptime_float));
+    try testing.expectEqual(@TypeOf(@log2(1)), Log2IntResult(comptime_int));
+
+    try testing.expectEqual(@TypeOf(@log2(@as(f64, 1))), Log2IntResult(f64));
+    try testing.expectEqual(@TypeOf(@log2(@as(f32, 1))), Log2IntResult(f32));
+
+    try testing.expectEqual(@TypeOf(@log2(@as(@Vector(2, f64), @splat(1)))), Log2IntResult(@Vector(2, f64)));
+    try testing.expectEqual(@TypeOf(@log2(@as(@Vector(2, f32), @splat(1)))), Log2IntResult(@Vector(2, f32)));
+
+    try testing.expectEqual(@TypeOf(@log2(@as(u64, 1))), Log2IntResult(u64));
+    try testing.expectEqual(@TypeOf(@log2(@as(u32, 1))), Log2IntResult(u32));
+    try testing.expectEqual(@TypeOf(@log2(@as(u29, 1))), Log2IntResult(u29));
+    try testing.expectEqual(@TypeOf(@log2(@as(u16, 1))), Log2IntResult(u16));
+    try testing.expectEqual(@TypeOf(@log2(@as(u8, 1))), Log2IntResult(u8));
+    try testing.expectEqual(@TypeOf(@log2(@as(u4, 1))), Log2IntResult(u4));
+    try testing.expectEqual(@TypeOf(@log2(@as(u2, 1))), Log2IntResult(u2));
+    try testing.expectEqual(@TypeOf(@log2(@as(u1, 1))), Log2IntResult(u1));
+
+    try testing.expectEqual(@TypeOf(@log2(@as(@Vector(2, u64), @splat(1)))), Log2IntResult(@Vector(2, u64)));
+    try testing.expectEqual(@TypeOf(@log2(@as(@Vector(2, u32), @splat(1)))), Log2IntResult(@Vector(2, u32)));
+    try testing.expectEqual(@TypeOf(@log2(@as(@Vector(2, u29), @splat(1)))), Log2IntResult(@Vector(2, u29)));
+    try testing.expectEqual(@TypeOf(@log2(@as(@Vector(2, u16), @splat(1)))), Log2IntResult(@Vector(2, u16)));
+    try testing.expectEqual(@TypeOf(@log2(@as(@Vector(2, u8), @splat(1)))), Log2IntResult(@Vector(2, u8)));
+    try testing.expectEqual(@TypeOf(@log2(@as(@Vector(2, u4), @splat(1)))), Log2IntResult(@Vector(2, u4)));
+    try testing.expectEqual(@TypeOf(@log2(@as(@Vector(2, u2), @splat(1)))), Log2IntResult(@Vector(2, u2)));
+    try testing.expectEqual(@TypeOf(@log2(@as(@Vector(2, u1), @splat(1)))), Log2IntResult(@Vector(2, u1)));
+}
+
+/// Returns the result type of `@log10(@as(T, ...))`.
+pub fn Log10IntResult(comptime T: type) type {
+    return switch (@typeInfo(T)) {
+        .comptime_int, .comptime_float, .float => T,
+        .vector => |v| switch (@typeInfo(v.child)) {
+            .float => T,
+            .int => @Vector(v.len, Log10IntResultInner(v.child)),
+            else => @compileError("invalid type '" ++ @typeName(T) ++ "'"),
+        },
+        .int => Log10IntResultInner(T),
+        else => @compileError("invalid type '" ++ @typeName(T) ++ "'"),
+    };
+}
+
+fn Log10IntResultInner(comptime T: type) type {
+    if (@typeInfo(T).int.bits <= 3) return u0;
+    return @Int(.unsigned, log2(log10(maxInt(T))) + 1);
+}
+
+test Log10IntResult {
+    try testing.expectEqual(@TypeOf(@log10(1.0)), Log10IntResult(comptime_float));
+    try testing.expectEqual(@TypeOf(@log10(1)), Log10IntResult(comptime_int));
+
+    try testing.expectEqual(@TypeOf(@log10(@as(f64, 1))), Log10IntResult(f64));
+    try testing.expectEqual(@TypeOf(@log10(@as(f32, 1))), Log10IntResult(f32));
+
+    try testing.expectEqual(@TypeOf(@log10(@as(@Vector(2, f64), @splat(1)))), Log10IntResult(@Vector(2, f64)));
+    try testing.expectEqual(@TypeOf(@log10(@as(@Vector(2, f32), @splat(1)))), Log10IntResult(@Vector(2, f32)));
+
+    try testing.expectEqual(@TypeOf(@log10(@as(u64, 1))), Log10IntResult(u64));
+    try testing.expectEqual(@TypeOf(@log10(@as(u32, 1))), Log10IntResult(u32));
+    try testing.expectEqual(@TypeOf(@log10(@as(u29, 1))), Log10IntResult(u29));
+    try testing.expectEqual(@TypeOf(@log10(@as(u16, 1))), Log10IntResult(u16));
+    try testing.expectEqual(@TypeOf(@log10(@as(u8, 1))), Log10IntResult(u8));
+    try testing.expectEqual(@TypeOf(@log10(@as(u4, 1))), Log10IntResult(u4));
+    try testing.expectEqual(@TypeOf(@log10(@as(u2, 1))), Log10IntResult(u2));
+    try testing.expectEqual(@TypeOf(@log10(@as(u1, 1))), Log10IntResult(u1));
+
+    try testing.expectEqual(@TypeOf(@log10(@as(@Vector(2, u64), @splat(1)))), Log10IntResult(@Vector(2, u64)));
+    try testing.expectEqual(@TypeOf(@log10(@as(@Vector(2, u32), @splat(1)))), Log10IntResult(@Vector(2, u32)));
+    try testing.expectEqual(@TypeOf(@log10(@as(@Vector(2, u29), @splat(1)))), Log10IntResult(@Vector(2, u29)));
+    try testing.expectEqual(@TypeOf(@log10(@as(@Vector(2, u16), @splat(1)))), Log10IntResult(@Vector(2, u16)));
+    try testing.expectEqual(@TypeOf(@log10(@as(@Vector(2, u8), @splat(1)))), Log10IntResult(@Vector(2, u8)));
+    try testing.expectEqual(@TypeOf(@log10(@as(@Vector(2, u4), @splat(1)))), Log10IntResult(@Vector(2, u4)));
+    try testing.expectEqual(@TypeOf(@log10(@as(@Vector(2, u2), @splat(1)))), Log10IntResult(@Vector(2, u2)));
+    try testing.expectEqual(@TypeOf(@log10(@as(@Vector(2, u1), @splat(1)))), Log10IntResult(@Vector(2, u1)));
+}
+
 /// Returns the smallest integer type that can hold both from and to.
 pub fn IntFittingRange(comptime from: comptime_int, comptime to: comptime_int) type {
     assert(from <= to);

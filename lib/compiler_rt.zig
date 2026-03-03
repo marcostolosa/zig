@@ -266,7 +266,9 @@ comptime {
     _ = @import("compiler_rt/fmin.zig");
     _ = @import("compiler_rt/fmod.zig");
     _ = @import("compiler_rt/log.zig");
+    _ = @import("compiler_rt/log10_int.zig");
     _ = @import("compiler_rt/log10.zig");
+    _ = @import("compiler_rt/log2_int.zig");
     _ = @import("compiler_rt/log2.zig");
     _ = @import("compiler_rt/round.zig");
     _ = @import("compiler_rt/sin.zig");

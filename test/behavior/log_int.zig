@@ -24,7 +24,6 @@ fn log10Case(comptime T: type, comptime expected: T, comptime actual: T) !void {
 }
 
 test "log2 scalar" {
-    if (builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
@@ -72,7 +71,6 @@ test "log2 scalar" {
 }
 
 test "log10 scalar" {
-    if (builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
@@ -124,7 +122,6 @@ test "log10 scalar" {
 }
 
 test "log2 vector" {
-    if (builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO
@@ -169,7 +166,6 @@ test "log2 vector" {
 }
 
 test "log10 vector" {
-    if (builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest; // TODO

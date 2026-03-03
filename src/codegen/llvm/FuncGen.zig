@@ -2069,11 +2069,8 @@ fn airFloatFromInt(self: *FuncGen, inst: Air.Inst.Index) TodoError!Builder.Value
         compiler_rt_dest_abbrev,
     });
 
-    var param_type = rt_int_ty;
-    if (rt_int_bits == 128 and (target.os.tag == .windows and target.cpu.arch == .x86_64)) {
-        // On Windows x86-64, "ti" functions must use Vector(2, u64) instead of the standard
-        // i128 calling convention to adhere to the ABI that LLVM expects compiler-rt to have.
-        param_type = try o.builder.vectorType(.normal, 2, .i64);
+    const param_type = try fixRtIntParam(self, rt_int_ty);
+    if (param_type != rt_int_ty) {
         extended = try self.wip.cast(.bitcast, extended, param_type, "");
     }
 
@@ -5409,10 +5406,164 @@ fn airLogOp(self: *FuncGen, inst: Air.Inst.Index, comptime op: LogOp) TodoError!
     const operand = try self.resolveInst(ty_op.operand);
     const operand_ty = self.typeOf(ty_op.operand);
     const scalar_ty = operand_ty.scalarType(self.object.zcu);
+    const return_ty = ty_op.ty.toType();
 
-    if (!scalar_ty.isRuntimeFloat()) {
-        return self.todo("TODO implement log2/log10 int", .{});
+    if (!scalar_ty.isRuntimeFloat()) switch (op) {
+        .log2 => return self.buildLog2Int(operand, operand_ty, return_ty),
+        .log10 => return self.buildLog10Int(operand, operand_ty, return_ty),
     } else return self.buildFloatOp(comptime op.toFloatOp(), .normal, operand_ty, 1, .{operand});
+}
+
+fn buildLog2Int(self: *FuncGen, operand: Builder.Value, operand_ty: Type, return_ty: Type) Allocator.Error!Builder.Value {
+    const o = self.object;
+    const zcu = o.zcu;
+    const scalar_ty = operand_ty.scalarType(zcu);
+    const return_scalar_ty = return_ty.scalarType(zcu);
+    const llvm_return_ty = try o.lowerType(return_ty, .by_value);
+    const llvm_return_scalar_ty = try o.lowerType(return_scalar_ty, .by_value);
+
+    const clz = try self.wip.callIntrinsic(
+        .normal,
+        .none,
+        .ctlz,
+        &.{try o.lowerType(operand_ty, .by_value)},
+        &.{ operand, .false },
+        "",
+    );
+
+    const conv = try self.wip.conv(
+        .unsigned,
+        clz,
+        llvm_return_ty,
+        "",
+    );
+
+    const scalar_lhs = try o.builder.intConst(llvm_return_scalar_ty, scalar_ty.bitSize(zcu) - 1);
+
+    const sub = try self.wip.bin(
+        .@"sub nuw",
+        if (operand_ty.isVector(zcu))
+            try o.builder.splatValue(llvm_return_ty, scalar_lhs)
+        else
+            scalar_lhs.toValue(),
+        conv,
+        "",
+    );
+
+    return sub;
+}
+
+fn buildLog10Int(self: *FuncGen, operand: Builder.Value, operand_ty: Type, return_ty: Type) TodoError!Builder.Value {
+    const o = self.object;
+    const pt = self.pt;
+    const zcu = o.zcu;
+
+    const arg_scalar_ty = operand_ty.scalarType(zcu);
+    const ret_scalar_ty = return_ty.scalarType(zcu);
+
+    const llvm_return_ty = try o.lowerType(return_ty, .by_value);
+
+    // LLVM does not have an integer log10 intrinsic, so we always lower to a compiler_rt call.
+
+    const rt_arg_scalar_bits = compilerRtIntBits(@intCast(arg_scalar_ty.bitSize(zcu))) orelse {
+        return self.todo("@log10 int operand type '{f}' is too big", .{arg_scalar_ty.fmt(pt)});
+    };
+    const rt_ret_scalar_bits = compilerRtIntBits(@intCast(ret_scalar_ty.bitSize(zcu))) orelse {
+        return self.todo("@log10 int return type '{f}' is too big", .{arg_scalar_ty.fmt(pt)});
+    };
+
+    const llvm_rt_arg_scalar_ty = try o.builder.intType(rt_arg_scalar_bits);
+    const rt_arg_scalar_ty = try pt.intType(.unsigned, rt_arg_scalar_bits);
+    const llvm_rt_ret_scalar_ty = try o.builder.intType(rt_ret_scalar_bits);
+
+    const libc_fn = try o.getLibcFunction(
+        try o.builder.strtabStringFmt("__log10{s}i2", .{compilerRtIntAbbrev(rt_arg_scalar_bits)}),
+        &.{try self.fixRtIntParam(llvm_rt_arg_scalar_ty)},
+        llvm_rt_ret_scalar_ty,
+    );
+
+    const call = if (operand_ty.isVector(zcu)) call: {
+        const vector_len = operand_ty.vectorLen(zcu);
+
+        const llvm_rt_return_vec_ty = try o.builder.vectorType(.normal, vector_len, llvm_rt_ret_scalar_ty);
+        var result = try o.builder.poisonValue(llvm_rt_return_vec_ty);
+        for (0..vector_len) |i| {
+            const index_i32 = try o.builder.intValue(.i32, i);
+
+            const result_elem = try self.buildLog10RtCall(
+                libc_fn,
+                rt_arg_scalar_ty,
+                llvm_rt_arg_scalar_ty,
+                try self.wip.extractElement(
+                    operand,
+                    index_i32,
+                    "",
+                ),
+            );
+
+            result = try self.wip.insertElement(result, result_elem, index_i32, "");
+        }
+
+        break :call result;
+    } else try self.buildLog10RtCall(libc_fn, rt_arg_scalar_ty, llvm_rt_arg_scalar_ty, operand);
+
+    return self.wip.conv(
+        .unsigned,
+        call,
+        llvm_return_ty,
+        "",
+    );
+}
+
+fn buildLog10RtCall(self: *FuncGen, func: Builder.Function.Index, arg_ty: Type, llvm_arg_ty: Builder.Type, arg: Builder.Value) Allocator.Error!Builder.Value {
+    const o = self.object;
+    const zcu = self.pt.zcu;
+
+    var conv_arg = try self.wip.conv(.unsigned, arg, llvm_arg_ty, "");
+    const arg_ty_fixed = try self.fixRtIntParam(llvm_arg_ty);
+    if (llvm_arg_ty != arg_ty_fixed) {
+        conv_arg = try self.wip.cast(.bitcast, conv_arg, arg_ty_fixed, "");
+    }
+
+    var attributes: Builder.FunctionAttributes.Wip = .{};
+    defer attributes.deinit(&o.builder);
+
+    if (ccAbiPromoteInt(.c, zcu, arg_ty)) |s| switch (s) {
+        .signed => try attributes.addParamAttr(0, .signext, &o.builder),
+        .unsigned => try attributes.addParamAttr(0, .zeroext, &o.builder),
+    };
+    if (ccAbiPromoteInt(.c, zcu, arg_ty)) |s| switch (s) {
+        .signed => try attributes.addRetAttr(.signext, &o.builder),
+        .unsigned => try attributes.addRetAttr(.zeroext, &o.builder),
+    };
+
+    return try self.wip.call(
+        .normal,
+        .ccc,
+        try attributes.finish(&o.builder),
+        func.typeOf(&o.builder),
+        func.toValue(&o.builder),
+        &.{conv_arg},
+        "",
+    );
+}
+
+/// Adjusts a integer parameter such that it does not cause ABI issues on Windows.
+/// Requires a bitcast to be made.
+fn fixRtIntParam(self: *FuncGen, param_ty: Builder.Type) Allocator.Error!Builder.Type {
+    const o = self.object;
+    const zcu = o.zcu;
+    const target = &zcu.root_mod.resolved_target.result;
+
+    const bits = param_ty.scalarBits(&self.object.builder);
+
+    if (bits == 128 and (target.os.tag == .windows and target.cpu.arch == .x86_64)) {
+        // On Windows x86-64, "ti" functions must use Vector(2, u64) instead of the standard
+        // i128 calling convention to adhere to the ABI that LLVM expects compiler-rt to have.
+        return try o.builder.vectorType(.normal, 2, .i64);
+    }
+
+    return param_ty;
 }
 
 fn airNeg(self: *FuncGen, inst: Air.Inst.Index, fast: Builder.FastMathKind) Allocator.Error!Builder.Value {

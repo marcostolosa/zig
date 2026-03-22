@@ -3,11 +3,12 @@ const cli = @This();
 
 const std = @import("std.zig");
 const assert = std.debug.assert;
+const cutPrefixSentinel = std.mem.cutPrefixSentinel;
 
 pub const Argument = struct {
     field: std.builtin.Type.StructField,
     count: Count,
-    help: []const u8,
+    help: [:0]const u8,
     short: ?u8,
 
     pub const Count = enum { one, unlimited };
@@ -18,7 +19,7 @@ pub const Argument = struct {
         comptime options: struct {
             name: [:0]const u8,
             count: Count = .one,
-            help: []const u8 = "",
+            help: [:0]const u8 = "",
             default_value: ?T = null,
             short: ?u8 = null,
         },
@@ -54,9 +55,9 @@ pub const Command = struct {
     named_args: []const Argument = &.{},
     positional_args: []const Argument = &.{},
     subcommands: []const Command = &.{},
-    help: []const u8 = "",
-    prologue: []const u8 = "",
-    epilogue: []const u8 = "",
+    help: [:0]const u8 = "",
+    prologue: [:0]const u8 = "",
+    epilogue: [:0]const u8 = "",
 };
 
 pub fn Parsed(comptime command: Command) type {
@@ -117,14 +118,16 @@ pub fn Parsed(comptime command: Command) type {
     };
 }
 
+/// Lifetime of args must exceed the return value (return value may point to args).
 pub fn parseExit(
     comptime command: Command,
     arena: std.mem.Allocator,
-    args: std.process.Args,
+    /// See std.process.Args.toSlice
+    /// Index 0 must be populated and will be skipped.
+    args: []const [:0]const u8,
 ) noreturn!Parsed(command) {
-    var iter = try std.process.Args.Iterator.initAllocator(args, arena);
-    // consume argv index 0, which is this executable's path.
-    _ = iter.skip();
+    var iter: Iterator = .init(args);
+    _ = iter.next(); // consume argv index 0, which is this executable's path.
 
     const result = parseRecursive(command, arena, &iter, .{
         .exit = true,
@@ -167,15 +170,17 @@ pub const ParseOptions = struct {
     render_help: bool = false,
 };
 
+/// Lifetime of args must exceed the return value (return value may point to args).
 pub fn parse(
     comptime command: Command,
     arena: std.mem.Allocator,
-    args: std.process.Args,
+    /// See std.process.Args.toSlice
+    /// Index 0 must be populated and will be skipped.
+    args: []const [:0]const u8,
     options: ParseOptions,
 ) ParseError!Parsed(command) {
-    var iter = try std.process.Args.Iterator.initAllocator(args, arena);
-    // consume argv index 0, which is this executable's path.
-    _ = iter.skip();
+    var iter: Iterator = .init(args);
+    _ = iter.next(); // consume argv index 0, which is this executable's path.
 
     const result = parseRecursive(command, arena, &iter, options);
 
@@ -292,7 +297,7 @@ pub fn printHelp(comptime command: Command, parsed: Parsed(command), out: *std.I
     try out.flush();
 }
 
-fn descendToHelpPage(comptime descent_path: []const u8, comptime command: Command, parsed: Parsed(command)) []const u8 {
+fn descendToHelpPage(comptime descent_path: []const u8, comptime command: Command, parsed: Parsed(command)) [:0]const u8 {
     const this_descent = if (comptime std.mem.eql(u8, descent_path, "")) command.name else descent_path ++ " " ++ command.name;
     if (parsed.subcommand) |subcommand| {
         switch (subcommand) {
@@ -308,8 +313,8 @@ fn descendToHelpPage(comptime descent_path: []const u8, comptime command: Comman
     } else return comptime helpPage(this_descent, command);
 }
 
-inline fn helpPage(comptime descent_path: []const u8, comptime command: Command) []const u8 {
-    var content: []const u8 = std.fmt.comptimePrint("Usage: {s} ...\n\n", .{descent_path});
+inline fn helpPage(comptime descent_path: []const u8, comptime command: Command) [:0]const u8 {
+    var content: [:0]const u8 = std.fmt.comptimePrint("Usage: {s} ...\n\n", .{descent_path});
 
     if (command.prologue.len > 0) {
         content = content ++ "\n" ++ command.prologue ++ "\n";
@@ -342,20 +347,7 @@ inline fn helpPage(comptime descent_path: []const u8, comptime command: Command)
     return content;
 }
 
-fn printCommandHelp(command: Command, out: *std.Io.Writer) !void {
-    try out.print("{s}\n\n", command.prologue);
-    if (command.positional_args.len > 0) {
-        try out.print("Positional Arguments:\n", .{});
-        inline for (command.positional_args) |arg| {
-            try out.print("    {s}: {s}", .{ arg.field.name, arg.help });
-        }
-        try out.print("\n", .{});
-    }
-    try out.print("Options: \n", .{});
-    try out.print("{s}\n\n", command.epilogue);
-}
-
-fn helpWanted(parsed: anytype) bool {
+pub fn helpWanted(parsed: anytype) bool {
     if (parsed.args.help) {
         return true;
     }
@@ -367,10 +359,23 @@ fn helpWanted(parsed: anytype) bool {
     return false;
 }
 
+const Iterator = struct {
+    args: []const [:0]const u8,
+    idx: usize,
+    fn init(args: []const [:0]const u8) Iterator {
+        return .{ .args = args, .idx = 0 };
+    }
+    fn next(self: *Iterator) ?[:0]const u8 {
+        if (self.idx == self.args.len) return null;
+        defer self.idx += 1;
+        return self.args[self.idx];
+    }
+};
+
 fn parseRecursive(
     comptime command: Command,
     arena: std.mem.Allocator,
-    iter: *std.process.Args.Iterator,
+    iter: *Iterator,
     options: ParseOptions,
 ) ParseError!Parsed(command) {
     comptime validateCommand(command);
@@ -419,12 +424,16 @@ fn parseRecursive(
                         value = .{ .found = false };
                     } else if (arg.short != null and std.mem.eql(u8, os_arg, "-" ++ [_]u8{arg.short.?})) {
                         value = .{ .found = true };
+                    } else if (cutPrefixSentinel(u8, 0, os_arg, "--" ++ arg.field.name ++ "=")) |suffix| {
+                        value = .{ .found = try parseValue(Value, suffix) };
                     } else {
                         value = .not_found;
                     }
                 } else {
                     if (std.mem.eql(u8, os_arg, "--" ++ arg.field.name)) {
                         value = .{ .found = try parseValue(Value, iter.next() orelse return error.Usage) };
+                    } else if (cutPrefixSentinel(u8, 0, os_arg, "--" ++ arg.field.name ++ "=")) |suffix| {
+                        value = .{ .found = try parseValue(Value, suffix) };
                     }
                 }
                 switch (value) {
@@ -532,12 +541,6 @@ fn parseValue(comptime T: type, buf: [:0]const u8) error{Usage}!T {
         .@"enum" => return std.meta.stringToEnum(T, buf) orelse error.Usage,
         else => comptime unreachable, // unsupported type for cli argument value parsing
     }
-}
-
-// TODO: should be in std.mem
-
-pub fn cutPrefixSentinel(comptime T: type, comptime sentinel: T, slice: [:sentinel]const T, prefix: []const T) ?[:sentinel]const T {
-    return if (std.mem.startsWith(T, slice, prefix)) slice[prefix.len..] else null;
 }
 
 test {

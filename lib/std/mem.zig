@@ -3233,6 +3233,16 @@ test cutPrefix {
     try testing.expectEqual(null, cutPrefix(u8, "--example=foo", "-example="));
 }
 
+/// If `slice` starts with `prefix`, returns the rest of `slice` starting at `prefix.len`, preserving sentinel.
+pub fn cutPrefixSentinel(comptime T: type, comptime sentinel: T, slice: [:sentinel]const T, prefix: []const T) ?[:sentinel]const T {
+    return if (std.mem.startsWith(T, slice, prefix)) slice[prefix.len..] else null;
+}
+
+test cutPrefixSentinel {
+    try testing.expectEqualStrings("foo", cutPrefixSentinel(u8, 0, "--example=foo", "--example=").?);
+    try testing.expectEqual(null, cutPrefixSentinel(u8, 0, "--example=foo", "-example="));
+}
+
 /// If `slice` ends with `suffix`, returns `slice` from beginning to start of `suffix`.
 pub fn cutSuffix(comptime T: type, slice: []const T, suffix: []const T) ?[]const T {
     return if (endsWith(T, slice, suffix)) slice[0 .. slice.len - suffix.len] else null;

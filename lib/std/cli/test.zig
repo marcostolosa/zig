@@ -364,3 +364,39 @@ test "parse.named.enum.suffix" {
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
     try std.testing.expectEqual(.debug, parsed.args.@"log-level");
 }
+
+test "parse.named.enum.optional" {
+    const raw: []const [:0]const u8 = &.{"git"};
+    const git: cli.Command = .{
+        .name = "git",
+        .named_args = &.{
+            .init(?std.log.Level, .{ .name = "log-level", .count = .one }),
+        },
+    };
+    const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
+    try std.testing.expectEqual(null, parsed.args.@"log-level");
+}
+
+test "parse.named.enum.suffix.short" {
+    const raw: []const [:0]const u8 = &.{ "git", "-l=debug" };
+    const git: cli.Command = .{
+        .name = "git",
+        .named_args = &.{
+            .init(std.log.Level, .{ .name = "log-level", .count = .one, .short = 'l' }),
+        },
+    };
+    const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
+    try std.testing.expectEqual(.debug, parsed.args.@"log-level");
+}
+
+test "parse.named.enum.short" {
+    const raw: []const [:0]const u8 = &.{ "git", "-l", "debug" };
+    const git: cli.Command = .{
+        .name = "git",
+        .named_args = &.{
+            .init(std.log.Level, .{ .name = "log-level", .count = .one, .short = 'l' }),
+        },
+    };
+    const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
+    try std.testing.expectEqual(.debug, parsed.args.@"log-level");
+}

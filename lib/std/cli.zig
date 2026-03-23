@@ -32,11 +32,18 @@ pub const Argument = struct {
                 }
             },
         }
+        const default_value_ptr: ?*const anyopaque = switch (@typeInfo(T)) {
+            .optional => if (options.default_value) |_| {
+                @compileError("The only supported default value for optional types is null");
+            } else &@as(T, null),
+            else => if (options.default_value) |value| @ptrCast(@alignCast(&value)) else null,
+        };
+
         return .{
             .field = .{
                 .name = options.name,
                 .type = T,
-                .default_value_ptr = if (options.default_value) |value| @ptrCast(@alignCast(&value)) else null,
+                .default_value_ptr = default_value_ptr,
                 .alignment = null,
                 .is_comptime = false,
             },
@@ -281,12 +288,13 @@ fn validateCommand(comptime command: Command) void {
     }
 }
 
-fn usageErrorExit(options: ParseOptions, comptime format: []const u8, args: anytype) void {
+fn usageErrorExit(options: ParseOptions, comptime format: []const u8, args: anytype) error{Usage} {
     if (options.render_usage_errors) {
         std.log.err(format, args);
         std.log.err("Add --help for help.", .{});
     }
     if (options.exit_on_usage_error) std.process.exit(1);
+    return error.Usage;
 }
 
 /// Prints help for the active command.
@@ -425,15 +433,31 @@ fn parseRecursive(
                     } else if (arg.short != null and std.mem.eql(u8, os_arg, "-" ++ [_]u8{arg.short.?})) {
                         value = .{ .found = true };
                     } else if (cutPrefixSentinel(u8, 0, os_arg, "--" ++ arg.field.name ++ "=")) |suffix| {
-                        value = .{ .found = try parseValue(Value, suffix) };
+                        value = .{ .found = try parseValue(options, Value, suffix) };
                     } else {
                         value = .not_found;
                     }
                 } else {
                     if (std.mem.eql(u8, os_arg, "--" ++ arg.field.name)) {
-                        value = .{ .found = try parseValue(Value, iter.next() orelse return error.Usage) };
+                        value = .{
+                            .found = try parseValue(options, Value, iter.next() orelse return usageErrorExit(
+                                options,
+                                "Missing argument for option: {s}",
+                                .{"--" ++ arg.field.name},
+                            )),
+                        };
                     } else if (cutPrefixSentinel(u8, 0, os_arg, "--" ++ arg.field.name ++ "=")) |suffix| {
-                        value = .{ .found = try parseValue(Value, suffix) };
+                        value = .{ .found = try parseValue(options, Value, suffix) };
+                    } else if (arg.short != null and std.mem.eql(u8, os_arg, "-" ++ [_]u8{arg.short.?})) {
+                        value = .{ .found = try parseValue(options, Value, iter.next() orelse return usageErrorExit(
+                            options,
+                            "Missing argument for option: {s}",
+                            .{"-" ++ [_]u8{arg.short.?}},
+                        )) };
+                    } else if (arg.short != null) {
+                        if (cutPrefixSentinel(u8, 0, os_arg, "-" ++ [_]u8{arg.short.?} ++ "=")) |suffix| {
+                            value = .{ .found = try parseValue(options, Value, suffix) };
+                        }
                     }
                 }
                 switch (value) {
@@ -462,13 +486,13 @@ fn parseRecursive(
             skip: switch (arg.count) {
                 .one => {
                     if (fields_defined[i] == .defined) break :skip;
-                    const value = try parseValue(arg.field.type, os_arg);
+                    const value = try parseValue(options, arg.field.type, os_arg);
                     @field(result_args, arg.field.name) = value;
                     fields_defined[i] = .defined;
                     continue :next_os_arg;
                 },
                 .unlimited => {
-                    const value = try parseValue(std.meta.Child(arg.field.type), os_arg);
+                    const value = try parseValue(options, std.meta.Child(arg.field.type), os_arg);
                     try @field(unlimited_args, arg.field.name).append(arena, value);
                     fields_defined[i] = .defined;
                     continue :next_os_arg;
@@ -476,15 +500,13 @@ fn parseRecursive(
             }
         }
 
-        usageErrorExit(options, "unexpected argument: {s}", .{os_arg});
-        return error.Usage;
+        return usageErrorExit(options, "unexpected argument: {s}", .{os_arg});
     }
 
     inline for (fields_defined[0..command.named_args.len], command.named_args) |defined, arg| {
         switch (defined) {
             .undefined => {
-                usageErrorExit(options, "missing required named argument: {s}", .{"--" ++ arg.field.name});
-                return error.Usage;
+                return usageErrorExit(options, "missing required named argument: {s}", .{"--" ++ arg.field.name});
             },
             .defined => {},
         }
@@ -493,8 +515,7 @@ fn parseRecursive(
     inline for (fields_defined[command.named_args.len..], command.positional_args) |defined, arg| {
         switch (defined) {
             .undefined => {
-                usageErrorExit(options, "missing required positional argument: {s}", .{arg.field.name});
-                return error.Usage;
+                return usageErrorExit(options, "missing required positional argument: {s}", .{arg.field.name});
             },
             .defined => {},
         }
@@ -513,7 +534,7 @@ fn parseRecursive(
     };
 }
 
-fn parseValue(comptime T: type, buf: [:0]const u8) error{Usage}!T {
+fn parseValue(options: ParseOptions, comptime T: type, buf: [:0]const u8) error{Usage}!T {
     switch (@typeInfo(T)) {
         .bool => {
             if (std.mem.eql(u8, "true", buf)) return true;
@@ -524,10 +545,22 @@ fn parseValue(comptime T: type, buf: [:0]const u8) error{Usage}!T {
             if (std.mem.eql(u8, "no", buf)) return false;
             if (std.mem.eql(u8, "y", buf)) return true;
             if (std.mem.eql(u8, "n", buf)) return false;
-            return error.Usage;
+            return usageErrorExit(
+                options,
+                "Invalid input for argument of type bool: {s}",
+                .{buf},
+            );
         },
-        .int => return std.fmt.parseInt(T, buf, 0) catch error.Usage,
-        .float => return std.fmt.parseFloat(T, buf) catch error.Usage,
+        .int => return std.fmt.parseInt(T, buf, 0) catch return usageErrorExit(
+            options,
+            "Invalid input for argument of type {s}: {s}",
+            .{ @typeName(T), buf },
+        ),
+        .float => return std.fmt.parseFloat(T, buf) catch return usageErrorExit(
+            options,
+            "Invalid input for argument of type {s}: {s}",
+            .{ @typeName(T), buf },
+        ),
         .pointer => |pointer| {
             switch (pointer.size) {
                 .slice, .c, .many => {
@@ -538,7 +571,12 @@ fn parseValue(comptime T: type, buf: [:0]const u8) error{Usage}!T {
                 else => comptime unreachable, // unsupported type for cli argument value parsing
             }
         },
-        .@"enum" => return std.meta.stringToEnum(T, buf) orelse error.Usage,
+        .@"enum" => return std.meta.stringToEnum(T, buf) orelse return usageErrorExit(
+            options,
+            "Invalid input for argument of type {s}: {s}",
+            .{ @typeName(T), buf },
+        ),
+        .optional => |info| return try parseValue(options, info.child, buf),
         else => comptime unreachable, // unsupported type for cli argument value parsing
     }
 }

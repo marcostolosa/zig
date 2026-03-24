@@ -132,13 +132,14 @@ pub fn parseExit(
     /// See std.process.Args.toSlice
     /// Index 0 must be populated and will be skipped.
     args: []const [:0]const u8,
-) noreturn!Parsed(command) {
+) ParseError!Parsed(command) {
     var iter: Iterator = .init(args);
     _ = iter.next(); // consume argv index 0, which is this executable's path.
 
     const result = parseRecursive(command, arena, &iter, .{
-        .exit = true,
-        .render_errors = true,
+        .exit_on_usage_error = true,
+        .render_usage_errors = true,
+        .exit_on_help = true,
         .render_help = true,
     });
 
@@ -154,7 +155,7 @@ pub fn parseExit(
     } else |err| switch (err) {
         error.Usage => unreachable,
         error.OutOfMemory => {
-            std.log.err("out of memory");
+            std.log.err("out of memory", .{});
             std.process.exit(1);
         },
     }
@@ -311,7 +312,7 @@ fn descendToHelpPage(comptime descent_path: []const u8, comptime command: Comman
         switch (subcommand) {
             inline else => |value, tag| {
                 inline for (command.subcommands) |subcommand_config| {
-                    if (std.mem.eql(u8, subcommand_config.name, @tagName(tag))) {
+                    if (comptime std.mem.eql(u8, subcommand_config.name, @tagName(tag))) {
                         return descendToHelpPage(this_descent, subcommand_config, value);
                     }
                 }

@@ -400,3 +400,15 @@ test "parse.named.enum.short" {
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
     try std.testing.expectEqual(.debug, parsed.args.@"log-level");
 }
+
+test "parseExit.named.enum.short" {
+    const raw: []const [:0]const u8 = &.{ "git", "-l", "debug" };
+    const git: cli.Command = .{
+        .name = "git",
+        .named_args = &.{
+            .init(std.log.Level, .{ .name = "log-level", .count = .one, .short = 'l' }),
+        },
+    };
+    const parsed = try cli.parseExit(git, std.testing.allocator, raw);
+    try std.testing.expectEqual(.debug, parsed.args.@"log-level");
+}

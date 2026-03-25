@@ -40,8 +40,8 @@ test "parse.named.bool" {
         },
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expect(parsed.args.verbose);
-    try std.testing.expect(!parsed.args.@"dry-run");
+    try std.testing.expect(parsed.kind.args.verbose);
+    try std.testing.expect(!parsed.kind.args.@"dry-run");
 }
 
 test "parse.named.bool.suffix" {
@@ -54,8 +54,8 @@ test "parse.named.bool.suffix" {
         },
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expect(parsed.args.verbose);
-    try std.testing.expect(!parsed.args.@"dry-run");
+    try std.testing.expect(parsed.kind.args.verbose);
+    try std.testing.expect(!parsed.kind.args.@"dry-run");
 }
 
 test "parse.named.bool.short" {
@@ -68,8 +68,8 @@ test "parse.named.bool.short" {
         },
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expect(parsed.args.verbose);
-    try std.testing.expect(!parsed.args.@"dry-run");
+    try std.testing.expect(parsed.kind.args.verbose);
+    try std.testing.expect(!parsed.kind.args.@"dry-run");
 }
 
 test "parse.named.bool.multi" {
@@ -83,9 +83,9 @@ test "parse.named.bool.multi" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const parsed = try cli.parse(git, arena.allocator(), raw, .{});
-    try std.testing.expect(parsed.args.verbose[0]);
-    try std.testing.expect(parsed.args.verbose[1]);
-    try std.testing.expectEqual(2, parsed.args.verbose.len);
+    try std.testing.expect(parsed.kind.args.verbose[0]);
+    try std.testing.expect(parsed.kind.args.verbose[1]);
+    try std.testing.expectEqual(2, parsed.kind.args.verbose.len);
 }
 
 test "parse.named.slice.const.u8.multi" {
@@ -109,9 +109,9 @@ test "parse.named.slice.const.u8.multi" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const parsed = try cli.parse(git, arena.allocator(), raw, .{});
-    try std.testing.expectEqual("Added cli to the std library!", parsed.subcommand.?.commit.args.message[0]);
-    try std.testing.expectEqual("I hope it works!", parsed.subcommand.?.commit.args.message[1]);
-    try std.testing.expectEqual(2, parsed.subcommand.?.commit.args.message.len);
+    try std.testing.expectEqual("Added cli to the std library!", parsed.subcommand.?.commit.kind.args.message[0]);
+    try std.testing.expectEqual("I hope it works!", parsed.subcommand.?.commit.kind.args.message[1]);
+    try std.testing.expectEqual(2, parsed.subcommand.?.commit.kind.args.message.len);
 }
 
 test "parse.named.slice.const.u8" {
@@ -126,7 +126,7 @@ test "parse.named.slice.const.u8" {
         }},
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expectEqual("added cli to the std library!", parsed.subcommand.?.commit.args.message);
+    try std.testing.expectEqual("added cli to the std library!", parsed.subcommand.?.commit.kind.args.message);
 }
 
 test "parse.named.slice.const.u8.null_terminated" {
@@ -141,7 +141,7 @@ test "parse.named.slice.const.u8.null_terminated" {
         }},
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expectEqual("added cli to the std library!", parsed.subcommand.?.commit.args.message);
+    try std.testing.expectEqual("added cli to the std library!", parsed.subcommand.?.commit.kind.args.message);
 }
 
 test "parse.named.slice.const.u8.c_null_terminated" {
@@ -156,7 +156,7 @@ test "parse.named.slice.const.u8.c_null_terminated" {
         }},
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expectEqual("added cli to the std library!", parsed.subcommand.?.commit.args.message);
+    try std.testing.expectEqual("added cli to the std library!", parsed.subcommand.?.commit.kind.args.message);
 }
 
 test "parse.named.slice.const.u8.c_null_terminated.suffix" {
@@ -171,7 +171,7 @@ test "parse.named.slice.const.u8.c_null_terminated.suffix" {
         }},
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expectEqualStrings("added cli to the std library!", parsed.subcommand.?.commit.args.message);
+    try std.testing.expectEqualStrings("added cli to the std library!", parsed.subcommand.?.commit.kind.args.message);
 }
 
 test "parse.named.int" {
@@ -188,7 +188,7 @@ test "parse.named.int" {
         },
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expectEqual(4, parsed.subcommand.?.log.args.@"max-count");
+    try std.testing.expectEqual(4, parsed.subcommand.?.log.kind.args.@"max-count");
 }
 
 test "parse.named.float" {
@@ -207,7 +207,7 @@ test "parse.named.float" {
         },
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expectEqual(30.1, parsed.subcommand.?.clone.args.@"timeout-s");
+    try std.testing.expectEqual(30.1, parsed.subcommand.?.clone.kind.args.@"timeout-s");
 }
 
 test "parse.positional.slice.const.u8" {
@@ -224,7 +224,7 @@ test "parse.positional.slice.const.u8" {
         },
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expectEqual("dev/awesome-feature", parsed.subcommand.?.branch.args.branch_name);
+    try std.testing.expectEqual("dev/awesome-feature", parsed.subcommand.?.branch.kind.args.branch_name);
 }
 
 test "parse.positional.slice.const.u8.multi" {
@@ -243,9 +243,9 @@ test "parse.positional.slice.const.u8.multi" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const parsed = try cli.parse(git, arena.allocator(), raw, .{});
-    try std.testing.expectEqual("README.md", parsed.subcommand.?.add.args.files[0]);
-    try std.testing.expectEqual("build.zig", parsed.subcommand.?.add.args.files[1]);
-    try std.testing.expectEqual(2, parsed.subcommand.?.add.args.files.len);
+    try std.testing.expectEqual("README.md", parsed.subcommand.?.add.kind.args.files[0]);
+    try std.testing.expectEqual("build.zig", parsed.subcommand.?.add.kind.args.files[1]);
+    try std.testing.expectEqual(2, parsed.subcommand.?.add.kind.args.files.len);
 }
 
 test "parse.positional.multi.default" {
@@ -264,16 +264,16 @@ test "parse.positional.multi.default" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const parsed = try cli.parse(git, arena.allocator(), raw, .{});
-    try std.testing.expectEqual("README.md", parsed.subcommand.?.add.args.files[0]);
-    try std.testing.expectEqual("build.zig", parsed.subcommand.?.add.args.files[1]);
-    try std.testing.expectEqual(2, parsed.subcommand.?.add.args.files.len);
+    try std.testing.expectEqual("README.md", parsed.subcommand.?.add.kind.args.files[0]);
+    try std.testing.expectEqual("build.zig", parsed.subcommand.?.add.kind.args.files[1]);
+    try std.testing.expectEqual(2, parsed.subcommand.?.add.kind.args.files.len);
 }
 
 test "parse.help" {
     const raw: []const [:0]const u8 = &.{ "git", "--help" };
     const git: cli.Command = .{ .name = "git" };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expect(parsed.args.help);
+    try std.testing.expect(parsed.kind == .help);
 }
 
 test "parse.positional.slice.const.u8.positional_sigil" {
@@ -291,8 +291,8 @@ test "parse.positional.slice.const.u8.positional_sigil" {
         },
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expectEqual("--verbose", parsed.subcommand.?.branch.args.branch_name);
-    try std.testing.expectEqual(false, parsed.subcommand.?.branch.args.verbose);
+    try std.testing.expectEqual("--verbose", parsed.subcommand.?.branch.kind.args.branch_name);
+    try std.testing.expectEqual(false, parsed.subcommand.?.branch.kind.args.verbose);
 }
 
 test "parse.switch_on_subcommand" {
@@ -329,13 +329,14 @@ test "printHelp" {
     try cli.printHelp(git, parsed, &writer);
 
     const expected: []const u8 =
-        \\
         \\Usage: git ...
         \\
+        \\Named Arguments:
+        \\  --help  Show this help text.
         \\
         \\Subcommands:
-        \\  branch: create a branch
-        \\  add: add files to be committed
+        \\  branch  create a branch
+        \\  add     add files to be committed
         \\
     ;
     try std.testing.expectEqualStrings(expected, writer.buffered());
@@ -350,7 +351,7 @@ test "parse.named.enum" {
         },
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expectEqual(.debug, parsed.args.@"log-level");
+    try std.testing.expectEqual(.debug, parsed.kind.args.@"log-level");
 }
 
 test "parse.named.enum.suffix" {
@@ -362,7 +363,7 @@ test "parse.named.enum.suffix" {
         },
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expectEqual(.debug, parsed.args.@"log-level");
+    try std.testing.expectEqual(.debug, parsed.kind.args.@"log-level");
 }
 
 test "parse.named.enum.optional" {
@@ -374,7 +375,7 @@ test "parse.named.enum.optional" {
         },
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expectEqual(null, parsed.args.@"log-level");
+    try std.testing.expectEqual(null, parsed.kind.args.@"log-level");
 }
 
 test "parse.named.enum.suffix.short" {
@@ -386,7 +387,7 @@ test "parse.named.enum.suffix.short" {
         },
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expectEqual(.debug, parsed.args.@"log-level");
+    try std.testing.expectEqual(.debug, parsed.kind.args.@"log-level");
 }
 
 test "parse.named.enum.short" {
@@ -398,7 +399,7 @@ test "parse.named.enum.short" {
         },
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-    try std.testing.expectEqual(.debug, parsed.args.@"log-level");
+    try std.testing.expectEqual(.debug, parsed.kind.args.@"log-level");
 }
 
 test "parseExit.named.enum.short" {
@@ -410,5 +411,80 @@ test "parseExit.named.enum.short" {
         },
     };
     const parsed = try cli.parseExit(git, std.testing.allocator, raw);
-    try std.testing.expectEqual(.debug, parsed.args.@"log-level");
+    try std.testing.expectEqual(.debug, parsed.kind.args.@"log-level");
+}
+
+test "parse.subcommand.help" {
+    const raw: []const [:0]const u8 = &.{ "git", "add", "--help" };
+    const git: cli.Command = .{
+        .name = "git",
+        .subcommands = &.{
+            .{
+                .name = "add",
+                .positional_args = &.{.init([]const []const u8, .{ .name = "files", .count = .unlimited })},
+            },
+        },
+    };
+    const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
+    try std.testing.expect(parsed.subcommand.?.add.kind == .help);
+}
+
+test "printHelp.advanced" {
+    const git: cli.Command = .{
+        .name = "git",
+        .subcommands = &.{
+            .{
+                .name = "branch",
+                .help = "Create a branch.",
+                .named_args = &.{.init(bool, .{ .name = "delete", .short = 'd', .help = "Delete the branch." })},
+                .positional_args = &.{.init([]const u8, .{ .name = "name", .help = "Branch name." })},
+            },
+            .{
+                .name = "add",
+                .help = "Stage files.",
+                .positional_args = &.{.init([]const []const u8, .{ .name = "files", .count = .unlimited, .help = "Files to be added to the staging area." })},
+            },
+        },
+    };
+    const raw: []const [:0]const u8 = &.{ "git", "--help" };
+    const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
+
+    var buf: [1024]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&buf);
+
+    try cli.printHelp(git, parsed, &writer);
+
+    const expected: []const u8 =
+        \\Usage: git ...
+        \\
+        \\Named Arguments:
+        \\  --help  Show this help text.
+        \\
+        \\Subcommands:
+        \\  branch  Create a branch.
+        \\  add     Stage files.
+        \\
+    ;
+    try std.testing.expectEqualStrings(expected, writer.buffered());
+
+    const raw2: []const [:0]const u8 = &.{ "git", "branch", "--help" };
+    const parsed2 = try cli.parse(git, std.testing.allocator, raw2, .{});
+
+    var buf2: [1024]u8 = undefined;
+    var writer2 = std.Io.Writer.fixed(&buf2);
+
+    try cli.printHelp(git, parsed2, &writer2);
+
+    const expected2: []const u8 =
+        \\Usage: git branch ...
+        \\
+        \\Positional Arguments:
+        \\  name [[]const u8]  Branch name.
+        \\
+        \\Named Arguments:
+        \\  -d,  --delete [bool]  Delete the branch.
+        \\  --help           Show this help text.
+        \\
+    ;
+    try std.testing.expectEqualStrings(expected2, writer2.buffered());
 }

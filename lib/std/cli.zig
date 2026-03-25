@@ -85,9 +85,9 @@ pub fn Parsed(comptime command: Command) type {
         break :blk @Struct(
             .auto,
             null,
-            &field_names ++ [1][]const u8{"help"},
-            &field_types ++ [1]type{bool},
-            &field_attrs ++ [1]std.builtin.Type.StructField.Attributes{.{ .default_value_ptr = &false }},
+            &field_names,
+            &field_types,
+            &field_attrs,
         );
     };
 
@@ -116,9 +116,13 @@ pub fn Parsed(comptime command: Command) type {
     };
 
     return struct {
-        /// The named and positional arguments.
-        /// Each argument is a field in this struct.
-        args: ArgsStruct,
+        kind: union(enum) {
+            /// Help requested by user with `--help`.
+            help,
+            /// The named and positional arguments.
+            /// Each argument is a field in this struct.
+            args: ArgsStruct,
+        },
         /// null when no subcommand provided.
         /// Each union field is a subcommand.
         subcommand: ?SubcommandTaggedUnion,
@@ -292,7 +296,7 @@ fn validateCommand(comptime command: Command) void {
 fn usageErrorExit(options: ParseOptions, comptime format: []const u8, args: anytype) error{Usage} {
     if (options.render_usage_errors) {
         std.log.err(format, args);
-        std.log.err("Add --help for help.", .{});
+        std.log.err("Provide only --help for help.", .{});
     }
     if (options.exit_on_usage_error) std.process.exit(1);
     return error.Usage;
@@ -301,7 +305,6 @@ fn usageErrorExit(options: ParseOptions, comptime format: []const u8, args: anyt
 /// Prints help for the active command.
 pub fn printHelp(comptime command: Command, parsed: Parsed(command), out: *std.Io.Writer) !void {
     const command_help = descendToHelpPage("", command, parsed);
-    try out.writeAll("\n");
     try out.writeAll(command_help);
     try out.flush();
 }
@@ -323,7 +326,7 @@ fn descendToHelpPage(comptime descent_path: []const u8, comptime command: Comman
 }
 
 inline fn helpPage(comptime descent_path: []const u8, comptime command: Command) [:0]const u8 {
-    var content: [:0]const u8 = std.fmt.comptimePrint("Usage: {s} ...\n\n", .{descent_path});
+    var content: [:0]const u8 = std.fmt.comptimePrint("Usage: {s} ...\n", .{descent_path});
 
     if (command.prologue.len > 0) {
         content = content ++ "\n" ++ command.prologue ++ "\n";
@@ -331,21 +334,49 @@ inline fn helpPage(comptime descent_path: []const u8, comptime command: Command)
 
     if (command.positional_args.len > 0) {
         content = content ++ "\nPositional Arguments:\n";
+
+        var max_positional_len: usize = 0;
         inline for (command.positional_args) |arg| {
-            content = content ++ "  " ++ arg.field.name ++ ": " ++ arg.help ++ "\n";
+            if (arg.field.name.len > max_positional_len) {
+                max_positional_len = arg.field.name.len;
+            }
+        }
+
+        inline for (command.positional_args) |arg| {
+            content = content ++
+                std.fmt.comptimePrint("  {s: <" ++ std.fmt.comptimePrint("{}", .{max_positional_len}) ++ "}  {s}\n", .{ arg.field.name ++ " [" ++ @typeName(arg.field.type) ++ "]", arg.help });
         }
     }
-    if (command.named_args.len > 0) {
-        content = content ++ "\nNamed Arguments:\n";
-        inline for (command.named_args) |arg| {
-            content = content ++ "  --" ++ arg.field.name ++ ": " ++ arg.help ++ "\n";
+    content = content ++ "\nNamed Arguments:\n";
+
+    var max_named_len: usize = 0;
+    inline for (command.named_args) |arg| {
+        const name_len = arg.field.name.len + @typeName(arg.field.type).len + if (arg.short != null) 3 else 0;
+        if (name_len > max_named_len) {
+            max_named_len = name_len;
         }
     }
 
+    inline for (command.named_args) |arg| {
+        const short = if (arg.short) |short| std.fmt.comptimePrint("  -{s},", .{[1]u8{short}}) else "";
+        content = content ++
+            std.fmt.comptimePrint("{s}  --{s: <" ++ std.fmt.comptimePrint("{}", .{max_named_len}) ++ "}  {s}\n", .{ short, arg.field.name ++ " [" ++ @typeName(arg.field.type) ++ "]", arg.help });
+    }
+    content = content ++ std.fmt.comptimePrint("  --{s: <" ++ std.fmt.comptimePrint("{}", .{max_named_len}) ++ "}  {s}\n", .{ "help", "Show this help text." });
+
     if (command.subcommands.len > 0) {
         content = content ++ "\nSubcommands:\n";
+
+        var max_subcommand_len: usize = 0;
         inline for (command.subcommands) |subcommand| {
-            content = content ++ "  " ++ subcommand.name ++ ": " ++ subcommand.help ++ "\n";
+            if (subcommand.name.len > max_subcommand_len) {
+                max_subcommand_len = subcommand.name.len;
+            }
+        }
+
+        inline for (command.subcommands) |subcommand| {
+            content = content ++
+                std.fmt.comptimePrint("  {s: <" ++ std.fmt.comptimePrint("{}", .{max_subcommand_len}) ++ "}  {s}\n", .{ subcommand.name, subcommand.help });
         }
     }
 
@@ -357,7 +388,7 @@ inline fn helpPage(comptime descent_path: []const u8, comptime command: Command)
 }
 
 pub fn helpWanted(parsed: anytype) bool {
-    if (parsed.args.help) {
+    if (parsed.kind == .help) {
         return true;
     }
     if (parsed.subcommand) |subcommand| {
@@ -390,12 +421,11 @@ fn parseRecursive(
     comptime validateCommand(command);
 
     // parsing will fill the resulting args one field at a time
-    var result_args: @FieldType(Parsed(command), "args") = undefined;
+    var result_args: @FieldType(@FieldType(Parsed(command), "kind"), "args") = undefined;
     // as we fill the args, track what we have defined so undefined is not leaked to return value
     const Defined = enum { defined, undefined };
     var fields_defined: [command.named_args.len + command.positional_args.len]Defined = @splat(.undefined);
     var result_subcommand: @FieldType(Parsed(command), "subcommand") = null;
-
     var unlimited_args: UnlimitedArgStruct(command) = .{};
 
     // args with default values are not required so they are filled in here first.
@@ -404,7 +434,6 @@ fn parseRecursive(
         @field(result_args, arg.field.name) = arg.field.defaultValue() orelse continue;
         fields_defined[i] = .defined;
     }
-    @field(result_args, "help") = false; // don't forget about help!
 
     var began_positional: bool = false;
     next_os_arg: while (iter.next()) |os_arg| {
@@ -416,8 +445,7 @@ fn parseRecursive(
             }
 
             if (std.mem.eql(u8, "--help", os_arg)) {
-                @field(result_args, "help") = true;
-                continue :next_os_arg;
+                return .{ .kind = .help, .subcommand = result_subcommand };
             }
 
             inline for (command.named_args, 0..) |arg, i| {
@@ -531,7 +559,7 @@ fn parseRecursive(
 
     assert(std.mem.allEqual(Defined, &fields_defined, .defined));
     return .{
-        .args = result_args,
+        .kind = .{ .args = result_args },
         .subcommand = result_subcommand,
     };
 }
@@ -582,7 +610,6 @@ fn parseValue(options: ParseOptions, comptime T: type, buf: [:0]const u8) error{
         else => comptime unreachable, // unsupported type for cli argument value parsing
     }
 }
-
 test {
     _ = @import("cli/test.zig");
 }

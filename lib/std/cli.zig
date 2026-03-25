@@ -404,6 +404,7 @@ fn parseRecursive(
         @field(result_args, arg.field.name) = arg.field.defaultValue() orelse continue;
         fields_defined[i] = .defined;
     }
+    @field(result_args, "help") = false; // don't forget about help!
 
     var began_positional: bool = false;
     next_os_arg: while (iter.next()) |os_arg| {

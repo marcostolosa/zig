@@ -402,7 +402,7 @@ test "parse.named.enum.short" {
     try std.testing.expectEqual(.debug, parsed.kind.args.@"log-level");
 }
 
-test "parseExit.named.enum.short" {
+test "parse.exit.named.enum.short" {
     const raw: []const [:0]const u8 = &.{ "git", "-l", "debug" };
     const git: cli.Command = .{
         .name = "git",
@@ -410,7 +410,12 @@ test "parseExit.named.enum.short" {
             .init(std.log.Level, .{ .name = "log-level", .count = .one, .short = 'l' }),
         },
     };
-    const parsed = try cli.parseExit(git, std.testing.allocator, raw);
+    const parsed = try cli.parse(git, std.testing.allocator, raw, .{
+        .exit_on_help = true,
+        .render_help = true,
+        .exit_on_usage_error = true,
+        .render_usage_errors = true,
+    });
     try std.testing.expectEqual(.debug, parsed.kind.args.@"log-level");
 }
 
@@ -487,4 +492,48 @@ test "printHelp.advanced" {
         \\
     ;
     try std.testing.expectEqualStrings(expected2, writer2.buffered());
+}
+
+test "parse.unknown_named_is_not_positional" {
+    const raw: []const [:0]const u8 = &.{ "git", "add", "-x", "debug" };
+    const git: cli.Command = .{
+        .name = "git",
+        .subcommands = &.{
+            .{
+                .name = "add",
+                .positional_args = &.{
+                    .init([]const []const u8, .{ .name = "files", .count = .unlimited }),
+                },
+                .named_args = &.{
+                    .init(std.log.Level, .{ .name = "log-level", .count = .one, .short = 'l', .default_value = .debug }),
+                },
+            },
+        },
+    };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const parsed = cli.parse(git, arena.allocator(), raw, .{});
+    try std.testing.expectError(error.Usage, parsed);
+}
+
+test "parse.dash_is_valid_positional" {
+    const raw: []const [:0]const u8 = &.{ "git", "add", "-" };
+    const git: cli.Command = .{
+        .name = "git",
+        .subcommands = &.{
+            .{
+                .name = "add",
+                .positional_args = &.{
+                    .init([]const []const u8, .{ .name = "files", .count = .unlimited }),
+                },
+                .named_args = &.{
+                    .init(std.log.Level, .{ .name = "log-level", .count = .one, .short = 'l', .default_value = .debug }),
+                },
+            },
+        },
+    };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const parsed = try cli.parse(git, arena.allocator(), raw, .{});
+    try std.testing.expectEqualStrings(parsed.subcommand.?.add.kind.args.files[0], "-");
 }

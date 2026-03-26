@@ -129,42 +129,6 @@ pub fn Parsed(comptime command: Command) type {
     };
 }
 
-/// Lifetime of args must exceed the return value (return value may point to args).
-pub fn parseExit(
-    comptime command: Command,
-    arena: std.mem.Allocator,
-    /// See std.process.Args.toSlice
-    /// Index 0 must be populated and will be skipped.
-    args: []const [:0]const u8,
-) ParseError!Parsed(command) {
-    var iter: Iterator = .init(args);
-    _ = iter.next(); // consume argv index 0, which is this executable's path.
-
-    const result = parseRecursive(command, arena, &iter, .{
-        .exit_on_usage_error = true,
-        .render_usage_errors = true,
-        .exit_on_help = true,
-        .render_help = true,
-    });
-
-    if (result) |parsed| {
-        if (helpWanted(parsed)) {
-            var io_impl: std.Io.Threaded = .init_single_threaded;
-            var buf: [1024]u8 = undefined;
-            var stdout: std.Io.File.Writer = .init(.stdout(), io_impl.io(), &buf);
-            const writer: *std.Io.Writer = &stdout.interface;
-            printHelp(command, parsed, writer) catch std.process.exit(1);
-            std.process.exit(1);
-        } else return parsed;
-    } else |err| switch (err) {
-        error.Usage => unreachable,
-        error.OutOfMemory => {
-            std.log.err("out of memory", .{});
-            std.process.exit(1);
-        },
-    }
-}
-
 pub const ParseError = error{
     /// Malformed input from the user.
     Usage,
@@ -175,10 +139,12 @@ pub const ParseOptions = struct {
     /// Call std.process.exit when there is a usage error.
     exit_on_usage_error: bool = false,
     /// Provide information about why a usage error occurred to stderr.
+    /// Errors when writing to stderr are silently ignored.
     render_usage_errors: bool = false,
     /// Call std.process.exit when the user requests help with --help.
     exit_on_help: bool = false,
     /// Provide help information to stdout when the user requests help with --help.
+    /// Errors when writing to stdout are silently ignored.
     render_help: bool = false,
 };
 
@@ -194,60 +160,21 @@ pub fn parse(
     var iter: Iterator = .init(args);
     _ = iter.next(); // consume argv index 0, which is this executable's path.
 
-    const result = parseRecursive(command, arena, &iter, options);
+    const parsed = try parseRecursive(command, arena, &iter, options);
 
-    if (result) |parsed| {
-        if (options.render_help and helpWanted(parsed)) {
-            var io_impl: std.Io.Threaded = .init_single_threaded;
-            var buf: [1024]u8 = undefined;
-            var stdout: std.Io.File.Writer = .init(.stdout(), io_impl.io(), &buf);
-            const writer: *std.Io.Writer = &stdout.interface;
-            printHelp(command, parsed, writer) catch std.process.exit(1);
-        }
-        if (options.exit_on_help and helpWanted(parsed)) {
-            std.process.exit(1);
-        }
-        return parsed;
-    } else |err| return err;
-}
-
-/// Generates a struct with fields of type ArrayList(T) for each unlimited argument.
-/// During parsing, instances of unlimited arguments are accumulated in the corresponding
-/// arraylist.
-fn UnlimitedArgStruct(comptime command: Command) type {
-    var num_unlimited: usize = 0;
-    for (command.named_args ++ command.positional_args) |arg| {
-        switch (arg.count) {
-            .unlimited => num_unlimited += 1,
-            .one => {},
-        }
+    if (options.render_help and helpWanted(parsed)) {
+        var io_impl: std.Io.Threaded = .init_single_threaded;
+        const io = io_impl.io();
+        var buf: [1024]u8 = undefined;
+        var stdout = std.Io.File.stdout().writer(io, &buf);
+        const writer: *std.Io.Writer = &stdout.interface;
+        printHelp(command, parsed, writer) catch {};
+        writer.flush() catch {};
     }
-
-    var field_types: [num_unlimited]type = undefined;
-    var field_names: [num_unlimited][]const u8 = undefined;
-    var field_attrs: [num_unlimited]std.builtin.Type.StructField.Attributes = undefined;
-
-    var num_populated: usize = 0;
-    inline for (command.named_args ++ command.positional_args) |arg| {
-        switch (arg.count) {
-            .unlimited => {
-                field_types[num_populated] = std.ArrayList(std.meta.Child(arg.field.type));
-                field_names[num_populated] = arg.field.name;
-                field_attrs[num_populated] = .{ .default_value_ptr = &std.ArrayList(std.meta.Child(arg.field.type)).empty };
-                num_populated += 1;
-            },
-            .one => continue,
-        }
+    if (options.exit_on_help and helpWanted(parsed)) {
+        std.process.exit(1);
     }
-    comptime assert(num_populated == num_unlimited);
-
-    return @Struct(
-        .auto,
-        null,
-        &field_names,
-        &field_types,
-        &field_attrs,
-    );
+    return parsed;
 }
 
 fn validateCommand(comptime command: Command) void {
@@ -304,13 +231,12 @@ fn usageErrorExit(options: ParseOptions, comptime format: []const u8, args: anyt
 
 /// Prints help for the active command.
 pub fn printHelp(comptime command: Command, parsed: Parsed(command), out: *std.Io.Writer) !void {
-    const command_help = descendToHelpPage("", command, parsed);
+    const command_help = descendToHelpPage(null, command, parsed);
     try out.writeAll(command_help);
-    try out.flush();
 }
 
-fn descendToHelpPage(comptime descent_path: []const u8, comptime command: Command, parsed: Parsed(command)) [:0]const u8 {
-    const this_descent = if (comptime std.mem.eql(u8, descent_path, "")) command.name else descent_path ++ " " ++ command.name;
+fn descendToHelpPage(comptime descent_path: ?[]const u8, comptime command: Command, parsed: Parsed(command)) [:0]const u8 {
+    const this_descent = if (descent_path) |path| path ++ " " ++ command.name else command.name;
     if (parsed.subcommand) |subcommand| {
         switch (subcommand) {
             inline else => |value, tag| {
@@ -388,9 +314,7 @@ inline fn helpPage(comptime descent_path: []const u8, comptime command: Command)
 }
 
 pub fn helpWanted(parsed: anytype) bool {
-    if (parsed.kind == .help) {
-        return true;
-    }
+    if (parsed.kind == .help) return true;
     if (parsed.subcommand) |subcommand| {
         switch (subcommand) {
             inline else => |value| return helpWanted(value),
@@ -412,6 +336,67 @@ const Iterator = struct {
     }
 };
 
+/// Generates a struct with fields of type ArrayList(T) for each unlimited argument.
+/// During parsing, instances of unlimited arguments are accumulated in the corresponding
+/// arraylist.
+fn UnlimitedArgStruct(comptime command: Command) type {
+    var num_unlimited: usize = 0;
+    for (command.named_args ++ command.positional_args) |arg| {
+        switch (arg.count) {
+            .unlimited => num_unlimited += 1,
+            .one => {},
+        }
+    }
+
+    var field_types: [num_unlimited]type = undefined;
+    var field_names: [num_unlimited][]const u8 = undefined;
+    var field_attrs: [num_unlimited]std.builtin.Type.StructField.Attributes = undefined;
+
+    var num_populated: usize = 0;
+    inline for (command.named_args ++ command.positional_args) |arg| {
+        switch (arg.count) {
+            .unlimited => {
+                field_types[num_populated] = std.ArrayList(std.meta.Child(arg.field.type));
+                field_names[num_populated] = arg.field.name;
+                field_attrs[num_populated] = .{ .default_value_ptr = &std.ArrayList(std.meta.Child(arg.field.type)).empty };
+                num_populated += 1;
+            },
+            .one => continue,
+        }
+    }
+    comptime assert(num_populated == num_unlimited);
+
+    return @Struct(
+        .auto,
+        null,
+        &field_names,
+        &field_types,
+        &field_attrs,
+    );
+}
+
+const Defined = enum { defined, undefined };
+
+/// Generates a struct with fields of type Defined for each argument.
+/// Used during parsing to track which arguments have been provided by the user
+/// and enforce that required arguments are provided.
+fn DefinedArgStruct(comptime command: Command) type {
+    const num_args = command.named_args.len + command.positional_args.len;
+    var field_types: [num_args]type = @splat(Defined);
+    var field_names: [num_args][]const u8 = undefined;
+    var field_attrs: [num_args]std.builtin.Type.StructField.Attributes = @splat(.{ .default_value_ptr = &Defined.undefined });
+    inline for (command.named_args ++ command.positional_args, &field_names) |arg, *field_name| {
+        field_name.* = arg.field.name;
+    }
+    return @Struct(
+        .auto,
+        null,
+        &field_names,
+        &field_types,
+        &field_attrs,
+    );
+}
+
 fn parseRecursive(
     comptime command: Command,
     arena: std.mem.Allocator,
@@ -423,16 +408,15 @@ fn parseRecursive(
     // parsing will fill the resulting args one field at a time
     var result_args: @FieldType(@FieldType(Parsed(command), "kind"), "args") = undefined;
     // as we fill the args, track what we have defined so undefined is not leaked to return value
-    const Defined = enum { defined, undefined };
-    var fields_defined: [command.named_args.len + command.positional_args.len]Defined = @splat(.undefined);
+    var defined: DefinedArgStruct(command) = .{};
     var result_subcommand: @FieldType(Parsed(command), "subcommand") = null;
     var unlimited_args: UnlimitedArgStruct(command) = .{};
 
     // args with default values are not required so they are filled in here first.
     // If found during parsing later, the default values are overwritten with the user-provided values.
-    inline for (command.named_args ++ command.positional_args, 0..) |arg, i| {
+    inline for (command.named_args ++ command.positional_args) |arg| {
         @field(result_args, arg.field.name) = arg.field.defaultValue() orelse continue;
-        fields_defined[i] = .defined;
+        @field(defined, arg.field.name) = .defined;
     }
 
     var began_positional: bool = false;
@@ -448,7 +432,7 @@ fn parseRecursive(
                 return .{ .kind = .help, .subcommand = result_subcommand };
             }
 
-            inline for (command.named_args, 0..) |arg, i| {
+            inline for (command.named_args) |arg| {
                 const Value = switch (arg.count) {
                     .one => arg.field.type,
                     .unlimited => std.meta.Child(arg.field.type),
@@ -496,7 +480,7 @@ fn parseRecursive(
                             .one => @field(result_args, arg.field.name) = found_value,
                             .unlimited => try @field(unlimited_args, arg.field.name).append(arena, found_value),
                         }
-                        fields_defined[i] = .defined;
+                        @field(defined, arg.field.name) = .defined;
                         continue :next_os_arg;
                     },
                     .not_found => {},
@@ -510,21 +494,27 @@ fn parseRecursive(
                     continue :next_os_arg;
                 }
             }
+            // "-" is sometimes used as a positional argument to signify stdin, so it is allowed.
+            // Otherwise the user is required to explicitly begin positional with sigil "--" if they want
+            // to have a positional argument that begins with "-".
+            if (std.mem.startsWith(u8, os_arg, "-") and !std.mem.eql(u8, os_arg, "-")) {
+                return usageErrorExit(options, "unexpected argument: {s}", .{os_arg});
+            }
         }
         began_positional = true;
-        inline for (command.positional_args, 0..) |arg, i| {
+        inline for (command.positional_args) |arg| {
             skip: switch (arg.count) {
                 .one => {
-                    if (fields_defined[i] == .defined) break :skip;
+                    if (@field(defined, arg.field.name) == .defined) break :skip;
                     const value = try parseValue(options, arg.field.type, os_arg);
                     @field(result_args, arg.field.name) = value;
-                    fields_defined[i] = .defined;
+                    @field(defined, arg.field.name) = .defined;
                     continue :next_os_arg;
                 },
                 .unlimited => {
                     const value = try parseValue(options, std.meta.Child(arg.field.type), os_arg);
                     try @field(unlimited_args, arg.field.name).append(arena, value);
-                    fields_defined[i] = .defined;
+                    @field(defined, arg.field.name) = .defined;
                     continue :next_os_arg;
                 },
             }
@@ -533,21 +523,22 @@ fn parseRecursive(
         return usageErrorExit(options, "unexpected argument: {s}", .{os_arg});
     }
 
-    inline for (fields_defined[0..command.named_args.len], command.named_args) |defined, arg| {
-        switch (defined) {
-            .undefined => {
-                return usageErrorExit(options, "missing required named argument: {s}", .{"--" ++ arg.field.name});
-            },
+    inline for (comptime std.meta.fieldNames(@TypeOf(defined))) |arg_name| {
+        switch (@field(defined, arg_name)) {
             .defined => {},
-        }
-    }
-
-    inline for (fields_defined[command.named_args.len..], command.positional_args) |defined, arg| {
-        switch (defined) {
             .undefined => {
-                return usageErrorExit(options, "missing required positional argument: {s}", .{arg.field.name});
+                inline for (command.named_args) |arg| {
+                    if (comptime std.mem.eql(u8, arg.field.name, arg_name)) {
+                        return usageErrorExit(options, "missing required named argument: {s}", .{"--" ++ arg.field.name});
+                    }
+                }
+                inline for (command.positional_args) |arg| {
+                    if (comptime std.mem.eql(u8, arg.field.name, arg_name)) {
+                        return usageErrorExit(options, "missing required positional argument: {s}", .{arg.field.name});
+                    }
+                }
+                comptime unreachable;
             },
-            .defined => {},
         }
     }
 
@@ -557,7 +548,10 @@ fn parseRecursive(
         }
     }
 
-    assert(std.mem.allEqual(Defined, &fields_defined, .defined));
+    inline for (comptime std.meta.fieldNames(@TypeOf(defined))) |arg_name| {
+        assert(@field(defined, arg_name) == .defined);
+    }
+
     return .{
         .kind = .{ .args = result_args },
         .subcommand = result_subcommand,
@@ -596,7 +590,7 @@ fn parseValue(options: ParseOptions, comptime T: type, buf: [:0]const u8) error{
                 .slice, .c, .many => {
                     if (pointer.child == u8) {
                         return buf;
-                    }
+                    } else comptime unreachable; // unsupported type for cli argument value parsing
                 },
                 else => comptime unreachable, // unsupported type for cli argument value parsing
             }
@@ -610,6 +604,7 @@ fn parseValue(options: ParseOptions, comptime T: type, buf: [:0]const u8) error{
         else => comptime unreachable, // unsupported type for cli argument value parsing
     }
 }
+
 test {
     _ = @import("cli/test.zig");
 }

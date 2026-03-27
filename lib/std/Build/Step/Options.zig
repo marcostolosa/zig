@@ -51,8 +51,9 @@ pub fn addOption(options: *Options, comptime T: type, name: []const u8, value: T
 fn printDecl(options: *Options, comptime T: type, name: []const u8, value: T) AddOptionError!void {
     const gpa = options.step.owner.allocator;
     const out = &options.contents;
+
     try printTypeDefinition(options, T);
-    try out.print(gpa, "pub const {f}: ", .{std.zig.fmtId(name)});
+    try out.print(gpa, "pub const {f}: ", .{fmtId(name)});
     try printTypeName(options, T, 0);
     try out.appendSlice(gpa, " = ");
     try printValue(options, T, value, 0);
@@ -84,7 +85,7 @@ fn printTypeDefinition(options: *Options, comptime T: type) AddOptionError!void 
 
     switch (type_info) {
         .@"enum" => {
-            try out.print(gpa, "pub const {f} = ", .{std.zig.fmtId(type_name)});
+            try out.print(gpa, "pub const {f} = ", .{fmtId(type_name)});
             try printEnumDefinition(options, T);
             try out.appendSlice(gpa, ";\n\n");
         },
@@ -93,7 +94,7 @@ fn printTypeDefinition(options: *Options, comptime T: type) AddOptionError!void 
                 try printTypeDefinition(options, @"type");
             }
 
-            try out.print(gpa, "pub const {f} = ", .{std.zig.fmtId(type_name)});
+            try out.print(gpa, "pub const {f} = ", .{fmtId(type_name)});
             try printStructDefinition(options, T);
             try out.appendSlice(gpa, ";\n\n");
         },
@@ -103,7 +104,7 @@ fn printTypeDefinition(options: *Options, comptime T: type) AddOptionError!void 
                 try printTypeDefinition(options, @"type");
             }
 
-            try out.print(gpa, "pub const {f} = ", .{std.zig.fmtId(type_name)});
+            try out.print(gpa, "pub const {f} = ", .{fmtId(type_name)});
             try printUnionDefinition(options, T);
             try out.appendSlice(gpa, ";\n\n");
         },
@@ -129,7 +130,7 @@ fn printEnumDefinition(options: *Options, comptime T: type) !void {
     try out.appendSlice(gpa, " {\n");
 
     inline for (@"enum".field_names, @"enum".field_values) |name, value| {
-        try out.print(gpa, indent_str ++ "{f} = {d},\n", .{ std.zig.fmtIdFlags(name, .{ .allow_primitive = true }), value });
+        try out.print(gpa, indent_str ++ "{f} = {d},\n", .{ fmtEnumFieldName(name), value });
     }
 
     if (@"enum".mode == .nonexhaustive) {
@@ -159,7 +160,7 @@ fn printStructDefinition(options: *Options, comptime T: type) !void {
 
     inline for (@"struct".field_names, @"struct".field_types) |name, @"type"| {
         try out.appendSlice(gpa, indent_str);
-        try out.print(gpa, "{f}: ", .{std.zig.fmtIdFlags(name, .{ .allow_underscore = true, .allow_primitive = true })});
+        try out.print(gpa, "{f}: ", .{fmtStructUnionFieldName(name)});
         try printTypeName(options, @"type", indent_width);
         try out.appendSlice(gpa, ",\n");
     }
@@ -180,7 +181,7 @@ fn printUnionDefinition(options: *Options, comptime T: type) !void {
 
     inline for (@"union".field_names, @"union".field_types) |name, @"type"| {
         try out.appendSlice(gpa, indent_str);
-        try out.print(gpa, "{f}: ", .{std.zig.fmtIdFlags(name, .{ .allow_underscore = true, .allow_primitive = true })});
+        try out.print(gpa, "{f}: ", .{fmtStructUnionFieldName(name)});
         try printTypeName(options, @"type", indent_width);
         try out.appendSlice(gpa, ",\n");
     }
@@ -231,7 +232,7 @@ fn printTypeName(options: *Options, comptime T: type, indent: u8) !void {
         .comptime_float,
         .enum_literal,
         => try out.print(gpa, "{s}", .{@typeName(T)}),
-        .@"enum", .@"struct", .@"union" => try out.print(gpa, "{f}", .{std.zig.fmtId(@typeName(T))}),
+        .@"enum", .@"struct", .@"union" => try out.print(gpa, "{f}", .{fmtId(@typeName(T))}),
         else => comptime unreachable,
     }
 }
@@ -278,10 +279,10 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) AddOpti
         => try out.print(gpa, "{any}", .{value}),
         .@"enum" => |@"enum"| {
             switch (@"enum".mode) {
-                .exhaustive => try out.print(gpa, ".{f}", .{std.zig.fmtIdFlags(@tagName(value), .{ .allow_underscore = true, .allow_primitive = true })}),
+                .exhaustive => try out.print(gpa, ".{f}", .{fmtEnumFieldName(@tagName(value))}),
                 .nonexhaustive => {
                     if (std.enums.tagName(T, value)) |name| {
-                        try out.print(gpa, ".{f}", .{std.zig.fmtIdFlags(name, .{ .allow_underscore = true, .allow_primitive = true })});
+                        try out.print(gpa, ".{f}", .{fmtEnumFieldName(name)});
                     } else {
                         try out.print(gpa, "@fromBackingInt({})", .{@backingInt(value)});
                     }
@@ -292,7 +293,7 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) AddOpti
             try out.appendSlice(gpa, ".{ ");
             switch (value) {
                 inline else => |payload, tag| {
-                    try out.print(gpa, ".{f} = ", .{std.zig.fmtIdFlags(@tagName(tag), .{ .allow_primitive = true, .allow_underscore = true })});
+                    try out.print(gpa, ".{f} = ", .{fmtStructUnionFieldName(@tagName(tag))});
                     try printValue(options, @TypeOf(payload), payload, indent);
                 },
             }
@@ -305,7 +306,7 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) AddOpti
             inline for (@"struct".field_names, @"struct".field_types) |name, @"type"| {
                 const field_indent = indent +| indent_width;
                 try out.appendNTimes(gpa, ' ', field_indent);
-                try out.print(gpa, ".{f} = ", .{std.zig.fmtIdFlags(name, .{ .allow_primitive = true, .allow_underscore = true })});
+                try out.print(gpa, ".{f} = ", .{fmtStructUnionFieldName(name)});
                 try printValue(options, @"type", @field(value, name), field_indent);
                 try out.appendSlice(gpa, ",\n");
             }
@@ -314,6 +315,16 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) AddOpti
         },
         else => comptime unreachable,
     }
+}
+
+const fmtId = std.zig.fmtId;
+
+fn fmtEnumFieldName(field_name: []const u8) std.zig.FormatId {
+    return std.zig.fmtIdFlags(field_name, .{ .allow_primitive = true });
+}
+
+fn fmtStructUnionFieldName(field_name: []const u8) std.zig.FormatId {
+    return std.zig.fmtIdFlags(field_name, .{ .allow_primitive = true, .allow_underscore = true });
 }
 
 /// The added option has type `[]const u8` and value of the provided path.

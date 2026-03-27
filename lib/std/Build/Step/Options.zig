@@ -64,22 +64,27 @@ fn printTypeDefinition(options: *Options, comptime T: type) AddOptionError!void 
 
     const type_info = @typeInfo(T);
     switch (type_info) {
-        inline .array, .pointer, .optional => |info| return printTypeDefinition(options, info.child),
+        inline .array, .pointer, .optional => |info, tag| {
+            if (tag == .pointer and info.size != .slice) unsupported("non-slice pointer", T);
+            return printTypeDefinition(options, info.child);
+        },
+        .void, .bool, .int, .float, .comptime_int, .comptime_float, .enum_literal => return,
         .@"enum" => {},
-        .@"struct" => |@"struct"| if (@"struct".is_tuple) unsupported("tuple"),
-        .@"union" => |info| if (info.tag_type == null) unsupported("untagged union"),
-        else => return,
+        .@"struct" => |@"struct"| if (@"struct".is_tuple) unsupported("tuple", T),
+        .@"union" => |info| if (info.tag_type == null) unsupported("untagged union", T),
+        else => |tag| unsupported(@tagName(tag), T),
     }
 
     const gpa = options.step.owner.allocator;
     const out = &options.contents;
 
-    const gop = try options.printed_types.getOrPut(gpa, @typeName(T));
+    const type_name = @typeName(T);
+    const gop = try options.printed_types.getOrPut(gpa, type_name);
     if (gop.found_existing) return;
 
     switch (type_info) {
         .@"enum" => {
-            try out.print(gpa, "pub const {f} = ", .{std.zig.fmtId(@typeName(T))});
+            try out.print(gpa, "pub const {f} = ", .{std.zig.fmtId(type_name)});
             try printEnumDefinition(options, T);
             try out.appendSlice(gpa, ";\n\n");
         },
@@ -88,7 +93,7 @@ fn printTypeDefinition(options: *Options, comptime T: type) AddOptionError!void 
                 try printTypeDefinition(options, @"type");
             }
 
-            try out.print(gpa, "pub const {f} = ", .{std.zig.fmtId(@typeName(T))});
+            try out.print(gpa, "pub const {f} = ", .{std.zig.fmtId(type_name)});
             try printStructDefinition(options, T);
             try out.appendSlice(gpa, ";\n\n");
         },
@@ -98,7 +103,7 @@ fn printTypeDefinition(options: *Options, comptime T: type) AddOptionError!void 
                 try printTypeDefinition(options, @"type");
             }
 
-            try out.print(gpa, "pub const {f} = ", .{std.zig.fmtId(@typeName(T))});
+            try out.print(gpa, "pub const {f} = ", .{std.zig.fmtId(type_name)});
             try printUnionDefinition(options, T);
             try out.appendSlice(gpa, ";\n\n");
         },
@@ -183,6 +188,10 @@ fn printUnionDefinition(options: *Options, comptime T: type) !void {
     try out.appendSlice(gpa, "}");
 }
 
+inline fn unsupported(comptime description: []const u8, comptime T: type) noreturn {
+    @compileError(std.fmt.comptimePrint("{s} type '{s}' is not supported as a build option", .{ description, @typeName(T) }));
+}
+
 fn printTypeName(options: *Options, comptime T: type, indent: u8) !void {
     const gpa = options.step.owner.allocator;
     const out = &options.contents;
@@ -202,10 +211,6 @@ fn printTypeName(options: *Options, comptime T: type, indent: u8) !void {
             try printTypeName(options, array.child, indent);
         },
         .pointer => |pointer| {
-            if (pointer.size != .slice) {
-                unsupported("non-slice pointer");
-            }
-
             try out.appendSlice(gpa, "[");
             if (pointer.sentinel()) |sentinel| {
                 try out.appendSlice(gpa, ":");
@@ -227,7 +232,7 @@ fn printTypeName(options: *Options, comptime T: type, indent: u8) !void {
         .enum_literal,
         => try out.print(gpa, "{s}", .{@typeName(T)}),
         .@"enum", .@"struct", .@"union" => try out.print(gpa, "{f}", .{std.zig.fmtId(@typeName(T))}),
-        else => |tag| unsupported(@tagName(tag)),
+        else => comptime unreachable,
     }
 }
 
@@ -307,12 +312,8 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) AddOpti
             try out.appendNTimes(gpa, ' ', indent);
             try out.appendSlice(gpa, "}");
         },
-        else => |tag| unsupported(@tagName(tag)),
+        else => comptime unreachable,
     }
-}
-
-inline fn unsupported(comptime str: []const u8) noreturn {
-    @compileError(std.fmt.comptimePrint("'{s}' is not supported as a build option", .{str}));
 }
 
 /// The added option has type `[]const u8` and value of the provided path.

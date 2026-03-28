@@ -5,21 +5,70 @@ const std = @import("std.zig");
 const assert = std.debug.assert;
 const cutPrefixSentinel = std.mem.cutPrefixSentinel;
 
+/// A recursive representation of the commands available in a CLI.
+pub const Command = struct {
+    /// If this is the root command, has no effect. Example: `git`.
+    /// Name of the corresponding tagged union field in `parsed.subcommands.?`.
+    /// Name of the subcommand in the cli.
+    /// To obtain a dashed-command like `git merge-base`, provide `.name = "merge-base"` and access with `parsed.subcommands.?.@"merge-base"`.
+    name: [:0]const u8,
+    /// Named arguments are arguments that begin with `--` in the CLI, or `-` for shorthands, like `git commit --message "std.cli"` or `git commit -m "std.cli"`.
+    named_args: []const Argument = &.{},
+    /// Positional arguments are arguments parsed by their position after the command. Like the branch name in `git branch dev/std.cli`.
+    positional_args: []const Argument = &.{},
+    /// The subcommands of this command. Like `commit` in `git commit`.
+    subcommands: []const Command = &.{},
+    /// The help text for this command. For example the text returned by `git --help`.
+    /// Typically ends in a newline (`"\n"`).
+    help: [:0]const u8 = "",
+    /// Included only to allow easier auto-generation of help-text by libraries outside of std.
+    /// Typically the single-line help sentence for subcommands.
+    help_short: [:0]const u8 = "",
+};
+
 pub const Argument = struct {
     field: std.builtin.Type.StructField,
     count: Count,
+    /// Included only to allow easier auto-generation of help-text by libraries outside of std.
+    /// Typically the single-line help sentence next to each option in a list of options.
     help: [:0]const u8,
+    /// If non-null, allows named arguments to have single character aliases.
+    /// Example: `git commit -m "std.cli"` and `git commit --message` parse results are identical.
+    /// Has no effect for positional arguments.
     short: ?u8,
 
-    pub const Count = enum { one, unlimited };
+    pub const Count = enum {
+        /// If the argument is provided multiple times, the last instance is the result.
+        /// Example: `git --verbose --no-verbose` results in a single false bool for `parsed.kind.args.verbose`.
+        one,
+        /// If the argument is provided multiple times, they are accumulated into a slice.
+        /// Example: `git commit --message "Paragraph 1" --message "Paragraph 2"` results in `&.{"Paragraph 1", "Paragraph 2"}` and args.message is a `[]const []const u8` (the provided `T` must be a slice type).
+        unlimited,
+    };
 
-    /// For `.count = .unlimited` arguments, the provided `T` must be a slice.
     pub fn init(
+        /// The type of the corresponding field in `parsed.kind.args`.
+        ///
+        /// - bool: `--verbose`, `--verbose=true`, `-v` result in true. `--no-verbose`, `--verbose=false`, `-v=false` result in false.
+        /// - enum: string input corresponding to each enum field. Example: `--log-level debug` results in `.debug`.
+        /// - integer: uses `std.fmt.parseInt` to parse an integer.
+        /// - float: uses `std.fmt.parseFloat` to parse a float.
+        /// - `[]const u8`: a string. Example: `git branch dev/std.cli` results in `"dev/std.cli"`. `[:0]const u8` is also supported.
+        /// - `?T`: when the user does not provide the argument, results in `null`. `null` is the only supported default value.
+        ///
+        /// For `.count = .unlimited` arguments, provide a `[]T`. Example: `git add README.md build.zig.zon` can be parsed with `[]const []const u8` as `&.{"README.md", "build.zig.zon"}`.
         comptime T: type,
         comptime options: struct {
+            /// Name of the corresponding field in `parsed.kind.args`.
+            /// Prefixed with `--` for the CLI user.
+            /// Example: `git commit --message "std.cli"` has `.name = "message"` and parsed.kind.args.message is `"std.cli"`.
+            ///
+            /// To obtain dashed arguments like `git commit --reset-author` provide "reset-author" and access with `parsed.kind.args.@"reset-author"`.
             name: [:0]const u8,
             count: Count = .one,
             help: [:0]const u8 = "",
+            /// Arguments with default values are optional in the CLI and the default value is applied to the field before it is returned as part of `parsed.kind.args`.
+            /// Optionals types (like ?i32) may only have default value null. This allows determining if a user provided argument or not. Example: `git branch dev/std.cli` has optional `?[]const u8` positional argument.
             default_value: ?T = null,
             short: ?u8 = null,
         },
@@ -28,7 +77,7 @@ pub const Argument = struct {
             .one => {},
             .unlimited => {
                 if (@typeInfo(T) != .pointer and @typeInfo(T).pointer.size != .slice) {
-                    @compileError("unlimited arguments must be a slice.");
+                    @compileError("Unlimited arguments must be a slice type.");
                 }
             },
         }
@@ -54,19 +103,10 @@ pub const Argument = struct {
     }
 };
 
-pub const Command = struct {
-    /// If this is the root command, this is the name of the executable shows in the help text.
-    ///
-    /// Example: "git"
-    name: [:0]const u8,
-    named_args: []const Argument = &.{},
-    positional_args: []const Argument = &.{},
-    subcommands: []const Command = &.{},
-    help: [:0]const u8 = "",
-    prologue: [:0]const u8 = "",
-    epilogue: [:0]const u8 = "",
-};
-
+/// Represents the result of CLI parsing.
+///
+/// When the user requests help, `parsed.kind == .help`, otherwise the named and positional arguments are accessible in `parsed.kind.args`.
+/// Subcommands are accessible in `parsed.subcommand`.
 pub fn Parsed(comptime command: Command) type {
     const ArgsStruct = blk: {
         const num_args = command.named_args.len + command.positional_args.len;
@@ -131,6 +171,7 @@ pub fn Parsed(comptime command: Command) type {
 
 pub const ParseError = error{
     /// Malformed input from the user.
+    /// Example: `git commit --not-a-valid-option`.
     Usage,
     OutOfMemory,
 };
@@ -148,7 +189,8 @@ pub const ParseOptions = struct {
     render_help: bool = false,
 };
 
-/// Lifetime of args must exceed the return value (return value may point to args).
+/// Parse the operating-system provided arguments according to the grammer defined in command.
+/// The lifetime of args must exceed the return value (return value may point to args).
 pub fn parse(
     comptime command: Command,
     arena: std.mem.Allocator,
@@ -168,13 +210,97 @@ pub fn parse(
         var buf: [1024]u8 = undefined;
         var stdout = std.Io.File.stdout().writer(io, &buf);
         const writer: *std.Io.Writer = &stdout.interface;
-        printHelp(command, parsed, writer) catch {};
+        writer.writeAll(helpPage(command, parsed)) catch {};
         writer.flush() catch {};
     }
     if (options.exit_on_help and helpWanted(parsed)) {
         std.process.exit(1);
     }
     return parsed;
+}
+
+test parse {
+    const command: Command = .{
+        .name = "git",
+        .help =
+        \\A version control system.
+        \\
+        \\Options:
+        \\  --log-level   One of err, warn, info, debug.
+        \\
+        \\Subcommands:
+        \\  branch: create a branch
+        \\  commit: commit changes to the repository
+        ,
+        .named_args = &.{
+            .init(std.log.Level, .{ .name = "log-level", .default_value = .err }),
+        },
+        .subcommands = &.{
+            .{
+                .name = "branch",
+                .positional_args = &.{
+                    .init([]const u8, .{ .name = "branch_name" }),
+                },
+            },
+            .{
+                .name = "commit",
+                .named_args = &.{
+                    .init([]const u8, .{ .name = "message", .short = 'm' }),
+                },
+            },
+        },
+    };
+    const parsed = try parse(
+        command,
+        std.testing.failing_allocator,
+        &.{"git"},
+        .{},
+    );
+    try std.testing.expect(parsed.kind.args.@"log-level" == .err);
+
+    const parsed2 = try parse(
+        command,
+        std.testing.failing_allocator,
+        &.{ "git", "--help" },
+        .{},
+    );
+    try std.testing.expect(parsed2.kind == .help);
+    try std.testing.expect(parsed2.subcommand == null);
+
+    const parsed3 = try parse(
+        command,
+        std.testing.failing_allocator,
+        &.{ "git", "--log-level=debug" },
+        .{},
+    );
+    try std.testing.expectEqual(.debug, parsed3.kind.args.@"log-level");
+    try std.testing.expect(parsed3.subcommand == null);
+
+    const parsed4 = try parse(
+        command,
+        std.testing.failing_allocator,
+        &.{ "git", "commit", "-m", "std.cli" },
+        .{},
+    );
+    try std.testing.expect(parsed4.subcommand.? == .commit);
+    try std.testing.expectEqualStrings("std.cli", parsed4.subcommand.?.commit.kind.args.message);
+
+    const parsed5 = try parse(
+        command,
+        std.testing.failing_allocator,
+        &.{ "git", "branch", "dev/std.cli" },
+        .{},
+    );
+    try std.testing.expect(parsed5.subcommand.? == .branch);
+    try std.testing.expectEqualStrings("dev/std.cli", parsed5.subcommand.?.branch.kind.args.branch_name);
+
+    const parsed6 = parse(
+        command,
+        std.testing.failing_allocator,
+        &.{ "git", "--not-an-option", "branch", "dev/std.cli" },
+        .{},
+    );
+    try std.testing.expectError(error.Usage, parsed6);
 }
 
 fn validateCommand(comptime command: Command) void {
@@ -229,92 +355,28 @@ fn usageErrorExit(options: ParseOptions, comptime format: []const u8, args: anyt
     return error.Usage;
 }
 
-/// Prints help for the active command.
-pub fn printHelp(comptime command: Command, parsed: Parsed(command), out: *std.Io.Writer) !void {
-    const command_help = descendToHelpPage(null, command, parsed);
-    try out.writeAll(command_help);
-}
-
-fn descendToHelpPage(comptime descent_path: ?[]const u8, comptime command: Command, parsed: Parsed(command)) [:0]const u8 {
-    const this_descent = if (descent_path) |path| path ++ " " ++ command.name else command.name;
+/// Returns the help page for the active command or subcommand.
+pub fn helpPage(comptime command: Command, parsed: Parsed(command)) [:0]const u8 {
     if (parsed.subcommand) |subcommand| {
         switch (subcommand) {
             inline else => |value, tag| {
                 inline for (command.subcommands) |subcommand_config| {
                     if (comptime std.mem.eql(u8, subcommand_config.name, @tagName(tag))) {
-                        return descendToHelpPage(this_descent, subcommand_config, value);
+                        return helpPage(subcommand_config, value);
                     }
                 }
             },
         }
         unreachable;
-    } else return comptime helpPage(this_descent, command);
+    } else return command.help;
 }
 
-inline fn helpPage(comptime descent_path: []const u8, comptime command: Command) [:0]const u8 {
-    var content: [:0]const u8 = std.fmt.comptimePrint("Usage: {s} ...\n", .{descent_path});
-
-    if (command.prologue.len > 0) {
-        content = content ++ "\n" ++ command.prologue ++ "\n";
-    }
-
-    if (command.positional_args.len > 0) {
-        content = content ++ "\nPositional Arguments:\n";
-
-        var max_positional_len: usize = 0;
-        inline for (command.positional_args) |arg| {
-            if (arg.field.name.len > max_positional_len) {
-                max_positional_len = arg.field.name.len;
-            }
-        }
-
-        inline for (command.positional_args) |arg| {
-            content = content ++
-                std.fmt.comptimePrint("  {s: <" ++ std.fmt.comptimePrint("{}", .{max_positional_len}) ++ "}  {s}\n", .{ arg.field.name ++ " [" ++ @typeName(arg.field.type) ++ "]", arg.help });
-        }
-    }
-    content = content ++ "\nNamed Arguments:\n";
-
-    var max_named_len: usize = 0;
-    inline for (command.named_args) |arg| {
-        const name_len = arg.field.name.len + @typeName(arg.field.type).len + if (arg.short != null) 3 else 0;
-        if (name_len > max_named_len) {
-            max_named_len = name_len;
-        }
-    }
-
-    inline for (command.named_args) |arg| {
-        const short = if (arg.short) |short| std.fmt.comptimePrint("  -{s},", .{[1]u8{short}}) else "";
-        content = content ++
-            std.fmt.comptimePrint("{s}  --{s: <" ++ std.fmt.comptimePrint("{}", .{max_named_len}) ++ "}  {s}\n", .{ short, arg.field.name ++ " [" ++ @typeName(arg.field.type) ++ "]", arg.help });
-    }
-    content = content ++ std.fmt.comptimePrint("  --{s: <" ++ std.fmt.comptimePrint("{}", .{max_named_len}) ++ "}  {s}\n", .{ "help", "Show this help text." });
-
-    if (command.subcommands.len > 0) {
-        content = content ++ "\nSubcommands:\n";
-
-        var max_subcommand_len: usize = 0;
-        inline for (command.subcommands) |subcommand| {
-            if (subcommand.name.len > max_subcommand_len) {
-                max_subcommand_len = subcommand.name.len;
-            }
-        }
-
-        inline for (command.subcommands) |subcommand| {
-            content = content ++
-                std.fmt.comptimePrint("  {s: <" ++ std.fmt.comptimePrint("{}", .{max_subcommand_len}) ++ "}  {s}\n", .{ subcommand.name, subcommand.help });
-        }
-    }
-
-    if (command.epilogue.len > 0) {
-        content = content ++ "\n" ++ command.epilogue ++ "\n";
-    }
-
-    return content;
-}
-
+/// True when no usage error and `--help` was provided as part of the arguments
 pub fn helpWanted(parsed: anytype) bool {
-    if (parsed.kind == .help) return true;
+    switch (parsed.kind) {
+        .help => return true,
+        .args => {},
+    }
     if (parsed.subcommand) |subcommand| {
         switch (subcommand) {
             inline else => |value| return helpWanted(value),

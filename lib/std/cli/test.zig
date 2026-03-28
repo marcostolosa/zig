@@ -312,7 +312,7 @@ test "parse.switch_on_subcommand" {
     }
 }
 
-test "printHelp" {
+test "helpPage" {
     const raw: []const [:0]const u8 = &.{ "git", "--help" };
     const git: cli.Command = .{
         .name = "git",
@@ -320,26 +320,12 @@ test "printHelp" {
             .{ .name = "branch", .help = "create a branch" },
             .{ .name = "add", .help = "add files to be committed" },
         },
+        .help = "A version control system.\n",
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
 
-    var buf: [1024]u8 = undefined;
-    var writer = std.Io.Writer.fixed(&buf);
-
-    try cli.printHelp(git, parsed, &writer);
-
-    const expected: []const u8 =
-        \\Usage: git ...
-        \\
-        \\Named Arguments:
-        \\  --help  Show this help text.
-        \\
-        \\Subcommands:
-        \\  branch  create a branch
-        \\  add     add files to be committed
-        \\
-    ;
-    try std.testing.expectEqualStrings(expected, writer.buffered());
+    const expected: []const u8 = "A version control system.\n";
+    try std.testing.expectEqualStrings(expected, cli.helpPage(git, parsed));
 }
 
 test "parse.named.enum" {
@@ -434,13 +420,14 @@ test "parse.subcommand.help" {
     try std.testing.expect(parsed.subcommand.?.add.kind == .help);
 }
 
-test "printHelp.advanced" {
+test "helpPage.subcommand" {
     const git: cli.Command = .{
         .name = "git",
+        .help = "A version control system.\n",
         .subcommands = &.{
             .{
                 .name = "branch",
-                .help = "Create a branch.",
+                .help = "Create a branch.\n",
                 .named_args = &.{.init(bool, .{ .name = "delete", .short = 'd', .help = "Delete the branch." })},
                 .positional_args = &.{.init([]const u8, .{ .name = "name", .help = "Branch name." })},
             },
@@ -454,44 +441,14 @@ test "printHelp.advanced" {
     const raw: []const [:0]const u8 = &.{ "git", "--help" };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
 
-    var buf: [1024]u8 = undefined;
-    var writer = std.Io.Writer.fixed(&buf);
-
-    try cli.printHelp(git, parsed, &writer);
-
-    const expected: []const u8 =
-        \\Usage: git ...
-        \\
-        \\Named Arguments:
-        \\  --help  Show this help text.
-        \\
-        \\Subcommands:
-        \\  branch  Create a branch.
-        \\  add     Stage files.
-        \\
-    ;
-    try std.testing.expectEqualStrings(expected, writer.buffered());
+    const expected: []const u8 = "A version control system.\n";
+    try std.testing.expectEqualStrings(expected, cli.helpPage(git, parsed));
 
     const raw2: []const [:0]const u8 = &.{ "git", "branch", "--help" };
     const parsed2 = try cli.parse(git, std.testing.allocator, raw2, .{});
 
-    var buf2: [1024]u8 = undefined;
-    var writer2 = std.Io.Writer.fixed(&buf2);
-
-    try cli.printHelp(git, parsed2, &writer2);
-
-    const expected2: []const u8 =
-        \\Usage: git branch ...
-        \\
-        \\Positional Arguments:
-        \\  name [[]const u8]  Branch name.
-        \\
-        \\Named Arguments:
-        \\  -d,  --delete [bool]  Delete the branch.
-        \\  --help           Show this help text.
-        \\
-    ;
-    try std.testing.expectEqualStrings(expected2, writer2.buffered());
+    const expected2: []const u8 = "Create a branch.\n";
+    try std.testing.expectEqualStrings(expected2, cli.helpPage(git, parsed2));
 }
 
 test "parse.unknown_named_is_not_positional" {

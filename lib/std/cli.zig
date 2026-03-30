@@ -178,12 +178,12 @@ pub const ParseError = error{
 
 pub const ParseOptions = struct {
     /// Call std.process.exit when there is a usage error.
-    exit_on_usage_error: bool = false,
+    exit_usage_error: bool = false,
     /// Provide information about why a usage error occurred to stderr.
     /// Errors when writing to stderr are silently ignored.
     render_usage_errors: bool = false,
     /// Call std.process.exit when the user requests help with --help.
-    exit_on_help: bool = false,
+    exit_help: bool = false,
     /// Provide help information to stdout when the user requests help with --help.
     /// Errors when writing to stdout are silently ignored.
     render_help: bool = false,
@@ -213,7 +213,7 @@ pub fn parse(
         writer.writeAll(helpPage(command, parsed)) catch {};
         writer.flush() catch {};
     }
-    if (options.exit_on_help and helpWanted(parsed)) {
+    if (options.exit_help and helpWanted(parsed)) {
         std.process.exit(1);
     }
     return parsed;
@@ -351,7 +351,7 @@ fn usageErrorExit(options: ParseOptions, comptime format: []const u8, args: anyt
         std.log.err(format, args);
         std.log.err("Provide only --help for help.", .{});
     }
-    if (options.exit_on_usage_error) std.process.exit(1);
+    if (options.exit_usage_error) std.process.exit(1);
     return error.Usage;
 }
 

@@ -397,9 +397,9 @@ test "parse.exit.named.enum.short" {
         },
     };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{
-        .exit_on_help = true,
+        .exit_help = true,
         .render_help = true,
-        .exit_on_usage_error = true,
+        .exit_usage_error = true,
         .render_usage_errors = true,
     });
     try std.testing.expectEqual(.debug, parsed.kind.args.@"log-level");

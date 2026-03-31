@@ -8,28 +8,41 @@ const Path = std.Build.Cache.Path;
 const assert = std.debug.assert;
 const SeenPcsHeader = std.Build.abi.fuzz.SeenPcsHeader;
 
+const usage =
+    \\usage: dump-cov path/to/exe path/to/coverage [target]
+    \\  if omitted, 'target' defaults to 'native'
+    \\  example: dump-cov zig-out/test .zig-cache/v/xxxxxxxx x86_64-linux
+    \\
+;
+
+const command: std.cli.Command = .{
+    .name = "dump-cov",
+    .help = usage,
+    .positional_args = &.{
+        .init([:0]const u8, .{ .name = "exe", .help = "path to exe" }),
+        .init([:0]const u8, .{ .name = "cov", .help = "path to coverage" }),
+        .init([:0]const u8, .{ .name = "target", .help = "target, defaults to native", .default_value = "native" }),
+    },
+};
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
 
-    const target_query_str = switch (args.len) {
-        3 => "native",
-        4 => args[3],
-        else => return fatal(
-            \\usage: {0s} path/to/exe path/to/coverage [target]
-            \\  if omitted, 'target' defaults to 'native'
-            \\  example: {0s} zig-out/test .zig-cache/v/xxxxxxxx x86_64-linux
-        , .{if (args.len == 0) "dump-cov" else args[0]}),
-    };
+    const parsed = try std.cli.parse(command, arena, args, .{
+        .exit_help = true,
+        .exit_usage_error = true,
+        .render_usage_errors = true,
+        .render_help = true,
+    });
 
     const target = std.zig.resolveTargetQueryOrFatal(io, try .parse(.{
-        .arch_os_abi = target_query_str,
+        .arch_os_abi = parsed.kind.args.target,
     }));
 
-    const exe_file_name = args[1];
-    const cov_file_name = args[2];
+    const exe_file_name = parsed.kind.args.exe;
+    const cov_file_name = parsed.kind.args.cov;
 
     const exe_path: Path = .{
         .root_dir = .cwd(),

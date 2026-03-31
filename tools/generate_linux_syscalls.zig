@@ -172,18 +172,35 @@ const architectures: []const Arch = &.{
     .{ .@"var" = "Microblaze", .table = .{ .specific = "arch/microblaze/kernel/syscalls/syscall.tbl" } },
 };
 
+const usage =
+    \\Usage: generate_linux_syscalls /path/to/linux
+    \\Alternative Usage: zig run /path/to/git/zig/tools/generate_linux_syscalls.zig -- /path/to/linux
+    \\
+    \\Generates the list of Linux syscalls for each supported cpu arch, using the Linux development tree.
+    \\Prints to stdout Zig code which you can use to replace the file lib/std/os/linux/syscalls.zig.
+    \\
+;
+const command: std.cli.Command = .{
+    .name = "generate_linux_syscalls",
+    .help = usage,
+    .positional_args = &.{
+        .init([:0]const u8, .{ .name = "linux_path" }),
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
+    const arena = init.arena.allocator();
 
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
-    if (args.len < 2 or mem.eql(u8, args[1], "--help")) {
-        const stderr = std.debug.lockStderr(&.{});
-        const w = &stderr.file_writer.interface;
-        usage(w, args[0]) catch std.process.exit(2);
-        std.process.exit(1);
-    }
-    const linux_path = args[1];
+    const args = try init.minimal.args.toSlice(arena);
+    const parsed = try std.cli.parse(command, arena, args, .{
+        .exit_help = true,
+        .exit_usage_error = true,
+        .render_usage_errors = true,
+        .render_help = true,
+    });
+    const linux_path = parsed.kind.args.linux_path;
 
     var stdout_buffer: [2048]u8 = undefined;
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
@@ -248,15 +265,4 @@ pub fn main(init: std.process.Init) !void {
     }
 
     try Io.Writer.flush(stdout);
-}
-
-fn usage(w: *std.Io.Writer, arg0: []const u8) std.Io.Writer.Error!void {
-    try w.print(
-        \\Usage: {s} /path/to/linux
-        \\Alternative Usage: zig run /path/to/git/zig/tools/generate_linux_syscalls.zig -- /path/to/linux
-        \\
-        \\Generates the list of Linux syscalls for each supported cpu arch, using the Linux development tree.
-        \\Prints to stdout Zig code which you can use to replace the file lib/std/os/linux/syscalls.zig.
-        \\
-    , .{arg0});
 }

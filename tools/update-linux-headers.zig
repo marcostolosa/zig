@@ -18,7 +18,6 @@ const std = @import("std");
 const Io = std.Io;
 const Dir = std.Io.Dir;
 const Arch = std.Target.Cpu.Arch;
-const Abi = std.Target.Abi;
 const assert = std.debug.assert;
 const Blake3 = std.crypto.hash.Blake3;
 
@@ -141,6 +140,22 @@ const HashToContents = std.StringHashMap(Contents);
 const TargetToHash = std.array_hash_map.Custom(DestTarget, []const u8, DestTarget.HashContext, true);
 const PathTable = std.StringHashMap(*TargetToHash);
 
+const usage =
+    \\Usage: {s} [--search-path <dir>] --out <dir>
+    \\--search-path can be used any number of times.
+    \\    subdirectories of search paths look like, e.g. x86_64-linux-gnu
+    \\--out is a dir that will be created, and populated with the results
+;
+
+const command: std.cli.Command = .{
+    .name = "update_linux_headers",
+    .help = usage,
+    .named_args = &.{
+        .init([]const [:0]const u8, .{ .name = "search-path", .count = .unlimited }),
+        .init([:0]const u8, .{ .name = "out" }),
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
@@ -148,32 +163,15 @@ pub fn main(init: std.process.Init) !void {
     const environ_map = init.environ_map;
     const cwd = try std.process.currentPathAlloc(io, arena);
 
-    var search_paths = std.array_list.Managed([]const u8).init(arena);
-    var opt_out_dir: ?[]const u8 = null;
+    const parsed = try std.cli.parse(command, arena, args, .{
+        .exit_help = true,
+        .exit_usage_error = true,
+        .render_usage_errors = true,
+        .render_help = true,
+    });
 
-    var arg_i: usize = 1;
-    while (arg_i < args.len) : (arg_i += 1) {
-        if (std.mem.eql(u8, args[arg_i], "--help"))
-            usageAndExit(args[0]);
-        if (arg_i + 1 >= args.len) {
-            std.debug.print("expected argument after '{s}'\n", .{args[arg_i]});
-            usageAndExit(args[0]);
-        }
-
-        if (std.mem.eql(u8, args[arg_i], "--search-path")) {
-            try search_paths.append(args[arg_i + 1]);
-        } else if (std.mem.eql(u8, args[arg_i], "--out")) {
-            assert(opt_out_dir == null);
-            opt_out_dir = args[arg_i + 1];
-        } else {
-            std.debug.print("unrecognized argument: {s}\n", .{args[arg_i]});
-            usageAndExit(args[0]);
-        }
-
-        arg_i += 1;
-    }
-
-    const out_dir = opt_out_dir orelse usageAndExit(args[0]);
+    const search_paths = parsed.kind.args.@"search-path";
+    const out_dir = parsed.kind.args.out;
     const generic_name = "any-linux-any";
 
     var path_table = PathTable.init(arena);
@@ -187,7 +185,7 @@ pub fn main(init: std.process.Init) !void {
         const dest_target = DestTarget{
             .arch = linux_target.arch,
         };
-        search: for (search_paths.items) |search_path| {
+        search: for (search_paths) |search_path| {
             const target_include_dir = try Dir.path.join(arena, &.{
                 search_path, linux_target.name, "include",
             });
@@ -324,12 +322,4 @@ pub fn main(init: std.process.Init) !void {
         const full_path = try Dir.path.join(arena, &[_][]const u8{ out_dir, bad_file });
         try Dir.cwd().deleteFile(io, full_path);
     }
-}
-
-fn usageAndExit(arg0: []const u8) noreturn {
-    std.debug.print("Usage: {s} [--search-path <dir>] --out <dir> --abi <name>\n", .{arg0});
-    std.debug.print("--search-path can be used any number of times.\n", .{});
-    std.debug.print("    subdirectories of search paths look like, e.g. x86_64-linux-gnu\n", .{});
-    std.debug.print("--out is a dir that will be created, and populated with the results\n", .{});
-    std.process.exit(1);
 }

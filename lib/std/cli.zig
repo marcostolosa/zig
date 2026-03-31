@@ -304,6 +304,12 @@ test parse {
 }
 
 fn validateCommand(comptime command: Command) void {
+    inline for (command.named_args) |arg| {
+        if (std.mem.eql(u8, arg.field.name, "help")) {
+            @compileError("named argument --help is reserved by the parser and may not be used.");
+        }
+    }
+
     // Multiple optional positionals makes parsing ambiguous.
     var last_optional_positional: ?[]const u8 = null;
     inline for (command.positional_args) |arg| {

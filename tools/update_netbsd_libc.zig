@@ -1,9 +1,3 @@
-//! This script updates the .c, .h, .s, and .S files that make up the start
-//! files such as crt1.o.
-//!
-//! Example usage:
-//! `zig run tools/update_netbsd_libc.zig -- ~/Downloads/netbsd-src .`
-
 const std = @import("std");
 const Io = std.Io;
 
@@ -12,13 +6,38 @@ const exempt_files = [_][]const u8{
     "abilists",
 };
 
+const usage =
+    \\ This script updates the .c, .h, .s, and .S files that make up the start
+    \\ files such as crt1.o.
+    \\
+    \\ Example usage:
+    \\ `zig run tools/update_netbsd_libc.zig -- ~/Downloads/netbsd-src .`
+    \\
+;
+
+const command: std.cli.Command = .{
+    .name = "update_netbsd_libc",
+    .help = usage,
+    .positional_args = &.{
+        .init([:0]const u8, .{ .name = "netbsd_src_path" }),
+        .init([:0]const u8, .{ .name = "zig_src_path" }),
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
 
-    const netbsd_src_path = args[1];
-    const zig_src_path = args[2];
+    const parsed = try std.cli.parse(command, arena, args, .{
+        .exit_help = true,
+        .exit_usage_error = true,
+        .render_usage_errors = true,
+        .render_help = true,
+    });
+
+    const netbsd_src_path = parsed.kind.args.netbsd_src_path;
+    const zig_src_path = parsed.kind.args.zig_src_path;
 
     const dest_dir_path = try std.fmt.allocPrint(arena, "{s}/lib/libc/netbsd", .{zig_src_path});
 

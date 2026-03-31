@@ -56,30 +56,36 @@ const usage =
     \\fetch_them_macos_headers [options] [cc args]
     \\
     \\Options:
-    \\  --sysroot     Path to macOS SDK
+    \\  --sysroot     Optional path to macOS SDK.
     \\
     \\General Options:
-    \\-h, --help                    Print this help and exit
+    \\  --help                    Print this help and exit
 ;
+
+const command: std.cli.Command = .{
+    .name = "fetch_them_macos_headers",
+    .help = usage,
+    .named_args = &.{
+        .init(?[:0]const u8, .{ .name = "sysroot", .help = "Optional path to macOS SDK." }),
+    },
+    .positional_args = &.{
+        .init([]const [:0]const u8, .{ .name = "cc_args", .count = .unlimited }),
+    },
+};
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
 
-    var argv = std.array_list.Managed([]const u8).init(arena);
-    var sysroot: ?[]const u8 = null;
+    const parsed = try std.cli.parse(command, arena, args, .{
+        .exit_help = true,
+        .exit_usage_error = true,
+        .render_usage_errors = true,
+        .render_help = true,
+    });
 
-    var args_iter = ArgsIterator{ .args = args[1..] };
-    while (args_iter.next()) |arg| {
-        if (mem.eql(u8, arg, "--help") or mem.eql(u8, arg, "-h")) {
-            return info(usage, .{});
-        } else if (mem.eql(u8, arg, "--sysroot")) {
-            sysroot = args_iter.nextOrFatal();
-        } else try argv.append(arg);
-    }
-
-    const sysroot_path = sysroot orelse blk: {
+    const sysroot_path = parsed.kind.args.sysroot orelse blk: {
         const target = try std.zig.system.resolveTargetQuery(io, .{});
         break :blk std.zig.system.darwin.getSdk(arena, io, &target) orelse
             fatal("no SDK found; you can provide one explicitly with '--sysroot' flag", .{});
@@ -107,7 +113,7 @@ pub fn main(init: std.process.Init) !void {
             .arch = arch,
             .os_ver = os_ver,
         };
-        try fetchTarget(arena, io, argv.items, sysroot_path, target, version, tmp_dir);
+        try fetchTarget(arena, io, parsed.kind.args.cc_args, sysroot_path, target, version, tmp_dir);
     }
 }
 

@@ -10,27 +10,30 @@ const usage =
     \\gen_macos_headers_c [dir]
     \\
     \\General Options:
-    \\-h, --help                    Print this help and exit
+    \\  --help                    Print this help and exit
 ;
+
+const command: std.cli.Command = .{
+    .name = "gen_macos_headers_c",
+    .help = usage,
+    .positional_args = &.{
+        .init([:0]const u8, .{ .name = "dir" }),
+    },
+};
 
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
 
-    if (args.len == 1) fatal("no command or option specified", .{});
+    const parsed = try std.cli.parse(command, arena, args, .{
+        .exit_help = true,
+        .exit_usage_error = true,
+        .render_usage_errors = true,
+        .render_help = true,
+    });
 
-    var positionals = std.array_list.Managed([]const u8).init(arena);
-
-    for (args[1..]) |arg| {
-        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
-            return info(usage, .{});
-        } else try positionals.append(arg);
-    }
-
-    if (positionals.items.len != 1) fatal("expected one positional argument: [dir]", .{});
-
-    var dir = try Io.Dir.cwd().openDir(io, positionals.items[0], .{ .follow_symlinks = false });
+    var dir = try Io.Dir.cwd().openDir(io, parsed.kind.args.dir, .{ .follow_symlinks = false });
     defer dir.close(io);
     var paths = std.array_list.Managed([]const u8).init(arena);
     try findHeaders(arena, io, dir, "", &paths);

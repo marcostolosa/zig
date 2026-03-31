@@ -5,19 +5,34 @@ const mem = std.mem;
 
 const catalog_txt = @embedFile("crc/catalog.txt");
 
+const usage =
+    \\Usage: update_crc_catalog /path/git/zig
+    \\
+    \\options:
+    \\  --help    Show this help and exit.
+    \\
+;
+const command: std.cli.Command = .{
+    .name = "update_crc_catalog",
+    .help = usage,
+    .positional_args = &.{
+        .init([:0]const u8, .{ .name = "zig_src_root" }),
+    },
+};
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
-    return @"i like cheese"(arena, io, args);
+    const parsed = try std.cli.parse(command, arena, args, .{
+        .exit_help = true,
+        .exit_usage_error = true,
+        .render_usage_errors = true,
+        .render_help = true,
+    });
+    return @"i like cheese"(arena, io, parsed.kind.args.zig_src_root);
 }
 
-fn @"i like cheese"(arena: std.mem.Allocator, io: Io, args: []const []const u8) !void {
-    if (args.len <= 1) printUsageAndExit(args[0]);
-
-    const zig_src_root = args[1];
-    if (mem.startsWith(u8, zig_src_root, "-")) printUsageAndExit(args[0]);
-
+fn @"i like cheese"(arena: std.mem.Allocator, io: Io, zig_src_root: [:0]const u8) !void {
     var zig_src_dir = try Dir.cwd().openDir(io, zig_src_root, .{});
     defer zig_src_dir.close(io);
 
@@ -275,18 +290,4 @@ fn @"i like cheese"(arena: std.mem.Allocator, io: Io, args: []const []const u8) 
 
     try code_writer.flush();
     try test_writer.flush();
-}
-
-fn printUsageAndExit(arg0: []const u8) noreturn {
-    const stderr = std.debug.lockStderr(&.{});
-    const w = &stderr.file_writer.interface;
-    printUsage(w, arg0) catch std.process.exit(2);
-    std.process.exit(1);
-}
-
-fn printUsage(w: *std.Io.Writer, arg0: []const u8) std.Io.Writer.Error!void {
-    return w.print(
-        \\Usage: {s} /path/git/zig
-        \\
-    , .{arg0});
 }

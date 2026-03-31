@@ -633,6 +633,22 @@ const cpu_targets = struct {
     pub const xtensa = std.Target.xtensa;
 };
 
+const usage =
+    \\Usage: update_clang_options /path/to/llvm-tblgen /path/to/git/llvm/llvm-project
+    \\
+    \\Prints to stdout Zig code which you can use to replace the file src/clang_options.zon.
+    \\
+;
+
+const command: std.cli.Command = .{
+    .name = "update_clang_options",
+    .help = usage,
+    .positional_args = &.{
+        .init([:0]const u8, .{ .name = "tblgen_path" }),
+        .init([:0]const u8, .{ .name = "llvm_project_path" }),
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
@@ -642,21 +658,15 @@ pub fn main(init: std.process.Init) !void {
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
-    if (args.len <= 1) printUsageAndExit(args[0]);
+    const cli_parsed = try std.cli.parse(command, arena, args, .{
+        .exit_help = true,
+        .exit_usage_error = true,
+        .render_usage_errors = true,
+        .render_help = true,
+    });
 
-    if (std.mem.eql(u8, args[1], "--help")) {
-        printUsage(stdout, args[0]) catch std.process.exit(2);
-        stdout.flush() catch std.process.exit(2);
-        std.process.exit(0);
-    }
-
-    if (args.len < 3) printUsageAndExit(args[0]);
-
-    const llvm_tblgen_exe = args[1];
-    if (std.mem.startsWith(u8, llvm_tblgen_exe, "-")) printUsageAndExit(args[0]);
-
-    const llvm_src_root = args[2];
-    if (std.mem.startsWith(u8, llvm_src_root, "-")) printUsageAndExit(args[0]);
+    const llvm_tblgen_exe = cli_parsed.kind.args.tblgen_path;
+    const llvm_src_root = cli_parsed.kind.args.llvm_project_path;
 
     var llvm_to_zig_cpu_features = std.StringHashMap([]const u8).init(arena);
 
@@ -894,20 +904,4 @@ fn objectLessThan(context: void, a: *json.ObjectMap, b: *json.ObjectMap) bool {
     const a_key = a.get("!name").?.string;
     const b_key = b.get("!name").?.string;
     return std.mem.lessThan(u8, a_key, b_key);
-}
-
-fn printUsageAndExit(arg0: []const u8) noreturn {
-    const stderr = std.debug.lockStderr(&.{});
-    const w = &stderr.file_writer.interface;
-    printUsage(w, arg0) catch std.process.exit(2);
-    std.process.exit(1);
-}
-
-fn printUsage(w: *std.Io.Writer, arg0: []const u8) std.Io.Writer.Error!void {
-    try w.print(
-        \\Usage: {s} /path/to/llvm-tblgen /path/to/git/llvm/llvm-project
-        \\
-        \\Prints to stdout Zig code which you can use to replace the file src/clang_options.zon.
-        \\
-    , .{arg0});
 }

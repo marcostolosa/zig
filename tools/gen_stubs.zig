@@ -1,56 +1,3 @@
-//! Example usage:
-//! ./gen_stubs /path/to/musl/build-all >libc.S
-//!
-//! The directory 'build-all' is expected to contain these subdirectories:
-//!
-//! * aarch64
-//! * arm
-//! * i386
-//! * hexagon
-//! * loongarch64
-//! * mips
-//! * mips64
-//! * mipsn32
-//! * powerpc
-//! * powerpc64
-//! * riscv32
-//! * riscv64
-//! * s390x
-//! * x32 (currently broken)
-//! * x86_64
-//!
-//! ...each with 'lib/libc.so' inside of them.
-//!
-//! When building the resulting libc.S file, these defines are required:
-//! * `-DTIME32`: When the target's primary time ABI is 32-bit
-//! * `-DPTR64`: When the target has 64-bit pointers
-//! * One of the following, corresponding to the CPU architecture:
-//!   - `-DARCH_aarch64`
-//!   - `-DARCH_arm`
-//!   - `-DARCH_i386`
-//!   - `-DARCH_hexagon`
-//!   - `-DARCH_loongarch64`
-//!   - `-DARCH_mips`
-//!   - `-DARCH_mips64`
-//!   - `-DARCH_mipsn32`
-//!   - `-DARCH_powerpc`
-//!   - `-DARCH_powerpc64`
-//!   - `-DARCH_riscv32`
-//!   - `-DARCH_riscv64`
-//!   - `-DARCH_s390x`
-//!   - `-DARCH_x32`
-//!   - `-DARCH_x86_64`
-//! * One of the following, corresponding to the CPU architecture family:
-//!   - `-DFAMILY_aarch64`
-//!   - `-DFAMILY_arm`
-//!   - `-DFAMILY_hexagon`
-//!   - `-DFAMILY_loongarch`
-//!   - `-DFAMILY_mips`
-//!   - `-DFAMILY_powerpc`
-//!   - `-DFAMILY_riscv`
-//!   - `-DFAMILY_s390x`
-//!   - `-DFAMILY_x86`
-
 // TODO: pick the best index to put them into instead of at the end
 //       - e.g. find a common previous symbol and put it after that one
 //       - they definitely need to go into the correct section
@@ -281,11 +228,81 @@ const Parse = struct {
     arch: Arch,
 };
 
+const usage =
+    \\ Example usage:
+    \\ ./gen_stubs /path/to/musl/build-all >libc.S
+    \\
+    \\ The directory 'build-all' is expected to contain these subdirectories:
+    \\
+    \\ * aarch64
+    \\ * arm
+    \\ * i386
+    \\ * hexagon
+    \\ * loongarch64
+    \\ * mips
+    \\ * mips64
+    \\ * mipsn32
+    \\ * powerpc
+    \\ * powerpc64
+    \\ * riscv32
+    \\ * riscv64
+    \\ * s390x
+    \\ * x32 (currently broken)
+    \\ * x86_64
+    \\
+    \\ ...each with 'lib/libc.so' inside of them.
+    \\
+    \\ When building the resulting libc.S file, these defines are required:
+    \\ * `-DTIME32`: When the target's primary time ABI is 32-bit
+    \\ * `-DPTR64`: When the target has 64-bit pointers
+    \\ * One of the following, corresponding to the CPU architecture:
+    \\   - `-DARCH_aarch64`
+    \\   - `-DARCH_arm`
+    \\   - `-DARCH_i386`
+    \\   - `-DARCH_hexagon`
+    \\   - `-DARCH_loongarch64`
+    \\   - `-DARCH_mips`
+    \\   - `-DARCH_mips64`
+    \\   - `-DARCH_mipsn32`
+    \\   - `-DARCH_powerpc`
+    \\   - `-DARCH_powerpc64`
+    \\   - `-DARCH_riscv32`
+    \\   - `-DARCH_riscv64`
+    \\   - `-DARCH_s390x`
+    \\   - `-DARCH_x32`
+    \\   - `-DARCH_x86_64`
+    \\ * One of the following, corresponding to the CPU architecture family:
+    \\   - `-DFAMILY_aarch64`
+    \\   - `-DFAMILY_arm`
+    \\   - `-DFAMILY_hexagon`
+    \\   - `-DFAMILY_loongarch`
+    \\   - `-DFAMILY_mips`
+    \\   - `-DFAMILY_powerpc`
+    \\   - `-DFAMILY_riscv`
+    \\   - `-DFAMILY_s390x`
+    \\   - `-DFAMILY_x86`
+    \\
+;
+
+const command: std.cli.Command = .{
+    .name = "gen_stubs",
+    .help = usage,
+    .positional_args = &.{
+        .init([:0]const u8, .{ .name = "build_all_path" }),
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
-    const build_all_path = args[1];
+    const parsed = try std.cli.parse(command, arena, args, .{
+        .exit_help = true,
+        .exit_usage_error = true,
+        .render_usage_errors = true,
+        .render_help = true,
+    });
+    const build_all_path = parsed.kind.args.build_all_path;
 
     var build_all_dir = try Io.Dir.cwd().openDir(io, build_all_path, .{});
 

@@ -11,13 +11,37 @@ const fatal = std.process.fatal;
 
 const max_doc_file_size = 10 * 1024 * 1024;
 
+const usage =
+    \\usage: migrate_langref [input_file] [output_file]
+    \\
+    \\options:
+    \\  --help     Show this help and exit.
+    \\
+;
+
+const command: std.cli.Command = .{
+    .name = "migrate_langref",
+    .help = usage,
+    .positional_args = &.{
+        .init([:0]const u8, .{ .name = "input_file" }),
+        .init([:0]const u8, .{ .name = "output_file" }),
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
 
-    const input_file = args[1];
-    const output_file = args[2];
+    const parsed = try std.cli.parse(command, arena, args, .{
+        .exit_help = true,
+        .exit_usage_error = true,
+        .render_usage_errors = true,
+        .render_help = true,
+    });
+
+    const input_file = parsed.kind.args.input_file;
+    const output_file = parsed.kind.args.output_file;
 
     var in_file = try Dir.cwd().openFile(io, input_file, .{ .mode = .read_only });
     defer in_file.close(io);

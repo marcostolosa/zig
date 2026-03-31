@@ -1,11 +1,3 @@
-//! This script updates the .c, .h, .s, and .S files that make up the start
-//! files such as crt1.o. Not to be confused with
-//! https://codeberg.org/ziglang/libc-abi-tools which updates the `abilists`
-//! file.
-//!
-//! Example usage:
-//! `zig run ../tools/update_glibc.zig -- ~/Downloads/glibc ..`
-
 const std = @import("std");
 const Io = std.Io;
 const Dir = std.Io.Dir;
@@ -39,13 +31,40 @@ const exempt_extensions = [_][]const u8{
     "-2.32.c",
 };
 
+const usage =
+    \\ This script updates the .c, .h, .s, and .S files that make up the start
+    \\ files such as crt1.o. Not to be confused with
+    \\ https://codeberg.org/ziglang/libc-abi-tools which updates the `abilists`
+    \\ file.
+    \\
+    \\ Example usage:
+    \\ `zig run ../tools/update_glibc.zig -- ~/Downloads/glibc ..`
+    \\
+;
+
+const command: std.cli.Command = .{
+    .name = "update_glibc",
+    .help = usage,
+    .positional_args = &.{
+        .init([:0]const u8, .{ .name = "glibc_src_path" }),
+        .init([:0]const u8, .{ .name = "zig_src_path" }),
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
 
-    const glibc_src_path = args[1];
-    const zig_src_path = args[2];
+    const parsed = try std.cli.parse(command, arena, args, .{
+        .exit_help = true,
+        .exit_usage_error = true,
+        .render_usage_errors = true,
+        .render_help = true,
+    });
+
+    const glibc_src_path = parsed.kind.args.glibc_src_path;
+    const zig_src_path = parsed.kind.args.zig_src_path;
 
     const dest_dir_path = try std.fmt.allocPrint(arena, "{s}/lib/libc/glibc", .{zig_src_path});
 

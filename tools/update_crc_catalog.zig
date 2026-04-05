@@ -9,7 +9,7 @@ const usage =
     \\Usage: update_crc_catalog /path/git/zig
     \\
     \\options:
-    \\  --help    Show this help and exit.
+    \\  -h, --help    Show this help and exit.
     \\
 ;
 const command: std.cli.Command = .{

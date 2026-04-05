@@ -13,6 +13,9 @@ const usage =
     \\Example usage:
     \\`zig run tools/update_openbsd_libc.zig -- ~/Downloads/openbsd-src .`
     \\
+    \\Options:
+    \\  -h, --help    Print this help and exit.
+    \\
 ;
 
 const command: std.cli.Command = .{

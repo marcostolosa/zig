@@ -14,6 +14,9 @@ const usage =
     \\
     \\example: `zig run tools/update_freebsd_libc.zig -- ~/Downloads/freebsd-src .`
     \\
+    \\Options:
+    \\  -h, --help    Print this help and exit.
+    \\
 ;
 const command: std.cli.Command = .{
     .name = "update_freebsd_libc",

@@ -282,6 +282,9 @@ const usage =
     \\   - `-DFAMILY_s390x`
     \\   - `-DFAMILY_x86`
     \\
+    \\Options:
+    \\  -h, --help    Print this help and exit.
+    \\
 ;
 
 const command: std.cli.Command = .{

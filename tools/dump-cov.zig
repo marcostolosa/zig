@@ -13,6 +13,9 @@ const usage =
     \\  if omitted, 'target' defaults to 'native'
     \\  example: dump-cov zig-out/test .zig-cache/v/xxxxxxxx x86_64-linux
     \\
+    \\Options:
+    \\  -h, --help       Print this help and exit.
+    \\
 ;
 
 const command: std.cli.Command = .{

@@ -20,7 +20,7 @@ const usage =
     \\   it to HTML documentation.
     \\
     \\Options:
-    \\   --help                 Print this help and exit
+    \\   -h, --help             Print this help and exit
     \\   -i, --input [file]     Source code file path
     \\   -o, --output [file]    Where to write output HTML docs to
     \\   --zig [file]           Path to the zig compiler

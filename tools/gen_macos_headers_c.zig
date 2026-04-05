@@ -10,7 +10,8 @@ const usage =
     \\gen_macos_headers_c [dir]
     \\
     \\General Options:
-    \\  --help                    Print this help and exit
+    \\  -h, --help               Print this help and exit
+    \\
 ;
 
 const command: std.cli.Command = .{

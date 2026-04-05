@@ -40,6 +40,8 @@ const usage =
     \\ Example usage:
     \\ `zig run ../tools/update_glibc.zig -- ~/Downloads/glibc ..`
     \\
+    \\Options:
+    \\  -h, --help    Print this help and exit.
 ;
 
 const command: std.cli.Command = .{

@@ -638,6 +638,9 @@ const usage =
     \\
     \\Prints to stdout Zig code which you can use to replace the file src/clang_options.zon.
     \\
+    \\Options:
+    \\  -h, --help    Print this help and exit.
+    \\
 ;
 
 const command: std.cli.Command = .{

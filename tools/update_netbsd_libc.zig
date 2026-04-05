@@ -13,6 +13,9 @@ const usage =
     \\ Example usage:
     \\ `zig run tools/update_netbsd_libc.zig -- ~/Downloads/netbsd-src .`
     \\
+    \\Options:
+    \\  -h, --help    Print this help and exit.
+    \\
 ;
 
 const command: std.cli.Command = .{

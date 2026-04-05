@@ -15,7 +15,7 @@ const usage =
     \\usage: migrate_langref [input_file] [output_file]
     \\
     \\options:
-    \\  --help     Show this help and exit.
+    \\  -h, --help     Show this help and exit.
     \\
 ;
 

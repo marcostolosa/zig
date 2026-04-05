@@ -1,4 +1,31 @@
-/// Command-line argument parser
+/// Command-line argument parser.
+///
+/// The grammer of a command-line is represented as a directed acyclic graph of commands and subcommands.
+/// Each command may have named and positional arguments.
+///
+/// For example, a graph representing these two git commands:
+///
+/// ```sh
+/// git clone https://example.com/repo.git
+/// git commit -m "added cli to std library"
+/// ```
+///
+/// ```
+///  - git (root command)
+///      - clone (subcommand)
+///          - url (positional string argument)
+///      - commit (subcommand)
+///          - message (named string argument)
+/// ```
+///
+/// 1. Describe your graph at comptime with `Command`.
+/// 2. Parse the command-line with `const parsed = try parse(command, ...)`.
+/// 3. Optionally automatically exit the program when help is requested or there is a usage error.
+/// 4. Access arguments with `parsed.kind.args.@"my-argument-name-here"`.
+/// 5. Access subcommands with `if (parsed.subcommand) |subcommand| switch (subcommand) ...`.
+///
+/// `--help` and '-h' named arguments are reserved by the parser to indicate help was requested by the user.
+/// Determine if help was requested (if not auto-exiting) with `switch (parsed.kind) {.help => ..., .args => ...}`.
 const cli = @This();
 
 const std = @import("std.zig");
@@ -76,7 +103,7 @@ pub const Argument = struct {
         switch (options.count) {
             .one => {},
             .unlimited => {
-                if (@typeInfo(T) != .pointer and @typeInfo(T).pointer.size != .slice) {
+                if (@typeInfo(T) != .pointer or @typeInfo(T).pointer.size != .slice) {
                     @compileError("Unlimited arguments must be a slice type.");
                 }
             },
@@ -231,6 +258,7 @@ test parse {
         \\Subcommands:
         \\  branch: create a branch
         \\  commit: commit changes to the repository
+        \\
         ,
         .named_args = &.{
             .init(std.log.Level, .{ .name = "log-level", .default_value = .err }),
@@ -308,6 +336,22 @@ fn validateCommand(comptime command: Command) void {
         if (std.mem.eql(u8, arg.field.name, "help")) {
             @compileError("named argument --help is reserved by the parser and may not be used.");
         }
+        if (arg.short == 'h') {
+            @compileError("named short argument -h is reserved by the parser and may not be used.");
+        }
+    }
+
+    // optional positional args must come after required args
+    var seen_optional = false;
+    inline for (command.positional_args) |arg| {
+        const is_optional = @typeInfo(arg.field.type) == .optional or arg.field.defaultValue() != null;
+
+        if (seen_optional and !is_optional) {
+            @compileError("Optional positional arguments must follow required positional arguments. Offender: " ++ arg.field.name);
+        }
+        if (is_optional) {
+            seen_optional = true;
+        }
     }
 
     // Multiple optional positionals makes parsing ambiguous.
@@ -324,7 +368,7 @@ fn validateCommand(comptime command: Command) void {
         }
     }
 
-    // Multiple unimited positional args is ambiguous.
+    // Multiple unlimited positional args is ambiguous.
     var last_positional_unlimited: ?[]const u8 = null;
     inline for (command.positional_args) |arg| {
         if (arg.count == .unlimited) {
@@ -335,6 +379,13 @@ fn validateCommand(comptime command: Command) void {
                     arg.field.name);
             }
             last_positional_unlimited = arg.field.name;
+        }
+    }
+
+    // Unlimited positional arguments must be the last argument.
+    inline for (command.positional_args, 0..) |arg, i| {
+        if (arg.count == .unlimited and i + 1 != command.positional_args.len) {
+            @compileError("Unlimited positional argument must be the last positional argument. Offender: " ++ arg.field.name);
         }
     }
 
@@ -377,7 +428,7 @@ pub fn helpPage(comptime command: Command, parsed: Parsed(command)) [:0]const u8
     } else return command.help;
 }
 
-/// True when no usage error and `--help` was provided as part of the arguments
+/// True when no usage error and (`--help` or `-h`) was provided as part of the arguments
 pub fn helpWanted(parsed: anytype) bool {
     switch (parsed.kind) {
         .help => return true,
@@ -475,7 +526,8 @@ fn parseRecursive(
 
     // parsing will fill the resulting args one field at a time
     var result_args: @FieldType(@FieldType(Parsed(command), "kind"), "args") = undefined;
-    // as we fill the args, track what we have defined so undefined is not leaked to return value
+    // As we fill the args, track what we have defined so undefined is not leaked to return value.
+    // This also tracks what args are provided, to allow "error: missing required argument...".
     var defined: DefinedArgStruct(command) = .{};
     var result_subcommand: @FieldType(Parsed(command), "subcommand") = null;
     var unlimited_args: UnlimitedArgStruct(command) = .{};
@@ -488,6 +540,7 @@ fn parseRecursive(
     }
 
     var began_positional: bool = false;
+    var positional_idx: usize = 0;
     next_os_arg: while (iter.next()) |os_arg| {
         if (!began_positional) {
             // encountering a lone "--" sigil means the rest of the args are positional
@@ -496,7 +549,7 @@ fn parseRecursive(
                 continue :next_os_arg;
             }
 
-            if (std.mem.eql(u8, "--help", os_arg)) {
+            if (std.mem.eql(u8, "--help", os_arg) or std.mem.eql(u8, "-h", os_arg)) {
                 return .{ .kind = .help, .subcommand = result_subcommand };
             }
 
@@ -507,37 +560,43 @@ fn parseRecursive(
                 };
                 var value: union(enum) { found: Value, not_found } = .not_found;
 
+                const long_token: []const u8 = "--" ++ arg.field.name; // like "--verbose"
+                const short_token: ?[]const u8 = if (arg.short) |short| "-" ++ [_]u8{short} else null; // like "-v"
+
                 if (@typeInfo(Value) == .bool) {
-                    if (std.mem.eql(u8, os_arg, "--" ++ arg.field.name)) {
+                    const no_long_token: []const u8 = "--no-" ++ arg.field.name; // like "--no-verbose"
+
+                    if (std.mem.eql(u8, os_arg, long_token)) {
                         value = .{ .found = true };
-                    } else if (std.mem.eql(u8, os_arg, "--no-" ++ arg.field.name)) {
+                    } else if (std.mem.eql(u8, os_arg, no_long_token)) {
                         value = .{ .found = false };
-                    } else if (arg.short != null and std.mem.eql(u8, os_arg, "-" ++ [_]u8{arg.short.?})) {
+                    } else if (short_token != null and std.mem.eql(u8, os_arg, short_token.?)) {
                         value = .{ .found = true };
-                    } else if (cutPrefixSentinel(u8, 0, os_arg, "--" ++ arg.field.name ++ "=")) |suffix| {
+                    } else if (cutPrefixSentinel(u8, 0, os_arg, long_token ++ "=")) |suffix| {
                         value = .{ .found = try parseValue(options, Value, suffix) };
+                    } else if (short_token != null) {
+                        if (cutPrefixSentinel(u8, 0, os_arg, short_token.? ++ "=")) |suffix| {
+                            value = .{ .found = try parseValue(options, Value, suffix) };
+                        }
                     } else {
                         value = .not_found;
                     }
                 } else {
-                    if (std.mem.eql(u8, os_arg, "--" ++ arg.field.name)) {
+                    if (std.mem.eql(u8, os_arg, long_token)) {
                         value = .{
                             .found = try parseValue(options, Value, iter.next() orelse return usageErrorExit(
                                 options,
                                 "Missing argument for option: {s}",
-                                .{"--" ++ arg.field.name},
+                                .{long_token},
                             )),
                         };
-                    } else if (cutPrefixSentinel(u8, 0, os_arg, "--" ++ arg.field.name ++ "=")) |suffix| {
+                    } else if (cutPrefixSentinel(u8, 0, os_arg, long_token ++ "=")) |suffix| {
                         value = .{ .found = try parseValue(options, Value, suffix) };
-                    } else if (arg.short != null and std.mem.eql(u8, os_arg, "-" ++ [_]u8{arg.short.?})) {
-                        value = .{ .found = try parseValue(options, Value, iter.next() orelse return usageErrorExit(
-                            options,
-                            "Missing argument for option: {s}",
-                            .{"-" ++ [_]u8{arg.short.?}},
-                        )) };
-                    } else if (arg.short != null) {
-                        if (cutPrefixSentinel(u8, 0, os_arg, "-" ++ [_]u8{arg.short.?} ++ "=")) |suffix| {
+                    } else if (short_token != null and std.mem.eql(u8, os_arg, short_token.?)) {
+                        value = .{ .found = try parseValue(options, Value, iter.next() orelse
+                            return usageErrorExit(options, "Missing argument for option: {s}", .{short_token.?})) };
+                    } else if (short_token != null) {
+                        if (cutPrefixSentinel(u8, 0, os_arg, short_token.? ++ "=")) |suffix| {
                             value = .{ .found = try parseValue(options, Value, suffix) };
                         }
                     }
@@ -570,21 +629,26 @@ fn parseRecursive(
             }
         }
         began_positional = true;
-        inline for (command.positional_args) |arg| {
-            skip: switch (arg.count) {
-                .one => {
-                    if (@field(defined, arg.field.name) == .defined) break :skip;
-                    const value = try parseValue(options, arg.field.type, os_arg);
-                    @field(result_args, arg.field.name) = value;
-                    @field(defined, arg.field.name) = .defined;
-                    continue :next_os_arg;
-                },
-                .unlimited => {
-                    const value = try parseValue(options, std.meta.Child(arg.field.type), os_arg);
-                    try @field(unlimited_args, arg.field.name).append(arena, value);
-                    @field(defined, arg.field.name) = .defined;
-                    continue :next_os_arg;
-                },
+        inline for (command.positional_args, 0..) |arg, i| {
+            if (i == positional_idx) {
+                switch (arg.count) {
+                    .one => {
+                        const value = try parseValue(options, arg.field.type, os_arg);
+                        @field(result_args, arg.field.name) = value;
+                        @field(defined, arg.field.name) = .defined;
+                        positional_idx += 1;
+                        continue :next_os_arg;
+                    },
+                    .unlimited => {
+                        comptime assert(i + 1 == command.positional_args.len); // unlimited positional must be last
+                        // note: incrementing positional_idx during unlimited arg parsing is useless
+                        const value = try parseValue(options, std.meta.Child(arg.field.type), os_arg);
+                        try @field(unlimited_args, arg.field.name).append(arena, value);
+                        @field(defined, arg.field.name) = .defined;
+
+                        continue :next_os_arg;
+                    },
+                }
             }
         }
 
@@ -633,13 +697,9 @@ fn parseValue(options: ParseOptions, comptime T: type, buf: [:0]const u8) error{
             if (std.mem.eql(u8, "false", buf)) return false;
             if (std.mem.eql(u8, "1", buf)) return true;
             if (std.mem.eql(u8, "0", buf)) return false;
-            if (std.mem.eql(u8, "yes", buf)) return true;
-            if (std.mem.eql(u8, "no", buf)) return false;
-            if (std.mem.eql(u8, "y", buf)) return true;
-            if (std.mem.eql(u8, "n", buf)) return false;
             return usageErrorExit(
                 options,
-                "Invalid input for argument of type bool: {s}",
+                "Invalid input for argument of type bool(true/false/1/0): {s}",
                 .{buf},
             );
         },

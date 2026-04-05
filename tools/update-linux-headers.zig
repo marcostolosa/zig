@@ -145,6 +145,9 @@ const usage =
     \\--search-path can be used any number of times.
     \\    subdirectories of search paths look like, e.g. x86_64-linux-gnu
     \\--out is a dir that will be created, and populated with the results
+    \\
+    \\Options:
+    \\  -h, --help    Print this help and exit.
 ;
 
 const command: std.cli.Command = .{

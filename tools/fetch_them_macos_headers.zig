@@ -59,7 +59,8 @@ const usage =
     \\  --sysroot     Optional path to macOS SDK.
     \\
     \\General Options:
-    \\  --help                    Print this help and exit
+    \\  -h, --help               Print this help and exit
+    \\
 ;
 
 const command: std.cli.Command = .{

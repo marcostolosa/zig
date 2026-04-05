@@ -179,6 +179,9 @@ const usage =
     \\Generates the list of Linux syscalls for each supported cpu arch, using the Linux development tree.
     \\Prints to stdout Zig code which you can use to replace the file lib/std/os/linux/syscalls.zig.
     \\
+    \\Options:
+    \\  -h, --help    Print this help and exit.
+    \\
 ;
 const command: std.cli.Command = .{
     .name = "generate_linux_syscalls",

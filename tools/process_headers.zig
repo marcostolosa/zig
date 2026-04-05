@@ -148,7 +148,8 @@ const usage =
     \\--out is a dir that will be created, and populated with the results
     \\--abi is either glibc, musl, freebsd, netbsd, or openbsd
     \\
-    \\--help   Show this help and exit.
+    \\-h, --help   Show this help and exit.
+    \\
 ;
 
 const command: std.cli.Command = .{

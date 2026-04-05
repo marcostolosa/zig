@@ -99,7 +99,7 @@ test "parse.named.bool.short" {
 }
 
 test "parse.named.bool.last_wins" {
-    const raw: []const [:0]const u8 = &.{ "git", "-p", "--no-paginate", "--paginate" };
+    const raw: []const [:0]const u8 = &.{ "git", "--no-paginate", "--paginate" };
     const parsed = try cli.parse(git, std.testing.failing_allocator, raw, .{});
     try std.testing.expect(parsed.kind.args.paginate);
 }

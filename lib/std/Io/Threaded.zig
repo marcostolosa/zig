@@ -15537,13 +15537,15 @@ fn childWaitPosix(child: *process.Child) process.Child.WaitError!process.Child.T
     const ru_ptr = if (child.request_resource_usage_statistics) &ru else null;
 
     if (have_wait4) {
-        var status: if (builtin.link_libc) c_int else i32 = undefined;
+        var status: posix.W = undefined;
         const syscall: Syscall = try .start();
-        while (true) switch (posix.errno(posix.system.wait4(pid, &status, 0, ru_ptr))) {
+        while (true) switch (posix.errno(
+            @intCast(posix.system.wait4(pid, &status, .{}, ru_ptr)),
+        )) {
             .SUCCESS => {
                 syscall.finish();
                 if (ru_ptr) |p| child.resource_usage_statistics.rusage = p.*;
-                return statusToTerm(@bitCast(status));
+                return statusToTerm(status);
             },
             .INTR => {
                 try syscall.checkCancel();
@@ -15558,7 +15560,9 @@ fn childWaitPosix(child: *process.Child) process.Child.WaitError!process.Child.T
         const linux = std.os.linux; // Bypass libc which has the wrong signature.
         var info: linux.siginfo_t = undefined;
         const syscall: Syscall = try .start();
-        while (true) switch (linux.errno(linux.waitid(.PID, pid, &info, linux.W.EXITED, ru_ptr))) {
+        while (true) switch (linux.errno(
+            linux.waitid(.PID, pid, &info, .{ .EXITED = true }, ru_ptr),
+        )) {
             .SUCCESS => {
                 syscall.finish();
                 if (ru_ptr) |p| child.resource_usage_statistics.rusage = p.*;
@@ -15580,12 +15584,14 @@ fn childWaitPosix(child: *process.Child) process.Child.WaitError!process.Child.T
         };
     }
 
-    var status: if (builtin.link_libc) c_int else i32 = undefined;
+    var status: posix.W = undefined;
     const syscall: Syscall = try .start();
-    while (true) switch (posix.errno(posix.system.waitpid(pid, &status, 0))) {
+    while (true) switch (posix.errno(
+        posix.system.waitpid(pid, &status, .{}),
+    )) {
         .SUCCESS => {
             syscall.finish();
-            return statusToTerm(@bitCast(status));
+            return statusToTerm(status);
         },
         .INTR => {
             try syscall.checkCancel();
@@ -15596,15 +15602,15 @@ fn childWaitPosix(child: *process.Child) process.Child.WaitError!process.Child.T
     };
 }
 
-pub fn statusToTerm(status: u32) process.Child.Term {
-    return if (posix.W.IFEXITED(status))
-        .{ .exited = posix.W.EXITSTATUS(status) }
-    else if (posix.W.IFSIGNALED(status))
-        .{ .signal = posix.W.TERMSIG(status) }
-    else if (posix.W.IFSTOPPED(status))
-        .{ .stopped = posix.W.STOPSIG(status) }
+pub fn statusToTerm(status: posix.W) process.Child.Term {
+    return if (status.IFEXITED())
+        .{ .exited = status.EXITSTATUS() }
+    else if (status.IFSIGNALED())
+        .{ .signal = status.TERMSIG() }
+    else if (status.IFSTOPPED())
+        .{ .stopped = status.STOPSIG() }
     else
-        .{ .unknown = status };
+        .{ .unknown = @bitCast(status) };
 }
 
 fn childKillPosix(child: *process.Child) !void {
@@ -15622,8 +15628,9 @@ fn childKillPosix(child: *process.Child) !void {
     };
 
     if (have_wait4) {
-        var status: if (builtin.link_libc) c_int else i32 = undefined;
-        while (true) switch (posix.errno(posix.system.wait4(pid, &status, 0, null))) {
+        while (true) switch (posix.errno(
+            @intCast(posix.system.wait4(pid, null, .{}, null)),
+        )) {
             .SUCCESS => return,
             .INTR => continue,
             .CHILD => |err| return errnoBug(err), // Double-free.
@@ -15634,7 +15641,9 @@ fn childKillPosix(child: *process.Child) !void {
     if (have_waitid) {
         const linux = std.os.linux; // Bypass libc which has the wrong signature.
         var info: linux.siginfo_t = undefined;
-        while (true) switch (linux.errno(linux.waitid(.PID, pid, &info, linux.W.EXITED, null))) {
+        while (true) switch (linux.errno(
+            linux.waitid(.PID, pid, &info, .{ .EXITED = true }, null),
+        )) {
             .SUCCESS => return,
             .INTR => continue,
             .CHILD => |err| return errnoBug(err), // Double-free.

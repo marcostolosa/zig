@@ -4724,8 +4724,10 @@ fn childWait(userdata: ?*anyopaque, child: *process.Child) process.Child.WaitErr
             .user_data = @intFromPtr(maybe_sync.cancel_region.fiber),
             .buf_index = 0,
             .personality = 0,
-            .splice_fd_in = linux.W.EXITED |
-                @as(i32, if (child.request_resource_usage_statistics) linux.W.NOWAIT else 0),
+            .splice_fd_in = @bitCast(linux.W{
+                .EXITED = true,
+                .NOWAIT = if (child.request_resource_usage_statistics) true else false,
+            }),
             .addr3 = 0,
             .resv = 0,
         };
@@ -4741,7 +4743,7 @@ fn childWait(userdata: ?*anyopaque, child: *process.Child) process.Child.WaitErr
                             .PID,
                             pid,
                             &info,
-                            linux.W.EXITED | linux.W.NOHANG,
+                            .{ .EXITED = true, .NOHANG = true },
                             &rusage,
                         ))) {
                             .SUCCESS => {
@@ -4805,7 +4807,7 @@ fn childKill(userdata: ?*anyopaque, child: *process.Child) void {
             .user_data = @intFromPtr(maybe_sync.cancel_region.fiber),
             .buf_index = 0,
             .personality = 0,
-            .splice_fd_in = linux.W.EXITED,
+            .splice_fd_in = @bitCast(linux.W{ .EXITED = true }),
             .addr3 = 0,
             .resv = 0,
         };

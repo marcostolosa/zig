@@ -73,7 +73,7 @@ pub inline fn versionCheck(comptime version: std.SemanticVersion) bool {
 }
 
 /// Get the errno if rc is -1 and SUCCESS if rc is not -1.
-pub fn errno(rc: anytype) E {
+pub fn errno(rc: i64) E {
     return if (rc == -1) @fromBackingInt(@intCast(_errno().*)) else .SUCCESS;
 }
 
@@ -3708,264 +3708,335 @@ pub const VDSO = switch (native_os) {
     .linux => linux.VDSO,
     else => void,
 };
+
 pub const W = switch (native_os) {
-    .linux => linux.W,
-    .emscripten => emscripten.W,
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => struct {
+    .emscripten, .linux => linux.W,
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => packed struct(u32) {
         /// [XSI] no hang in wait/no child to reap
-        pub const NOHANG = 0x00000001;
+        NOHANG: bool = false,
         /// [XSI] notify on stop, untraced child
-        pub const UNTRACED = 0x00000002;
+        UNTRACED: bool = false,
+        _2: u30 = 0,
 
-        pub fn EXITSTATUS(x: u32) u8 {
-            return @as(u8, @intCast(x >> 8));
+        pub fn EXITSTATUS(s: W) u8 {
+            return @intCast(@backingInt(s.STOPSIG()));
         }
-        pub fn TERMSIG(x: u32) SIG {
-            return @fromBackingInt(@intCast(status(x)));
+        pub fn TERMSIG(s: W) SIG {
+            return @fromBackingInt(s.status());
         }
-        pub fn STOPSIG(x: u32) SIG {
-            return @fromBackingInt(@intCast(x >> 8));
+        pub fn STOPSIG(s: W) SIG {
+            return @fromBackingInt(s.toInt() >> 8);
         }
-        pub fn IFEXITED(x: u32) bool {
-            return status(x) == 0;
+        pub fn IFEXITED(s: W) bool {
+            return s.status() == 0;
         }
-        pub fn IFSTOPPED(x: u32) bool {
-            return status(x) == stopped and @as(u32, @backingInt(STOPSIG(x))) != 0x13;
+        pub fn IFSTOPPED(s: W) bool {
+            return s.status() == stopped and @backingInt(s.STOPSIG()) != 0x13;
         }
-        pub fn IFSIGNALED(x: u32) bool {
-            return status(x) != stopped and status(x) != 0;
+        pub fn IFSIGNALED(s: W) bool {
+            return s.status() != stopped and s.status() != 0;
         }
 
-        fn status(x: u32) u32 {
-            return x & 0o177;
+        fn status(s: W) u32 {
+            return s.toInt() & stopped;
         }
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
+        }
+
         const stopped = 0o177;
     },
-    .freebsd => struct {
-        pub const NOHANG = 1;
-        pub const UNTRACED = 2;
-        pub const STOPPED = UNTRACED;
-        pub const CONTINUED = 4;
-        pub const NOWAIT = 8;
-        pub const EXITED = 16;
-        pub const TRAPPED = 32;
+    .freebsd => packed struct(u32) {
+        /// no hang in wait/no child to reap
+        NOHANG: bool = false,
+        /// notify on stop, untraced child
+        STOPPED: bool = false,
+        /// process continued
+        CONTINUED: bool = false,
+        /// don't wait for processes to exit
+        NOWAIT: bool = false,
+        /// process exited
+        EXITED: bool = false,
+        /// process trapped
+        TRAPPED: bool = false,
+        _6: u26 = 0,
 
-        pub fn EXITSTATUS(s: u32) u8 {
-            return @as(u8, @intCast((s & 0xff00) >> 8));
+        pub const UNTRACED: W = .{ .STOPPED = true };
+
+        pub fn EXITSTATUS(s: W) u8 {
+            return @intCast((s.toInt() & 0xff00) >> 8);
         }
-        pub fn TERMSIG(s: u32) SIG {
-            return @fromBackingInt(@intCast(s & 0x7f));
+        pub fn TERMSIG(s: W) SIG {
+            return @fromBackingInt(s.toInt() & 0x7f);
         }
-        pub fn STOPSIG(s: u32) SIG {
-            return @fromBackingInt(@intCast(EXITSTATUS(s)));
+        pub fn STOPSIG(s: W) SIG {
+            return @fromBackingInt(s.EXITSTATUS());
         }
-        pub fn IFEXITED(s: u32) bool {
-            return (s & 0x7f) == 0;
+        pub fn IFEXITED(s: W) bool {
+            return @backingInt(s.TERMSIG()) == 0;
         }
-        pub fn IFSTOPPED(s: u32) bool {
-            return @as(u16, @truncate((((s & 0xffff) *% 0x10001) >> 8))) > 0x7f00;
+        pub fn IFSTOPPED(s: W) bool {
+            return @as(u16, @truncate((((s.toInt() & 0xffff) *% 0x10001) >> 8))) >
+                0x7f00;
         }
-        pub fn IFSIGNALED(s: u32) bool {
-            return (s & 0xffff) -% 1 < 0xff;
+        pub fn IFSIGNALED(s: W) bool {
+            return (s.toInt() & 0xffff) -% 1 < 0xff;
+        }
+
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
         }
     },
-    .illumos => struct {
-        pub const EXITED = 0o001;
-        pub const TRAPPED = 0o002;
-        pub const UNTRACED = 0o004;
-        pub const STOPPED = UNTRACED;
-        pub const CONTINUED = 0o010;
-        pub const NOHANG = 0o100;
-        pub const NOWAIT = 0o200;
+    .illumos => packed struct(u32) {
+        /// process exited
+        EXITED: bool = false,
+        /// process trapped
+        TRAPPED: bool = false,
+        /// notify on stop, untraced child
+        STOPPED: bool = false,
+        /// process continued
+        CONTINUED: bool = false,
+        _4: u2 = 0,
+        /// no hang in wait/no child to reap
+        NOHANG: bool = false,
+        /// don't wait for processes to exit
+        NOWAIT: bool = false,
+        _8: u24 = 0,
 
-        pub fn EXITSTATUS(s: u32) u8 {
-            return @as(u8, @intCast((s >> 8) & 0xff));
+        pub const UNTRACED: W = .{ .STOPPED = true };
+
+        pub fn EXITSTATUS(s: W) u8 {
+            return @intCast((s.toInt() >> 8) & 0xff);
         }
-        pub fn TERMSIG(s: u32) SIG {
-            return @fromBackingInt(@intCast(s & 0x7f));
+        pub fn TERMSIG(s: W) SIG {
+            return @fromBackingInt(s.toInt() & 0x7f);
         }
-        pub fn STOPSIG(s: u32) SIG {
-            return @fromBackingInt(@intCast(EXITSTATUS(s)));
+        pub fn STOPSIG(s: W) SIG {
+            return @fromBackingInt(s.EXITSTATUS());
         }
-        pub fn IFEXITED(s: u32) bool {
-            return (s & 0x7f) == 0;
+        pub fn IFEXITED(s: W) bool {
+            return @backingInt(s.TERMSIG()) == 0;
+        }
+        pub fn IFCONTINUED(s: W) bool {
+            return (s.toInt() & 0o177777) == 0o177777;
+        }
+        pub fn IFSTOPPED(s: W) bool {
+            return (s.toInt() & 0x00ff != 0o177) and !(s.toInt() & 0xff00 != 0);
+        }
+        pub fn IFSIGNALED(s: W) bool {
+            return s.toInt() & 0x00ff > 0 and s.toInt() & 0xff00 == 0;
         }
 
-        pub fn IFCONTINUED(s: u32) bool {
-            return ((s & 0o177777) == 0o177777);
-        }
-
-        pub fn IFSTOPPED(s: u32) bool {
-            return (s & 0x00ff != 0o177) and !(s & 0xff00 != 0);
-        }
-
-        pub fn IFSIGNALED(s: u32) bool {
-            return s & 0x00ff > 0 and s & 0xff00 == 0;
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
         }
     },
-    .netbsd => struct {
-        pub const NOHANG = 0x00000001;
-        pub const UNTRACED = 0x00000002;
-        pub const STOPPED = UNTRACED;
-        pub const CONTINUED = 0x00000010;
-        pub const NOWAIT = 0x00010000;
-        pub const EXITED = 0x00000020;
-        pub const TRAPPED = 0x00000040;
+    .netbsd => packed struct(u32) {
+        /// no hang in wait/no child to reap
+        NOHANG: bool = false,
+        /// notify on stop, untraced child
+        STOPPED: bool = false,
+        _2: u2 = 0,
+        /// process continued
+        CONTINUED: bool = false,
+        /// process exited
+        EXITED: bool = false,
+        /// process trapped
+        TRAPPED: bool = false,
+        _7: u9 = 0,
+        /// don't wait for processes to exit
+        NOWAIT: bool = false,
+        _17: u15 = 0,
 
-        pub fn EXITSTATUS(s: u32) u8 {
-            return @as(u8, @intCast((s >> 8) & 0xff));
+        pub const UNTRACED: W = .{ .STOPPED = true };
+
+        pub fn EXITSTATUS(s: W) u8 {
+            return @intCast((s.toInt() >> 8) & 0xff);
         }
-        pub fn TERMSIG(s: u32) SIG {
-            return @fromBackingInt(@intCast(s & 0x7f));
+        pub fn TERMSIG(s: W) SIG {
+            return @fromBackingInt(s.toInt() & 0x7f);
         }
-        pub fn STOPSIG(s: u32) SIG {
-            return @fromBackingInt(@intCast(EXITSTATUS(s)));
+        pub fn STOPSIG(x: W) SIG {
+            return @fromBackingInt(x.EXITSTATUS());
         }
-        pub fn IFEXITED(s: u32) bool {
-            return (s & 0x7f) == 0;
+        pub fn IFEXITED(s: W) bool {
+            return @backingInt(s.TERMSIG()) == 0;
+        }
+        pub fn IFCONTINUED(s: W) bool {
+            return (s == W{ .CONTINUED = true });
+        }
+        pub fn IFSTOPPED(s: W) bool {
+            return (s.TERMSIG() == W{ .STOPPED = true }) and !s.IFCONTINUED();
+        }
+        pub fn IFSIGNALED(s: W) bool {
+            return !s.IFSTOPPED() and !s.IFCONTINUED() and !s.IFEXITED();
         }
 
-        pub fn IFCONTINUED(s: u32) bool {
-            return (s == CONTINUED);
-        }
-
-        pub fn IFSTOPPED(s: u32) bool {
-            return (((s & 0x7f) == STOPPED) and !IFCONTINUED(s));
-        }
-
-        pub fn IFSIGNALED(s: u32) bool {
-            return !IFSTOPPED(s) and !IFCONTINUED(s) and !IFEXITED(s);
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
         }
     },
-    .dragonfly => struct {
-        pub const NOHANG = 0x0001;
-        pub const UNTRACED = 0x0002;
-        pub const CONTINUED = 0x0004;
-        pub const STOPPED = UNTRACED;
-        pub const NOWAIT = 0x0008;
-        pub const EXITED = 0x0010;
-        pub const TRAPPED = 0x0020;
+    .dragonfly => packed struct(u32) {
+        /// no hang in wait/no child to reap
+        NOHANG: bool = false,
+        /// notify on stop, untraced child
+        STOPPED: bool = false,
+        /// process continued
+        CONTINUED: bool = false,
+        /// don't wait for processes to exit
+        NOWAIT: bool = false,
+        /// process exited
+        EXITED: bool = false,
+        /// process trapped
+        TRAPPED: bool = false,
+        _6: u26 = 0,
 
-        pub fn EXITSTATUS(s: u32) u8 {
-            return @as(u8, @intCast((s & 0xff00) >> 8));
+        pub const UNTRACED: W = .{ .STOPPED = true };
+
+        pub fn EXITSTATUS(s: W) u8 {
+            return @intCast((s.toInt() & 0xff00) >> 8);
         }
-        pub fn TERMSIG(s: u32) SIG {
-            return @fromBackingInt(@intCast(s & 0x7f));
+        pub fn TERMSIG(s: W) SIG {
+            return @fromBackingInt(s.toInt() & 0x7f);
         }
-        pub fn STOPSIG(s: u32) SIG {
-            return @fromBackingInt(@intCast(EXITSTATUS(s)));
+        pub fn STOPSIG(s: W) SIG {
+            return @fromBackingInt(s.EXITSTATUS());
         }
-        pub fn IFEXITED(s: u32) bool {
-            return (s & 0x7f) == 0;
+        pub fn IFEXITED(s: W) bool {
+            return @backingInt(s.TERMSIG()) == 0;
         }
-        pub fn IFSTOPPED(s: u32) bool {
-            return @as(u16, @truncate((((s & 0xffff) *% 0x10001) >> 8))) > 0x7f00;
+        pub fn IFSTOPPED(s: W) bool {
+            return @as(u16, @truncate((((s.toInt() & 0xffff) *% 0x10001) >> 8))) >
+                0x7f00;
         }
-        pub fn IFSIGNALED(s: u32) bool {
-            return (s & 0xffff) -% 1 < 0xff;
+        pub fn IFSIGNALED(s: W) bool {
+            return (s.toInt() & 0xffff) -% 1 < 0xff;
+        }
+
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
         }
     },
-    .haiku => struct {
-        pub const NOHANG = 0x1;
-        pub const UNTRACED = 0x2;
-        pub const CONTINUED = 0x4;
-        pub const EXITED = 0x08;
-        pub const STOPPED = 0x10;
-        pub const NOWAIT = 0x20;
+    .haiku => packed struct(u32) {
+        /// no hang in wait/no child to reap
+        NOHANG: bool = false,
+        /// notify on stop, untraced child
+        UNTRACED: bool = false,
+        /// process continued
+        CONTINUED: bool = false,
+        /// process exited
+        EXITED: bool = false,
+        /// process stopped
+        STOPPED: bool = false,
+        /// don't wait for processes to exit
+        NOWAIT: bool = false,
+        _6: u26 = 0,
 
-        pub fn EXITSTATUS(s: u32) u8 {
-            return @as(u8, @intCast(s & 0xff));
+        pub fn EXITSTATUS(s: W) u8 {
+            return @intCast(s.toInt() & 0xff);
+        }
+        pub fn TERMSIG(s: W) SIG {
+            return @fromBackingInt((s.toInt() >> 8) & 0xff);
+        }
+        pub fn STOPSIG(s: W) SIG {
+            return @fromBackingInt((s.toInt() >> 16) & 0xff);
+        }
+        pub fn IFEXITED(s: W) bool {
+            return (s.toInt() & ~@as(u32, 0xff)) == 0;
+        }
+        pub fn IFSTOPPED(s: W) bool {
+            return @backingInt(s.STOPSIG()) != 0;
+        }
+        pub fn IFSIGNALED(s: W) bool {
+            return @backingInt(s.TERMSIG()) != 0;
         }
 
-        pub fn TERMSIG(s: u32) SIG {
-            return @fromBackingInt(@intCast((s >> 8) & 0xff));
-        }
-
-        pub fn STOPSIG(s: u32) SIG {
-            return @fromBackingInt(@intCast((s >> 16) & 0xff));
-        }
-
-        pub fn IFEXITED(s: u32) bool {
-            return (s & ~@as(u32, 0xff)) == 0;
-        }
-
-        pub fn IFSTOPPED(s: u32) bool {
-            return ((s >> 16) & 0xff) != 0;
-        }
-
-        pub fn IFSIGNALED(s: u32) bool {
-            return ((s >> 8) & 0xff) != 0;
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
         }
     },
-    .openbsd => struct {
-        pub const NOHANG = 1;
-        pub const UNTRACED = 2;
-        pub const CONTINUED = 8;
+    .openbsd => packed struct(u32) {
+        /// no hang in wait/no child to reap
+        NOHANG: bool = false,
+        /// notify on stop, untraced child
+        UNTRACED: bool = false,
+        _2: u1 = 0,
+        /// process continued
+        CONTINUED: bool = false,
+        _4: u28 = 0,
 
-        pub fn EXITSTATUS(s: u32) u8 {
-            return @as(u8, @intCast((s >> 8) & 0xff));
+        pub fn EXITSTATUS(s: W) u8 {
+            return @intCast((s.toInt() >> 8) & 0xff);
         }
-        pub fn TERMSIG(s: u32) SIG {
-            return @fromBackingInt(@intCast(s & 0x7f));
+        pub fn TERMSIG(s: W) SIG {
+            return @fromBackingInt(s.toInt() & 0x7f);
         }
-        pub fn STOPSIG(s: u32) SIG {
-            return @fromBackingInt(@intCast(EXITSTATUS(s)));
+        pub fn STOPSIG(s: W) SIG {
+            return @fromBackingInt(s.EXITSTATUS());
         }
-        pub fn IFEXITED(s: u32) bool {
-            return (s & 0x7f) == 0;
+        pub fn IFEXITED(s: W) bool {
+            return @backingInt(s.TERMSIG()) == 0;
+        }
+        pub fn IFCONTINUED(s: W) bool {
+            return (s.toInt() & 0o177777) == 0o177777;
+        }
+        pub fn IFSTOPPED(s: W) bool {
+            return (s.toInt() & 0xff) == 0o177;
+        }
+        pub fn IFSIGNALED(s: W) bool {
+            return ((s.toInt() & 0o177) != 0o177) and ((s.toInt() & 0o177) != 0);
         }
 
-        pub fn IFCONTINUED(s: u32) bool {
-            return ((s & 0o177777) == 0o177777);
-        }
-
-        pub fn IFSTOPPED(s: u32) bool {
-            return (s & 0xff == 0o177);
-        }
-
-        pub fn IFSIGNALED(s: u32) bool {
-            return (((s) & 0o177) != 0o177) and (((s) & 0o177) != 0);
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
         }
     },
     // https://github.com/SerenityOS/serenity/blob/ec492a1a0819e6239ea44156825c4ee7234ca3db/Kernel/API/POSIX/sys/wait.h
-    .serenity => struct {
-        pub const NOHANG = 1;
-        pub const UNTRACED = 2;
-        pub const STOPPED = UNTRACED;
-        pub const EXITED = 4;
-        pub const CONTINUED = 8;
-        pub const NOWAIT = 0x1000000;
+    .serenity => packed struct(u32) {
+        /// no hang in wait/no child to reap
+        NOHANG: bool = false,
+        /// notify on stop, untraced child
+        STOPPED: bool = false,
+        /// process exited
+        EXITED: bool = false,
+        /// process continued
+        CONTINUED: bool = false,
+        _4: u20 = 0,
+        /// don't wait for processes to exit
+        NOWAIT: bool = false,
+        _25: u7 = 0,
 
-        pub fn EXITSTATUS(s: u32) u8 {
-            return @intCast((s & 0xff00) >> 8);
+        pub const UNTRACED: W = .{ .STOPPED = true };
+
+        pub fn EXITSTATUS(s: W) u8 {
+            return @intCast((s.toInt() & 0xff00) >> 8);
+        }
+        pub fn STOPSIG(s: W) SIG {
+            return @fromBackingInt(s.EXITSTATUS());
+        }
+        pub fn TERMSIG(s: W) SIG {
+            return @fromBackingInt(s.toInt() & 0x7f);
+        }
+        pub fn IFEXITED(s: W) bool {
+            return @backingInt(s.TERMSIG()) == 0;
+        }
+        pub fn IFSTOPPED(s: W) bool {
+            return @backingInt(s.TERMSIG()) == 0x7f;
+        }
+        pub fn IFSIGNALED(s: W) bool {
+            return ((@backingInt(s.TERMSIG()) + 1) >> 1) > 0;
+        }
+        pub fn IFCONTINUED(s: W) bool {
+            return s.toInt() == 0xffff;
         }
 
-        pub fn STOPSIG(s: u32) SIG {
-            return @fromBackingInt(@intCast(EXITSTATUS(s)));
-        }
-
-        pub fn TERMSIG(s: u32) SIG {
-            return @fromBackingInt(@intCast(s & 0x7f));
-        }
-
-        pub fn IFEXITED(s: u32) bool {
-            return (s & 0x7f) == 0;
-        }
-
-        pub fn IFSTOPPED(s: u32) bool {
-            return (s & 0xff) == 0x7f;
-        }
-
-        pub fn IFSIGNALED(s: u32) bool {
-            return (((s & 0x7f) + 1) >> 1) > 0;
-        }
-
-        pub fn IFCONTINUED(s: u32) bool {
-            return s == 0xffff;
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
         }
     },
     else => void,
 };
+
 pub const accept_filter_arg = switch (native_os) {
     // https://github.com/freebsd/freebsd-src/blob/2024887abc7d1b931e00fbb0697658e98adf048d/sys/sys/socket.h#L205
     // https://github.com/DragonFlyBSD/DragonFlyBSD/blob/6098912863ed4c7b3f70d7483910ce2956cf4ed3/sys/sys/socket.h#L164
@@ -10713,7 +10784,7 @@ pub extern "c" fn linkat(oldfd: fd_t, oldpath: [*:0]const u8, newfd: fd_t, newpa
 pub extern "c" fn unlink(path: [*:0]const u8) c_int;
 pub extern "c" fn unlinkat(dirfd: fd_t, path: [*:0]const u8, flags: c_uint) c_int;
 pub extern "c" fn getcwd(buf: [*]u8, size: usize) ?[*]u8;
-pub extern "c" fn waitpid(pid: pid_t, status: ?*c_int, options: c_int) pid_t;
+pub extern "c" fn waitpid(pid: pid_t, status: ?*W, options: W) pid_t;
 
 pub const wait4 = switch (native_os) {
     .netbsd => private.__wait450,
@@ -11641,7 +11712,7 @@ const private = struct {
     extern "c" fn sigaltstack(ss: ?*const stack_t, old_ss: ?*stack_t) c_int;
     extern "c" fn sysconf(sc: c_int) c_long;
     extern "c" fn shm_open(name: [*:0]const u8, flag: c_int, mode: mode_t) c_int;
-    extern "c" fn wait4(pid: pid_t, status: ?*c_int, options: c_int, ru: ?*rusage) pid_t;
+    extern "c" fn wait4(pid: pid_t, status: ?*W, options: W, ru: ?*rusage) pid_t;
 
     extern "c" fn pthread_setname_np(thread: pthread_t, name: [*:0]const u8) c_int;
 
@@ -11695,7 +11766,7 @@ const private = struct {
     extern "c" fn __stat50(path: [*:0]const u8, buf: *Stat) c_int;
     extern "c" fn __getdents30(fd: c_int, buf_ptr: [*]u8, nbytes: usize) c_int;
     extern "c" fn __sigaltstack14(ss: ?*const stack_t, old_ss: ?*stack_t) c_int;
-    extern "c" fn __wait450(pid: pid_t, status: ?*c_int, options: c_int, ru: ?*rusage) pid_t;
+    extern "c" fn __wait450(pid: pid_t, status: ?*W, options: W, ru: ?*rusage) pid_t;
 
     extern "c" fn __libc_current_sigrtmin() c_int;
     extern "c" fn __libc_current_sigrtmax() c_int;

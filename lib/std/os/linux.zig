@@ -1964,27 +1964,33 @@ pub fn unlinkat(dirfd: fd_t, path: [*:0]const u8, flags: u32) usize {
     return syscall3(.unlinkat, @as(u32, @bitCast(dirfd)), @intFromPtr(path), flags);
 }
 
-pub fn waitpid(pid: pid_t, status: *i32, flags: u32) usize {
-    return syscall4(.wait4, @as(u32, @bitCast(pid)), @intFromPtr(status), flags, 0);
-}
-
-pub fn wait4(pid: pid_t, status: *i32, flags: u32, usage: ?*rusage) usize {
-    return syscall4(
+pub fn waitpid(pid: pid_t, status: ?*W, flags: W) pid_t {
+    return @intCast(syscall4(
         .wait4,
         @as(u32, @bitCast(pid)),
         @intFromPtr(status),
-        flags,
-        @intFromPtr(usage),
-    );
+        @as(u32, @bitCast(flags)),
+        0,
+    ));
 }
 
-pub fn waitid(id_type: P, id: pid_t, infop: *siginfo_t, flags: u32, usage: ?*rusage) usize {
+pub fn wait4(pid: pid_t, status: ?*W, flags: W, usage: ?*rusage) pid_t {
+    return @intCast(syscall4(
+        .wait4,
+        @as(u32, @bitCast(pid)),
+        @intFromPtr(status),
+        @as(u32, @bitCast(flags)),
+        @intFromPtr(usage),
+    ));
+}
+
+pub fn waitid(id_type: P, id: pid_t, infop: *siginfo_t, flags: W, usage: ?*rusage) usize {
     return syscall5(
         .waitid,
         @backingInt(id_type),
         @as(u32, @bitCast(id)),
         @intFromPtr(infop),
-        flags,
+        @as(u32, @bitCast(flags)),
         @intFromPtr(usage),
     );
 }
@@ -4339,31 +4345,38 @@ pub const X_OK = 1;
 pub const W_OK = 2;
 pub const R_OK = 4;
 
-pub const W = struct {
-    pub const NOHANG = 1;
-    pub const UNTRACED = 2;
-    pub const STOPPED = 2;
-    pub const EXITED = 4;
-    pub const CONTINUED = 8;
-    pub const NOWAIT = 0x1000000;
+pub const W = packed struct(u32) {
+    NOHANG: bool = false,
+    STOPPED: bool = false,
+    EXITED: bool = false,
+    CONTINUED: bool = false,
+    _4: u20 = 0,
+    NOWAIT: bool = false,
+    _25: u7 = 0,
 
-    pub fn EXITSTATUS(s: u32) u8 {
-        return @as(u8, @intCast((s & 0xff00) >> 8));
+    pub const UNTRACED: W = .{ .STOPPED = true };
+
+    pub fn EXITSTATUS(s: W) u8 {
+        return @intCast((s.toInt() & 0xff00) >> 8);
     }
-    pub fn TERMSIG(s: u32) SIG {
-        return @fromBackingInt(@intCast(s & 0x7f));
+    pub fn TERMSIG(s: W) SIG {
+        return @fromBackingInt(s.toInt() & 0x7f);
     }
-    pub fn STOPSIG(s: u32) SIG {
-        return @fromBackingInt(@intCast(EXITSTATUS(s)));
+    pub fn STOPSIG(s: W) SIG {
+        return @fromBackingInt(s.EXITSTATUS());
     }
-    pub fn IFEXITED(s: u32) bool {
-        return (s & 0x7f) == 0;
+    pub fn IFEXITED(s: W) bool {
+        return @backingInt(s.TERMSIG()) == 0;
     }
-    pub fn IFSTOPPED(s: u32) bool {
-        return @as(u16, @truncate(((s & 0xffff) *% 0x10001) >> 8)) > 0x7f00;
+    pub fn IFSTOPPED(s: W) bool {
+        return @as(u16, @truncate(((s.toInt() & 0xffff) *% 0x10001) >> 8)) > 0x7f00;
     }
-    pub fn IFSIGNALED(s: u32) bool {
-        return (s & 0xffff) -% 1 < 0xff;
+    pub fn IFSIGNALED(s: W) bool {
+        return (s.toInt() & 0xffff) -% 1 < 0xff;
+    }
+
+    fn toInt(s: W) u32 {
+        return @bitCast(s);
     }
 };
 

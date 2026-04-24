@@ -520,7 +520,7 @@ pub const RunError = error{
     FetchFailed,
 };
 
-pub fn run(f: *Fetch) RunError!void {
+pub fn run(f: *Fetch, prog_node: std.Progress.Node) RunError!void {
     const job_queue = f.job_queue;
     const io = job_queue.io;
     const eb = &f.error_bundle;
@@ -566,14 +566,14 @@ pub fn run(f: *Fetch) RunError!void {
         .path_or_url => |path_or_url| {
             if (Io.Dir.cwd().openDir(io, path_or_url, .{ .iterate = true })) |dir| {
                 var resource: Resource = .{ .dir = dir };
-                return f.runResource(path_or_url, &resource, null, false);
+                return f.runResource(path_or_url, &resource, null, false, prog_node);
             } else |dir_err| {
                 var server_header_buffer: [init_resource_buffer_size]u8 = undefined;
 
                 const file_err = if (dir_err == error.NotDir) e: {
                     if (Io.Dir.cwd().openFile(io, path_or_url, .{})) |file| {
                         var resource: Resource = .{ .file = file.reader(io, &server_header_buffer) };
-                        return f.runResource(path_or_url, &resource, null, false);
+                        return f.runResource(path_or_url, &resource, null, false, prog_node);
                     } else |err| break :e err;
                 } else dir_err;
 
@@ -585,7 +585,7 @@ pub fn run(f: *Fetch) RunError!void {
                 };
                 var resource: Resource = undefined;
                 try f.initResource(uri, &resource, &server_header_buffer);
-                return f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, null, false);
+                return f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, null, false, prog_node);
             }
         },
     };
@@ -646,7 +646,7 @@ pub fn run(f: *Fetch) RunError!void {
         if (cached_tarball_path.root_dir.handle.openFile(io, cached_tarball_path.sub_path, .{})) |file| {
             log.debug("found global cached tarball {f}", .{cached_tarball_path});
             var resource: Resource = .{ .file = file.reader(io, &resource_buffer) };
-            return f.runResource(cached_tarball_sub_path, &resource, remote.hash, true);
+            return f.runResource(cached_tarball_sub_path, &resource, remote.hash, true, prog_node);
         } else |err| switch (err) {
             error.FileNotFound => log.debug("FileNotFound: {f}", .{cached_tarball_path}),
             error.Canceled => |e| return e,
@@ -683,7 +683,7 @@ pub fn run(f: *Fetch) RunError!void {
     );
     var resource: Resource = undefined;
     try f.initResource(uri, &resource, &resource_buffer);
-    return f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, remote.hash, false);
+    return f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, remote.hash, false, prog_node);
 }
 
 pub fn deinit(f: *Fetch) void {
@@ -698,6 +698,7 @@ fn runResource(
     resource: *Resource,
     remote_hash: ?Package.Hash,
     disable_recompress: bool,
+    prog_node: std.Progress.Node,
 ) RunError!void {
     const job_queue = f.job_queue;
     assert(!job_queue.read_only);
@@ -742,7 +743,7 @@ fn runResource(
         defer tmp_directory.handle.close(io);
 
         // Fetch and unpack a resource into a temporary directory.
-        var unpack_result = try unpackResource(f, resource, uri_path, tmp_directory);
+        var unpack_result = try unpackResource(f, resource, uri_path, tmp_directory, prog_node);
 
         const pkg_path: Path = .{ .root_dir = tmp_directory, .sub_path = unpack_result.root_dir };
 
@@ -1046,7 +1047,7 @@ pub fn workerRun(f: *Fetch, prog_name: []const u8) Io.Cancelable!void {
     const prog_node = f.prog_node.start(prog_name, 0);
     defer prog_node.end();
 
-    run(f) catch |err| switch (err) {
+    run(f, prog_node) catch |err| switch (err) {
         error.OutOfMemory => f.oom_flag = true,
         error.Canceled => |e| return e,
         error.FetchFailed => {
@@ -1332,6 +1333,7 @@ fn unpackResource(
     resource: *Resource,
     uri_path: []const u8,
     tmp_directory: Directory,
+    prog_node: std.Progress.Node,
 ) RunError!UnpackResult {
     const eb = &f.error_bundle;
     const file_type = switch (resource.*) {
@@ -1436,7 +1438,7 @@ fn unpackResource(
             });
             return try unpackTarball(f, tmp_directory.handle, &decompress.reader);
         },
-        .git_pack => return unpackGitPack(f, tmp_directory.handle, &resource.git) catch |err| switch (err) {
+        .git_pack => return unpackGitPack(f, tmp_directory.handle, &resource.git, prog_node) catch |err| switch (err) {
             error.FetchFailed, error.OutOfMemory => |e| return e,
             else => |e| return f.fail(f.location_tok, try eb.printString("unable to unpack git files: {t}", .{e})),
         },
@@ -1569,15 +1571,13 @@ fn unzip(
     return .{ .root_dir = diagnostics.root_dir };
 }
 
-fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git) anyerror!UnpackResult {
+fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git, prog_node: std.Progress.Node) anyerror!UnpackResult {
     const io = f.job_queue.io;
     const arena = f.arena.allocator();
     // TODO don't try to get a gpa from an arena. expose this dependency higher up
     // because the backing of arena could be page allocator
     const gpa = f.arena.child_allocator;
     const object_format: git.Oid.Format = resource.want_oid;
-
-    f.prog_node.increaseEstimatedTotalItems(2);
 
     var res: UnpackResult = .{};
     // The .git directory is used to store the packfile and associated index, but
@@ -1602,14 +1602,14 @@ fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git) anyerror!U
         var index_file_buffer: [2000]u8 = undefined;
         var index_file_writer = index_file.writer(io, &index_file_buffer);
         {
-            const index_prog_node = f.prog_node.start("Index pack", 0);
+            const index_prog_node = prog_node.start("Index pack", 0);
             defer index_prog_node.end();
             try git.indexPack(gpa, object_format, &pack_file_reader, &index_file_writer);
         }
 
         {
             var index_file_reader = index_file.reader(io, &index_file_buffer);
-            const checkout_prog_node = f.prog_node.start("Checkout", 0);
+            const checkout_prog_node = prog_node.start("Checkout", 0);
             defer checkout_prog_node.end();
             var repository: git.Repository = undefined;
             try repository.init(gpa, object_format, &pack_file_reader, &index_file_reader);

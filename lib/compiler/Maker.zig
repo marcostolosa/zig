@@ -1713,6 +1713,7 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
 
     var root_prog_node = std.Progress.start(io, .{
         .root_name = "Fetch",
+        .estimated_total_items = 1,
     });
     defer root_prog_node.end();
 
@@ -1787,10 +1788,18 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
     };
     defer fetch.deinit();
 
-    fetch.run() catch |err| switch (err) {
-        error.OutOfMemory, error.Canceled => |e| return e,
-        error.FetchFailed => {}, // error bundle checked below
-    };
+    {
+        const prog_node = root_prog_node.start(switch (save) {
+            .no => null,
+            .yes, .exact => |opt_name| opt_name,
+        } orelse "root package", 0);
+        defer prog_node.end();
+
+        fetch.run(prog_node) catch |err| switch (err) {
+            error.OutOfMemory, error.Canceled => |e| return e,
+            error.FetchFailed => {}, // error bundle checked below
+        };
+    }
 
     try job_queue.group.await(io);
 

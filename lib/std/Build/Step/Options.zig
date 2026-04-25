@@ -65,10 +65,9 @@ fn printTypeDefinition(options: *Options, comptime T: type) PrintDeclError!void 
         inline .array, .optional => |info| return printTypeDefinition(options, info.child),
         .pointer => |pointer| {
             switch (pointer.size) {
-                .slice => return printTypeDefinition(options, pointer.child),
-                .one => unsupported("single-item pointer", T),
+                .one, .slice => return printTypeDefinition(options, pointer.child),
                 .many => unsupported("many-item pointer", T),
-                .c => unsupported("c pointer", T),
+                .c => unsupported("C pointer", T),
             }
         },
         .void, .bool, .int, .float, .comptime_int, .comptime_float, .enum_literal => return,
@@ -184,10 +183,11 @@ fn printStructOrUnionBody(options: *Options, comptime T: type) !void {
     };
     if (type_info.field_names.len == 0) return out.appendSlice(gpa, " {}");
     try out.appendSlice(gpa, " {\n");
-    inline for (type_info.field_names, type_info.field_types) |name, @"type"| {
+    inline for (type_info.field_names, type_info.field_types, type_info.field_attrs) |name, @"type", attrs| {
         try out.appendSlice(gpa, indent_str);
         try out.print(gpa, "{f}: ", .{fmtStructUnionFieldName(name)});
         try printTypeName(options, @"type", indent_width);
+        if (attrs.@"align") |alignment| try out.print(gpa, " align({d})", .{alignment});
         try out.appendSlice(gpa, ",\n");
     }
     try out.appendSlice(gpa, "}");
@@ -212,12 +212,20 @@ fn printTypeName(options: *Options, comptime T: type, indent: u8) !void {
             try printTypeName(options, array.child, indent);
         },
         .pointer => |pointer| {
-            try out.appendSlice(gpa, "[");
-            if (pointer.sentinel()) |sentinel| {
-                try out.appendSlice(gpa, ":");
-                try printValue(options, pointer.child, sentinel, indent);
+            switch (pointer.size) {
+                .one => try out.appendSlice(gpa, "*"),
+                .slice => {
+                    try out.appendSlice(gpa, "[");
+                    if (pointer.sentinel()) |sentinel| {
+                        try out.appendSlice(gpa, ":");
+                        try printValue(options, pointer.child, sentinel, indent);
+                    }
+                    try out.appendSlice(gpa, "]");
+                },
+                .many, .c => comptime unreachable,
             }
-            try out.appendSlice(gpa, "]const ");
+            if (pointer.attrs.@"align") |alignment| try out.print(gpa, "align({d}) ", .{alignment});
+            try out.appendSlice(gpa, "const ");
             try printTypeName(options, pointer.child, indent);
         },
         .optional => |optional| {
@@ -235,13 +243,26 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) PrintDe
     const out = &options.contents;
 
     switch (@typeInfo(T)) {
-        .array => |array| try printArrayOrSlice(options, value, array.child, indent),
+        .array => try printArrayOrSlice(options, T, value, indent),
         .pointer => |pointer| {
-            if (pointer.child == u8 and (pointer.sentinel() orelse 0) == 0) {
-                return out.print(gpa, "\"{f}\"", .{std.zig.fmtString(value)});
+            switch (pointer.size) {
+                .one => {
+                    const child_info = @typeInfo(pointer.child);
+                    if (child_info == .array and child_info.array.child == u8 and (child_info.array.sentinel() orelse 0) == 0) {
+                        return out.print(gpa, "\"{f}\"", .{std.zig.fmtString(value)});
+                    }
+                    try out.appendSlice(gpa, "&");
+                    try printValue(options, pointer.child, value.*, indent);
+                },
+                .slice => {
+                    if (pointer.child == u8 and (pointer.sentinel() orelse 0) == 0) {
+                        return out.print(gpa, "\"{f}\"", .{std.zig.fmtString(value)});
+                    }
+                    try out.appendSlice(gpa, "&");
+                    try printArrayOrSlice(options, T, value, indent);
+                },
+                .many, .c => comptime unreachable,
             }
-            try out.appendSlice(gpa, "&");
-            try printArrayOrSlice(options, value, pointer.child, indent);
         },
         .optional => |optional| {
             if (value) |inner| {
@@ -313,7 +334,7 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) PrintDe
     }
 }
 
-fn printArrayOrSlice(options: *Options, collection: anytype, comptime Child: type, indent: u8) PrintDeclError!void {
+fn printArrayOrSlice(options: *Options, comptime T: type, collection: T, indent: u8) PrintDeclError!void {
     const gpa = options.step.owner.allocator;
     const out = &options.contents;
 
@@ -323,7 +344,7 @@ fn printArrayOrSlice(options: *Options, collection: anytype, comptime Child: typ
     const elem_indent = indent +| indent_width;
     for (collection) |item| {
         try out.appendNTimes(gpa, ' ', elem_indent);
-        try printValue(options, Child, item, elem_indent);
+        try printValue(options, std.meta.Child(T), item, elem_indent);
         try out.appendSlice(gpa, ",\n");
     }
 

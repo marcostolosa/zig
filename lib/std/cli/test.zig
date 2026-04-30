@@ -252,19 +252,24 @@ test "parse.switch_on_subcommand" {
     }
 }
 
-test "helpPage" {
+test "renderHelp" {
     const raw: []const [:0]const u8 = &.{ "git", "--help" };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
+    var buf: [1024]u8 = undefined;
+    var out = std.Io.Writer.fixed(&buf);
     const expected: []const u8 = "A super long help page...\n";
-    try std.testing.expectEqualStrings(expected, cli.helpPage(git, parsed));
+    try cli.renderHelp(git, parsed, "git", &out);
+    try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
-test "helpPage.subcommand" {
+test "renderHelp.subcommand" {
     const raw: []const [:0]const u8 = &.{ "git", "branch", "--help" };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
-
-    const expected2: []const u8 = "Create a branch.\n";
-    try std.testing.expectEqualStrings(expected2, cli.helpPage(git, parsed));
+    var buf: [1024]u8 = undefined;
+    var out = std.Io.Writer.fixed(&buf);
+    const expected: []const u8 = "Create a branch.\n";
+    try cli.renderHelp(git, parsed, "git", &out);
+    try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
 test "parse.named.enum" {
@@ -314,4 +319,15 @@ test "parse.dash_is_valid_positional" {
     defer arena.deinit();
     const parsed = try cli.parse(git, arena.allocator(), raw, .{});
     try std.testing.expectEqualStrings(parsed.subcommand.?.add.kind.args.files[0], "-");
+}
+
+test "descentPath" {
+    const raw: []const [:0]const u8 = &.{ "git", "add", "-" };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const parsed = try cli.parse(git, arena.allocator(), raw, .{});
+    const path = cli.descentPath(&.{}, git, parsed);
+    try std.testing.expectEqualStrings("git", path[0]);
+    try std.testing.expectEqualStrings("add", path[1]);
+    try std.testing.expectEqual(2, path.len);
 }

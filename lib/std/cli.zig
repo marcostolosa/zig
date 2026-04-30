@@ -51,6 +51,30 @@ pub const Command = struct {
     /// Included only to allow easier auto-generation of help-text by libraries outside of std.
     /// Typically the single-line help sentence for subcommands.
     help_short: [:0]const u8 = "",
+
+    /// Optionally provide a help text generator implementation.
+    renderHelp: *const fn (
+        comptime command: Command,
+        /// See ParseOptions.
+        argv0: [:0]const u8,
+        /// The full path to this subcommand.
+        /// Index 0 is always the .name field of the root command.
+        /// Example: &.{"git", "commit"}
+        descent_path: []const [:0]const u8,
+        out: *std.Io.Writer,
+    ) std.Io.Writer.Error!void = renderHelpVerbatim,
+
+    /// Renders the .help field verbatim.
+    pub fn renderHelpVerbatim(
+        comptime command: Command,
+        argv0: [:0]const u8,
+        descent_path: []const [:0]const u8,
+        out: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+        _ = descent_path;
+        _ = argv0;
+        try out.writeAll(command.help);
+    }
 };
 
 pub const Argument = struct {
@@ -60,7 +84,7 @@ pub const Argument = struct {
     /// Typically the single-line help sentence next to each option in a list of options.
     help: [:0]const u8,
     /// If non-null, allows named arguments to have single character aliases.
-    /// Example: `git commit -m "std.cli"` and `git commit --message` parse results are identical.
+    /// Example: `git commit -m "std.cli"` and `git commit --message "std.cli"` parse results are identical.
     /// Has no effect for positional arguments.
     short: ?u8,
 
@@ -214,6 +238,15 @@ pub const ParseOptions = struct {
     /// Provide help information to stdout when the user requests help with --help.
     /// Errors when writing to stdout are silently ignored.
     render_help: bool = false,
+    /// When generating the help text, choose what to use as "argv0".
+    /// Example: "git".
+    /// The first os argument is typically the path to the executable.
+    argv0: union(enum) {
+        /// Use the root command name as argv0. Example: "git".
+        root_command_name: void,
+        first_os_argument: void,
+        custom: [:0]const u8,
+    } = .root_command_name,
 };
 
 /// Parse the operating-system provided arguments according to the grammer defined in command.
@@ -222,12 +255,21 @@ pub fn parse(
     comptime command: Command,
     arena: std.mem.Allocator,
     /// See std.process.Args.toSlice
-    /// Index 0 must be populated and will be skipped.
+    /// Index 0 must be populated.
     args: []const [:0]const u8,
     options: ParseOptions,
 ) ParseError!Parsed(command) {
     var iter: Iterator = .init(args);
-    _ = iter.next(); // consume argv index 0, which is this executable's path.
+    const argv0 = switch (options.argv0) {
+        .root_command_name => command.name,
+        .first_os_argument => iter.next() orelse unreachable,
+        .custom => |v| v,
+    };
+
+    switch (options.argv0) {
+        .first_os_argument => {},
+        .custom, .root_command_name => _ = iter.next() orelse unreachable, // consume argv index 0, which is this executable's path.
+    }
 
     const parsed = try parseRecursive(command, arena, &iter, options);
 
@@ -237,7 +279,7 @@ pub fn parse(
         var buf: [1024]u8 = undefined;
         var stdout = std.Io.File.stdout().writer(io, &buf);
         const writer: *std.Io.Writer = &stdout.interface;
-        writer.writeAll(helpPage(command, parsed)) catch {};
+        renderHelp(command, parsed, argv0, writer) catch {};
         writer.flush() catch {};
     }
     if (options.exit_help and helpWanted(parsed)) {
@@ -412,20 +454,52 @@ fn usageErrorExit(options: ParseOptions, comptime format: []const u8, args: anyt
     return error.Usage;
 }
 
-/// Returns the help page for the active command or subcommand.
-pub fn helpPage(comptime command: Command, parsed: Parsed(command)) [:0]const u8 {
+pub fn renderHelp(
+    comptime command: Command,
+    parsed: Parsed(command),
+    argv0: [:0]const u8,
+    out: *std.Io.Writer,
+) std.Io.Writer.Error!void {
+    return renderHelpRecursive(&.{}, command, parsed, argv0, out);
+}
+
+// separate recursive function just avoids awkward accumulator parameter for users
+fn renderHelpRecursive(
+    comptime accumulator: []const [:0]const u8,
+    comptime command: Command,
+    parsed: Parsed(command),
+    argv0: [:0]const u8,
+    out: *std.Io.Writer,
+) std.Io.Writer.Error!void {
+    const descent_path = accumulator ++ [_][:0]const u8{command.name};
     if (parsed.subcommand) |subcommand| {
         switch (subcommand) {
             inline else => |value, tag| {
                 inline for (command.subcommands) |subcommand_config| {
                     if (comptime std.mem.eql(u8, subcommand_config.name, @tagName(tag))) {
-                        return helpPage(subcommand_config, value);
+                        return renderHelpRecursive(descent_path, subcommand_config, value, argv0, out);
                     }
                 }
             },
         }
         unreachable;
-    } else return command.help;
+    } else return command.renderHelp(command, argv0, descent_path, out);
+}
+
+pub inline fn descentPath(comptime accumulator: []const [:0]const u8, comptime command: Command, parsed: Parsed(command)) []const [:0]const u8 {
+    const result = accumulator ++ [_][:0]const u8{command.name};
+    if (parsed.subcommand) |subcommand| {
+        switch (subcommand) {
+            inline else => |value, tag| {
+                inline for (command.subcommands) |subcommand_config| {
+                    if (comptime std.mem.eql(u8, subcommand_config.name, @tagName(tag))) {
+                        return descentPath(result, subcommand_config, value);
+                    }
+                }
+            },
+        }
+    }
+    return result;
 }
 
 /// True when no usage error and (`--help` or `-h`) was provided as part of the arguments

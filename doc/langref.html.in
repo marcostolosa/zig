@@ -4669,10 +4669,13 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       {#header_close#}
 
       {#header_open|@compileError#}
-      <pre>{#syntax#}@compileError(comptime msg: []const u8) noreturn{#endsyntax#}</pre>
+      <pre>{#syntax#}@compileError(...) noreturn{#endsyntax#}</pre>
       <p>
-      This function, when semantically analyzed, causes a compile error with the
-      message {#syntax#}msg{#endsyntax#}.
+      This function, when semantically analyzed, causes a compile error with a
+      message generated from the arguments passed to it.
+      </p>
+      <p>
+      Each argument must be either a comptime-known string or a {#syntax#}type{#endsyntax#}.
       </p>
       <p>
       There are several ways that code avoids being semantically checked, such as

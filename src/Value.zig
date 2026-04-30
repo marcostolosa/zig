@@ -81,7 +81,7 @@ pub fn toIpString(val: Value, ty: Type, pt: Zcu.PerThread) !InternPool.NullTermi
 
 /// Asserts that the value is representable as an array of bytes.
 /// Copies the value into a freshly allocated slice of memory, which is owned by the caller.
-pub fn toAllocatedBytes(val: Value, ty: Type, allocator: Allocator, pt: Zcu.PerThread) ![]u8 {
+pub fn toAllocatedBytes(val: Value, ty: Type, allocator: Allocator, pt: Zcu.PerThread) Allocator.Error![]u8 {
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
     return switch (ip.indexToKey(val.toIntern())) {
@@ -101,7 +101,7 @@ pub fn toAllocatedBytes(val: Value, ty: Type, allocator: Allocator, pt: Zcu.PerT
     };
 }
 
-fn arrayToAllocatedBytes(val: Value, len: u64, allocator: Allocator, pt: Zcu.PerThread) ![]u8 {
+fn arrayToAllocatedBytes(val: Value, len: u64, allocator: Allocator, pt: Zcu.PerThread) Allocator.Error![]u8 {
     const result = try allocator.alloc(u8, @intCast(len));
     for (result, 0..) |*elem, i| {
         const elem_val = try val.elemValue(pt, i);

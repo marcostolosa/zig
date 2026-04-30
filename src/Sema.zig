@@ -2007,7 +2007,7 @@ fn resolveConstBool(
     src: LazySrcLoc,
     zir_ref: Zir.Inst.Ref,
     reason: ComptimeReason,
-) !bool {
+) CompileError!bool {
     const air_inst = sema.resolveInst(zir_ref);
     const wanted_type: Type = .bool;
     const coerced_inst = try sema.coerce(block, wanted_type, air_inst, src);
@@ -2023,7 +2023,7 @@ fn resolveConstString(
     /// `null` may be passed only if `block.isComptime()`. It indicates that the reason for the value
     /// being comptime-resolved is that the block is being comptime-evaluated.
     reason: ?ComptimeReason,
-) ![]u8 {
+) CompileError![]u8 {
     const air_inst = sema.resolveInst(zir_ref);
     return sema.toConstString(block, src, air_inst, reason);
 }
@@ -2036,10 +2036,23 @@ pub fn toConstString(
     /// `null` may be passed only if `block.isComptime()`. It indicates that the reason for the value
     /// being comptime-resolved is that the block is being comptime-evaluated.
     reason: ?ComptimeReason,
-) ![]u8 {
-    const pt = sema.pt;
+) CompileError![]u8 {
     const coerced_inst = try sema.coerce(block, .slice_const_u8, air_inst, src);
-    const slice_val = try sema.resolveConstDefinedValue(block, src, coerced_inst, reason);
+    return sema.toConstStringNoCoerce(block, src, coerced_inst, reason);
+}
+
+/// Assumes that `air_inst` is of type `slice_const_u8`.
+pub fn toConstStringNoCoerce(
+    sema: *Sema,
+    block: *Block,
+    src: LazySrcLoc,
+    air_inst: Air.Inst.Ref,
+    /// `null` may be passed only if `block.isComptime()`. It indicates that the reason for the value
+    /// being comptime-resolved is that the block is being comptime-evaluated.
+    reason: ?ComptimeReason,
+) CompileError![]u8 {
+    const pt = sema.pt;
+    const slice_val = try sema.resolveConstDefinedValue(block, src, air_inst, reason);
     const arr_val = try sema.derefSliceAsArray(block, src, slice_val, reason);
     return arr_val.toAllocatedBytes(arr_val.typeOf(pt.zcu), sema.arena, pt);
 }
@@ -2050,7 +2063,7 @@ pub fn resolveConstStringIntern(
     src: LazySrcLoc,
     zir_ref: Zir.Inst.Ref,
     reason: ComptimeReason,
-) !InternPool.NullTerminatedString {
+) CompileError!InternPool.NullTerminatedString {
     const air_inst = sema.resolveInst(zir_ref);
     const wanted_type: Type = .slice_const_u8;
     const coerced_inst = try sema.coerce(block, wanted_type, air_inst, src);
@@ -2751,7 +2764,7 @@ fn reparentOwnedErrorMsg(
     msg: *Zcu.ErrorMsg,
     comptime format: []const u8,
     args: anytype,
-) !void {
+) Allocator.Error!void {
     const msg_str = try std.fmt.allocPrint(sema.gpa, format, args);
 
     const orig_notes = msg.notes.len;
@@ -2764,6 +2777,20 @@ fn reparentOwnedErrorMsg(
 
     msg.src_loc = src;
     msg.msg = msg_str;
+}
+
+/// Given an ErrorMsg, modify its message and source location to the given values, discarding the
+/// original message. Notes on the original message are preserved. Reference trace is preserved.
+fn replaceOwnedErrorMsg(
+    sema: *Sema,
+    src: LazySrcLoc,
+    msg: *Zcu.ErrorMsg,
+    comptime format: []const u8,
+    args: anytype,
+) Allocator.Error!void {
+    msg.msg = try sema.gpa.realloc(msg.msg, std.fmt.count(format, args));
+    _ = std.fmt.bufPrint(@constCast(msg.msg), format, args) catch unreachable;
+    msg.src_loc = src;
 }
 
 const align_ty: Type = .u29;
@@ -5016,11 +5043,51 @@ fn zirFloat128(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Ai
 }
 
 fn zirCompileError(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!void {
-    const inst_data = sema.code.instructions.items(.data)[@backingInt(inst)].un_node;
+    const pt = sema.pt;
+    const zcu = pt.zcu;
+    const gpa = sema.gpa;
+
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    const writer = &aw.writer;
+
+    const inst_data = sema.code.instructions.items(.data)[@backingInt(inst)].pl_node;
+    const extra = sema.code.extraData(Zir.Inst.MultiOp, inst_data.payload_index);
     const src = block.nodeOffset(inst_data.src_node);
-    const operand_src = block.builtinCallArgSrc(inst_data.src_node, 0);
-    const msg = try sema.resolveConstString(block, operand_src, inst_data.operand, .{ .simple = .compile_error_string });
-    return sema.fail(block, src, "{s}", .{msg});
+    const args = sema.code.refSlice(extra.end, extra.data.operands_len);
+
+    for (args, 0..) |arg_ref, arg_i| {
+        const arg = sema.resolveInst(arg_ref);
+        const arg_ty = sema.typeOf(arg);
+        if (arg_ty.zigTypeTag(zcu) == .type) {
+            writer.print("{f}", .{arg.toType().fmt(pt)}) catch return error.OutOfMemory;
+        } else {
+            const arg_src = block.builtinCallArgSrc(inst_data.src_node, @intCast(arg_i));
+            const coerced = sema.coerce(block, .slice_const_u8, arg, arg_src) catch |err| switch (err) {
+                error.AnalysisFail => {
+                    const msg = sema.err orelse return error.AnalysisFail;
+                    try sema.replaceOwnedErrorMsg(arg_src, msg, "expected either type '[]const u8' or type 'type', found '{f}'", .{arg_ty.fmt(pt)});
+                    return error.AnalysisFail;
+                },
+                else => |e| return e,
+            };
+            const str = try sema.toConstStringNoCoerce(block, arg_src, coerced, .{ .simple = .compile_error_message });
+            writer.writeAll(str) catch return error.OutOfMemory;
+        }
+    }
+
+    return sema.failWithOwnedErrorMsg(block, msg: {
+        const msg = try sema.errMsg(src, "{s}", .{aw.written()});
+        errdefer msg.destroy(gpa);
+
+        for (args) |arg_ref| {
+            const arg = sema.resolveInst(arg_ref);
+            if (sema.typeOf(arg).zigTypeTag(zcu) == .type) {
+                try sema.addDeclaredHereNote(msg, arg.toType());
+            }
+        }
+        break :msg msg;
+    });
 }
 
 fn zirCompileLog(

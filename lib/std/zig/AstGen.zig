@@ -8966,6 +8966,36 @@ fn minMax(
     return rvalue(gz, ri, result, node);
 }
 
+fn compileError(
+    gz: *GenZir,
+    scope: *Scope,
+    ri: ResultInfo,
+    node: Ast.Node.Index,
+    args: []const Ast.Node.Index,
+) InnerError!Zir.Inst.Ref {
+    const astgen = gz.astgen;
+    if (args.len == 0) {
+        return astgen.failNodeNotes(node, "expected at least 1 argument, found 0", .{}, &.{
+            try astgen.errNoteNode(node, "consider using 'comptime unreachable'", .{}),
+        });
+    }
+    try astgen.extra.ensureUnusedCapacity(
+        astgen.gpa,
+        @typeInfo(Zir.Inst.MultiOp).@"struct".field_names.len + args.len,
+    );
+    const payload_index = astgen.addExtraAssumeCapacity(Zir.Inst.MultiOp{
+        .operands_len = @intCast(args.len),
+    });
+    var extra_index = try reserveExtra(astgen, args.len);
+    for (args) |arg| {
+        const arg_ref = try comptimeExpr(gz, scope, .{ .rl = .none }, arg, .compile_error_message);
+        astgen.extra.items[extra_index] = @backingInt(arg_ref);
+        extra_index += 1;
+    }
+    const result = try gz.addPlNodePayloadIndex(.compile_error, node, payload_index);
+    return rvalue(gz, ri, result, node);
+}
+
 fn builtinCall(
     gz: *GenZir,
     scope: *Scope,
@@ -9097,12 +9127,13 @@ fn builtinCall(
         },
 
         // zig fmt: off
-        .as         => return as(       gz, scope, ri, node, params[0], params[1]),
-        .bit_cast   => return bitCast(  gz, scope, ri, node, params[0]),
-        .TypeOf     => return typeOf(   gz, scope, ri, node, params),
-        .union_init => return unionInit(gz, scope, ri, node, params),
-        .min        => return minMax(   gz, scope, ri, node, params, .min),
-        .max        => return minMax(   gz, scope, ri, node, params, .max),
+        .as            => return as(          gz, scope, ri, node, params[0], params[1]),
+        .bit_cast      => return bitCast(     gz, scope, ri, node, params[0]),
+        .TypeOf        => return typeOf(      gz, scope, ri, node, params),
+        .union_init    => return unionInit(   gz, scope, ri, node, params),
+        .min           => return minMax(      gz, scope, ri, node, params, .min),
+        .max           => return minMax(      gz, scope, ri, node, params, .max),
+        .compile_error => return compileError(gz, scope, ri, node, params),
         // zig fmt: on
 
         .@"export" => {
@@ -9170,7 +9201,6 @@ fn builtinCall(
         .align_of    => return simpleUnOpType(gz, scope, ri, node, params[0], .align_of),
 
         .int_from_ptr          => return simpleUnOp(gz, scope, ri, node, .{ .rl = .none },                                     params[0], .int_from_ptr),
-        .compile_error         => return simpleUnOp(gz, scope, ri, node, .{ .rl = .{ .coerced_ty = .slice_const_u8_type } },   params[0], .compile_error),
         .set_eval_branch_quota => return simpleUnOp(gz, scope, ri, node, .{ .rl = .{ .coerced_ty = .u32_type } },              params[0], .set_eval_branch_quota),
         .int_from_enum         => return simpleUnOp(gz, scope, ri, node, .{ .rl = .none },                                     params[0], .int_from_enum),
         .int_from_bool         => return simpleUnOp(gz, scope, ri, node, .{ .rl = .none },                                     params[0], .int_from_bool),
@@ -9744,10 +9774,7 @@ fn simpleUnOp(
     tag: Zir.Inst.Tag,
 ) InnerError!Zir.Inst.Ref {
     const cursor = maybeAdvanceSourceCursorToMainToken(gz, node);
-    const operand = if (tag == .compile_error)
-        try comptimeExpr(gz, scope, operand_ri, operand_node, .compile_error_string)
-    else
-        try expr(gz, scope, operand_ri, operand_node);
+    const operand = try expr(gz, scope, operand_ri, operand_node);
     switch (tag) {
         .tag_name, .error_name, .int_from_ptr => try emitDbgStmt(gz, cursor),
         else => {},

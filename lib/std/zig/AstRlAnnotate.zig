@@ -811,7 +811,7 @@ fn builtinCall(astrl: *AstRlAnnotate, block: ?*Block, ri: ResultInfo, node: Ast.
             _ = try astrl.expr(args[0], block, ResultInfo.type_only);
             return false;
         },
-        .compile_log, .TypeOf => {
+        .compile_log, .compile_error, .TypeOf => {
             for (args) |arg_node| {
                 _ = try astrl.expr(arg_node, block, ResultInfo.none);
             }
@@ -884,7 +884,6 @@ fn builtinCall(astrl: *AstRlAnnotate, block: ?*Block, ri: ResultInfo, node: Ast.
         .size_of,
         .bit_size_of,
         .align_of,
-        .compile_error,
         .set_eval_branch_quota,
         .int_from_bool,
         .int_from_error,

@@ -27,7 +27,7 @@ pub fn main(init: std.process.Init) !void {
         .exit_help = true,
         .exit_usage_error = true,
         .render_usage_errors = true,
-        .render_help = true,
+        .render_help = .verbatim,
     });
     return @"i like cheese"(arena, io, parsed.kind.args.zig_src_root);
 }

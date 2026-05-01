@@ -6,11 +6,11 @@ const git: cli.Command = .{
     .help = "A super long help page...\n",
     .help_short = "A version control system.",
     .named_args = &.{
-        .init(bool, .{ .name = "paginate", .short = 'p', .default_value = false }),
+        .init(bool, .{ .name = "paginate", .short = 'p', .default_value = false, .help = "Enable pagination." }),
         // this is a fictional argument
-        .init(std.log.Level, .{ .name = "log-level", .short = 'l', .default_value = .warn }),
+        .init(std.log.Level, .{ .name = "log-level", .short = 'l', .default_value = .warn, .help = "Set log level." }),
         // this is a fictional argument
-        .init([]const bool, .{ .name = "verbose", .count = .unlimited, .default_value = &.{true} }),
+        .init([]const bool, .{ .name = "verbose", .count = .unlimited, .default_value = &.{true}, .help = "Increase verbosity." }),
     },
     .subcommands = &.{
         .{
@@ -22,42 +22,30 @@ const git: cli.Command = .{
             .positional_args = &.{
                 .init([]const u8, .{ .name = "url", .count = .one }),
             },
+            .help_short = "Download a repository.",
         },
-        .{
-            .name = "add",
-            .positional_args = &.{
-                .init([]const [:0]const u8, .{ .name = "files", .count = .unlimited }),
-            },
-        },
-        .{
-            .name = "commit",
-            .named_args = &.{
-                .init([]const [:0]const u8, .{ .name = "message", .short = 'm', .count = .unlimited }),
-                .init(?[:0]const u8, .{ .name = "author", .count = .one }),
-            },
-        },
-        .{
-            .name = "branch",
-            .help = "Create a branch.\n",
-            .positional_args = &.{
-                .init(?[:0]const u8, .{ .name = "branch_name", .count = .one }),
-            },
-            .named_args = &.{
-                .init(bool, .{ .name = "verbose", .short = 'v', .count = .one, .default_value = false }),
-            },
-        },
+        .{ .name = "add", .positional_args = &.{
+            .init([]const [:0]const u8, .{ .name = "files", .count = .unlimited }),
+        }, .help_short = "Stage files." },
+        .{ .name = "commit", .named_args = &.{
+            .init([]const [:0]const u8, .{ .name = "message", .short = 'm', .count = .unlimited }),
+            .init(?[:0]const u8, .{ .name = "author", .count = .one }),
+        }, .help_short = "Commit staged changes." },
+        .{ .name = "branch", .help = "Create a branch.\n", .positional_args = &.{
+            .init(?[:0]const u8, .{ .name = "branch_name", .count = .one }),
+        }, .named_args = &.{
+            .init(bool, .{ .name = "verbose", .short = 'v', .count = .one, .default_value = false }),
+        }, .help_short = "Create a branch." },
         .{
             .name = "log",
             .named_args = &.{
                 .init(?u32, .{ .name = "max-count", .count = .one }),
             },
+            .help_short = "Show history.",
         },
-        .{
-            .name = "init",
-            .positional_args = &.{
-                .init([:0]const u8, .{ .name = "directory", .count = .one, .default_value = "." }),
-            },
-        },
+        .{ .name = "init", .positional_args = &.{
+            .init([:0]const u8, .{ .name = "directory", .count = .one, .default_value = "." }),
+        }, .help_short = "Create a repository." },
     },
 };
 
@@ -252,23 +240,23 @@ test "parse.switch_on_subcommand" {
     }
 }
 
-test "renderHelp" {
+test "writeHelpVerbatim" {
     const raw: []const [:0]const u8 = &.{ "git", "--help" };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
     var buf: [1024]u8 = undefined;
     var out = std.Io.Writer.fixed(&buf);
     const expected: []const u8 = "A super long help page...\n";
-    try cli.renderHelp(git, parsed, "git", &out);
+    try cli.writeHelpVerbatim(git, parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
-test "renderHelp.subcommand" {
+test "writeHelpVerbatim.subcommand" {
     const raw: []const [:0]const u8 = &.{ "git", "branch", "--help" };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
     var buf: [1024]u8 = undefined;
     var out = std.Io.Writer.fixed(&buf);
     const expected: []const u8 = "Create a branch.\n";
-    try cli.renderHelp(git, parsed, "git", &out);
+    try cli.writeHelpVerbatim(git, parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
@@ -300,7 +288,7 @@ test "parse.options.named.enum.short" {
     const raw: []const [:0]const u8 = &.{ "git", "-l", "debug" };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{
         .exit_help = true,
-        .render_help = true,
+        .render_help = .verbatim,
         .exit_usage_error = true,
         .render_usage_errors = true,
     });
@@ -330,4 +318,33 @@ test "descentPath" {
     try std.testing.expectEqualStrings("git", path[0]);
     try std.testing.expectEqualStrings("add", path[1]);
     try std.testing.expectEqual(2, path.len);
+}
+
+test "writeHelpGenerated" {
+    const raw: []const [:0]const u8 = &.{ "git", "--help" };
+    const parsed = try cli.parse(git, std.testing.allocator, raw, .{});
+    var buf: [1024]u8 = undefined;
+    var out = std.Io.Writer.fixed(&buf);
+    const expected: []const u8 =
+        \\Usage: git ...
+        \\A super long help page...
+        \\Named Arguments:
+        \\  -p, --paginate: Enable pagination.
+        \\  -l, --log-level: Set log level.
+        \\  --verbose: Increase verbosity.
+        \\
+        \\Subcommands:
+        \\  clone: Download a repository.
+        \\  add: Stage files.
+        \\  commit: Commit staged changes.
+        \\  branch: Create a branch.
+        \\  log: Show history.
+        \\  init: Create a repository.
+        \\
+        \\
+        \\
+    ;
+
+    try cli.writeHelpGenerated(git, parsed, &out);
+    try std.testing.expectEqualStrings(expected, out.buffered());
 }

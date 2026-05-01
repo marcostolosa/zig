@@ -170,7 +170,7 @@ pub fn main(init: std.process.Init) !void {
         .exit_help = true,
         .exit_usage_error = true,
         .render_usage_errors = true,
-        .render_help = true,
+        .render_help = .verbatim,
     });
 
     const search_paths = parsed.kind.args.@"search-path";

@@ -27,7 +27,7 @@ pub fn main(init: std.process.Init) !void {
         .exit_help = true,
         .exit_usage_error = true,
         .render_usage_errors = true,
-        .render_help = true,
+        .render_help = .verbatim,
     });
 
     const zig_src_lib_path = parsed.kind.args.zig_src_lib_path;

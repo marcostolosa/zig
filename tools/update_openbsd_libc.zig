@@ -36,7 +36,7 @@ pub fn main(init: std.process.Init) !void {
         .exit_help = true,
         .exit_usage_error = true,
         .render_usage_errors = true,
-        .render_help = true,
+        .render_help = .verbatim,
     });
 
     const openbsd_src_path = parsed.kind.args.openbsd_src_path;

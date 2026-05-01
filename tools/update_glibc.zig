@@ -62,7 +62,7 @@ pub fn main(init: std.process.Init) !void {
         .exit_help = true,
         .exit_usage_error = true,
         .render_usage_errors = true,
-        .render_help = true,
+        .render_help = .verbatim,
     });
 
     const glibc_src_path = parsed.kind.args.glibc_src_path;

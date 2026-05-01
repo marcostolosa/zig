@@ -314,7 +314,7 @@ test "descentPath" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const parsed = try cli.parse(git, arena.allocator(), raw, .{});
-    const path = cli.descentPath(&.{}, git, parsed);
+    const path = cli.descentPath(git, parsed);
     try std.testing.expectEqualStrings("git", path[0]);
     try std.testing.expectEqualStrings("add", path[1]);
     try std.testing.expectEqual(2, path.len);

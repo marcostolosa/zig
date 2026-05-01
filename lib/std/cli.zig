@@ -559,16 +559,19 @@ pub fn writeCommandGeneratedHelp(comptime command: Command, comptime descent_pat
 /// The path of subcommands leading to and including the active subcommand.
 ///
 /// Example: the descent path for `git commit -m "std.cli"` is `&.{"git", "commit"}`, and the active subcommand is `commit`.
-///
-/// This a is a recursive function. Comptime parameter accumulator should be `&.{}` at the first callsite.
-pub inline fn descentPath(comptime accumulator: []const [:0]const u8, comptime command: Command, parsed: Parsed(command)) []const [:0]const u8 {
+pub inline fn descentPath(comptime command: Command, parsed: Parsed(command)) []const [:0]const u8 {
+    return descentPathRecursive(&.{}, command, parsed);
+}
+
+// separate function only to avoid exposing user to awkward accumulator parameter
+inline fn descentPathRecursive(comptime accumulator: []const [:0]const u8, comptime command: Command, parsed: Parsed(command)) []const [:0]const u8 {
     const result = accumulator ++ [_][:0]const u8{command.name};
     if (parsed.subcommand) |subcommand| {
         switch (subcommand) {
             inline else => |value, tag| {
                 inline for (command.subcommands) |subcommand_config| {
                     if (comptime std.mem.eql(u8, subcommand_config.name, @tagName(tag))) {
-                        return descentPath(result, subcommand_config, value);
+                        return descentPathRecursive(result, subcommand_config, value);
                     }
                 }
             },

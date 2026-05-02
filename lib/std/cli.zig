@@ -74,7 +74,7 @@ pub const Argument = struct {
     pub fn init(
         /// The type of the corresponding field in `parsed.kind.args`.
         ///
-        /// - bool: `--verbose`, `--verbose=true`, `-v` result in true. `--no-verbose`, `--verbose=false`, `-v=false` result in false.
+        /// - bool: `--verbose`, `--verbose=true`, `-v` result in true. `--no-verbose`, `--verbose=false` result in false.
         /// - enum: string input corresponding to each enum field. Example: `--log-level debug` results in `.debug`.
         /// - integer: uses `std.fmt.parseInt` to parse an integer.
         /// - float: uses `std.fmt.parseFloat` to parse a float.

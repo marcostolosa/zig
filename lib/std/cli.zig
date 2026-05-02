@@ -126,6 +126,10 @@ pub const Argument = struct {
             .short = options.short,
         };
     }
+
+    pub inline fn isOptional(comptime self: Argument) bool {
+        return @typeInfo(self.field.type) == .optional or self.field.defaultValue() != null;
+    }
 };
 
 /// Represents the result of CLI parsing.
@@ -364,12 +368,10 @@ fn validateCommand(comptime command: Command) void {
     // optional positional args must come after required args
     var seen_optional = false;
     inline for (command.positional_args) |arg| {
-        const is_optional = @typeInfo(arg.field.type) == .optional or arg.field.defaultValue() != null;
-
-        if (seen_optional and !is_optional) {
+        if (seen_optional and !arg.isOptional()) {
             @compileError("Optional positional arguments must follow required positional arguments. Offender: " ++ arg.field.name);
         }
-        if (is_optional) {
+        if (arg.isOptional()) {
             seen_optional = true;
         }
     }
@@ -492,68 +494,138 @@ fn writeHelpRecursive(
 /// Looks like this:
 ///
 /// ```
-/// Usage: git add ...
+/// Usage: git add [OPTIONS] <files ...>
 ///
-/// Stage files for commit.
+/// Stage files before committing.
 ///
-/// Positional Arguments:
-///   files: the files to stage.
+/// POSITIONAL ARGUMENTS
+///   files
+///     List of files to stage.
 ///
-/// Named Arguments:
-///   -v, --verbose: be verbose.
-///
-/// Subcommands:
-///   commit: commit files.
-///
+/// OPTIONS
+///   -n, --dry-run, --no-dry-run
+///     Don't actually do anything.
 ///
 /// ```
-///
-pub fn writeCommandGeneratedHelp(comptime command: Command, comptime descent_path: []const [:0]const u8, out: *std.Io.Writer) std.Io.Writer.Error!void {
-    // Usage: git add ...
+pub fn writeCommandGeneratedHelp(
+    comptime command: Command,
+    comptime descent_path: []const [:0]const u8,
+    out: *std.Io.Writer,
+) std.Io.Writer.Error!void {
     try out.writeAll("Usage: ");
-    for (descent_path) |cmd| {
-        try out.writeAll(cmd);
-        try out.writeAll(" ");
-    }
-    try out.writeAll("...\n");
+    try writeCommandUsage(command, descent_path, out);
+    try out.writeAll("\n");
 
-    // Stage files for commit.
-    try out.writeAll(command.help);
-
-    // Positional Arguments:
-    //   files: the files to stage.
-    if (command.positional_args.len > 0) {
-        try out.writeAll("Positional Arguments:\n");
-        inline for (command.positional_args) |positional| {
-            try out.print("  {s}: {s}\n", .{ positional.field.name, positional.help });
-        }
+    if (command.help.len > 0) {
         try out.writeAll("\n");
+        try out.print("{s}", .{command.help});
     }
 
-    // Named Arguments:
-    //   -v, --verbose: be verbose.
-    if (command.named_args.len > 0) {
-        try out.writeAll("Named Arguments:\n");
-        inline for (command.named_args) |named| {
-            if (named.short) |short| {
-                try out.print("  -{c}, --{s}: {s}\n", .{ short, named.field.name, named.help });
-            } else {
-                try out.print("  --{s}: {s}\n", .{ named.field.name, named.help });
+    if (command.positional_args.len > 0) {
+        try out.writeAll("\n");
+        try out.writeAll("POSITIONAL ARGUMENTS\n");
+        inline for (command.positional_args) |positional| {
+            try out.print("  {s}\n", .{positional.field.name});
+            if (positional.help.len > 0) try writeIndented(positional.help, 4, out);
+            if (positional.field.defaultValue()) |default_value| {
+                if (@typeInfo(@TypeOf(default_value)) != .optional) {
+                    try out.writeAll("    Default: ");
+                    switch (positional.count) {
+                        .one => try writeDefaultValue(@TypeOf(default_value), default_value, out),
+                        .unlimited => {
+                            for (default_value) |v| {
+                                try writeDefaultValue(@TypeOf(v), v, out);
+                            }
+                        },
+                    }
+                    try out.writeAll("\n");
+                }
             }
         }
-        try out.writeAll("\n");
     }
 
-    // Subcommands:
-    //   commit:
-    if (command.subcommands.len > 0) {
-        try out.writeAll("Subcommands:\n");
-        inline for (command.subcommands) |subcommand| {
-            try out.print("  {s}: {s}\n", .{ subcommand.name, subcommand.help_short });
+    try out.writeAll("\n");
+    try out.writeAll("OPTIONS\n");
+    try out.writeAll("  -h, --help\n");
+    try out.writeAll("    Print this help and exit.\n");
+    inline for (command.named_args) |named| {
+        try out.writeAll("\n");
+        const Value = switch (named.count) {
+            .one => named.field.type,
+            .unlimited => std.meta.Child(named.field.type),
+        };
+        if (named.short) |short| try out.print("  -{c}, ", .{short}) else try out.writeAll("  ");
+        if (@typeInfo(Value) == .bool) {
+            try out.print("--{s}, --no-{s}\n", .{ named.field.name, named.field.name });
+        } else {
+            try out.print("--{s} [{s}]\n", .{ named.field.name, helpTypeName(Value) });
         }
+        if (named.help.len > 0) try writeIndented(named.help, 4, out);
+        if (named.field.defaultValue()) |default_value| {
+            if (@typeInfo(@TypeOf(default_value)) != .optional) {
+                try out.writeAll("    Default: ");
+                // HACK: json formats slices of strings decently and enums!
+                try std.json.Stringify.value(default_value, .{ .emit_strings_as_arrays = false }, out);
+                try out.writeAll("\n");
+            }
+        }
+    }
+
+    if (command.subcommands.len > 0) {
+        try out.writeAll("\n");
+        try out.writeAll("SUBCOMMANDS");
+        inline for (command.subcommands) |subcommand| {
+            try out.writeAll("\n");
+            try out.print("  {s}\n", .{subcommand.name});
+            try writeIndented(subcommand.help_short, 4, out);
+        }
+    }
+}
+
+// Warning: converts \r\n to \n.
+fn writeIndented(buf: [:0]const u8, comptime spaces: u8, out: *std.Io.Writer) std.Io.Writer.Error!void {
+    var iter = std.mem.tokenizeAny(u8, buf, "\r\n");
+    while (iter.next()) |next| {
+        const indent: [spaces]u8 = @splat(' ');
+        try out.writeAll(&indent);
+        try out.writeAll(next);
         try out.writeAll("\n");
     }
-    try out.writeAll("\n");
+}
+
+/// Example: `git clone [OPTIONS] <url>`
+pub fn writeCommandUsage(
+    comptime command: Command,
+    comptime descent_path: []const [:0]const u8,
+    out: *std.Io.Writer,
+) std.Io.Writer.Error!void {
+    inline for (descent_path) |cmd| {
+        try out.print("{s} ", .{cmd});
+    }
+
+    if (command.named_args.len > 0) {
+        try out.writeAll("[OPTIONS]");
+    }
+
+    inline for (command.positional_args) |positional| {
+        // [name_of_a_positional ...]
+        const fragment = blk: {
+            comptime var s: [:0]const u8 = " ";
+            {
+                s = s ++ if (positional.isOptional()) "[" else "<";
+                defer s = s ++ if (positional.isOptional()) "]" else ">";
+
+                s = s ++ positional.field.name;
+                switch (positional.count) {
+                    .one => {},
+                    .unlimited => s = s ++ " ...",
+                }
+            }
+            break :blk s;
+        };
+        try out.writeAll(fragment);
+    }
+    if (command.subcommands.len > 0) try out.writeAll(" [SUBCOMMAND]");
 }
 
 /// The path of subcommands leading to and including the active subcommand.
@@ -725,10 +797,6 @@ fn parseRecursive(
                         value = .{ .found = true };
                     } else if (cutPrefixSentinel(u8, 0, os_arg, long_token ++ "=")) |suffix| {
                         value = .{ .found = try parseValue(options, Value, suffix) };
-                    } else if (short_token != null) {
-                        if (cutPrefixSentinel(u8, 0, os_arg, short_token.? ++ "=")) |suffix| {
-                            value = .{ .found = try parseValue(options, Value, suffix) };
-                        }
                     } else {
                         value = .not_found;
                     }
@@ -746,10 +814,6 @@ fn parseRecursive(
                     } else if (short_token != null and std.mem.eql(u8, os_arg, short_token.?)) {
                         value = .{ .found = try parseValue(options, Value, iter.next() orelse
                             return usageErrorExit(options, "Missing argument for option: {s}", .{short_token.?})) };
-                    } else if (short_token != null) {
-                        if (cutPrefixSentinel(u8, 0, os_arg, short_token.? ++ "=")) |suffix| {
-                            value = .{ .found = try parseValue(options, Value, suffix) };
-                        }
                     }
                 }
                 switch (value) {
@@ -882,6 +946,70 @@ fn parseValue(options: ParseOptions, comptime T: type, buf: [:0]const u8) error{
         .optional => |info| return try parseValue(options, info.child, buf),
         else => comptime unreachable, // unsupported type for cli argument value parsing
     }
+}
+
+/// Intended to be very similar to parseValue.
+/// Example: "integer" in these help lines:
+///
+/// ```
+///   --retry [integer]
+///     Retry requests n times.
+/// ```
+fn helpTypeName(comptime T: type) [:0]const u8 {
+    return switch (@typeInfo(T)) {
+        .bool => "bool",
+        .int => "integer",
+        .float => "number",
+        .pointer => |pointer| switch (pointer.size) {
+            .slice, .c, .many => if (pointer.child == u8)
+                "string"
+            else
+                comptime unreachable // unsupported type for cli argument value parsing
+            ,
+            else => comptime unreachable, // unsupported type for cli argument value parsing
+        },
+        .@"enum" => |info| blk: {
+            comptime var s: [:0]const u8 = "";
+            inline for (info.fields, 0..) |field, i| {
+                if (i == 0) {
+                    s = s ++ field.name;
+                    continue;
+                }
+                s = s ++ "|" ++ field.name;
+            }
+            break :blk s;
+        },
+        .optional => |info| return helpTypeName(info.child),
+        else => comptime unreachable, // unsupported type for cli argument value parsing
+    };
+}
+
+/// Intended to be very similar to parseValue.
+/// Example: "3" in these help lines:
+///
+/// ```
+///   --retry [integer]
+///     Retry requests n times.
+///     Default: 3
+/// ```
+fn writeDefaultValue(comptime T: type, value: T, out: *std.Io.Writer) std.Io.Writer.Error!void {
+    return switch (@typeInfo(T)) {
+        .bool, .int, .float => try out.print("{any}", .{value}),
+        .pointer => |pointer| switch (pointer.size) {
+            .slice, .c, .many => if (pointer.child == u8)
+                try out.print("\"{s}\"", .{value})
+            else
+                comptime unreachable // unsupported type for cli argument value parsing
+            ,
+            else => comptime unreachable, // unsupported type for cli argument value parsing
+        },
+        .@"enum" => try out.writeAll(@tagName(value)),
+        .optional => {
+            comptime assert(value == null); // default value for optional args is always null
+            try out.writeAll("null");
+        },
+        else => comptime unreachable, // unsupported type for cli argument value parsing
+    };
 }
 
 test {

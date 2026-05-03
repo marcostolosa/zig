@@ -1,63 +1,87 @@
-# This grammer document describes how to parse command line arguments.
-# This document attempts to adhere to GNU getopt_long semantics, which is an extension
-# of POSIX getopt behavior, and allows mixing the order of positionals and options.
-# Ref: https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap12.html
-# Ref: https://sourceware.org/glibc/manual/latest/html_node/Argument-Syntax.html
+# Zig std.cli Command-line Argument Parser Grammer Specification
+# Version: 0.1.0
+
+# To prevent breaking changes experienced by users of applications
+# that include std.cli functionality, std.cli MUST conform to
+# this specification.
+
+# The style of this document MUST align with the zig language grammer document:
+# https://codeberg.org/ziglang/zig-spec/src/branch/master/grammar/grammar.peg
 #
-# The style of this document should align with zig-spec grammer document.
-# Ref: https://codeberg.org/ziglang/zig-spec/src/branch/master/grammar/grammar.peg#
-# Ref: https://en.wikipedia.org/wiki/Parsing_expression_grammar
+# This document describes Parsing Expression Grammer.
+# https://en.wikipedia.org/wiki/Parsing_expression_grammar
 
-# Examples are all in ZON format.
+# The command-line argument parser MAY conform to parts of the following
+# specifications:
+# - POSIX Utility Conventions: https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap12.html
+# - GNU Program Argument Syntax Conventions: https://sourceware.org/glibc/manual/latest/html_node/Argument-Syntax.html
+#
+#
+# Summary:
+# - Aligns with GNU getopt_long, which allows mixing the order of options and positionals.
+# - Supports short-clusters, like in `tar -xvf files.tar.gz`.
+# - Does not support ShortArg append to ShortFlag, like .{"-o", "file.txt"} in .{"curl", "-ofile.txt", "http://example.com"}
+#
+# Examples are given in ZON (Zig Object Notation) format.
 
 
-# ArgV: the operating system provided argument vector.
+# ArgV is the POSIX operating-system-provided argument vector.
+# The parser is given ArgV.
 # Example: .{"/usr/bin/git", "commit", "-m", "std.cli"}
 #
-# Program: the name of the program.
-# Example: "/usr/bin/git"
+# The divisions between the elements are semantically important
+# and are denoted as NE ("new element").
 #
-# Arg: the user provided elements of the argument vector.
-# Example: .{"commit", "-m", "std.cli"}
-# There may be zero or more Arg.
-#
-# EOI: ("end of input") is the end of the os-provided argument vector.
-ArgV <- Program Arg* EOI
+# SOI ("start of input") is the start of the os-provided argument vector.
+# Program is the program name.
+# Arg is an argument given to the program, there may be zero or more Arg.
+# EOI ("end of input") is the end of the os-provided argument vector.
+ArgV <- SOI Program (NE Arg)* EOI
 
+# The program name can be any string.
 # Example: "/usr/bin/git"
 Program <- STRING
 
-# Example: .{"commit", "-m", "std.cli"}
+# An Arg may be explicitly beginning positionals, an optional,
+# a subcommand, or a positional in that priority order.
+#
+# Example: Subcommand "commit" in .{"git", "commit", "-m", "std.cli"}
+# Example: Option .{"-m", "std.cli"} in .{"git", "commit", "-m", "std.cli"}
+# 
 # Encountering the EndOfOptions symbol ("--") causes all remaining
 # Arg to be considered Positional (zero or more).
 #
-# Note: Subcommand is prioritized above Positional.
-# So if the user wants to specify a positional that collides with a subcommand,
-# they need to use EndOfOptions.
+# Example: .{"--", "README.md", "build.zig.zon"} in .{"git", "add", "--", "README.md", "build.zig.zon"}
+# 
+# Note that Positional is the lowest priority, so if the user wants to specify a 
+# positional that collides with EndOfOptions, Option, Subcommand, they need to user EndOfOptions first.
+#
+# Example: .{"git", "add", "--", "--verbose"} will add a file named "--verbose".
 Arg
-    <- EndOfOptions Positional*
-    / Optional
+    <- EndOfOptions (NE Positional)*
+    / Option
     / Subcommand
     / Positional
 
 # The EndOfOptions symbol is DASHDASH.
-# Example: "--"
+# Example: "--" in .{"git", "add", "--", "README.md"}
 EndOfOptions <- DASHDASH
 
 # Subcommands just begin the argparsing again.
-# Args after subcommand only apply to that subcommand and to not apply to the parents.
-Subcommand <- SubcommandName Arg*
+# Arg after subcommand only apply to that subcommand and to not apply to the parents.
+#
+# Example: .{"commit", "-m", "std.cli"} in .{"git", "commit", "-m", "std.cli"}
+Subcommand <- SubcommandName (NE Arg)*
 
-# SubcommandName is only one of the allowed subcommands.
-# The following example comes from the full command line:
-# .{"git" , "commit" , "-m", "std.cli"}
-# Example: "commit"
+# SubcommandName is only one of the program-author-allowed subcommands.
+# 
+# Example: "commit" in .{"git" , "commit" , "-m", "std.cli"}
 #
 # And SUBCOMMANDLIST would be something like .{"commit", "pull", "push", "clone"} etc.
-# Note: Subcommand may not start with dash, conflicts with options.
+# Note: Subcommand may not start with dash, conflicts with Option.
 SubcommandName <- SUBCOMMANDLIST
 
-# A single DASH ("-") is a valid positional argument, typically representing stdout.
+# A single DASH ("-") is a valid Positional, typically representing stdout.
 Positional
     <- DASH
     / STRING
@@ -68,40 +92,33 @@ Option
     / ShortCluster
 
 # A LongOption begins with "--" and might have a LongArg attached.
-# Example: .{"--message", "std.cli"}
-# Example: .{"--message=std.cli"}
-# Example: .{"--amend"}
-LongOption
-    <- DASHDASH Name LongArg?
-
-# OptionValue can be attached to LongArg with "=" or detached.
-#
 # EQUAL is "=".
 #
-# The following examples come from full command-line:
-# .{"git", "commit", "--message=std.cli", "--message", "std.cli"}
-#
-# Example: "=std.cli"
-# Example: "std.cli"
-LongArg
-    <- EQUAL OptionValue
-    / OptionValue
+# Example: .{"--message", "std.cli"} in .{"git" , "commit" , "--message", "std.cli"}
+# Example: .{"--message=std.cli"} in .{"git" , "commit" , "--message=std.cli"}
+# Example: "--amend" in .{"git" , "commit" , "--amend"}
+# Example: .{"--message", ""} in .{"git" , "commit" , "--message="}
+LongOption
+    <- DASHDASH Name (NE OptionValue)?
+    \ DASHDASH Name EQUAL OptionValue
+
+# Name is one of the program-author-allowed long option names for the command.
+# 
+# Example: "amend" in .{"git" , "commit" , "--amend"}
+Name <- LONGOPTIONLIST
 
 # OptionValue is just a string that gets reinterpreted as some type
-# like f32 or i64 by the developer.
+# like f32 or i64 by the program author.
 OptionValue <- STRING
 
 
 # A short-cluster is a group of single-character aliases for long options.
 # The following examples come from full command-line:
-# .{"tar", "-xvf", "zig-x86_64-linux-0.15.2.tar.xz"}
-# Example: "-xvf"
-# In the above example:
 #
-# - "x" is a ShortNoArg
-# - "v" is a ShortNoArg
-# - "f" with "zig-x86_64-linux-0.15.2.tar.xz" is a ShortWithArg.
-# 
+# Example:"x" is a ShortNoArg in .{"tar", "-xvf", "files.tar.gz"}
+# Example: "v" is a ShortNoArg in .{"tar", "-xvf", "files.tar.gz"}
+# Example: .{"f", "files.tar.gz"} is a ShortWithArg in .{"tar", "-xvf", "files.tar.gz"}
+#
 # A ShortCluster begins with a DASH ("-") and may contain multiple
 # ShortNoArg. If there is a ShortWithArg, it must be last.
 # The ShortCluster must have at least one short in it.
@@ -109,28 +126,18 @@ ShortCluster
     <- DASH ShortNoArg* ShortWithArg
      / DASH ShortNoArg+
 
-# ShortWithArg is "f" and "zig-x86_64-linux-0.15.2.tar.xz" in the following 
-# full command-line example (ZON):
-# .{"tar", "-xvf", "zig-x86_64-linux-0.15.2.tar.xz"}
-ShortWithArg <- ShortFlag ShortArg
+# Example: .{"f", "files.tar.gz"} in .{"tar", "-xvf", "files.tar.gz"}
+ShortWithArg <- ShortFlag NE ShortArg
 
-# ShortFlag is any ASCII single character.
-# The following examples come from full command-line:
-# .{"git", "commit", "-m", "std.cli"}
-#
-# Example: "m"
-ShortFlag <- ASCIICHAR
+# ShortFlag is any non-dash single ASCII character.
+# Example: "m" in .{"git", "commit", "-m", "std.cli"}
+ShortFlag <- ASCIICHARNODASH
 
 # ShortArg is the argument for a ShortWithArg.
-# The following examples come from full command-line:
-# .{"git", "commit", "-m", "std.cli"}
-#
-# Example: "std.cli"
+# Example: "std.cli" in .{"git", "commit", "-m", "std.cli"}
 ShortArg <- OptionValue
 
-# Common functionality intentionally omitted:
-#
-# ShortArg appended to ShortFlag.
-# Rejected example: .{"-ofile.txt"}
-# Accepted example: .{"-o", "file.txt"}
-# Rationale: Difficult to disambiguate with short-cluster.
+# ShortArg appended to ShortFlag is not supported because
+# it is too difficult to disambiguate with a short-cluster.
+# Rejected example: .{"-ofile.txt"} in .{"curl", "-ofile.txt", "http://example.com"}
+# Accepted example: .{"-o", "file.txt"} in .{"curl", "-o", "file.txt", "http://example.com"}

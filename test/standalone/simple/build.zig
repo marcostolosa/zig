@@ -39,52 +39,83 @@ pub fn build(b: *std.Build) void {
 
             const resolved_target = b.resolveTargetQuery(case.target);
 
-            if (case.is_exe) {
+            if (case.file_type == .exe or case.file_type == .exe_and_obj) {
                 const exe = b.addExecutable(.{
                     .name = std.fs.path.stem(case.src_path),
                     .root_module = b.createModule(.{
                         .root_source_file = b.path(case.src_path),
                         .optimize = optimize,
                         .target = resolved_target,
+                        .link_libc = case.link_libc,
                     }),
                 });
-                if (case.link_libc) exe.root_module.link_libc = true;
-
-                _ = exe.getEmittedBin();
+                if (case.emit_type == .bin) _ = exe.getEmittedBin();
+                if (case.emit_type == .@"asm") _ = exe.getEmittedAsm();
+                if (case.emit_type == .llvm_ir_and_llvm_bc) {
+                    _ = exe.getEmittedLlvmIr();
+                    _ = exe.getEmittedLlvmBc();
+                }
 
                 step.dependOn(&exe.step);
             }
 
-            if (case.is_test) {
-                const exe = b.addTest(.{
+            if (case.file_type == .obj or case.file_type == .exe_and_obj) {
+                const obj = b.addObject(.{
                     .name = std.fs.path.stem(case.src_path),
                     .root_module = b.createModule(.{
                         .root_source_file = b.path(case.src_path),
                         .optimize = optimize,
                         .target = resolved_target,
+                        .link_libc = case.link_libc,
                     }),
                 });
-                if (case.link_libc) exe.root_module.link_libc = true;
+                if (case.emit_type == .bin) _ = obj.getEmittedBin();
+                if (case.emit_type == .@"asm") _ = obj.getEmittedAsm();
+                if (case.emit_type == .llvm_ir_and_llvm_bc) {
+                    _ = obj.getEmittedLlvmIr();
+                    _ = obj.getEmittedLlvmBc();
+                }
 
-                const run = b.addRunArtifact(exe);
-                step.dependOn(&run.step);
+                step.dependOn(&obj.step);
             }
         }
     }
 }
+
+const FileType = enum {
+    exe,
+    obj,
+    exe_and_obj,
+};
+
+const EmitType = enum {
+    bin,
+    @"asm",
+    llvm_ir_and_llvm_bc,
+};
 
 const Case = struct {
     src_path: []const u8,
     link_libc: bool = false,
     all_modes: bool = false,
     target: std.Target.Query = .{},
-    is_test: bool = false,
-    is_exe: bool = true,
+    file_type: FileType = .exe,
+    emit_type: EmitType = .bin,
     /// Run only on this OS.
     os_filter: ?std.Target.Os.Tag = null,
 };
 
 const cases = [_]Case{
+    .{
+        .src_path = "emit_asm_no_bin.zig",
+        .file_type = .obj,
+        .emit_type = .@"asm",
+    },
+    .{
+        .src_path = "emit_llvm_no_bin.zig",
+        .file_type = .obj,
+        .emit_type = .llvm_ir_and_llvm_bc,
+    },
     .{
         .src_path = "hello_world/hello.zig",
         .all_modes = true,
@@ -94,9 +125,7 @@ const cases = [_]Case{
         .link_libc = true,
         .all_modes = true,
     },
-    .{
-        .src_path = "cat/main.zig",
-    },
-    .{ .src_path = "guess_number/main.zig" },
+    .{ .src_path = "cat.zig" },
+    .{ .src_path = "guess_number.zig" },
     .{ .src_path = "std_enums_big_enums.zig" },
 };

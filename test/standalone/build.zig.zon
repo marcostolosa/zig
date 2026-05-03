@@ -45,12 +45,6 @@
         .emit_asm_and_bin = .{
             .path = "emit_asm_and_bin",
         },
-        .emit_llvm_no_bin = .{
-            .path = "emit_llvm_no_bin",
-        },
-        .emit_asm_no_bin = .{
-            .path = "emit_asm_no_bin",
-        },
         .child_process = .{
             .path = "child_process",
         },

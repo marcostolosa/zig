@@ -2,11 +2,11 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const test_mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("main.zig"),
         .target = b.graph.host,
     });
-    const module1 = b.createModule(.{ .root_source_file = b.path("module1/main.zig") });
-    const module2 = b.createModule(.{ .root_source_file = b.path("module2/main.zig") });
+    const module1 = b.createModule(.{ .root_source_file = b.path("module1.zig") });
+    const module2 = b.createModule(.{ .root_source_file = b.path("module2.zig") });
 
     module2.addImport("module1", module1);
     test_mod.addImport("module2", module2);
@@ -14,7 +14,7 @@ pub fn build(b: *std.Build) void {
     const t = b.addTest(.{
         .root_module = test_mod,
         .test_runner = .{
-            .path = b.path("test_runner/main.zig"),
+            .path = b.path("test_runner.zig"),
             .mode = .simple,
         },
     });

@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const test_obj = b.addTest(.{
         .emit_object = true,
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
+            .root_source_file = b.path("main.zig"),
             .target = b.graph.host,
         }),
     });

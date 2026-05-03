@@ -483,6 +483,15 @@ fn validateCommand(comptime command: Command) void {
         }
     }
 
+    // Shorthand may not be dash.
+    inline for (command.positional_args ++ command.named_args) |arg| {
+        if (arg.short) |short| {
+            if (short == '-') {
+                @compileError("Argument with shorthand \"-\" is prohibited. Offender: " ++ "--" ++ arg.field.name);
+            }
+        }
+    }
+
     // Subcommand may not start with "-", conflicts with named arguments.
     inline for (command.subcommands) |subcommand| {
         if (comptime std.mem.startsWith(u8, subcommand.name, "-")) {

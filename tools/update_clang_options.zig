@@ -661,7 +661,7 @@ pub fn main(init: std.process.Init) !void {
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
-    const cli_parsed = try std.cli.parse(command, arena, args, .{
+    const cli_parsed = try std.cli.parseAlloc(command, arena, args, .{
         .exit_help = true,
         .exit_usage_error = true,
         .render_usage_errors = true,

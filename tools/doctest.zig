@@ -69,7 +69,7 @@ pub fn main(init: std.process.Init) !void {
 
     try environ_map.put("CLICOLOR_FORCE", "1");
 
-    const parsed = try std.cli.parse(
+    const parsed = try std.cli.parseAlloc(
         command,
         arena,
         try init.minimal.args.toSlice(arena),

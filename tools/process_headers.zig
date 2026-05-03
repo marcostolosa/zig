@@ -168,7 +168,7 @@ pub fn main(init: std.process.Init) !void {
     const cwd_path = try std.process.currentPathAlloc(io, arena);
     const environ_map = init.environ_map;
 
-    const parsed = try std.cli.parse(command, arena, args, .{
+    const parsed = try std.cli.parseAlloc(command, arena, args, .{
         .exit_help = true,
         .exit_usage_error = true,
         .render_usage_errors = true,

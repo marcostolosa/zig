@@ -411,7 +411,7 @@ fn validateCommand(comptime command: Command) void {
         }
     }
 
-    // require unique shorthand
+    // Require unique shorthand.
     inline for (command.positional_args ++ command.named_args, 0..) |lhs_arg, i| {
         inline for (command.positional_args ++ command.named_args, 0..) |rhs_arg, j| {
             if (i == j) continue;
@@ -421,6 +421,13 @@ fn validateCommand(comptime command: Command) void {
                     "), " ++
                     "--" ++ rhs_arg.field.name ++ " (-" ++ [_]u8{rhs_arg.short.?} ++ ")");
             }
+        }
+    }
+
+    // Subcommand may not start with "-", conflicts with named arguments.
+    inline for (command.subcommands) |subcommand| {
+        if (comptime std.mem.startsWith(u8, subcommand.name, "-")) {
+            @compileError("Subcommand name may not start with \"-\", offender: " ++ subcommand.name);
         }
     }
 }
@@ -466,23 +473,23 @@ pub fn writeHelpGenerated(
     parsed: Parsed(command),
     out: *std.Io.Writer,
 ) std.Io.Writer.Error!void {
-    return writeHelpRecursive(&.{}, command, parsed, out);
+    const descent_path = descentPath(command, parsed);
+    return writeHelpRecursive(command, descent_path, parsed, out);
 }
 
 // separate recursive function just avoids awkward accumulator parameter for users
 fn writeHelpRecursive(
-    comptime accumulator: []const [:0]const u8,
     comptime command: Command,
+    descent_path: []const [:0]const u8,
     parsed: Parsed(command),
     out: *std.Io.Writer,
 ) std.Io.Writer.Error!void {
-    const descent_path = accumulator ++ [_][:0]const u8{command.name};
     if (parsed.subcommand) |subcommand| {
         switch (subcommand) {
             inline else => |value, tag| {
                 inline for (command.subcommands) |subcommand_config| {
                     if (comptime std.mem.eql(u8, subcommand_config.name, @tagName(tag))) {
-                        return writeHelpRecursive(descent_path, subcommand_config, value, out);
+                        return writeHelpRecursive(subcommand_config, descent_path, value, out);
                     }
                 }
             },
@@ -509,7 +516,7 @@ fn writeHelpRecursive(
 /// ```
 pub fn writeCommandGeneratedHelp(
     comptime command: Command,
-    comptime descent_path: []const [:0]const u8,
+    descent_path: []const [:0]const u8,
     out: *std.Io.Writer,
 ) std.Io.Writer.Error!void {
     try out.writeAll("Usage: ");
@@ -529,15 +536,8 @@ pub fn writeCommandGeneratedHelp(
             if (positional.help.len > 0) try writeIndented(positional.help, 4, out);
             if (positional.field.defaultValue()) |default_value| {
                 if (@typeInfo(@TypeOf(default_value)) != .optional) {
-                    try out.writeAll("    Default: ");
-                    switch (positional.count) {
-                        .one => try writeDefaultValue(@TypeOf(default_value), default_value, out),
-                        .unlimited => {
-                            for (default_value) |v| {
-                                try writeDefaultValue(@TypeOf(v), v, out);
-                            }
-                        },
-                    }
+                    try out.writeAll("    Default:");
+                    try writeArgumentDefaultValue(positional, out);
                     try out.writeAll("\n");
                 }
             }
@@ -563,9 +563,8 @@ pub fn writeCommandGeneratedHelp(
         if (named.help.len > 0) try writeIndented(named.help, 4, out);
         if (named.field.defaultValue()) |default_value| {
             if (@typeInfo(@TypeOf(default_value)) != .optional) {
-                try out.writeAll("    Default: ");
-                // HACK: json formats slices of strings decently and enums!
-                try std.json.Stringify.value(default_value, .{ .emit_strings_as_arrays = false }, out);
+                try out.writeAll("    Default:");
+                try writeArgumentDefaultValue(named, out);
                 try out.writeAll("\n");
             }
         }
@@ -596,10 +595,10 @@ fn writeIndented(buf: [:0]const u8, comptime spaces: u8, out: *std.Io.Writer) st
 /// Example: `git clone [OPTIONS] <url>`
 pub fn writeCommandUsage(
     comptime command: Command,
-    comptime descent_path: []const [:0]const u8,
+    descent_path: []const [:0]const u8,
     out: *std.Io.Writer,
 ) std.Io.Writer.Error!void {
-    inline for (descent_path) |cmd| {
+    for (descent_path) |cmd| {
         try out.print("{s} ", .{cmd});
     }
 
@@ -762,13 +761,13 @@ fn parseRecursive(
         @field(defined, arg.field.name) = .defined;
     }
 
-    var began_positional: bool = false;
+    var began_forced_positional: bool = false;
     var positional_idx: usize = 0;
     next_os_arg: while (iter.next()) |os_arg| {
-        if (!began_positional) {
+        if (!began_forced_positional) {
             // encountering a lone "--" sigil means the rest of the args are positional
             if (std.mem.eql(u8, "--", os_arg)) {
-                began_positional = true;
+                began_forced_positional = true;
                 continue :next_os_arg;
             }
 
@@ -829,6 +828,52 @@ fn parseRecursive(
                 }
             }
 
+            // like `-xvf` in `tar -xvf files.tar.gz`
+
+            if (!std.mem.eql(u8, os_arg, "-") and
+                std.mem.startsWith(u8, os_arg, "-") and
+                !std.mem.startsWith(u8, os_arg, "--"))
+            {
+                const suffix = cutPrefixSentinel(u8, 0, os_arg, "-") orelse unreachable;
+                assert(suffix.len > 0);
+
+                next_char: for (suffix, 0..) |char, char_idx| {
+                    const is_last: bool = char_idx + 1 == suffix.len;
+
+                    inline for (command.named_args) |arg| {
+                        const short = arg.short orelse continue;
+                        if (char == short) {
+                            const Value = switch (arg.count) {
+                                .one => arg.field.type,
+                                .unlimited => std.meta.Child(arg.field.type),
+                            };
+
+                            if (@typeInfo(Value) == .bool) {
+                                switch (arg.count) {
+                                    .one => @field(result_args, arg.field.name) = true,
+                                    .unlimited => try @field(unlimited_args, arg.field.name).append(arena, true),
+                                }
+                                @field(defined, arg.field.name) = .defined;
+                                continue :next_char;
+                            } else {
+                                if (!is_last) return usageErrorExit(options, "Short flag: {c} requires a value, so it must be in the last position of the short cluster: -{s}.", .{ short, suffix });
+                                const value = try parseValue(options, Value, iter.next() orelse return usageErrorExit(options, "Missing argument for option: {c}", .{short}));
+                                switch (arg.count) {
+                                    .one => @field(result_args, arg.field.name) = value,
+                                    .unlimited => try @field(unlimited_args, arg.field.name).append(arena, value),
+                                }
+                                @field(defined, arg.field.name) = .defined;
+
+                                assert(is_last);
+                                continue :next_os_arg;
+                            }
+                        }
+                    } else return usageErrorExit(options, "Invalid short flag: {c}", .{char});
+                    comptime unreachable;
+                }
+                continue :next_os_arg;
+            }
+
             inline for (command.subcommands) |subcommand| {
                 if (std.mem.eql(u8, os_arg, subcommand.name)) {
                     const U = std.meta.Child(@TypeOf(result_subcommand));
@@ -843,7 +888,6 @@ fn parseRecursive(
                 return usageErrorExit(options, "unexpected argument: {s}", .{os_arg});
             }
         }
-        began_positional = true;
         inline for (command.positional_args, 0..) |arg, i| {
             if (i == positional_idx) {
                 switch (arg.count) {
@@ -982,6 +1026,24 @@ fn helpTypeName(comptime T: type) [:0]const u8 {
         .optional => |info| return helpTypeName(info.child),
         else => comptime unreachable, // unsupported type for cli argument value parsing
     };
+}
+
+fn writeArgumentDefaultValue(comptime arg: Argument, out: *std.Io.Writer) std.Io.Writer.Error!void {
+    const default_value = arg.field.defaultValue() orelse comptime unreachable;
+    switch (arg.count) {
+        .one => {
+            try out.writeAll(" ");
+            try writeDefaultValue(@TypeOf(default_value), default_value, out);
+        },
+        .unlimited => {
+            if (default_value.len > 0) {
+                for (default_value) |v| {
+                    try out.writeAll(" ");
+                    try writeDefaultValue(@TypeOf(v), v, out);
+                }
+            } else try out.writeAll(" <empty>");
+        },
+    }
 }
 
 /// Intended to be very similar to parseValue.

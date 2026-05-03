@@ -10,7 +10,7 @@ const git: cli.Command = .{
         // this is a fictional argument
         .init(std.log.Level, .{ .name = "log-level", .short = 'l', .default_value = .warn, .help = "Set log level.\nOne of debug, warn, error.\n" }),
         // this is a fictional argument
-        .init([]const bool, .{ .name = "verbose", .count = .unlimited, .default_value = &.{true}, .help = "Increase verbosity.\n" }),
+        .init([]const bool, .{ .name = "verbose", .count = .unlimited, .short = 'v', .default_value = &.{true}, .help = "Increase verbosity.\n" }),
     },
     .subcommands = &.{
         .{
@@ -37,6 +37,7 @@ const git: cli.Command = .{
             .named_args = &.{
                 .init([]const [:0]const u8, .{ .name = "message", .short = 'm', .count = .unlimited }),
                 .init(?[:0]const u8, .{ .name = "author", .count = .one }),
+                .init(bool, .{ .name = "verbose", .count = .one, .short = 'v', .help = "Be verbose.", .default_value = false }),
             },
             .help_short = "Commit staged changes.",
         },
@@ -56,6 +57,8 @@ const git: cli.Command = .{
             .named_args = &.{
                 .init(?u32, .{ .name = "max-count", .count = .one }),
                 .init(bool, .{ .name = "remove-empty", .count = .one }),
+                // this is a fictional argument
+                .init([]const bool, .{ .name = "verbose", .count = .unlimited, .short = 'v', .default_value = &.{}, .help = "Increase verbosity.\n" }),
             },
         },
         .{
@@ -316,6 +319,67 @@ test "parse.named.enum.short" {
     try std.testing.expectEqual(.debug, parsed.kind.args.@"log-level");
 }
 
+test "parse.named.short_cluster_with_arg" {
+    const raw: []const [:0]const u8 = &.{ "git", "commit", "-vm", "std.cli" };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const parsed = try cli.parse(git, arena.allocator(), raw, .{});
+    try std.testing.expectEqual(true, parsed.subcommand.?.commit.kind.args.verbose);
+    try std.testing.expectEqualStrings("std.cli", parsed.subcommand.?.commit.kind.args.message[0]);
+    try std.testing.expectEqual(1, parsed.subcommand.?.commit.kind.args.message.len);
+}
+
+test "parse.named.short_cluster_no_arg" {
+    const raw: []const [:0]const u8 = &.{ "git", "branch", "-vvvvv" };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const parsed = try cli.parse(git, arena.allocator(), raw, .{});
+    try std.testing.expectEqual(true, parsed.subcommand.?.branch.kind.args.verbose);
+}
+
+test "parse.named.short_cluster_unlimited_bool_no_arg" {
+    const raw: []const [:0]const u8 = &.{ "git", "-vvv", "--no-verbose", "--verbose", "branch", "-vvvvv" };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const parsed = try cli.parse(git, arena.allocator(), raw, .{});
+    try std.testing.expectEqual(true, parsed.subcommand.?.branch.kind.args.verbose);
+    try std.testing.expectEqualSlices(bool, parsed.kind.args.verbose, &.{ true, true, true, false, true });
+}
+
+test "parse.named.short_cluster_unlimited_with_arg" {
+    const raw: []const [:0]const u8 = &.{ "git", "commit", "-vm", "std.cli", "-vm", "Super cool!" };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const parsed = try cli.parse(git, arena.allocator(), raw, .{});
+    try std.testing.expectEqual(true, parsed.subcommand.?.commit.kind.args.verbose);
+    try std.testing.expectEqualSlices([:0]const u8, parsed.subcommand.?.commit.kind.args.message, &.{ "std.cli", "Super cool!" });
+}
+
+test "parse.named.short_cluster_wrong_order" {
+    const raw: []const [:0]const u8 = &.{ "git", "commit", "-mv", "std.cli", "-vm", "Super cool!" };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const parsed = cli.parse(git, arena.allocator(), raw, .{});
+    try std.testing.expectError(error.Usage, parsed);
+}
+
+test "parse.named.short_cluster_missing_arg" {
+    const raw: []const [:0]const u8 = &.{ "git", "commit", "-vm" };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const parsed = cli.parse(git, arena.allocator(), raw, .{});
+    try std.testing.expectError(error.Usage, parsed);
+}
+
+test "parse.named.short_cluster_unlimited_with_arg_has_dashes" {
+    const raw: []const [:0]const u8 = &.{ "git", "commit", "-vm", "std.cli", "-vm", "-v" };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const parsed = try cli.parse(git, arena.allocator(), raw, .{});
+    try std.testing.expectEqual(true, parsed.subcommand.?.commit.kind.args.verbose);
+    try std.testing.expectEqualSlices([:0]const u8, parsed.subcommand.?.commit.kind.args.message, &.{ "std.cli", "-v" });
+}
+
 test "parse.options.named.enum.short" {
     const raw: []const [:0]const u8 = &.{ "git", "-l", "debug" };
     const parsed = try cli.parse(git, std.testing.allocator, raw, .{
@@ -339,6 +403,15 @@ test "parse.dash_is_valid_positional" {
     defer arena.deinit();
     const parsed = try cli.parse(git, arena.allocator(), raw, .{});
     try std.testing.expectEqualStrings(parsed.subcommand.?.add.kind.args.files[0], "-");
+}
+
+test "parse.named_argument_may_come_after_positional" {
+    const raw: []const [:0]const u8 = &.{ "git", "branch", "dev/std.cli", "-v" };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const parsed = try cli.parse(git, arena.allocator(), raw, .{});
+    try std.testing.expectEqualStrings(parsed.subcommand.?.branch.kind.args.branch_name.?, "dev/std.cli");
+    try std.testing.expectEqual(true, parsed.subcommand.?.branch.kind.args.verbose);
 }
 
 test "descentPath" {
@@ -373,11 +446,11 @@ test "writeHelpGenerated.snapshot.0" {
         \\  -l, --log-level [err|warn|info|debug]
         \\    Set log level.
         \\    One of debug, warn, error.
-        \\    Default: "warn"
+        \\    Default: warn
         \\
-        \\  --verbose, --no-verbose
+        \\  -v, --verbose, --no-verbose
         \\    Increase verbosity.
-        \\    Default: [true]
+        \\    Default: true
         \\
         \\SUBCOMMANDS
         \\  clone
@@ -490,6 +563,10 @@ test "writeHelpGenerated.subcommand.snapshot.4" {
         \\
         \\  --author [string]
         \\
+        \\  -v, --verbose, --no-verbose
+        \\    Be verbose.
+        \\    Default: false
+        \\
     ;
     try cli.writeHelpGenerated(git, parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
@@ -535,6 +612,10 @@ test "writeHelpGenerated.subcommand.snapshot.6" {
         \\  --max-count [integer]
         \\
         \\  --remove-empty, --no-remove-empty
+        \\
+        \\  -v, --verbose, --no-verbose
+        \\    Increase verbosity.
+        \\    Default: <empty>
         \\
     ;
     try cli.writeHelpGenerated(git, parsed, &out);

@@ -30,14 +30,32 @@ Program <- STRING
 # Example: .{"commit", "-m", "std.cli"}
 # Encountering the EndOfOptions symbol ("--") causes all remaining
 # Arg to be considered Positional (zero or more).
+#
+# Note: Subcommand is prioritized above Positional.
+# So if the user wants to specify a positional that collides with a subcommand,
+# they need to use EndOfOptions.
 Arg
     <- EndOfOptions Positional*
     / Optional
+    / Subcommand
     / Positional
 
 # The EndOfOptions symbol is DASHDASH.
 # Example: "--"
 EndOfOptions <- DASHDASH
+
+# Subcommands just begin the argparsing again.
+# Args after subcommand only apply to that subcommand and to not apply to the parents.
+Subcommand <- SubcommandName Arg*
+
+# SubcommandName is only one of the allowed subcommands.
+# The following example comes from the full command line:
+# .{"git" , "commit" , "-m", "std.cli"}
+# Example: "commit"
+#
+# And SUBCOMMANDLIST would be something like .{"commit", "pull", "push", "clone"} etc.
+# Note: Subcommand may not start with dash, conflicts with options.
+SubcommandName <- SUBCOMMANDLIST
 
 # A single DASH ("-") is a valid positional argument, typically representing stdout.
 Positional
@@ -113,6 +131,6 @@ ShortArg <- OptionValue
 # Common functionality intentionally omitted:
 #
 # ShortArg appended to ShortFlag.
-# Rejected example (ZON): .{"-ofile.txt"}
-# Accepted example (ZON): .{"-o", "file.txt"}
+# Rejected example: .{"-ofile.txt"}
+# Accepted example: .{"-o", "file.txt"}
 # Rationale: Difficult to disambiguate with short-cluster.

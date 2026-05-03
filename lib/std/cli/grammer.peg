@@ -113,6 +113,6 @@ ShortArg <- OptionValue
 # Common functionality intentionally omitted:
 #
 # ShortArg appended to ShortFlag.
-# Rejected Example (ZON): .{"-ofile.txt"}
-# Accepted Example (ZON): .{"-o", "file.txt"}
+# Rejected example (ZON): .{"-ofile.txt"}
+# Accepted example (ZON): .{"-o", "file.txt"}
 # Rationale: Difficult to disambiguate with short-cluster.

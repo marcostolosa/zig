@@ -71,6 +71,7 @@ pub const bit_set = @import("bit_set.zig");
 pub const builtin = lang;
 pub const lang = @import("lang.zig");
 pub const c = @import("c.zig");
+pub const cli = @import("cli.zig");
 pub const coff = @import("coff.zig");
 pub const compress = @import("compress.zig");
 pub const static_string_map = @import("static_string_map.zig");

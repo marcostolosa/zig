@@ -154,8 +154,8 @@ const command: std.cli.Command = .{
     .name = "update_linux_headers",
     .help = usage,
     .named_args = &.{
-        .init([]const [:0]const u8, .{ .name = "search-path", .count = .unlimited }),
-        .init([:0]const u8, .{ .name = "out" }),
+        .init("search-path", []const [:0]const u8, .{ .count = .unlimited }),
+        .init("out", [:0]const u8, .{}),
     },
 };
 

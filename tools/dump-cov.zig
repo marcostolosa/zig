@@ -22,9 +22,9 @@ const command: std.cli.Command = .{
     .name = "dump-cov",
     .help = usage,
     .positional_args = &.{
-        .init([:0]const u8, .{ .name = "exe", .help = "path to exe" }),
-        .init([:0]const u8, .{ .name = "cov", .help = "path to coverage" }),
-        .init([:0]const u8, .{ .name = "target", .help = "target, defaults to native", .default_value = "native" }),
+        .init("exe", [:0]const u8, .{ .help = "path to exe" }),
+        .init("cov", [:0]const u8, .{ .help = "path to coverage" }),
+        .init("target", [:0]const u8, .{ .help = "target, defaults to native", .default_value = "native" }),
     },
 };
 pub fn main(init: std.process.Init) !void {

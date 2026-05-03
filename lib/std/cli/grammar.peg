@@ -1,14 +1,14 @@
-# Zig std.cli Command-line Argument Parser Grammer Specification
+# Zig std.cli Command-line Argument Parser Grammar Specification
 # Version: 0.1.0
 
 # To prevent breaking changes experienced by users of applications
 # that include std.cli functionality, std.cli MUST conform to
 # this specification.
 
-# The style of this document MUST align with the zig language grammer document:
+# The style of this document MUST align with the zig language grammar document:
 # https://codeberg.org/ziglang/zig-spec/src/branch/master/grammar/grammar.peg
 #
-# This document describes Parsing Expression Grammer.
+# This document describes Parsing Expression Grammar.
 # https://en.wikipedia.org/wiki/Parsing_expression_grammar
 
 # The command-line argument parser MAY conform to parts of the following
@@ -54,7 +54,7 @@ Program <- STRING
 # Example: .{"--", "README.md", "build.zig.zon"} in .{"git", "add", "--", "README.md", "build.zig.zon"}
 # 
 # Note that Positional is the lowest priority, so if the user wants to specify a 
-# positional that collides with EndOfOptions, Option, Subcommand, they need to user EndOfOptions first.
+# positional that collides with EndOfOptions, Option, Subcommand, they need to use EndOfOptions first.
 #
 # Example: .{"git", "add", "--", "--verbose"} will add a file named "--verbose".
 Arg

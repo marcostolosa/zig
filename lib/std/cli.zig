@@ -1,6 +1,6 @@
 /// Command-line argument parser.
 ///
-/// The grammer of a command-line is represented as a directed acyclic graph of commands and subcommands.
+/// The grammar of a command-line is represented as a directed acyclic graph of commands and subcommands.
 /// Each command may have named and positional arguments.
 ///
 /// For example, a graph representing these two git commands:
@@ -34,10 +34,11 @@ const cutPrefixSentinel = std.mem.cutPrefixSentinel;
 
 /// A recursive representation of the commands available in a CLI.
 pub const Command = struct {
-    /// If this is the root command, has no effect. Example: `git`.
-    /// Name of the corresponding tagged union field in `parsed.subcommands.?`.
+    /// If this is the root command, has no effect. Example: "git".
+    /// For subcommands, this is the name of the corresponding tagged union field in `parsed.subcommands.?`. Example: "commit".
     /// Name of the subcommand in the cli.
-    /// To obtain a dashed-command like `git merge-base`, provide `.name = "merge-base"` and access with `parsed.subcommands.?.@"merge-base"`.
+    /// To obtain a dashed-command like `git merge-base`, provide name "merge-base" and access with `parsed.subcommands.?.@"merge-base"`.
+    /// Must not start with "-".
     name: [:0]const u8,
     /// Named arguments are arguments that begin with `--` in the CLI, or `-` for shorthands, like `git commit --message "std.cli"` or `git commit -m "std.cli"`.
     named_args: []const Argument = &.{},
@@ -72,6 +73,12 @@ pub const Argument = struct {
     };
 
     pub fn init(
+        /// Name of the corresponding field in `parsed.kind.args`.
+        /// Prefixed with `--` for the CLI user.
+        /// Example: `git commit --message "std.cli"` has name "message"` and parsed.kind.args.message is `"std.cli"`.
+        ///
+        /// To obtain dashed arguments like `git commit --reset-author` provide "reset-author" and access with `parsed.kind.args.@"reset-author"`.
+        comptime name: [:0]const u8,
         /// The type of the corresponding field in `parsed.kind.args`.
         ///
         /// - bool: `--verbose`, `--verbose=true`, `-v` result in true. `--no-verbose`, `--verbose=false` result in false.
@@ -84,12 +91,6 @@ pub const Argument = struct {
         /// For `.count = .unlimited` arguments, provide a `[]T`. Example: `git add README.md build.zig.zon` can be parsed with `[]const []const u8` as `&.{"README.md", "build.zig.zon"}`.
         comptime T: type,
         comptime options: struct {
-            /// Name of the corresponding field in `parsed.kind.args`.
-            /// Prefixed with `--` for the CLI user.
-            /// Example: `git commit --message "std.cli"` has `.name = "message"` and parsed.kind.args.message is `"std.cli"`.
-            ///
-            /// To obtain dashed arguments like `git commit --reset-author` provide "reset-author" and access with `parsed.kind.args.@"reset-author"`.
-            name: [:0]const u8,
             count: Count = .one,
             help: [:0]const u8 = "",
             /// Arguments with default values are optional in the CLI and the default value is applied to the field before it is returned as part of `parsed.kind.args`.
@@ -115,7 +116,7 @@ pub const Argument = struct {
 
         return .{
             .field = .{
-                .name = options.name,
+                .name = name,
                 .type = T,
                 .default_value_ptr = default_value_ptr,
                 .alignment = null,
@@ -224,7 +225,7 @@ pub const ParseError = error{
     Usage,
 };
 
-/// Parse the operating system provided arguments according to the grammer defined in command.
+/// Parse the operating system provided arguments according to the grammar defined in command.
 /// The lifetime of args must exceed the return value (return value may point to args).
 /// If you have .count = .unlimited args, parsing will required allocation. See parseAlloc.
 pub fn parse(
@@ -280,19 +281,19 @@ test parseAlloc {
         \\
         ,
         .named_args = &.{
-            .init(std.log.Level, .{ .name = "log-level", .default_value = .err }),
+            .init("log-level", std.log.Level, .{ .default_value = .err }),
         },
         .subcommands = &.{
             .{
                 .name = "branch",
                 .positional_args = &.{
-                    .init([]const u8, .{ .name = "branch_name" }),
+                    .init("branch_name", []const u8, .{}),
                 },
             },
             .{
                 .name = "commit",
                 .named_args = &.{
-                    .init([]const u8, .{ .name = "message", .short = 'm' }),
+                    .init("message", []const u8, .{ .short = 'm' }),
                 },
             },
         },
@@ -394,13 +395,13 @@ fn parseRequiresAlloc(comptime command: Command) bool {
 }
 
 test parseRequiresAlloc {
-    const needs_alloc_named: Command = .{ .name = "an-executable", .named_args = &.{.init([]bool, .{ .name = "verbose", .count = .unlimited })} };
+    const needs_alloc_named: Command = .{ .name = "an-executable", .named_args = &.{.init("verbose", []bool, .{ .count = .unlimited })} };
     try std.testing.expect(parseRequiresAlloc(needs_alloc_named));
-    const needs_alloc_pos: Command = .{ .name = "an-executable", .positional_args = &.{.init([]bool, .{ .name = "verbose", .count = .unlimited })} };
+    const needs_alloc_pos: Command = .{ .name = "an-executable", .positional_args = &.{.init("verbose", []bool, .{ .count = .unlimited })} };
     try std.testing.expect(parseRequiresAlloc(needs_alloc_pos));
-    const no_needs_alloc_named: Command = .{ .name = "an-executable", .named_args = &.{.init(bool, .{ .name = "verbose", .count = .one })} };
+    const no_needs_alloc_named: Command = .{ .name = "an-executable", .named_args = &.{.init("verbose", bool, .{ .count = .one })} };
     try std.testing.expect(!parseRequiresAlloc(no_needs_alloc_named));
-    const no_needs_alloc_pos: Command = .{ .name = "an-executable", .positional_args = &.{.init(bool, .{ .name = "verbose", .count = .one })} };
+    const no_needs_alloc_pos: Command = .{ .name = "an-executable", .positional_args = &.{.init("verbose", bool, .{ .count = .one })} };
     try std.testing.expect(!parseRequiresAlloc(no_needs_alloc_named));
 
     const sub_needs_alloc_named: Command = .{ .name = "an-executable", .subcommands = &.{needs_alloc_named} };

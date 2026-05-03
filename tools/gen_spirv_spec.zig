@@ -100,8 +100,8 @@ const command: std.cli.Command = .{
     .name = "gen_spirv_spec",
     .help = usage,
     .positional_args = &.{
-        .init([:0]const u8, .{ .name = "header_repo_path" }),
-        .init([:0]const u8, .{ .name = "grammer_json_path" }),
+        .init("header_repo_path", [:0]const u8, .{}),
+        .init("grammer_json_path", [:0]const u8, .{}),
     },
 };
 

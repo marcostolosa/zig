@@ -22,8 +22,8 @@ const command: std.cli.Command = .{
     .name = "update_openbsd_libc",
     .help = usage,
     .positional_args = &.{
-        .init([:0]const u8, .{ .name = "openbsd_src_path" }),
-        .init([:0]const u8, .{ .name = "zig_src_path" }),
+        .init("openbsd_src_path", [:0]const u8, .{}),
+        .init("zig_src_path", [:0]const u8, .{}),
     },
 };
 

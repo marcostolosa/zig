@@ -23,8 +23,8 @@ const command: std.cli.Command = .{
     .name = "migrate_langref",
     .help = usage,
     .positional_args = &.{
-        .init([:0]const u8, .{ .name = "input_file" }),
-        .init([:0]const u8, .{ .name = "output_file" }),
+        .init("input_file", [:0]const u8, .{}),
+        .init("output_file", [:0]const u8, .{}),
     },
 };
 

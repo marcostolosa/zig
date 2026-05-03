@@ -16,7 +16,7 @@ const command: std.cli.Command = .{
     .name = "update_crc_catalog",
     .help = usage,
     .positional_args = &.{
-        .init([:0]const u8, .{ .name = "zig_src_root" }),
+        .init("zig_src_root", [:0]const u8, .{}),
     },
 };
 pub fn main(init: std.process.Init) !void {

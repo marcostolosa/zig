@@ -14,8 +14,8 @@ const command: std.cli.Command = .{
     .name = "update_mingw",
     .help = usage,
     .positional_args = &.{
-        .init([:0]const u8, .{ .name = "zig_src_lib_path" }),
-        .init([:0]const u8, .{ .name = "mingw_src_path" }),
+        .init("zig_src_lib_path", [:0]const u8, .{}),
+        .init("mingw_src_path", [:0]const u8, .{}),
     },
 };
 pub fn main(init: std.process.Init) !void {

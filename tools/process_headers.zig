@@ -156,9 +156,9 @@ const command: std.cli.Command = .{
     .name = "process_headers",
     .help = usage,
     .named_args = &.{
-        .init([]const [:0]const u8, .{ .name = "search-path", .count = .unlimited }),
-        .init([:0]const u8, .{ .name = "out" }),
-        .init(LibCVendor, .{ .name = "abi" }),
+        .init("search-path", []const [:0]const u8, .{ .count = .unlimited }),
+        .init("out", [:0]const u8, .{}),
+        .init("abi", LibCVendor, .{}),
     },
 };
 pub fn main(init: std.process.Init) !void {

@@ -647,8 +647,8 @@ const command: std.cli.Command = .{
     .name = "update_clang_options",
     .help = usage,
     .positional_args = &.{
-        .init([:0]const u8, .{ .name = "tblgen_path" }),
-        .init([:0]const u8, .{ .name = "llvm_project_path" }),
+        .init("tblgen_path", [:0]const u8, .{}),
+        .init("llvm_project_path", [:0]const u8, .{}),
     },
 };
 

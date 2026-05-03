@@ -18,7 +18,7 @@ const command: std.cli.Command = .{
     .name = "gen_macos_headers_c",
     .help = usage,
     .positional_args = &.{
-        .init([:0]const u8, .{ .name = "dir" }),
+        .init("dir", [:0]const u8, .{}),
     },
 };
 

@@ -198,13 +198,6 @@ pub fn Parsed(comptime command: Command) type {
     };
 }
 
-pub const ParseError = error{
-    /// Malformed input from the user.
-    /// Example: `git commit --not-a-valid-option`.
-    Usage,
-    OutOfMemory,
-};
-
 pub const ParseOptions = struct {
     /// Call std.process.exit(1) when there is a usage error.
     exit_usage_error: bool = false,
@@ -225,52 +218,57 @@ pub const ParseOptions = struct {
     } = .none,
 };
 
+pub const ParseError = error{
+    /// Malformed input from the user.
+    /// Example: `git commit --not-a-valid-option`.
+    Usage,
+};
+
 /// Parse the operating system provided arguments according to the grammer defined in command.
 /// The lifetime of args must exceed the return value (return value may point to args).
+/// If you have .count = .unlimited args, parsing will required allocation. See parseAlloc.
 pub fn parse(
+    comptime command: Command,
+    /// See std.process.Args.toSlice
+    /// Index 0 must be populated.
+    args: []const [:0]const u8,
+    options: ParseOptions,
+) ParseAllocError!Parsed(command) {
+    comptime if (parseRequiresAlloc(command)) @compileError("Parsing requires allocation. See parseAlloc.");
+
+    var iter: Iterator = .init(args);
+    _ = iter.next() orelse unreachable; // consume argv index 0, which is this executable's path
+
+    const parsed = parseRecursive(command, null, &iter, options) catch |err| switch (err) {
+        error.OutOfMemory => unreachable, // its actually comptime unreachable but zig doesn't know that yet.
+        error.Usage => |e| return e,
+    };
+    helpExit(command, parsed, options);
+
+    return parsed;
+}
+
+pub const ParseAllocError = ParseError || std.mem.Allocator.Error;
+
+/// The allocator is only required for .count = .unlimited arguments.
+/// If you don't have those, consider using parse instead.
+pub fn parseAlloc(
     comptime command: Command,
     arena: std.mem.Allocator,
     /// See std.process.Args.toSlice
     /// Index 0 must be populated.
     args: []const [:0]const u8,
     options: ParseOptions,
-) ParseError!Parsed(command) {
+) ParseAllocError!Parsed(command) {
     var iter: Iterator = .init(args);
     _ = iter.next() orelse unreachable; // consume argv index 0, which is this executable's path
 
     const parsed = try parseRecursive(command, arena, &iter, options);
-
-    if (helpWanted(parsed)) {
-        switch (options.render_help) {
-            .none => {},
-            .verbatim => {
-                var io_impl: std.Io.Threaded = .init_single_threaded;
-                const io = io_impl.io();
-                var buf: [1024]u8 = undefined;
-                var stdout = std.Io.File.stdout().writer(io, &buf);
-                const writer: *std.Io.Writer = &stdout.interface;
-                writeHelpVerbatim(command, parsed, writer) catch {};
-                writer.flush() catch {};
-            },
-            .generated => {
-                var io_impl: std.Io.Threaded = .init_single_threaded;
-                const io = io_impl.io();
-                var buf: [1024]u8 = undefined;
-                var stdout = std.Io.File.stdout().writer(io, &buf);
-                const writer: *std.Io.Writer = &stdout.interface;
-                writeHelpGenerated(command, parsed, writer) catch {};
-                writer.flush() catch {};
-            },
-        }
-    }
-
-    if (options.exit_help and helpWanted(parsed)) {
-        std.process.exit(1);
-    }
+    helpExit(command, parsed, options);
     return parsed;
 }
 
-test parse {
+test parseAlloc {
     const command: Command = .{
         .name = "git",
         .help =
@@ -302,7 +300,7 @@ test parse {
             },
         },
     };
-    const parsed = try parse(
+    const parsed = try parseAlloc(
         command,
         std.testing.failing_allocator,
         &.{"git"},
@@ -310,7 +308,7 @@ test parse {
     );
     try std.testing.expect(parsed.kind.args.@"log-level" == .err);
 
-    const parsed2 = try parse(
+    const parsed2 = try parseAlloc(
         command,
         std.testing.failing_allocator,
         &.{ "git", "--help" },
@@ -319,7 +317,7 @@ test parse {
     try std.testing.expect(parsed2.kind == .help);
     try std.testing.expect(parsed2.subcommand == null);
 
-    const parsed3 = try parse(
+    const parsed3 = try parseAlloc(
         command,
         std.testing.failing_allocator,
         &.{ "git", "--log-level=debug" },
@@ -328,7 +326,7 @@ test parse {
     try std.testing.expectEqual(.debug, parsed3.kind.args.@"log-level");
     try std.testing.expect(parsed3.subcommand == null);
 
-    const parsed4 = try parse(
+    const parsed4 = try parseAlloc(
         command,
         std.testing.failing_allocator,
         &.{ "git", "commit", "-m", "std.cli" },
@@ -337,7 +335,7 @@ test parse {
     try std.testing.expect(parsed4.subcommand.? == .commit);
     try std.testing.expectEqualStrings("std.cli", parsed4.subcommand.?.commit.kind.args.message);
 
-    const parsed5 = try parse(
+    const parsed5 = try parseAlloc(
         command,
         std.testing.failing_allocator,
         &.{ "git", "branch", "dev/std.cli" },
@@ -346,13 +344,76 @@ test parse {
     try std.testing.expect(parsed5.subcommand.? == .branch);
     try std.testing.expectEqualStrings("dev/std.cli", parsed5.subcommand.?.branch.kind.args.branch_name);
 
-    const parsed6 = parse(
+    const parsed6 = parseAlloc(
         command,
         std.testing.failing_allocator,
         &.{ "git", "--not-an-option", "branch", "dev/std.cli" },
         .{},
     );
     try std.testing.expectError(error.Usage, parsed6);
+}
+
+fn helpExit(comptime command: Command, parsed: Parsed(command), options: ParseOptions) void {
+    if (helpWanted(parsed)) {
+        switch (options.render_help) {
+            .none => {},
+            .verbatim => {
+                var io_impl: std.Io.Threaded = .init_single_threaded;
+                const io = io_impl.io();
+                var buf: [1024]u8 = undefined;
+                var stdout = std.Io.File.stdout().writer(io, &buf);
+                const writer: *std.Io.Writer = &stdout.interface;
+                writeHelpVerbatim(command, parsed, writer) catch {};
+                writer.flush() catch {};
+            },
+            .generated => {
+                var io_impl: std.Io.Threaded = .init_single_threaded;
+                const io = io_impl.io();
+                var buf: [1024]u8 = undefined;
+                var stdout = std.Io.File.stdout().writer(io, &buf);
+                const writer: *std.Io.Writer = &stdout.interface;
+                writeHelpGenerated(command, parsed, writer) catch {};
+                writer.flush() catch {};
+            },
+        }
+    }
+
+    if (options.exit_help and helpWanted(parsed)) {
+        std.process.exit(1);
+    }
+}
+
+fn parseRequiresAlloc(comptime command: Command) bool {
+    inline for (command.named_args ++ command.positional_args) |arg| {
+        switch (arg.count) {
+            .unlimited => return true,
+            .one => {},
+        }
+    }
+    inline for (command.subcommands) |subcommand| {
+        if (parseRequiresAlloc(subcommand)) return true;
+    }
+    return false;
+}
+
+test parseRequiresAlloc {
+    const needs_alloc_named: Command = .{ .name = "an-executable", .named_args = &.{.init([]bool, .{ .name = "verbose", .count = .unlimited })} };
+    try std.testing.expect(parseRequiresAlloc(needs_alloc_named));
+    const needs_alloc_pos: Command = .{ .name = "an-executable", .positional_args = &.{.init([]bool, .{ .name = "verbose", .count = .unlimited })} };
+    try std.testing.expect(parseRequiresAlloc(needs_alloc_pos));
+    const no_needs_alloc_named: Command = .{ .name = "an-executable", .named_args = &.{.init(bool, .{ .name = "verbose", .count = .one })} };
+    try std.testing.expect(!parseRequiresAlloc(no_needs_alloc_named));
+    const no_needs_alloc_pos: Command = .{ .name = "an-executable", .positional_args = &.{.init(bool, .{ .name = "verbose", .count = .one })} };
+    try std.testing.expect(!parseRequiresAlloc(no_needs_alloc_named));
+
+    const sub_needs_alloc_named: Command = .{ .name = "an-executable", .subcommands = &.{needs_alloc_named} };
+    try std.testing.expect(parseRequiresAlloc(sub_needs_alloc_named));
+    const sub_needs_alloc_pos: Command = .{ .name = "an-executable", .subcommands = &.{needs_alloc_pos} };
+    try std.testing.expect(parseRequiresAlloc(sub_needs_alloc_pos));
+    const no_sub_needs_alloc_named: Command = .{ .name = "an-executable", .subcommands = &.{no_needs_alloc_named} };
+    try std.testing.expect(!parseRequiresAlloc(no_sub_needs_alloc_named));
+    const no_sub_needs_alloc_pos: Command = .{ .name = "an-executable", .subcommands = &.{no_needs_alloc_pos} };
+    try std.testing.expect(!parseRequiresAlloc(no_sub_needs_alloc_pos));
 }
 
 fn validateCommand(comptime command: Command) void {
@@ -740,10 +801,14 @@ fn DefinedArgStruct(comptime command: Command) type {
 
 fn parseRecursive(
     comptime command: Command,
-    arena: std.mem.Allocator,
+    /// Provide comptime null if we know we won't allocate,
+    /// otherwise provide std.mem.Allocator (arena suggested).
+    maybe_arena: anytype,
     iter: *Iterator,
     options: ParseOptions,
-) ParseError!Parsed(command) {
+) ParseAllocError!Parsed(command) {
+    comptime assert(@TypeOf(maybe_arena) == @TypeOf(null) or
+        @TypeOf(maybe_arena) == std.mem.Allocator);
     comptime validateCommand(command);
 
     // parsing will fill the resulting args one field at a time
@@ -819,7 +884,7 @@ fn parseRecursive(
                     .found => |found_value| {
                         switch (arg.count) {
                             .one => @field(result_args, arg.field.name) = found_value,
-                            .unlimited => try @field(unlimited_args, arg.field.name).append(arena, found_value),
+                            .unlimited => try @field(unlimited_args, arg.field.name).append(maybe_arena, found_value),
                         }
                         @field(defined, arg.field.name) = .defined;
                         continue :next_os_arg;
@@ -851,7 +916,7 @@ fn parseRecursive(
                             if (@typeInfo(Value) == .bool) {
                                 switch (arg.count) {
                                     .one => @field(result_args, arg.field.name) = true,
-                                    .unlimited => try @field(unlimited_args, arg.field.name).append(arena, true),
+                                    .unlimited => try @field(unlimited_args, arg.field.name).append(maybe_arena, true),
                                 }
                                 @field(defined, arg.field.name) = .defined;
                                 continue :next_char;
@@ -860,7 +925,7 @@ fn parseRecursive(
                                 const value = try parseValue(options, Value, iter.next() orelse return usageErrorExit(options, "Missing argument for option: {c}", .{short}));
                                 switch (arg.count) {
                                     .one => @field(result_args, arg.field.name) = value,
-                                    .unlimited => try @field(unlimited_args, arg.field.name).append(arena, value),
+                                    .unlimited => try @field(unlimited_args, arg.field.name).append(maybe_arena, value),
                                 }
                                 @field(defined, arg.field.name) = .defined;
 
@@ -877,7 +942,7 @@ fn parseRecursive(
             inline for (command.subcommands) |subcommand| {
                 if (std.mem.eql(u8, os_arg, subcommand.name)) {
                     const U = std.meta.Child(@TypeOf(result_subcommand));
-                    result_subcommand = @unionInit(U, subcommand.name, try parseRecursive(subcommand, arena, iter, options));
+                    result_subcommand = @unionInit(U, subcommand.name, try parseRecursive(subcommand, maybe_arena, iter, options));
                     continue :next_os_arg;
                 }
             }
@@ -902,7 +967,7 @@ fn parseRecursive(
                         comptime assert(i + 1 == command.positional_args.len); // unlimited positional must be last
                         // note: incrementing positional_idx during unlimited arg parsing is useless
                         const value = try parseValue(options, std.meta.Child(arg.field.type), os_arg);
-                        try @field(unlimited_args, arg.field.name).append(arena, value);
+                        try @field(unlimited_args, arg.field.name).append(maybe_arena, value);
                         @field(defined, arg.field.name) = .defined;
 
                         continue :next_os_arg;
@@ -935,7 +1000,7 @@ fn parseRecursive(
 
     inline for (comptime std.meta.fieldNames(@TypeOf(unlimited_args))) |field_name| {
         if (@field(unlimited_args, field_name).items.len > 0) {
-            @field(result_args, field_name) = try @field(unlimited_args, field_name).toOwnedSlice(arena);
+            @field(result_args, field_name) = try @field(unlimited_args, field_name).toOwnedSlice(maybe_arena);
         }
     }
 

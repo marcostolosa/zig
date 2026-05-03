@@ -239,10 +239,7 @@ pub fn parse(
     var iter: Iterator = .init(args);
     _ = iter.next() orelse unreachable; // consume argv index 0, which is this executable's path
 
-    const parsed = parseRecursive(command, null, &iter, options) catch |err| switch (err) {
-        error.OutOfMemory => unreachable, // its actually comptime unreachable but zig doesn't know that yet.
-        error.Usage => |e| return e,
-    };
+    const parsed = try parseRecursive(command, null, &iter, options);
     helpExit(command, parsed, options);
 
     return parsed;
@@ -799,6 +796,14 @@ fn DefinedArgStruct(comptime command: Command) type {
     );
 }
 
+fn ParseRecursiveError(MaybeArena: type) type {
+    return switch (MaybeArena) {
+        std.mem.Allocator => ParseAllocError,
+        @TypeOf(null) => ParseError,
+        else => comptime unreachable,
+    };
+}
+
 fn parseRecursive(
     comptime command: Command,
     /// Provide comptime null if we know we won't allocate,
@@ -806,7 +811,7 @@ fn parseRecursive(
     maybe_arena: anytype,
     iter: *Iterator,
     options: ParseOptions,
-) ParseAllocError!Parsed(command) {
+) ParseRecursiveError(@TypeOf(maybe_arena))!Parsed(command) {
     comptime assert(@TypeOf(maybe_arena) == @TypeOf(null) or
         @TypeOf(maybe_arena) == std.mem.Allocator);
     comptime validateCommand(command);

@@ -11304,8 +11304,20 @@ pub const intmax_t = i64;
 pub const uintmax_t = u64;
 
 pub const wint_t = switch (builtin.target.os.tag) {
-    .windows => u16,
-    else => i32,
+    .fuchsia => c_uint,
+    .linux => c_uint,
+    .openbsd => c_int,
+    .uefi => c_ushort,
+    .windows => c_ushort,
+    else => switch (builtin.target.cpu.arch) {
+        .csky => c_uint,
+        .loongarch32, .loongarch64 => c_uint,
+        .riscv32, .riscv32be, .riscv64, .riscv64be => c_uint,
+        .ve => c_uint,
+        .xcore => c_uint,
+        .xtensa, .xtensaeb => c_uint,
+        else => c_int,
+    },
 };
 
 pub const wchar_t = switch (builtin.target.os.tag) {

@@ -74,12 +74,11 @@ fn __iswgraph_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn iswprint(wc: wint_t) callconv(.c) c_int {
-    const wc_unsigned: @Int(.unsigned, @bitSizeOf(wint_t)) = @bitCast(wc);
-    if (wc_unsigned < 0xff)
-        return @intFromBool((wc_unsigned +% 1 & 0x7f) >= 0x21);
-    if (wc_unsigned < 0x2028 or wc_unsigned -% 0x202a < 0xd800 -% 0x202a or wc_unsigned -% 0xe000 < 0xfff9 -% 0xe000)
+    if (wc < 0xff)
+        return @intFromBool((wc +% 1 & 0x7f) >= 0x21);
+    if (wc < 0x2028 or wc -% 0x202a < 0xd800 -% 0x202a or wc -% 0xe000 < 0xfff9 -% 0xe000)
         return 1;
-    if (wc_unsigned -% 0xfffc > 0x10ffff -% 0xfffc or (wc_unsigned & 0xfffe) == 0xfffe)
+    if (wc -% 0xfffc > 0x10ffff -% 0xfffc or (wc & 0xfffe) == 0xfffe)
         return 0;
     return 1;
 }

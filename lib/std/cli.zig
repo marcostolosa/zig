@@ -227,7 +227,9 @@ pub const ParseError = error{
 
 /// Parse the operating system provided arguments according to the grammar defined in command.
 /// The lifetime of args must exceed the return value (return value may point to args).
-/// If you have .count = .unlimited args, parsing will required allocation. See parseAlloc.
+/// If you have .count = .unlimited args, parsing will require allocation. See parseAlloc.
+///
+/// This function has no side-effects unless enabled in options.
 pub fn parse(
     comptime command: Command,
     /// See std.process.Args.toSlice
@@ -236,13 +238,10 @@ pub fn parse(
     options: ParseOptions,
 ) ParseAllocError!Parsed(command) {
     comptime if (parseRequiresAlloc(command)) @compileError("Parsing requires allocation. See parseAlloc.");
-
     var iter: Iterator = .init(args);
-    _ = iter.next() orelse unreachable; // consume argv index 0, which is this executable's path
-
+    const argv0 = iter.next() orelse unreachable;
     const parsed = try parseRecursive(command, null, &iter, options);
-    helpExit(command, parsed, options);
-
+    helpExit(command, argv0, parsed, options);
     return parsed;
 }
 
@@ -250,6 +249,8 @@ pub const ParseAllocError = ParseError || std.mem.Allocator.Error;
 
 /// The allocator is only required for .count = .unlimited arguments.
 /// If you don't have those, consider using parse instead.
+///
+/// This function has no side-effects unless enabled in options.
 pub fn parseAlloc(
     comptime command: Command,
     arena: std.mem.Allocator,
@@ -259,10 +260,9 @@ pub fn parseAlloc(
     options: ParseOptions,
 ) ParseAllocError!Parsed(command) {
     var iter: Iterator = .init(args);
-    _ = iter.next() orelse unreachable; // consume argv index 0, which is this executable's path
-
+    const argv0 = iter.next() orelse unreachable;
     const parsed = try parseRecursive(command, arena, &iter, options);
-    helpExit(command, parsed, options);
+    helpExit(command, argv0, parsed, options);
     return parsed;
 }
 
@@ -351,7 +351,12 @@ test parseAlloc {
     try std.testing.expectError(error.Usage, parsed6);
 }
 
-fn helpExit(comptime command: Command, parsed: Parsed(command), options: ParseOptions) void {
+fn helpExit(
+    comptime command: Command,
+    argv0: []const u8,
+    parsed: Parsed(command),
+    options: ParseOptions,
+) void {
     if (helpWanted(parsed)) {
         switch (options.render_help) {
             .none => {},
@@ -370,7 +375,7 @@ fn helpExit(comptime command: Command, parsed: Parsed(command), options: ParseOp
                 var buf: [1024]u8 = undefined;
                 var stdout = std.Io.File.stdout().writer(io, &buf);
                 const writer: *std.Io.Writer = &stdout.interface;
-                writeHelpGenerated(command, parsed, writer) catch {};
+                writeHelpGenerated(command, argv0, parsed, writer) catch {};
                 writer.flush() catch {};
             },
         }
@@ -524,7 +529,6 @@ pub fn writeHelpVerbatim(comptime command: Command, parsed: Parsed(command), out
         unreachable;
     } else return try out.writeAll(command.help);
 }
-
 /// Write generated help message to out for the active command.
 ///
 /// For commands:
@@ -538,16 +542,25 @@ pub fn writeHelpVerbatim(comptime command: Command, parsed: Parsed(command), out
 ///
 pub fn writeHelpGenerated(
     comptime command: Command,
+    /// Example: "git" in a help usage string like "git add [OPTIONS] <files ...>"
+    program_name: []const u8,
     parsed: Parsed(command),
     out: *std.Io.Writer,
 ) std.Io.Writer.Error!void {
     const descent_path = descentPath(command, parsed);
-    return writeHelpRecursive(command, descent_path, parsed, out);
+    return writeHelpRecursive(
+        command,
+        program_name,
+        descent_path,
+        parsed,
+        out,
+    );
 }
 
 // separate recursive function just avoids awkward accumulator parameter for users
 fn writeHelpRecursive(
     comptime command: Command,
+    program_name: []const u8,
     descent_path: []const [:0]const u8,
     parsed: Parsed(command),
     out: *std.Io.Writer,
@@ -557,13 +570,25 @@ fn writeHelpRecursive(
             inline else => |value, tag| {
                 inline for (command.subcommands) |subcommand_config| {
                     if (comptime std.mem.eql(u8, subcommand_config.name, @tagName(tag))) {
-                        return writeHelpRecursive(subcommand_config, descent_path, value, out);
+                        return writeHelpRecursive(
+                            subcommand_config,
+                            program_name,
+                            descent_path,
+                            value,
+                            out,
+                        );
                     }
                 }
             },
         }
         unreachable;
-    } else return writeCommandGeneratedHelp(command, descent_path, out);
+    } else return writeCommandGeneratedHelp(
+        command,
+        program_name,
+        descent_path,
+        out,
+    );
+    comptime unreachable;
 }
 
 /// Looks like this:
@@ -584,11 +609,14 @@ fn writeHelpRecursive(
 /// ```
 pub fn writeCommandGeneratedHelp(
     comptime command: Command,
+    /// Example: "git" in a help usage string like "git add [OPTIONS] <files ...>"
+    program_name: []const u8,
+    /// See descentPath.
     descent_path: []const [:0]const u8,
     out: *std.Io.Writer,
 ) std.Io.Writer.Error!void {
     try out.writeAll("Usage: ");
-    try writeCommandUsage(command, descent_path, out);
+    try writeCommandUsage(command, program_name, descent_path, out);
     try out.writeAll("\n");
 
     if (command.help.len > 0) {
@@ -626,7 +654,10 @@ pub fn writeCommandGeneratedHelp(
         if (@typeInfo(Value) == .bool) {
             try out.print("--{s}, --no-{s}\n", .{ named.field.name, named.field.name });
         } else {
-            try out.print("--{s} [{s}]\n", .{ named.field.name, helpTypeName(Value) });
+            switch (@typeInfo(Value)) {
+                .@"enum" => try out.print("--{s} {{{s}}}\n", .{ named.field.name, helpTypeName(Value) }),
+                else => try out.print("--{s} <{s}>\n", .{ named.field.name, helpTypeName(Value) }),
+            }
         }
         if (named.help.len > 0) try writeIndented(named.help, 4, out);
         if (named.field.defaultValue()) |default_value| {
@@ -663,16 +694,19 @@ fn writeIndented(buf: [:0]const u8, comptime spaces: u8, out: *std.Io.Writer) st
 /// Example: `git clone [OPTIONS] <url>`
 pub fn writeCommandUsage(
     comptime command: Command,
+    program_name: []const u8,
+    /// See descentPath.
     descent_path: []const [:0]const u8,
     out: *std.Io.Writer,
 ) std.Io.Writer.Error!void {
-    for (descent_path) |cmd| {
-        try out.print("{s} ", .{cmd});
+    try out.print("{s} ", .{program_name});
+    if (descent_path.len > 1) {
+        for (descent_path[1..]) |cmd| {
+            try out.print("{s} ", .{cmd});
+        }
     }
 
-    if (command.named_args.len > 0) {
-        try out.writeAll("[OPTIONS]");
-    }
+    try out.writeAll("[OPTIONS]");
 
     inline for (command.positional_args) |positional| {
         // [name_of_a_positional ...]

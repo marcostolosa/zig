@@ -443,7 +443,7 @@ test "writeHelpGenerated.snapshot.0" {
         \\    Enable pagination.
         \\    Default: false
         \\
-        \\  -l, --log-level [err|warn|info|debug]
+        \\  -l, --log-level {err|warn|info|debug}
         \\    Set log level.
         \\    One of debug, warn, error.
         \\    Default: warn
@@ -475,7 +475,7 @@ test "writeHelpGenerated.snapshot.0" {
         \\
     ;
 
-    try cli.writeHelpGenerated(git, parsed, &out);
+    try cli.writeHelpGenerated(git, git.name, parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
@@ -485,7 +485,7 @@ test "writeHelpGenerated.subcommand.snapshot.1" {
     var buf: [1024]u8 = undefined;
     var out = std.Io.Writer.fixed(&buf);
     const expected: []const u8 =
-        \\Usage: git add  <files ...>
+        \\Usage: git add [OPTIONS] <files ...>
         \\
         \\POSITIONAL ARGUMENTS
         \\  files
@@ -495,7 +495,7 @@ test "writeHelpGenerated.subcommand.snapshot.1" {
         \\    Print this help and exit.
         \\
     ;
-    try cli.writeHelpGenerated(git, parsed, &out);
+    try cli.writeHelpGenerated(git, git.name, parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
@@ -518,11 +518,11 @@ test "writeHelpGenerated.subcommand.snapshot.2" {
         \\  -h, --help
         \\    Print this help and exit.
         \\
-        \\  --timeout-s [number]
+        \\  --timeout-s <number>
         \\    Default: 10
         \\
     ;
-    try cli.writeHelpGenerated(git, parsed, &out);
+    try cli.writeHelpGenerated(git, git.name, parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
@@ -532,7 +532,7 @@ test "writeHelpGenerated.subcommand.snapshot.3" {
     var buf: [1024]u8 = undefined;
     var out = std.Io.Writer.fixed(&buf);
     const expected: []const u8 =
-        \\Usage: git init  [directory]
+        \\Usage: git init [OPTIONS] [directory]
         \\
         \\POSITIONAL ARGUMENTS
         \\  directory
@@ -543,7 +543,7 @@ test "writeHelpGenerated.subcommand.snapshot.3" {
         \\    Print this help and exit.
         \\
     ;
-    try cli.writeHelpGenerated(git, parsed, &out);
+    try cli.writeHelpGenerated(git, git.name, parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
@@ -559,16 +559,16 @@ test "writeHelpGenerated.subcommand.snapshot.4" {
         \\  -h, --help
         \\    Print this help and exit.
         \\
-        \\  -m, --message [string]
+        \\  -m, --message <string>
         \\
-        \\  --author [string]
+        \\  --author <string>
         \\
         \\  -v, --verbose, --no-verbose
         \\    Be verbose.
         \\    Default: false
         \\
     ;
-    try cli.writeHelpGenerated(git, parsed, &out);
+    try cli.writeHelpGenerated(git, git.name, parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
@@ -593,7 +593,7 @@ test "writeHelpGenerated.subcommand.snapshot.5" {
         \\    Default: false
         \\
     ;
-    try cli.writeHelpGenerated(git, parsed, &out);
+    try cli.writeHelpGenerated(git, git.name, parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
@@ -603,13 +603,13 @@ test "writeHelpGenerated.subcommand.snapshot.6" {
     var buf: [1024]u8 = undefined;
     var out = std.Io.Writer.fixed(&buf);
     const expected: []const u8 =
-        \\Usage: git log [OPTIONS]
+        \\Usage: /usr/bin/git log [OPTIONS]
         \\
         \\OPTIONS
         \\  -h, --help
         \\    Print this help and exit.
         \\
-        \\  --max-count [integer]
+        \\  --max-count <integer>
         \\
         \\  --remove-empty, --no-remove-empty
         \\
@@ -618,7 +618,7 @@ test "writeHelpGenerated.subcommand.snapshot.6" {
         \\    Default: <empty>
         \\
     ;
-    try cli.writeHelpGenerated(git, parsed, &out);
+    try cli.writeHelpGenerated(git, "/usr/bin/git", parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
@@ -628,7 +628,7 @@ test "writeHelpGenerated.subcommand.snapshot.7" {
     var buf: [1024]u8 = undefined;
     var out = std.Io.Writer.fixed(&buf);
     const expected: []const u8 =
-        \\Usage: git diff  <path1> <path2>
+        \\Usage: git diff [OPTIONS] <path1> <path2>
         \\
         \\Compare two files.
         \\Returns differences in patch diff format.
@@ -643,7 +643,7 @@ test "writeHelpGenerated.subcommand.snapshot.7" {
         \\    Print this help and exit.
         \\
     ;
-    try cli.writeHelpGenerated(git, parsed, &out);
+    try cli.writeHelpGenerated(git, git.name, parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 

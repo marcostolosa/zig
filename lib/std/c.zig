@@ -11401,6 +11401,34 @@ pub extern "c" fn bsearch(
     compare: *const fn (a: *const anyopaque, b: *const anyopaque) callconv(.c) c_int,
 ) ?*anyopaque;
 
+pub extern "c" fn isalpha(c: c_int) c_int;
+pub extern "c" fn isalnum(c: c_int) c_int;
+pub extern "c" fn isblank(c: c_int) c_int;
+pub extern "c" fn iscntrl(c: c_int) c_int;
+pub extern "c" fn isdigit(c: c_int) c_int;
+pub extern "c" fn isgraph(c: c_int) c_int;
+pub extern "c" fn islower(c: c_int) c_int;
+pub extern "c" fn isprint(c: c_int) c_int;
+pub extern "c" fn ispunct(c: c_int) c_int;
+pub extern "c" fn isspace(c: c_int) c_int;
+pub extern "c" fn isupper(c: c_int) c_int;
+pub extern "c" fn isxdigit(c: c_int) c_int;
+pub extern "c" fn tolower(c: c_int) c_int;
+pub extern "c" fn toupper(c: c_int) c_int;
+
+pub extern "c" fn iswalpha(c: wint_t) c_int;
+pub extern "c" fn iswalnum(c: wint_t) c_int;
+pub extern "c" fn iswblank(c: wint_t) c_int;
+pub extern "c" fn iswcntrl(c: wint_t) c_int;
+pub extern "c" fn iswdigit(c: wint_t) c_int;
+pub extern "c" fn iswgraph(c: wint_t) c_int;
+pub extern "c" fn iswlower(c: wint_t) c_int;
+pub extern "c" fn iswprint(c: wint_t) c_int;
+pub extern "c" fn iswpunct(c: wint_t) c_int;
+pub extern "c" fn iswspace(c: wint_t) c_int;
+pub extern "c" fn iswupper(c: wint_t) c_int;
+pub extern "c" fn iswxdigit(c: wint_t) c_int;
+
 // Math
 pub extern "c" fn atan(x: f64) f64;
 pub extern "c" fn copysign(x: f64, y: f64) f64;

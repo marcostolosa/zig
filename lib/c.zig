@@ -83,4 +83,5 @@ comptime {
 
     _ = @import("c/unistd.zig");
     _ = @import("c/wchar.zig");
+    _ = @import("c/wctype.zig");
 }

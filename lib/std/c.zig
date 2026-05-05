@@ -11309,6 +11309,7 @@ pub const wint_t = switch (builtin.target.os.tag) {
     .openbsd => c_int,
     .uefi => c_ushort,
     .windows => c_ushort,
+    .wasi => c_uint,
     else => switch (builtin.target.cpu.arch) {
         .csky => c_uint,
         .loongarch32, .loongarch64 => c_uint,

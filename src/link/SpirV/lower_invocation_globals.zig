@@ -94,12 +94,10 @@ const ModuleInfo = struct {
 
             switch (inst.opcode) {
                 .OpEntryPoint => {
+                    // The same function id may back multiple OpEntryPoints
+                    // (one per export name); only record it once.
                     const entry_point: ResultId = @enumFromInt(inst.operands[1]);
-                    const entry = try entry_points.getOrPut(arena, entry_point);
-                    if (entry.found_existing) {
-                        log.err("Entry point type {f} has duplicate definition", .{entry_point});
-                        return error.DuplicateId;
-                    }
+                    _ = try entry_points.getOrPut(arena, entry_point);
                 },
                 .OpTypeFunction => {
                     const fn_type: ResultId = @enumFromInt(inst.operands[0]);

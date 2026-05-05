@@ -134,7 +134,9 @@ pub const Decl = struct {
 
 pub const EntryPoint = struct {
     decl_index: Decl.Index,
-    name: []const u8,
+    /// Names under which the kernel is exported. SPIR-V allows the same
+    /// function id to back multiple OpEntryPoints, one per export name.
+    names: std.ArrayList([]const u8) = .empty,
     cc: std.builtin.CallingConvention,
 };
 
@@ -238,6 +240,7 @@ pub fn deinit(module: *Module) void {
 
     module.decls.deinit(module.gpa);
     module.decl_deps.deinit(module.gpa);
+    for (module.entry_points.values()) |*ep| ep.names.deinit(module.gpa);
     module.entry_points.deinit(module.gpa);
 
     module.* = undefined;
@@ -335,12 +338,14 @@ fn entryPoints(module: *Module) !Section {
             else => unreachable,
         };
         try module.addEntryPointDeps(entry_point.decl_index, &seen, &interface);
-        try entry_points.emit(module.gpa, .OpEntryPoint, .{
-            .execution_model = exec_model,
-            .entry_point = entry_point_id,
-            .name = entry_point.name,
-            .interface = interface.items,
-        });
+        for (entry_point.names.items) |name| {
+            try entry_points.emit(module.gpa, .OpEntryPoint, .{
+                .execution_model = exec_model,
+                .entry_point = entry_point_id,
+                .name = name,
+                .interface = interface.items,
+            });
+        }
 
         switch (entry_point.cc) {
             .spirv_kernel, .spirv_task => |kernel| {
@@ -980,6 +985,9 @@ pub fn declPtr(module: *Module, index: Decl.Index) *Decl {
 /// Declare a SPIR-V function as an entry point. This causes an extra wrapper
 /// function to be generated, which is then exported as the real entry point. The purpose of this
 /// wrapper is to allocate and initialize the structure holding the instance globals.
+///
+/// May be called multiple times with the same `decl_index` to export the
+/// function under several names; each call appends one OpEntryPoint.
 pub fn declareEntryPoint(
     module: *Module,
     decl_index: Decl.Index,
@@ -987,9 +995,16 @@ pub fn declareEntryPoint(
     cc: std.builtin.CallingConvention,
 ) !void {
     const gop = try module.entry_points.getOrPut(module.gpa, module.declPtr(decl_index).result_id);
-    gop.value_ptr.decl_index = decl_index;
-    gop.value_ptr.name = name;
-    gop.value_ptr.cc = cc;
+    if (!gop.found_existing) {
+        gop.value_ptr.* = .{
+            .decl_index = decl_index,
+            .cc = cc,
+        };
+    } else {
+        gop.value_ptr.decl_index = decl_index;
+        gop.value_ptr.cc = cc;
+    }
+    try gop.value_ptr.names.append(module.gpa, name);
 }
 
 pub fn debugName(module: *Module, target: Id, name: []const u8) !void {

@@ -557,7 +557,6 @@ pub fn writeHelpGenerated(
     );
 }
 
-// separate recursive function just avoids awkward accumulator parameter for users
 fn writeHelpRecursive(
     comptime command: Command,
     program_name: []const u8,
@@ -732,12 +731,12 @@ pub fn writeCommandUsage(
 /// The path of subcommands leading to and including the active subcommand.
 ///
 /// Example: the descent path for `git commit -m "std.cli"` is `&.{"git", "commit"}`, and the active subcommand is `commit`.
-pub inline fn descentPath(comptime command: Command, parsed: Parsed(command)) []const [:0]const u8 {
+pub fn descentPath(comptime command: Command, parsed: Parsed(command)) []const [:0]const u8 {
     return descentPathRecursive(&.{}, command, parsed);
 }
 
 // separate function only to avoid exposing user to awkward accumulator parameter
-inline fn descentPathRecursive(comptime accumulator: []const [:0]const u8, comptime command: Command, parsed: Parsed(command)) []const [:0]const u8 {
+fn descentPathRecursive(comptime accumulator: []const [:0]const u8, comptime command: Command, parsed: Parsed(command)) []const [:0]const u8 {
     const result = accumulator ++ [_][:0]const u8{command.name};
     if (parsed.subcommand) |subcommand| {
         switch (subcommand) {
@@ -889,6 +888,7 @@ fn parseRecursive(
                 return .{ .kind = .help, .subcommand = result_subcommand };
             }
 
+            // long args, like "--verbose"
             inline for (command.named_args) |arg| {
                 const Value = switch (arg.count) {
                     .one => arg.field.type,
@@ -897,7 +897,6 @@ fn parseRecursive(
                 var value: union(enum) { found: Value, not_found } = .not_found;
 
                 const long_token: []const u8 = "--" ++ arg.field.name; // like "--verbose"
-                const short_token: ?[]const u8 = if (arg.short) |short| "-" ++ [_]u8{short} else null; // like "-v"
 
                 if (@typeInfo(Value) == .bool) {
                     const no_long_token: []const u8 = "--no-" ++ arg.field.name; // like "--no-verbose"
@@ -906,8 +905,6 @@ fn parseRecursive(
                         value = .{ .found = true };
                     } else if (std.mem.eql(u8, os_arg, no_long_token)) {
                         value = .{ .found = false };
-                    } else if (short_token != null and std.mem.eql(u8, os_arg, short_token.?)) {
-                        value = .{ .found = true };
                     } else if (cutPrefixSentinel(u8, 0, os_arg, long_token ++ "=")) |suffix| {
                         value = .{ .found = try parseValue(options, Value, suffix) };
                     } else {
@@ -924,9 +921,6 @@ fn parseRecursive(
                         };
                     } else if (cutPrefixSentinel(u8, 0, os_arg, long_token ++ "=")) |suffix| {
                         value = .{ .found = try parseValue(options, Value, suffix) };
-                    } else if (short_token != null and std.mem.eql(u8, os_arg, short_token.?)) {
-                        value = .{ .found = try parseValue(options, Value, iter.next() orelse
-                            return usageErrorExit(options, "Missing argument for option: {s}", .{short_token.?})) };
                     }
                 }
                 switch (value) {
@@ -942,8 +936,7 @@ fn parseRecursive(
                 }
             }
 
-            // like `-xvf` in `tar -xvf files.tar.gz`
-
+            // short clusters, like `-xvf` in `tar -xvf files.tar.gz`
             if (!std.mem.eql(u8, os_arg, "-") and
                 std.mem.startsWith(u8, os_arg, "-") and
                 !std.mem.startsWith(u8, os_arg, "--"))
@@ -971,7 +964,7 @@ fn parseRecursive(
                                 continue :next_char;
                             } else {
                                 if (!is_last) return usageErrorExit(options, "Short flag: {c} requires a value, so it must be in the last position of the short cluster: -{s}.", .{ short, suffix });
-                                const value = try parseValue(options, Value, iter.next() orelse return usageErrorExit(options, "Missing argument for option: {c}", .{short}));
+                                const value = try parseValue(options, Value, iter.next() orelse return usageErrorExit(options, "Missing argument for option: {c} in short cluster: -{s}", .{ short, suffix }));
                                 switch (arg.count) {
                                     .one => @field(result_args, arg.field.name) = value,
                                     .unlimited => try @field(unlimited_args, arg.field.name).append(maybe_arena, value),
@@ -1072,19 +1065,19 @@ fn parseValue(options: ParseOptions, comptime T: type, buf: [:0]const u8) error{
             if (std.mem.eql(u8, "0", buf)) return false;
             return usageErrorExit(
                 options,
-                "Invalid input for argument of type bool(true/false/1/0): {s}",
+                "Invalid input \"{s}\" for argument of type bool. Choose one of true|false|1|0.",
                 .{buf},
             );
         },
         .int => return std.fmt.parseInt(T, buf, 0) catch return usageErrorExit(
             options,
             "Invalid input for argument of type {s}: {s}",
-            .{ @typeName(T), buf },
+            .{ helpTypeName(T), buf },
         ),
         .float => return std.fmt.parseFloat(T, buf) catch return usageErrorExit(
             options,
             "Invalid input for argument of type {s}: {s}",
-            .{ @typeName(T), buf },
+            .{ helpTypeName(T), buf },
         ),
         .pointer => |pointer| {
             switch (pointer.size) {
@@ -1098,8 +1091,8 @@ fn parseValue(options: ParseOptions, comptime T: type, buf: [:0]const u8) error{
         },
         .@"enum" => return std.meta.stringToEnum(T, buf) orelse return usageErrorExit(
             options,
-            "Invalid input for argument of type {s}: {s}",
-            .{ @typeName(T), buf },
+            "Invalid input \"{s}\". Choose one of {s}.",
+            .{ buf, helpTypeName(T) },
         ),
         .optional => |info| return try parseValue(options, info.child, buf),
         else => comptime unreachable, // unsupported type for cli argument value parsing

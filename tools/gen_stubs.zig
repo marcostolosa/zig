@@ -288,10 +288,10 @@ const usage =
 ;
 
 const command: std.cli.Command = .{
-    .name = "gen_stubs",
+    .name = .gen_stubs,
     .help = usage,
     .positional_args = &.{
-        .init("build_all_path", [:0]const u8, .{}),
+        .init(.build_all_path, [:0]const u8, .{}),
     },
 };
 

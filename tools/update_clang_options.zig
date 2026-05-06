@@ -644,11 +644,11 @@ const usage =
 ;
 
 const command: std.cli.Command = .{
-    .name = "update_clang_options",
+    .name = .update_clang_options,
     .help = usage,
     .positional_args = &.{
-        .init("tblgen_path", [:0]const u8, .{}),
-        .init("llvm_project_path", [:0]const u8, .{}),
+        .init(.tblgen_path, [:0]const u8, .{}),
+        .init(.llvm_project_path, [:0]const u8, .{}),
     },
 };
 

@@ -13,10 +13,10 @@ const usage =
     \\
 ;
 const command: std.cli.Command = .{
-    .name = "update_crc_catalog",
+    .name = .update_crc_catalog,
     .help = usage,
     .positional_args = &.{
-        .init("zig_src_root", [:0]const u8, .{}),
+        .init(.zig_src_root, [:0]const u8, .{}),
     },
 };
 pub fn main(init: std.process.Init) !void {

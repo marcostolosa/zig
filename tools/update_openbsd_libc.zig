@@ -19,11 +19,11 @@ const usage =
 ;
 
 const command: std.cli.Command = .{
-    .name = "update_openbsd_libc",
+    .name = .update_openbsd_libc,
     .help = usage,
     .positional_args = &.{
-        .init("openbsd_src_path", [:0]const u8, .{}),
-        .init("zig_src_path", [:0]const u8, .{}),
+        .init(.openbsd_src_path, [:0]const u8, .{}),
+        .init(.zig_src_path, [:0]const u8, .{}),
     },
 };
 

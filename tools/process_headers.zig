@@ -153,12 +153,12 @@ const usage =
 ;
 
 const command: std.cli.Command = .{
-    .name = "process_headers",
+    .name = .process_headers,
     .help = usage,
     .named_args = &.{
-        .init("search-path", []const [:0]const u8, .{ .count = .unlimited }),
-        .init("out", [:0]const u8, .{}),
-        .init("abi", LibCVendor, .{}),
+        .init(.@"search-path", []const [:0]const u8, .{ .count = .unlimited }),
+        .init(.out, [:0]const u8, .{}),
+        .init(.abi, LibCVendor, .{}),
     },
 };
 pub fn main(init: std.process.Init) !void {

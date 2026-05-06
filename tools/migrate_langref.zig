@@ -20,11 +20,11 @@ const usage =
 ;
 
 const command: std.cli.Command = .{
-    .name = "migrate_langref",
+    .name = .migrate_langref,
     .help = usage,
     .positional_args = &.{
-        .init("input_file", [:0]const u8, .{}),
-        .init("output_file", [:0]const u8, .{}),
+        .init(.input_file, [:0]const u8, .{}),
+        .init(.output_file, [:0]const u8, .{}),
     },
 };
 

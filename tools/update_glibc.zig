@@ -45,11 +45,11 @@ const usage =
 ;
 
 const command: std.cli.Command = .{
-    .name = "update_glibc",
+    .name = .update_glibc,
     .help = usage,
     .positional_args = &.{
-        .init("glibc_src_path", [:0]const u8, .{}),
-        .init("zig_src_path", [:0]const u8, .{}),
+        .init(.glibc_src_path, [:0]const u8, .{}),
+        .init(.zig_src_path, [:0]const u8, .{}),
     },
 };
 

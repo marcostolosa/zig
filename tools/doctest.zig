@@ -30,14 +30,14 @@ const usage =
 ;
 
 const command: std.cli.Command = .{
-    .name = "doctest",
+    .name = .doctest,
     .help = usage,
     .named_args = &.{
-        .init("input", [:0]const u8, .{ .short = 'i', .help = "Source code file path" }),
-        .init("output", [:0]const u8, .{ .short = 'o', .help = "Where to write output HTML docs" }),
-        .init("zig", [:0]const u8, .{ .help = "Path to the zig compiler" }),
-        .init("zig-lib-dir", ?[:0]const u8, .{ .help = "Optional. Override the zig compiler library path" }),
-        .init("cache-root", [:0]const u8, .{ .help = "Path to local .zig-cache/" }),
+        .init(.input, [:0]const u8, .{ .short = 'i', .help = "Source code file path" }),
+        .init(.output, [:0]const u8, .{ .short = 'o', .help = "Where to write output HTML docs" }),
+        .init(.zig, [:0]const u8, .{ .help = "Path to the zig compiler" }),
+        .init(.@"zig-lib-dir", ?[:0]const u8, .{ .help = "Optional. Override the zig compiler library path" }),
+        .init(.@"cache-root", [:0]const u8, .{ .help = "Path to local .zig-cache/" }),
     },
 };
 

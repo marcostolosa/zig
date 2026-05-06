@@ -19,11 +19,11 @@ const usage =
 ;
 
 const command: std.cli.Command = .{
-    .name = "update_netbsd_libc",
+    .name = .update_netbsd_libc,
     .help = usage,
     .positional_args = &.{
-        .init("netbsd_src_path", [:0]const u8, .{}),
-        .init("zig_src_path", [:0]const u8, .{}),
+        .init(.netbsd_src_path, [:0]const u8, .{}),
+        .init(.zig_src_path, [:0]const u8, .{}),
     },
 };
 

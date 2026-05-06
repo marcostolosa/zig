@@ -184,10 +184,10 @@ const usage =
     \\
 ;
 const command: std.cli.Command = .{
-    .name = "generate_linux_syscalls",
+    .name = .generate_linux_syscalls,
     .help = usage,
     .positional_args = &.{
-        .init("linux_path", [:0]const u8, .{}),
+        .init(.linux_path, [:0]const u8, .{}),
     },
 };
 

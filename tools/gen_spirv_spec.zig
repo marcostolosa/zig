@@ -97,11 +97,11 @@ const usage =
     \\
 ;
 const command: std.cli.Command = .{
-    .name = "gen_spirv_spec",
+    .name = .gen_spirv_spec,
     .help = usage,
     .positional_args = &.{
-        .init("header_repo_path", [:0]const u8, .{}),
-        .init("grammer_json_path", [:0]const u8, .{}),
+        .init(.header_repo_path, [:0]const u8, .{}),
+        .init(.grammer_json_path, [:0]const u8, .{}),
     },
 };
 

@@ -2,77 +2,77 @@ const std = @import("../std.zig");
 const cli = @import("../cli.zig");
 
 const git: cli.Command = .{
-    .name = "git",
+    .name = .git,
     .help = "A super long help page...\n",
     .help_short = "A version control system.",
     .named_args = &.{
-        .init("paginate", bool, .{ .short = 'p', .default_value = false, .help = "Enable pagination." }),
+        .init(.paginate, bool, .{ .short = 'p', .default_value = false, .help = "Enable pagination." }),
         // this is a fictional argument
-        .init("log-level", std.log.Level, .{ .short = 'l', .default_value = .warn, .help = "Set log level.\nOne of debug, warn, error.\n" }),
+        .init(.@"log-level", std.log.Level, .{ .short = 'l', .default_value = .warn, .help = "Set log level.\nOne of debug, warn, error.\n" }),
         // this is a fictional argument
-        .init("verbose", []const bool, .{ .count = .unlimited, .short = 'v', .default_value = &.{true}, .help = "Increase verbosity.\n" }),
+        .init(.verbose, []const bool, .{ .count = .unlimited, .short = 'v', .default_value = &.{true}, .help = "Increase verbosity.\n" }),
     },
     .subcommands = &.{
         .{
-            .name = "clone",
+            .name = .clone,
             .named_args = &.{
                 // this is a fictional argument
-                .init("timeout-s", f32, .{ .count = .one, .default_value = 10.0 }),
+                .init(.@"timeout-s", f32, .{ .count = .one, .default_value = 10.0 }),
             },
             .positional_args = &.{
-                .init("url", []const u8, .{ .count = .one, .help = "The git URL to clone." }),
+                .init(.url, []const u8, .{ .count = .one, .help = "The git URL to clone." }),
             },
             .help_short = "Download a repository.",
             .help = "Download a repository.\nUse a git URL.\n",
         },
         .{
-            .name = "add",
+            .name = .add,
             .positional_args = &.{
-                .init("files", []const [:0]const u8, .{ .count = .unlimited }),
+                .init(.files, []const [:0]const u8, .{ .count = .unlimited }),
             },
             .help_short = "Stage files.",
         },
         .{
-            .name = "commit",
+            .name = .commit,
             .named_args = &.{
-                .init("message", []const [:0]const u8, .{ .short = 'm', .count = .unlimited }),
-                .init("author", ?[:0]const u8, .{}),
-                .init("verbose", bool, .{ .short = 'v', .help = "Be verbose.", .default_value = false }),
+                .init(.message, []const [:0]const u8, .{ .short = 'm', .count = .unlimited }),
+                .init(.author, ?[:0]const u8, .{}),
+                .init(.verbose, bool, .{ .short = 'v', .help = "Be verbose.", .default_value = false }),
             },
             .help_short = "Commit staged changes.",
         },
         .{
-            .name = "branch",
+            .name = .branch,
             .help = "Create a branch.\n",
             .positional_args = &.{
-                .init("branch_name", ?[:0]const u8, .{}),
+                .init(.branch_name, ?[:0]const u8, .{}),
             },
             .named_args = &.{
-                .init("verbose", bool, .{ .short = 'v', .count = .one, .default_value = false }),
+                .init(.verbose, bool, .{ .short = 'v', .count = .one, .default_value = false }),
             },
             .help_short = "Create a branch.",
         },
         .{
-            .name = "log",
+            .name = .log,
             .named_args = &.{
-                .init("max-count", ?u32, .{ .count = .one }),
-                .init("remove-empty", bool, .{ .count = .one }),
+                .init(.@"max-count", ?u32, .{ .count = .one }),
+                .init(.@"remove-empty", bool, .{ .count = .one }),
                 // this is a fictional argument
-                .init("verbose", []const bool, .{ .count = .unlimited, .short = 'v', .default_value = &.{}, .help = "Increase verbosity.\n" }),
+                .init(.verbose, []const bool, .{ .count = .unlimited, .short = 'v', .default_value = &.{}, .help = "Increase verbosity.\n" }),
             },
         },
         .{
-            .name = "init",
+            .name = .init,
             .positional_args = &.{
-                .init("directory", [:0]const u8, .{ .count = .one, .default_value = "." }),
+                .init(.directory, [:0]const u8, .{ .count = .one, .default_value = "." }),
             },
             .help_short = "Create a repository.",
         },
         .{
-            .name = "diff",
+            .name = .diff,
             .positional_args = &.{
-                .init("path1", [:0]const u8, .{ .count = .one }),
-                .init("path2", [:0]const u8, .{ .count = .one, .help = "The second path to diff." }),
+                .init(.path1, [:0]const u8, .{ .count = .one }),
+                .init(.path2, [:0]const u8, .{ .count = .one, .help = "The second path to diff." }),
             },
             .help_short = "Compare files.",
             .help = "Compare two files.\nReturns differences in patch diff format.\n",
@@ -475,7 +475,7 @@ test "writeHelpGenerated.snapshot.0" {
         \\
     ;
 
-    try cli.writeHelpGenerated(git, git.name, parsed, &out);
+    try cli.writeHelpGenerated(git, @tagName(git.name), parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
@@ -495,7 +495,7 @@ test "writeHelpGenerated.subcommand.snapshot.1" {
         \\    Print this help and exit.
         \\
     ;
-    try cli.writeHelpGenerated(git, git.name, parsed, &out);
+    try cli.writeHelpGenerated(git, @tagName(git.name), parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
@@ -522,7 +522,7 @@ test "writeHelpGenerated.subcommand.snapshot.2" {
         \\    Default: 10
         \\
     ;
-    try cli.writeHelpGenerated(git, git.name, parsed, &out);
+    try cli.writeHelpGenerated(git, @tagName(git.name), parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
@@ -543,7 +543,7 @@ test "writeHelpGenerated.subcommand.snapshot.3" {
         \\    Print this help and exit.
         \\
     ;
-    try cli.writeHelpGenerated(git, git.name, parsed, &out);
+    try cli.writeHelpGenerated(git, @tagName(git.name), parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
@@ -568,7 +568,7 @@ test "writeHelpGenerated.subcommand.snapshot.4" {
         \\    Default: false
         \\
     ;
-    try cli.writeHelpGenerated(git, git.name, parsed, &out);
+    try cli.writeHelpGenerated(git, @tagName(git.name), parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
@@ -593,7 +593,7 @@ test "writeHelpGenerated.subcommand.snapshot.5" {
         \\    Default: false
         \\
     ;
-    try cli.writeHelpGenerated(git, git.name, parsed, &out);
+    try cli.writeHelpGenerated(git, @tagName(git.name), parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
@@ -643,19 +643,19 @@ test "writeHelpGenerated.subcommand.snapshot.7" {
         \\    Print this help and exit.
         \\
     ;
-    try cli.writeHelpGenerated(git, git.name, parsed, &out);
+    try cli.writeHelpGenerated(git, @tagName(git.name), parsed, &out);
     try std.testing.expectEqualStrings(expected, out.buffered());
 }
 
 test "parse.named.bool.no" {
     const git_no_alloc: cli.Command = .{
-        .name = "git",
+        .name = .git,
         .help = "A super long help page...\n",
         .help_short = "A version control system.",
         .named_args = &.{
-            .init("paginate", bool, .{ .short = 'p', .default_value = false, .help = "Enable pagination." }),
+            .init(.paginate, bool, .{ .short = 'p', .default_value = false, .help = "Enable pagination." }),
             // this is a fictional argument
-            .init("log-level", std.log.Level, .{ .short = 'l', .default_value = .warn, .help = "Set log level.\nOne of debug, warn, error.\n" }),
+            .init(.@"log-level", std.log.Level, .{ .short = 'l', .default_value = .warn, .help = "Set log level.\nOne of debug, warn, error.\n" }),
         },
     };
     const raw: []const [:0]const u8 = &.{ "git", "--no-paginate" };

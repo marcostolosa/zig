@@ -151,11 +151,11 @@ const usage =
 ;
 
 const command: std.cli.Command = .{
-    .name = "update_linux_headers",
+    .name = .update_linux_headers,
     .help = usage,
     .named_args = &.{
-        .init("search-path", []const [:0]const u8, .{ .count = .unlimited }),
-        .init("out", [:0]const u8, .{}),
+        .init(.@"search-path", []const [:0]const u8, .{ .count = .unlimited }),
+        .init(.out, [:0]const u8, .{}),
     },
 };
 

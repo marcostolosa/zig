@@ -64,13 +64,13 @@ const usage =
 ;
 
 const command: std.cli.Command = .{
-    .name = "fetch_them_macos_headers",
+    .name = .fetch_them_macos_headers,
     .help = usage,
     .named_args = &.{
-        .init("sysroot", ?[:0]const u8, .{ .help = "Optional path to macOS SDK." }),
+        .init(.sysroot, ?[:0]const u8, .{ .help = "Optional path to macOS SDK." }),
     },
     .positional_args = &.{
-        .init("cc_args", []const [:0]const u8, .{ .count = .unlimited }),
+        .init(.cc_args, []const [:0]const u8, .{ .count = .unlimited }),
     },
 };
 

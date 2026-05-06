@@ -35,11 +35,11 @@ const cutPrefixSentinel = std.mem.cutPrefixSentinel;
 /// A recursive representation of the commands available in a CLI.
 pub const Command = struct {
     /// If this is the root command, has no effect. Example: "git".
-    /// For subcommands, this is the name of the corresponding tagged union field in `parsed.subcommands.?`. Example: "commit".
+    /// For subcommands, this is the name of the corresponding tagged union field in `parsed.subcommands.?`. Example: `.commit`.
     /// Name of the subcommand in the cli.
-    /// To obtain a dashed-command like `git merge-base`, provide name "merge-base" and access with `parsed.subcommands.?.@"merge-base"`.
+    /// To obtain a dashed-command like `git merge-base`, provide name `.@"merge-base"` and access with `parsed.subcommands.?.@"merge-base"`.
     /// Must not start with "-".
-    name: [:0]const u8,
+    name: @EnumLiteral(),
     /// Named arguments are arguments that begin with `--` in the CLI, or `-` for shorthands, like `git commit --message "std.cli"` or `git commit -m "std.cli"`.
     named_args: []const Argument = &.{},
     /// Positional arguments are arguments parsed by their position after the command. Like the branch name in `git branch dev/std.cli`.
@@ -75,10 +75,10 @@ pub const Argument = struct {
     pub fn init(
         /// Name of the corresponding field in `parsed.kind.args`.
         /// Prefixed with `--` for the CLI user.
-        /// Example: `git commit --message "std.cli"` has name "message"` and parsed.kind.args.message is `"std.cli"`.
+        /// Example: `git commit --message "std.cli"` has name `.message` and parsed.kind.args.message is `"std.cli"`.
         ///
-        /// To obtain dashed arguments like `git commit --reset-author` provide "reset-author" and access with `parsed.kind.args.@"reset-author"`.
-        comptime name: [:0]const u8,
+        /// To obtain dashed arguments like `git commit --reset-author` provide `.@"reset-author"` and access with `parsed.kind.args.@"reset-author"`.
+        comptime name: @EnumLiteral(),
         /// The type of the corresponding field in `parsed.kind.args`.
         ///
         /// - bool: `--verbose`, `--verbose=true`, `-v` result in true. `--no-verbose`, `--verbose=false` result in false.
@@ -116,7 +116,7 @@ pub const Argument = struct {
 
         return .{
             .field = .{
-                .name = name,
+                .name = @tagName(name),
                 .type = T,
                 .default_value_ptr = default_value_ptr,
                 .alignment = null,
@@ -166,7 +166,7 @@ pub fn Parsed(comptime command: Command) type {
         var field_names: [command.subcommands.len][]const u8 = undefined;
         inline for (&field_types, &field_names, command.subcommands) |*field_type, *field_name, subcommand| {
             field_type.* = Parsed(subcommand);
-            field_name.* = subcommand.name;
+            field_name.* = @tagName(subcommand.name);
         }
         const field_attrs: [command.subcommands.len]std.builtin.Type.UnionField.Attributes = @splat(.{});
         const bits = if (field_names.len != 0) std.math.log2_int_ceil(usize, field_names.len) else 0;
@@ -268,7 +268,7 @@ pub fn parseAlloc(
 
 test parseAlloc {
     const command: Command = .{
-        .name = "git",
+        .name = .git,
         .help =
         \\A version control system.
         \\
@@ -281,19 +281,19 @@ test parseAlloc {
         \\
         ,
         .named_args = &.{
-            .init("log-level", std.log.Level, .{ .default_value = .err }),
+            .init(.@"log-level", std.log.Level, .{ .default_value = .err }),
         },
         .subcommands = &.{
             .{
-                .name = "branch",
+                .name = .branch,
                 .positional_args = &.{
-                    .init("branch_name", []const u8, .{}),
+                    .init(.branch_name, []const u8, .{}),
                 },
             },
             .{
-                .name = "commit",
+                .name = .commit,
                 .named_args = &.{
-                    .init("message", []const u8, .{ .short = 'm' }),
+                    .init(.message, []const u8, .{ .short = 'm' }),
                 },
             },
         },
@@ -400,22 +400,22 @@ fn parseRequiresAlloc(comptime command: Command) bool {
 }
 
 test parseRequiresAlloc {
-    const needs_alloc_named: Command = .{ .name = "an-executable", .named_args = &.{.init("verbose", []bool, .{ .count = .unlimited })} };
+    const needs_alloc_named: Command = .{ .name = .@"an-executable", .named_args = &.{.init(.verbose, []bool, .{ .count = .unlimited })} };
     try std.testing.expect(parseRequiresAlloc(needs_alloc_named));
-    const needs_alloc_pos: Command = .{ .name = "an-executable", .positional_args = &.{.init("verbose", []bool, .{ .count = .unlimited })} };
+    const needs_alloc_pos: Command = .{ .name = .@"an-executable", .positional_args = &.{.init(.verbose, []bool, .{ .count = .unlimited })} };
     try std.testing.expect(parseRequiresAlloc(needs_alloc_pos));
-    const no_needs_alloc_named: Command = .{ .name = "an-executable", .named_args = &.{.init("verbose", bool, .{ .count = .one })} };
+    const no_needs_alloc_named: Command = .{ .name = .@"an-executable", .named_args = &.{.init(.verbose, bool, .{ .count = .one })} };
     try std.testing.expect(!parseRequiresAlloc(no_needs_alloc_named));
-    const no_needs_alloc_pos: Command = .{ .name = "an-executable", .positional_args = &.{.init("verbose", bool, .{ .count = .one })} };
+    const no_needs_alloc_pos: Command = .{ .name = .@"an-executable", .positional_args = &.{.init(.verbose, bool, .{ .count = .one })} };
     try std.testing.expect(!parseRequiresAlloc(no_needs_alloc_named));
 
-    const sub_needs_alloc_named: Command = .{ .name = "an-executable", .subcommands = &.{needs_alloc_named} };
+    const sub_needs_alloc_named: Command = .{ .name = .@"an-executable", .subcommands = &.{needs_alloc_named} };
     try std.testing.expect(parseRequiresAlloc(sub_needs_alloc_named));
-    const sub_needs_alloc_pos: Command = .{ .name = "an-executable", .subcommands = &.{needs_alloc_pos} };
+    const sub_needs_alloc_pos: Command = .{ .name = .@"an-executable", .subcommands = &.{needs_alloc_pos} };
     try std.testing.expect(parseRequiresAlloc(sub_needs_alloc_pos));
-    const no_sub_needs_alloc_named: Command = .{ .name = "an-executable", .subcommands = &.{no_needs_alloc_named} };
+    const no_sub_needs_alloc_named: Command = .{ .name = .@"an-executable", .subcommands = &.{no_needs_alloc_named} };
     try std.testing.expect(!parseRequiresAlloc(no_sub_needs_alloc_named));
-    const no_sub_needs_alloc_pos: Command = .{ .name = "an-executable", .subcommands = &.{no_needs_alloc_pos} };
+    const no_sub_needs_alloc_pos: Command = .{ .name = .@"an-executable", .subcommands = &.{no_needs_alloc_pos} };
     try std.testing.expect(!parseRequiresAlloc(no_sub_needs_alloc_pos));
 }
 
@@ -499,8 +499,8 @@ fn validateCommand(comptime command: Command) void {
 
     // Subcommand may not start with "-", conflicts with named arguments.
     inline for (command.subcommands) |subcommand| {
-        if (comptime std.mem.startsWith(u8, subcommand.name, "-")) {
-            @compileError("Subcommand name may not start with \"-\", offender: " ++ subcommand.name);
+        if (comptime std.mem.startsWith(u8, @tagName(subcommand.name), "-")) {
+            @compileError("Subcommand name may not start with \"-\", offender: " ++ @tagName(subcommand.name));
         }
     }
 }
@@ -520,7 +520,7 @@ pub fn writeHelpVerbatim(comptime command: Command, parsed: Parsed(command), out
         switch (subcommand) {
             inline else => |value, tag| {
                 inline for (command.subcommands) |subcommand_config| {
-                    if (comptime std.mem.eql(u8, subcommand_config.name, @tagName(tag))) {
+                    if (comptime std.mem.eql(u8, @tagName(subcommand_config.name), @tagName(tag))) {
                         return writeHelpVerbatim(subcommand_config, value, out);
                     }
                 }
@@ -568,7 +568,7 @@ fn writeHelpRecursive(
         switch (subcommand) {
             inline else => |value, tag| {
                 inline for (command.subcommands) |subcommand_config| {
-                    if (comptime std.mem.eql(u8, subcommand_config.name, @tagName(tag))) {
+                    if (comptime std.mem.eql(u8, @tagName(subcommand_config.name), @tagName(tag))) {
                         return writeHelpRecursive(
                             subcommand_config,
                             program_name,
@@ -673,7 +673,7 @@ pub fn writeCommandGeneratedHelp(
         try out.writeAll("SUBCOMMANDS");
         inline for (command.subcommands) |subcommand| {
             try out.writeAll("\n");
-            try out.print("  {s}\n", .{subcommand.name});
+            try out.print("  {s}\n", .{@tagName(subcommand.name)});
             try writeIndented(subcommand.help_short, 4, out);
         }
     }
@@ -737,12 +737,12 @@ pub fn descentPath(comptime command: Command, parsed: Parsed(command)) []const [
 
 // separate function only to avoid exposing user to awkward accumulator parameter
 fn descentPathRecursive(comptime accumulator: []const [:0]const u8, comptime command: Command, parsed: Parsed(command)) []const [:0]const u8 {
-    const result = accumulator ++ [_][:0]const u8{command.name};
+    const result = accumulator ++ [_][:0]const u8{@tagName(command.name)};
     if (parsed.subcommand) |subcommand| {
         switch (subcommand) {
             inline else => |value, tag| {
                 inline for (command.subcommands) |subcommand_config| {
-                    if (comptime std.mem.eql(u8, subcommand_config.name, @tagName(tag))) {
+                    if (comptime std.mem.eql(u8, @tagName(subcommand_config.name), @tagName(tag))) {
                         return descentPathRecursive(result, subcommand_config, value);
                     }
                 }
@@ -982,9 +982,9 @@ fn parseRecursive(
             }
 
             inline for (command.subcommands) |subcommand| {
-                if (std.mem.eql(u8, os_arg, subcommand.name)) {
+                if (std.mem.eql(u8, os_arg, @tagName(subcommand.name))) {
                     const U = std.meta.Child(@TypeOf(result_subcommand));
-                    result_subcommand = @unionInit(U, subcommand.name, try parseRecursive(subcommand, maybe_arena, iter, options));
+                    result_subcommand = @unionInit(U, @tagName(subcommand.name), try parseRecursive(subcommand, maybe_arena, iter, options));
                     continue :next_os_arg;
                 }
             }

@@ -787,7 +787,7 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
     const preopens = std.process.Preopens.init(arena_allocator.allocator()) catch |err|
         std.process.fatal("failed to init preopens: {t}", .{err});
 
-    return wrapMain(root.main(.{
+    const init: std.process.Init = .{
         .minimal = .{
             .args = .{ .vector = args },
             .environ = .{ .block = environ },
@@ -797,7 +797,23 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
         .io = threaded.io(),
         .environ_map = &environ_map,
         .preopens = preopens,
-    }));
+    };
+
+    if (fn_info.params.len == 1) return wrapMain(root.main(init));
+
+    const parsed_args = std.cli.parseProcessArgs(fn_info.params[1].type.?, init) catch |err| switch (err) {
+        error.HelpRequested, error.VersionRequested => {
+            if (builtin.mode != .Debug) std.process.exit(0) else return 0;
+        },
+        error.Usage => {
+            if (builtin.mode != .Debug) std.process.exit(2) else return 2;
+        },
+        else => {
+            std.process.fatal("failed to process command-line arguments: {t}", .{err});
+        },
+    };
+
+    return wrapMain(root.main(init, parsed_args));
 }
 
 inline fn wrapMain(result: anytype) u8 {

@@ -1,5 +1,6 @@
 const std = @import("std");
 const ArgsTokenizer = std.cli.ArgsTokenizer;
+const Help = std.cli.Help;
 const assert = std.debug.assert;
 
 const ArgsParser = @This();
@@ -55,7 +56,7 @@ pub fn parseAllocZ(
     return p.parseArgs(.{ .alloc = true, .z = true }, T, arena, args);
 }
 
-const CommandInfo = struct {
+pub const CommandInfo = struct {
     positional_names: []const [:0]const u8,
     positional_types: []const type,
     positional_classes: []const ArgClass,
@@ -63,9 +64,9 @@ const CommandInfo = struct {
     option_types: []const type,
     option_classes: []const ArgClass,
 
-    const ArgClass = enum { required, optional, repeated };
+    pub const ArgClass = enum { required, optional, repeated };
 
-    fn from(comptime T: type) CommandInfo {
+    pub fn from(comptime T: type) CommandInfo {
         for (.{ "--help", "--version" }) |field_name| if (@hasField(T, field_name)) {
             @compileError("option '" ++ field_name ++ "' is reserved and cannot be declared as a field");
         };
@@ -168,6 +169,11 @@ fn parseArgs(
     }
 
     const cmd: CommandInfo = comptime .from(T);
+    const cmd_name: ?[]const u8 =
+        if (@hasDecl(T, "--help") and @TypeOf(T.@"--help") == Help(T))
+            T.@"--help".command_name orelse p.program_name
+        else
+            p.program_name;
 
     const ArrayLists: type, //
     const required_positional_count: usize, //
@@ -281,7 +287,7 @@ fn parseArgs(
             inline 0...(option_names.len - 1) => |i| {
                 const option_name = option_names[i];
                 if (i < original_options_end) {
-                    const parsed_arg = try p.parseArg(api, option_name, cmd.option_types[i], option.arg);
+                    const parsed_arg = try p.parseArg(api, cmd_name, option_name, cmd.option_types[i], option.arg);
                     if (cmd.option_classes[i] == .repeated) {
                         // Repeated option
                         try @field(result_lists, option_name).append(arena, parsed_arg);
@@ -307,7 +313,7 @@ fn parseArgs(
         .positional => |positional_arg| if (cmd.positional_names.len != 0) switch (positional_index) {
             inline 0...(cmd.positional_names.len - 1) => |i| {
                 const positional_name = cmd.positional_names[i];
-                const parsed_arg = try p.parseArg(api, null, cmd.positional_types[i], positional_arg);
+                const parsed_arg = try p.parseArg(api, cmd_name, null, cmd.positional_types[i], positional_arg);
                 if (cmd.positional_classes[i] == .repeated) {
                     // Repeated positional
                     try @field(result_lists, positional_name).append(arena, parsed_arg);
@@ -318,26 +324,26 @@ fn parseArgs(
                 }
             },
             else => {
-                return try p.failIncorrectArgCount(required_positional_count, optional_positional_count);
+                return try p.failIncorrectArgCount(cmd_name, required_positional_count, optional_positional_count);
             },
         } else {
-            return try p.failMissingOrUnexpectedArg(null, positional_arg);
+            return try p.failMissingOrUnexpectedArg(cmd_name, null, positional_arg);
         },
         .invalid_option => |invalid| switch (invalid.err) {
             error.UnrecognizedOption => {
-                return try p.failUnrecognized("option", invalid.name.slice());
+                return try p.failUnrecognized(cmd_name, "option", invalid.name.slice());
             },
             error.MissingOptionArg, error.UnexpectedOptionArg => {
-                return try p.failMissingOrUnexpectedArg(invalid.name.slice(), invalid.arg);
+                return try p.failMissingOrUnexpectedArg(cmd_name, invalid.name.slice(), invalid.arg);
             },
         },
     };
 
     if (positional_index < required_positional_count) {
         if (required_positional_count == 1 and optional_positional_count == 0) {
-            return try p.failMissingOrUnexpectedArg(null, null);
+            return try p.failMissingOrUnexpectedArg(cmd_name, null, null);
         } else {
-            return try p.failIncorrectArgCount(required_positional_count, optional_positional_count);
+            return try p.failIncorrectArgCount(cmd_name, required_positional_count, optional_positional_count);
         }
     }
 
@@ -352,7 +358,7 @@ fn parseArgs(
     return result;
 }
 
-fn parseArg(p: ArgsParser, comptime api: Api, option_name: ?[]const u8, comptime T: type, arg: ?[]const u8) !T {
+fn parseArg(p: ArgsParser, comptime api: Api, cmd_name: ?[]const u8, option_name: ?[]const u8, comptime T: type, arg: ?[]const u8) !T {
     switch (@typeInfo(T)) {
         .void => {
             assert(arg == null);
@@ -364,18 +370,18 @@ fn parseArg(p: ArgsParser, comptime api: Api, option_name: ?[]const u8, comptime
         },
         .int => {
             return parseInt(T, arg.?) catch |err| switch (err) {
-                error.InvalidCharacter => try p.failInvalidNumber(option_name, arg.?, "integer"),
-                error.Overflow => try p.failNumberOutOfRange(option_name, arg.?, std.math.minInt(T), std.math.maxInt(T)),
+                error.InvalidCharacter => try p.failInvalidNumber(cmd_name, option_name, arg.?, "integer"),
+                error.Overflow => try p.failNumberOutOfRange(cmd_name, option_name, arg.?, std.math.minInt(T), std.math.maxInt(T)),
             };
         },
         .float => {
             return parseFloat(T, arg.?) catch |err| switch (err) {
-                error.InvalidCharacter => try p.failInvalidNumber(option_name, arg.?, "floating-point number"),
+                error.InvalidCharacter => try p.failInvalidNumber(cmd_name, option_name, arg.?, "floating-point number"),
             };
         },
         .@"enum" => {
             return parseEnum(T, arg.?) catch |err| switch (err) {
-                error.UnrecognizedName => try p.failInvalidChoice(option_name, arg.?, std.meta.fieldNames(T)),
+                error.UnrecognizedName => try p.failInvalidChoice(cmd_name, option_name, arg.?, std.meta.fieldNames(T)),
             };
         },
         .pointer => {
@@ -415,15 +421,15 @@ fn parseSubcommand(
     @compileError("TODO: implement subcommand parsing");
 }
 
-fn failUnrecognized(p: ArgsParser, kind: []const u8, name: []const u8) !noreturn {
+fn failUnrecognized(p: ArgsParser, cmd_name: ?[]const u8, kind: []const u8, name: []const u8) !noreturn {
     @branchHint(.cold);
     try p.failPrefix(null);
     try p.stderr.writer.print("unrecognized {s} ", .{kind});
     try p.failQuote(.yellow, name);
-    return p.failSuffix();
+    return p.failSuffix(cmd_name);
 }
 
-fn failIncorrectArgCount(p: ArgsParser, required: usize, optional: usize) !noreturn {
+fn failIncorrectArgCount(p: ArgsParser, cmd_name: ?[]const u8, required: usize, optional: usize) !noreturn {
     @branchHint(.cold);
     try p.failPrefix(null);
     try p.stderr.writer.writeAll("incorrect number of arguments (expected ");
@@ -441,10 +447,10 @@ fn failIncorrectArgCount(p: ArgsParser, required: usize, optional: usize) !noret
         }
     }
     try p.stderr.writer.print("{d})", .{last});
-    return p.failSuffix();
+    return p.failSuffix(cmd_name);
 }
 
-fn failMissingOrUnexpectedArg(p: ArgsParser, option_name: ?[]const u8, arg: ?[]const u8) !noreturn {
+fn failMissingOrUnexpectedArg(p: ArgsParser, cmd_name: ?[]const u8, option_name: ?[]const u8, arg: ?[]const u8) !noreturn {
     @branchHint(.cold);
     try p.failPrefix(option_name);
     if (arg) |x| {
@@ -453,19 +459,19 @@ fn failMissingOrUnexpectedArg(p: ArgsParser, option_name: ?[]const u8, arg: ?[]c
     } else {
         try p.stderr.writer.writeAll("expected an argument");
     }
-    return p.failSuffix();
+    return p.failSuffix(cmd_name);
 }
 
-fn failInvalidNumber(p: ArgsParser, option_name: ?[]const u8, arg: []const u8, kind: []const u8) !noreturn {
+fn failInvalidNumber(p: ArgsParser, cmd_name: ?[]const u8, option_name: ?[]const u8, arg: []const u8, kind: []const u8) !noreturn {
     @branchHint(.cold);
     try p.failPrefix(option_name);
     try p.stderr.writer.writeAll("argument ");
     try p.failQuote(.yellow, arg);
     try p.stderr.writer.print(" is not a recognizable {s}", .{kind});
-    return p.failSuffix();
+    return p.failSuffix(cmd_name);
 }
 
-fn failNumberOutOfRange(p: ArgsParser, option_name: ?[]const u8, arg: []const u8, comptime min: comptime_int, comptime max: comptime_int) !noreturn {
+fn failNumberOutOfRange(p: ArgsParser, cmd_name: ?[]const u8, option_name: ?[]const u8, arg: []const u8, comptime min: comptime_int, comptime max: comptime_int) !noreturn {
     @branchHint(.cold);
     try p.failPrefix(option_name);
     try p.stderr.writer.writeAll("argument ");
@@ -479,10 +485,10 @@ fn failNumberOutOfRange(p: ArgsParser, option_name: ?[]const u8, arg: []const u8
     try p.stderr.writer.print("{d}", .{max});
     try p.stderr.setColor(.reset);
     try p.stderr.writer.writeAll(" inclusive)");
-    return p.failSuffix();
+    return p.failSuffix(cmd_name);
 }
 
-fn failInvalidChoice(p: ArgsParser, option_name: ?[]const u8, arg: []const u8, choices: []const []const u8) !noreturn {
+fn failInvalidChoice(p: ArgsParser, cmd_name: ?[]const u8, option_name: ?[]const u8, arg: []const u8, choices: []const []const u8) !noreturn {
     @branchHint(.cold);
     try p.failPrefix(option_name);
     try p.stderr.writer.writeAll("argument ");
@@ -498,7 +504,7 @@ fn failInvalidChoice(p: ArgsParser, option_name: ?[]const u8, arg: []const u8, c
         try p.failQuote(.bold, choices[choices.len - 1]);
     }
     try p.stderr.writer.writeByte(')');
-    return p.failSuffix();
+    return p.failSuffix(cmd_name);
 }
 
 fn failQuote(f: ArgsParser, color: std.Io.Terminal.Color, value: []const u8) !void {
@@ -523,12 +529,12 @@ fn failPrefix(p: ArgsParser, option_name: ?[]const u8) !void {
     }
 }
 
-fn failSuffix(p: ArgsParser) !noreturn {
+fn failSuffix(p: ArgsParser, cmd_name: ?[]const u8) !noreturn {
     @branchHint(.cold);
     try p.stderr.writer.writeAll("\nTry ");
     try p.stderr.setColor(.bold);
     try p.stderr.writer.writeByte('\'');
-    if (p.program_name) |name| {
+    if (cmd_name) |name| {
         try p.stderr.writer.print("{s} ", .{name});
     }
     try p.stderr.writer.writeAll("--help'");
@@ -540,16 +546,37 @@ fn failSuffix(p: ArgsParser) !noreturn {
 
 fn printHelp(p: ArgsParser, comptime T: type) !noreturn {
     @branchHint(.cold);
-    _ = T;
-    try p.stdout.writer.writeAll("TODO: implement --help\n");
+    if (!@hasDecl(T, "--help")) {
+        const default_help: Help(T) = .{ .args = std.mem.zeroInit(Help(T).Args, .{}) };
+        try default_help.renderHelp(p.stdout, p.program_name);
+    } else if (@typeInfo(@TypeOf(T.@"--help")) == .pointer) {
+        const string = T.@"--help";
+        try p.stdout.writer.writeAll(string);
+        if (string.len != 0 and string[string.len - 1] != '\n') {
+            try p.stdout.writer.writeByte('\n');
+        }
+    } else if (@TypeOf(T.@"--help") == Help(T)) {
+        try T.@"--help".renderHelp(p.stdout, p.program_name);
+    } else {
+        @compileError("unsupported '--help' type: expected '[]const u8' or 'std.cli.Help(" ++ @typeName(T) ++ ")', found '" ++ @typeName(@TypeOf(T.@"--help")) ++ "'");
+    }
     try p.stdout.writer.flush();
     return error.HelpRequested;
 }
 
 fn printVersion(p: ArgsParser, comptime T: type) !noreturn {
     @branchHint(.cold);
-    _ = T;
-    try p.stdout.writer.writeAll("TODO: implement --version\n");
+    if (@typeInfo(@TypeOf(T.@"--version")) == .pointer) {
+        const string = T.@"--version";
+        try p.stdout.writer.writeAll(string);
+        if (string.len != 0 and string[string.len - 1] != '\n') {
+            try p.stdout.writer.writeByte('\n');
+        }
+    } else if (@TypeOf(T.@"--version") == std.SemanticVersion) {
+        try p.stdout.writer.print("{f}\n", .{T.@"--version"});
+    } else {
+        @compileError("unsupported '--version' type: expected '[]const u8' or 'std.SemanticVersion', found '" ++ @typeName(@TypeOf(T.@"--version")) ++ "'");
+    }
     try p.stdout.writer.flush();
     return error.VersionRequested;
 }

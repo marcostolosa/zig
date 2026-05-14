@@ -205,7 +205,7 @@ pub const ParseOptions = struct {
     /// Provide information about why a usage error occurred to stderr.
     /// Errors when writing to stderr are silently ignored.
     render_usage_errors: bool = false,
-    /// Call std.process.exit(1) when the user requests help with --help.
+    /// Call std.process.exit(0) when the user requests help with --help.
     exit_help: bool = false,
     /// Provide help information to stdout when the user requests help with --help.
     /// Errors when writing to stdout are silently ignored.
@@ -382,7 +382,7 @@ fn helpExit(
     }
 
     if (options.exit_help and helpWanted(parsed)) {
-        std.process.exit(1);
+        std.process.exit(0);
     }
 }
 

@@ -57,8 +57,19 @@ Program <- STRING
 # positional that collides with EndOfOptions, Option, Subcommand, they need to use EndOfOptions first.
 #
 # Example: .{"git", "add", "--", "--verbose"} will add a file named "--verbose".
+#
+# HELPLONG and HELPSHORT indicate the user requested help.
+# HELPLONG is "--help".
+# HELPSHORT is "-h".
+# Example: "--help" in .{"git", "--help", "add", "--", "README.md", "build.zig.zon"}.
+# Example "-h" in .{"git", "add", "-h", "--", "README.md", "build.zig.zon"}.
+#
+# HELPLONG and HELPSHORT can be interpreted as positionals if they come after EndOfOptions.
+# Example: "--help" in .{"git", "add", "--", "--help", "build.zig.zon"} will add a file named "--help".
 Arg
     <- EndOfOptions (NE Positional)*
+    / HELPLONG
+    / HELPSHORT
     / Option
     / Subcommand
     / Positional

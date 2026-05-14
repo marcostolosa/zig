@@ -74,8 +74,7 @@ pub fn Help(comptime T: type) type {
                     try term.writer.writeByte('[');
                     brackets += 1;
                 }
-                const display = arg_help.display orelse
-                    "<" ++ p_name ++ ">" ++ (if (p_class == .repeated) "..." else "");
+                const display = arg_help.display orelse defaultPositionalDisplay(p_name, p_class);
                 try renderUsageTokens(term, .normal, display);
                 max_positional_width = @max(max_positional_width orelse 0, display.len);
             }
@@ -94,8 +93,7 @@ pub fn Help(comptime T: type) type {
                     const arg_help: Arg = @field(help.args, p_name);
                     if (arg_help.hidden) break :@"continue";
                     try term.writer.writeAll("\n  ");
-                    const display = arg_help.display orelse
-                        "<" ++ p_name ++ ">" ++ (if (p_class == .repeated) "..." else "");
+                    const display = arg_help.display orelse defaultPositionalDisplay(p_name, p_class);
                     try renderUsageTokens(term, .normal, display);
                     if (arg_help.description) |description| {
                         try term.writer.splatByteAll(' ', max_width - display.len + 2);
@@ -118,7 +116,7 @@ pub fn Help(comptime T: type) type {
                         width += "[no-]".len;
                     },
                     else => {
-                        const display = arg_help.display orelse "<value>";
+                        const display = arg_help.display orelse defaultOptionDisplay(o_type);
                         width += "=".len + display.len;
                     },
                 }
@@ -143,7 +141,7 @@ pub fn Help(comptime T: type) type {
                     try term.setColor(.reset);
                 } else {
                     try term.writer.writeByte('=');
-                    const display = arg_help.display orelse "<value>";
+                    const display = arg_help.display orelse defaultOptionDisplay(o_type);
                     width += "=".len + display.len;
                     try renderUsageTokens(term, .bold, display);
                 }
@@ -213,6 +211,29 @@ pub fn Help(comptime T: type) type {
             if (prev_style != .normal) {
                 try term.setColor(.reset);
             }
+        }
+
+        fn defaultPositionalDisplay(
+            comptime p_name: []const u8,
+            comptime p_class: ArgsParser.CommandInfo.ArgClass,
+        ) []const u8 {
+            return comptime display: {
+                var copy = p_name[0..].*;
+                std.mem.replaceScalar(u8, &copy, '_', '-');
+                break :display "<" ++ copy ++ ">" ++ (if (p_class == .repeated) "..." else "");
+            };
+        }
+
+        fn defaultOptionDisplay(
+            comptime o_type: type,
+        ) []const u8 {
+            return switch (@typeInfo(o_type)) {
+                .void, .bool => comptime unreachable, // These don't take arguments
+                .int, .float => "<number>",
+                .@"enum" => "<choice>",
+                .pointer => "<value>",
+                else => comptime unreachable, // Unsupported
+            };
         }
     };
 }

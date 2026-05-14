@@ -11,73 +11,43 @@ const mem = std.mem;
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
-const fatal = std.process.fatal;
 const Writer = std.Io.Writer;
 
 const max_doc_file_size = 10 * 1024 * 1024;
 
 const obj_ext = builtin.object_format.fileExt(builtin.cpu.arch);
 
-const usage =
-    \\Usage: docgen [options] input output
-    \\
-    \\   Generates an HTML document from a docgen template.
-    \\
-    \\Options:
-    \\   --code-dir dir         Path to directory containing code example outputs
-    \\   -h, --help             Print this help and exit
-    \\
-;
+const Args = struct {
+    code_dir: []const u8,
+    input_file: []const u8,
+    output_file: []const u8,
 
-pub fn main(init: std.process.Init) !void {
+    pub const @"--help": std.cli.Help(Args) = .{
+        .summary = "Generates an HTML document from a docgen template.",
+        .args = .{
+            .code_dir = .{ .description = "Path to directory containing code example outputs" },
+            .input_file = .{ .description = "Path to input file" },
+            .output_file = .{ .description = "Path to output file" },
+        },
+    };
+};
+
+pub fn main(init: std.process.Init, args: Args) !void {
     const arena = init.arena.allocator();
     const io = init.io;
 
-    var args_it = try init.minimal.args.iterateAllocator(arena);
-    if (!args_it.skip()) @panic("expected self arg");
-
-    var opt_code_dir: ?[]const u8 = null;
-    var opt_input: ?[]const u8 = null;
-    var opt_output: ?[]const u8 = null;
-
-    while (args_it.next()) |arg| {
-        if (mem.startsWith(u8, arg, "-")) {
-            if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                try Io.File.stdout().writeStreamingAll(io, usage);
-                process.exit(0);
-            } else if (mem.eql(u8, arg, "--code-dir")) {
-                if (args_it.next()) |param| {
-                    opt_code_dir = param;
-                } else {
-                    fatal("expected parameter after --code-dir", .{});
-                }
-            } else {
-                fatal("unrecognized option: '{s}'", .{arg});
-            }
-        } else if (opt_input == null) {
-            opt_input = arg;
-        } else if (opt_output == null) {
-            opt_output = arg;
-        } else {
-            fatal("unexpected positional argument: '{s}'", .{arg});
-        }
-    }
-    const input_path = opt_input orelse fatal("missing input file", .{});
-    const output_path = opt_output orelse fatal("missing output file", .{});
-    const code_dir_path = opt_code_dir orelse fatal("missing --code-dir argument", .{});
-
-    var in_file = try Dir.cwd().openFile(io, input_path, .{});
+    var in_file = try Dir.cwd().openFile(io, args.input_file, .{});
     defer in_file.close(io);
 
-    var out_file = try Dir.cwd().createFile(io, output_path, .{});
+    var out_file = try Dir.cwd().createFile(io, args.output_file, .{});
     defer out_file.close(io);
     var out_file_buffer: [4096]u8 = undefined;
     var out_file_writer = out_file.writer(io, &out_file_buffer);
 
     var code_dir: Path = .{
         .root_dir = .{
-            .handle = try Dir.cwd().openDir(io, code_dir_path, .{}),
-            .path = code_dir_path,
+            .handle = try Dir.cwd().openDir(io, args.code_dir, .{}),
+            .path = args.code_dir,
         },
     };
     defer code_dir.root_dir.handle.close(io);
@@ -85,7 +55,7 @@ pub fn main(init: std.process.Init) !void {
     var in_file_reader = in_file.reader(io, &.{});
     const input_file_bytes = try in_file_reader.interface.allocRemaining(arena, .limited(max_doc_file_size));
 
-    var tokenizer = Tokenizer.init(input_path, input_file_bytes);
+    var tokenizer = Tokenizer.init(args.input_file, input_file_bytes);
     var toc = try genToc(arena, &tokenizer);
 
     try genHtml(arena, io, &tokenizer, &toc, code_dir, &out_file_writer.interface);

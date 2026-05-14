@@ -1551,19 +1551,15 @@ fn generateLangRef(b: *std.Build) !std.Build.LazyPath {
         const out_basename = b.fmt("{s}.out", .{std.fs.path.stem(entry.name)});
         const cmd = b.addRunArtifact(doctest_exe);
 
-        cmd.addArg("--zig");
         cmd.addFileArg(.zig_exe);
 
-        cmd.addArg("--cache-root");
         cmd.addDirectoryArg(.cache_root);
 
         cmd.addArg("--zig-lib-dir");
         cmd.addDirectoryArg(.zig_lib);
 
-        cmd.addArg("-i");
         cmd.addFileArg(b.path(b.fmt("doc/langref/{s}", .{entry.name})));
 
-        cmd.addArg("-o");
         _ = wf.addCopyFile(cmd.addOutputFileArg(out_basename), out_basename);
     }
 
@@ -1577,7 +1573,6 @@ fn generateLangRef(b: *std.Build) !std.Build.LazyPath {
     });
 
     const docgen_cmd = b.addRunArtifact(docgen_exe);
-    docgen_cmd.addArgs(&.{"--code-dir"});
     docgen_cmd.addDirectoryArg(wf.getDirectory());
 
     docgen_cmd.addFileArg(b.path("doc/langref.html.in"));

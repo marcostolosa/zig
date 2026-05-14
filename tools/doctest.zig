@@ -13,23 +13,32 @@ const getExternalExecutor = std.zig.system.getExternalExecutor;
 
 const max_doc_file_size = 10 * 1024 * 1024;
 
-const usage =
-    \\Usage: doctest [options] -i input -o output
-    \\
-    \\   Compiles and possibly runs a code example, capturing output and rendering
-    \\   it to HTML documentation.
-    \\
-    \\Options:
-    \\   -h, --help             Print this help and exit
-    \\   -i input               Source code file path
-    \\   -o output              Where to write output HTML docs to
-    \\   --zig zig              Path to the zig compiler
-    \\   --zig-lib-dir dir      Override the zig compiler library path
-    \\   --cache-root dir       Path to local .zig-cache/
-    \\
-;
+const Args = struct {
+    zig_exe: []const u8,
+    cache_root: []const u8,
+    input_path: []const u8,
+    output_path: []const u8,
+    @"--zig-lib-dir": ?[]const u8,
 
-pub fn main(init: std.process.Init) !void {
+    pub const @"--help": std.cli.Help(Args) = .{
+        .summary = (
+            \\Compiles and possibly runs a code example,
+            \\capturing output and rendering it to HTML documentation.
+        ),
+        .args = .{
+            .zig_exe = .{ .description = "Path to the zig compiler" },
+            .cache_root = .{ .description = "Path to local .zig-cache/" },
+            .input_path = .{ .description = "Source code file path" },
+            .output_path = .{ .description = "Where to write output HTML docs to" },
+            .@"--zig-lib-dir" = .{
+                .display = "<dir>",
+                .description = "Override the zig compiler library path",
+            },
+        },
+    };
+};
+
+pub fn main(init: std.process.Init, args: Args) !void {
     const arena = init.arena.allocator();
     const io = init.io;
     const environ_map = init.environ_map;
@@ -37,74 +46,37 @@ pub fn main(init: std.process.Init) !void {
 
     try environ_map.put("CLICOLOR_FORCE", "1");
 
-    var args_it = try init.minimal.args.iterateAllocator(arena);
-    if (!args_it.skip()) fatal("missing argv[0]", .{});
-
-    var opt_input: ?[]const u8 = null;
-    var opt_output: ?[]const u8 = null;
-    var opt_zig: ?[]const u8 = null;
-    var opt_zig_lib_dir: ?[]const u8 = null;
-    var opt_cache_root: ?[]const u8 = null;
-
-    while (args_it.next()) |arg| {
-        if (mem.startsWith(u8, arg, "-")) {
-            if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                try Io.File.stdout().writeStreamingAll(io, usage);
-                process.exit(0);
-            } else if (mem.eql(u8, arg, "-i")) {
-                opt_input = args_it.next() orelse fatal("expected parameter after -i", .{});
-            } else if (mem.eql(u8, arg, "-o")) {
-                opt_output = args_it.next() orelse fatal("expected parameter after -o", .{});
-            } else if (mem.eql(u8, arg, "--zig")) {
-                opt_zig = args_it.next() orelse fatal("expected parameter after --zig", .{});
-            } else if (mem.eql(u8, arg, "--zig-lib-dir")) {
-                opt_zig_lib_dir = args_it.next() orelse fatal("expected parameter after --zig-lib-dir", .{});
-            } else if (mem.eql(u8, arg, "--cache-root")) {
-                opt_cache_root = args_it.next() orelse fatal("expected parameter after --cache-root", .{});
-            } else {
-                fatal("unrecognized option: '{s}'", .{arg});
-            }
-        } else {
-            fatal("unexpected positional argument: '{s}'", .{arg});
-        }
-    }
-
-    const input_path = opt_input orelse fatal("missing input file (-i)", .{});
-    const output_path = opt_output orelse fatal("missing output file (-o)", .{});
-    const zig_path = opt_zig orelse fatal("missing zig compiler path (--zig)", .{});
-    const cache_root = opt_cache_root orelse fatal("missing cache root path (--cache-root)", .{});
-
-    const source_bytes = try Dir.cwd().readFileAlloc(io, input_path, arena, .limited(std.math.maxInt(u32)));
+    const source_bytes = try Dir.cwd().readFileAlloc(io, args.input_path, arena, .limited(std.math.maxInt(u32)));
     const code = try parseManifest(arena, source_bytes);
     const source = stripManifest(source_bytes);
 
     var random_integer: u64 = undefined;
     io.random(@ptrCast(&random_integer));
 
-    const tmp_dir_path = try std.fmt.allocPrint(arena, "{s}/tmp/{x}", .{ cache_root, random_integer });
+    const tmp_dir_path = try std.fmt.allocPrint(arena, "{s}/tmp/{x}", .{ args.cache_root, random_integer });
     Dir.cwd().createDirPath(io, tmp_dir_path) catch |err|
         fatal("unable to create tmp dir '{s}': {t}", .{ tmp_dir_path, err });
     defer Dir.cwd().deleteTree(io, tmp_dir_path) catch |err| std.log.err("unable to delete '{s}': {t}", .{
         tmp_dir_path, err,
     });
 
-    var out_file = try Dir.cwd().createFile(io, output_path, .{});
+    var out_file = try Dir.cwd().createFile(io, args.output_path, .{});
     defer out_file.close(io);
     var out_file_buffer: [4096]u8 = undefined;
     var out_file_writer = out_file.writer(io, &out_file_buffer);
 
     const out = &out_file_writer.interface;
 
-    try printSourceBlock(arena, out, source, Dir.path.basename(input_path));
+    try printSourceBlock(arena, out, source, Dir.path.basename(args.input_path));
     try printOutput(
         arena,
         io,
         out,
         code,
         tmp_dir_path,
-        try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, zig_path),
-        try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, input_path),
-        if (opt_zig_lib_dir) |zig_lib_dir|
+        try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, args.zig_exe),
+        try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, args.input_path),
+        if (args.@"--zig-lib-dir") |zig_lib_dir|
             try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, zig_lib_dir)
         else
             null,

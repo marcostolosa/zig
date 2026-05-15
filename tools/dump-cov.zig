@@ -1,5 +1,22 @@
-//! Reads a Zig coverage file and prints human-readable information to stdout,
-//! including file:line:column information for each PC.
+const Args = struct {
+    exe_path: []const u8,
+    cov_path: []const u8,
+    target_query: []const u8 = "native",
+
+    pub const @"--help": std.cli.Help(Args) = .{
+        .summary = (
+            \\Reads a Zig coverage file and prints human-readable information to stdout,
+            \\including file:line:column information for each PC.
+            \\
+            \\Example: dump-cov zig-out/test .zig-cache/v/xxxxxxxx x86_64-linux
+        ),
+        .args = .{
+            .exe_path = .{ .description = "Path to executable" },
+            .cov_path = .{ .description = "Path to coverage file" },
+            .target_query = .{ .description = "If omitted, defaults to 'native'" },
+        },
+    };
+};
 
 const std = @import("std");
 const Io = std.Io;
@@ -8,36 +25,22 @@ const Path = std.Build.Cache.Path;
 const assert = std.debug.assert;
 const SeenPcsHeader = std.Build.abi.fuzz.SeenPcsHeader;
 
-pub fn main(init: std.process.Init) !void {
+pub fn main(init: std.process.Init, args: Args) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
-
-    const target_query_str = switch (args.len) {
-        3 => "native",
-        4 => args[3],
-        else => return fatal(
-            \\usage: {0s} path/to/exe path/to/coverage [target]
-            \\  if omitted, 'target' defaults to 'native'
-            \\  example: {0s} zig-out/test .zig-cache/v/xxxxxxxx x86_64-linux
-        , .{if (args.len == 0) "dump-cov" else args[0]}),
-    };
 
     const target = std.zig.resolveTargetQueryOrFatal(io, try .parse(.{
-        .arch_os_abi = target_query_str,
+        .arch_os_abi = args.target_query,
     }));
-
-    const exe_file_name = args[1];
-    const cov_file_name = args[2];
 
     const exe_path: Path = .{
         .root_dir = .cwd(),
-        .sub_path = exe_file_name,
+        .sub_path = args.exe_path,
     };
     const cov_path: Path = .{
         .root_dir = .cwd(),
-        .sub_path = cov_file_name,
+        .sub_path = args.cov_path,
     };
 
     var coverage: std.debug.Coverage = .init;

@@ -11,11 +11,13 @@ const AtomicOp = enum {
     ldset,
 };
 
-pub fn main(init: std.process.Init) !void {
+// Use an empty args struct as the second parameter,
+// so that a usage error message is printed if any args are passed.
+const Args = struct {};
+
+pub fn main(init: std.process.Init, _: Args) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-
-    //const args = try std.process.argsAlloc(arena);
 
     var stdout_buffer: [2000]u8 = undefined;
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);

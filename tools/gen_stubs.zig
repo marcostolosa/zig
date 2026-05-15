@@ -1,55 +1,65 @@
-//! Example usage:
-//! ./gen_stubs /path/to/musl/build-all >libc.S
-//!
-//! The directory 'build-all' is expected to contain these subdirectories:
-//!
-//! * aarch64
-//! * arm
-//! * i386
-//! * hexagon
-//! * loongarch64
-//! * mips
-//! * mips64
-//! * mipsn32
-//! * powerpc
-//! * powerpc64
-//! * riscv32
-//! * riscv64
-//! * s390x
-//! * x32 (currently broken)
-//! * x86_64
-//!
-//! ...each with 'lib/libc.so' inside of them.
-//!
-//! When building the resulting libc.S file, these defines are required:
-//! * `-DTIME32`: When the target's primary time ABI is 32-bit
-//! * `-DPTR64`: When the target has 64-bit pointers
-//! * One of the following, corresponding to the CPU architecture:
-//!   - `-DARCH_aarch64`
-//!   - `-DARCH_arm`
-//!   - `-DARCH_i386`
-//!   - `-DARCH_hexagon`
-//!   - `-DARCH_loongarch64`
-//!   - `-DARCH_mips`
-//!   - `-DARCH_mips64`
-//!   - `-DARCH_mipsn32`
-//!   - `-DARCH_powerpc`
-//!   - `-DARCH_powerpc64`
-//!   - `-DARCH_riscv32`
-//!   - `-DARCH_riscv64`
-//!   - `-DARCH_s390x`
-//!   - `-DARCH_x32`
-//!   - `-DARCH_x86_64`
-//! * One of the following, corresponding to the CPU architecture family:
-//!   - `-DFAMILY_aarch64`
-//!   - `-DFAMILY_arm`
-//!   - `-DFAMILY_hexagon`
-//!   - `-DFAMILY_loongarch`
-//!   - `-DFAMILY_mips`
-//!   - `-DFAMILY_powerpc`
-//!   - `-DFAMILY_riscv`
-//!   - `-DFAMILY_s390x`
-//!   - `-DFAMILY_x86`
+const Args = struct {
+    build_all_dir: []const u8,
+
+    pub const @"--help": std.cli.Help(Args) = .{
+        .summary = (
+            \\Example: gen_stubs /path/to/musl/build-all >libc.S
+            \\
+            \\The directory 'build-all' is expected to contain these subdirectories:
+            \\
+            \\* aarch64
+            \\* arm
+            \\* i386
+            \\* hexagon
+            \\* loongarch64
+            \\* mips
+            \\* mips64
+            \\* mipsn32
+            \\* powerpc
+            \\* powerpc64
+            \\* riscv32
+            \\* riscv64
+            \\* s390x
+            \\* x32 (currently broken)
+            \\* x86_64
+            \\
+            \\...each with 'lib/libc.so' inside of them.
+            \\
+            \\When building the resulting libc.S file, these defines are required:
+            \\* `-DTIME32`: When the target's primary time ABI is 32-bit
+            \\* `-DPTR64`: When the target has 64-bit pointers
+            \\* One of the following, corresponding to the CPU architecture:
+            \\  - `-DARCH_aarch64`
+            \\  - `-DARCH_arm`
+            \\  - `-DARCH_i386`
+            \\  - `-DARCH_hexagon`
+            \\  - `-DARCH_loongarch64`
+            \\  - `-DARCH_mips`
+            \\  - `-DARCH_mips64`
+            \\  - `-DARCH_mipsn32`
+            \\  - `-DARCH_powerpc`
+            \\  - `-DARCH_powerpc64`
+            \\  - `-DARCH_riscv32`
+            \\  - `-DARCH_riscv64`
+            \\  - `-DARCH_s390x`
+            \\  - `-DARCH_x32`
+            \\  - `-DARCH_x86_64`
+            \\* One of the following, corresponding to the CPU architecture family:
+            \\  - `-DFAMILY_aarch64`
+            \\  - `-DFAMILY_arm`
+            \\  - `-DFAMILY_hexagon`
+            \\  - `-DFAMILY_loongarch`
+            \\  - `-DFAMILY_mips`
+            \\  - `-DFAMILY_powerpc`
+            \\  - `-DFAMILY_riscv`
+            \\  - `-DFAMILY_s390x`
+            \\  - `-DFAMILY_x86`
+        ),
+        .args = .{
+            .build_all_dir = .{ .description = "Directory containing '<arch>/lib/libc.so'" },
+        },
+    };
+};
 
 // TODO: pick the best index to put them into instead of at the end
 //       - e.g. find a common previous symbol and put it after that one
@@ -281,13 +291,11 @@ const Parse = struct {
     arch: Arch,
 };
 
-pub fn main(init: std.process.Init) !void {
+pub fn main(init: std.process.Init, args: Args) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
-    const build_all_path = args[1];
 
-    var build_all_dir = try Io.Dir.cwd().openDir(io, build_all_path, .{});
+    var build_all_dir = try Io.Dir.cwd().openDir(io, args.build_all_dir, .{});
 
     var sym_table: std.array_hash_map.String(MultiSym) = .empty;
     var sections: std.array_hash_map.String(void) = .empty;
@@ -304,7 +312,7 @@ pub fn main(init: std.process.Init) !void {
             .of(elf.Elf64_Ehdr),
             null,
         ) catch |err| {
-            std.debug.panic("unable to read '{s}/{s}': {t}", .{ build_all_path, libc_so_path, err });
+            std.debug.panic("unable to read '{s}/{s}': {t}", .{ args.build_all_dir, libc_so_path, err });
         };
         var stream: std.Io.Reader = .fixed(elf_bytes);
         const header = try elf.Header.read(&stream);

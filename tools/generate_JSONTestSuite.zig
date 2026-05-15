@@ -1,9 +1,17 @@
-// zig run this file inside the test_parsing/ directory of this repo: https://github.com/nst/JSONTestSuite
-
 const std = @import("std");
 const Io = std.Io;
 
-pub fn main(init: std.process.Init) !void {
+const Args = struct {
+    pub const @"--help": std.cli.Help(Args) = .{
+        .summary = (
+            \\Run this program inside the test_parsing/ directory of this repo:
+            \\https://github.com/nst/JSONTestSuite
+        ),
+        .args = .{},
+    };
+};
+
+pub fn main(init: std.process.Init, _: Args) !void {
     const allocator = init.arena.allocator();
     const io = init.io;
 

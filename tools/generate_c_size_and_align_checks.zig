@@ -1,10 +1,19 @@
-//! Usage: zig run tools/generate_c_size_and_align_checks.zig -- [target_triple]
-//! e.g. zig run tools/generate_c_size_and_align_checks.zig -- x86_64-linux-gnu
-//!
-//! Prints _Static_asserts for the size and alignment of all the basic built-in C
-//! types. The output can be run through a compiler for the specified target to
-//! verify that Zig's values are the same as those used by a C compiler for the
-//! target.
+const Args = struct {
+    target_triple: []const u8,
+
+    pub const @"--help": std.cli.Help(Args) = .{
+        .command_name = "zig run tools/generate_c_size_and_align_checks.zig --",
+        .summary = (
+            \\Prints _Static_asserts for the size and alignment of all the basic built-in
+            \\C types. The output can be run through a compiler for the specified target
+            \\to verify that Zig's values are the same as those used by a C compiler
+            \\for the target.
+        ),
+        .args = .{
+            .target_triple = .{ .description = "Zig target triple (e.g. x86_64-linux-gnu)" },
+        },
+    };
+};
 
 const std = @import("std");
 const Io = std.Io;
@@ -26,18 +35,10 @@ fn cName(ty: std.Target.CType) []const u8 {
     };
 }
 
-var general_purpose_allocator: std.heap.DebugAllocator(.{}) = .init;
-
-pub fn main(init: std.process.Init) !void {
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
+pub fn main(init: std.process.Init, args: Args) !void {
     const io = init.io;
 
-    if (args.len != 2) {
-        std.debug.print("Usage: {s} [target_triple]\n", .{args[0]});
-        std.process.exit(1);
-    }
-
-    const query = try std.Target.Query.parse(.{ .arch_os_abi = args[1] });
+    const query = try std.Target.Query.parse(.{ .arch_os_abi = args.target_triple });
     const target = try std.zig.system.resolveTargetQuery(io, query);
 
     var buffer: [2000]u8 = undefined;

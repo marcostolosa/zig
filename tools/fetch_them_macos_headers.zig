@@ -52,34 +52,26 @@ const Target = struct {
 
 const headers_source_prefix: []const u8 = "headers";
 
-const usage =
-    \\fetch_them_macos_headers [options] [cc args]
-    \\
-    \\Options:
-    \\  --sysroot     Path to macOS SDK
-    \\
-    \\General Options:
-    \\-h, --help                    Print this help and exit
-;
+const Args = struct {
+    cc_args: []const []const u8,
+    @"--sysroot": ?[]const u8,
 
-pub fn main(init: std.process.Init) !void {
+    pub const @"--help": std.cli.Help(Args) = .{
+        .args = .{
+            .cc_args = .{ .description = "Additional arguments to forward to CC" },
+            .@"--sysroot" = .{
+                .display = "<path>",
+                .description = "Path to macOS SDK",
+            },
+        },
+    };
+};
+
+pub fn main(init: std.process.Init, args: Args) !void {
     const io = init.io;
     const arena = init.arena.allocator();
-    const args = try init.minimal.args.toSlice(arena);
 
-    var argv = std.array_list.Managed([]const u8).init(arena);
-    var sysroot: ?[]const u8 = null;
-
-    var args_iter = ArgsIterator{ .args = args[1..] };
-    while (args_iter.next()) |arg| {
-        if (mem.eql(u8, arg, "--help") or mem.eql(u8, arg, "-h")) {
-            return info(usage, .{});
-        } else if (mem.eql(u8, arg, "--sysroot")) {
-            sysroot = args_iter.nextOrFatal();
-        } else try argv.append(arg);
-    }
-
-    const sysroot_path = sysroot orelse blk: {
+    const sysroot_path = args.@"--sysroot" orelse blk: {
         const target = try std.zig.system.resolveTargetQuery(io, .{});
         break :blk std.zig.system.darwin.getSdk(arena, io, &target) orelse
             fatal("no SDK found; you can provide one explicitly with '--sysroot' flag", .{});
@@ -107,7 +99,7 @@ pub fn main(init: std.process.Init) !void {
             .arch = arch,
             .os_ver = os_ver,
         };
-        try fetchTarget(arena, io, argv.items, sysroot_path, target, version, tmp_dir);
+        try fetchTarget(arena, io, args.cc_args, sysroot_path, target, version, tmp_dir);
     }
 }
 
@@ -212,24 +204,6 @@ fn fetchTarget(
         entry.value_ptr.close(io);
     }
 }
-
-const ArgsIterator = struct {
-    args: []const []const u8,
-    i: usize = 0,
-
-    fn next(it: *@This()) ?[]const u8 {
-        if (it.i >= it.args.len) {
-            return null;
-        }
-        defer it.i += 1;
-        return it.args[it.i];
-    }
-
-    fn nextOrFatal(it: *@This()) []const u8 {
-        const arg = it.next() orelse fatal("expected parameter after '{s}'", .{it.args[it.i - 1]});
-        return arg;
-    }
-};
 
 const Version = struct {
     major: u16,

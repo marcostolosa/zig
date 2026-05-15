@@ -1,8 +1,22 @@
-//! This script updates the .c, .h, .s, and .S files that make up the start
-//! files such as crt1.o.
-//!
-//! Example usage:
-//! `zig run tools/update_openbsd_libc.zig -- ~/Downloads/openbsd-src .`
+const Args = struct {
+    openbsd_src_path: []const u8,
+    zig_src_path: []const u8,
+
+    pub const @"--help": std.cli.Help(Args) = .{
+        .command_name = "zig run tools/update_openbsd_libc.zig --",
+        .summary = (
+            \\This script updates the .c, .h, .s, and .S files that make up the start
+            \\files such as crt1.o.
+            \\
+            \\Example usage:
+            \\zig run tools/update_openbsd_libc.zig -- ~/Downloads/openbsd-src .
+        ),
+        .args = .{
+            .openbsd_src_path = .{ .description = "Path to OpenBSD source tree" },
+            .zig_src_path = .{ .description = "Path to Zig source tree" },
+        },
+    };
+};
 
 const std = @import("std");
 const Io = std.Io;
@@ -12,15 +26,11 @@ const exempt_files = [_][]const u8{
     "abilists",
 };
 
-pub fn main(init: std.process.Init) !void {
+pub fn main(init: std.process.Init, args: Args) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
 
-    const openbsd_src_path = args[1];
-    const zig_src_path = args[2];
-
-    const dest_dir_path = try std.fmt.allocPrint(arena, "{s}/lib/libc/openbsd", .{zig_src_path});
+    const dest_dir_path = try std.fmt.allocPrint(arena, "{s}/lib/libc/openbsd", .{args.zig_src_path});
 
     var dest_dir = Io.Dir.cwd().openDir(io, dest_dir_path, .{ .iterate = true }) catch |err| {
         std.log.err("unable to open destination directory '{s}': {t}", .{ dest_dir_path, err });
@@ -28,7 +38,7 @@ pub fn main(init: std.process.Init) !void {
     };
     defer dest_dir.close(io);
 
-    var openbsd_src_dir = try Io.Dir.cwd().openDir(io, openbsd_src_path, .{});
+    var openbsd_src_dir = try Io.Dir.cwd().openDir(io, args.openbsd_src_path, .{});
     defer openbsd_src_dir.close(io);
 
     // Copy updated files from upstream.
@@ -44,13 +54,13 @@ pub fn main(init: std.process.Init) !void {
             }
 
             std.log.info("updating '{s}/{s}' from '{s}/{s}'", .{
-                dest_dir_path,    entry.path,
-                openbsd_src_path, entry.path,
+                dest_dir_path,         entry.path,
+                args.openbsd_src_path, entry.path,
             });
 
             openbsd_src_dir.copyFile(entry.path, dest_dir, entry.path, io, .{}) catch |err| {
                 std.log.warn("unable to copy '{s}/{s}' to '{s}/{s}': {t}", .{
-                    openbsd_src_path, entry.path, dest_dir_path, entry.path, err,
+                    args.openbsd_src_path, entry.path, dest_dir_path, entry.path, err,
                 });
                 if (err == error.FileNotFound) {
                     try dest_dir.deleteFile(io, entry.path);

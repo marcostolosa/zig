@@ -1,20 +1,35 @@
+const Args = struct {
+    mingw_src_path: []const u8,
+    zig_src_path: []const u8,
+
+    pub const @"--help": std.cli.Help(Args) = .{
+        .command_name = "zig run tools/update_mingw.zig --",
+        .summary = (
+            \\This script updates mingw-w64 crt and library files.
+            \\
+            \\Example usage:
+            \\zig run tools/update_mingw.zig -- ~/Downloads/mingw-w64 .
+        ),
+        .args = .{
+            .mingw_src_path = .{ .description = "Path to mingw-w64 source tree" },
+            .zig_src_path = .{ .description = "Path to Zig source tree" },
+        },
+    };
+};
+
 const std = @import("std");
 const Io = std.Io;
 const Dir = std.Io.Dir;
 
-pub fn main(init: std.process.Init) !void {
+pub fn main(init: std.process.Init, args: Args) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
-
-    const zig_src_lib_path = args[1];
-    const mingw_src_path = args[2];
 
     const dest_mingw_crt_path = try Dir.path.join(arena, &.{
-        zig_src_lib_path, "libc", "mingw",
+        args.zig_src_path, "lib", "libc", "mingw",
     });
     const src_mingw_crt_path = try Dir.path.join(arena, &.{
-        mingw_src_path, "mingw-w64-crt",
+        args.mingw_src_path, "mingw-w64-crt",
     });
 
     // Update only the set of existing files we have already chosen to include
@@ -65,10 +80,10 @@ pub fn main(init: std.process.Init) !void {
 
     {
         const dest_mingw_winpthreads_path = try Dir.path.join(arena, &.{
-            zig_src_lib_path, "libc", "mingw", "winpthreads",
+            args.zig_src_path, "lib", "libc", "mingw", "winpthreads",
         });
         const src_mingw_libraries_winpthreads_src_path = try Dir.path.join(arena, &.{
-            mingw_src_path, "mingw-w64-libraries", "winpthreads", "src",
+            args.mingw_src_path, "mingw-w64-libraries", "winpthreads", "src",
         });
 
         var dest_winpthreads_dir = Dir.cwd().openDir(io, dest_mingw_winpthreads_path, .{ .iterate = true }) catch |err| {

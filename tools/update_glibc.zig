@@ -1,10 +1,25 @@
-//! This script updates the .c, .h, .s, and .S files that make up the start
-//! files such as crt1.o. Not to be confused with
-//! https://codeberg.org/ziglang/libc-abi-tools which updates the `abilists`
-//! file.
-//!
-//! Example usage:
-//! `zig run ../tools/update_glibc.zig -- ~/Downloads/glibc ..`
+const Args = struct {
+    glibc_src_path: []const u8,
+    zig_src_path: []const u8,
+
+    pub const @"--help": std.cli.Help(Args) = .{
+        .command_name = "zig run tools/update_glibc.zig --",
+        .summary = (
+            \\This script updates the .c, .h, .s, and .S files that make up the start
+            \\files such as crt1.o.
+            \\
+            \\Not to be confused with https://codeberg.org/ziglang/libc-abi-tools
+            \\which updates the 'abilists' file.
+            \\
+            \\Example usage:
+            \\zig run tools/update_glibc.zig -- ~/Downloads/glibc .
+        ),
+        .args = .{
+            .glibc_src_path = .{ .description = "Path to glibc source tree" },
+            .zig_src_path = .{ .description = "Path to Zig source tree" },
+        },
+    };
+};
 
 const std = @import("std");
 const Io = std.Io;
@@ -38,22 +53,18 @@ const exempt_extensions = [_][]const u8{
     "-2.33.c",
 };
 
-pub fn main(init: std.process.Init) !void {
+pub fn main(init: std.process.Init, args: Args) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
 
-    const glibc_src_path = args[1];
-    const zig_src_path = args[2];
-
-    const dest_dir_path = try std.fmt.allocPrint(arena, "{s}/lib/libc/glibc", .{zig_src_path});
+    const dest_dir_path = try std.fmt.allocPrint(arena, "{s}/lib/libc/glibc", .{args.zig_src_path});
 
     var dest_dir = Dir.cwd().openDir(io, dest_dir_path, .{ .iterate = true }) catch |err| {
         fatal("unable to open destination directory '{s}': {t}", .{ dest_dir_path, err });
     };
     defer dest_dir.close(io);
 
-    var glibc_src_dir = try Dir.cwd().openDir(io, glibc_src_path, .{});
+    var glibc_src_dir = try Dir.cwd().openDir(io, args.glibc_src_path, .{});
     defer glibc_src_dir.close(io);
 
     // Copy updated files from upstream.
@@ -73,7 +84,7 @@ pub fn main(init: std.process.Init) !void {
 
             glibc_src_dir.copyFile(entry.path, dest_dir, entry.path, io, .{}) catch |err| {
                 log.warn("unable to copy '{s}/{s}' to '{s}/{s}': {t}", .{
-                    glibc_src_path, entry.path, dest_dir_path, entry.path, err,
+                    args.glibc_src_path, entry.path, dest_dir_path, entry.path, err,
                 });
                 if (err == error.FileNotFound) {
                     try dest_dir.deleteFile(io, entry.path);
@@ -93,7 +104,7 @@ pub fn main(init: std.process.Init) !void {
     const generic_glibc_path = try std.fmt.allocPrint(
         arena,
         "{s}/lib/libc/include/generic-glibc",
-        .{zig_src_path},
+        .{args.zig_src_path},
     );
     var generic_glibc_dir = try Dir.cwd().openDir(io, generic_glibc_path, .{});
     defer generic_glibc_dir.close(io);

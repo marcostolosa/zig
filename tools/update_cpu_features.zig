@@ -2007,44 +2007,31 @@ const targets = [_]ArchTarget{
     },
 };
 
-pub fn main(init: std.process.Init) !void {
-    const arena = init.arena.allocator();
+const Args = struct {
+    llvm_tblgen_exe: []const u8,
+    llvm_src_root: []const u8,
+    zig_src_root: []const u8,
+    filter: ?[]const u8,
+
+    pub const @"--help": std.cli.Help(Args) = .{
+        .summary = (
+            \\Updates lib/std/target/<target>.zig from llvm/lib/Target/<Target>/<Target>.td.
+            \\
+            \\On a less beefy system, or when debugging, compile with -fsingle-threaded.
+        ),
+        .args = .{
+            .llvm_tblgen_exe = .{ .description = "Path to llvm-tblgen executable" },
+            .llvm_src_root = .{ .description = "Path to llvm-project source tree" },
+            .zig_src_root = .{ .description = "Path to Zig source tree" },
+            .filter = .{ .description = "Optional Zig name filter" },
+        },
+    };
+};
+
+pub fn main(init: std.process.Init, args: Args) !void {
     const io = init.io;
 
-    var args = try init.minimal.args.iterateAllocator(arena);
-    const args0 = args.next().?;
-
-    const llvm_tblgen_exe = args.next() orelse
-        usageAndExit(args0, 1);
-
-    if (std.mem.eql(u8, llvm_tblgen_exe, "--help")) {
-        usageAndExit(args0, 0);
-    }
-    if (std.mem.startsWith(u8, llvm_tblgen_exe, "-")) {
-        usageAndExit(args0, 1);
-    }
-
-    const llvm_src_root = args.next() orelse
-        usageAndExit(args0, 1);
-
-    if (std.mem.startsWith(u8, llvm_src_root, "-")) {
-        usageAndExit(args0, 1);
-    }
-
-    const zig_src_root = args.next() orelse
-        usageAndExit(args0, 1);
-
-    if (std.mem.startsWith(u8, zig_src_root, "-")) {
-        usageAndExit(args0, 1);
-    }
-
-    var filter: ?[]const u8 = null;
-    if (args.next()) |arg| filter = arg;
-
-    // there shouldn't be any more argument after the optional filter
-    if (args.skip()) usageAndExit(args0, 1);
-
-    var zig_src_dir = try Dir.cwd().openDir(io, zig_src_root, .{});
+    var zig_src_dir = try Dir.cwd().openDir(io, args.zig_src_root, .{});
     defer zig_src_dir.close(io);
 
     const root_progress = std.Progress.start(io, .{ .estimated_total_items = targets.len });
@@ -2054,12 +2041,12 @@ pub fn main(init: std.process.Init) !void {
     defer group.cancel(io);
 
     for (targets) |target| {
-        if (filter) |zig_name| {
+        if (args.filter) |zig_name| {
             if (!std.mem.eql(u8, target.zig_name, zig_name)) continue;
         }
         group.async(io, processOneTarget, .{ io, .{
-            .llvm_tblgen_exe = llvm_tblgen_exe,
-            .llvm_src_root = llvm_src_root,
+            .llvm_tblgen_exe = args.llvm_tblgen_exe,
+            .llvm_src_root = args.llvm_src_root,
             .zig_src_dir = zig_src_dir,
             .root_progress = root_progress,
             .target = target,
@@ -2546,20 +2533,6 @@ fn processOneTargetInner(io: Io, job: Job) !void {
     try w.flush();
 
     render_progress.end();
-}
-
-fn usageAndExit(arg0: []const u8, code: u8) noreturn {
-    const stderr = std.debug.lockStderr(&.{});
-    const w = &stderr.file_writer.interface;
-    w.print(
-        \\Usage: {s} /path/to/llvm-tblgen /path/git/llvm-project /path/git/zig [zig_name filter]
-        \\
-        \\Updates lib/std/target/<target>.zig from llvm/lib/Target/<Target>/<Target>.td .
-        \\
-        \\On a less beefy system, or when debugging, compile with -fsingle-threaded.
-        \\
-    , .{arg0}) catch std.process.exit(1);
-    std.process.exit(code);
 }
 
 fn featureLessThan(_: void, a: Feature, b: Feature) bool {

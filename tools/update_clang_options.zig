@@ -1,4 +1,4 @@
-//! To get started, run this tool with no args and read the help message.
+//! To get started, run this tool with `--help` and read the help message.
 //!
 //! Clang has a file "options.td" which describes all of its command line parameter options.
 //! When using `zig cc`, Zig acts as a proxy between the user and Clang. It does not need
@@ -633,30 +633,28 @@ const cpu_targets = struct {
     pub const xtensa = std.Target.xtensa;
 };
 
-pub fn main(init: std.process.Init) !void {
+const Args = struct {
+    llvm_tblgen_exe: []const u8,
+    llvm_src_root: []const u8,
+
+    pub const @"--help": std.cli.Help(Args) = .{
+        .summary = (
+            \\Prints to stdout Zig code which you can use to replace the file src/clang_options.zon.
+        ),
+        .args = .{
+            .llvm_tblgen_exe = .{ .description = "Path to llvm-tblgen executable" },
+            .llvm_src_root = .{ .description = "Path to llvm-project source tree" },
+        },
+    };
+};
+
+pub fn main(init: std.process.Init, args: Args) !void {
     const arena = init.arena.allocator();
-    const args = try init.minimal.args.toSlice(arena);
     const io = init.io;
 
     var stdout_buffer: [4000]u8 = undefined;
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
-
-    if (args.len <= 1) printUsageAndExit(args[0]);
-
-    if (std.mem.eql(u8, args[1], "--help")) {
-        printUsage(stdout, args[0]) catch std.process.exit(2);
-        stdout.flush() catch std.process.exit(2);
-        std.process.exit(0);
-    }
-
-    if (args.len < 3) printUsageAndExit(args[0]);
-
-    const llvm_tblgen_exe = args[1];
-    if (std.mem.startsWith(u8, llvm_tblgen_exe, "-")) printUsageAndExit(args[0]);
-
-    const llvm_src_root = args[2];
-    if (std.mem.startsWith(u8, llvm_src_root, "-")) printUsageAndExit(args[0]);
 
     var llvm_to_zig_cpu_features = std.StringHashMap([]const u8).init(arena);
 
@@ -673,11 +671,11 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const child_args = [_][]const u8{
-        llvm_tblgen_exe,
+        args.llvm_tblgen_exe,
         "--dump-json",
-        try std.fmt.allocPrint(arena, "{s}/clang/include/clang/Options/Options.td", .{llvm_src_root}),
-        try std.fmt.allocPrint(arena, "-I={s}/llvm/include", .{llvm_src_root}),
-        try std.fmt.allocPrint(arena, "-I={s}/clang/include/clang/Driver", .{llvm_src_root}),
+        try std.fmt.allocPrint(arena, "{s}/clang/include/clang/Options/Options.td", .{args.llvm_src_root}),
+        try std.fmt.allocPrint(arena, "-I={s}/llvm/include", .{args.llvm_src_root}),
+        try std.fmt.allocPrint(arena, "-I={s}/clang/include/clang/Driver", .{args.llvm_src_root}),
     };
 
     const child_result = try std.process.run(arena, io, .{
@@ -894,20 +892,4 @@ fn objectLessThan(context: void, a: *json.ObjectMap, b: *json.ObjectMap) bool {
     const a_key = a.get("!name").?.string;
     const b_key = b.get("!name").?.string;
     return std.mem.lessThan(u8, a_key, b_key);
-}
-
-fn printUsageAndExit(arg0: []const u8) noreturn {
-    const stderr = std.debug.lockStderr(&.{});
-    const w = &stderr.file_writer.interface;
-    printUsage(w, arg0) catch std.process.exit(2);
-    std.process.exit(1);
-}
-
-fn printUsage(w: *std.Io.Writer, arg0: []const u8) std.Io.Writer.Error!void {
-    try w.print(
-        \\Usage: {s} /path/to/llvm-tblgen /path/to/git/llvm/llvm-project
-        \\
-        \\Prints to stdout Zig code which you can use to replace the file src/clang_options.zon.
-        \\
-    , .{arg0});
 }

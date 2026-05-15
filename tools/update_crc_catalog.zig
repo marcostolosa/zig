@@ -6,20 +6,24 @@ const ascii = std.ascii;
 
 const catalog_txt = @embedFile("crc/catalog.txt");
 
-pub fn main(init: std.process.Init) !void {
+const Cheddar = struct {
+    zig_src_root: []const u8,
+
+    pub const @"--help": std.cli.Help(Cheddar) = .{
+        .args = .{
+            .zig_src_root = .{ .description = "Path to Zig source tree" },
+        },
+    };
+};
+
+pub fn main(init: std.process.Init, cheddar: Cheddar) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
-    return @"i like cheese"(arena, io, args);
+    return @"i like cheese"(arena, io, cheddar);
 }
 
-fn @"i like cheese"(arena: std.mem.Allocator, io: Io, args: []const []const u8) !void {
-    if (args.len <= 1) printUsageAndExit(args[0]);
-
-    const zig_src_root = args[1];
-    if (mem.startsWith(u8, zig_src_root, "-")) printUsageAndExit(args[0]);
-
-    var zig_src_dir = try Dir.cwd().openDir(io, zig_src_root, .{});
+fn @"i like cheese"(arena: std.mem.Allocator, io: Io, cheddar: Cheddar) !void {
+    var zig_src_dir = try Dir.cwd().openDir(io, cheddar.zig_src_root, .{});
     defer zig_src_dir.close(io);
 
     const hash_sub_path = try Dir.path.join(arena, &.{ "lib", "std", "hash" });
@@ -190,18 +194,4 @@ fn @"i like cheese"(arena: std.mem.Allocator, io: Io, args: []const []const u8) 
 
     try code_writer.flush();
     try test_writer.flush();
-}
-
-fn printUsageAndExit(arg0: []const u8) noreturn {
-    const stderr = std.debug.lockStderr(&.{});
-    const w = &stderr.file_writer.interface;
-    printUsage(w, arg0) catch std.process.exit(2);
-    std.process.exit(1);
-}
-
-fn printUsage(w: *std.Io.Writer, arg0: []const u8) std.Io.Writer.Error!void {
-    return w.print(
-        \\Usage: {s} /path/git/zig
-        \\
-    , .{arg0});
 }

@@ -11,29 +11,37 @@ const fatal = std.process.fatal;
 
 const max_doc_file_size = 10 * 1024 * 1024;
 
-pub fn main(init: std.process.Init) !void {
+const Args = struct {
+    input_file: []const u8,
+    output_file: []const u8,
+
+    pub const @"--help": std.cli.Help(Args) = .{
+        .args = .{
+            .input_file = .{ .description = "Path to input file" },
+            .output_file = .{ .description = "Path to output file" },
+        },
+    };
+};
+
+pub fn main(init: std.process.Init, args: Args) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
 
-    const input_file = args[1];
-    const output_file = args[2];
-
-    var in_file = try Dir.cwd().openFile(io, input_file, .{ .mode = .read_only });
+    var in_file = try Dir.cwd().openFile(io, args.input_file, .{ .mode = .read_only });
     defer in_file.close(io);
 
-    var out_file = try Dir.cwd().createFile(io, output_file, .{});
+    var out_file = try Dir.cwd().createFile(io, args.output_file, .{});
     defer out_file.close(io);
     var out_file_buffer: [4096]u8 = undefined;
     var out_file_writer = out_file.writer(io, &out_file_buffer);
 
-    var out_dir = try Dir.cwd().openDir(io, Dir.path.dirname(output_file).?, .{});
+    var out_dir = try Dir.cwd().openDir(io, Dir.path.dirname(args.output_file).?, .{});
     defer out_dir.close(io);
 
     var in_file_reader = in_file.reader(io, &.{});
     const input_file_bytes = try in_file_reader.interface.allocRemaining(arena, .unlimited);
 
-    var tokenizer = Tokenizer.init(input_file, input_file_bytes);
+    var tokenizer = Tokenizer.init(args.input_file, input_file_bytes);
 
     try walk(arena, io, &tokenizer, out_dir, &out_file_writer.interface);
 

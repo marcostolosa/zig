@@ -1,4 +1,4 @@
-//! To get started, run this tool with no args and read the help message.
+//! To get started, run this tool with `--help` and read the help message.
 //!
 //! The build system of Linux requires specifying a single target
 //! architecture. Meanwhile, Zig supports out-of-the-box cross compilation for
@@ -141,39 +141,29 @@ const HashToContents = std.StringHashMap(Contents);
 const TargetToHash = std.array_hash_map.Custom(DestTarget, []const u8, DestTarget.HashContext, true);
 const PathTable = std.StringHashMap(*TargetToHash);
 
-pub fn main(init: std.process.Init) !void {
+const Args = struct {
+    out_dir: []const u8,
+    @"--search-path": []const []const u8,
+
+    pub const @"--help": std.cli.Help(Args) = .{
+        .args = .{
+            .out_dir = .{
+                .description = "Dir that will be created, and populated with the results",
+            },
+            .@"--search-path" = .{
+                .display = "<path>",
+                .description = "Search paths, subdirectories look like, e.g. x86_64-linux-gnu",
+            },
+        },
+    };
+};
+
+pub fn main(init: std.process.Init, args: Args) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
     const environ_map = init.environ_map;
     const cwd = try std.process.currentPathAlloc(io, arena);
 
-    var search_paths = std.array_list.Managed([]const u8).init(arena);
-    var opt_out_dir: ?[]const u8 = null;
-
-    var arg_i: usize = 1;
-    while (arg_i < args.len) : (arg_i += 1) {
-        if (std.mem.eql(u8, args[arg_i], "--help"))
-            usageAndExit(args[0]);
-        if (arg_i + 1 >= args.len) {
-            std.debug.print("expected argument after '{s}'\n", .{args[arg_i]});
-            usageAndExit(args[0]);
-        }
-
-        if (std.mem.eql(u8, args[arg_i], "--search-path")) {
-            try search_paths.append(args[arg_i + 1]);
-        } else if (std.mem.eql(u8, args[arg_i], "--out")) {
-            assert(opt_out_dir == null);
-            opt_out_dir = args[arg_i + 1];
-        } else {
-            std.debug.print("unrecognized argument: {s}\n", .{args[arg_i]});
-            usageAndExit(args[0]);
-        }
-
-        arg_i += 1;
-    }
-
-    const out_dir = opt_out_dir orelse usageAndExit(args[0]);
     const generic_name = "any-linux-any";
 
     var path_table = PathTable.init(arena);
@@ -187,7 +177,7 @@ pub fn main(init: std.process.Init) !void {
         const dest_target = DestTarget{
             .arch = linux_target.arch,
         };
-        search: for (search_paths.items) |search_path| {
+        search: for (args.@"--search-path") |search_path| {
             const target_include_dir = try Dir.path.join(arena, &.{
                 search_path, linux_target.name, "include",
             });
@@ -258,7 +248,7 @@ pub fn main(init: std.process.Init) !void {
         total_bytes,
         total_bytes - max_bytes_saved,
     });
-    try Dir.cwd().createDirPath(io, out_dir);
+    try Dir.cwd().createDirPath(io, args.out_dir);
 
     var missed_opportunity_bytes: usize = 0;
     // iterate path_table. for each path, put all the hashes into a list. sort by hit_count.
@@ -278,7 +268,7 @@ pub fn main(init: std.process.Init) !void {
         const best_contents = contents_list.pop().?;
         if (best_contents.hit_count > 1) {
             // worth it to make it generic
-            const full_path = try Dir.path.join(arena, &[_][]const u8{ out_dir, generic_name, path_kv.key_ptr.* });
+            const full_path = try Dir.path.join(arena, &[_][]const u8{ args.out_dir, generic_name, path_kv.key_ptr.* });
             try Dir.cwd().createDirPath(io, Dir.path.dirname(full_path).?);
             try Dir.cwd().writeFile(io, .{ .sub_path = full_path, .data = best_contents.bytes });
             best_contents.is_generic = true;
@@ -304,7 +294,7 @@ pub fn main(init: std.process.Init) !void {
                 else => @tagName(dest_target.arch),
             };
             const out_subpath = try std.fmt.allocPrint(arena, "{s}-linux-any", .{arch_name});
-            const full_path = try Dir.path.join(arena, &[_][]const u8{ out_dir, out_subpath, path_kv.key_ptr.* });
+            const full_path = try Dir.path.join(arena, &[_][]const u8{ args.out_dir, out_subpath, path_kv.key_ptr.* });
             try Dir.cwd().createDirPath(io, Dir.path.dirname(full_path).?);
             try Dir.cwd().writeFile(io, .{ .sub_path = full_path, .data = contents.bytes });
         }
@@ -321,15 +311,7 @@ pub fn main(init: std.process.Init) !void {
         "any-linux-any/linux/netfilter_ipv6/ip6t_HL.h",
     };
     for (bad_files) |bad_file| {
-        const full_path = try Dir.path.join(arena, &[_][]const u8{ out_dir, bad_file });
+        const full_path = try Dir.path.join(arena, &[_][]const u8{ args.out_dir, bad_file });
         try Dir.cwd().deleteFile(io, full_path);
     }
-}
-
-fn usageAndExit(arg0: []const u8) noreturn {
-    std.debug.print("Usage: {s} [--search-path <dir>] --out <dir> --abi <name>\n", .{arg0});
-    std.debug.print("--search-path can be used any number of times.\n", .{});
-    std.debug.print("    subdirectories of search paths look like, e.g. x86_64-linux-gnu\n", .{});
-    std.debug.print("--out is a dir that will be created, and populated with the results\n", .{});
-    std.process.exit(1);
 }

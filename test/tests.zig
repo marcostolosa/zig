@@ -3346,14 +3346,14 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []cons
             run.addArg("--zig-lib-dir");
             run.addDirectoryArg(.zig_lib);
 
-            run.addArgs(&.{ "--target", target_str });
+            run.addArg(target_str);
 
             run.addArg("--quiet"); // don't fill stderr telling us about skipped tests etc
 
-            if (b.enable_qemu) run.addArg("-fqemu");
-            if (b.enable_wine) run.addArg("-fwine");
-            if (b.enable_wasmtime) run.addArg("-fwasmtime");
-            if (b.enable_darling) run.addArg("-fdarling");
+            if (b.enable_qemu) run.addArg("--qemu");
+            if (b.enable_wine) run.addArg("--wine");
+            if (b.enable_wasmtime) run.addArg("--wasmtime");
+            if (b.enable_darling) run.addArg("--darling");
 
             run.addCheck(.{ .expect_term = .{ .exited = 0 } });
             test_step.dependOn(&run.step);

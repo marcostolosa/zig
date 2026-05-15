@@ -4,21 +4,6 @@ const Dir = std.Io.Dir;
 const Allocator = std.mem.Allocator;
 const Cache = std.Build.Cache;
 
-const usage =
-    \\Usage: incr-check <zig binary path> <input file> [options]
-    \\Options:
-    \\  --target triple-backend
-    \\  --quiet
-    \\  --zig-lib-dir /path/to/zig/lib
-    \\  --zig-cc-binary /path/to/zig
-    \\  -fqemu
-    \\  -fwine
-    \\  -fwasmtime
-    \\Debug Options:
-    \\  --preserve-tmp
-    \\  --debug-log foo
-;
-
 pub const std_options: std.Options = .{
     .logFn = logImpl,
 };
@@ -40,82 +25,89 @@ fn logImpl(
     );
 }
 
-pub fn main(init: std.process.Init) !void {
+const Args = struct {
+    zig_exe: []const u8,
+    input_file: []const u8,
+    target_and_backend: []const u8,
+    @"--quiet": bool = false,
+    @"--zig-lib-dir": ?[]const u8,
+    @"--zig-cc-binary": ?[]const u8,
+    @"--qemu": bool = false,
+    @"--wine": bool = false,
+    @"--wasmtime": bool = false,
+    @"--darling": bool = false,
+    @"--preserve-tmp": bool = false,
+    @"--debug-log": []const []const u8,
+
+    pub const @"--help": std.cli.Help(Args) = .{
+        .args = .{
+            .zig_exe = .{
+                .description = "Path to Zig binary",
+            },
+            .input_file = .{
+                .description = "Path to input file",
+            },
+            .target_and_backend = .{
+                .display = "<triple-backend>",
+                .description = "Target triple-backend (e.g. 'x86_64-linux-selfhosted')",
+            },
+            .@"--quiet" = .{
+                .description = "Suppress log messages about e.g. skipped tests",
+            },
+            .@"--zig-lib-dir" = .{
+                .display = "<path>",
+                .description = "Override path to Zig lib directory",
+            },
+            .@"--zig-cc-binary" = .{
+                .display = "<path>",
+                .description = "Path to CC Zig exe",
+            },
+
+            // Note: These integration options use the form '--qemu',
+            // not '-fqemu' like is used by the build system.
+            .@"--qemu" = .{
+                .description = "Enable QEMU integration",
+            },
+            .@"--wine" = .{
+                .description = "Enable Wine integration",
+            },
+            .@"--wasmtime" = .{
+                .description = "Enable Wasmtime integration",
+            },
+            .@"--darling" = .{
+                .description = "Enable Darling integration",
+            },
+
+            .@"--preserve-tmp" = .{
+                .description = "Preserve temp directory",
+            },
+            .@"--debug-log" = .{
+                .display = "<arg>",
+                .description = "--debug-log arguments to forward to the Zig compiler",
+            },
+        },
+    };
+};
+
+pub fn main(init: std.process.Init, args: Args) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
     const io = init.io;
     const environ_map = init.environ_map;
     const cwd_path = try std.process.currentPathAlloc(io, arena);
 
-    var opt_zig_exe: ?[]const u8 = null;
-    var opt_input_file_name: ?[]const u8 = null;
-    var opt_lib_dir: ?[]const u8 = null;
-    var opt_cc_zig: ?[]const u8 = null;
-    var opt_target: ?struct { std.Target.Query, Backend } = null;
-    var preserve_tmp = false;
-    var enable_qemu: bool = false;
-    var enable_wine: bool = false;
-    var enable_wasmtime: bool = false;
-    var enable_darling: bool = false;
-    var quiet: bool = false;
+    const target_query, const backend = parseTargetQueryAndBackend(args.target_and_backend, "");
 
-    var debug_log_args: std.ArrayList([]const u8) = .empty;
-
-    var arg_it = try init.minimal.args.iterateAllocator(arena);
-    _ = arg_it.skip();
-    while (arg_it.next()) |arg| {
-        if (arg.len > 0 and arg[0] == '-') {
-            if (std.mem.eql(u8, arg, "--zig-lib-dir")) {
-                opt_lib_dir = arg_it.next() orelse badUsage("expected arg after --zig-lib-dir", .{});
-            } else if (std.mem.eql(u8, arg, "--target")) {
-                const str = arg_it.next() orelse badUsage("expected arg after --zig-cc-binary", .{});
-                opt_target = parseTargetQueryAndBackend(str, "");
-            } else if (std.mem.eql(u8, arg, "--quiet")) {
-                quiet = true;
-            } else if (std.mem.eql(u8, arg, "--debug-log")) {
-                try debug_log_args.append(
-                    arena,
-                    arg_it.next() orelse badUsage("expected arg after --debug-log", .{}),
-                );
-            } else if (std.mem.eql(u8, arg, "--preserve-tmp")) {
-                preserve_tmp = true;
-            } else if (std.mem.eql(u8, arg, "-fqemu")) {
-                enable_qemu = true;
-            } else if (std.mem.eql(u8, arg, "-fwine")) {
-                enable_wine = true;
-            } else if (std.mem.eql(u8, arg, "-fwasmtime")) {
-                enable_wasmtime = true;
-            } else if (std.mem.eql(u8, arg, "-fdarling")) {
-                enable_darling = true;
-            } else if (std.mem.eql(u8, arg, "--zig-cc-binary")) {
-                opt_cc_zig = arg_it.next() orelse badUsage("expected arg after --zig-cc-binary", .{});
-            } else {
-                badUsage("unknown option '{s}'", .{arg});
-            }
-            continue;
-        }
-        if (opt_zig_exe == null) {
-            opt_zig_exe = arg;
-        } else if (opt_input_file_name == null) {
-            opt_input_file_name = arg;
-        } else {
-            badUsage("unknown argument '{s}'\n{s}", .{ arg, usage });
-        }
-    }
-    const zig_exe = opt_zig_exe orelse badUsage("missing path to zig", .{});
-    const input_file_name = opt_input_file_name orelse badUsage("missing input file", .{});
-    const target_query, const backend = opt_target orelse badUsage("missing required option '--target'", .{});
-
-    if (backend == .cbe and opt_lib_dir == null) {
+    if (backend == .cbe and args.@"--zig-lib-dir" == null) {
         std.process.fatal("'--zig-lib-dir' required when using backend 'cbe'", .{});
     }
 
-    const input_file_bytes = try Dir.cwd().readFileAlloc(io, input_file_name, arena, .limited(std.math.maxInt(u32)));
+    const input_file_bytes = try Dir.cwd().readFileAlloc(io, args.input_file, arena, .limited(std.math.maxInt(u32)));
     const case: Case = try .parse(arena, input_file_bytes);
 
     for (case.skip_targets) |skip| {
         if (target_query.eql(skip.query) and backend == skip.backend) {
-            if (!quiet) std.log.warn("skipping test because of a 'skip_target' match", .{});
+            if (!args.@"--quiet") std.log.warn("skipping test because of a 'skip_target' match", .{});
             return;
         }
     }
@@ -130,7 +122,7 @@ pub fn main(init: std.process.Init) !void {
     var tmp_dir = try Dir.cwd().createDirPathOpen(io, tmp_dir_path, .{});
     defer {
         tmp_dir.close(io);
-        if (!preserve_tmp) {
+        if (!args.@"--preserve-tmp") {
             Dir.cwd().deleteTree(io, tmp_dir_path) catch |err| {
                 std.log.warn("failed to delete tree '{s}': {t}", .{ tmp_dir_path, err });
             };
@@ -138,8 +130,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // Convert paths to be relative to the cwd of the subprocess.
-    const resolved_zig_exe = try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, zig_exe);
-    const opt_resolved_lib_dir = if (opt_lib_dir) |lib_dir|
+    const resolved_zig_exe = try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, args.zig_exe);
+    const opt_resolved_lib_dir = if (args.@"--zig-lib-dir") |lib_dir|
         try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, lib_dir)
     else
         null;
@@ -170,7 +162,7 @@ pub fn main(init: std.process.Init) !void {
         .llvm => try child_args.appendSlice(arena, &.{ "-fllvm", "-flld" }),
         .cbe => try child_args.appendSlice(arena, &.{ "-ofmt=c", "-lc" }),
     }
-    for (debug_log_args.items) |arg| {
+    for (args.@"--debug-log") |arg| {
         try child_args.appendSlice(arena, &.{ "--debug-log", arg });
     }
     for (case.modules) |mod| {
@@ -186,7 +178,7 @@ pub fn main(init: std.process.Init) !void {
 
     var cc_child_args: std.ArrayList([]const u8) = .empty;
     if (backend == .cbe) {
-        const resolved_cc_zig_exe = if (opt_cc_zig) |cc_zig_exe|
+        const resolved_cc_zig_exe = if (args.@"--zig-cc-binary") |cc_zig_exe|
             try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, cc_zig_exe)
         else
             resolved_zig_exe;
@@ -226,14 +218,14 @@ pub fn main(init: std.process.Init) !void {
         .tmp_dir = tmp_dir,
         .tmp_dir_path = tmp_dir_path,
         .child = &child,
-        .allow_compiler_stderr = debug_log_args.items.len != 0,
-        .quiet = quiet,
-        .preserve_tmp_on_fatal = preserve_tmp,
+        .allow_compiler_stderr = args.@"--debug-log".len != 0,
+        .quiet = args.@"--quiet",
+        .preserve_tmp_on_fatal = args.@"--preserve-tmp",
         .cc_child_args = &cc_child_args,
-        .enable_qemu = enable_qemu,
-        .enable_wine = enable_wine,
-        .enable_wasmtime = enable_wasmtime,
-        .enable_darling = enable_darling,
+        .enable_qemu = args.@"--qemu",
+        .enable_wine = args.@"--wine",
+        .enable_wasmtime = args.@"--wasmtime",
+        .enable_darling = args.@"--darling",
     };
 
     var multi_reader_buffer: Io.File.MultiReader.Buffer(2) = undefined;
@@ -245,7 +237,7 @@ pub fn main(init: std.process.Init) !void {
         var update_prog_node = updates_prog_node.start(update.name, 0);
         defer update_prog_node.end();
 
-        if (debug_log_args.items.len != 0) {
+        if (args.@"--debug-log".len != 0) {
             // Print a line separating the debug logs from the compiler in the stderr output.
             std.log.scoped(.status).info("update: '{s}'", .{update.name});
         }
@@ -997,9 +989,4 @@ fn parseTargetQueryAndBackend(input_str: []const u8, err_prefix: []const u8) str
     }) catch fatal("{s}invalid target query '{s}'", .{ err_prefix, query });
 
     return .{ parsed_query, backend };
-}
-
-fn badUsage(comptime fmt: []const u8, args: anytype) noreturn {
-    std.log.err(fmt ++ "\n{s}", args ++ .{usage});
-    std.process.exit(1);
 }

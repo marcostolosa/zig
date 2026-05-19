@@ -1,16 +1,107 @@
+//! Low-level API for iterating over a slice of command-line arguments,
+//! tokenizing it into **options** and **positional arguments**.
+//!
+//! An *option* is a command-line argument that begins with `-`
+//! and which is not exactly `-` or `--`, or a negative number (`-` followed by an ASCII digit).
+//!
+//! An option can be either **short** or **long**:
+//!
+//! - A *short option* has a name that consists of `-` followed by exactly one byte
+//!   that is neither `-` nor an ASCII digit; for example, `-f` or `-n`.
+//! - A *long option* has a name that consists of `--` followed by one or more bytes,
+//!   none of which are `=`; for example, `--foo` or `--dry-run`.
+//!
+//! An option can take a **required argument**, an **optional argument** or **no argument** at all:
+//!
+//! - A *required-argument option* receives its argument from the command line differently
+//!   depending on whether it is short or long:
+//!   - A short required-argument option receives its argument in the form of the option name
+//!     followed by its argument, separated by optional whitespace;
+//!     for example, `-fbar` or `-f bar`.
+//!   - A long required-argument option receives its argument in the form of the option name
+//!     followed by its argument, separated by either `=` or whitespace;
+//!     for example, `--foo=bar` or `--foo bar`.
+//! - An *optional-argument option* receives its argument in the same way
+//!   as the non-whitespace-separated form of a required-argument option;
+//!   for example, `-fbar` or `--foo=bar`.
+//! - As the name would suggest, a *no-argument option* does not receive an argument.
+//!
+//! Short no-argument options can be *stacked* and entered on the command line
+//! as a contiguous sequence of characters (ending with whitespace
+//! or a required- or optional-argument option); for example, `-abc` instead of `-a -b -c`.
+//!
+//! Arguments which are not options are classified as *positional arguments*.
+//! To prevent a positional argument that begins with `-` from being mistaken for an option,
+//! a special token, the *end-of-options delimiter* `--`, can be used.
+//! Any arguments that appear after `--` will be classified as positional;
+//! for example, in the command-line string `123 -- --foo`, `--foo` is a positional argument.
+//!
+//! If `ArgsTokenizer` encounters an unrecognized or incorrectly entered option,
+//! it will advance to the next element of the input slice.
+//!
+//! The behavior of `ArgsTokenizer` is consistent with all de-facto conventions
+//! established by Unix/POSIX `getopt` and later GNU `getopt_long`,
+//! except that it will not recognize abbreviated forms of long option names.
+//!
+//! See also `std.cli.ArgsParser` for a more high-level API that can be used to parse
+//! command-line arguments into a custom struct.
+const ArgsTokenizer = @This();
+
+test ArgsTokenizer {
+    const Option = union(enum) {
+        @"--amend": void,
+        @"-m": []const u8,
+        @"--message": []const u8,
+    };
+    var amend: bool = false;
+    var message: ?[]const u8 = null;
+
+    var positionals: std.ArrayList([]const u8) = .empty;
+    defer positionals.deinit(std.testing.allocator);
+
+    const args: []const []const u8 = &.{ "git", "commit", "--amend", "-mFix bugs" };
+    var tokenizer: std.cli.ArgsTokenizer = .init(args);
+
+    const program_name = tokenizer.nextPositional();
+    while (tokenizer.next(Option)) |token| switch (token) {
+        .option => |option| switch (option) {
+            .@"--amend" => {
+                amend = true;
+            },
+            .@"-m", .@"--message" => |arg| {
+                message = arg;
+            },
+        },
+        .end_of_options => {},
+        .positional => |arg| {
+            try positionals.append(std.testing.allocator, arg);
+        },
+        .invalid_option => |invalid| {
+            return invalid.err;
+        },
+    };
+
+    try std.testing.expectEqualStrings("git", program_name orelse "");
+    try std.testing.expectEqual(1, positionals.items.len);
+    try std.testing.expectEqualStrings("commit", positionals.items[0]);
+    try std.testing.expectEqual(true, amend);
+    try std.testing.expectEqualStrings("Fix bugs", message orelse "");
+}
+
 const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
-
-const ArgsTokenizer = @This();
 
 args: []const []const u8,
 outer_pos: usize,
 inner_pos: usize,
 
 /// When `true`, all tokens will be unconditionally interpreted as positional arguments.
-/// Setting this to `true` when the most recently consumed token was a short no-argument option
-/// may cause Illegal Behavior.
+/// `next` and `nextDynamic` automatically set this field to `true`
+/// after encountering the `--` end-of-options delimiter.
+///
+/// Manually setting this to `true` when the most recently consumed token was
+/// a short no-argument option may cause Illegal Behavior.
 positional_only: bool,
 
 pub fn init(args: []const []const u8) ArgsTokenizer {
@@ -357,47 +448,6 @@ pub const InvalidOptionName = union(enum) {
         };
     }
 };
-
-test ArgsTokenizer {
-    const Option = union(enum) {
-        @"--amend": void,
-        @"-m": []const u8,
-        @"--message": []const u8,
-    };
-    var amend: bool = false;
-    var message: ?[]const u8 = null;
-
-    var positionals: std.ArrayList([]const u8) = .empty;
-    defer positionals.deinit(std.testing.allocator);
-
-    const args: []const []const u8 = &.{ "git", "commit", "--amend", "-mFix bugs" };
-    var tokenizer: std.cli.ArgsTokenizer = .init(args);
-
-    const program_name = tokenizer.nextPositional();
-    while (tokenizer.next(Option)) |token| switch (token) {
-        .option => |option| switch (option) {
-            .@"--amend" => {
-                amend = true;
-            },
-            .@"-m", .@"--message" => |arg| {
-                message = arg;
-            },
-        },
-        .end_of_options => {},
-        .positional => |arg| {
-            try positionals.append(std.testing.allocator, arg);
-        },
-        .invalid_option => |invalid| {
-            return invalid.err;
-        },
-    };
-
-    try std.testing.expectEqualStrings("git", program_name orelse "");
-    try std.testing.expectEqual(1, positionals.items.len);
-    try std.testing.expectEqualStrings("commit", positionals.items[0]);
-    try std.testing.expectEqual(true, amend);
-    try std.testing.expectEqualStrings("Fix bugs", message orelse "");
-}
 
 /// Note that the parameters order is the opposite of most `std.testing` functions!
 fn expectToken(comptime Option: type, actual: ?Token(Option), expected: ?Token(Option)) !void {

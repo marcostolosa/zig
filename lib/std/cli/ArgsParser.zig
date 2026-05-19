@@ -1,9 +1,113 @@
+//! High-level API for parsing a slice of command-line arguments into a custom struct.
+//!
+//! Any field of the custom struct whose name begins with `@"--"` and is at least three characters
+//! in length is considered to be an option field; for example, `@"--foo"` or `@"--dry-run"`.
+//! The type of an option field dictates how it receives values from the command line:
+//!
+//! Primitive | `?T` | `[]T` | Example type       | Example command-line syntax
+//! ----------|------|-------|--------------------|--------------------------------
+//! Void      | Yes  | No    | `?void`            | `--foo`
+//! Boolean   | Yes  | No    | `bool`             | `--foo`, `--no-foo`
+//! Integer   | Yes  | Yes   | `[]i32`            | `--foo=123`, `--foo 0xff`
+//! Float     | Yes  | Yes   | `f64`              | `--foo=1.5`, `--foo 1.2e-3`
+//! Enum      | Yes  | Yes   | `enum { on, off }` | `--foo=on`, `--foo off`
+//! String    | Yes  | Yes   | `[][]const u8`     | `--foo=c.c`, `--foo /dev/null`
+//!
+//! Each option field must either have an optional or slice type, or a default field value
+//! (a "required option" is an oxymoron). Slice options are populated by specifying the option
+//! multiple times on the command line. For scalar (non-slice) options, if the same option is
+//! specified multiple times, then the last specified value is the one that gets used.
+//!
+//! Fields of the custom struct whose names do not begin with `@"--"` are considered to be
+//! positional fields, and receives their values from the command line as positional arguments,
+//! in the same order as the fields are declared. Positional fields may have any of the same types
+//! as option fields except for `void` and `bool`.
+//!
+//! Positional fields that have optional or slice types, or default field values,
+//! are considered optional and are not required to be specified on the command line.
+//! All other positional fields are required to be specified. Optional positional fields must be
+//! declared after all required positional fields. The last declared positional field may have
+//! a slice type, in which case it is considered to be a repeated positional and will receive
+//! all trailing positional arguments from the command line.
+//!
+//! If the parser cannot parse the provided slice of command-line arguments,
+//! it will automatically print a usage error message to `stderr` and return `error.Usage`.
+//!
+//! If the parser encounters the option `--help`, it will automatically print help text
+//! to `stdout` and return `error.HelpRequested`. The help text can be customized by having
+//! the custom struct declare `pub const @"--help"` of type `[]const u8` or `std.cli.Help(T)`.
+//!
+//! If the custom struct declares `pub const @"--version"` of type `[]const u8` or
+//! `std.SemanticVersion`, then the parser will additionally recognize the `--version` option
+//! and handle it in a similar manner to `--help`, by printing the version to `stdout`
+//! and returning `error.VersionRequested`.
+//!
+//! `ArgsParser` can be called from code like any other regular API.
+//! However, if the program's `main` function is defined to take two parameters, like
+//!
+//! ```
+//! pub fn main(init: std.process.Init, args: Args) void {}
+//! ```
+//!
+//! then `ArgsParser` will be used to automatically parse the program's
+//! command-line arguments into an instance of the custom struct `Args`.
+//! When used like this, usage errors and requests for help text will be handled automatically
+//! before control enters the program's `main` function.
+//!
+//! See also `std.cli.ArgsTokenizer` for a more low-level API that can be used to tokenize
+//! command-line arguments into options and positional arguments.
+const ArgsParser = @This();
+
+test ArgsParser {
+    var arena_allocator: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_allocator.deinit();
+
+    var discarding: std.Io.Writer.Discarding = .init(&.{});
+
+    const AppArgs = struct {
+        op: enum { sum, min, max },
+        first_value: i32,
+        rest_values: []const i32,
+        @"--output": ?[:0]const u8,
+        @"--pretty": bool = true,
+        @"--verbose": ?void,
+    };
+
+    const args: []const [:0]const u8 = &.{
+        "calculatinator",
+        "sum",
+        "--output",
+        "result.txt",
+        "5",
+        "12",
+        "-4",
+        "19",
+        "--no-pretty",
+        "--verbose",
+    };
+    const parser: std.cli.ArgsParser = .{
+        .stdout = .{ .writer = &discarding.writer, .mode = .no_color },
+        .stderr = .{ .writer = &discarding.writer, .mode = .no_color },
+        .program_name = args[0],
+    };
+
+    const parsed = try parser.parseAllocZ(AppArgs, arena_allocator.allocator(), args[1..]);
+
+    const expected: AppArgs = .{
+        .op = .sum,
+        .first_value = 5,
+        .rest_values = &.{ 12, -4, 19 },
+        .@"--output" = "result.txt",
+        .@"--pretty" = false,
+        .@"--verbose" = {},
+    };
+    try std.testing.expectEqualDeep(expected, parsed);
+}
+
 const std = @import("std");
 const ArgsTokenizer = std.cli.ArgsTokenizer;
 const Help = std.cli.Help;
 const assert = std.debug.assert;
-
-const ArgsParser = @This();
 
 stdout: std.Io.Terminal,
 stderr: std.Io.Terminal,
@@ -20,6 +124,9 @@ pub const ParseError = error{
     VersionRequested,
 } || std.Io.Terminal.SetColorError || std.Io.Writer.Error;
 
+/// Parses a slice of command-line arguments.
+/// Asserts at comptime that `T` does not contain any slice fields,
+/// which would require dynamic memory allocation to populate.
 pub fn parse(
     p: ArgsParser,
     comptime T: type,
@@ -28,6 +135,9 @@ pub fn parse(
     return p.parseArgs(.{ .alloc = false, .z = false }, T, {}, args);
 }
 
+/// Parses a slice of null-terminated command-line arguments.
+/// Asserts at comptime that `T` does not contain any slice fields,
+/// which would require dynamic memory allocation to populate.
 pub fn parseZ(
     p: ArgsParser,
     comptime T: type,
@@ -38,6 +148,10 @@ pub fn parseZ(
 
 pub const ParseAllocError = ParseError || std.mem.Allocator.Error;
 
+/// Parses a slice of command-line arguments.
+/// Slice fields are populated using the specified arena allocator;
+/// however, note that string elements of fields of type `[]const []const u8`
+/// are not copied and will instead point to inside the original `args` slice.
 pub fn parseAlloc(
     p: ArgsParser,
     comptime T: type,
@@ -47,6 +161,10 @@ pub fn parseAlloc(
     return p.parseArgs(.{ .alloc = true, .z = false }, T, arena, args);
 }
 
+/// Parses a slice of null-terminated command-line arguments.
+/// Slice fields are populated using the specified arena allocator;
+/// however, note that string elements of fields of type `[]const []const u8`
+/// are not copied and will instead point to inside the original `args` slice.
 pub fn parseAllocZ(
     p: ArgsParser,
     comptime T: type,
@@ -579,50 +697,4 @@ fn printVersion(p: ArgsParser, comptime T: type) !noreturn {
     }
     try p.stdout.writer.flush();
     return error.VersionRequested;
-}
-
-test ArgsParser {
-    var arena_allocator: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena_allocator.deinit();
-
-    var discarding: std.Io.Writer.Discarding = .init(&.{});
-
-    const AppArgs = struct {
-        op: enum { sum, min, max },
-        first_value: i32,
-        rest_values: []const i32,
-        @"--output": ?[:0]const u8,
-        @"--pretty": bool = true,
-        @"--verbose": ?void,
-    };
-
-    const args: []const [:0]const u8 = &.{
-        "calculatinator",
-        "sum",
-        "--output",
-        "result.txt",
-        "5",
-        "12",
-        "-4",
-        "19",
-        "--no-pretty",
-        "--verbose",
-    };
-    const parser: std.cli.ArgsParser = .{
-        .stdout = .{ .writer = &discarding.writer, .mode = .no_color },
-        .stderr = .{ .writer = &discarding.writer, .mode = .no_color },
-        .program_name = args[0],
-    };
-
-    const parsed = try parser.parseAllocZ(AppArgs, arena_allocator.allocator(), args[1..]);
-
-    const expected: AppArgs = .{
-        .op = .sum,
-        .first_value = 5,
-        .rest_values = &.{ 12, -4, 19 },
-        .@"--output" = "result.txt",
-        .@"--pretty" = false,
-        .@"--verbose" = {},
-    };
-    try std.testing.expectEqualDeep(expected, parsed);
 }

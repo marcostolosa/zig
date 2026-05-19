@@ -25,9 +25,9 @@ pub const Preopens = @import("process/Preopens.zig");
 /// advantage of. This is the type of the first parameter of the main function.
 /// Applications wanting more flexibility can accept `Init.Minimal` instead.
 ///
-/// Completion of https://github.com/ziglang/zig/issues/24510 will also allow
-/// the second parameter of the main function to be a custom struct that
-/// contain auto-parsed CLI arguments.
+/// Optionally, the second parameter of the main function may be a custom struct
+/// which will be populated with automatically parsed command-line arguments.
+/// See `std.cli.ArgsParser` for more details.
 pub const Init = struct {
     /// `Init` is a superset of `Minimal`; the latter is included here.
     minimal: Minimal,

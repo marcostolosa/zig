@@ -6,7 +6,7 @@ pub const ArgsParser = @import("cli/ArgsParser.zig");
 pub const ArgsTokenizer = @import("cli/ArgsTokenizer.zig");
 
 /// Convenience function for parsing the process's arguments into a struct or tagged union instance.
-/// See `ArgsParser` for more detailed information about the parser's behavior.
+/// See `std.cli.ArgsParser` for more detailed information about the parser's behavior.
 pub fn parseProcessArgs(comptime T: type, init: std.process.Init) ArgsParser.ParseAllocError!T {
     // It is okay for the stdout and stderr writers to both share the same buffer,
     // the parser will only write to at most one of them, never both.
@@ -33,6 +33,7 @@ pub fn parseProcessArgs(comptime T: type, init: std.process.Init) ArgsParser.Par
     return parser.parseAllocZ(T, init.arena.allocator(), args[@min(1, args.len)..]);
 }
 
+/// Used to customize the help text printed by `std.cli.ArgsParser`.
 pub fn Help(comptime T: type) type {
     return struct {
         command_name: ?[]const u8 = null,

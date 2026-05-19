@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Test it");
     b.default_step = test_step;
 
-    const optimize: std.builtin.Optimize = .debug;
+    const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
 
     const exe_names: []const []const u8 = &.{
@@ -81,4 +81,41 @@ pub fn build(b: *std.Build) void {
         const run_cmd = b.addRunArtifact(exe);
         test_step.dependOn(&run_cmd.step);
     }
+
+    const obj = b.addObject(.{
+        .name = "zig_root",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("link_lib_with_obj_and_exe_with_obj/root.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const lib = b.addLibrary(.{
+        .linkage = .dynamic,
+        .name = "lib",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("link_lib_with_obj_and_exe_with_obj/lib.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const exe = b.addExecutable(.{
+        .name = "main",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("link_lib_with_obj_and_exe_with_obj/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    exe.root_module.addObject(obj);
+    exe.root_module.linkLibrary(lib);
+    obj.root_module.linkLibrary(lib);
+
+    const run_cmd = b.addRunArtifact(exe);
+    run_cmd.step.dependOn(b.getInstallStep());
+
+    const run_step = b.step("run", "Run the app");
+    run_step.dependOn(&run_cmd.step);
 }

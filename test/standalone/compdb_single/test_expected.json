@@ -1,0 +1,12 @@
+[
+    {
+        "file": "foo.c",
+        "arguments": []
+    },
+    {
+        "file": "bar.c",
+        "arguments": [
+            "-Werror"
+        ]
+    }
+]

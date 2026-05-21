@@ -251,6 +251,9 @@ generated_llvm_bc: Configuration.OptionalGeneratedFileIndex = .none,
 generated_llvm_ir: Configuration.OptionalGeneratedFileIndex = .none,
 generated_h: Configuration.OptionalGeneratedFileIndex = .none,
 
+compdb_fragments_dir: ?*Step.WriteFile = null,
+compdb_merged_json: Configuration.OptionalGeneratedFileIndex = .none,
+
 pub const ExpectedCompileErrors = union(enum) {
     contains: []const u8,
     exact: []const []const u8,
@@ -737,6 +740,18 @@ pub fn getEmittedLlvmIr(compile: *Compile) LazyPath {
 /// Returns the path to the generated LLVM BC.
 pub fn getEmittedLlvmBc(compile: *Compile) LazyPath {
     return compile.getEmittedFileGeneric(&compile.generated_llvm_bc);
+}
+
+/// Returns the path to the compile commands JSON file
+pub fn getCompileCommandsJson(compile: *Compile) LazyPath {
+    if (compile.compdb_fragments_dir) |_| {} else {
+        const b = compile.step.owner;
+        // Compile step depends on temporary directory to exist so fragements can be written there
+        const dir_wf: *Step.WriteFile = b.addTempFiles();
+        compile.step.dependOn(&dir_wf.step);
+        compile.compdb_fragments_dir = dir_wf;
+    }
+    return compile.getEmittedFileGeneric(&compile.compdb_merged_json);
 }
 
 pub fn rootModuleTarget(c: *Compile) std.Target {

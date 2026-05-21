@@ -749,6 +749,8 @@ pub const Step = extern struct {
         generated_llvm_bc: Storage.FlagOptional(.flags4, .generated_llvm_bc, GeneratedFileIndex),
         generated_llvm_ir: Storage.FlagOptional(.flags4, .generated_llvm_ir, GeneratedFileIndex),
         generated_h: Storage.FlagOptional(.flags4, .generated_h, GeneratedFileIndex),
+        compdb_fragments_dir: Storage.FlagOptional(.flags4, .compdb_fragments_dir, LazyPath.Index),
+        compdb_merged_json: Storage.FlagOptional(.flags4, .compdb_merged_json, GeneratedFileIndex),
 
         pub const InstalledHeader = union(@This().Tag) {
             file: File,
@@ -1034,7 +1036,9 @@ pub const Step = extern struct {
             generated_llvm_ir: bool,
             generated_h: bool,
             incremental: DefaultingBool,
-            _: u7 = 0,
+            compdb_fragments_dir: bool,
+            compdb_merged_json: bool,
+            _: u5 = 0,
         };
 
         pub fn isDynamicLibrary(compile: *const Compile) bool {

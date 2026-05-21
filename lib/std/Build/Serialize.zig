@@ -218,6 +218,8 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                             .generated_llvm_ir = c.generated_llvm_ir != .none,
                             .generated_h = c.generated_h != .none,
                             .incremental = .init(c.incremental),
+                            .compdb_fragments_dir = c.compdb_fragments_dir != null,
+                            .compdb_merged_json = c.compdb_merged_json != .none,
                         },
                         .root_module = try s.addModule(c.root_module),
                         .root_name = try wc.addString(c.name),
@@ -271,6 +273,10 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                         .generated_llvm_bc = .{ .value = c.generated_llvm_bc.unwrap() },
                         .generated_llvm_ir = .{ .value = c.generated_llvm_ir.unwrap() },
                         .generated_h = .{ .value = c.generated_h.unwrap() },
+                        .compdb_fragments_dir = .{
+                            .value = try s.addOptionalLazyPath(if (c.compdb_fragments_dir) |fd| fd.getDirectory() else null),
+                        },
+                        .compdb_merged_json = .{ .value = c.compdb_merged_json.unwrap() },
                     });
                 },
                 .install_artifact => e: {

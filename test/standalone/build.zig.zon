@@ -36,6 +36,9 @@
         .compile_asm = .{
             .path = "compile_asm",
         },
+        .compdb_single = .{
+            .path = "compdb_single",
+        },
         .issue_5825 = .{
             .path = "issue_5825",
         },

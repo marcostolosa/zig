@@ -1,0 +1,22 @@
+[
+    {
+        "file": "foo.c",
+        "arguments": [
+            "-Wall"
+        ]
+    },
+    {
+        "file": "bar.c",
+        "arguments": [
+            "-Wall",
+            "-Werror"
+        ]
+    },
+    {
+        "file": "baz.c",
+        "arguments": [
+            "-Wall",
+            "-Werror"
+        ]
+    }
+]

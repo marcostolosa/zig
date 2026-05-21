@@ -1,0 +1,14 @@
+[
+    {
+        "file": "foo.c",
+        "arguments": [
+            "-Wno-pedantic"
+        ]
+    },
+    {
+        "file": "baz.c",
+        "arguments": [
+            "-Wall"
+        ]
+    }
+]

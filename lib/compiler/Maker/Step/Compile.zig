@@ -9,6 +9,7 @@ const Path = std.Build.Cache.Path;
 const Module = std.Build.Configuration.Module;
 const Io = std.Io;
 const Sha256 = std.crypto.hash.sha2.Sha256;
+const CityHash64 = std.hash.CityHash64;
 const assert = std.debug.assert;
 
 const Step = @import("../Step.zig");
@@ -74,6 +75,9 @@ pub fn make(
         try updateGeneratedFile(maker, arena, &conf_comp, output_dir, &target, conf_comp.generated_asm.value, .@"asm");
         try updateGeneratedFile(maker, arena, &conf_comp, output_dir, &target, conf_comp.generated_llvm_ir.value, .llvm_ir);
         try updateGeneratedFile(maker, arena, &conf_comp, output_dir, &target, conf_comp.generated_llvm_bc.value, .llvm_bc);
+
+        // Merge JSON fragment files into single JSON
+        try mergeCompDbFragments(maker, arena, compile_index, &conf_comp, output_dir, conf_comp.compdb_merged_json.value);
     }
 
     if (conf_comp.flags3.kind == .lib and conf_comp.flags2.linkage == .dynamic and
@@ -125,6 +129,94 @@ fn updateGeneratedFile(
     maker.generatedPath(gf).* = try out_path.join(graph.arena, name);
 }
 
+fn mergeCompDbFragments(
+    maker: *Maker,
+    arena: Allocator,
+    asking_step: Configuration.Step.Index,
+    conf_comp: *const Configuration.Step.Compile,
+    out_path: std.Build.Cache.Path,
+    opt_gf: ?Configuration.GeneratedFileIndex,
+) Step.ExtendedMakeError!void {
+    const gf = opt_gf orelse return;
+    const graph = maker.graph;
+    const io = graph.io;
+    const name = "compile_commands.json";
+    const step = maker.stepByIndex(asking_step);
+
+    const fh = out_path.root_dir.handle.createFile(
+        io,
+        try Dir.path.join(arena, &.{ out_path.sub_path, name }),
+        .{},
+    ) catch |e| {
+        return step.fail(maker, "Unable to created compile_commands.json: {t}", .{e});
+    };
+    defer fh.close(io);
+    var wbuf: [1024]u8 = undefined;
+    var fhw = fh.writer(io, &wbuf);
+    fhw.interface.writeByte('[') catch |e| {
+        return step.fail(maker, "Unable to write compile_commands.json: {t}", .{e});
+    };
+
+    // Optional generated file existing implies that this tmp file directory must also exist
+    const frag_dir_lpi = conf_comp.compdb_fragments_dir.value.?;
+    const frag_dir_fp = try maker.resolveLazyPathIndex(arena, frag_dir_lpi, asking_step);
+    const fragment_dir_real = frag_dir_fp.root_dir.handle.openDir(io, frag_dir_fp.sub_path, .{ .iterate = true }) catch |e| {
+        return step.fail(maker, "Couldn't open fragment temp dir: {s} {t}", .{ frag_dir_fp.sub_path, e });
+    };
+    defer fragment_dir_real.close(io);
+    var diter = fragment_dir_real.iterate();
+
+    var need_comma: bool = false;
+    while (diter.next(io) catch |e1| return step.fail(maker, "Unable to write compile_commands.json: {t}", .{e1})) |entry| {
+        if (need_comma) {
+            fhw.interface.writeByte(',') catch |e| {
+                return step.fail(maker, "Unable to write compile_commands.json: {t}", .{e});
+            };
+        }
+        // Should only be fragment files in our temp dir since we have exclusive ownership
+        assert(entry.kind == .file);
+        const fragment_fh = fragment_dir_real.openFile(io, entry.name, .{}) catch |e| {
+            return step.fail(maker, "Can't open fragment: {s} {t}", .{ entry.name, e });
+        };
+        var rdbuf: [1024]u8 = undefined;
+        var fragment_fr = fragment_fh.reader(io, &rdbuf);
+
+        // Stream the entire fragment into the output file, stripping the newline chars + comma at the end since
+        // we're manually handling comma separation in the merged JSON ourselves
+        var written: usize = 0;
+        while (true) {
+            fragment_fr.interface.fill(rdbuf.len) catch |e| switch (e) {
+                error.EndOfStream => {
+                    const slice = std.mem.trimEnd(u8, fragment_fr.interface.buffered(), "\r\n,");
+                    fhw.interface.writeAll(slice) catch |e2| {
+                        return step.fail(maker, "Unable to write compile_commands.json: {t}", .{e2});
+                    };
+                    break;
+                },
+                else => return step.fail(maker, "Unable to write compile_commands.json: {t}", .{e}),
+            };
+            fhw.interface.writeAll(fragment_fr.interface.buffered()) catch |e| {
+                return step.fail(maker, "Unable to write compile_commands.json: {t}", .{e});
+            };
+            written += fragment_fr.interface.buffered().len;
+            fragment_fr.interface.tossBuffered();
+        }
+        // If for some reason we get an output file with no JSON content (newlines/comma only), we will form invalid JSON by having "{...},,"".
+        // There should be no way for this to happen, so make sure of that in debug mode.
+        assert(written > 0);
+        need_comma = true;
+    }
+    fhw.interface.writeByte(']') catch |e| {
+        return step.fail(maker, "Unable to write compile_commands.json: {t}", .{e});
+    };
+    fhw.interface.flush() catch |e| {
+        return step.fail(maker, "Unable to write compile_commands.json: {t}", .{e});
+    };
+
+    const compdb_path = try out_path.join(graph.arena, name);
+    maker.generatedPath(gf).* = compdb_path;
+}
+
 /// List of importable modules in a compilation's module graph, including
 /// the root module. The root module is guaranteed to be first.
 const ModuleList = std.array_hash_map.Auto(Configuration.Module.Index, Configuration.String);
@@ -155,6 +247,23 @@ const ModuleListContext = struct {
         }
     };
 };
+
+/// Joins the temporary directory for compile_commands.json fragments with a hashed version of a C file's path to
+/// prevent collisions in projects that have identically named .c files in different paths (path1/foo.c, path2/foo.c)
+fn generateCSourceFileCompdbEntryPath(
+    conf_comp: *const Configuration.Step.Compile,
+    arena: Allocator,
+    maker: *const Maker,
+    asking_step: Configuration.Step.Index,
+    c_source_file_path: []const u8,
+) !?[]const u8 {
+    if (conf_comp.compdb_fragments_dir.value) |fdir| {
+        const dir = try maker.resolveLazyPathIndexAbs(arena, fdir, asking_step);
+        const basename = Dir.path.basename(c_source_file_path);
+        const hash = std.fmt.hex(CityHash64.hash(c_source_file_path));
+        return try Dir.path.join(arena, &.{ dir, try arena.print("{s}-{s}", .{ basename, hash }) });
+    } else return null;
+}
 
 fn lowerZigArgs(
     arena: Allocator,
@@ -428,21 +537,43 @@ fn lowerZigArgs(
                         if (!my_responsibility) break :l;
 
                         const c_source_file = c_source_file_index.get(conf);
+                        const c_source_file_path = try maker.resolveLazyPathIndexAbs(arena, c_source_file.file, compile_index);
+                        const c_source_file_compdb_entry_path = try generateCSourceFileCompdbEntryPath(
+                            &conf_comp,
+                            arena,
+                            maker,
+                            compile_index,
+                            c_source_file_path,
+                        );
 
                         if (prev_has_cflags or c_source_file.args.slice.len != 0) {
-                            try zig_args.ensureUnusedCapacity(gpa, 2 + c_source_file.args.slice.len);
+                            var total_arg_count: usize = 2 + c_source_file.args.slice.len;
+                            if(c_source_file_compdb_entry_path) |_| total_arg_count += 1;
+                            try zig_args.ensureUnusedCapacity(gpa, total_arg_count);
+                            
                             zig_args.appendAssumeCapacity("-cflags");
+                            if (c_source_file_compdb_entry_path) |compdb_entry_path| {
+                                zig_args.appendAssumeCapacity(try arena.print("-MJ{s}", .{compdb_entry_path}));
+                            }
                             for (c_source_file.args.slice) |arg| {
                                 zig_args.appendAssumeCapacity(arg.slice(conf));
                             }
                             zig_args.appendAssumeCapacity("--");
+                        } else if (c_source_file_compdb_entry_path) |compdb_entry_path| {
+                            try zig_args.append(gpa, "-cflags");
+                            try zig_args.append(gpa, try arena.print("-MJ{s}", .{compdb_entry_path}));
+                            try zig_args.append(gpa, "--");
                         }
-                        prev_has_cflags = (c_source_file.args.slice.len != 0);
+
+                        prev_has_cflags = if (c_source_file_compdb_entry_path) |_|
+                            true
+                        else
+                            (c_source_file.args.slice.len != 0);
 
                         if (c_source_file.flags.lang.get()) |lang|
                             (try zig_args.addManyAsArray(gpa, 2)).* = .{ "-x", lang.clangIdentifier() };
 
-                        try zig_args.append(gpa, try maker.resolveLazyPathIndexAbs(arena, c_source_file.file, compile_index));
+                        try zig_args.append(gpa, c_source_file_path);
 
                         if (c_source_file.flags.lang != .default)
                             (try zig_args.addManyAsArray(gpa, 2)).* = .{ "-x", "none" };
@@ -454,31 +585,55 @@ fn lowerZigArgs(
                         if (!my_responsibility) break :l;
 
                         const c_source_files = c_source_files_index.get(conf);
-
-                        if (prev_has_cflags or c_source_files.args.slice.len != 0) {
-                            try zig_args.ensureUnusedCapacity(gpa, 2 + c_source_files.args.slice.len);
-                            zig_args.appendAssumeCapacity("-cflags");
-                            for (c_source_files.args.slice) |arg| {
-                                zig_args.appendAssumeCapacity(arg.slice(conf));
-                            }
-                            zig_args.appendAssumeCapacity("--");
-                        }
-                        prev_has_cflags = (c_source_files.args.slice.len != 0);
-
-                        if (c_source_files.flags.lang.get()) |lang|
-                            (try zig_args.addManyAsArray(gpa, 2)).* = .{ "-x", lang.clangIdentifier() };
-
                         const root_path = try maker.resolveLazyPathIndexAbs(arena, c_source_files.root, compile_index);
-                        try zig_args.ensureUnusedCapacity(gpa, c_source_files.sub_paths.slice.len);
+
+                        // TODO: Iterating over each file is a workaround to an issue where passing -MJ as a flag
+                        //       for multiple files doesn't correctly generate multiple compdb entries, see:
+                        //       https://github.com/ziglang/zig/issues/9323
+                        //       Otherwise, it would be more correct to apply all the flags to the group of files
+                        //       rather than appending them per file.
                         for (c_source_files.sub_paths.slice) |sub_path| {
-                            zig_args.appendAssumeCapacity(try Dir.path.join(arena, &.{
+                            const c_source_file_path = try Dir.path.join(arena, &.{
                                 root_path, sub_path.slice(conf),
-                            }));
+                            });
+                            const c_source_file_compdb_entry_path = try generateCSourceFileCompdbEntryPath(
+                                &conf_comp,
+                                arena,
+                                maker,
+                                compile_index,
+                                c_source_file_path,
+                            );
+                            
+                            if (prev_has_cflags or c_source_files.args.slice.len != 0) {
+                                var total_arg_count: usize = 2 + c_source_files.args.slice.len;
+                                if(c_source_file_compdb_entry_path) |_| total_arg_count += 1;
+                                try zig_args.ensureUnusedCapacity(gpa, total_arg_count);
+                                zig_args.appendAssumeCapacity("-cflags");
+                                if (c_source_file_compdb_entry_path) |compdb_entry_path| {
+                                    zig_args.appendAssumeCapacity(try arena.print("-MJ{s}", .{compdb_entry_path}));
+                                }
+                                for (c_source_files.args.slice) |arg| {
+                                    zig_args.appendAssumeCapacity(arg.slice(conf));
+                                }
+                                zig_args.appendAssumeCapacity("--");
+                            } else if (c_source_file_compdb_entry_path) |compdb_entry_path| {
+                                try zig_args.append(gpa, "-cflags");
+                                try zig_args.append(gpa, try arena.print("-MJ{s}", .{compdb_entry_path}));
+                                try zig_args.append(gpa, "--");
+                            }
+                            prev_has_cflags = if (c_source_file_compdb_entry_path) |_|
+                                    true
+                                else
+                                    (c_source_files.args.slice.len != 0);
+
+                            if (c_source_files.flags.lang.get()) |lang|
+                                (try zig_args.addManyAsArray(gpa, 2)).* = .{ "-x", lang.clangIdentifier() };
+                            
+                            try zig_args.append(gpa, c_source_file_path);
+
+                            if (c_source_files.flags.lang != .default)
+                                (try zig_args.addManyAsArray(gpa, 2)).* = .{ "-x", "none" };
                         }
-
-                        if (c_source_files.flags.lang != .default)
-                            (try zig_args.addManyAsArray(gpa, 2)).* = .{ "-x", "none" };
-
                         total_linker_objects += c_source_files.sub_paths.slice.len;
                     },
 

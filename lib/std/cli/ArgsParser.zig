@@ -698,3 +698,466 @@ fn printVersion(p: ArgsParser, comptime T: type) !noreturn {
     try p.stdout.writer.flush();
     return error.VersionRequested;
 }
+
+fn noopDrain(w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+    _ = w;
+    const slice = data[0 .. data.len - 1];
+    const pattern = data[slice.len];
+    var written: usize = pattern.len * splat;
+    for (slice) |bytes| written += bytes.len;
+    return written;
+}
+
+var noop_writer: std.Io.Writer = .{ .buffer = &.{}, .vtable = &.{ .drain = noopDrain } };
+const noop_terminal: std.Io.Terminal = .{ .writer = &noop_writer, .mode = .no_color };
+const quiet_parser: ArgsParser = .{
+    .stdout = noop_terminal,
+    .stderr = noop_terminal,
+    .program_name = null,
+};
+
+test "integers" {
+    var arena_allocator: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_allocator.deinit();
+
+    const Args = struct {
+        p0: i32,
+        p1: u32,
+        p2: i96,
+        p3: u31,
+        p4: u0,
+        p5: []u8,
+        @"--o0": ?i32,
+        @"--o1": ?u32,
+        @"--o2": ?i96,
+        @"--o3": ?u31,
+        @"--o4": ?u0,
+        @"--o5": []u8,
+    };
+    const args: []const []const u8 = &.{
+        "--o0=999",
+        "12_345",
+        "0b0101_1010",
+        "0x7fff_ffff_ffff_ffff_ffff_ffff",
+        "0o765",
+        "--o0=-123",
+        "--o1=+123",
+        "--o2",
+        "-0XC0FFEE",
+        "--o3=0O0",
+        "0B0",
+        "--o5=0x7a",
+        "1",
+        "--o5=0x69",
+        "2",
+        "--o5=0x67",
+        "3",
+    };
+    var expected_p5: [3]u8 = .{ 1, 2, 3 };
+    var expected_o5: [3]u8 = .{ 122, 105, 103 };
+    const expected: Args = .{
+        .p0 = 12345,
+        .p1 = 90,
+        .p2 = 39614081257132168796771975167,
+        .p3 = 501,
+        .p4 = 0,
+        .p5 = &expected_p5,
+        .@"--o0" = -123,
+        .@"--o1" = 123,
+        .@"--o2" = -12648430,
+        .@"--o3" = 0,
+        .@"--o4" = null,
+        .@"--o5" = &expected_o5,
+    };
+    const actual = try quiet_parser.parseAlloc(Args, arena_allocator.allocator(), args);
+    try std.testing.expectEqualDeep(expected, actual);
+}
+
+test "floats" {
+    var arena_allocator: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_allocator.deinit();
+
+    const Args = struct {
+        p0: f16,
+        p1: f32,
+        p2: f128,
+        p3: []const f64,
+        @"--o0": ?f80,
+        @"--o1": ?f80,
+        @"--o2": f32 = 100,
+        @"--o3": []const f32,
+    };
+    const args: []const []const u8 = &.{
+        "--o0",
+        "+1",
+        "--o1",
+        "-1",
+        "123",
+        "-0_0_0.1_2_3",
+        "1.2e-3",
+        "0x1.2p-3",
+        "--o3=0X7fff_ffee",
+        "--o3=001e100",
+        "0.0e+0",
+    };
+    const expected: Args = .{
+        .p0 = 123,
+        .p1 = -0.123,
+        .p2 = 0.0012,
+        .p3 = &.{ 0.140625, 0 },
+        .@"--o0" = 1,
+        .@"--o1" = -1,
+        .@"--o2" = 100,
+        .@"--o3" = &.{ 2147483648, std.math.inf(f32) },
+    };
+    const actual = try quiet_parser.parseAlloc(Args, arena_allocator.allocator(), args);
+    try std.testing.expectEqualDeep(expected, actual);
+}
+
+test "special floats" {
+    const Args = struct {
+        p0: f32 = 0,
+        @"--o0": f32 = 0,
+        @"--o1": f32 = 0,
+        p1: f32 = 0,
+        @"--o2": f32 = 0,
+        @"--o3": f32 = 0,
+        p2: f32 = 0,
+        @"--o4": f32 = 0,
+        @"--o5": f32 = 0,
+        p3: f32 = 0,
+        @"--o6": f32 = 0,
+        @"--o7": f32 = 0,
+    };
+    const args: []const []const u8 = &.{
+        "0",
+        "--o0=+0.0",
+        "--o1=-0x0",
+        "inf",
+        "--o2=+INF",
+        "--o3=-Inf",
+        "infinity",
+        "--o4=+inFINIty",
+        "--o5=-Infinity",
+        "nan",
+        "--o6=+NaN",
+        "--o7=-nAn",
+    };
+    const actual = try quiet_parser.parse(Args, args);
+    try std.testing.expectEqual(0x00000000, @as(u32, @bitCast(actual.p0)));
+    try std.testing.expectEqual(0x00000000, @as(u32, @bitCast(actual.@"--o0")));
+    try std.testing.expectEqual(0x80000000, @as(u32, @bitCast(actual.@"--o1")));
+    try std.testing.expectEqual(std.math.inf(f32), actual.p1);
+    try std.testing.expectEqual(std.math.inf(f32), actual.@"--o2");
+    try std.testing.expectEqual(-std.math.inf(f32), actual.@"--o3");
+    try std.testing.expectEqual(std.math.inf(f32), actual.p2);
+    try std.testing.expectEqual(std.math.inf(f32), actual.@"--o4");
+    try std.testing.expectEqual(-std.math.inf(f32), actual.@"--o5");
+    try std.testing.expect(std.math.isNan(actual.p3));
+    try std.testing.expect(std.math.isNan(actual.@"--o6"));
+    try std.testing.expect(std.math.isNan(actual.@"--o7"));
+}
+
+test "enums" {
+    var arena_allocator: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_allocator.deinit();
+
+    const E = enum { one, two, three, @"--four" };
+    const Args = struct {
+        pos: []const E,
+        @"--opt": []const E,
+        @"--four": bool = false,
+    };
+    const args: []const []const u8 = &.{
+        "one",
+        "two",
+        "--opt=three",
+        "--opt",
+        "--four",
+        "--four",
+        "--",
+        "--four",
+    };
+    const expected: Args = .{
+        .pos = &.{ .one, .two, .@"--four" },
+        .@"--opt" = &.{ .three, .@"--four" },
+        .@"--four" = true,
+    };
+    const actual = try quiet_parser.parseAlloc(Args, arena_allocator.allocator(), args);
+    try std.testing.expectEqualDeep(expected, actual);
+}
+
+test "strings" {
+    var arena_allocator: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_allocator.deinit();
+
+    const Args = struct {
+        p0: []const u8,
+        p1: [:0]const u8,
+        p2: []const []const u8,
+        @"--o0": ?[]const u8,
+        @"--o1": ?[:0]const u8,
+        @"--o2": []const [:0]const u8,
+    };
+    const args: []const [:0]const u8 = &.{
+        "--o0",
+        "abc",
+        "--o1",
+        "def",
+        "--o2",
+        "ghi",
+        "--o2",
+        "jkl",
+        "--",
+        "mno",
+        "--o2",
+        "pqr",
+        "tuv",
+        "wxy",
+        "zzz",
+    };
+    const expected: Args = .{
+        .p0 = "mno",
+        .p1 = "--o2",
+        .p2 = &.{ "pqr", "tuv", "wxy", "zzz" },
+        .@"--o0" = "abc",
+        .@"--o1" = "def",
+        .@"--o2" = &.{ "ghi", "jkl" },
+    };
+    const actual = try quiet_parser.parseAllocZ(Args, arena_allocator.allocator(), args);
+    try std.testing.expectEqualDeep(expected, actual);
+}
+
+test "void options" {
+    const Args = struct {
+        @"--aaa": void = {},
+        @"--bbb": ?void,
+        @"--ccc": ?void,
+    };
+    const args: []const []const u8 = &.{ "--aaa", "--bbb" };
+    const expected: Args = .{ .@"--aaa" = {}, .@"--bbb" = {}, .@"--ccc" = null };
+    const actual = try quiet_parser.parse(Args, args);
+    try std.testing.expectEqualDeep(expected, actual);
+}
+
+test "boolean options" {
+    const Args = struct {
+        @"--aaa": bool = false,
+        @"--bbb": bool = true,
+        @"--ccc": ?bool,
+        @"--ddd": ?bool,
+    };
+    const args: []const []const u8 = &.{ "--no-ccc", "--aaa", "--no-bbb" };
+    const expected: Args = .{ .@"--aaa" = true, .@"--bbb" = false, .@"--ccc" = false, .@"--ddd" = null };
+    const actual = try quiet_parser.parse(Args, args);
+    try std.testing.expectEqualDeep(expected, actual);
+}
+
+test "sentinel-terminated slices" {
+    var arena_allocator: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_allocator.deinit();
+
+    const Args = struct {
+        pos: [:0xff]u8,
+        @"--o1": [:-1]const i32,
+        @"--o2": [:65535]const u16,
+    };
+    const args: []const []const u8 = &.{ "--o1=1", "--o1=2", "0xA", "0xB", "0xC", "--o1", "3" };
+    var expected_pos: [3:0xff]u8 = .{ 0xA, 0xB, 0xC };
+    const expected: Args = .{
+        .pos = &expected_pos,
+        .@"--o1" = &.{ 1, 2, 3 },
+        .@"--o2" = &.{},
+    };
+    const actual = try quiet_parser.parseAlloc(Args, arena_allocator.allocator(), args);
+    try std.testing.expectEqualDeep(expected, actual);
+}
+
+test "--help: string" {
+    var arena_allocator: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_allocator.deinit();
+
+    var writer: std.Io.Writer.Allocating = .init(arena_allocator.allocator());
+    var failing: std.Io.Writer = .failing;
+    const parser: std.cli.ArgsParser = .{
+        .stdout = .{ .writer = &writer.writer, .mode = .no_color },
+        .stderr = .{ .writer = &failing, .mode = .no_color },
+        .program_name = "app",
+    };
+
+    const Args = struct {
+        foo: []const u8,
+        @"--bar": ?[]const u8,
+        pub const @"--help" =
+            \\Lorem ipsum
+            \\dolor sit amet.
+        ;
+    };
+    const expected_help = // The parser ensures that the text is printed with a trailing newline
+        \\Lorem ipsum
+        \\dolor sit amet.
+        \\
+    ;
+    try std.testing.expectError(error.HelpRequested, parser.parse(Args, &.{"--help"}));
+    try std.testing.expectEqualStrings(expected_help, writer.written());
+
+    try std.testing.expectError(error.HelpRequested, quiet_parser.parse(Args, &.{"-h"}));
+    try std.testing.expectError(error.HelpRequested, quiet_parser.parse(Args, &.{"-help"}));
+    try std.testing.expectError(error.HelpRequested, quiet_parser.parse(Args, &.{ "123", "--help", "--asdf" }));
+}
+
+test "--help: std.cli.Help" {
+    var arena_allocator: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_allocator.deinit();
+
+    var writer: std.Io.Writer.Allocating = .init(arena_allocator.allocator());
+    var failing: std.Io.Writer = .failing;
+    const parser: std.cli.ArgsParser = .{
+        .stdout = .{ .writer = &writer.writer, .mode = .no_color },
+        .stderr = .{ .writer = &failing, .mode = .no_color },
+        .program_name = "app",
+    };
+
+    const Args = struct {
+        foo: []const u8,
+        @"--bar": ?[]const u8,
+        pub const @"--help": std.cli.Help(@This()) = .{
+            .command_name = "command",
+            .summary = "A summary summary.",
+            .args = .{
+                .foo = .{ .description = "Foo foo" },
+                .@"--bar" = .{ .description = "Bar bar" },
+            },
+        };
+    };
+    const expected_help =
+        \\Usage: command [<option>...] [--] <foo>
+        \\
+        \\A summary summary.
+        \\
+        \\Arguments:
+        \\  <foo>  Foo foo
+        \\
+        \\Options:
+        \\  --bar=<value>  Bar bar
+        \\  -h, --help     Print this help and exit
+        \\
+    ;
+    try std.testing.expectError(error.HelpRequested, parser.parse(Args, &.{"--help"}));
+    try std.testing.expectEqualStrings(expected_help, writer.written());
+}
+
+test "--version: string" {
+    var arena_allocator: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_allocator.deinit();
+
+    var writer: std.Io.Writer.Allocating = .init(arena_allocator.allocator());
+    var failing: std.Io.Writer = .failing;
+    const parser: std.cli.ArgsParser = .{
+        .stdout = .{ .writer = &writer.writer, .mode = .no_color },
+        .stderr = .{ .writer = &failing, .mode = .no_color },
+        .program_name = "app",
+    };
+
+    const Args = struct {
+        foo: []const u8,
+        @"--bar": ?[]const u8,
+        pub const @"--version" =
+            \\program.exe 0.1.2
+            \\Crappyright (💩) 20XX John Doe
+        ;
+    };
+    const expected_version = // The parser ensures that the text is printed with a trailing newline
+        \\program.exe 0.1.2
+        \\Crappyright (💩) 20XX John Doe
+        \\
+    ;
+    try std.testing.expectError(error.VersionRequested, parser.parse(Args, &.{"--version"}));
+    try std.testing.expectEqualStrings(expected_version, writer.written());
+
+    try std.testing.expectError(error.VersionRequested, quiet_parser.parse(Args, &.{ "--version", "--help" }));
+    try std.testing.expectError(error.VersionRequested, quiet_parser.parse(Args, &.{ "123", "--version", "--asdf" }));
+}
+
+test "--version: std.SemanticVersion" {
+    var arena_allocator: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_allocator.deinit();
+
+    var writer: std.Io.Writer.Allocating = .init(arena_allocator.allocator());
+    var failing: std.Io.Writer = .failing;
+    const parser: std.cli.ArgsParser = .{
+        .stdout = .{ .writer = &writer.writer, .mode = .no_color },
+        .stderr = .{ .writer = &failing, .mode = .no_color },
+        .program_name = "app",
+    };
+
+    const Args = struct {
+        pub const @"--version": std.SemanticVersion = .{
+            .major = 1,
+            .minor = 0,
+            .patch = 0,
+            .pre = "beta",
+            .build = "exp.sha.5114f85",
+        };
+    };
+    const expected_version =
+        \\1.0.0-beta+exp.sha.5114f85
+        \\
+    ;
+    try std.testing.expectError(error.VersionRequested, parser.parse(Args, &.{"--version"}));
+    try std.testing.expectEqualStrings(expected_version, writer.written());
+}
+
+test "usage errors" {
+    var arena_allocator: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_allocator.deinit();
+
+    var writer: std.Io.Writer.Allocating = .init(arena_allocator.allocator());
+    var failing: std.Io.Writer = .failing;
+    const parser: std.cli.ArgsParser = .{
+        .stdout = .{ .writer = &failing, .mode = .no_color },
+        .stderr = .{ .writer = &writer.writer, .mode = .no_color },
+        .program_name = "app",
+    };
+
+    const Args = struct {
+        a: []const u8,
+        b: []const u8,
+        c: ?[]const u8,
+        d: ?[]const u8,
+        @"--one": ?i16,
+        @"--two": ?f32,
+        @"--three": ?enum { foo, bar, baz },
+
+        fn expectUsageError(expected_first_line: []const u8, actual: []const u8) !void {
+            var it = std.mem.splitScalar(u8, actual, '\n');
+            try std.testing.expectEqualStrings(expected_first_line, it.first());
+            try std.testing.expectEqualStrings("Try 'app --help' for more information.", it.next() orelse return error.TestFailed);
+            try std.testing.expectEqualStrings("", it.next() orelse return error.TestFailed); // Trailing newline
+            try std.testing.expect(it.next() == null);
+        }
+    };
+    try std.testing.expectError(error.Usage, parser.parse(Args, &.{"--no-one"}));
+    try Args.expectUsageError("error: unrecognized option '--no-one'", writer.written());
+    writer.clearRetainingCapacity();
+    try std.testing.expectError(error.Usage, parser.parse(Args, &.{}));
+    try Args.expectUsageError("error: incorrect number of arguments (expected between 2 and 4)", writer.written());
+    writer.clearRetainingCapacity();
+    try std.testing.expectError(error.Usage, parser.parse(Args, &.{"--one"}));
+    try Args.expectUsageError("error: option --one: expected an argument", writer.written());
+    writer.clearRetainingCapacity();
+    try std.testing.expectError(error.Usage, parser.parse(Args, &.{"--help=me"}));
+    try Args.expectUsageError("error: option --help: unexpected argument 'me'", writer.written());
+    writer.clearRetainingCapacity();
+    try std.testing.expectError(error.Usage, parser.parse(Args, &.{"--one=01_2__3"}));
+    try Args.expectUsageError("error: option --one: argument '01_2__3' is not a recognizable integer", writer.written());
+    writer.clearRetainingCapacity();
+    try std.testing.expectError(error.Usage, parser.parse(Args, &.{"--two=infinitinity"}));
+    try Args.expectUsageError("error: option --two: argument 'infinitinity' is not a recognizable floating-point number", writer.written());
+    writer.clearRetainingCapacity();
+    try std.testing.expectError(error.Usage, parser.parse(Args, &.{"--one=0x8000"}));
+    try Args.expectUsageError("error: option --one: argument '0x8000' is outside the allowable range (expected a value between -32768 and 32767 inclusive)", writer.written());
+    writer.clearRetainingCapacity();
+    try std.testing.expectError(error.Usage, parser.parse(Args, &.{"--three=xyz"}));
+    try Args.expectUsageError("error: option --three: argument 'xyz' is not a recognizable choice (expected 'foo', 'bar' or 'baz')", writer.written());
+}

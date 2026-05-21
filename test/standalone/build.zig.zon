@@ -193,6 +193,9 @@
         .debug_io_color = .{
             .path = "debug_io_color",
         },
+        .juicy_main_args_parsing = .{
+            .path = "juicy_main_args_parsing",
+        },
         .elf2 = .{
             .path = "elf2",
         },

@@ -7794,8 +7794,8 @@ fn dirRenamePreserveLinux(
         .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
         .XDEV => return syscall.fail(error.CrossDevice),
         .ILSEQ => return syscall.fail(error.BadPathName),
+        .INVAL => return syscall.fail(error.OperationUnsupported), // Either arguments are invalid, or the FS does not support NOREPLACE
         .FAULT => |err| return syscall.errnoBug(err),
-        .INVAL => |err| return syscall.errnoBug(err),
         else => |err| return syscall.unexpectedErrno(err),
     };
 }

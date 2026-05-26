@@ -33,9 +33,9 @@ pub fn initCapacity(gpa: Allocator, num_bits: usize) Allocator.Error!BitStack {
 ///
 /// When initialized this way, all functions that accept an Allocator
 /// argument cause illegal behavior.
-pub fn initBuffer(buffer: []u8) BitStack {
+pub fn initBuffer(bytes: []u8) BitStack {
     return .{
-        .bytes = buffer,
+        .bytes = bytes,
         .bit_len = 0,
     };
 }
@@ -85,35 +85,59 @@ pub fn push(self: *BitStack, gpa: Allocator, bit: u1) Allocator.Error!void {
 /// If `self` cannot hold an additional bit, returns
 /// `error.OutOfMemory`.
 pub fn pushBounded(self: *BitStack, bit: u1) error{OutOfMemory}!void {
-    if (self.bit_len >= self.capacity()) return error.OutOfMemory;
-    self.pushAssumeCapacity(bit);
+    return buffer.pushBounded(self.bytes, &self.bit_len, bit);
 }
-/// Asserts that `self` can old an additional bit.
+/// Asserts that `self` can hold an additional bit.
 pub fn pushAssumeCapacity(self: *BitStack, bit: u1) void {
-    assert(self.bit_len < self.capacity());
-
-    const byte_idx, const bit_idx = bitIdxToByteIdx(self.bit_len);
-    self.bytes[byte_idx] &= ~(@as(u8, 1) << bit_idx);
-    self.bytes[byte_idx] |= @as(u8, bit) << bit_idx;
-    self.bit_len += 1;
+    return buffer.pushAssumeCapacity(self.bytes, &self.bit_len, bit);
 }
 
 /// Remove and return top-most bit from `self`.
 /// If `self` is empty, returns `null`.
 pub fn pop(self: *BitStack) ?u1 {
-    const bit = self.peek() orelse return null;
-    self.bit_len -= 1;
-    return bit;
+    return buffer.pop(self.bytes, &self.bit_len);
 }
 /// Return top-most bit from `self`.
 /// If `self` is empty, returns `null`.
 pub fn peek(self: BitStack) ?u1 {
-    if (self.bit_len <= 0) return null;
-    const byte_idx, const bit_idx = bitIdxToByteIdx(self.bit_len - 1);
-    const byte = self.bytes[byte_idx];
-    const bit: u1 = @intCast((byte >> bit_idx) & 1);
-    return bit;
+    return buffer.peek(self.bytes, self.bit_len);
 }
+
+/// Standalone functions for working with buffers
+/// that aren't `BitStack`s.
+pub const buffer = struct {
+    /// If `bytes` cannot hold an additional bit, returns
+    /// `error.OutOfMemory`.
+    pub fn pushBounded(bytes: []u8, bit_len: *usize, bit: u1) error{OutOfMemory}!void {
+        if (bit_len.* >= bytes.len * 8) return error.OutOfMemory;
+        buffer.pushAssumeCapacity(bytes, bit_len, bit);
+    }
+    /// Asserts that `bytes` can hold an additional bit.
+    pub fn pushAssumeCapacity(bytes: []u8, bit_len: *usize, bit: u1) void {
+        assert(bit_len.* < bytes.len * 8);
+
+        const byte_idx, const bit_idx = bitIdxToByteIdx(bit_len.*);
+        bytes[byte_idx] &= ~(@as(u8, 1) << bit_idx);
+        bytes[byte_idx] |= @as(u8, bit) << bit_idx;
+        bit_len.* += 1;
+    }
+    /// Return the top-most bit and lower `bit_len` by one.
+    /// Returns `null` if `bit_len` is zero.
+    pub fn pop(bytes: []const u8, bit_len: *usize) ?u1 {
+        const bit = buffer.peek(bytes, bit_len.*) orelse return null;
+        bit_len.* -= 1;
+        return bit;
+    }
+    /// Return the top-most bit.
+    /// Returns `null` if `bit_len` is zero.
+    pub fn peek(bytes: []const u8, bit_len: usize) ?u1 {
+        if (bit_len <= 0) return null;
+        const byte_idx, const bit_idx = bitIdxToByteIdx(bit_len - 1);
+        const byte = bytes[byte_idx];
+        const bit: u1 = @intCast((byte >> bit_idx) & 1);
+        return bit;
+    }
+};
 
 /// Returns the split byte and bit index based on a bit index.
 fn bitIdxToByteIdx(bit_idx: usize) struct { usize, u3 } {
@@ -181,29 +205,19 @@ pub const Managed = struct {
         return popWithState(self.bytes.items, &self.bit_len);
     }
 
-    /// Standalone function for working with a fixed-size buffer.
+    /// Deprecated in favor of `BitStack.buffer.pushAssumeCapacity`.
     pub fn pushWithStateAssumeCapacity(buf: []u8, bit_len: *usize, b: u1) void {
-        const byte_index = bit_len.* >> 3;
-        const bit_index = @as(u3, @intCast(bit_len.* & 7));
-
-        buf[byte_index] &= ~(@as(u8, 1) << bit_index);
-        buf[byte_index] |= @as(u8, b) << bit_index;
-
-        bit_len.* += 1;
+        buffer.pushAssumeCapacity(buf, bit_len, b);
     }
 
-    /// Standalone function for working with a fixed-size buffer.
+    /// Deprecated in favor of `BitStack.buffer.peek`.
     pub fn peekWithState(buf: []const u8, bit_len: usize) u1 {
-        const byte_index = (bit_len - 1) >> 3;
-        const bit_index = @as(u3, @intCast((bit_len - 1) & 7));
-        return @as(u1, @intCast((buf[byte_index] >> bit_index) & 1));
+        return buffer.peek(buf, bit_len).?;
     }
 
-    /// Standalone function for working with a fixed-size buffer.
+    /// Deprecated in favor of `BitStack.buffer.pop`.
     pub fn popWithState(buf: []const u8, bit_len: *usize) u1 {
-        const b = peekWithState(buf, bit_len.*);
-        bit_len.* -= 1;
-        return b;
+        return buffer.pop(buf, bit_len).?;
     }
 };
 
@@ -268,6 +282,34 @@ test initCapacity {
         try testing.expectEqual(0, stack.bit_len);
     }
 }
+test initBuffer {
+    const gpa = testing.allocator;
+
+    const bytes = try gpa.alloc(u8, 1);
+    defer gpa.free(bytes);
+
+    var stack: BitStack = .initBuffer(bytes);
+
+    try testing.expectEqual(8, stack.capacity());
+    try stack.pushBounded(1);
+    try stack.pushBounded(1);
+    try stack.pushBounded(0);
+    try stack.pushBounded(0);
+    try stack.pushBounded(1);
+    try stack.pushBounded(0);
+    try stack.pushBounded(1);
+    try stack.pushBounded(0);
+    try testing.expectError(error.OutOfMemory, stack.pushBounded(0));
+    try testing.expectEqual(0, stack.pop());
+    try testing.expectEqual(1, stack.pop());
+    try testing.expectEqual(0, stack.pop());
+    try testing.expectEqual(1, stack.pop());
+    try testing.expectEqual(0, stack.pop());
+    try testing.expectEqual(0, stack.pop());
+    try testing.expectEqual(1, stack.pop());
+    try testing.expectEqual(1, stack.pop());
+    try testing.expectEqual(null, stack.pop());
+}
 test clone {
     const gpa = testing.allocator;
 
@@ -292,4 +334,8 @@ test clone {
 
     // Ensure the original wasn't modified.
     try testing.expectEqual(0, stack.pop());
+}
+test "passes through allocation failure" {
+    var stack: BitStack = .empty;
+    try testing.expectError(error.OutOfMemory, stack.push(testing.failing_allocator, 1));
 }

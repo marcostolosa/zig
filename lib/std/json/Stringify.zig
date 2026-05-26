@@ -21,7 +21,7 @@ const std = @import("../std.zig");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
-const BitStackManaged = std.BitStack.Managed;
+const BitStack = std.BitStack;
 const Stringify = @This();
 const Writer = std.Io.Writer;
 
@@ -127,7 +127,7 @@ pub fn endObject(self: *Stringify) Error!void {
 fn pushIndentation(self: *Stringify, mode: IndentationMode) !void {
     switch (safety_checks) {
         .checked_to_fixed_depth => {
-            BitStackManaged.pushWithStateAssumeCapacity(&self.nesting_stack, &self.indent_level, @backingInt(mode));
+            BitStack.buffer.pushAssumeCapacity(&self.nesting_stack, &self.indent_level, @backingInt(mode));
         },
         .assumed_correct => {
             self.indent_level += 1;
@@ -137,7 +137,7 @@ fn pushIndentation(self: *Stringify, mode: IndentationMode) !void {
 fn popIndentation(self: *Stringify, expected_mode: IndentationMode) void {
     switch (safety_checks) {
         .checked_to_fixed_depth => {
-            assert(BitStackManaged.popWithState(&self.nesting_stack, &self.indent_level) == @backingInt(expected_mode));
+            assert(BitStack.buffer.pop(&self.nesting_stack, &self.indent_level).? == @backingInt(expected_mode));
         },
         .assumed_correct => {
             self.indent_level -= 1;
@@ -202,7 +202,7 @@ fn valueDone(self: *Stringify) void {
 fn isObjectKeyExpected(self: *const Stringify) ?bool {
     switch (safety_checks) {
         .checked_to_fixed_depth => return self.indent_level > 0 and
-            BitStackManaged.peekWithState(&self.nesting_stack, self.indent_level) == @backingInt(IndentationMode.object) and
+            BitStack.buffer.peek(&self.nesting_stack, self.indent_level).? == @backingInt(IndentationMode.object) and
             self.next_punctuation != .colon,
         .assumed_correct => return null,
     }

@@ -149,10 +149,7 @@ fn bitIdxToByteIdx(bit_idx: usize) struct { usize, u3 } {
 /// Returns the minimum number of bytes necessary
 /// to represent a number of bits.
 fn numBitsToNumBytes(num_bits: usize) usize {
-    const partial_byte = num_bits & 0b111 != 0;
-    const bytes_floor = num_bits >> 3;
-    const bytes_ceil = bytes_floor + @intFromBool(partial_byte);
-    return bytes_ceil;
+    return (num_bits + 7) >> 3;
 }
 test numBitsToNumBytes {
     try testing.expectEqual(0, numBitsToNumBytes(0));

@@ -47,11 +47,11 @@ const std = @import("std");
 
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
-const BitStack = std.BitStack;
+const BitStackManaged = std.BitStack.Managed;
 
 state: State = .value,
 string_is_object_key: bool = false,
-stack: BitStack,
+stack: BitStackManaged,
 value_start: usize = undefined,
 utf16_code_units: [2]u16 = undefined,
 
@@ -63,7 +63,7 @@ diagnostics: ?*Diagnostics = null,
 /// The allocator is only used to track `[]` and `{}` nesting levels.
 pub fn initStreaming(allocator: Allocator) @This() {
     return .{
-        .stack = BitStack.init(allocator),
+        .stack = BitStackManaged.init(allocator),
     };
 }
 /// Use this if your input is a single slice.
@@ -75,7 +75,7 @@ pub fn initStreaming(allocator: Allocator) @This() {
 /// ```
 pub fn initCompleteInput(allocator: Allocator, complete_input: []const u8) @This() {
     return .{
-        .stack = BitStack.init(allocator),
+        .stack = BitStackManaged.init(allocator),
         .input = complete_input,
         .is_end_of_input = true,
     };

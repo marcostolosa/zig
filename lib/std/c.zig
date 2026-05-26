@@ -3854,27 +3854,32 @@ pub const W = switch (native_os) {
             return @intCast((s.toInt() >> 8) & 0xff);
         }
         pub fn TERMSIG(s: W) SIG {
-            return @fromBackingInt(s.toInt() & 0x7f);
+            return @fromBackingInt(s.status());
         }
-        pub fn STOPSIG(x: W) SIG {
-            return @fromBackingInt(x.EXITSTATUS());
+        pub fn STOPSIG(s: W) SIG {
+            return @fromBackingInt(s.EXITSTATUS());
         }
         pub fn IFEXITED(s: W) bool {
-            return @backingInt(s.TERMSIG()) == 0;
+            return s.status() == 0;
         }
         pub fn IFCONTINUED(s: W) bool {
-            return (s == W{ .CONTINUED = true });
+            return s == W{ .CONTINUED = true };
         }
         pub fn IFSTOPPED(s: W) bool {
-            return (s.TERMSIG() == W{ .STOPPED = true }) and !s.IFCONTINUED();
+            return (s.status() == stopped) and !s.IFCONTINUED();
         }
         pub fn IFSIGNALED(s: W) bool {
             return !s.IFSTOPPED() and !s.IFCONTINUED() and !s.IFEXITED();
         }
 
+        fn status(s: W) u32 {
+            return s.toInt() & stopped;
+        }
         fn toInt(s: W) u32 {
             return @bitCast(s);
         }
+
+        const stopped = 0o177;
     },
     .dragonfly => packed struct(u32) {
         /// no hang in wait/no child to reap

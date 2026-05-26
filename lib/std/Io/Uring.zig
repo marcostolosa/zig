@@ -4726,7 +4726,7 @@ fn childWait(userdata: ?*anyopaque, child: *process.Child) process.Child.WaitErr
             .personality = 0,
             .splice_fd_in = @bitCast(linux.W{
                 .EXITED = true,
-                .NOWAIT = if (child.request_resource_usage_statistics) true else false,
+                .NOWAIT = child.request_resource_usage_statistics,
             }),
             .addr3 = 0,
             .resv = 0,

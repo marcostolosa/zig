@@ -1964,24 +1964,24 @@ pub fn unlinkat(dirfd: fd_t, path: [*:0]const u8, flags: u32) usize {
     return syscall3(.unlinkat, @as(u32, @bitCast(dirfd)), @intFromPtr(path), flags);
 }
 
-pub fn waitpid(pid: pid_t, status: ?*W, flags: W) pid_t {
-    return @intCast(syscall4(
+pub fn waitpid(pid: pid_t, status: ?*W, flags: W) usize {
+    return syscall4(
         .wait4,
         @as(u32, @bitCast(pid)),
         @intFromPtr(status),
         @as(u32, @bitCast(flags)),
         0,
-    ));
+    );
 }
 
-pub fn wait4(pid: pid_t, status: ?*W, flags: W, usage: ?*rusage) pid_t {
-    return @intCast(syscall4(
+pub fn wait4(pid: pid_t, status: ?*W, flags: W, usage: ?*rusage) usize {
+    return syscall4(
         .wait4,
         @as(u32, @bitCast(pid)),
         @intFromPtr(status),
         @as(u32, @bitCast(flags)),
         @intFromPtr(usage),
-    ));
+    );
 }
 
 pub fn waitid(id_type: P, id: pid_t, infop: *siginfo_t, flags: W, usage: ?*rusage) usize {

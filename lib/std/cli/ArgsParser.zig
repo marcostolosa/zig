@@ -86,9 +86,9 @@ test ArgsParser {
         "--verbose",
     };
     const parser: std.cli.ArgsParser = .{
+        .command_name = args[0..1],
         .stdout = .{ .writer = &discarding.writer, .mode = .no_color },
         .stderr = .{ .writer = &discarding.writer, .mode = .no_color },
-        .program_name = args[0],
     };
 
     const parsed = try parser.parseAllocZ(AppArgs, arena_allocator.allocator(), args[1..]);
@@ -107,13 +107,18 @@ test ArgsParser {
 const std = @import("std");
 const ArgsTokenizer = std.cli.ArgsTokenizer;
 const Help = std.cli.Help;
+const Terminal = std.Io.Terminal;
 const assert = std.debug.assert;
 
-stdout: std.Io.Terminal,
-stderr: std.Io.Terminal,
+/// The name of the command to be parsed. The value of this field is only used for printing
+/// help text and usage error messages and does not affect actual parsing.
+/// For top-level commands, this is normally the name of the program obtained from `args[0]`.
+/// For subcommands, this is the name of the subcommand and the names of all preceding commands;
+/// for example, `&.{ "my_program", "config", "add" }`.
+command_name: []const []const u8,
 
-/// Used for printing usage messages.
-program_name: ?[]const u8,
+stdout: Terminal,
+stderr: Terminal,
 
 pub const ParseError = error{
     /// Command-line usage error.
@@ -122,581 +127,845 @@ pub const ParseError = error{
     HelpRequested,
     /// The user passed the `--version` option.
     VersionRequested,
-} || std.Io.Terminal.SetColorError || std.Io.Writer.Error;
+} || Terminal.SetColorError || std.Io.Writer.Error;
 
 /// Parses a slice of command-line arguments.
 /// Asserts at comptime that `T` does not contain any slice fields,
-/// which would require dynamic memory allocation to populate.
+/// which require dynamic memory allocation to populate.
 pub fn parse(
     p: ArgsParser,
     comptime T: type,
+    /// The slice of command-line arguments to parse (excluding the program/command name).
     args: []const []const u8,
 ) ParseError!T {
-    return p.parseArgs(.{ .alloc = false, .z = false }, T, {}, args);
+    return p.parseWithMode(T, .{ .alloc = false, .z = false }, {}, args);
 }
 
 /// Parses a slice of null-terminated command-line arguments.
 /// Asserts at comptime that `T` does not contain any slice fields,
-/// which would require dynamic memory allocation to populate.
+/// which require dynamic memory allocation to populate.
 pub fn parseZ(
     p: ArgsParser,
     comptime T: type,
+    /// The slice of command-line arguments to parse (excluding the program/command name).
     args: []const [:0]const u8,
 ) ParseError!T {
-    return p.parseArgs(.{ .alloc = false, .z = true }, T, {}, args);
+    return p.parseWithMode(T, .{ .alloc = false, .z = true }, {}, args);
 }
 
 pub const ParseAllocError = ParseError || std.mem.Allocator.Error;
 
 /// Parses a slice of command-line arguments.
-/// Slice fields are populated using the specified arena allocator;
-/// however, note that string elements of fields of type `[]const []const u8`
-/// are not copied and will instead point to inside the original `args` slice.
+/// Slice fields are populated using the specified arena allocator; however, string contents are
+/// not copied to new memory and will point to inside the original `args` slice.
 pub fn parseAlloc(
     p: ArgsParser,
     comptime T: type,
     arena: std.mem.Allocator,
+    /// The slice of command-line arguments to parse (excluding the program/command name).
     args: []const []const u8,
 ) ParseAllocError!T {
-    return p.parseArgs(.{ .alloc = true, .z = false }, T, arena, args);
+    return p.parseWithMode(T, .{ .alloc = true, .z = false }, arena, args);
 }
 
 /// Parses a slice of null-terminated command-line arguments.
-/// Slice fields are populated using the specified arena allocator;
-/// however, note that string elements of fields of type `[]const []const u8`
-/// are not copied and will instead point to inside the original `args` slice.
+/// Slice fields are populated using the specified arena allocator; however, string contents are
+/// not copied to new memory and will point to inside the original `args` slice.
 pub fn parseAllocZ(
     p: ArgsParser,
     comptime T: type,
     arena: std.mem.Allocator,
+    /// The slice of command-line arguments to parse (excluding the program/command name).
     args: []const [:0]const u8,
 ) ParseAllocError!T {
-    return p.parseArgs(.{ .alloc = true, .z = true }, T, arena, args);
+    return p.parseWithMode(T, .{ .alloc = true, .z = true }, arena, args);
 }
 
-pub const CommandInfo = struct {
-    positional_names: []const [:0]const u8,
-    positional_types: []const type,
-    positional_classes: []const ArgClass,
-    option_names: []const [:0]const u8,
-    option_types: []const type,
-    option_classes: []const ArgClass,
+const ParseMode = struct { alloc: bool, z: bool };
 
-    pub const ArgClass = enum { required, optional, repeated };
-
-    pub fn from(comptime T: type) CommandInfo {
-        for (.{ "--help", "--version" }) |field_name| if (@hasField(T, field_name)) {
-            @compileError("option '" ++ field_name ++ "' is reserved and cannot be declared as a field");
-        };
-
-        var cmd: CommandInfo = .{
-            .positional_names = &.{},
-            .positional_types = &.{},
-            .positional_classes = &.{},
-            .option_names = &.{},
-            .option_types = &.{},
-            .option_classes = &.{},
-        };
-        for (@typeInfo(T).@"struct".fields) |f| {
-            const unwrapped_type: type, const class: ArgClass = unwrap: {
-                switch (@typeInfo(f.type)) {
-                    .optional => |info| {
-                        break :unwrap .{ info.child, .optional };
-                    },
-                    .pointer => |info| if (info.size == .slice and !isStringSlice(info)) {
-                        break :unwrap .{ info.child, .repeated };
-                    },
-                    else => {},
-                }
-                break :unwrap .{ f.type, if (f.default_value_ptr != null) .optional else .required };
-            };
-            if (f.name[0] == '-') {
-                if (!ArgsTokenizer.isValidLongOptionName(f.name)) {
-                    const kind = if (ArgsTokenizer.isValidShortOptionName(f.name)) "short" else "invalid";
-                    @compileError("expected long option name in the form '--foo', found " ++ kind ++ " option name '" ++ f.name ++ "'");
-                }
-                type_ok: {
-                    switch (@typeInfo(unwrapped_type)) {
-                        .void, .bool => if (class != .repeated) break :type_ok,
-                        .int, .float, .@"enum" => break :type_ok,
-                        .pointer => |info| if (isStringSlice(info)) break :type_ok,
-                        else => {},
-                    }
-                    @compileError("option '" ++ f.name ++ "' has unsupported type '" ++ @typeName(f.type) ++ "'");
-                }
-                if (class == .required) {
-                    @compileError("scalar option '" ++ f.name ++ "' must have an optional type or a default field value");
-                }
-                if (f.type == bool) {
-                    const negated_name = "--no-" ++ f.name[2..];
-                    if (@hasField(T, negated_name)) {
-                        @compileError("option '" ++ negated_name ++ "' conflicts with boolean option '" ++ f.name ++ "'");
-                    }
-                }
-                cmd.option_names = cmd.option_names ++ .{f.name};
-                cmd.option_types = cmd.option_types ++ .{unwrapped_type};
-                cmd.option_classes = cmd.option_classes ++ .{class};
-            } else {
-                type_ok: {
-                    switch (@typeInfo(unwrapped_type)) {
-                        .int, .float, .@"enum" => break :type_ok,
-                        .pointer => |info| if (isStringSlice(info)) break :type_ok,
-                        else => {},
-                    }
-                    @compileError("positional '" ++ f.name ++ "' has unsupported type '" ++ @typeName(f.type) ++ "'");
-                }
-                if (cmd.positional_names.len != 0) {
-                    const i = cmd.positional_names.len - 1;
-                    if (cmd.positional_classes[i] == .repeated) {
-                        @compileError("repeated positional '" ++ cmd.positional_names[i] ++ "' must be declared after all other positionals");
-                    }
-                    if (class == .required and cmd.positional_classes[i] == .optional) {
-                        @compileError("optional positional '" ++ cmd.positional_names[i] ++ "' must be declared after all required positionals");
-                    }
-                }
-                cmd.positional_names = cmd.positional_names ++ .{f.name};
-                cmd.positional_types = cmd.positional_types ++ .{unwrapped_type};
-                cmd.positional_classes = cmd.positional_classes ++ .{class};
+fn parseWithMode(
+    p: ArgsParser,
+    comptime T: type,
+    comptime mode: ParseMode,
+    arena: if (mode.alloc) std.mem.Allocator else void,
+    args: []const []const u8,
+) !T {
+    var state: State = .{
+        .maybe_arena = if (mode.alloc) arena else null,
+        .tokenizer = .init(args),
+        .root_command_prefix = if (p.command_name.len > 1) p.command_name[0..(p.command_name.len - 1)] else &.{},
+        .root_command_name = name: {
+            if (@hasDecl(T, "--help") and @TypeOf(T.@"--help") == Help(T)) {
+                if (T.@"--help".command_name) |help_name| break :name help_name;
             }
-        }
+            break :name if (p.command_name.len != 0) p.command_name[p.command_name.len - 1] else null;
+        },
+        .stdout = p.stdout,
+        .stderr = p.stderr,
+    };
+    var specialized_parser: Specialized(T, mode) = .{ .state = &state };
+    return specialized_parser.parse();
+}
 
-        return cmd;
-    }
-
-    fn isStringSlice(info: std.lang.Type.Pointer) bool {
-        return info.size == .slice and info.is_const and info.child == u8 and (info.sentinel() orelse 0) == 0;
-    }
+const State = struct {
+    maybe_arena: ?std.mem.Allocator,
+    tokenizer: ArgsTokenizer,
+    root_command_prefix: []const []const u8,
+    root_command_name: ?[]const u8,
+    stdout: Terminal,
+    stderr: Terminal,
 };
 
-const Api = struct { alloc: bool, z: bool };
+fn Specialized(comptime T: type, comptime mode: ParseMode) type {
+    return struct {
+        state: *State,
 
-fn parseArgs(
-    p: ArgsParser,
-    comptime api: Api,
-    comptime T: type,
-    arena: if (api.alloc) std.mem.Allocator else void,
-    args: []const (if (api.z) [:0]const u8 else []const u8),
-) !T {
-    type_ok: {
-        switch (@typeInfo(T)) {
-            .@"struct" => break :type_ok,
-            .@"union" => |info| if (info.tag_type != null) return p.parseSubcommand(T, api, arena, args),
-            else => {},
-        }
-        @compileError("expected struct or tagged union, found '" ++ @typeName(T) ++ "'");
-    }
-
-    const cmd: CommandInfo = comptime .from(T);
-    const cmd_name: ?[]const u8 =
-        if (@hasDecl(T, "--help") and @TypeOf(T.@"--help") == Help(T))
-            T.@"--help".command_name orelse p.program_name
-        else
-            p.program_name;
-
-    const ArrayLists: type, //
-    const required_positional_count: usize, //
-    const optional_positional_count: usize, //
-    const option_names: []const [:0]const u8, //
-    const option_arities: []const ArgsTokenizer.OptionArity, //
-    const original_options_end: usize, //
-    const negated_options_end: usize, //
-    const help_options_end: usize //
-    = comptime info: {
-        var list_field_names: []const [:0]const u8 = &.{};
-        var list_field_types: []const type = &.{};
-        var list_field_attrs: []const std.lang.Type.StructField.Attributes = &.{};
-        var required_positional_count: usize = 0;
-        var optional_positional_count: usize = 0;
-        for (cmd.positional_names, cmd.positional_types, cmd.positional_classes, 0..) |p_name, p_type, p_class, i| {
-            switch (p_class) {
-                .required => {
-                    assert(optional_positional_count == 0);
-                    required_positional_count += 1;
-                },
-                .optional => {
-                    optional_positional_count += 1;
-                },
-                .repeated => {
-                    assert(i == cmd.positional_names.len - 1);
-                    optional_positional_count = std.math.maxInt(usize);
-                    list_field_names = list_field_names ++ .{p_name};
-                    list_field_types = list_field_types ++ .{std.ArrayList(p_type)};
-                    list_field_attrs = list_field_attrs ++ .{@as(
-                        std.lang.Type.StructField.Attributes,
-                        .{ .default_value_ptr = &std.ArrayList(p_type).empty },
-                    )};
-                },
-            }
+        fn arena(p: @This()) if (mode.alloc) std.mem.Allocator else void {
+            return if (mode.alloc) p.state.maybe_arena.? else {};
         }
 
-        var option_arities: []const ArgsTokenizer.OptionArity = &.{};
-        var negated_option_names: []const [:0]const u8 = &.{};
-        for (cmd.option_names, cmd.option_types, cmd.option_classes) |o_name, o_type, o_class| {
-            if (o_class == .repeated) {
-                list_field_names = list_field_names ++ .{o_name};
-                list_field_types = list_field_types ++ .{std.ArrayList(o_type)};
-                list_field_attrs = list_field_attrs ++ .{@as(
-                    std.lang.Type.StructField.Attributes,
-                    .{ .default_value_ptr = &std.ArrayList(o_type).empty },
-                )};
-            }
-            const arity: ArgsTokenizer.OptionArity = switch (o_type) {
-                void => .no_arg,
-                bool => arity: {
-                    negated_option_names = negated_option_names ++ .{"--no-" ++ o_name[2..]};
-                    break :arity .no_arg;
-                },
-                else => .required_arg,
-            };
-            option_arities = option_arities ++ .{arity};
-        }
+        const FieldClass = enum { required, optional, repeated };
 
-        var option_names = cmd.option_names;
-        const original_options_end = option_names.len;
-        option_names = option_names ++ negated_option_names;
-        const negated_options_end = option_names.len;
-        option_names = option_names ++ .{ "-h", "--help" };
-        const help_options_end = option_names.len;
-        if (@hasDecl(T, "--version")) {
-            option_names = option_names ++ .{"--version"};
-        }
-        option_arities = option_arities ++ @as(
-            [option_names.len - original_options_end]ArgsTokenizer.OptionArity,
-            @splat(.no_arg),
-        );
-
-        assert(option_names.len == option_arities.len);
-        break :info .{
-            @Struct(.auto, null, list_field_names, list_field_types[0..], list_field_attrs[0..]),
-            required_positional_count,
-            optional_positional_count,
-            option_names,
-            option_arities,
-            original_options_end,
-            negated_options_end,
-            help_options_end,
-        };
-    };
-
-    var result: T = comptime init: {
-        var result_init: T = undefined;
-        for (@typeInfo(T).@"struct".fields) |f_| {
-            const f: std.lang.Type.StructField = f_;
-            const default_value: ?f.type = f.defaultValue() orelse switch (@typeInfo(f.type)) {
-                .optional => @as(f.type, null),
-                else => @as(?f.type, null),
-            };
-            if (default_value) |value| {
-                @field(result_init, f.name) = value;
-            }
-        }
-        break :init result_init;
-    };
-
-    var result_lists: ArrayLists = .{};
-    errdefer inline for (@typeInfo(ArrayLists).@"struct".fields) |f| {
-        @field(result_lists, f.name).deinit(arena);
-    };
-
-    var positional_index: usize = 0;
-    var tokenizer: ArgsTokenizer = .init(args);
-    while (tokenizer.nextDynamic(option_names, option_arities)) |token| switch (token) {
-        .option => |option| switch (option.index) {
-            inline 0...(option_names.len - 1) => |i| {
-                const option_name = option_names[i];
-                if (i < original_options_end) {
-                    const parsed_arg = try p.parseArg(api, cmd_name, option_name, cmd.option_types[i], option.arg);
-                    if (cmd.option_classes[i] == .repeated) {
-                        // Repeated option
-                        try @field(result_lists, option_name).append(arena, parsed_arg);
-                    } else {
-                        // Scalar option
-                        @field(result, option_name) = parsed_arg;
+        const fields: type = fields: {
+            var p_names: []const [:0]const u8 = &.{};
+            var p_types: []const type = &.{};
+            var p_classes: []const FieldClass = &.{};
+            var o_names: []const [:0]const u8 = &.{};
+            var o_types: []const type = &.{};
+            var o_classes: []const FieldClass = &.{};
+            var subcmd_names: []const [:0]const u8 = &.{};
+            var subcmd_types: []const type = &.{};
+            switch (@typeInfo(T)) {
+                .@"struct" => |struct_info| {
+                    for (.{ "--help", "--version" }) |field_name| if (@hasField(T, field_name)) {
+                        @compileError("option '" ++ field_name ++ "' is reserved and cannot be declared as a field");
+                    };
+                    for (struct_info.fields) |f| {
+                        const unwrapped_type: type, const class: FieldClass = unwrap: {
+                            switch (@typeInfo(f.type)) {
+                                .optional => |info| {
+                                    break :unwrap .{ info.child, .optional };
+                                },
+                                .pointer => |info| if (info.size == .slice and !isStringSlice(info)) {
+                                    break :unwrap .{ info.child, .repeated };
+                                },
+                                else => {},
+                            }
+                            break :unwrap .{ f.type, if (f.default_value_ptr != null) .optional else .required };
+                        };
+                        if (f.name[0] == '-') {
+                            if (!ArgsTokenizer.isValidLongOptionName(f.name)) {
+                                const adjective = if (ArgsTokenizer.isValidShortOptionName(f.name)) "short" else "invalid";
+                                @compileError("expected long option name in the form '--foo', found " ++ adjective ++ " option name '" ++ f.name ++ "'");
+                            }
+                            type_ok: {
+                                switch (@typeInfo(unwrapped_type)) {
+                                    .void, .bool => if (class != .repeated) break :type_ok,
+                                    .int, .float, .@"enum" => break :type_ok,
+                                    .pointer => |info| if (isStringSlice(info)) break :type_ok,
+                                    else => {},
+                                }
+                                @compileError("option '" ++ f.name ++ "' has unsupported type '" ++ @typeName(f.type) ++ "'");
+                            }
+                            if (class == .required) {
+                                @compileError("scalar option '" ++ f.name ++ "' must have an optional type or a default field value");
+                            }
+                            if (f.type == bool) {
+                                const negated_name = "--no-" ++ f.name[2..];
+                                if (@hasField(T, negated_name)) {
+                                    @compileError("option '" ++ negated_name ++ "' conflicts with boolean option '" ++ f.name ++ "'");
+                                }
+                            }
+                            o_names = o_names ++ .{f.name};
+                            o_types = o_types ++ .{unwrapped_type};
+                            o_classes = o_classes ++ .{class};
+                        } else {
+                            type_ok: {
+                                switch (@typeInfo(unwrapped_type)) {
+                                    .int, .float, .@"enum" => break :type_ok,
+                                    .pointer => |info| if (isStringSlice(info)) break :type_ok,
+                                    else => {},
+                                }
+                                @compileError("positional '" ++ f.name ++ "' has unsupported type '" ++ @typeName(f.type) ++ "'");
+                            }
+                            if (p_names.len != 0) {
+                                const i = p_names.len - 1;
+                                if (p_classes[i] == .repeated) {
+                                    @compileError("repeated positional '" ++ p_names[i] ++ "' must be declared after all other positionals");
+                                }
+                                if (class == .required and p_classes[i] == .optional) {
+                                    @compileError("optional positional '" ++ p_names[i] ++ "' must be declared after all required positionals");
+                                }
+                            }
+                            p_names = p_names ++ .{f.name};
+                            p_types = p_types ++ .{unwrapped_type};
+                            p_classes = p_classes ++ .{class};
+                        }
                     }
-                } else if (i < negated_options_end) {
-                    // Negated boolean option
-                    assert(option.arg == null);
-                    @field(result, "--" ++ option_name["--no-".len..]) = false;
-                } else if (i < help_options_end) {
-                    // -h, --help
-                    return try p.printHelp(T);
-                } else {
-                    // --version
-                    return try p.printVersion(T);
-                }
-            },
-            else => unreachable,
-        },
-        .end_of_options => {},
-        .positional => |positional_arg| if (cmd.positional_names.len != 0) switch (positional_index) {
-            inline 0...(cmd.positional_names.len - 1) => |i| {
-                const positional_name = cmd.positional_names[i];
-                const parsed_arg = try p.parseArg(api, cmd_name, null, cmd.positional_types[i], positional_arg);
-                if (cmd.positional_classes[i] == .repeated) {
-                    // Repeated positional
-                    try @field(result_lists, positional_name).append(arena, parsed_arg);
-                } else {
-                    // Scalar positional
-                    @field(result, positional_name) = parsed_arg;
-                    positional_index += 1;
-                }
-            },
-            else => {
-                return try p.failIncorrectArgCount(cmd_name, required_positional_count, optional_positional_count);
-            },
-        } else {
-            return try p.failMissingOrUnexpectedArg(cmd_name, null, positional_arg);
-        },
-        .invalid_option => |invalid| switch (invalid.err) {
-            error.UnrecognizedOption => {
-                return try p.failUnrecognized(cmd_name, "option", invalid.name.slice());
-            },
-            error.MissingOptionArg, error.UnexpectedOptionArg => {
-                return try p.failMissingOrUnexpectedArg(cmd_name, invalid.name.slice(), invalid.arg);
-            },
-        },
-    };
-
-    if (positional_index < required_positional_count) {
-        if (required_positional_count == 1 and optional_positional_count == 0) {
-            return try p.failMissingOrUnexpectedArg(cmd_name, null, null);
-        } else {
-            return try p.failIncorrectArgCount(cmd_name, required_positional_count, optional_positional_count);
-        }
-    }
-
-    inline for (@typeInfo(ArrayLists).@"struct".fields) |f| {
-        if (@typeInfo(@FieldType(T, f.name)).pointer.sentinel()) |s| {
-            @field(result, f.name) = try @field(result_lists, f.name).toOwnedSliceSentinel(arena, s);
-        } else {
-            @field(result, f.name) = try @field(result_lists, f.name).toOwnedSlice(arena);
-        }
-    }
-
-    return result;
-}
-
-fn parseArg(p: ArgsParser, comptime api: Api, cmd_name: ?[]const u8, option_name: ?[]const u8, comptime T: type, arg: ?[]const u8) !T {
-    switch (@typeInfo(T)) {
-        .void => {
-            assert(arg == null);
-            return;
-        },
-        .bool => {
-            assert(arg == null);
-            return true;
-        },
-        .int => {
-            return parseInt(T, arg.?) catch |err| switch (err) {
-                error.InvalidCharacter => try p.failInvalidNumber(cmd_name, option_name, arg.?, "integer"),
-                error.Overflow => try p.failNumberOutOfRange(cmd_name, option_name, arg.?, std.math.minInt(T), std.math.maxInt(T)),
-            };
-        },
-        .float => {
-            return parseFloat(T, arg.?) catch |err| switch (err) {
-                error.InvalidCharacter => try p.failInvalidNumber(cmd_name, option_name, arg.?, "floating-point number"),
-            };
-        },
-        .@"enum" => {
-            return parseEnum(T, arg.?) catch |err| switch (err) {
-                error.UnrecognizedName => try p.failInvalidChoice(cmd_name, option_name, arg.?, std.meta.fieldNames(T)),
-            };
-        },
-        .pointer => {
-            if (api.z) {
-                // This is perfectly safe; the tokenizer guarantees that sentinels are preserved.
-                return arg.?.ptr[0..arg.?.len :0];
+                },
+                .@"union" => |union_info| {
+                    for (union_info.fields) |f| {
+                        if (f.name[0] == '-') {
+                            @compileError("expected subcommand name, found option name '" ++ f.name ++ "'");
+                        }
+                        field_type_ok: {
+                            switch (@typeInfo(T)) {
+                                .@"struct" => break :field_type_ok,
+                                .@"union" => |info| if (info.tag_type != null) break :field_type_ok,
+                                else => {},
+                            }
+                            @compileError("subcommand '" ++ f.name ++ "' has unsupported type '" ++ @typeName(f.type) ++ "'");
+                        }
+                        subcmd_names = subcmd_names ++ .{f.name};
+                        subcmd_types = subcmd_types ++ .{f.type};
+                    }
+                },
+                else => unreachable,
             }
-            return arg.?;
-        },
-        else => {},
-    }
-    comptime unreachable;
-}
+            break :fields struct {
+                const positional_names: []const [:0]const u8 = p_names;
+                const positional_types: []const type = p_types;
+                const positional_classes: []const FieldClass = p_classes;
+                const option_names: []const [:0]const u8 = o_names;
+                const option_types: []const type = o_types;
+                const option_classes: []const FieldClass = o_classes;
+                const subcommand_names: []const [:0]const u8 = subcmd_names;
+                const subcommand_types: []const type = subcmd_types;
+            };
+        };
 
-fn parseInt(comptime Int: type, arg: []const u8) !Int {
-    return std.fmt.parseInt(Int, arg, 0);
-}
+        fn isStringSlice(info: std.lang.Type.Pointer) bool {
+            return info.size == .slice and info.is_const and info.child == u8 and (info.sentinel() orelse 0) == 0;
+        }
 
-fn parseFloat(comptime Float: type, arg: []const u8) !Float {
-    return std.fmt.parseFloat(Float, arg);
-}
+        fn parse(p: @This()) !T {
+            switch (@typeInfo(T)) {
+                .@"struct" => return p.parseArgs(),
+                .@"union" => |info| if (info.tag_type != null) return p.parseSubcommand(),
+                else => {},
+            }
+            @compileError("expected struct or tagged union, found '" ++ @typeName(T) ++ "'");
+        }
 
-fn parseEnum(comptime Enum: type, arg: []const u8) !Enum {
-    return std.meta.stringToEnum(Enum, arg) orelse error.UnrecognizedName;
-}
+        fn parseArgs(p: @This()) !T {
+            const ArrayLists: type, //
+            const required_positional_count: usize, //
+            const optional_positional_count: usize, //
+            const option_names: []const [:0]const u8, //
+            const option_arities: []const ArgsTokenizer.OptionArity, //
+            const original_options_end: usize, //
+            const negated_options_end: usize, //
+            const help_options_end: usize //
+            = comptime info: {
+                var list_field_names: []const [:0]const u8 = &.{};
+                var list_field_types: []const type = &.{};
+                var list_field_attrs: []const std.lang.Type.StructField.Attributes = &.{};
+                var required_positional_count: usize = 0;
+                var optional_positional_count: usize = 0;
+                for (fields.positional_names, fields.positional_types, fields.positional_classes, 0..) |p_name, p_type, p_class, i| {
+                    switch (p_class) {
+                        .required => {
+                            assert(optional_positional_count == 0);
+                            required_positional_count += 1;
+                        },
+                        .optional => {
+                            optional_positional_count += 1;
+                        },
+                        .repeated => {
+                            assert(i == fields.positional_names.len - 1);
+                            optional_positional_count = std.math.maxInt(usize);
+                            list_field_names = list_field_names ++ .{p_name};
+                            list_field_types = list_field_types ++ .{std.ArrayList(p_type)};
+                            list_field_attrs = list_field_attrs ++ .{@as(
+                                std.lang.Type.StructField.Attributes,
+                                .{ .default_value_ptr = &std.ArrayList(p_type).empty },
+                            )};
+                        },
+                    }
+                }
 
-fn parseSubcommand(
-    p: ArgsParser,
-    comptime api: Api,
-    comptime T: type,
-    arena: if (api.alloc) std.mem.Allocator else void,
-    args: []const (if (api.z) [:0]const u8 else []const u8),
-) !T {
-    _ = p;
-    _ = arena;
-    _ = args;
-    @compileError("TODO: implement subcommand parsing");
-}
+                var option_arities: []const ArgsTokenizer.OptionArity = &.{};
+                var negated_option_names: []const [:0]const u8 = &.{};
+                for (fields.option_names, fields.option_types, fields.option_classes) |o_name, o_type, o_class| {
+                    if (o_class == .repeated) {
+                        list_field_names = list_field_names ++ .{o_name};
+                        list_field_types = list_field_types ++ .{std.ArrayList(o_type)};
+                        list_field_attrs = list_field_attrs ++ .{@as(
+                            std.lang.Type.StructField.Attributes,
+                            .{ .default_value_ptr = &std.ArrayList(o_type).empty },
+                        )};
+                    }
+                    const arity: ArgsTokenizer.OptionArity = switch (o_type) {
+                        void => .no_arg,
+                        bool => arity: {
+                            negated_option_names = negated_option_names ++ .{"--no-" ++ o_name[2..]};
+                            break :arity .no_arg;
+                        },
+                        else => .required_arg,
+                    };
+                    option_arities = option_arities ++ .{arity};
+                }
 
-fn failUnrecognized(p: ArgsParser, cmd_name: ?[]const u8, kind: []const u8, name: []const u8) !noreturn {
-    @branchHint(.cold);
-    try p.failPrefix(null);
-    try p.stderr.writer.print("unrecognized {s} ", .{kind});
-    try p.failQuote(.yellow, name);
-    return p.failSuffix(cmd_name);
-}
+                var option_names = fields.option_names;
+                const original_options_end = option_names.len;
+                option_names = option_names ++ negated_option_names;
+                const negated_options_end = option_names.len;
+                option_names = option_names ++ .{ "-h", "--help" };
+                const help_options_end = option_names.len;
+                if (@hasDecl(T, "--version")) {
+                    option_names = option_names ++ .{"--version"};
+                }
+                option_arities = option_arities ++ @as(
+                    [option_names.len - original_options_end]ArgsTokenizer.OptionArity,
+                    @splat(.no_arg),
+                );
 
-fn failIncorrectArgCount(p: ArgsParser, cmd_name: ?[]const u8, required: usize, optional: usize) !noreturn {
-    @branchHint(.cold);
-    try p.failPrefix(null);
-    try p.stderr.writer.writeAll("incorrect number of arguments (expected ");
-    var last = required;
-    if (optional != 0) {
-        if (optional == std.math.maxInt(usize)) {
-            try p.stderr.writer.writeAll("at least ");
-        } else {
-            if (required == 0) {
-                try p.stderr.writer.writeAll("at most ");
+                assert(option_names.len == option_arities.len);
+                break :info .{
+                    @Struct(.auto, null, list_field_names, list_field_types[0..], list_field_attrs[0..]),
+                    required_positional_count,
+                    optional_positional_count,
+                    option_names,
+                    option_arities,
+                    original_options_end,
+                    negated_options_end,
+                    help_options_end,
+                };
+            };
+
+            var result: T = comptime init: {
+                var result_init: T = undefined;
+                for (@typeInfo(T).@"struct".fields) |f_| {
+                    const f: std.lang.Type.StructField = f_;
+                    const default_value: ?f.type = f.defaultValue() orelse switch (@typeInfo(f.type)) {
+                        .optional => @as(f.type, null),
+                        else => @as(?f.type, null),
+                    };
+                    if (default_value) |value| {
+                        @field(result_init, f.name) = value;
+                    }
+                }
+                break :init result_init;
+            };
+
+            var result_lists: ArrayLists = .{};
+            errdefer inline for (@typeInfo(ArrayLists).@"struct".fields) |f| {
+                @field(result_lists, f.name).deinit(p.arena());
+            };
+
+            var positional_index: usize = 0;
+            while (p.state.tokenizer.nextDynamic(option_names, option_arities)) |token| switch (token) {
+                .option => |option| switch (option.index) {
+                    inline 0...(option_names.len - 1) => |i| {
+                        const option_name = option_names[i];
+                        if (i < original_options_end) {
+                            const parsed_arg = try p.parseArg(option_name, fields.option_types[i], option.arg);
+                            if (fields.option_classes[i] == .repeated) {
+                                // Repeated option
+                                try @field(result_lists, option_name).append(p.arena(), parsed_arg);
+                            } else {
+                                // Scalar option
+                                @field(result, option_name) = parsed_arg;
+                            }
+                        } else if (i < negated_options_end) {
+                            // Negated boolean option
+                            assert(option.arg == null);
+                            @field(result, "--" ++ option_name["--no-".len..]) = false;
+                        } else if (i < help_options_end) {
+                            // -h, --help
+                            return try p.printHelp();
+                        } else {
+                            // --version
+                            return try p.printVersion();
+                        }
+                    },
+                    else => unreachable,
+                },
+                .end_of_options => {},
+                .positional => |positional_arg| if (fields.positional_names.len != 0) switch (positional_index) {
+                    inline 0...(fields.positional_names.len - 1) => |i| {
+                        const positional_name = fields.positional_names[i];
+                        const parsed_arg = try p.parseArg(null, fields.positional_types[i], positional_arg);
+                        if (fields.positional_classes[i] == .repeated) {
+                            // Repeated positional
+                            try @field(result_lists, positional_name).append(p.arena(), parsed_arg);
+                        } else {
+                            // Scalar positional
+                            @field(result, positional_name) = parsed_arg;
+                            positional_index += 1;
+                        }
+                    },
+                    else => {
+                        return try p.failIncorrectArgCount(required_positional_count, optional_positional_count);
+                    },
+                } else {
+                    return try p.failMissingOrUnexpectedArg(null, positional_arg);
+                },
+                .invalid_option => |invalid| switch (invalid.err) {
+                    error.UnrecognizedOption => {
+                        return try p.failUnrecognizedOptionOrCommand("option", invalid.name.slice());
+                    },
+                    error.MissingOptionArg, error.UnexpectedOptionArg => {
+                        return try p.failMissingOrUnexpectedArg(invalid.name.slice(), invalid.arg);
+                    },
+                },
+            };
+
+            if (positional_index < required_positional_count) {
+                if (required_positional_count == 1 and optional_positional_count == 0) {
+                    return try p.failMissingOrUnexpectedArg(null, null);
+                } else {
+                    return try p.failIncorrectArgCount(required_positional_count, optional_positional_count);
+                }
+            }
+
+            inline for (@typeInfo(ArrayLists).@"struct".fields) |f| {
+                if (@typeInfo(@FieldType(T, f.name)).pointer.sentinel()) |s| {
+                    @field(result, f.name) = try @field(result_lists, f.name).toOwnedSliceSentinel(p.arena(), s);
+                } else {
+                    @field(result, f.name) = try @field(result_lists, f.name).toOwnedSlice(p.arena());
+                }
+            }
+
+            return result;
+        }
+
+        fn parseArg(p: @This(), option_name: ?[]const u8, comptime Arg: type, arg: ?[]const u8) !Arg {
+            switch (@typeInfo(Arg)) {
+                .void => {
+                    assert(arg == null);
+                    return;
+                },
+                .bool => {
+                    assert(arg == null);
+                    return true;
+                },
+                .int => {
+                    return std.fmt.parseInt(Arg, arg.?, 0) catch |err| switch (err) {
+                        error.InvalidCharacter => try p.failInvalidNumber(option_name, arg.?, "integer"),
+                        error.Overflow => try p.failNumberOutOfRange(option_name, arg.?, std.math.minInt(Arg), std.math.maxInt(Arg)),
+                    };
+                },
+                .float => {
+                    return std.fmt.parseFloat(Arg, arg.?) catch |err| switch (err) {
+                        error.InvalidCharacter => try p.failInvalidNumber(option_name, arg.?, "floating-point number"),
+                    };
+                },
+                .@"enum" => {
+                    return std.meta.stringToEnum(Arg, arg.?) orelse {
+                        try p.failInvalidChoice(option_name, arg.?, std.meta.fieldNames(Arg));
+                    };
+                },
+                .pointer => {
+                    if (mode.z) {
+                        // This is perfectly safe; the tokenizer guarantees that sentinels are preserved.
+                        return arg.?.ptr[0..arg.?.len :0];
+                    }
+                    return arg.?;
+                },
+                else => comptime unreachable,
+            }
+        }
+
+        fn parseSubcommand(p: @This()) !T {
+            _ = p;
+            @compileError("TODO: implement subcommand parsing");
+        }
+
+        fn failUnrecognizedOptionOrCommand(p: @This(), noun: []const u8, name: []const u8) !noreturn {
+            @branchHint(.cold);
+            const term = p.state.stderr;
+            try p.failPrefix(null);
+            try term.writer.print("unrecognized {s} ", .{noun});
+            try p.failQuote(.yellow, name);
+            return p.failSuffix();
+        }
+
+        fn failIncorrectArgCount(p: @This(), required: usize, optional: usize) !noreturn {
+            @branchHint(.cold);
+            const term = p.state.stderr;
+            try p.failPrefix(null);
+            try term.writer.writeAll("incorrect number of arguments (expected ");
+            var last = required;
+            if (optional != 0) {
+                if (optional == std.math.maxInt(usize)) {
+                    try term.writer.writeAll("at least ");
+                } else {
+                    if (required == 0) {
+                        try term.writer.writeAll("at most ");
+                    } else {
+                        try term.writer.print("between {d} and ", .{required});
+                    }
+                    last = required + optional;
+                }
+            }
+            try term.writer.print("{d})", .{last});
+            return p.failSuffix();
+        }
+
+        fn failMissingOrUnexpectedArg(p: @This(), option_name: ?[]const u8, arg: ?[]const u8) !noreturn {
+            @branchHint(.cold);
+            const term = p.state.stderr;
+            try p.failPrefix(option_name);
+            if (arg) |x| {
+                try term.writer.writeAll("unexpected argument ");
+                try p.failQuote(.yellow, x);
             } else {
-                try p.stderr.writer.print("between {d} and ", .{required});
+                try term.writer.writeAll("expected an argument");
             }
-            last = required + optional;
+            return p.failSuffix();
         }
-    }
-    try p.stderr.writer.print("{d})", .{last});
-    return p.failSuffix(cmd_name);
-}
 
-fn failMissingOrUnexpectedArg(p: ArgsParser, cmd_name: ?[]const u8, option_name: ?[]const u8, arg: ?[]const u8) !noreturn {
-    @branchHint(.cold);
-    try p.failPrefix(option_name);
-    if (arg) |x| {
-        try p.stderr.writer.writeAll("unexpected argument ");
-        try p.failQuote(.yellow, x);
-    } else {
-        try p.stderr.writer.writeAll("expected an argument");
-    }
-    return p.failSuffix(cmd_name);
-}
-
-fn failInvalidNumber(p: ArgsParser, cmd_name: ?[]const u8, option_name: ?[]const u8, arg: []const u8, kind: []const u8) !noreturn {
-    @branchHint(.cold);
-    try p.failPrefix(option_name);
-    try p.stderr.writer.writeAll("argument ");
-    try p.failQuote(.yellow, arg);
-    try p.stderr.writer.print(" is not a recognizable {s}", .{kind});
-    return p.failSuffix(cmd_name);
-}
-
-fn failNumberOutOfRange(p: ArgsParser, cmd_name: ?[]const u8, option_name: ?[]const u8, arg: []const u8, comptime min: comptime_int, comptime max: comptime_int) !noreturn {
-    @branchHint(.cold);
-    try p.failPrefix(option_name);
-    try p.stderr.writer.writeAll("argument ");
-    try p.failQuote(.yellow, arg);
-    try p.stderr.writer.writeAll(" is outside the allowable range (expected a value between ");
-    try p.stderr.setColor(.bold);
-    try p.stderr.writer.print("{d}", .{min});
-    try p.stderr.setColor(.reset);
-    try p.stderr.writer.writeAll(" and ");
-    try p.stderr.setColor(.bold);
-    try p.stderr.writer.print("{d}", .{max});
-    try p.stderr.setColor(.reset);
-    try p.stderr.writer.writeAll(" inclusive)");
-    return p.failSuffix(cmd_name);
-}
-
-fn failInvalidChoice(p: ArgsParser, cmd_name: ?[]const u8, option_name: ?[]const u8, arg: []const u8, choices: []const []const u8) !noreturn {
-    @branchHint(.cold);
-    try p.failPrefix(option_name);
-    try p.stderr.writer.writeAll("argument ");
-    try p.failQuote(.yellow, arg);
-    try p.stderr.writer.writeAll(" is not a recognizable choice (expected ");
-    try p.failQuote(.bold, choices[0]);
-    for (choices[1..(choices.len - 1)]) |choice| {
-        try p.stderr.writer.writeAll(", ");
-        try p.failQuote(.bold, choice);
-    }
-    if (choices.len > 1) {
-        try p.stderr.writer.writeAll(" or ");
-        try p.failQuote(.bold, choices[choices.len - 1]);
-    }
-    try p.stderr.writer.writeByte(')');
-    return p.failSuffix(cmd_name);
-}
-
-fn failQuote(f: ArgsParser, color: std.Io.Terminal.Color, value: []const u8) !void {
-    @branchHint(.cold);
-    try f.stderr.setColor(color);
-    try f.stderr.writer.print("'{s}'", .{value});
-    try f.stderr.setColor(.reset);
-}
-
-fn failPrefix(p: ArgsParser, option_name: ?[]const u8) !void {
-    @branchHint(.cold);
-    try p.stderr.setColor(.bold);
-    try p.stderr.setColor(.red);
-    try p.stderr.writer.writeAll("error:");
-    try p.stderr.setColor(.reset);
-    try p.stderr.writer.writeByte(' ');
-    if (option_name) |name| {
-        try p.stderr.setColor(.bold);
-        try p.stderr.writer.print("option {s}:", .{name});
-        try p.stderr.setColor(.reset);
-        try p.stderr.writer.writeByte(' ');
-    }
-}
-
-fn failSuffix(p: ArgsParser, cmd_name: ?[]const u8) !noreturn {
-    @branchHint(.cold);
-    try p.stderr.writer.writeAll("\nTry ");
-    try p.stderr.setColor(.bold);
-    try p.stderr.writer.writeByte('\'');
-    if (cmd_name) |name| {
-        try p.stderr.writer.print("{s} ", .{name});
-    }
-    try p.stderr.writer.writeAll("--help'");
-    try p.stderr.setColor(.reset);
-    try p.stderr.writer.writeAll(" for more information.\n");
-    try p.stderr.writer.flush();
-    return error.Usage;
-}
-
-fn printHelp(p: ArgsParser, comptime T: type) !noreturn {
-    @branchHint(.cold);
-    if (!@hasDecl(T, "--help")) {
-        const default_help: Help(T) = .{ .args = std.mem.zeroInit(Help(T).Args, .{}) };
-        try default_help.renderHelp(p.stdout, p.program_name);
-    } else if (@typeInfo(@TypeOf(T.@"--help")) == .pointer) {
-        const string = T.@"--help";
-        try p.stdout.writer.writeAll(string);
-        if (string.len != 0 and string[string.len - 1] != '\n') {
-            try p.stdout.writer.writeByte('\n');
+        fn failInvalidNumber(p: @This(), option_name: ?[]const u8, arg: []const u8, noun: []const u8) !noreturn {
+            @branchHint(.cold);
+            const term = p.state.stderr;
+            try p.failPrefix(option_name);
+            try term.writer.writeAll("argument ");
+            try p.failQuote(.yellow, arg);
+            try term.writer.print(" is not a recognizable {s}", .{noun});
+            return p.failSuffix();
         }
-    } else if (@TypeOf(T.@"--help") == Help(T)) {
-        try T.@"--help".renderHelp(p.stdout, p.program_name);
-    } else {
-        @compileError("unsupported '--help' type: expected '[]const u8' or 'std.cli.Help(" ++ @typeName(T) ++ ")', found '" ++ @typeName(@TypeOf(T.@"--help")) ++ "'");
-    }
-    try p.stdout.writer.flush();
-    return error.HelpRequested;
-}
 
-fn printVersion(p: ArgsParser, comptime T: type) !noreturn {
-    @branchHint(.cold);
-    if (@typeInfo(@TypeOf(T.@"--version")) == .pointer) {
-        const string = T.@"--version";
-        try p.stdout.writer.writeAll(string);
-        if (string.len != 0 and string[string.len - 1] != '\n') {
-            try p.stdout.writer.writeByte('\n');
+        fn failNumberOutOfRange(p: @This(), option_name: ?[]const u8, arg: []const u8, comptime min: comptime_int, comptime max: comptime_int) !noreturn {
+            @branchHint(.cold);
+            const term = p.state.stderr;
+            try p.failPrefix(option_name);
+            try term.writer.writeAll("argument ");
+            try p.failQuote(.yellow, arg);
+            try term.writer.writeAll(" is outside the allowable range (expected a value between ");
+            try term.setColor(.bold);
+            try term.writer.print("{d}", .{min});
+            try term.setColor(.reset);
+            try term.writer.writeAll(" and ");
+            try term.setColor(.bold);
+            try term.writer.print("{d}", .{max});
+            try term.setColor(.reset);
+            try term.writer.writeAll(" inclusive)");
+            return p.failSuffix();
         }
-    } else if (@TypeOf(T.@"--version") == std.SemanticVersion) {
-        try p.stdout.writer.print("{f}\n", .{T.@"--version"});
-    } else {
-        @compileError("unsupported '--version' type: expected '[]const u8' or 'std.SemanticVersion', found '" ++ @typeName(@TypeOf(T.@"--version")) ++ "'");
-    }
-    try p.stdout.writer.flush();
-    return error.VersionRequested;
+
+        fn failInvalidChoice(p: @This(), option_name: ?[]const u8, arg: []const u8, choices: []const []const u8) !noreturn {
+            @branchHint(.cold);
+            const term = p.state.stderr;
+            try p.failPrefix(option_name);
+            try term.writer.writeAll("argument ");
+            try p.failQuote(.yellow, arg);
+            try term.writer.writeAll(" is not a recognizable choice (expected ");
+            try p.failQuote(.bold, choices[0]);
+            for (choices[1..(choices.len - 1)]) |choice| {
+                try term.writer.writeAll(", ");
+                try p.failQuote(.bold, choice);
+            }
+            if (choices.len > 1) {
+                try term.writer.writeAll(" or ");
+                try p.failQuote(.bold, choices[choices.len - 1]);
+            }
+            try term.writer.writeByte(')');
+            return p.failSuffix();
+        }
+
+        fn failPrefix(p: @This(), option_name: ?[]const u8) !void {
+            @branchHint(.cold);
+            const term = p.state.stderr;
+            try term.setColor(.bold);
+            try term.setColor(.red);
+            try term.writer.writeAll("error:");
+            try term.setColor(.reset);
+            try term.writer.writeByte(' ');
+            if (option_name) |name| {
+                try term.setColor(.bold);
+                try term.writer.print("option {s}:", .{name});
+                try term.setColor(.reset);
+                try term.writer.writeByte(' ');
+            }
+        }
+
+        fn failSuffix(p: @This()) !noreturn {
+            @branchHint(.cold);
+            const term = p.state.stderr;
+            try term.writer.writeAll("\nTry ");
+            try term.setColor(.bold);
+            try term.writer.writeByte('\'');
+            for (p.state.root_command_prefix) |name| {
+                try term.writer.print("{s} ", .{name});
+            }
+            if (p.state.root_command_name) |name| {
+                try term.writer.print("{s} ", .{name});
+            }
+            try term.writer.writeAll("--help'");
+            try term.setColor(.reset);
+            try term.writer.writeAll(" for more information.\n");
+            try term.writer.flush();
+            return error.Usage;
+        }
+
+        fn failQuote(p: @This(), color: Terminal.Color, value: []const u8) !void {
+            @branchHint(.cold);
+            const term = p.state.stderr;
+            try term.setColor(color);
+            try term.writer.print("'{s}'", .{value});
+            try term.setColor(.reset);
+        }
+
+        fn printHelp(p: @This()) !noreturn {
+            @branchHint(.cold);
+            const term = p.state.stdout;
+            const help: *const Help(T) = help: {
+                if (!@hasDecl(T, "--help")) {
+                    break :help comptime &.{ .args = std.mem.zeroInit(Help(T).Args, .{}) };
+                }
+                if (@TypeOf(T.@"--help") == Help(T)) {
+                    break :help &T.@"--help";
+                }
+                if (@typeInfo(@TypeOf(T.@"--help")) == .pointer) {
+                    const string = T.@"--help";
+                    try term.writer.writeAll(string);
+                    if (string.len != 0 and string[string.len - 1] != '\n') {
+                        try term.writer.writeByte('\n');
+                    }
+                    try term.writer.flush();
+                    return error.HelpRequested;
+                }
+                @compileError("unsupported '--help' type: expected '[]const u8' or 'std.cli.Help(" ++ @typeName(T) ++ ")', found '" ++ @typeName(@TypeOf(T.@"--help")) ++ "'");
+            };
+            try term.setColor(.bold);
+            try term.writer.writeAll("Usage:");
+            try term.setColor(.reset);
+            for (p.state.root_command_prefix) |name| {
+                try term.writer.writeByte(' ');
+                try term.setColor(.bold);
+                try term.writer.writeAll(name);
+                try term.setColor(.reset);
+            }
+            if (p.state.root_command_name) |name| {
+                try term.writer.writeByte(' ');
+                try term.setColor(.bold);
+                try term.writer.writeAll(name);
+                try term.setColor(.reset);
+            }
+            try renderUsageTokens(term, .reset, " [<option>...]", .reset);
+            var brackets: usize = 0;
+            var max_positional_width: ?usize = null;
+            inline for (fields.positional_names, fields.positional_classes) |p_name, p_class| @"continue": {
+                const arg_help: Help(T).Arg = @field(help.args, p_name);
+                if (p_class != .required and arg_help.hidden) break :@"continue";
+                if (max_positional_width == null) {
+                    try renderUsageTokens(term, .reset, " [--]", .reset);
+                }
+                try term.writer.writeByte(' ');
+                if (p_class != .required) {
+                    try term.writer.writeByte('[');
+                    brackets += 1;
+                }
+                const display = arg_help.display orelse defaultPositionalDisplay(p_name, p_class);
+                try renderUsageTokens(term, .reset, display, .reset);
+                max_positional_width = @max(max_positional_width orelse 0, display.len);
+            }
+            if (brackets != 0) {
+                try term.writer.splatByteAll(']', brackets);
+            }
+            if (help.summary) |summary| {
+                try term.writer.print("\n\n{s}", .{summary});
+            }
+            if (max_positional_width) |max_width| {
+                try term.writer.writeAll("\n\n");
+                try term.setColor(.bold);
+                try term.writer.writeAll("Arguments:");
+                try term.setColor(.reset);
+                inline for (fields.positional_names, fields.positional_classes) |p_name, p_class| @"continue": {
+                    const arg_help: Help(T).Arg = @field(help.args, p_name);
+                    if (p_class != .required and arg_help.hidden) break :@"continue";
+                    try term.writer.writeAll("\n  ");
+                    const display = arg_help.display orelse defaultPositionalDisplay(p_name, p_class);
+                    try renderUsageTokens(term, .reset, display, .reset);
+                    if (arg_help.description) |description| {
+                        try term.writer.splatByteAll(' ', max_width - display.len + 2);
+                        try term.writer.writeAll(description);
+                    }
+                }
+            }
+            try term.writer.writeAll("\n\n");
+            try term.setColor(.bold);
+            try term.writer.writeAll("Options:");
+            try term.setColor(.reset);
+            var max_option_width: usize = "-h, --help".len;
+            inline for (fields.option_names, fields.option_types) |o_name, o_type| @"continue": {
+                const arg_help: Help(T).Arg = @field(help.args, o_name);
+                if (arg_help.hidden) break :@"continue";
+                var width: usize = o_name.len;
+                switch (o_type) {
+                    void => {},
+                    bool => {
+                        width += "[no-]".len;
+                    },
+                    else => {
+                        const display = arg_help.display orelse defaultOptionDisplay(o_type);
+                        width += "=".len + display.len;
+                    },
+                }
+                max_option_width = @max(max_option_width, width);
+            }
+            inline for (fields.option_names, fields.option_types) |o_name, o_type| @"continue": {
+                const arg_help: Help(T).Arg = @field(help.args, o_name);
+                if (arg_help.hidden) break :@"continue";
+                try term.writer.writeAll("\n  ");
+                var width: usize = o_name.len;
+                try term.setColor(.bold);
+                try term.writer.writeAll("--");
+                if (o_type == bool) {
+                    width += "[no-]".len;
+                    try renderUsageTokens(term, .bold, "[no-]", .bold);
+                }
+                try term.writer.writeAll(o_name[2..]);
+                if (o_type == void or o_type == bool) {
+                    try term.setColor(.reset);
+                } else {
+                    try term.writer.writeByte('=');
+                    const display = arg_help.display orelse defaultOptionDisplay(o_type);
+                    width += "=".len + display.len;
+                    try renderUsageTokens(term, .bold, display, .reset);
+                }
+                if (arg_help.description) |description| {
+                    try term.writer.splatByteAll(' ', max_option_width - width + 2);
+                    try term.writer.writeAll(description);
+                }
+            }
+            try term.writer.writeAll("\n  ");
+            try term.setColor(.bold);
+            try term.writer.writeAll("-h");
+            try term.setColor(.reset);
+            try term.writer.writeAll(", ");
+            try term.setColor(.bold);
+            try term.writer.writeAll("--help");
+            try term.setColor(.reset);
+            try term.writer.splatByteAll(' ', max_option_width - "-h, --help".len + 2);
+            try term.writer.writeAll("Print this help and exit");
+            if (@hasDecl(T, "--version")) {
+                try term.writer.writeAll("\n  ");
+                try renderUsageTokens(term, .reset, "--version", .reset);
+                try term.writer.splatByteAll(' ', max_option_width - "--version".len + 2);
+                try term.writer.writeAll("Print version and exit");
+            }
+            try term.writer.writeByte('\n');
+            try term.writer.flush();
+            return error.HelpRequested;
+        }
+
+        fn printVersion(p: @This()) !noreturn {
+            @branchHint(.cold);
+            const term = p.state.stdout;
+            if (@TypeOf(T.@"--version") == std.SemanticVersion) {
+                try term.writer.print("{f}\n", .{T.@"--version"});
+            } else if (@typeInfo(@TypeOf(T.@"--version")) == .pointer) {
+                const string = T.@"--version";
+                try term.writer.writeAll(string);
+                if (string.len != 0 and string[string.len - 1] != '\n') {
+                    try term.writer.writeByte('\n');
+                }
+            } else {
+                @compileError("unsupported '--version' type: expected '[]const u8' or 'std.SemanticVersion', found '" ++ @typeName(@TypeOf(T.@"--version")) ++ "'");
+            }
+            try term.writer.flush();
+            return error.VersionRequested;
+        }
+
+        /// Styles commands/arguments/options in a usage message,
+        /// roughly according to the conventions prescribed by man-pages(7):
+        ///
+        /// > [...] boldface is used for as-is text and italics are used to indicate replaceable
+        /// > arguments. Brackets ([]) surround optional arguments, vertical bars (|) separate
+        /// > choices, and ellipses (...) can be repeated.
+        ///
+        /// <https://man7.org/linux/man-pages/man7/man-pages.7.html>
+        fn renderUsageTokens(term: Terminal, start_color: Terminal.Color, tokens: []const u8, end_color: Terminal.Color) !void {
+            @branchHint(.cold);
+            var color: Terminal.Color = start_color;
+            var i: usize = 0;
+            while (i < tokens.len) switch (tokens[i]) {
+                ' ', '(', ')', '[', ']', '|' => {
+                    if (color != .reset) {
+                        try term.setColor(.reset);
+                        color = .reset;
+                    }
+                    try term.writer.writeByte(tokens[i]);
+                    i += 1;
+                },
+                '.' => {
+                    if (tokens.len - i >= 3 and tokens[i + 1] == '.' and tokens[i + 2] == '.') {
+                        if (color != .reset) {
+                            try term.setColor(.reset);
+                            color = .reset;
+                        }
+                        try term.writer.writeAll("...");
+                        i += 3;
+                    } else {
+                        if (color != .bold) {
+                            if (color != .reset) {
+                                try term.setColor(.reset);
+                            }
+                            try term.setColor(.bold);
+                            color = .bold;
+                        }
+                        try term.writer.writeByte(tokens[i]);
+                        i += 1;
+                    }
+                },
+                '<' => {
+                    if (color != .reset) {
+                        try term.setColor(.reset);
+                        color = .reset;
+                    }
+                    // 'std.Io.Terminal.Color' is currently missing italics
+                    // (and other common SGR styles).
+                    if (term.mode == .escape_codes) {
+                        try term.writer.writeAll("\x1b[3m");
+                    }
+                    const end = (std.mem.findScalarPos(u8, tokens, i, '>') orelse tokens.len - 1) + 1;
+                    try term.writer.writeAll(tokens[i..end]);
+                    i = end;
+                    try term.setColor(.reset);
+                    color = .reset;
+                },
+                else => {
+                    if (color != .bold) {
+                        if (color != .reset) {
+                            try term.setColor(.reset);
+                        }
+                        try term.setColor(.bold);
+                        color = .bold;
+                    }
+                    try term.writer.writeByte(tokens[i]);
+                    i += 1;
+                },
+            };
+            if (color != end_color) {
+                if (color != .reset and end_color != .reset) {
+                    try term.setColor(.reset);
+                }
+                try term.setColor(end_color);
+            }
+        }
+
+        fn defaultPositionalDisplay(comptime p_name: []const u8, comptime p_class: FieldClass) []const u8 {
+            @branchHint(.cold);
+            return comptime display: {
+                var copy = p_name[0..].*;
+                std.mem.replaceScalar(u8, &copy, '_', '-');
+                break :display "<" ++ copy ++ ">" ++ (if (p_class == .repeated) "..." else "");
+            };
+        }
+
+        fn defaultOptionDisplay(comptime o_type: type) []const u8 {
+            @branchHint(.cold);
+            return comptime switch (@typeInfo(o_type)) {
+                .void, .bool => unreachable, // These don't take arguments
+                .int, .float => "<number>",
+                .@"enum" => "<choice>",
+                .pointer => "<value>",
+                else => unreachable, // Unsupported
+            };
+        }
+    };
 }
 
 fn noopDrain(w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
@@ -709,11 +978,11 @@ fn noopDrain(w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.W
 }
 
 var noop_writer: std.Io.Writer = .{ .buffer = &.{}, .vtable = &.{ .drain = noopDrain } };
-const noop_terminal: std.Io.Terminal = .{ .writer = &noop_writer, .mode = .no_color };
+const noop_terminal: Terminal = .{ .writer = &noop_writer, .mode = .no_color };
 const quiet_parser: ArgsParser = .{
+    .command_name = &.{},
     .stdout = noop_terminal,
     .stderr = noop_terminal,
-    .program_name = null,
 };
 
 test "integers" {
@@ -980,14 +1249,14 @@ test "--help: string" {
     var writer: std.Io.Writer.Allocating = .init(arena_allocator.allocator());
     var failing: std.Io.Writer = .failing;
     const parser: std.cli.ArgsParser = .{
+        .command_name = &.{"app"},
         .stdout = .{ .writer = &writer.writer, .mode = .no_color },
         .stderr = .{ .writer = &failing, .mode = .no_color },
-        .program_name = "app",
     };
 
     const Args = struct {
-        foo: []const u8,
-        @"--bar": ?[]const u8,
+        foo: [:0]const u8,
+        @"--bar": ?[:0]const u8,
         pub const @"--help" =
             \\Lorem ipsum
             \\dolor sit amet.
@@ -998,12 +1267,12 @@ test "--help: string" {
         \\dolor sit amet.
         \\
     ;
-    try std.testing.expectError(error.HelpRequested, parser.parse(Args, &.{"--help"}));
+    try std.testing.expectError(error.HelpRequested, parser.parseZ(Args, &.{"--help"}));
     try std.testing.expectEqualStrings(expected_help, writer.written());
 
-    try std.testing.expectError(error.HelpRequested, quiet_parser.parse(Args, &.{"-h"}));
-    try std.testing.expectError(error.HelpRequested, quiet_parser.parse(Args, &.{"-help"}));
-    try std.testing.expectError(error.HelpRequested, quiet_parser.parse(Args, &.{ "123", "--help", "--asdf" }));
+    try std.testing.expectError(error.HelpRequested, quiet_parser.parseZ(Args, &.{"-h"}));
+    try std.testing.expectError(error.HelpRequested, quiet_parser.parseZ(Args, &.{"-help"}));
+    try std.testing.expectError(error.HelpRequested, quiet_parser.parseZ(Args, &.{ "123", "--help", "--asdf" }));
 }
 
 test "--help: std.cli.Help" {
@@ -1013,14 +1282,14 @@ test "--help: std.cli.Help" {
     var writer: std.Io.Writer.Allocating = .init(arena_allocator.allocator());
     var failing: std.Io.Writer = .failing;
     const parser: std.cli.ArgsParser = .{
+        .command_name = &.{"app"},
         .stdout = .{ .writer = &writer.writer, .mode = .no_color },
         .stderr = .{ .writer = &failing, .mode = .no_color },
-        .program_name = "app",
     };
 
     const Args = struct {
-        foo: []const u8,
-        @"--bar": ?[]const u8,
+        foo: [:0]const u8,
+        @"--bar": ?[:0]const u8,
         pub const @"--help": std.cli.Help(@This()) = .{
             .command_name = "command",
             .summary = "A summary summary.",
@@ -1043,7 +1312,7 @@ test "--help: std.cli.Help" {
         \\  -h, --help     Print this help and exit
         \\
     ;
-    try std.testing.expectError(error.HelpRequested, parser.parse(Args, &.{"--help"}));
+    try std.testing.expectError(error.HelpRequested, parser.parseZ(Args, &.{"--help"}));
     try std.testing.expectEqualStrings(expected_help, writer.written());
 }
 
@@ -1054,9 +1323,9 @@ test "--version: string" {
     var writer: std.Io.Writer.Allocating = .init(arena_allocator.allocator());
     var failing: std.Io.Writer = .failing;
     const parser: std.cli.ArgsParser = .{
+        .command_name = &.{"app"},
         .stdout = .{ .writer = &writer.writer, .mode = .no_color },
         .stderr = .{ .writer = &failing, .mode = .no_color },
-        .program_name = "app",
     };
 
     const Args = struct {
@@ -1086,9 +1355,9 @@ test "--version: std.SemanticVersion" {
     var writer: std.Io.Writer.Allocating = .init(arena_allocator.allocator());
     var failing: std.Io.Writer = .failing;
     const parser: std.cli.ArgsParser = .{
+        .command_name = &.{"app"},
         .stdout = .{ .writer = &writer.writer, .mode = .no_color },
         .stderr = .{ .writer = &failing, .mode = .no_color },
-        .program_name = "app",
     };
 
     const Args = struct {
@@ -1115,9 +1384,9 @@ test "usage errors" {
     var writer: std.Io.Writer.Allocating = .init(arena_allocator.allocator());
     var failing: std.Io.Writer = .failing;
     const parser: std.cli.ArgsParser = .{
+        .command_name = &.{"app"},
         .stdout = .{ .writer = &failing, .mode = .no_color },
         .stderr = .{ .writer = &writer.writer, .mode = .no_color },
-        .program_name = "app",
     };
 
     const Args = struct {

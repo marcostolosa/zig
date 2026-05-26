@@ -2,6 +2,7 @@
 const BitStack = @This();
 
 const std = @import("std");
+const testing = std.testing;
 
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
@@ -19,8 +20,8 @@ pub fn capacity(self: BitStack) usize {
     return self.bytes.len * 8;
 }
 
-/// Initialize with capacity to hold exactly `num_bits`
-/// bits.
+/// Initialize with capacity to hold `num_bits` bits,
+/// rounded to the next highest multiple of 8.
 /// Deinitialize with `deinit`.
 pub fn initCapacity(gpa: Allocator, num_bits: usize) Allocator.Error!BitStack {
     var self: BitStack = .empty;
@@ -43,8 +44,7 @@ pub fn initBuffer(buffer: []u8) BitStack {
 pub fn clone(self: BitStack, gpa: Allocator) Allocator.Error!BitStack {
     var cloned = try initCapacity(gpa, self.capacity());
     errdefer cloned.deinit(gpa);
-    const used_bytes = numBitsToNumBytes(self.bit_len);
-    @memcpy(cloned.bytes[0..used_bytes], self.bytes[0..used_bytes]);
+    @memcpy(cloned.bytes, self.bytes);
     cloned.bit_len = self.bit_len;
     return cloned;
 }
@@ -56,7 +56,7 @@ pub fn deinit(self: *BitStack, gpa: Allocator) void {
 
 /// If the current capacity is less than `num_bits`,
 /// expand capacity such that self can hold `num_bits` bits.
-/// Rounds the capacity to the next highest multiple of 8.
+/// Rounds to the next highest multiple of 8.
 pub fn ensureTotalCapacity(self: *BitStack, gpa: Allocator, num_bits: usize) Allocator.Error!void {
     if (self.capacity() >= num_bits) return;
 
@@ -65,7 +65,7 @@ pub fn ensureTotalCapacity(self: *BitStack, gpa: Allocator, num_bits: usize) All
     if (gpa.remap(old_bytes, num_bytes)) |new_bytes| {
         self.bytes = new_bytes;
     } else {
-        const new_bytes = gpa.alloc(u8, num_bytes);
+        const new_bytes = try gpa.alloc(u8, num_bytes);
         @memcpy(new_bytes[0..old_bytes.len], old_bytes);
         gpa.free(old_bytes);
         self.bytes = new_bytes;
@@ -115,6 +115,7 @@ pub fn peek(self: BitStack) ?u1 {
     return bit;
 }
 
+/// Returns the split byte and bit index based on a bit index.
 fn bitIdxToByteIdx(bit_idx: usize) struct { usize, u3 } {
     return .{
         bit_idx >> 3,
@@ -128,6 +129,13 @@ fn numBitsToNumBytes(num_bits: usize) usize {
     const bytes_floor = num_bits >> 3;
     const bytes_ceil = bytes_floor + @intFromBool(partial_byte);
     return bytes_ceil;
+}
+test numBitsToNumBytes {
+    try testing.expectEqual(0, numBitsToNumBytes(0));
+    for (1..9) |i| try testing.expectEqual(1, numBitsToNumBytes(i));
+    for (9..17) |i| try testing.expectEqual(2, numBitsToNumBytes(i));
+    for (17..25) |i| try testing.expectEqual(3, numBitsToNumBytes(i));
+    try testing.expectEqual(187, numBitsToNumBytes(1495));
 }
 fn addOrOom(a: usize, b: usize) error{OutOfMemory}!usize {
     const result, const overflow = @addWithOverflow(a, b);
@@ -199,7 +207,6 @@ pub const Managed = struct {
     }
 };
 
-const testing = std.testing;
 test Managed {
     var stack = Managed.init(testing.allocator);
     defer stack.deinit();
@@ -215,4 +222,74 @@ test Managed {
     try testing.expectEqual(@as(u1, 0), stack.pop());
     try testing.expectEqual(@as(u1, 0), stack.pop());
     try testing.expectEqual(@as(u1, 1), stack.pop());
+}
+
+test "basic usage" {
+    const gpa = testing.allocator;
+
+    var stack: BitStack = .empty;
+    defer stack.deinit(gpa);
+
+    try testing.expectError(error.OutOfMemory, stack.pushBounded(1));
+
+    try stack.ensureUnusedCapacity(gpa, 6);
+    stack.pushAssumeCapacity(1);
+    try stack.push(gpa, 0);
+    try stack.pushBounded(1);
+    try stack.push(gpa, 1);
+    stack.pushAssumeCapacity(0);
+    try stack.pushBounded(0);
+
+    try testing.expectEqual(0, stack.pop());
+    try testing.expectEqual(0, stack.pop());
+    try testing.expectEqual(1, stack.pop());
+    try testing.expectEqual(1, stack.pop());
+    try testing.expectEqual(0, stack.pop());
+    try testing.expectEqual(1, stack.pop());
+    try testing.expectEqual(null, stack.pop());
+
+    stack.pushAssumeCapacity(1);
+    try testing.expectEqual(1, stack.peek());
+    try testing.expectEqual(1, stack.pop());
+    try testing.expectEqual(null, stack.peek());
+}
+test initCapacity {
+    const gpa = testing.allocator;
+    {
+        var stack = try BitStack.initCapacity(gpa, 5);
+        defer stack.deinit(gpa);
+        try testing.expectEqual(8, stack.capacity());
+        try testing.expectEqual(0, stack.bit_len);
+    }
+    { // Doesn't allocate on zero capacity.
+        var stack = try BitStack.initCapacity(testing.failing_allocator, 0);
+        defer stack.deinit(testing.failing_allocator);
+        try testing.expectEqual(0, stack.capacity());
+        try testing.expectEqual(0, stack.bit_len);
+    }
+}
+test clone {
+    const gpa = testing.allocator;
+
+    var stack: BitStack = .empty;
+    defer stack.deinit(gpa);
+    try stack.push(gpa, 1);
+    try stack.push(gpa, 0);
+    try stack.push(gpa, 0);
+
+    var cpy = try stack.clone(gpa);
+    defer cpy.deinit(gpa);
+
+    try testing.expectEqual(stack.capacity(), cpy.capacity());
+    try testing.expectEqual(stack.bit_len, cpy.bit_len);
+
+    try cpy.push(gpa, 1);
+    try testing.expectEqual(1, cpy.pop());
+    try testing.expectEqual(0, cpy.pop());
+    try testing.expectEqual(0, cpy.pop());
+    try testing.expectEqual(1, cpy.pop());
+    try testing.expectEqual(null, cpy.pop());
+
+    // Ensure the original wasn't modified.
+    try testing.expectEqual(0, stack.pop());
 }

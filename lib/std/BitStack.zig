@@ -25,7 +25,7 @@ pub fn capacity(self: BitStack) usize {
 /// Deinitialize with `deinit`.
 pub fn initCapacity(gpa: Allocator, num_bits: usize) Allocator.Error!BitStack {
     var self: BitStack = .empty;
-    try self.ensureTotalCapacity(gpa, num_bits);
+    try self.ensureTotalCapacityPrecise(gpa, num_bits);
     return self;
 }
 /// Initialize with externally-managed memory. The buffer
@@ -55,9 +55,17 @@ pub fn deinit(self: *BitStack, gpa: Allocator) void {
 }
 
 /// If the current capacity is less than `num_bits`,
+/// expand capacity such that self can hold at least
+/// `num_bits` bits.
+pub fn ensureTotalCapacity(self: *BitStack, gpa: Allocator, num_bits: usize) Allocator.Error!void {
+    const new_num_bytes = std.ArrayList(u8).growCapacity(numBitsToNumBytes(num_bits));
+    const new_num_bits = std.math.mul(usize, new_num_bytes, 8) catch return error.OutOfMemory;
+    return self.ensureTotalCapacityPrecise(gpa, new_num_bits);
+}
+/// If the current capacity is less than `num_bits`,
 /// expand capacity such that self can hold `num_bits` bits.
 /// Rounds to the next highest multiple of 8.
-pub fn ensureTotalCapacity(self: *BitStack, gpa: Allocator, num_bits: usize) Allocator.Error!void {
+pub fn ensureTotalCapacityPrecise(self: *BitStack, gpa: Allocator, num_bits: usize) Allocator.Error!void {
     if (self.capacity() >= num_bits) return;
 
     const num_bytes = numBitsToNumBytes(num_bits);
@@ -74,7 +82,7 @@ pub fn ensureTotalCapacity(self: *BitStack, gpa: Allocator, num_bits: usize) All
 /// Expand capacity such that `self` can hold up to
 /// `additional_bits` more bits.
 pub fn ensureUnusedCapacity(self: *BitStack, gpa: Allocator, additional_bits: usize) Allocator.Error!void {
-    const num_bits = try addOrOom(self.bit_len, additional_bits);
+    const num_bits = std.math.add(usize, self.bit_len, additional_bits) catch return error.OutOfMemory;
     return self.ensureTotalCapacity(gpa, num_bits);
 }
 
@@ -157,11 +165,6 @@ test numBitsToNumBytes {
     for (9..17) |i| try testing.expectEqual(2, numBitsToNumBytes(i));
     for (17..25) |i| try testing.expectEqual(3, numBitsToNumBytes(i));
     try testing.expectEqual(187, numBitsToNumBytes(1495));
-}
-fn addOrOom(a: usize, b: usize) error{OutOfMemory}!usize {
-    const result, const overflow = @addWithOverflow(a, b);
-    if (overflow != 0) return error.OutOfMemory;
-    return result;
 }
 
 /// Deprecated in favor of `BitStack`.

@@ -88,7 +88,7 @@ const Args = struct {
 
     pub const @"--help": std.cli.Help(Args) = .{
         .command_name = "gen_spirv_spec",
-        .summary = (
+        .description = (
             \\Generates Zig bindings for SPIR-V specifications found in the SPIRV-Headers
             \\repository. The result, printed to stdout, should be used to update
             \\files in src/codegen/spirv. Don't forget to format the output.

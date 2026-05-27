@@ -23,7 +23,7 @@ const Args = struct {
     output_file: []const u8,
 
     pub const @"--help": std.cli.Help(Args) = .{
-        .summary = "Generates an HTML document from a docgen template.",
+        .description = "Generates an HTML document from a docgen template.",
         .args = .{
             .code_dir = .{ .description = "Path to directory containing code example outputs" },
             .input_file = .{ .description = "Path to input file" },

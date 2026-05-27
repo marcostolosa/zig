@@ -3,7 +3,7 @@ const Args = struct {
 
     pub const @"--help": std.cli.Help(Args) = .{
         .command_name = "zig run tools/generate_c_size_and_align_checks.zig --",
-        .summary = (
+        .description = (
             \\Prints _Static_asserts for the size and alignment of all the basic built-in
             \\C types. The output can be run through a compiler for the specified target
             \\to verify that Zig's values are the same as those used by a C compiler

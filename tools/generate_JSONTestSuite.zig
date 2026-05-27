@@ -3,7 +3,7 @@ const Io = std.Io;
 
 const Args = struct {
     pub const @"--help": std.cli.Help(Args) = .{
-        .summary = (
+        .description = (
             \\Run this program inside the test_parsing/ directory of this repo:
             \\https://github.com/nst/JSONTestSuite
         ),

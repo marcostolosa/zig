@@ -4,7 +4,7 @@ const Args = struct {
 
     pub const @"--help": std.cli.Help(Args) = .{
         .command_name = "zig run tools/update_mingw.zig --",
-        .summary = (
+        .description = (
             \\This script updates mingw-w64 crt and library files.
             \\
             \\Example usage:

@@ -2014,7 +2014,7 @@ const Args = struct {
     filter: ?[]const u8,
 
     pub const @"--help": std.cli.Help(Args) = .{
-        .summary = (
+        .description = (
             \\Updates lib/std/target/<target>.zig from llvm/lib/Target/<Target>/<Target>.td.
             \\
             \\On a less beefy system, or when debugging, compile with -fsingle-threaded.

@@ -638,7 +638,7 @@ const Args = struct {
     llvm_src_root: []const u8,
 
     pub const @"--help": std.cli.Help(Args) = .{
-        .summary = (
+        .description = (
             \\Prints to stdout Zig code which you can use to replace the file src/clang_options.zon.
         ),
         .args = .{

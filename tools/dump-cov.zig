@@ -4,7 +4,7 @@ const Args = struct {
     target_query: []const u8 = "native",
 
     pub const @"--help": std.cli.Help(Args) = .{
-        .summary = (
+        .description = (
             \\Reads a Zig coverage file and prints human-readable information to stdout,
             \\including file:line:column information for each PC.
             \\

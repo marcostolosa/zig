@@ -14,7 +14,7 @@ const MainArgs = struct {
 
     pub const @"--help": std.cli.Help(MainArgs) = .{
         .command_name = "appapp",
-        .summary = "Lorem ipsum...",
+        .description = "Lorem ipsum...",
         .args = .{
             .one = .{ .description = "Nothing wrong with me" },
             .two = .{ .description = "Nothing wrong with me" },

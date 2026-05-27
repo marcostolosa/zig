@@ -32,13 +32,23 @@ pub fn parseProcessArgs(comptime T: type, init: std.process.Init) ArgsParser.Par
 /// Used to customize the help text printed by `std.cli.ArgsParser`.
 pub fn Help(comptime T: type) type {
     return struct {
+        /// The canonical name of the command; for example, `my_program`.
+        /// If `null`, the command name will be inferred from the command line.
         command_name: ?[]const u8 = null,
-        summary: ?[]const u8 = null,
+        /// A description of the command.
+        description: ?[]const u8 = null,
+        /// Information about the command's positional arguments, subcommands and options.
         args: Args,
 
+        /// A positional argument, subcommand or option.
         pub const Arg = struct {
+            /// The argument placeholder; for example, `<path>` or `(on|off)`.
+            /// This field is ignored for subcommands and no-argument options.
             display: ?[]const u8 = null,
+            /// A short description of the positional/subcommand/option.
             description: ?[]const u8 = null,
+            /// If `true`, this positional/subcommand/option will not be included in the help text.
+            /// This field is ignored for required positional arguments, which cannot be hidden.
             hidden: bool = false,
         };
 

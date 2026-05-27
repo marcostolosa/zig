@@ -4,7 +4,7 @@ const Args = struct {
 
     pub const @"--help": std.cli.Help(Args) = .{
         .command_name = "zig run tools/update_glibc.zig --",
-        .summary = (
+        .description = (
             \\This script updates the .c, .h, .s, and .S files that make up the start
             \\files such as crt1.o.
             \\

@@ -834,8 +834,8 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                     if (brackets != 0) {
                         try term.writer.splatByteAll(']', brackets);
                     }
-                    if (help.summary) |summary| {
-                        try term.writer.print("\n\n{s}", .{summary});
+                    if (help.description) |description| {
+                        try term.writer.print("\n\n{s}", .{description});
                     }
                     if (max_positional_width) |max_width| {
                         try term.writer.writeAll("\n\n");
@@ -857,8 +857,8 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                 },
                 .@"union" => {
                     try renderUsageTokens(term, .reset, " <command> [<argument>...]", .reset);
-                    if (help.summary) |summary| {
-                        try term.writer.print("\n\n{s}", .{summary});
+                    if (help.description) |description| {
+                        try term.writer.print("\n\n{s}", .{description});
                     }
                     var max_subcommand_width: ?usize = null;
                     inline for (fields.subcommand_names) |subcmd_name| @"continue": {
@@ -1395,7 +1395,7 @@ test "--help: std.cli.Help" {
         @"--bar": ?[:0]const u8,
         pub const @"--help": std.cli.Help(@This()) = .{
             .command_name = "command",
-            .summary = "A summary summary.",
+            .description = "A descriptive description.",
             .args = .{
                 .foo = .{ .description = "Foo foo" },
                 .@"--bar" = .{ .description = "Bar bar" },
@@ -1405,7 +1405,7 @@ test "--help: std.cli.Help" {
     const expected_help =
         \\Usage: command [<option>...] [--] <foo>
         \\
-        \\A summary summary.
+        \\A descriptive description.
         \\
         \\Arguments:
         \\  <foo>  Foo foo
@@ -1585,7 +1585,7 @@ test "subcommands: --help and --version" {
             six: struct {},
             pub const @"--help": std.cli.Help(@This()) = .{
                 .command_name = "this-should-not-be-printed",
-                .summary = "This is a subcommand.",
+                .description = "This is a subcommand.",
                 .args = .{
                     .five = .{ .description = "Cinco" },
                     .six = .{ .description = "Seis" },

@@ -2,7 +2,7 @@ const Args = struct {
     build_all_dir: []const u8,
 
     pub const @"--help": std.cli.Help(Args) = .{
-        .summary = (
+        .description = (
             \\Example: gen_stubs /path/to/musl/build-all >libc.S
             \\
             \\The directory 'build-all' is expected to contain these subdirectories:

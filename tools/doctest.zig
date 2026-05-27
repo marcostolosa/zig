@@ -21,7 +21,7 @@ const Args = struct {
     @"--zig-lib-dir": ?[]const u8,
 
     pub const @"--help": std.cli.Help(Args) = .{
-        .summary = (
+        .description = (
             \\Compiles and possibly runs a code example,
             \\capturing output and rendering it to HTML documentation.
         ),

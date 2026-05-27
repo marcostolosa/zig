@@ -176,7 +176,7 @@ const Args = struct {
     linux_dir: []const u8,
 
     pub const @"--help": std.cli.Help(Args) = .{
-        .summary = (
+        .description = (
             \\Alternative Usage: zig run /path/to/git/zig/tools/generate_linux_syscalls.zig -- /path/to/linux
             \\
             \\Generates the list of Linux syscalls for each supported cpu arch, using the Linux development tree.

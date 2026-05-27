@@ -1258,6 +1258,8 @@ fn addInstallDir(wc: *Configuration.Wip, install_dir: ?std.Build.InstallDir) !Co
         .lib => return .lib,
         .bin => return .bin,
         .header => return .header,
+        .data => return .data,
+        .doc => return .doc,
         .custom => |sub_path| return .initCustom(try wc.addString(sub_path)),
     }
 }

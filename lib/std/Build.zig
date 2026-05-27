@@ -1675,6 +1675,16 @@ pub fn addInstallHeaderFile(b: *Build, source: LazyPath, dest_rel_path: []const 
     return b.addInstallFileWithDir(source, .header, dest_rel_path);
 }
 
+/// `dest_rel_path` is relative to lib path
+pub fn addInstallDataFile(b: *Build, source: LazyPath, dest_rel_path: []const u8) *Step.InstallFile {
+    return b.addInstallFileWithDir(source, .data, dest_rel_path);
+}
+
+/// `dest_rel_path` is relative to lib path
+pub fn addInstallDocFile(b: *Build, source: LazyPath, dest_rel_path: []const u8) *Step.InstallFile {
+    return b.addInstallFileWithDir(source, .doc, dest_rel_path);
+}
+
 pub fn addInstallFileWithDir(
     b: *Build,
     source: LazyPath,
@@ -2633,6 +2643,8 @@ pub const InstallDir = union(enum) {
     lib: void,
     bin: void,
     header: void,
+    data: void,
+    doc: void,
     /// A path relative to the prefix
     custom: []const u8,
 

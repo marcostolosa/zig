@@ -1842,6 +1842,8 @@ pub const Path = extern struct {
         install_lib,
         install_bin,
         install_include,
+        install_data,
+        install_doc,
     };
 
     pub fn toCachePath(path: Path, c: *const Configuration, arena: Allocator) std.Build.Cache.Path {
@@ -1858,6 +1860,8 @@ pub const InstallDestDir = enum(u32) {
     lib = max_u32 - 2,
     bin = max_u32 - 1,
     header = max_u32,
+    data = max_u32 - 5,
+    doc = max_u32 - 6,
     /// A `String` path relative to the prefix.
     _,
 
@@ -1871,6 +1875,8 @@ pub const InstallDestDir = enum(u32) {
         lib,
         bin,
         header,
+        data,
+        doc,
         sub_path: String,
     };
 
@@ -1881,6 +1887,8 @@ pub const InstallDestDir = enum(u32) {
             .lib => .lib,
             .bin => .bin,
             .header => .header,
+            .data => .data,
+            .doc => .doc,
             _ => .{ .sub_path = @enumFromInt(@intFromEnum(this)) },
         };
     }

@@ -290,6 +290,8 @@ pub fn printUsage(sc: *const ScannedConfig, graph: *Graph, w: *Writer) !void {
         \\  --prefix-lib-dir [path]      Where to install libraries
         \\  --prefix-exe-dir [path]      Where to install executables
         \\  --prefix-include-dir [path]  Where to install C header files
+        \\  --prefix-data-dir [path]     Where to install data files
+        \\  --prefix-doc-dir [path]      Where to install documentation
         \\  --release[=mode]             Request release mode, optionally specifying a
         \\                               preferred optimization mode: fast, safe, small
         \\

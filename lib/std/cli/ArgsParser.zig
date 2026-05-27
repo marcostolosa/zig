@@ -54,6 +54,10 @@
 //! When used like this, usage errors and requests for help text will be handled automatically
 //! before control enters the program's `main` function.
 //!
+//! In addition to parsing command-line arguments into a struct, `ArgsParser` can
+//! also recursively parse the command line into a tagged union, where each field is itself
+//! a struct or tagged union that represents a subcommand.
+//!
 //! See also `std.cli.ArgsTokenizer` for a more low-level API that can be used to tokenize
 //! command-line arguments into options and positional arguments.
 const ArgsParser = @This();
@@ -200,11 +204,12 @@ fn parseWithMode(
             }
             break :name if (p.command_name.len != 0) p.command_name[p.command_name.len - 1] else null;
         },
+        .current_subcommand_end = 0,
         .stdout = p.stdout,
         .stderr = p.stderr,
     };
-    var specialized_parser: Specialized(T, mode) = .{ .state = &state };
-    return specialized_parser.parse();
+    const root_parser: Specialized(T, mode) = .{ .state = &state };
+    return root_parser.parse();
 }
 
 const State = struct {
@@ -212,6 +217,7 @@ const State = struct {
     tokenizer: ArgsTokenizer,
     root_command_prefix: []const []const u8,
     root_command_name: ?[]const u8,
+    current_subcommand_end: usize,
     stdout: Terminal,
     stderr: Terminal,
 };
@@ -234,7 +240,6 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
             var o_types: []const type = &.{};
             var o_classes: []const FieldClass = &.{};
             var subcmd_names: []const [:0]const u8 = &.{};
-            var subcmd_types: []const type = &.{};
             switch (@typeInfo(T)) {
                 .@"struct" => |struct_info| {
                     for (.{ "--help", "--version" }) |field_name| if (@hasField(T, field_name)) {
@@ -317,7 +322,9 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                             @compileError("subcommand '" ++ f.name ++ "' has unsupported type '" ++ @typeName(f.type) ++ "'");
                         }
                         subcmd_names = subcmd_names ++ .{f.name};
-                        subcmd_types = subcmd_types ++ .{f.type};
+                    }
+                    if (subcmd_names.len == 0) {
+                        @compileError("tagged union must declare at least one subcommand field");
                     }
                 },
                 else => unreachable,
@@ -330,7 +337,6 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                 const option_types: []const type = o_types;
                 const option_classes: []const FieldClass = o_classes;
                 const subcommand_names: []const [:0]const u8 = subcmd_names;
-                const subcommand_types: []const type = subcmd_types;
             };
         };
 
@@ -357,6 +363,7 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
             const negated_options_end: usize, //
             const help_options_end: usize //
             = comptime info: {
+                assert(fields.subcommand_names.len == 0);
                 var list_field_names: []const [:0]const u8 = &.{};
                 var list_field_types: []const type = &.{};
                 var list_field_attrs: []const std.lang.Type.StructField.Attributes = &.{};
@@ -568,8 +575,60 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
         }
 
         fn parseSubcommand(p: @This()) !T {
-            _ = p;
-            @compileError("TODO: implement subcommand parsing");
+            const option_names: []const [:0]const u8, //
+            const option_arities: []const ArgsTokenizer.OptionArity, //
+            const help_options_end: usize //
+            = comptime info: {
+                assert(fields.positional_names.len == 0);
+                assert(fields.option_names.len == 0);
+                var option_names: []const [:0]const u8 = &.{ "-h", "--help" };
+                const help_options_end = option_names.len;
+                if (@hasDecl(T, "--version")) {
+                    option_names = option_names ++ .{"--version"};
+                }
+                const option_arities: *const [option_names.len]ArgsTokenizer.OptionArity = &@splat(.no_arg);
+                break :info .{
+                    option_names,
+                    option_arities,
+                    help_options_end,
+                };
+            };
+
+            const token = p.state.tokenizer.nextDynamic(option_names, option_arities) orelse {
+                try p.failMissingOrUnexpectedArg(null, null);
+            };
+            switch (token) {
+                .option => |option| switch (option.index) {
+                    inline 0...(option_names.len - 1) => |i| if (i < help_options_end) {
+                        return try p.printHelp();
+                    } else {
+                        return try p.printVersion();
+                    },
+                    else => unreachable,
+                },
+                .end_of_options => {
+                    // '--' is not recognized as the end-of-options delimiter in this position
+                    return try p.failUnrecognizedOptionOrCommand("option", "--");
+                },
+                .positional => |actual_subcmd_name| inline for (fields.subcommand_names) |recognized_subcmd_name| {
+                    if (std.mem.eql(u8, recognized_subcmd_name, actual_subcmd_name)) {
+                        p.state.current_subcommand_end += 1;
+                        const child_parser: Specialized(@FieldType(T, recognized_subcmd_name), mode) = .{ .state = p.state };
+                        return @unionInit(T, recognized_subcmd_name, try child_parser.parse());
+                    }
+                } else {
+                    return try p.failUnrecognizedOptionOrCommand("command", actual_subcmd_name);
+                },
+                .invalid_option => |invalid| switch (invalid.err) {
+                    error.UnrecognizedOption => {
+                        return try p.failUnrecognizedOptionOrCommand("option", invalid.name.slice());
+                    },
+                    error.MissingOptionArg => unreachable,
+                    error.UnexpectedOptionArg => {
+                        return try p.failMissingOrUnexpectedArg(invalid.name.slice(), invalid.arg);
+                    },
+                },
+            }
         }
 
         fn failUnrecognizedOptionOrCommand(p: @This(), noun: []const u8, name: []const u8) !noreturn {
@@ -692,6 +751,9 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
             if (p.state.root_command_name) |name| {
                 try term.writer.print("{s} ", .{name});
             }
+            for (p.state.tokenizer.args[0..p.state.current_subcommand_end]) |name| {
+                try term.writer.print("{s} ", .{name});
+            }
             try term.writer.writeAll("--help'");
             try term.setColor(.reset);
             try term.writer.writeAll(" for more information.\n");
@@ -743,46 +805,87 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                 try term.writer.writeAll(name);
                 try term.setColor(.reset);
             }
-            try renderUsageTokens(term, .reset, " [<option>...]", .reset);
-            var brackets: usize = 0;
-            var max_positional_width: ?usize = null;
-            inline for (fields.positional_names, fields.positional_classes) |p_name, p_class| @"continue": {
-                const arg_help: Help(T).Arg = @field(help.args, p_name);
-                if (p_class != .required and arg_help.hidden) break :@"continue";
-                if (max_positional_width == null) {
-                    try renderUsageTokens(term, .reset, " [--]", .reset);
-                }
+            for (p.state.tokenizer.args[0..p.state.current_subcommand_end]) |name| {
                 try term.writer.writeByte(' ');
-                if (p_class != .required) {
-                    try term.writer.writeByte('[');
-                    brackets += 1;
-                }
-                const display = arg_help.display orelse defaultPositionalDisplay(p_name, p_class);
-                try renderUsageTokens(term, .reset, display, .reset);
-                max_positional_width = @max(max_positional_width orelse 0, display.len);
-            }
-            if (brackets != 0) {
-                try term.writer.splatByteAll(']', brackets);
-            }
-            if (help.summary) |summary| {
-                try term.writer.print("\n\n{s}", .{summary});
-            }
-            if (max_positional_width) |max_width| {
-                try term.writer.writeAll("\n\n");
                 try term.setColor(.bold);
-                try term.writer.writeAll("Arguments:");
+                try term.writer.writeAll(name);
                 try term.setColor(.reset);
-                inline for (fields.positional_names, fields.positional_classes) |p_name, p_class| @"continue": {
-                    const arg_help: Help(T).Arg = @field(help.args, p_name);
-                    if (p_class != .required and arg_help.hidden) break :@"continue";
-                    try term.writer.writeAll("\n  ");
-                    const display = arg_help.display orelse defaultPositionalDisplay(p_name, p_class);
-                    try renderUsageTokens(term, .reset, display, .reset);
-                    if (arg_help.description) |description| {
-                        try term.writer.splatByteAll(' ', max_width - display.len + 2);
-                        try term.writer.writeAll(description);
+            }
+            try renderUsageTokens(term, .reset, " [<option>...]", .reset);
+            switch (@typeInfo(T)) {
+                .@"struct" => {
+                    var brackets: usize = 0;
+                    var max_positional_width: ?usize = null;
+                    inline for (fields.positional_names, fields.positional_classes) |p_name, p_class| @"continue": {
+                        const arg_help: Help(T).Arg = @field(help.args, p_name);
+                        if (p_class != .required and arg_help.hidden) break :@"continue";
+                        if (max_positional_width == null) {
+                            try renderUsageTokens(term, .reset, " [--]", .reset);
+                        }
+                        try term.writer.writeByte(' ');
+                        if (p_class != .required) {
+                            try term.writer.writeByte('[');
+                            brackets += 1;
+                        }
+                        const display = arg_help.display orelse defaultPositionalDisplay(p_name, p_class);
+                        try renderUsageTokens(term, .reset, display, .reset);
+                        max_positional_width = @max(max_positional_width orelse 0, display.len);
                     }
-                }
+                    if (brackets != 0) {
+                        try term.writer.splatByteAll(']', brackets);
+                    }
+                    if (help.summary) |summary| {
+                        try term.writer.print("\n\n{s}", .{summary});
+                    }
+                    if (max_positional_width) |max_width| {
+                        try term.writer.writeAll("\n\n");
+                        try term.setColor(.bold);
+                        try term.writer.writeAll("Arguments:");
+                        try term.setColor(.reset);
+                        inline for (fields.positional_names, fields.positional_classes) |p_name, p_class| @"continue": {
+                            const arg_help: Help(T).Arg = @field(help.args, p_name);
+                            if (p_class != .required and arg_help.hidden) break :@"continue";
+                            try term.writer.writeAll("\n  ");
+                            const display = arg_help.display orelse defaultPositionalDisplay(p_name, p_class);
+                            try renderUsageTokens(term, .reset, display, .reset);
+                            if (arg_help.description) |description| {
+                                try term.writer.splatByteAll(' ', max_width - display.len + 2);
+                                try term.writer.writeAll(description);
+                            }
+                        }
+                    }
+                },
+                .@"union" => {
+                    try renderUsageTokens(term, .reset, " <command> [<argument>...]", .reset);
+                    if (help.summary) |summary| {
+                        try term.writer.print("\n\n{s}", .{summary});
+                    }
+                    var max_subcommand_width: ?usize = null;
+                    inline for (fields.subcommand_names) |subcmd_name| @"continue": {
+                        const subcmd_help: Help(T).Arg = @field(help.args, subcmd_name);
+                        if (subcmd_help.hidden) break :@"continue";
+                        max_subcommand_width = @max(max_subcommand_width orelse 0, subcmd_name.len);
+                    }
+                    if (max_subcommand_width) |max_width| {
+                        try term.writer.writeAll("\n\n");
+                        try term.setColor(.bold);
+                        try term.writer.writeAll("Commands:");
+                        try term.setColor(.reset);
+                        inline for (fields.subcommand_names) |subcmd_name| @"continue": {
+                            const subcmd_help: Help(T).Arg = @field(help.args, subcmd_name);
+                            if (subcmd_help.hidden) break :@"continue";
+                            try term.writer.writeAll("\n  ");
+                            try term.setColor(.bold);
+                            try term.writer.writeAll(subcmd_name);
+                            try term.setColor(.reset);
+                            if (subcmd_help.description) |description| {
+                                try term.writer.splatByteAll(' ', max_width - subcmd_name.len + 2);
+                                try term.writer.writeAll(description);
+                            }
+                        }
+                    }
+                },
+                else => comptime unreachable,
             }
             try term.writer.writeAll("\n\n");
             try term.setColor(.bold);
@@ -1429,4 +1532,164 @@ test "usage errors" {
     writer.clearRetainingCapacity();
     try std.testing.expectError(error.Usage, parser.parse(Args, &.{"--three=xyz"}));
     try Args.expectUsageError("error: option --three: argument 'xyz' is not a recognizable choice (expected 'foo', 'bar' or 'baz')", writer.written());
+}
+
+test "subcommands: parsing" {
+    const Command = union(enum) {
+        one: struct {
+            a: i32,
+            @"--foo": ?[]const u8,
+        },
+        two: union(enum) {
+            three: struct {
+                b: i32,
+                @"--bar": ?[]const u8,
+            },
+            four: struct {
+                c: i32,
+                @"--baz": ?[]const u8,
+            },
+        },
+    };
+    const args: []const []const u8 = &.{ "two", "four", "123", "--baz", "xyz" };
+    const expected: Command = .{
+        .two = .{
+            .four = .{
+                .c = 123,
+                .@"--baz" = "xyz",
+            },
+        },
+    };
+    const actual = try quiet_parser.parse(Command, args);
+    try std.testing.expectEqualDeep(expected, actual);
+}
+
+test "subcommands: --help and --version" {
+    var arena_allocator: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_allocator.deinit();
+
+    var writer: std.Io.Writer.Allocating = .init(arena_allocator.allocator());
+    var failing: std.Io.Writer = .failing;
+    const parser: std.cli.ArgsParser = .{
+        .command_name = &.{"app"},
+        .stdout = .{ .writer = &writer.writer, .mode = .no_color },
+        .stderr = .{ .writer = &failing, .mode = .no_color },
+    };
+
+    const Command = union(enum) {
+        one: struct {},
+        two: struct {},
+        three: struct {},
+        four: union(enum) {
+            five: struct {},
+            six: struct {},
+            pub const @"--help": std.cli.Help(@This()) = .{
+                .command_name = "this-should-not-be-printed",
+                .summary = "This is a subcommand.",
+                .args = .{
+                    .five = .{ .description = "Cinco" },
+                    .six = .{ .description = "Seis" },
+                },
+            };
+            pub const @"--version": std.SemanticVersion = .{ .major = 0, .minor = 2, .patch = 3 };
+        },
+        pub const @"--help": std.cli.Help(@This()) = .{
+            .command_name = "root",
+            .args = .{
+                .one = .{},
+                .two = .{},
+                .three = .{},
+                .four = .{},
+            },
+        };
+        pub const @"--version": std.SemanticVersion = .{ .major = 0, .minor = 1, .patch = 0 };
+    };
+    const expected_help =
+        \\Usage: root four [<option>...] <command> [<argument>...]
+        \\
+        \\This is a subcommand.
+        \\
+        \\Commands:
+        \\  five  Cinco
+        \\  six   Seis
+        \\
+        \\Options:
+        \\  -h, --help  Print this help and exit
+        \\  --version   Print version and exit
+        \\
+    ;
+    try std.testing.expectError(error.HelpRequested, parser.parse(Command, &.{ "four", "--help" }));
+    try std.testing.expectEqualStrings(expected_help, writer.written());
+    writer.clearRetainingCapacity();
+    const expected_version =
+        \\0.2.3
+        \\
+    ;
+    try std.testing.expectError(error.VersionRequested, parser.parse(Command, &.{ "four", "--version" }));
+    try std.testing.expectEqualStrings(expected_version, writer.written());
+}
+
+test "subcommands: usage errors" {
+    var arena_allocator: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_allocator.deinit();
+
+    var writer: std.Io.Writer.Allocating = .init(arena_allocator.allocator());
+    var failing: std.Io.Writer = .failing;
+    const parser: std.cli.ArgsParser = .{
+        .command_name = &.{"app"},
+        .stdout = .{ .writer = &failing, .mode = .no_color },
+        .stderr = .{ .writer = &writer.writer, .mode = .no_color },
+    };
+
+    const Command = union(enum) {
+        one: struct {},
+        two: struct {},
+        three: struct {},
+        four: union(enum) {
+            five: struct {
+                @"--foo": ?u8,
+                pub const @"--help": std.cli.Help(@This()) = .{
+                    .command_name = "this-should-not-be-printed",
+                    .args = .{
+                        .@"--foo" = .{},
+                    },
+                };
+            },
+            six: struct {},
+            pub const @"--help": std.cli.Help(@This()) = .{
+                .command_name = "this-should-not-be-printed",
+                .args = .{
+                    .five = .{},
+                    .six = .{},
+                },
+            };
+        },
+    };
+    try std.testing.expectError(error.Usage, parser.parse(Command, &.{}));
+    try std.testing.expectEqualStrings(
+        \\error: expected an argument
+        \\Try 'app --help' for more information.
+        \\
+    , writer.written());
+    writer.clearRetainingCapacity();
+    try std.testing.expectError(error.Usage, parser.parse(Command, &.{"--foo"}));
+    try std.testing.expectEqualStrings(
+        \\error: unrecognized option '--foo'
+        \\Try 'app --help' for more information.
+        \\
+    , writer.written());
+    writer.clearRetainingCapacity();
+    try std.testing.expectError(error.Usage, parser.parse(Command, &.{"four"}));
+    try std.testing.expectEqualStrings(
+        \\error: expected an argument
+        \\Try 'app four --help' for more information.
+        \\
+    , writer.written());
+    writer.clearRetainingCapacity();
+    try std.testing.expectError(error.Usage, parser.parse(Command, &.{ "four", "five", "--foo=-1" }));
+    try std.testing.expectEqualStrings(
+        \\error: option --foo: argument '-1' is outside the allowable range (expected a value between 0 and 255 inclusive)
+        \\Try 'app four five --help' for more information.
+        \\
+    , writer.written());
 }

@@ -41,8 +41,59 @@ pub fn create(owner: *std.Build) *Options {
 }
 
 pub fn addOption(options: *Options, comptime T: type, name: []const u8, value: T) void {
+    comptime checkType(T, null);
     if (name.len == 0) @panic("name cannot be empty");
     return printDecl(options, T, name, value) catch @panic("unhandled error");
+}
+
+const VisitedTypes = struct {
+    type: type,
+    field_name: []const u8,
+    next: ?*const VisitedTypes,
+};
+
+fn checkType(comptime T: type, comptime visited: ?*const VisitedTypes) void {
+    const type_info = @typeInfo(T);
+    switch (type_info) {
+        inline .array, .optional => |info| return checkType(info.child, visited),
+        .pointer => |pointer| {
+            switch (pointer.size) {
+                .one, .slice => return checkType(pointer.child, visited),
+                .many => unsupported("many-item pointer", T, visited),
+                .c => unsupported("C pointer", T, visited),
+            }
+        },
+        .void, .bool, .int, .float, .comptime_int, .comptime_float, .enum_literal, .@"enum" => return,
+        .@"struct" => |@"struct"| if (@"struct".is_tuple) unsupported("tuple", T, visited),
+        .@"union" => |@"union"| if (@"union".tag_type == null) unsupported("untagged union", T, visited),
+        else => |tag| unsupported(@tagName(tag), T, visited),
+    }
+
+    var head = visited;
+    while (head) |h| : (head = h.next) {
+        if (h.type == T) return;
+    }
+
+    switch (type_info) {
+        inline .@"struct", .@"union" => |info| {
+            inline for (info.field_names, info.field_types) |name, @"type"| {
+                const new_visited: VisitedTypes = .{ .type = T, .field_name = name, .next = visited };
+                checkType(@"type", &new_visited);
+            }
+        },
+        else => comptime unreachable,
+    }
+}
+
+fn unsupported(comptime description: []const u8, comptime T: type, comptime visited: ?*const VisitedTypes) noreturn {
+    comptime {
+        var msg: []const u8 = std.fmt.comptimePrint("{s} type '{s}' is not supported as a build option", .{ description, @typeName(T) });
+        var head = visited;
+        while (head) |h| : (head = h.next) {
+            msg = msg ++ std.fmt.comptimePrint("\n\tin field '{s}' of type '{s}'", .{ h.field_name, @typeName(h.type) });
+        }
+        @compileError(msg);
+    }
 }
 
 fn printDecl(options: *Options, comptime T: type, name: []const u8, value: T) PrintDeclError!void {
@@ -62,19 +113,10 @@ fn printTypeDefinition(options: *Options, comptime T: type) PrintDeclError!void 
 
     const type_info = @typeInfo(T);
     switch (type_info) {
-        inline .array, .optional => |info| return printTypeDefinition(options, info.child),
-        .pointer => |pointer| {
-            switch (pointer.size) {
-                .one, .slice => return printTypeDefinition(options, pointer.child),
-                .many => unsupported("many-item pointer", T),
-                .c => unsupported("C pointer", T),
-            }
-        },
+        inline .array, .optional, .pointer => |info| return printTypeDefinition(options, info.child),
         .void, .bool, .int, .float, .comptime_int, .comptime_float, .enum_literal => return,
-        .@"enum" => {},
-        .@"struct" => |@"struct"| if (@"struct".is_tuple) unsupported("tuple", T),
-        .@"union" => |@"union"| if (@"union".tag_type == null) unsupported("untagged union", T),
-        else => |tag| unsupported(@tagName(tag), T),
+        .@"enum", .@"struct", .@"union" => {},
+        else => comptime unreachable,
     }
 
     const gpa = options.step.owner.allocator;
@@ -111,10 +153,6 @@ fn printTypeDefinition(options: *Options, comptime T: type) PrintDeclError!void 
         },
         else => comptime unreachable,
     }
-}
-
-inline fn unsupported(comptime description: []const u8, comptime T: type) noreturn {
-    @compileError(std.fmt.comptimePrint("{s} type '{s}' is not supported as a build option", .{ description, @typeName(T) }));
 }
 
 fn printEnumDefinition(options: *Options, comptime T: type) !void {

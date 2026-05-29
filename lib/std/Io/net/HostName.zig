@@ -211,12 +211,14 @@ pub fn expand(noalias packet: []const u8, start_i: usize, noalias dest_buffer: [
         if (i >= packet.len) return error.InvalidDnsPacket;
 
         const c = packet[i];
-        if ((c & 0xc0) != 0) {
+        if ((c & 0xc0) == 0xc0) {
             if (i + 1 >= packet.len) return error.InvalidDnsPacket;
             const j: usize = (@as(usize, c & 0x3F) << 8) | packet[i + 1];
             if (j >= packet.len) return error.InvalidDnsPacket;
             if (len == null) len = (i + 2) - start_i;
             i = j;
+        } else if ((c & 0xc0) != 0) {
+            return error.InvalidDnsPacket;
         } else if (c != 0) {
             if (dest_i != 0) {
                 dest[dest_i] = '.';

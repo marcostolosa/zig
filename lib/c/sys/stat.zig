@@ -6,6 +6,7 @@ const linux = std.os.linux;
 const dev_t = std.c.dev_t;
 const fd_t = std.c.fd_t;
 const mode_t = std.c.mode_t;
+const S = std.c.S;
 
 const symbol = @import("../../c.zig").symbol;
 const errno = @import("../../c.zig").errno;
@@ -15,6 +16,8 @@ comptime {
         symbol(&chmodLinux, "chmod");
         symbol(&mkdirLinux, "mkdir");
         symbol(&mkdiratLinux, "mkdirat");
+        symbol(&mkfifoLinux, "mkfifo");
+        symbol(&mkfifoatLinux, "mkfifoat");
         symbol(&mknodLinux, "mknod");
         symbol(&mknodatLinux, "mknodat");
         symbol(&umaskLinux, "umask");
@@ -31,6 +34,14 @@ fn mkdirLinux(path: [*:0]const c_char, mode: mode_t) callconv(.c) c_int {
 
 fn mkdiratLinux(dirfd: fd_t, path: [*:0]const c_char, mode: mode_t) callconv(.c) c_int {
     return errno(linux.mkdirat(dirfd, @ptrCast(path), mode));
+}
+
+fn mkfifoLinux(path: [*:0]const c_char, mode: mode_t) callconv(.c) c_int {
+    return errno(linux.mknod(@ptrCast(path), mode | S.IFIFO, 0));
+}
+
+fn mkfifoatLinux(dirfd: fd_t, path: [*:0]const c_char, mode: mode_t) callconv(.c) c_int {
+    return errno(linux.mknodat(dirfd, @ptrCast(path), mode | S.IFIFO, 0));
 }
 
 fn mknodLinux(path: [*:0]const c_char, mode: mode_t, dev: dev_t) callconv(.c) c_int {

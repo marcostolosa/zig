@@ -74,6 +74,34 @@ test "mkdirat" {
     defer new_dir.close(io);
 }
 
+test "mkfifo" {
+    if (native_os == .windows or native_os == .wasi) return error.SkipZigTest; // no mkfifo
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+    // Relies on tmpDir internals
+    const dir_path = try path.joinZ(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(dir_path);
+    try expectEqual(.EXIST, errno(c.mkfifo(dir_path, 0o644)));
+
+    const fifo_path = try path.joinZ(allocator, &.{ dir_path, "test_fifo" });
+    defer allocator.free(fifo_path);
+    try expectEqual(.SUCCESS, errno(c.mkfifo(fifo_path, 0o644)));
+}
+
+test "mkfifoat" {
+    if (native_os == .windows or native_os == .wasi) return error.SkipZigTest; // no mkfifoat
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+    // Relies on tmpDir internals
+    const dir_path = try path.joinZ(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(dir_path);
+    try expectEqual(.EXIST, errno(c.mkfifoat(c.AT.FDCWD, dir_path, 0o644)));
+
+    try expectEqual(.SUCCESS, errno(c.mkfifoat(tmp.dir.handle, "test_fifo", 0o644)));
+}
+
 test "mknod" {
     if (native_os == .windows or native_os == .wasi) return error.SkipZigTest; // no mknod
 

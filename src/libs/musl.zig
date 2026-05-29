@@ -1334,8 +1334,6 @@ const src_files = [_][]const u8{
     "musl/src/stat/futimesat.c",
     "musl/src/stat/lchmod.c",
     "musl/src/stat/lstat.c",
-    "musl/src/stat/mkfifoat.c",
-    "musl/src/stat/mkfifo.c",
     "musl/src/stat/stat.c",
     "musl/src/stat/statvfs.c",
     "musl/src/stat/utimensat.c",

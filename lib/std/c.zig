@@ -10916,6 +10916,8 @@ pub extern "c" fn faccessat(dirfd: fd_t, path: [*:0]const u8, mode: c_uint, flag
 pub extern "c" fn pipe(fds: *[2]fd_t) c_int;
 pub extern "c" fn mkdir(path: [*:0]const u8, mode: mode_t) c_int;
 pub extern "c" fn mkdirat(dirfd: fd_t, path: [*:0]const u8, mode: mode_t) c_int;
+pub extern "c" fn mkfifo(path: [*:0]const u8, mode: mode_t) c_int;
+pub extern "c" fn mkfifoat(dirfd: fd_t, path: [*:0]const u8, mode: mode_t) c_int;
 pub extern "c" fn mknod(path: [*:0]const u8, mode: mode_t, dev: dev_t) c_int;
 pub extern "c" fn mknodat(dirfd: fd_t, path: [*:0]const u8, mode: mode_t, dev: dev_t) c_int;
 pub extern "c" fn symlink(existing: [*:0]const u8, new: [*:0]const u8) c_int;

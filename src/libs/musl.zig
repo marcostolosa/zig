@@ -1326,7 +1326,6 @@ const src_files = [_][]const u8{
     "musl/src/signal/x32/sigsetjmp.s",
     "musl/src/signal/x86_64/restore.s",
     "musl/src/signal/x86_64/sigsetjmp.s",
-    "musl/src/stat/chmod.c",
     "musl/src/stat/fchmodat.c",
     "musl/src/stat/fchmod.c",
     "musl/src/stat/fstatat.c",

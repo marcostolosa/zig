@@ -79,6 +79,7 @@ comptime {
     _ = @import("c/sys/file.zig");
     _ = @import("c/sys/mman.zig");
     _ = @import("c/sys/reboot.zig");
+    _ = @import("c/sys/stat.zig");
     _ = @import("c/sys/utsname.zig");
 
     _ = @import("c/unistd.zig");

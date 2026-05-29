@@ -41,3 +41,35 @@ test "chmod" {
     try expectEqual(.SUCCESS, errno(c.chmod(file_path, 0o776)));
     try expectEqual(0o776, (try file.stat(io)).permissions.toMode() & 0o777);
 }
+
+test "mkdir" {
+    if (native_os == .windows or native_os == .wasi) return error.SkipZigTest; // no mkdir
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+    // Relies on tmpDir internals
+    const dir_path = try path.joinZ(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(dir_path);
+    try expectEqual(.EXIST, errno(c.mkdir(dir_path, 0o755)));
+
+    const new_dir_path = try path.joinZ(allocator, &.{ dir_path, "test_dir" });
+    defer allocator.free(new_dir_path);
+    try expectEqual(.SUCCESS, errno(c.mkdir(new_dir_path, 0o755)));
+    var new_dir = try tmp.dir.openDir(io, "test_dir", .{});
+    defer new_dir.close(io);
+}
+
+test "mkdirat" {
+    if (native_os == .windows or native_os == .wasi) return error.SkipZigTest; // no mkdirat
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+    // Relies on tmpDir internals
+    const dir_path = try path.joinZ(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(dir_path);
+    try expectEqual(.EXIST, errno(c.mkdirat(c.AT.FDCWD, dir_path, 0o755)));
+
+    try expectEqual(.SUCCESS, errno(c.mkdirat(tmp.dir.handle, "test_dir", 0o755)));
+    var new_dir = try tmp.dir.openDir(io, "test_dir", .{});
+    defer new_dir.close(io);
+}

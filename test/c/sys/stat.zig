@@ -73,3 +73,31 @@ test "mkdirat" {
     var new_dir = try tmp.dir.openDir(io, "test_dir", .{});
     defer new_dir.close(io);
 }
+
+test "mknod" {
+    if (native_os == .windows or native_os == .wasi) return error.SkipZigTest; // no mknod
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+    // Relies on tmpDir internals
+    const dir_path = try path.joinZ(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(dir_path);
+    try expectEqual(.EXIST, errno(c.mknod(dir_path, c.S.IFIFO | 0o644, 0)));
+
+    const node_path = try path.joinZ(allocator, &.{ dir_path, "test_node" });
+    defer allocator.free(node_path);
+    try expectEqual(.SUCCESS, errno(c.mknod(node_path, c.S.IFIFO | 0o644, 0)));
+}
+
+test "mknodat" {
+    if (native_os == .windows or native_os == .wasi) return error.SkipZigTest; // no mknodat
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+    // Relies on tmpDir internals
+    const dir_path = try path.joinZ(allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+    defer allocator.free(dir_path);
+    try expectEqual(.EXIST, errno(c.mknodat(c.AT.FDCWD, dir_path, c.S.IFIFO | 0o644, 0)));
+
+    try expectEqual(.SUCCESS, errno(c.mknodat(tmp.dir.handle, "test_node", c.S.IFIFO | 0o644, 0)));
+}

@@ -1,15 +1,11 @@
 const Options = @This();
 
-const builtin = @import("builtin");
-
 const std = @import("std");
-const Io = std.Io;
-const fs = std.fs;
 const Step = std.Build.Step;
 const LazyPath = std.Build.LazyPath;
 const Configuration = std.Build.Configuration;
 
-const AddOptionError = Io.Writer.Error || std.mem.Allocator.Error;
+const PrintDeclError = std.Io.Writer.Error || std.mem.Allocator.Error;
 const indent_width = 4;
 const indent_str: *const [indent_width]u8 = &@splat(' ');
 
@@ -45,10 +41,11 @@ pub fn create(owner: *std.Build) *Options {
 }
 
 pub fn addOption(options: *Options, comptime T: type, name: []const u8, value: T) void {
+    if (name.len == 0) @panic("name cannot be empty");
     return printDecl(options, T, name, value) catch @panic("unhandled error");
 }
 
-fn printDecl(options: *Options, comptime T: type, name: []const u8, value: T) AddOptionError!void {
+fn printDecl(options: *Options, comptime T: type, name: []const u8, value: T) PrintDeclError!void {
     const gpa = options.step.owner.allocator;
     const out = &options.contents;
 
@@ -60,19 +57,24 @@ fn printDecl(options: *Options, comptime T: type, name: []const u8, value: T) Ad
     try out.appendSlice(gpa, ";\n\n");
 }
 
-fn printTypeDefinition(options: *Options, comptime T: type) AddOptionError!void {
+fn printTypeDefinition(options: *Options, comptime T: type) PrintDeclError!void {
     if (T == std.SemanticVersion) return;
 
     const type_info = @typeInfo(T);
     switch (type_info) {
-        inline .array, .pointer, .optional => |info, tag| {
-            if (tag == .pointer and info.size != .slice) unsupported("non-slice pointer", T);
-            return printTypeDefinition(options, info.child);
+        inline .array, .optional => |info| return printTypeDefinition(options, info.child),
+        .pointer => |pointer| {
+            switch (pointer.size) {
+                .slice => return printTypeDefinition(options, pointer.child),
+                .one => unsupported("single-item pointer", T),
+                .many => unsupported("many-item pointer", T),
+                .c => unsupported("c pointer", T),
+            }
         },
         .void, .bool, .int, .float, .comptime_int, .comptime_float, .enum_literal => return,
         .@"enum" => {},
         .@"struct" => |@"struct"| if (@"struct".is_tuple) unsupported("tuple", T),
-        .@"union" => |info| if (info.tag_type == null) unsupported("untagged union", T),
+        .@"union" => |@"union"| if (@"union".tag_type == null) unsupported("untagged union", T),
         else => |tag| unsupported(@tagName(tag), T),
     }
 
@@ -112,13 +114,17 @@ fn printTypeDefinition(options: *Options, comptime T: type) AddOptionError!void 
     }
 }
 
+inline fn unsupported(comptime description: []const u8, comptime T: type) noreturn {
+    @compileError(std.fmt.comptimePrint("{s} type '{s}' is not supported as a build option", .{ description, @typeName(T) }));
+}
+
 fn printEnumDefinition(options: *Options, comptime T: type) !void {
     const @"enum" = @typeInfo(T).@"enum";
     const gpa = options.step.owner.allocator;
     const out = &options.contents;
 
     try out.appendSlice(gpa, "enum(");
-    try printTypeName(options, @"enum".tag_type, indent_width);
+    try printTypeName(options, @"enum".tag_type, 0);
     try out.appendSlice(gpa, ")");
     if (@"enum".field_names.len == 0) {
         const body = switch (@"enum".mode) {
@@ -154,18 +160,7 @@ fn printStructDefinition(options: *Options, comptime T: type) !void {
             try out.appendSlice(gpa, ")");
         },
     }
-
-    if (@"struct".field_names.len == 0) return out.appendSlice(gpa, " {}");
-    try out.appendSlice(gpa, " {\n");
-
-    inline for (@"struct".field_names, @"struct".field_types) |name, @"type"| {
-        try out.appendSlice(gpa, indent_str);
-        try out.print(gpa, "{f}: ", .{fmtStructUnionFieldName(name)});
-        try printTypeName(options, @"type", indent_width);
-        try out.appendSlice(gpa, ",\n");
-    }
-
-    try out.appendSlice(gpa, "}");
+    try printStructOrUnionBody(options, T);
 }
 
 fn printUnionDefinition(options: *Options, comptime T: type) !void {
@@ -174,23 +169,28 @@ fn printUnionDefinition(options: *Options, comptime T: type) !void {
     const out = &options.contents;
 
     try out.appendSlice(gpa, "union(");
-    try printTypeName(options, @"union".tag_type.?, indent_width);
+    try printTypeName(options, @"union".tag_type.?, 0);
     try out.appendSlice(gpa, ")");
-    if (@"union".field_names.len == 0) return out.appendSlice(gpa, " {}");
-    try out.appendSlice(gpa, " {\n");
+    try printStructOrUnionBody(options, T);
+}
 
-    inline for (@"union".field_names, @"union".field_types) |name, @"type"| {
+fn printStructOrUnionBody(options: *Options, comptime T: type) !void {
+    const gpa = options.step.owner.allocator;
+    const out = &options.contents;
+
+    const type_info = switch (@typeInfo(T)) {
+        inline .@"struct", .@"union" => |info| info,
+        else => comptime unreachable,
+    };
+    if (type_info.field_names.len == 0) return out.appendSlice(gpa, " {}");
+    try out.appendSlice(gpa, " {\n");
+    inline for (type_info.field_names, type_info.field_types) |name, @"type"| {
         try out.appendSlice(gpa, indent_str);
         try out.print(gpa, "{f}: ", .{fmtStructUnionFieldName(name)});
         try printTypeName(options, @"type", indent_width);
         try out.appendSlice(gpa, ",\n");
     }
-
     try out.appendSlice(gpa, "}");
-}
-
-inline fn unsupported(comptime description: []const u8, comptime T: type) noreturn {
-    @compileError(std.fmt.comptimePrint("{s} type '{s}' is not supported as a build option", .{ description, @typeName(T) }));
 }
 
 fn printTypeName(options: *Options, comptime T: type, indent: u8) !void {
@@ -203,7 +203,7 @@ fn printTypeName(options: *Options, comptime T: type, indent: u8) !void {
 
     switch (@typeInfo(T)) {
         .array => |array| {
-            try out.print(gpa, "[{}", .{array.len});
+            try out.print(gpa, "[{d}", .{array.len});
             if (array.sentinel()) |sentinel| {
                 try out.appendSlice(gpa, ":");
                 try printValue(options, array.child, sentinel, indent);
@@ -224,41 +224,24 @@ fn printTypeName(options: *Options, comptime T: type, indent: u8) !void {
             try out.appendSlice(gpa, "?");
             try printTypeName(options, optional.child, indent);
         },
-        .void,
-        .bool,
-        .int,
-        .float,
-        .comptime_int,
-        .comptime_float,
-        .enum_literal,
-        => try out.print(gpa, "{s}", .{@typeName(T)}),
+        .void, .bool, .int, .comptime_int, .enum_literal, .float, .comptime_float => try out.print(gpa, "{s}", .{@typeName(T)}),
         .@"enum", .@"struct", .@"union" => try out.print(gpa, "{f}", .{fmtId(@typeName(T))}),
         else => comptime unreachable,
     }
 }
 
-fn printValue(options: *Options, comptime T: type, value: T, indent: u8) AddOptionError!void {
+fn printValue(options: *Options, comptime T: type, value: T, indent: u8) PrintDeclError!void {
     const gpa = options.step.owner.allocator;
     const out = &options.contents;
 
-    if (T == []const u8 or T == [:0]const u8) {
-        return out.print(gpa, "\"{f}\"", .{std.zig.fmtString(value)});
-    }
-
     switch (@typeInfo(T)) {
-        inline .array, .pointer => |type_info, tag| {
-            if (tag == .pointer) try out.appendSlice(gpa, "&");
-            if (value.len == 0) return out.appendSlice(gpa, ".{}");
-
-            try out.appendSlice(gpa, ".{\n");
-            for (value) |item| {
-                const elem_indent = indent +| indent_width;
-                try out.appendNTimes(gpa, ' ', elem_indent);
-                try printValue(options, type_info.child, item, elem_indent);
-                try out.appendSlice(gpa, ",\n");
+        .array => |array| try printArrayOrSlice(options, value, array.child, indent),
+        .pointer => |pointer| {
+            if (pointer.child == u8 and (pointer.sentinel() orelse 0) == 0) {
+                return out.print(gpa, "\"{f}\"", .{std.zig.fmtString(value)});
             }
-            try out.appendNTimes(gpa, ' ', indent);
-            try out.appendSlice(gpa, "}");
+            try out.appendSlice(gpa, "&");
+            try printArrayOrSlice(options, value, pointer.child, indent);
         },
         .optional => |optional| {
             if (value) |inner| {
@@ -270,11 +253,9 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) AddOpti
             }
         },
         .void => try out.appendSlice(gpa, "{}"),
-        .bool,
-        .int,
-        .comptime_int,
-        .enum_literal,
-        => try out.print(gpa, "{}", .{value}),
+        .bool => try out.appendSlice(gpa, if (value) "true" else "false"),
+        .int, .comptime_int => try out.print(gpa, "{d}", .{value}),
+        .enum_literal => try out.print(gpa, ".{f}", .{fmtEnumFieldName(@tagName(value))}),
         .float => {
             if (std.math.isFinite(value))
                 return out.print(gpa, "{e}", .{value});
@@ -299,7 +280,7 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) AddOpti
                     if (std.enums.tagName(T, value)) |name| {
                         try out.print(gpa, ".{f}", .{fmtEnumFieldName(name)});
                     } else {
-                        try out.print(gpa, "@fromBackingInt({})", .{@backingInt(value)});
+                        try out.print(gpa, "@fromBackingInt({d})", .{@backingInt(value)});
                     }
                 },
             }
@@ -309,7 +290,7 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) AddOpti
             switch (value) {
                 inline else => |payload, tag| {
                     try out.print(gpa, ".{f} = ", .{fmtStructUnionFieldName(@tagName(tag))});
-                    try printValue(options, @TypeOf(payload), payload, indent);
+                    try printValue(options, @FieldType(T, @tagName(tag)), payload, indent);
                 },
             }
             try out.appendSlice(gpa, " }");
@@ -330,6 +311,24 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) AddOpti
         },
         else => comptime unreachable,
     }
+}
+
+fn printArrayOrSlice(options: *Options, collection: anytype, comptime Child: type, indent: u8) PrintDeclError!void {
+    const gpa = options.step.owner.allocator;
+    const out = &options.contents;
+
+    if (collection.len == 0) return out.appendSlice(gpa, ".{}");
+    try out.appendSlice(gpa, ".{\n");
+
+    const elem_indent = indent +| indent_width;
+    for (collection) |item| {
+        try out.appendNTimes(gpa, ' ', elem_indent);
+        try printValue(options, Child, item, elem_indent);
+        try out.appendSlice(gpa, ",\n");
+    }
+
+    try out.appendNTimes(gpa, ' ', indent);
+    try out.appendSlice(gpa, "}");
 }
 
 const fmtId = std.zig.fmtId;

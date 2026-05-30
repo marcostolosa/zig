@@ -269,14 +269,29 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) AddOpti
                 try out.appendSlice(gpa, ", null)");
             }
         },
-        .void,
+        .void => try out.appendSlice(gpa, "{}"),
         .bool,
         .int,
-        .float,
         .comptime_int,
-        .comptime_float,
         .enum_literal,
-        => try out.print(gpa, "{any}", .{value}),
+        => try out.print(gpa, "{}", .{value}),
+        .float => {
+            if (std.math.isFinite(value))
+                return out.print(gpa, "{e}", .{value});
+
+            if (std.math.isPositiveInf(value))
+                try out.appendSlice(gpa, "@import(\"std\").math.inf(")
+            else if (std.math.isNegativeInf(value))
+                try out.appendSlice(gpa, "-@import(\"std\").math.inf(")
+            else if (std.math.isNan(value))
+                try out.appendSlice(gpa, "@import(\"std\").math.snan(")
+            else
+                unreachable;
+
+            try printTypeName(options, T, indent);
+            try out.appendSlice(gpa, ")");
+        },
+        .comptime_float => try out.print(gpa, "{e}", .{value}),
         .@"enum" => |@"enum"| {
             switch (@"enum".mode) {
                 .exhaustive => try out.print(gpa, ".{f}", .{fmtEnumFieldName(@tagName(value))}),

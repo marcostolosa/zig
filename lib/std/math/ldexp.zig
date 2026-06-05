@@ -19,7 +19,7 @@ pub fn ldexp(x: anytype, n: i32) @TypeOf(x) {
     const repr = @as(TBits, @bitCast(x));
     const sign_bit = repr & (1 << (exponent_bits + mantissa_bits));
 
-    if (math.isNan(x) or !math.isFinite(x))
+    if (math.isNan(x) or !math.isFinite(x) or x == 0.0)
         return x;
 
     var exponent: i32 = @as(i32, @intCast((repr << 1) >> (mantissa_bits + 1)));
@@ -29,6 +29,7 @@ pub fn ldexp(x: anytype, n: i32) @TypeOf(x) {
     if (n >= 0) {
         if (n > max_biased_exponent - exponent) {
             // Overflow. Return +/- inf
+            math.raiseOverflow();
             return @as(T, @bitCast(@as(TBits, @bitCast(math.inf(T))) | sign_bit));
         } else if (exponent + n <= 0) {
             // Result is subnormal
@@ -92,6 +93,12 @@ test ldexp {
         // normals -> subnormals
         try expect(math.isNormal(ldexp(@as(T, 1.0), min_exponent)));
         try expect(!math.isNormal(ldexp(@as(T, 1.0), min_exponent - 1)));
+
+        // zero -> zero
+        try expect(math.isPositiveZero(ldexp(@as(T, 0x0p+0), math.maxInt(i32))));
+        try expect(math.isPositiveZero(ldexp(@as(T, 0x0p+0), math.minInt(i32))));
+        try expect(math.isNegativeZero(ldexp(@as(T, -0x0p+0), math.maxInt(i32))));
+        try expect(math.isNegativeZero(ldexp(@as(T, -0x0p+0), math.minInt(i32))));
 
         // normals -> zero
         try expect(ldexp(@as(T, 1.0), min_exponent - fractional_bits) > 0.0);

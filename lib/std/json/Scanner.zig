@@ -47,11 +47,11 @@ const std = @import("std");
 
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
-const BitStack = std.BitStack;
+const BitStackUnmanaged = std.BitStackUnmanaged;
 
 state: State = .value,
 string_is_object_key: bool = false,
-stack: BitStack,
+stack: BitStackUnmanaged,
 /// Used for `stack`.
 allocator: Allocator,
 value_start: usize = undefined,

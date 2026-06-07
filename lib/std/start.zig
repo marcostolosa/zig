@@ -799,9 +799,9 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
         .preopens = preopens,
     };
 
-    if (fn_info.params.len == 1) return wrapMain(root.main(init));
+    if (fn_info.param_types.len == 1) return wrapMain(root.main(init));
 
-    const parsed_args = std.cli.parseProcessArgs(fn_info.params[1].type.?, init) catch |err| switch (err) {
+    const parsed_args = std.cli.parseProcessArgs(fn_info.param_types[1].?, init) catch |err| switch (err) {
         error.HelpRequested, error.VersionRequested => {
             if (builtin.mode != .Debug) std.process.exit(0) else return 0;
         },

@@ -245,9 +245,9 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                     for (.{ "--help", "--version" }) |field_name| if (@hasField(T, field_name)) {
                         @compileError("option '" ++ field_name ++ "' is reserved and cannot be declared as a field");
                     };
-                    for (struct_info.fields) |f| {
+                    for (struct_info.field_names, struct_info.field_types, struct_info.field_attrs) |f_name, f_type, f_attrs| {
                         const unwrapped_type: type, const class: FieldClass = unwrap: {
-                            switch (@typeInfo(f.type)) {
+                            switch (@typeInfo(f_type)) {
                                 .optional => |info| {
                                     break :unwrap .{ info.child, .optional };
                                 },
@@ -256,12 +256,12 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                                 },
                                 else => {},
                             }
-                            break :unwrap .{ f.type, if (f.default_value_ptr != null) .optional else .required };
+                            break :unwrap .{ f_type, if (f_attrs.default_value_ptr != null) .optional else .required };
                         };
-                        if (f.name[0] == '-') {
-                            if (!ArgsTokenizer.isValidLongOptionName(f.name)) {
-                                const adjective = if (ArgsTokenizer.isValidShortOptionName(f.name)) "short" else "invalid";
-                                @compileError("expected long option name in the form '--foo', found " ++ adjective ++ " option name '" ++ f.name ++ "'");
+                        if (f_name[0] == '-') {
+                            if (!ArgsTokenizer.isValidLongOptionName(f_name)) {
+                                const adjective = if (ArgsTokenizer.isValidShortOptionName(f_name)) "short" else "invalid";
+                                @compileError("expected long option name in the form '--foo', found " ++ adjective ++ " option name '" ++ f_name ++ "'");
                             }
                             type_ok: {
                                 switch (@typeInfo(unwrapped_type)) {
@@ -270,18 +270,18 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                                     .pointer => |info| if (isStringSlice(info)) break :type_ok,
                                     else => {},
                                 }
-                                @compileError("option '" ++ f.name ++ "' has unsupported type '" ++ @typeName(f.type) ++ "'");
+                                @compileError("option '" ++ f_name ++ "' has unsupported type '" ++ @typeName(f_type) ++ "'");
                             }
                             if (class == .required) {
-                                @compileError("scalar option '" ++ f.name ++ "' must have an optional type or a default field value");
+                                @compileError("scalar option '" ++ f_name ++ "' must have an optional type or a default field value");
                             }
-                            if (f.type == bool) {
-                                const negated_name = "--no-" ++ f.name[2..];
+                            if (f_type == bool) {
+                                const negated_name = "--no-" ++ f_name[2..];
                                 if (@hasField(T, negated_name)) {
-                                    @compileError("option '" ++ negated_name ++ "' conflicts with boolean option '" ++ f.name ++ "'");
+                                    @compileError("option '" ++ negated_name ++ "' conflicts with boolean option '" ++ f_name ++ "'");
                                 }
                             }
-                            o_names = o_names ++ .{f.name};
+                            o_names = o_names ++ .{f_name};
                             o_types = o_types ++ .{unwrapped_type};
                             o_classes = o_classes ++ .{class};
                         } else {
@@ -291,7 +291,7 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                                     .pointer => |info| if (isStringSlice(info)) break :type_ok,
                                     else => {},
                                 }
-                                @compileError("positional '" ++ f.name ++ "' has unsupported type '" ++ @typeName(f.type) ++ "'");
+                                @compileError("positional '" ++ f_name ++ "' has unsupported type '" ++ @typeName(f_type) ++ "'");
                             }
                             if (p_names.len != 0) {
                                 const i = p_names.len - 1;
@@ -302,16 +302,16 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                                     @compileError("optional positional '" ++ p_names[i] ++ "' must be declared after all required positionals");
                                 }
                             }
-                            p_names = p_names ++ .{f.name};
+                            p_names = p_names ++ .{f_name};
                             p_types = p_types ++ .{unwrapped_type};
                             p_classes = p_classes ++ .{class};
                         }
                     }
                 },
                 .@"union" => |union_info| {
-                    for (union_info.fields) |f| {
-                        if (f.name[0] == '-') {
-                            @compileError("expected subcommand name, found option name '" ++ f.name ++ "'");
+                    for (union_info.field_names, union_info.field_types) |f_name, f_type| {
+                        if (f_name[0] == '-') {
+                            @compileError("expected subcommand name, found option name '" ++ f_name ++ "'");
                         }
                         field_type_ok: {
                             switch (@typeInfo(T)) {
@@ -319,9 +319,9 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                                 .@"union" => |info| if (info.tag_type != null) break :field_type_ok,
                                 else => {},
                             }
-                            @compileError("subcommand '" ++ f.name ++ "' has unsupported type '" ++ @typeName(f.type) ++ "'");
+                            @compileError("subcommand '" ++ f_name ++ "' has unsupported type '" ++ @typeName(f_type) ++ "'");
                         }
-                        subcmd_names = subcmd_names ++ .{f.name};
+                        subcmd_names = subcmd_names ++ .{f_name};
                     }
                     if (subcmd_names.len == 0) {
                         @compileError("tagged union must declare at least one subcommand field");
@@ -341,7 +341,7 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
         };
 
         fn isStringSlice(info: std.lang.Type.Pointer) bool {
-            return info.size == .slice and info.is_const and info.child == u8 and (info.sentinel() orelse 0) == 0;
+            return info.size == .slice and info.attrs.@"const" and info.child == u8 and (info.sentinel() orelse 0) == 0;
         }
 
         fn parse(p: @This()) !T {
@@ -366,7 +366,7 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                 assert(fields.subcommand_names.len == 0);
                 var list_field_names: []const [:0]const u8 = &.{};
                 var list_field_types: []const type = &.{};
-                var list_field_attrs: []const std.lang.Type.StructField.Attributes = &.{};
+                var list_field_attrs: []const std.lang.Type.Struct.FieldAttributes = &.{};
                 var required_positional_count: usize = 0;
                 var optional_positional_count: usize = 0;
                 for (fields.positional_names, fields.positional_types, fields.positional_classes, 0..) |p_name, p_type, p_class, i| {
@@ -384,7 +384,7 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                             list_field_names = list_field_names ++ .{p_name};
                             list_field_types = list_field_types ++ .{std.ArrayList(p_type)};
                             list_field_attrs = list_field_attrs ++ .{@as(
-                                std.lang.Type.StructField.Attributes,
+                                std.lang.Type.Struct.FieldAttributes,
                                 .{ .default_value_ptr = &std.ArrayList(p_type).empty },
                             )};
                         },
@@ -398,7 +398,7 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                         list_field_names = list_field_names ++ .{o_name};
                         list_field_types = list_field_types ++ .{std.ArrayList(o_type)};
                         list_field_attrs = list_field_attrs ++ .{@as(
-                            std.lang.Type.StructField.Attributes,
+                            std.lang.Type.Struct.FieldAttributes,
                             .{ .default_value_ptr = &std.ArrayList(o_type).empty },
                         )};
                     }
@@ -442,22 +442,22 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
 
             var result: T = comptime init: {
                 var result_init: T = undefined;
-                for (@typeInfo(T).@"struct".fields) |f_| {
-                    const f: std.lang.Type.StructField = f_;
-                    const default_value: ?f.type = f.defaultValue() orelse switch (@typeInfo(f.type)) {
-                        .optional => @as(f.type, null),
-                        else => @as(?f.type, null),
+                const struct_info = @typeInfo(T).@"struct";
+                for (struct_info.field_names, struct_info.field_types, struct_info.field_attrs) |f_name, f_type, f_attrs| {
+                    const default_value: ?f_type = f_attrs.defaultValue(f_type) orelse switch (@typeInfo(f_type)) {
+                        .optional => @as(f_type, null),
+                        else => @as(?f_type, null),
                     };
                     if (default_value) |value| {
-                        @field(result_init, f.name) = value;
+                        @field(result_init, f_name) = value;
                     }
                 }
                 break :init result_init;
             };
 
             var result_lists: ArrayLists = .{};
-            errdefer inline for (@typeInfo(ArrayLists).@"struct".fields) |f| {
-                @field(result_lists, f.name).deinit(p.arena());
+            errdefer inline for (@typeInfo(ArrayLists).@"struct".field_names) |f_name| {
+                @field(result_lists, f_name).deinit(p.arena());
             };
 
             var positional_index: usize = 0;
@@ -526,11 +526,11 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                 }
             }
 
-            inline for (@typeInfo(ArrayLists).@"struct".fields) |f| {
-                if (@typeInfo(@FieldType(T, f.name)).pointer.sentinel()) |s| {
-                    @field(result, f.name) = try @field(result_lists, f.name).toOwnedSliceSentinel(p.arena(), s);
+            inline for (@typeInfo(ArrayLists).@"struct".field_names) |f_name| {
+                if (@typeInfo(@FieldType(T, f_name)).pointer.sentinel()) |s| {
+                    @field(result, f_name) = try @field(result_lists, f_name).toOwnedSliceSentinel(p.arena(), s);
                 } else {
-                    @field(result, f.name) = try @field(result_lists, f.name).toOwnedSlice(p.arena());
+                    @field(result, f_name) = try @field(result_lists, f_name).toOwnedSlice(p.arena());
                 }
             }
 
@@ -560,7 +560,7 @@ fn Specialized(comptime T: type, comptime mode: ParseMode) type {
                 },
                 .@"enum" => {
                     return std.meta.stringToEnum(Arg, arg.?) orelse {
-                        try p.failInvalidChoice(option_name, arg.?, std.meta.fieldNames(Arg));
+                        try p.failInvalidChoice(option_name, arg.?, @typeInfo(Arg).@"enum".field_names);
                     };
                 },
                 .pointer => {

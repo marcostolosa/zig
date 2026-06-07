@@ -155,18 +155,19 @@ pub fn peek(
     /// as no-argument, required-argument or optional-argument respectively.
     comptime Option: type,
 ) ?Token(Option).PeekResult {
-    const option_count = @typeInfo(Option).@"union".fields.len;
+    const union_info = @typeInfo(Option).@"union";
+    const option_count = union_info.field_names.len;
     const option_names: [option_count][]const u8, //
     const option_arities: [option_count]OptionArity //
     = comptime names_and_arities: {
         var names: [option_count][]const u8 = undefined;
         var arities: [option_count]OptionArity = undefined;
-        for (&names, &arities, @typeInfo(Option).@"union".fields) |*name, *arity, field| {
-            if (!isValidOptionName(field.name)) {
-                @compileError("expected short or long option name in the form '-f' or '--foo', found invalid option name '" ++ field.name ++ "'");
+        for (&names, &arities, union_info.field_names, union_info.field_types) |*name, *arity, field_name, field_type| {
+            if (!isValidOptionName(field_name)) {
+                @compileError("expected short or long option name in the form '-f' or '--foo', found invalid option name '" ++ field_name ++ "'");
             }
-            name.* = field.name;
-            arity.* = switch (@typeInfo(field.type)) {
+            name.* = field_name;
+            arity.* = switch (@typeInfo(field_type)) {
                 .void => .no_arg,
                 .optional => .optional_arg,
                 else => .required_arg,

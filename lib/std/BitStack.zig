@@ -111,9 +111,10 @@ pub const Unmanaged = struct {
     /// expand capacity such that self can hold at least
     /// `num_bits` bits.
     pub fn ensureTotalCapacity(self: *Unmanaged, gpa: Allocator, num_bits: usize) Allocator.Error!void {
+        if (self.capacity() >= num_bits) return;
+
         const new_num_bytes = std.ArrayList(u8).growCapacity(numBitsToNumBytes(num_bits));
-        const new_num_bits = std.math.mul(usize, new_num_bytes, 8) catch return error.OutOfMemory;
-        return self.ensureTotalCapacityPrecise(gpa, new_num_bits);
+        return self.ensureTotalByteCapacityPrecise(gpa, new_num_bytes);
     }
     /// If the current capacity is less than `num_bits`,
     /// expand capacity such that self can hold `num_bits` bits.
@@ -122,6 +123,12 @@ pub const Unmanaged = struct {
         if (self.capacity() >= num_bits) return;
 
         const num_bytes = numBitsToNumBytes(num_bits);
+        return self.ensureTotalByteCapacityPrecise(gpa, num_bytes);
+    }
+    /// Asserts that `self` cannot already hold `num_bytes` bytes.
+    fn ensureTotalByteCapacityPrecise(self: *Unmanaged, gpa: Allocator, num_bytes: usize) Allocator.Error!void {
+        assert(num_bytes > self.bytes.len);
+
         const old_bytes = self.bytes;
         if (gpa.remap(old_bytes, num_bytes)) |new_bytes| {
             self.bytes = new_bytes;

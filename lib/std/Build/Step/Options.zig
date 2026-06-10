@@ -59,14 +59,14 @@ fn checkType(comptime T: type, comptime visited: ?*const VisitedTypes) void {
         .pointer => |pointer| {
             switch (pointer.size) {
                 .one, .slice => return checkType(pointer.child, visited),
-                .many => unsupported("many-item pointer", T, visited),
-                .c => unsupported("C pointer", T, visited),
+                .many => unsupportedType("many-item pointer", T, visited),
+                .c => unsupportedType("C pointer", T, visited),
             }
         },
         .void, .bool, .int, .float, .comptime_int, .comptime_float, .enum_literal, .@"enum" => return,
-        .@"struct" => |@"struct"| if (@"struct".is_tuple) unsupported("tuple", T, visited),
-        .@"union" => |@"union"| if (@"union".tag_type == null) unsupported("untagged union", T, visited),
-        else => |tag| unsupported(@tagName(tag), T, visited),
+        .@"struct" => |@"struct"| if (@"struct".is_tuple) unsupportedType("tuple", T, visited),
+        .@"union" => |@"union"| if (@"union".tag_type == null) unsupportedType("untagged union", T, visited),
+        else => |tag| unsupportedType(@tagName(tag), T, visited),
     }
 
     var head = visited;
@@ -76,8 +76,9 @@ fn checkType(comptime T: type, comptime visited: ?*const VisitedTypes) void {
 
     switch (type_info) {
         inline .@"struct", .@"union" => |info| {
-            inline for (info.field_names, info.field_types) |name, @"type"| {
+            inline for (info.field_names, info.field_types, info.field_attrs) |name, @"type", attrs| {
                 const new_visited: VisitedTypes = .{ .type = T, .field_name = name, .next = visited };
+                if (type_info == .@"struct" and attrs.@"comptime") unsupported("comptime struct fields are not supported as build options", &new_visited);
                 checkType(@"type", &new_visited);
             }
         },
@@ -85,9 +86,13 @@ fn checkType(comptime T: type, comptime visited: ?*const VisitedTypes) void {
     }
 }
 
-fn unsupported(comptime description: []const u8, comptime T: type, comptime visited: ?*const VisitedTypes) noreturn {
+fn unsupportedType(comptime description: []const u8, comptime T: type, comptime visited: ?*const VisitedTypes) noreturn {
+    unsupported(std.fmt.comptimePrint("{s} type '{s}' is not supported as a build option", .{ description, @typeName(T) }), visited);
+}
+
+fn unsupported(comptime first_line: []const u8, comptime visited: ?*const VisitedTypes) noreturn {
     comptime {
-        var msg: []const u8 = std.fmt.comptimePrint("{s} type '{s}' is not supported as a build option", .{ description, @typeName(T) });
+        var msg = first_line;
         var head = visited;
         while (head) |h| : (head = h.next) {
             msg = msg ++ std.fmt.comptimePrint("\n\tin field '{s}' of type '{s}'", .{ h.field_name, @typeName(h.type) });

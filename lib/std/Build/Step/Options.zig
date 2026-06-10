@@ -173,7 +173,7 @@ fn printEnumDefinition(options: *Options, comptime T: type) !void {
     try out.appendSlice(gpa, " {\n");
 
     inline for (@"enum".field_names, @"enum".field_values) |name, value| {
-        try out.print(gpa, indent_str ++ "{f} = {d},\n", .{ fmtEnumFieldName(name), value });
+        try out.print(gpa, indent_str ++ "{f} = {d},\n", .{ std.zig.fmtIdFlags(name, .{ .allow_primitive = true }), value });
     }
 
     if (@"enum".mode == .nonexhaustive) {
@@ -223,7 +223,7 @@ fn printStructOrUnionBody(options: *Options, comptime T: type) !void {
     try out.appendSlice(gpa, " {\n");
     inline for (type_info.field_names, type_info.field_types, type_info.field_attrs) |name, @"type", attrs| {
         try out.appendSlice(gpa, indent_str);
-        try out.print(gpa, "{f}: ", .{fmtStructUnionFieldName(name)});
+        try out.print(gpa, "{f}: ", .{fmtFieldName(name)});
         try printTypeName(options, @"type", indent_width);
         if (attrs.@"align") |alignment| try out.print(gpa, " align({d})", .{alignment});
         try out.appendSlice(gpa, ",\n");
@@ -314,7 +314,7 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) PrintDe
         .void => try out.appendSlice(gpa, "{}"),
         .bool => try out.appendSlice(gpa, if (value) "true" else "false"),
         .int, .comptime_int => try out.print(gpa, "{d}", .{value}),
-        .enum_literal => try out.print(gpa, ".{f}", .{fmtEnumFieldName(@tagName(value))}),
+        .enum_literal => try out.print(gpa, ".{f}", .{fmtFieldName(@tagName(value))}),
         .float => {
             if (std.math.isFinite(value))
                 return out.print(gpa, "{e}", .{value});
@@ -334,10 +334,10 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) PrintDe
         .comptime_float => try out.print(gpa, "{e}", .{value}),
         .@"enum" => |@"enum"| {
             switch (@"enum".mode) {
-                .exhaustive => try out.print(gpa, ".{f}", .{fmtEnumFieldName(@tagName(value))}),
+                .exhaustive => try out.print(gpa, ".{f}", .{fmtFieldName(@tagName(value))}),
                 .nonexhaustive => {
                     if (std.enums.tagName(T, value)) |name| {
-                        try out.print(gpa, ".{f}", .{fmtEnumFieldName(name)});
+                        try out.print(gpa, ".{f}", .{fmtFieldName(name)});
                     } else {
                         try out.print(gpa, "@fromBackingInt({d})", .{@backingInt(value)});
                     }
@@ -348,7 +348,7 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) PrintDe
             try out.appendSlice(gpa, ".{ ");
             switch (value) {
                 inline else => |payload, tag| {
-                    try out.print(gpa, ".{f} = ", .{fmtStructUnionFieldName(@tagName(tag))});
+                    try out.print(gpa, ".{f} = ", .{fmtFieldName(@tagName(tag))});
                     try printValue(options, @FieldType(T, @tagName(tag)), payload, indent);
                 },
             }
@@ -361,7 +361,7 @@ fn printValue(options: *Options, comptime T: type, value: T, indent: u8) PrintDe
             inline for (@"struct".field_names, @"struct".field_types) |name, @"type"| {
                 const field_indent = indent +| indent_width;
                 try out.appendNTimes(gpa, ' ', field_indent);
-                try out.print(gpa, ".{f} = ", .{fmtStructUnionFieldName(name)});
+                try out.print(gpa, ".{f} = ", .{fmtFieldName(name)});
                 try printValue(options, @"type", @field(value, name), field_indent);
                 try out.appendSlice(gpa, ",\n");
             }
@@ -392,11 +392,7 @@ fn printArrayOrSlice(options: *Options, comptime T: type, collection: T, indent:
 
 const fmtId = std.zig.fmtId;
 
-fn fmtEnumFieldName(field_name: []const u8) std.zig.FormatId {
-    return std.zig.fmtIdFlags(field_name, .{ .allow_primitive = true });
-}
-
-fn fmtStructUnionFieldName(field_name: []const u8) std.zig.FormatId {
+fn fmtFieldName(field_name: []const u8) std.zig.FormatId {
     return std.zig.fmtIdFlags(field_name, .{ .allow_primitive = true, .allow_underscore = true });
 }
 

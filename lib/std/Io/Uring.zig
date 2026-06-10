@@ -771,15 +771,15 @@ pub fn io(ev: *Evented) Io {
             .random = random,
             .randomSecure = randomSecure,
 
-            .netListenIp = netListenIpUnavailable,
-            .netAccept = netAcceptUnavailable,
+            .netListenIp = netListenIp,
+            .netAccept = netAccept,
             .netBindIp = netBindIp,
-            .netConnectIp = netConnectIpUnavailable,
+            .netConnectIp = netConnectIp,
             .netListenUnix = netListenUnixUnavailable,
             .netConnectUnix = netConnectUnixUnavailable,
             .netSocketCreatePair = netSocketCreatePairUnavailable,
-            .netSend = netSendUnavailable,
-            .netWrite = netWriteUnavailable,
+            .netSend = netSend,
+            .netWrite = netWrite,
             .netWriteFile = netWriteFileUnavailable,
             .netClose = netClose,
             .netShutdown = netShutdown,
@@ -2105,9 +2105,9 @@ fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Oper
             },
         },
         .net_read => |o| .{
-            .net_read = r: {
-                _ = o;
-                break :r error.NetworkDown; // TODO
+            .net_read = ev.netRead(&maybe_sync.cancel_region, o.socket_handle, o.data) catch |err| switch (err) {
+                error.Canceled => |e| return e,
+                else => |e| e,
             },
         },
     };
@@ -4965,28 +4965,82 @@ fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
     };
 }
 
-fn netListenIpUnavailable(
+fn netListenIp(
     userdata: ?*anyopaque,
     address: *const net.IpAddress,
     options: net.IpAddress.ListenOptions,
 ) net.IpAddress.ListenError!net.Socket {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = address;
-    _ = options;
-    return error.NetworkDown;
+    var maybe_sync: CancelRegion.Sync.Maybe = .{ .cancel_region = .init() };
+    defer maybe_sync.deinit(ev);
+    const family = posixAddressFamily(address);
+    const socket_fd = try ev.socket(&maybe_sync.cancel_region, family, .{ .mode = options.mode, .protocol = options.protocol });
+    errdefer ev.close(socket_fd);
+    if (options.reuse_address) {
+        try ev.setsockopt(&maybe_sync.cancel_region, socket_fd, linux.SOL.SOCKET, linux.SO.REUSEADDR, 1);
+        try ev.setsockopt(&maybe_sync.cancel_region, socket_fd, linux.SOL.SOCKET, linux.SO.REUSEPORT, 1);
+    }
+    var storage: PosixAddress = undefined;
+    var addr_len = addressToPosix(address, &storage);
+    try ev.bind(&maybe_sync.cancel_region, socket_fd, &storage.any, addr_len);
+    try ev.listen(&maybe_sync.cancel_region, socket_fd, options.kernel_backlog);
+    try ev.getsockname(try maybe_sync.enterSync(ev), socket_fd, &storage.any, &addr_len);
+    return .{ .handle = socket_fd, .address = addressFromPosix(&storage) };
 }
 
-fn netAcceptUnavailable(
+fn netAccept(
     userdata: ?*anyopaque,
     listen_handle: net.Socket.Handle,
     options: net.Server.AcceptOptions,
 ) net.Server.AcceptError!net.Socket {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = listen_handle;
-    _ = options;
-    return error.NetworkDown;
+    options;
+    var cancel_region: CancelRegion = .init();
+    defer cancel_region.deinit();
+    while (true) {
+        var storage: PosixAddress = undefined;
+        var addr_len: linux.socklen_t = @sizeOf(PosixAddress);
+        const thread = try cancel_region.awaitIoUring();
+        thread.enqueue().* = .{
+            .opcode = .ACCEPT,
+            .flags = 0,
+            .ioprio = 0,
+            .fd = listen_handle,
+            .off = @intFromPtr(&addr_len),
+            .addr = @intFromPtr(&storage),
+            .len = 0,
+            .rw_flags = 0,
+            .user_data = @intFromPtr(cancel_region.fiber),
+            .buf_index = 0,
+            .personality = 0,
+            .splice_fd_in = 0,
+            .addr3 = 0,
+            .resv = 0,
+        };
+        ev.yield(null, .nothing);
+        const completion = cancel_region.completion();
+        switch (completion.errno()) {
+            .SUCCESS => return .{
+                .handle = completion.result,
+                .address = addressFromPosix(&storage),
+            },
+            .INTR, .CANCELED => {},
+            .AGAIN => |err| return errnoBug(err),
+            .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+            .CONNABORTED => return error.ConnectionAborted,
+            .FAULT => |err| return errnoBug(err),
+            .INVAL => return error.SocketNotListening,
+            .NOTSOCK => |err| return errnoBug(err),
+            .MFILE => return error.ProcessFdQuotaExceeded,
+            .NFILE => return error.SystemFdQuotaExceeded,
+            .NOBUFS => return error.SystemResources,
+            .NOMEM => return error.SystemResources,
+            .OPNOTSUPP => |err| return errnoBug(err),
+            .PROTO => return error.ProtocolFailure,
+            .PERM => return error.BlockedByFirewall,
+            else => |err| return unexpectedErrno(err),
+        }
+    }
 }
 
 fn netBindIp(
@@ -5008,16 +5062,23 @@ fn netBindIp(
     return .{ .handle = socket_fd, .address = addressFromPosix(&storage) };
 }
 
-fn netConnectIpUnavailable(
+fn netConnectIp(
     userdata: ?*anyopaque,
     address: *const net.IpAddress,
     options: net.IpAddress.ConnectOptions,
 ) net.IpAddress.ConnectError!net.Socket {
+    if (options.timeout != .none) @panic("TODO implement netConnectIp with timeout");
     const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = address;
-    _ = options;
-    return error.NetworkDown;
+    const family = posixAddressFamily(address);
+    var maybe_sync: CancelRegion.Sync.Maybe = .{ .cancel_region = .init() };
+    defer maybe_sync.deinit(ev);
+    const socket_fd = try ev.socket(&maybe_sync.cancel_region, family, .{ .mode = options.mode, .protocol = options.protocol });
+    errdefer ev.closeAsync(socket_fd);
+    var storage: PosixAddress = undefined;
+    var addr_len = addressToPosix(address, &storage);
+    try ev.connect(&maybe_sync.cancel_region, socket_fd, &storage.any, addr_len);
+    try ev.getsockname(try maybe_sync.enterSync(ev), socket_fd, &storage.any, &addr_len);
+    return .{ .handle = socket_fd, .address = addressFromPosix(&storage) };
 }
 
 fn netListenUnixUnavailable(
@@ -5051,18 +5112,43 @@ fn netSocketCreatePairUnavailable(
     return error.OperationUnsupported;
 }
 
-fn netSendUnavailable(
+fn netSend(
     userdata: ?*anyopaque,
     handle: net.Socket.Handle,
     messages: []net.OutgoingMessage,
     flags: net.SendFlags,
 ) struct { ?net.Socket.SendError, usize } {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = handle;
-    _ = messages;
-    _ = flags;
-    return .{ error.NetworkDown, 0 };
+    var cancel_region: CancelRegion = .init();
+    defer cancel_region.deinit();
+
+    const linux_flags: u32 =
+        @as(u32, if (flags.confirm) linux.MSG.CONFIRM else 0) |
+        @as(u32, if (flags.dont_route) linux.MSG.DONTROUTE else 0) |
+        @as(u32, if (flags.eor) linux.MSG.EOR else 0) |
+        @as(u32, if (flags.oob) linux.MSG.OOB else 0) |
+        @as(u32, if (flags.fastopen) linux.MSG.FASTOPEN else 0) |
+        linux.MSG.NOSIGNAL;
+
+    var i: usize = 0;
+    while (messages.len - i != 0) {
+        var message = &messages[i];
+        var addr: PosixAddress = undefined;
+        var iov: iovec_const = .{ .base = @constCast(message.data_ptr), .len = message.data_len };
+        const msg: linux.msghdr_const = .{
+            .name = &addr.any,
+            .namelen = addressToPosix(message.address, &addr),
+            .iov = (&iov)[0..1],
+            .iovlen = 1,
+            .control = if (message.control.len == 0) null else @constCast(message.control.ptr),
+            .controllen = @intCast(message.control.len),
+            .flags = 0,
+        };
+
+        message.data_len = ev.sendmsg(&cancel_region, handle, &msg, linux_flags, net.Socket.SendError) catch |err| return .{ err, i };
+        i += 1;
+    }
+    return .{ null, i };
 }
 
 fn netReceive(
@@ -5154,7 +5240,65 @@ fn netReceive(
     }
 }
 
-fn netWriteUnavailable(
+fn netRead(
+    ev: *Evented,
+    cancel_region: *CancelRegion,
+    fd: net.Socket.Handle,
+    data: [][]u8,
+) net.Stream.Reader.Error!usize {
+    var iovecs_buffer: [max_iovecs_len]iovec = undefined;
+    var i: usize = 0;
+    for (data) |buf| {
+        if (iovecs_buffer.len - i == 0) break;
+        if (buf.len > 0) {
+            iovecs_buffer[i] = .{ .base = buf.ptr, .len = buf.len };
+            i += 1;
+        }
+    }
+    const dest = iovecs_buffer[0..i];
+    assert(dest[0].len > 0);
+
+    if (dest.len == 0) return 0;
+    const gather = dest.len > 1 or dest[0].len > 0xfffff000;
+    while (true) {
+        const thread = try cancel_region.awaitIoUring();
+        thread.enqueue().* = .{
+            .opcode = if (gather) .READV else .READ,
+            .flags = 0,
+            .ioprio = 0,
+            .fd = fd,
+            .off = 0,
+            .addr = if (gather) @intFromPtr(dest.ptr) else @intFromPtr(dest[0].base),
+            .len = @intCast(if (gather) dest.len else dest[0].len),
+            .rw_flags = 0,
+            .user_data = @intFromPtr(cancel_region.fiber),
+            .buf_index = 0,
+            .personality = 0,
+            .splice_fd_in = 0,
+            .addr3 = 0,
+            .resv = 0,
+        };
+        ev.yield(null, .nothing);
+        const completion = cancel_region.completion();
+        switch (completion.errno()) {
+            .SUCCESS => return @as(u32, @bitCast(completion.result)),
+            .INTR, .CANCELED => {},
+            .INVAL => |err| return errnoBug(err),
+            .FAULT => |err| return errnoBug(err),
+            .AGAIN => |err| return errnoBug(err),
+            .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+            .NOBUFS => return error.SystemResources,
+            .NOMEM => return error.SystemResources,
+            .NOTCONN => return error.SocketUnconnected,
+            .CONNRESET => return error.ConnectionResetByPeer,
+            .PIPE => return error.SocketUnconnected,
+            .NETDOWN => return error.NetworkDown,
+            else => |err| return unexpectedErrno(err),
+        }
+    }
+}
+
+fn netWrite(
     userdata: ?*anyopaque,
     handle: net.Socket.Handle,
     header: []const u8,
@@ -5162,12 +5306,50 @@ fn netWriteUnavailable(
     splat: usize,
 ) net.Stream.Writer.Error!usize {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = handle;
-    _ = header;
-    _ = data;
-    _ = splat;
-    return error.NetworkDown;
+
+    var iovecs: [max_iovecs_len]iovec_const = undefined;
+    var msg: linux.msghdr_const = .{
+        .name = null,
+        .namelen = 0,
+        .iov = &iovecs,
+        .iovlen = 0,
+        .control = null,
+        .controllen = 0,
+        .flags = 0,
+    };
+    addBuf(&iovecs, &msg.iovlen, header);
+    for (data[0 .. data.len - 1]) |bytes| addBuf(&iovecs, &msg.iovlen, bytes);
+    const pattern = data[data.len - 1];
+
+    var splat_backup_buffer: [splat_buffer_size]u8 = undefined;
+    if (iovecs.len - msg.iovlen != 0) switch (splat) {
+        0 => {},
+        1 => addBuf(&iovecs, &msg.iovlen, pattern),
+        else => switch (pattern.len) {
+            0 => {},
+            1 => {
+                const splat_buffer = &splat_backup_buffer;
+                const memset_len = @min(splat_buffer.len, splat);
+                const buf = splat_buffer[0..memset_len];
+                @memset(buf, pattern[0]);
+                addBuf(&iovecs, &msg.iovlen, buf);
+                var remaining_splat = splat - buf.len;
+                while (remaining_splat > splat_buffer.len and iovecs.len - msg.iovlen != 0) {
+                    assert(buf.len == splat_buffer.len);
+                    addBuf(&iovecs, &msg.iovlen, splat_buffer);
+                    remaining_splat -= splat_buffer.len;
+                }
+                addBuf(&iovecs, &msg.iovlen, splat_buffer[0..@min(remaining_splat, splat_buffer.len)]);
+            },
+            else => for (0..@min(splat, iovecs.len - msg.iovlen)) |_| {
+                addBuf(&iovecs, &msg.iovlen, pattern);
+            },
+        },
+    };
+
+    var cancel_region: CancelRegion = .init();
+    defer cancel_region.deinit();
+    return ev.sendmsg(&cancel_region, handle, &msg, linux.MSG.NOSIGNAL, net.Stream.Writer.Error);
 }
 
 fn netWriteFileUnavailable(
@@ -5303,6 +5485,59 @@ fn bind(
             .ADDRNOTAVAIL => return error.AddressUnavailable,
             .FAULT => |err| return errnoBug(err), // invalid `addr` pointer
             .NOMEM => return error.SystemResources,
+            else => |err| return unexpectedErrno(err),
+        }
+    }
+}
+
+fn connect(
+    ev: *Evented,
+    cancel_region: *CancelRegion,
+    fd: fd_t,
+    addr: *const linux.sockaddr,
+    addr_len: linux.socklen_t,
+) !void {
+    while (true) {
+        const thread = try cancel_region.awaitIoUring();
+        thread.enqueue().* = .{
+            .opcode = .CONNECT,
+            .flags = 0,
+            .ioprio = 0,
+            .fd = fd,
+            .off = addr_len,
+            .addr = @intFromPtr(addr),
+            .len = 0,
+            .rw_flags = 0,
+            .user_data = @intFromPtr(cancel_region.fiber),
+            .buf_index = 0,
+            .personality = 0,
+            .splice_fd_in = 0,
+            .addr3 = 0,
+            .resv = 0,
+        };
+        ev.yield(null, .nothing);
+        switch (cancel_region.errno()) {
+            .SUCCESS => return,
+            .INTR, .CANCELED => {},
+            .ADDRNOTAVAIL => return error.AddressUnavailable,
+            .AFNOSUPPORT => return error.AddressFamilyUnsupported,
+            .AGAIN, .INPROGRESS => return error.WouldBlock,
+            .ALREADY => return error.ConnectionPending,
+            .CONNREFUSED => return error.ConnectionRefused,
+            .CONNRESET => return error.ConnectionResetByPeer,
+            .HOSTUNREACH => return error.HostUnreachable,
+            .NETUNREACH => return error.NetworkUnreachable,
+            .TIMEDOUT => return error.Timeout,
+            .ACCES => return error.AccessDenied,
+            .NETDOWN => return error.NetworkDown,
+            .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+            .CONNABORTED => |err| return errnoBug(err),
+            .FAULT => |err| return errnoBug(err),
+            .ISCONN => |err| return errnoBug(err),
+            .NOENT => |err| return errnoBug(err),
+            .NOTSOCK => |err| return errnoBug(err),
+            .PERM => |err| return errnoBug(err),
+            .PROTOTYPE => |err| return errnoBug(err),
             else => |err| return unexpectedErrno(err),
         }
     }
@@ -6083,6 +6318,43 @@ fn utimensat(
     }
 }
 
+fn listen(
+    ev: *Evented,
+    cancel_region: *CancelRegion,
+    socket_fd: fd_t,
+    backlog: u32,
+) !void {
+    while (true) {
+        const thread = try cancel_region.awaitIoUring();
+        thread.enqueue().* = .{
+            .opcode = .LISTEN,
+            .flags = 0,
+            .ioprio = 0,
+            .fd = socket_fd,
+            .off = 0,
+            .addr = 0,
+            .len = backlog,
+            .rw_flags = 0,
+            .user_data = @intFromPtr(cancel_region.fiber),
+            .buf_index = 0,
+            .personality = 0,
+            .splice_fd_in = 0,
+            .addr3 = 0,
+            .resv = 0,
+        };
+        ev.yield(null, .nothing);
+        switch (cancel_region.errno()) {
+            .SUCCESS => return,
+            .INTR, .CANCELED => {},
+            .ADDRINUSE => return error.AddressInUse,
+            .BADF => |err| return errnoBug(err),
+            .NOTSOCK => |err| return errnoBug(err),
+            .OPNOTSUPP => |err| return errnoBug(err),
+            else => |err| return unexpectedErrno(err),
+        }
+    }
+}
+
 fn writeAllSync(sync: *CancelRegion.Sync, fd: fd_t, buffer: []const u8) File.Writer.Error!void {
     var index: usize = 0;
     while (buffer.len - index != 0) index += try writeSync(sync, fd, buffer[index..]);
@@ -6109,6 +6381,89 @@ fn writeSync(sync: *CancelRegion.Sync, fd: fd_t, buffer: []const u8) File.Writer
             .CONNRESET => |err| return errnoBug(err), // Not a socket handle.
             .BUSY => return error.DeviceBusy,
             else => |err| return unexpectedErrno(err),
+        }
+    }
+}
+
+fn sendmsg(
+    ev: *Evented,
+    cancel_region: *CancelRegion,
+    socket_fd: net.Socket.Handle,
+    msg: *const linux.msghdr_const,
+    flags: u32,
+    comptime ErrorSet: type,
+) ErrorSet!usize {
+    while (true) {
+        const thread = try cancel_region.awaitIoUring();
+        thread.enqueue().* = .{
+            .opcode = .SENDMSG,
+            .flags = 0,
+            .ioprio = 0,
+            .fd = socket_fd,
+            .off = 0,
+            .addr = @intFromPtr(msg),
+            .len = 1,
+            .rw_flags = flags,
+            .user_data = @intFromPtr(cancel_region.fiber),
+            .buf_index = 0,
+            .personality = 0,
+            .splice_fd_in = 0,
+            .addr3 = 0,
+            .resv = 0,
+        };
+        ev.yield(null, .nothing);
+        const completion = cancel_region.completion();
+        switch (completion.errno()) {
+            .SUCCESS => return @as(u32, @bitCast(completion.result)),
+            .INTR, .CANCELED => {},
+            else => |errno| switch (ErrorSet) {
+                net.Stream.Writer.Error => return switch (errno) {
+                    .AFNOSUPPORT => error.AddressFamilyUnsupported,
+                    .ALREADY => error.FastOpenAlreadyInProgress,
+                    .CONNRESET => error.ConnectionResetByPeer,
+                    .HOSTUNREACH => error.HostUnreachable,
+                    .NETDOWN => error.NetworkDown,
+                    .NETUNREACH => error.NetworkUnreachable,
+                    .NOBUFS => error.SystemResources,
+                    .NOMEM => error.SystemResources,
+                    .NOTCONN => error.SocketUnconnected,
+                    .PIPE => error.SocketUnconnected,
+                    .ACCES => |err| errnoBug(err),
+                    .AGAIN => |err| errnoBug(err),
+                    .BADF => |err| errnoBug(err), // File descriptor used after closed.
+                    .DESTADDRREQ => |err| errnoBug(err), // The socket is not connection-mode, and no peer address is set.
+                    .FAULT => |err| errnoBug(err), // An invalid user space address was specified for an argument.
+                    .INVAL => |err| errnoBug(err), // Invalid argument passed.
+                    .ISCONN => |err| errnoBug(err), // connection-mode socket was connected already but a recipient was specified
+                    .MSGSIZE => |err| errnoBug(err),
+                    .NOTSOCK => |err| errnoBug(err), // The file descriptor sockfd does not refer to a socket.
+                    .OPNOTSUPP => |err| errnoBug(err), // Some bit in the flags argument is inappropriate for the socket type.
+                    else => |err| unexpectedErrno(err),
+                },
+                net.Socket.SendError => return switch (errno) {
+                    .ACCES => error.AccessDenied,
+                    .AFNOSUPPORT => error.AddressFamilyUnsupported,
+                    .ALREADY => error.FastOpenAlreadyInProgress,
+                    .CONNRESET => error.ConnectionResetByPeer,
+                    .HOSTUNREACH => error.HostUnreachable,
+                    .MSGSIZE => error.MessageOversize,
+                    .NETDOWN => error.NetworkDown,
+                    .NETUNREACH => error.NetworkUnreachable,
+                    .NOBUFS => error.SystemResources,
+                    .NOMEM => error.SystemResources,
+                    .NOTCONN => error.SocketUnconnected,
+                    .PIPE => error.SocketUnconnected,
+                    .BADF => |err| errnoBug(err), // File descriptor used after closed.
+                    .DESTADDRREQ => |err| errnoBug(err),
+                    .FAULT => |err| errnoBug(err),
+                    .INVAL => |err| errnoBug(err),
+                    .ISCONN => |err| errnoBug(err),
+                    .NOTSOCK => |err| errnoBug(err),
+                    .OPNOTSUPP => |err| errnoBug(err),
+                    else => |err| unexpectedErrno(err),
+                },
+                else => comptime unreachable,
+            },
         }
     }
 }

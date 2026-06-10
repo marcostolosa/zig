@@ -2131,7 +2131,7 @@ fn fileReadStreaming(
     const dest = iovecs_buffer[0..i];
     assert(dest[0].len > 0);
 
-    const n = try ev.preadv(cancel_region, file.handle, dest, null);
+    const n = try ev.preadv(cancel_region, file.handle, dest, null, File.Reader.Error);
     return if (n == 0) error.EndOfStream else n;
 }
 
@@ -3735,11 +3735,7 @@ fn fileReadPositional(
 
     var cancel_region: CancelRegion = .init();
     defer cancel_region.deinit();
-    return ev.preadv(&cancel_region, file.handle, dest, offset) catch |err| switch (err) {
-        error.SocketUnconnected => return errnoBug(.NOTCONN), // not a socket
-        error.ConnectionResetByPeer => return errnoBug(.CONNRESET), // not a socket
-        else => |e| return e,
-    };
+    return ev.preadv(&cancel_region, file.handle, dest, offset, File.ReadPositionalError);
 }
 
 fn fileSeekBy(userdata: ?*anyopaque, file: File, offset: i64) File.SeekError!void {
@@ -5258,44 +5254,7 @@ fn netRead(
     const dest = iovecs_buffer[0..i];
     assert(dest[0].len > 0);
 
-    if (dest.len == 0) return 0;
-    const gather = dest.len > 1 or dest[0].len > 0xfffff000;
-    while (true) {
-        const thread = try cancel_region.awaitIoUring();
-        thread.enqueue().* = .{
-            .opcode = if (gather) .READV else .READ,
-            .flags = 0,
-            .ioprio = 0,
-            .fd = fd,
-            .off = 0,
-            .addr = if (gather) @intFromPtr(dest.ptr) else @intFromPtr(dest[0].base),
-            .len = @intCast(if (gather) dest.len else dest[0].len),
-            .rw_flags = 0,
-            .user_data = @intFromPtr(cancel_region.fiber),
-            .buf_index = 0,
-            .personality = 0,
-            .splice_fd_in = 0,
-            .addr3 = 0,
-            .resv = 0,
-        };
-        ev.yield(null, .nothing);
-        const completion = cancel_region.completion();
-        switch (completion.errno()) {
-            .SUCCESS => return @as(u32, @bitCast(completion.result)),
-            .INTR, .CANCELED => {},
-            .INVAL => |err| return errnoBug(err),
-            .FAULT => |err| return errnoBug(err),
-            .AGAIN => |err| return errnoBug(err),
-            .BADF => |err| return errnoBug(err), // File descriptor used after closed.
-            .NOBUFS => return error.SystemResources,
-            .NOMEM => return error.SystemResources,
-            .NOTCONN => return error.SocketUnconnected,
-            .CONNRESET => return error.ConnectionResetByPeer,
-            .PIPE => return error.SocketUnconnected,
-            .NETDOWN => return error.NetworkDown,
-            else => |err| return unexpectedErrno(err),
-        }
-    }
+    return ev.preadv(cancel_region, fd, dest, null, net.Stream.Reader.Error);
 }
 
 fn netWrite(
@@ -5921,7 +5880,8 @@ fn preadv(
     fd: fd_t,
     iov: []const iovec,
     offset: ?u64,
-) File.Reader.Error!usize {
+    comptime ErrorSet: type,
+) ErrorSet!usize {
     if (iov.len == 0) return 0;
     const gather = iov.len > 1 or iov[0].len > 0xfffff000;
     while (true) {
@@ -5947,17 +5907,48 @@ fn preadv(
         switch (completion.errno()) {
             .SUCCESS => return @as(u32, @bitCast(completion.result)),
             .INTR, .CANCELED => {},
-            .INVAL => |err| return errnoBug(err),
-            .FAULT => |err| return errnoBug(err),
-            .AGAIN => return error.WouldBlock,
-            .BADF => |err| return errnoBug(err), // File descriptor used after closed
-            .IO => return error.InputOutput,
-            .ISDIR => return error.IsDir,
-            .NOBUFS => return error.SystemResources,
-            .NOMEM => return error.SystemResources,
-            .NOTCONN => return error.SocketUnconnected,
-            .CONNRESET => return error.ConnectionResetByPeer,
-            else => |err| return unexpectedErrno(err),
+            else => |errno| return switch (ErrorSet) {
+                File.Reader.Error => switch (errno) {
+                    .INVAL => |err| errnoBug(err),
+                    .FAULT => |err| errnoBug(err),
+                    .AGAIN => error.WouldBlock,
+                    .BADF => |err| errnoBug(err), // File descriptor used after closed
+                    .IO => error.InputOutput,
+                    .ISDIR => error.IsDir,
+                    .NOBUFS => error.SystemResources,
+                    .NOMEM => error.SystemResources,
+                    .NOTCONN => error.SocketUnconnected,
+                    .CONNRESET => error.ConnectionResetByPeer,
+                    else => |err| unexpectedErrno(err),
+                },
+                File.ReadPositionalError => switch (errno) {
+                    .INVAL => |err| errnoBug(err),
+                    .FAULT => |err| errnoBug(err),
+                    .AGAIN => error.WouldBlock,
+                    .BADF => |err| errnoBug(err), // File descriptor used after closed
+                    .IO => error.InputOutput,
+                    .ISDIR => error.IsDir,
+                    .NOBUFS => error.SystemResources,
+                    .NOMEM => error.SystemResources,
+                    .NOTCONN => |err| errnoBug(err),
+                    .CONNRESET => |err| errnoBug(err),
+                    else => |err| unexpectedErrno(err),
+                },
+                net.Stream.Reader.Error => switch (errno) {
+                    .INVAL => |err| errnoBug(err),
+                    .FAULT => |err| errnoBug(err),
+                    .AGAIN => |err| errnoBug(err),
+                    .BADF => |err| errnoBug(err), // File descriptor used after closed.
+                    .NOBUFS => error.SystemResources,
+                    .NOMEM => error.SystemResources,
+                    .NOTCONN => error.SocketUnconnected,
+                    .CONNRESET => error.ConnectionResetByPeer,
+                    .PIPE => error.SocketUnconnected,
+                    .NETDOWN => error.NetworkDown,
+                    else => |err| unexpectedErrno(err),
+                },
+                else => comptime unreachable,
+            },
         }
     }
 }
@@ -6022,7 +6013,7 @@ fn readAll(
     while (buffer.len - index != 0) {
         const len = try ev.preadv(cancel_region, fd, &.{
             .{ .base = buffer[index..].ptr, .len = buffer.len - index },
-        }, null);
+        }, null, File.Reader.Error);
         if (len == 0) return error.EndOfStream;
         index += len;
     }
@@ -6416,8 +6407,8 @@ fn sendmsg(
         switch (completion.errno()) {
             .SUCCESS => return @as(u32, @bitCast(completion.result)),
             .INTR, .CANCELED => {},
-            else => |errno| switch (ErrorSet) {
-                net.Stream.Writer.Error => return switch (errno) {
+            else => |errno| return switch (ErrorSet) {
+                net.Stream.Writer.Error => switch (errno) {
                     .AFNOSUPPORT => error.AddressFamilyUnsupported,
                     .ALREADY => error.FastOpenAlreadyInProgress,
                     .CONNRESET => error.ConnectionResetByPeer,
@@ -6440,7 +6431,7 @@ fn sendmsg(
                     .OPNOTSUPP => |err| errnoBug(err), // Some bit in the flags argument is inappropriate for the socket type.
                     else => |err| unexpectedErrno(err),
                 },
-                net.Socket.SendError => return switch (errno) {
+                net.Socket.SendError => switch (errno) {
                     .ACCES => error.AccessDenied,
                     .AFNOSUPPORT => error.AddressFamilyUnsupported,
                     .ALREADY => error.FastOpenAlreadyInProgress,

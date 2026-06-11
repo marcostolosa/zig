@@ -1409,6 +1409,10 @@ pub fn mknodat(dirfd: fd_t, path: [*:0]const u8, mode: mode_t, dev: dev_t) usize
     return syscall4(.mknodat, @as(u32, @bitCast(dirfd)), @intFromPtr(path), mode, dev);
 }
 
+pub fn umask(mode: mode_t) usize {
+    return syscall1(.umask, mode);
+}
+
 pub fn mount(special: ?[*:0]const u8, dir: [*:0]const u8, fstype: ?[*:0]const u8, flags: u32, data: usize) usize {
     return syscall5(.mount, @intFromPtr(special), @intFromPtr(dir), @intFromPtr(fstype), flags, data);
 }

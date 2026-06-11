@@ -11,9 +11,14 @@ const errno = @import("../../c.zig").errno;
 comptime {
     if (builtin.target.isMuslLibC()) {
         symbol(&chmodLinux, "chmod");
+        symbol(&umaskLinux, "umask");
     }
 }
 
 fn chmodLinux(path: [*:0]const c_char, mode: mode_t) callconv(.c) c_int {
     return errno(linux.chmod(@ptrCast(path), mode));
+}
+
+fn umaskLinux(mode: mode_t) callconv(.c) mode_t {
+    return @intCast(linux.umask(mode));
 }

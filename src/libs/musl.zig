@@ -1342,7 +1342,6 @@ const src_files = [_][]const u8{
     "musl/src/stat/mknod.c",
     "musl/src/stat/stat.c",
     "musl/src/stat/statvfs.c",
-    "musl/src/stat/umask.c",
     "musl/src/stat/utimensat.c",
     "musl/src/stat/__xstat.c",
     "musl/src/stdio/asprintf.c",

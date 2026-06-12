@@ -5045,11 +5045,13 @@ fn netBindIp(
     options: net.IpAddress.BindOptions,
 ) net.IpAddress.BindError!net.Socket {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
-    const family = posixAddressFamily(address);
     var maybe_sync: CancelRegion.Sync.Maybe = .{ .cancel_region = .init() };
     defer maybe_sync.deinit(ev);
+
+    const family = posixAddressFamily(address);
     const socket_fd = try ev.socket(&maybe_sync.cancel_region, family, options);
     errdefer ev.closeAsync(socket_fd);
+
     var storage: PosixAddress = undefined;
     var addr_len = addressToPosix(address, &storage);
     try ev.bind(&maybe_sync.cancel_region, socket_fd, &storage.any, addr_len);
@@ -5063,16 +5065,18 @@ fn netConnectIp(
     address: *const net.IpAddress,
     options: net.IpAddress.ConnectOptions,
 ) net.IpAddress.ConnectError!net.Socket {
-    if (options.timeout != .none) @panic("TODO implement netConnectIp with timeout");
     const ev: *Evented = @ptrCast(@alignCast(userdata));
-    const family = posixAddressFamily(address);
     var maybe_sync: CancelRegion.Sync.Maybe = .{ .cancel_region = .init() };
     defer maybe_sync.deinit(ev);
+
+    const family = posixAddressFamily(address);
     const socket_fd = try ev.socket(&maybe_sync.cancel_region, family, .{ .mode = options.mode, .protocol = options.protocol });
     errdefer ev.closeAsync(socket_fd);
+
     var storage: PosixAddress = undefined;
     var addr_len = addressToPosix(address, &storage);
-    try ev.connect(&maybe_sync.cancel_region, socket_fd, &storage.any, addr_len);
+    const timeout, const timeout_flags = timeoutToLinux(options.timeout);
+    try ev.connect(&maybe_sync.cancel_region, socket_fd, &storage.any, addr_len, timeout, timeout_flags);
     try ev.getsockname(try maybe_sync.enterSync(ev), socket_fd, &storage.any, &addr_len);
     return .{ .handle = socket_fd, .address = addressFromPosix(&storage) };
 }
@@ -5455,12 +5459,14 @@ fn connect(
     fd: fd_t,
     addr: *const linux.sockaddr,
     addr_len: linux.socklen_t,
+    timeout: ?linux.kernel_timespec,
+    timeout_flags: u32,
 ) !void {
     while (true) {
         const thread = try cancel_region.awaitIoUring();
         thread.enqueue().* = .{
             .opcode = .CONNECT,
-            .flags = 0,
+            .flags = if (timeout) |_| linux.IOSQE_IO_LINK else 0,
             .ioprio = 0,
             .fd = fd,
             .off = addr_len,
@@ -5474,10 +5480,27 @@ fn connect(
             .addr3 = 0,
             .resv = 0,
         };
+        if (timeout) |*timespec_ptr| thread.enqueue().* = .{
+            .opcode = .LINK_TIMEOUT,
+            .flags = linux.IOSQE_CQE_SKIP_SUCCESS,
+            .ioprio = 0,
+            .fd = 0,
+            .off = 0,
+            .addr = @intFromPtr(timespec_ptr),
+            .len = 1,
+            .rw_flags = timeout_flags,
+            .user_data = @intFromEnum(Completion.Userdata.wakeup),
+            .buf_index = 0,
+            .personality = 0,
+            .splice_fd_in = 0,
+            .addr3 = 0,
+            .resv = 0,
+        };
         ev.yield(null, .nothing);
         switch (cancel_region.errno()) {
             .SUCCESS => return,
-            .INTR, .CANCELED => {},
+            .INTR => {},
+            .CANCELED => return error.Timeout,
             .ADDRNOTAVAIL => return error.AddressUnavailable,
             .AFNOSUPPORT => return error.AddressFamilyUnsupported,
             .AGAIN, .INPROGRESS => return error.WouldBlock,
@@ -6457,6 +6480,25 @@ fn sendmsg(
             },
         }
     }
+}
+
+fn timeoutToLinux(timeout: Io.Timeout) struct { ?linux.kernel_timespec, u32 } {
+    const ns: i96, const clock: Io.Clock, const flags: u32 = switch (timeout) {
+        .none => return .{ null, 0 },
+        .duration => |duration| .{ duration.raw.toNanoseconds(), duration.clock, 0 },
+        .deadline => |deadline| .{ deadline.raw.toNanoseconds(), deadline.clock, linux.IORING_TIMEOUT_ABS },
+    };
+    return .{
+        .{
+            .sec = @intCast(@divFloor(ns, std.time.ns_per_s)),
+            .nsec = @intCast(@mod(ns, std.time.ns_per_s)),
+        },
+        flags | @as(u32, switch (clock) {
+            .real => linux.IORING_TIMEOUT_REALTIME,
+            .boot => linux.IORING_TIMEOUT_BOOTTIME,
+            else => 0,
+        }),
+    };
 }
 
 test {

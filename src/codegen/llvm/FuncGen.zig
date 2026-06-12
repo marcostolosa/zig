@@ -634,7 +634,9 @@ fn airCall(self: *FuncGen, inst: Air.Inst.Index, modifier: std.lang.CallModifier
         try llvm_args.append(self.err_ret_trace);
     }
 
-    var it = iterateParamTypes(o, fn_info);
+    const cc_info = llvm.toLlvmCallConv(fn_info.cc, target).?;
+
+    var it = iterateParamTypes(o, fn_info, cc_info);
     while (try it.nextCall(self, args)) |lowering| switch (lowering) {
         .no_bits => continue,
         .byval => {
@@ -768,15 +770,11 @@ fn airCall(self: *FuncGen, inst: Air.Inst.Index, modifier: std.lang.CallModifier
         },
     };
 
-    const cc_info = llvm.toLlvmCallConv(fn_info.cc, target).?;
-
     {
         // Add argument attributes.
-        it = iterateParamTypes(o, fn_info);
+        it = iterateParamTypes(o, fn_info, cc_info);
         it.llvm_index += @intFromBool(sret);
         it.llvm_index += @intFromBool(err_return_tracing);
-        var remaining_inreg_int = cc_info.inreg_int_params;
-        var remaining_inreg_float = cc_info.inreg_float_params;
         while (try it.next()) |lowering| switch (lowering) {
             .byval => {
                 const param_index = it.zig_index - 1;
@@ -785,19 +783,8 @@ fn airCall(self: *FuncGen, inst: Air.Inst.Index, modifier: std.lang.CallModifier
                     try o.addByValParamAttrs(pt, &attributes, param_ty, param_index, fn_info, it.llvm_index - 1);
                 }
 
-                if (remaining_inreg_int > 0 and
-                    (param_ty.isPtrAtRuntime(zcu) or
-                        (param_ty.isAbiInt(zcu) and param_ty.abiSize(zcu) <= Type.usize.abiSize(zcu))))
-                {
+                if (it.inreg_attr) {
                     try attributes.addParamAttr(it.llvm_index - 1, .inreg, &o.builder);
-                    remaining_inreg_int -= 1;
-                }
-
-                if (remaining_inreg_float > 0 and
-                    param_ty.zigTypeTag(zcu) == .float)
-                {
-                    try attributes.addParamAttr(it.llvm_index - 1, .inreg, &o.builder);
-                    remaining_inreg_float -= 1;
                 }
             },
             .byref => {
@@ -6587,12 +6574,14 @@ fn typeOfIndex(fg: *FuncGen, inst: Air.Inst.Index) Type {
 const ParamTypeIterator = struct {
     object: *Object,
     fn_info: InternPool.Key.FuncType,
+    cc_regs: llvm.CallingConventionRegs,
     zig_index: u32,
     llvm_index: u32,
     types_len: u32,
     types_buffer: [8]Builder.Type,
     offsets_buffer: [9]u64,
     byval_attr: bool,
+    inreg_attr: bool,
 
     const Lowering = union(enum) {
         no_bits,
@@ -6612,6 +6601,7 @@ const ParamTypeIterator = struct {
         const ip = &it.object.zcu.intern_pool;
         const ty = it.fn_info.param_types.get(ip)[it.zig_index];
         it.byval_attr = false;
+        it.inreg_attr = false;
         return nextInner(it, Type.fromInterned(ty));
     }
 
@@ -6665,7 +6655,9 @@ const ParamTypeIterator = struct {
             },
             .x86_64_sysv, .x86_64_x32 => return it.nextSystemV(ty),
             .x86_64_win => return it.nextWin64(ty),
-            .x86_stdcall => {
+            .x86_stdcall => if (target.os.tag == .windows) {
+                return it.nextWin32(ty);
+            } else {
                 it.zig_index += 1;
                 it.llvm_index += 1;
 
@@ -6676,6 +6668,7 @@ const ParamTypeIterator = struct {
                     return .byref;
                 }
             },
+            .x86_win, .x86_fastcall, .x86_vectorcall => return it.nextWin32(ty),
             .aarch64_aapcs, .aarch64_aapcs_darwin, .aarch64_aapcs_win => {
                 it.zig_index += 1;
                 it.llvm_index += 1;
@@ -6773,6 +6766,30 @@ const ParamTypeIterator = struct {
                 return .byval;
             },
         }
+    }
+
+    fn nextWin32(it: *ParamTypeIterator, ty: Type) Allocator.Error!?Lowering {
+        const o = it.object;
+        const zcu = o.zcu;
+
+        it.zig_index += 1;
+        it.llvm_index += 1;
+
+        return switch (x86_abi.classifyParamTypeWin32(zcu, it.fn_info.cc, &it.cc_regs, ty)) {
+            .direct => .byval,
+            .direct_inreg => blk: {
+                it.inreg_attr = true;
+                break :blk .byval;
+            },
+            .indirect => .byref,
+            .i32_array => |len| .{ .i32_array = len },
+            .i64 => {
+                it.types_len = 1;
+                it.types_buffer[0..1].* = .{.i64};
+                it.offsets_buffer[0..2].* = .{ 0, 8 };
+                return .multiple_llvm_types;
+            },
+        };
     }
 
     fn nextWin64(it: *ParamTypeIterator, ty: Type) ?Lowering {
@@ -6919,16 +6936,23 @@ const ParamTypeIterator = struct {
         return .multiple_llvm_types;
     }
 };
-pub fn iterateParamTypes(object: *Object, fn_info: InternPool.Key.FuncType) ParamTypeIterator {
+
+pub fn iterateParamTypes(
+    object: *Object,
+    fn_info: InternPool.Key.FuncType,
+    cc_info: llvm.CallingConventionInfo,
+) ParamTypeIterator {
     return .{
         .object = object,
         .fn_info = fn_info,
+        .cc_regs = cc_info.regs,
         .zig_index = 0,
         .llvm_index = 0,
         .types_len = undefined,
         .types_buffer = undefined,
         .offsets_buffer = undefined,
         .byval_attr = false,
+        .inreg_attr = false,
     };
 }
 
@@ -6955,9 +6979,12 @@ pub fn firstParamSRet(fn_info: InternPool.Key.FuncType, zcu: *Zcu, target: *cons
         .auto => returnTypeByRef(zcu, target, return_type),
         .x86_64_sysv, .x86_64_x32 => firstParamSRetSystemV(return_type, zcu, target),
         .x86_64_win => x86_64_abi.classifyWindows(return_type, zcu, target, .ret) == .memory,
-        .x86_sysv, .x86_win => isByRef(return_type, zcu),
-        .x86_stdcall => !isScalar(zcu, return_type),
-        .x86_fastcall => firstParamSRetX86Fastcall(zcu, return_type),
+        .x86_sysv => isByRef(return_type, zcu),
+        .x86_stdcall => if (target.os.tag == .windows)
+            firstParamSRetWin32(zcu, return_type)
+        else
+            !isScalar(zcu, return_type),
+        .x86_win, .x86_fastcall, .x86_vectorcall => firstParamSRetWin32(zcu, return_type),
         .wasm_mvp => wasm_c_abi.classifyType(return_type, zcu) == .indirect,
         .aarch64_aapcs,
         .aarch64_aapcs_darwin,
@@ -6977,18 +7004,8 @@ pub fn firstParamSRet(fn_info: InternPool.Key.FuncType, zcu: *Zcu, target: *cons
     };
 }
 
-fn firstParamSRetX86Fastcall(zcu: *Zcu, ty: Type) bool {
-    if (isScalar(zcu, ty)) {
-        return false;
-    }
-    const tag = ty.zigTypeTag(zcu);
-    if (tag == .@"struct" or tag == .@"union") {
-        const size = ty.abiSize(zcu);
-        if (size == 1 or size == 2 or size == 4 or size == 8) {
-            return false;
-        }
-    }
-    return true;
+fn firstParamSRetWin32(zcu: *Zcu, ty: Type) bool {
+    return x86_abi.classifyReturnTypeWin32(zcu, ty) == .indirect;
 }
 
 fn firstParamSRetSystemV(ty: Type, zcu: *Zcu, target: *const std.Target) bool {
@@ -7015,9 +7032,13 @@ pub fn lowerFnRetTy(o: *Object, fn_info: InternPool.Key.FuncType) Allocator.Erro
         .auto => return if (returnTypeByRef(zcu, target, return_type)) .void else o.lowerType(return_type),
         .x86_64_sysv, .x86_64_x32 => return lowerSystemVFnRetTy(o, fn_info),
         .x86_64_win => return lowerWin64FnRetTy(o, fn_info),
-        .x86_stdcall => return if (isScalar(zcu, return_type)) o.lowerType(return_type) else .void,
-        .x86_fastcall => return lowerX86FastcallFnRetTy(o, zcu, return_type),
-        .x86_sysv, .x86_win => return if (isByRef(return_type, zcu)) .void else o.lowerType(return_type),
+        .x86_sysv => return if (isByRef(return_type, zcu)) .void else o.lowerType(return_type),
+        .x86_stdcall => if (target.os.tag == .windows) {
+            return lowerWin32FnRetTy(o, return_type);
+        } else {
+            return if (isScalar(zcu, return_type)) o.lowerType(return_type) else .void;
+        },
+        .x86_win, .x86_fastcall, .x86_vectorcall => return lowerWin32FnRetTy(o, return_type),
         .aarch64_aapcs, .aarch64_aapcs_darwin, .aarch64_aapcs_win => switch (aarch64_c_abi.classifyType(return_type, zcu)) {
             .memory => return .void,
             .float_array => return o.lowerType(return_type),
@@ -7067,18 +7088,16 @@ pub fn lowerFnRetTy(o: *Object, fn_info: InternPool.Key.FuncType) Allocator.Erro
     }
 }
 
-fn lowerX86FastcallFnRetTy(o: *Object, zcu: *Zcu, ty: Type) Allocator.Error!Builder.Type {
-    if (isScalar(zcu, ty)) {
-        return o.lowerType(ty);
-    }
-    const tag = ty.zigTypeTag(zcu);
-    if (tag == .@"struct" or tag == .@"union") {
-        const size = ty.abiSize(zcu);
-        if (size == 1 or size == 2 or size == 4 or size == 8) {
-            return o.builder.intType(@intCast(size * 8));
-        }
-    }
-    return .void;
+fn lowerWin32FnRetTy(o: *Object, ty: Type) Allocator.Error!Builder.Type {
+    const zcu = o.zcu;
+    return switch (x86_abi.classifyReturnTypeWin32(zcu, ty)) {
+        .none, .indirect => .void,
+        .direct => o.lowerType(ty),
+        .int => o.builder.intType(@intCast(ty.abiSize(zcu) * 8)),
+        .half => .half,
+        .float => .float,
+        .double => .double,
+    };
 }
 
 fn lowerWin64FnRetTy(o: *Object, fn_info: InternPool.Key.FuncType) Allocator.Error!Builder.Type {
@@ -7809,6 +7828,7 @@ const Builder = std.zig.llvm.Builder;
 const assert = std.debug.assert;
 const math = std.math;
 
+const x86_abi = @import("../x86/abi.zig");
 const x86_64_abi = @import("../x86_64/abi.zig");
 const wasm_c_abi = @import("../wasm/abi.zig");
 const aarch64_c_abi = @import("../aarch64/abi.zig");

@@ -1289,7 +1289,8 @@ pub const Object = struct {
         defer args.deinit(gpa);
 
         const ret_ptr: Builder.Value, const err_ret_trace: Builder.Value = implicit_args: {
-            var it = iterateParamTypes(o, fn_info);
+            const cc_info = toLlvmCallConv(fn_info.cc, target).?;
+            var it = iterateParamTypes(o, fn_info, cc_info);
 
             const ret_ptr: Builder.Value = if (firstParamSRet(fn_info, zcu, target)) param: {
                 const param = wip.arg(it.llvm_index);
@@ -2830,7 +2831,7 @@ pub const Object = struct {
 
         if (fn_info.return_type == .noreturn_type) try attributes.addFnAttr(.noreturn, &o.builder);
 
-        var it = iterateParamTypes(o, fn_info);
+        var it = iterateParamTypes(o, fn_info, cc_info);
         if (firstParamSRet(fn_info, zcu, target)) {
             // Sret pointers must not be address 0
             try attributes.addParamAttr(it.llvm_index, .nonnull, &o.builder);
@@ -2850,9 +2851,6 @@ pub const Object = struct {
             it.llvm_index += 1;
         }
 
-        var remaining_inreg_int = cc_info.inreg_int_params;
-        var remaining_inreg_float = cc_info.inreg_float_params;
-
         while (try it.next()) |lowering| switch (lowering) {
             .byval => {
                 const param_index = it.zig_index - 1;
@@ -2861,19 +2859,8 @@ pub const Object = struct {
                     try o.addByValParamAttrs(pt, &attributes, param_ty, param_index, fn_info, it.llvm_index - 1);
                 }
 
-                if (remaining_inreg_int > 0 and
-                    (param_ty.isPtrAtRuntime(zcu) or
-                        (param_ty.isAbiInt(zcu) and param_ty.abiSize(zcu) <= Type.usize.abiSize(zcu))))
-                {
+                if (it.inreg_attr) {
                     try attributes.addParamAttr(it.llvm_index - 1, .inreg, &o.builder);
-                    remaining_inreg_int -= 1;
-                }
-
-                if (remaining_inreg_float > 0 and
-                    param_ty.zigTypeTag(zcu) == .float)
-                {
-                    try attributes.addParamAttr(it.llvm_index - 1, .inreg, &o.builder);
-                    remaining_inreg_float -= 1;
                 }
             },
             .byref => {
@@ -3430,7 +3417,9 @@ pub const Object = struct {
             try llvm_params.append(o.gpa, llvm_ptr_ty);
         }
 
-        var it = iterateParamTypes(o, fn_info);
+        const cc_info = toLlvmCallConv(fn_info.cc, target).?;
+
+        var it = iterateParamTypes(o, fn_info, cc_info);
         while (try it.next()) |lowering| switch (lowering) {
             .no_bits => continue,
             .byval => {
@@ -4420,22 +4409,27 @@ pub const Object = struct {
     }
 };
 
-const CallingConventionInfo = struct {
+pub const CallingConventionRegs = struct {
+    /// How many integer registers are available for `inreg` attribute to use
+    int_regs: u2,
+    /// How many floating-point registers are available for `inreg` attribute to use
+    float_regs: u3,
+};
+
+pub const CallingConventionInfo = struct {
     /// The LLVM calling convention to use.
     llvm_cc: Builder.CallConv,
     /// Whether to use an `alignstack` attribute to forcibly re-align the stack pointer in the function's prologue.
     align_stack: bool,
     /// Whether the function needs a `naked` attribute.
     naked: bool,
-    /// How many leading register-sized integer parameters to apply the `inreg` attribute to.
-    inreg_int_params: u2 = 0,
-    /// How many leading floating-point parameters to apply the `inreg` attribute to.
-    inreg_float_params: u3 = 0,
+    regs: CallingConventionRegs,
 };
 
 pub fn toLlvmCallConv(cc: std.lang.CallingConvention, target: *const std.Target) ?CallingConventionInfo {
     const llvm_cc = toLlvmCallConvTag(cc, target) orelse return null;
     const incoming_stack_alignment: ?u64, const inreg_int_params: u2, const inreg_float_params: u3 = switch (cc) {
+        .x86_win => |opts| .{ opts.incoming_stack_alignment, 0, 3 },
         .x86_fastcall => |opts| .{ opts.incoming_stack_alignment, 2, 0 },
         .x86_vectorcall => |opts| .{ opts.incoming_stack_alignment, 2, 6 },
         inline else => |pl| switch (@TypeOf(pl)) {
@@ -4463,8 +4457,10 @@ pub fn toLlvmCallConv(cc: std.lang.CallingConvention, target: *const std.Target)
             break :need_align a < normal_stack_align;
         } else false,
         .naked = cc == .naked,
-        .inreg_int_params = inreg_int_params,
-        .inreg_float_params = inreg_float_params,
+        .regs = .{
+            .int_regs = inreg_int_params,
+            .float_regs = inreg_float_params,
+        },
     };
 }
 pub fn toLlvmCallConvTag(cc_tag: std.lang.CallingConvention.Tag, target: *const std.Target) ?Builder.CallConv {

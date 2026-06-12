@@ -89,6 +89,10 @@ static void assert_or_panic(bool ok) {
 #  define ZIG_NO_COMPLEX
 #endif
 
+#ifdef _MSC_VER
+#define ZIG_NO_COMPLEX
+#endif
+
 #ifdef __x86_64__
 #define ZIG_NO_RAW_F16
 #endif
@@ -15374,7 +15378,6 @@ void run_c_tests(void) {
     }
 #endif
 
-#if !(defined(__i386__) && defined(_WIN32))
 #ifndef __loongarch__
 #ifndef ZIG_MIPS64
 #ifndef __powerpc__
@@ -15383,7 +15386,6 @@ void run_c_tests(void) {
         struct Struct_i32_i32 s = {1, 2};
         zig_struct_i32_i32(s);
     }
-#endif
 #endif
 #endif
 #endif

@@ -64,6 +64,8 @@ comptime {
     _ = @import("c/ctype.zig");
     _ = @import("c/fcntl.zig");
     _ = @import("c/inttypes.zig");
+    _ = @import("c/libgen.zig");
+
     if (!builtin.target.isMinGW()) {
         _ = @import("c/malloc.zig");
     }

@@ -6021,6 +6021,7 @@ fn pwritev(
             .PIPE => return error.BrokenPipe,
             .CONNRESET => |err| return errnoBug(err), // Not a socket handle.
             .BUSY => return error.DeviceBusy,
+            .ACCES => return error.AccessDenied,
             else => |err| return unexpectedErrno(err),
         }
     }
@@ -6394,6 +6395,7 @@ fn writeSync(sync: *CancelRegion.Sync, fd: fd_t, buffer: []const u8) File.Writer
             .PIPE => return error.BrokenPipe,
             .CONNRESET => |err| return errnoBug(err), // Not a socket handle.
             .BUSY => return error.DeviceBusy,
+            .ACCES => return error.AccessDenied,
             else => |err| return unexpectedErrno(err),
         }
     }

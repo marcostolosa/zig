@@ -4214,7 +4214,7 @@ fn createModule(
         }
         create_module.framework_dir_args = undefined; // From here we use framework_directories instead.
 
-        if (create_module.each_lib_rpath orelse resolved_target.is_native_os) {
+        if (create_module.each_lib_rpath orelse false) {
             try create_module.rpath_list.ensureUnusedCapacity(arena, create_module.lib_directories.items.len);
             for (create_module.lib_directories.items) |lib_directory| {
                 create_module.rpath_list.appendAssumeCapacity(lib_directory.path.?);

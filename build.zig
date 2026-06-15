@@ -648,7 +648,7 @@ pub fn build(b: *std.Build) !void {
     }
 
     const check_mingw_step = b.step("check-mingw", "Checks for mingw preprocessor regressions");
-    const mingw_preprocessor_mod = b.addModule("preprocessor", .{
+    const mingw_preprocessor_mod = b.createModule(.{
         .root_source_file = b.path("src/libs/mingw/Preprocessor.zig"),
         .target = target,
     });

@@ -63,8 +63,8 @@ pub fn build(b: *std.Build) void {
             }),
         });
         if (std.mem.endsWith(u8, tool_src_path, "check_mingw.zig")) {
-            const mingw_preprocessor_mod = b.addModule("preprocessor", .{
-                .root_source_file = b.path("src/libs/mingw/Preprocessor.zig"),
+            const mingw_preprocessor_mod = b.createModule(.{
+                .root_source_file = b.path("../../src/libs/mingw/Preprocessor.zig"),
                 .target = tools_target,
             });
             tool.root_module.addImport("preprocessor", mingw_preprocessor_mod);

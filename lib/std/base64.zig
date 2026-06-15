@@ -293,6 +293,48 @@ pub const Base64Decoder = struct {
             if (padding_chars != padding_len) return error.InvalidPadding;
         }
     }
+
+    pub fn decodeWriter(decoder: *const Base64Decoder, dest_writer: *std.Io.Writer, source: []const u8) !void {
+        var temp: [4]u8 = undefined;
+        var chunker = window(u8, source, 4, 4);
+        while (chunker.next()) |chunk| {
+            const size = try decoder.calcSizeForSlice(chunk);
+            try decoder.decode(&temp, chunk);
+            try dest_writer.writeAll(temp[0..size]);
+        }
+    }
+};
+
+const WindowWithIgnore = struct {
+    const Self = @This();
+
+    reader: std.Io.Reader,
+    decoder: *const Base64DecoderWithIgnore,
+    buffer: [4]u8 = undefined,
+
+    pub fn init(source: []const u8, decoder: *const Base64DecoderWithIgnore) Self {
+        return .{ .reader = .fixed(source), .decoder = decoder };
+    }
+
+    pub fn next(self: *Self) []u8 {
+        var size: usize = 0;
+        while (size < 4) {
+            const byte = self.reader.takeByte() catch |err| switch (err) {
+                error.EndOfStream => {
+                    break;
+                },
+                error.ReadFailed => unreachable,
+            };
+
+            if (self.decoder.char_is_ignored[byte]) {
+                continue;
+            }
+            self.buffer[size] = byte;
+            size += 1;
+        }
+
+        return self.buffer[0..size];
+    }
 };
 
 pub const Base64DecoderWithIgnore = struct {
@@ -324,54 +366,33 @@ pub const Base64DecoderWithIgnore = struct {
         return result;
     }
 
+    const ErrorDecodeWriter = Error || std.Io.Writer.Error;
+
+    pub fn decodeWriter(decoder_with_ignore: *const Base64DecoderWithIgnore, dest: *std.Io.Writer, source: []const u8) ErrorDecodeWriter!void {
+        var chunker = WindowWithIgnore.init(source, decoder_with_ignore);
+        var buffer: [4]u8 = undefined;
+        while (true) {
+            const chunk = chunker.next();
+            if (chunk.len == 0) {
+                return;
+            }
+            const size = try decoder_with_ignore.decoder.calcSizeForSlice(chunk);
+            try decoder_with_ignore.decoder.decode(&buffer, chunk);
+            try dest.writeAll(buffer[0..size]);
+        }
+    }
+
     /// Invalid characters that are not ignored result in error.InvalidCharacter.
     /// Invalid padding results in error.InvalidPadding.
     /// Decoding more data than can fit in dest results in error.NoSpaceLeft. See also ::calcSizeUpperBound.
     /// Returns the number of bytes written to dest.
     pub fn decode(decoder_with_ignore: *const Base64DecoderWithIgnore, dest: []u8, source: []const u8) Error!usize {
-        const decoder = &decoder_with_ignore.decoder;
-        var acc: u12 = 0;
-        var acc_len: u4 = 0;
-        var dest_idx: usize = 0;
-        var leftover_idx: ?usize = null;
-        for (source, 0..) |c, src_idx| {
-            if (decoder_with_ignore.char_is_ignored[c]) continue;
-            const d = decoder.char_to_index[c];
-            if (d == Base64Decoder.invalid_char) {
-                if (decoder.pad_char == null or c != decoder.pad_char.?) return error.InvalidCharacter;
-                leftover_idx = src_idx;
-                break;
-            }
-            acc = (acc << 6) + d;
-            acc_len += 6;
-            if (acc_len >= 8) {
-                if (dest_idx == dest.len) return error.NoSpaceLeft;
-                acc_len -= 8;
-                dest[dest_idx] = @as(u8, @truncate(acc >> acc_len));
-                dest_idx += 1;
-            }
-        }
-        if (acc_len > 4 or (acc & (@as(u12, 1) << acc_len) - 1) != 0) {
-            return error.InvalidPadding;
-        }
-        const padding_len = acc_len / 2;
-        if (leftover_idx == null) {
-            if (decoder.pad_char != null and padding_len != 0) return error.InvalidPadding;
-            return dest_idx;
-        }
-        const leftover = source[leftover_idx.?..];
-        if (decoder.pad_char) |pad_char| {
-            var padding_chars: usize = 0;
-            for (leftover) |c| {
-                if (decoder_with_ignore.char_is_ignored[c]) continue;
-                if (c != pad_char) {
-                    return if (c == Base64Decoder.invalid_char) error.InvalidCharacter else error.InvalidPadding;
-                }
-                padding_chars += 1;
-            }
-            if (padding_chars != padding_len) return error.InvalidPadding;
-        }
-        return dest_idx;
+        var writer = std.Io.Writer.fixed(dest);
+        decoder_with_ignore.decodeWriter(&writer, source) catch |err| switch (err) {
+            error.WriteFailed => return error.NoSpaceLeft,
+            Error.InvalidCharacter, Error.InvalidPadding, Error.NoSpaceLeft => |x| return x,
+        };
+        return writer.end;
     }
 };
 
@@ -511,20 +532,41 @@ fn testAllApis(codecs: Codecs, expected_decoded: []const u8, expected_encoded: [
 
     // Base64Decoder
     {
+        // raw decode
         var buffer: [0x100]u8 = undefined;
         const decoded = buffer[0..try codecs.Decoder.calcSizeForSlice(expected_encoded)];
         try codecs.Decoder.decode(decoded, expected_encoded);
         try testing.expectEqualSlices(u8, expected_decoded, decoded);
     }
+    {
+        // stream decode
+        var buffer: [0x100]u8 = undefined;
+        const decoded = buffer[0..try codecs.Decoder.calcSizeForSlice(expected_encoded)];
+        var writer = std.Io.Writer.fixed(decoded);
+        try codecs.Decoder.decodeWriter(&writer, expected_encoded);
+        try testing.expectEqualSlices(u8, expected_decoded, decoded);
+    }
 
     // Base64DecoderWithIgnore
     {
+        // raw decode
         const decoder_ignore_nothing = codecs.decoderWithIgnore("");
         var buffer: [0x100]u8 = undefined;
         const decoded = buffer[0..decoder_ignore_nothing.calcSizeUpperBound(expected_encoded.len)];
         const written = try decoder_ignore_nothing.decode(decoded, expected_encoded);
         try testing.expect(written <= decoded.len);
         try testing.expectEqualSlices(u8, expected_decoded, decoded[0..written]);
+    }
+    {
+        // stream decode
+        const decoder_ignore_nothing = codecs.decoderWithIgnore("");
+        var buffer: [0x100]u8 = undefined;
+        const calc_size = decoder_ignore_nothing.calcSizeUpperBound(expected_encoded.len);
+        const decoded = buffer[0..calc_size];
+        var writer = std.Io.Writer.fixed(decoded);
+        try decoder_ignore_nothing.decodeWriter(&writer, expected_encoded);
+        try testing.expect(writer.end <= decoded.len);
+        try testing.expectEqualSlices(u8, expected_decoded, writer.buffer[0..writer.end]);
     }
 }
 

@@ -4673,9 +4673,9 @@ fn llvmAddrSpaceInfo(target: *const std.Target) []const AddrSpaceInfo {
         },
         .wasm32, .wasm64 => &.{
             .{ .zig = .generic, .llvm = Builder.AddrSpace.wasm.default, .force_in_data_layout = true },
-            .{ .zig = null, .llvm = Builder.AddrSpace.wasm.variable, .non_integral = true },
-            .{ .zig = null, .llvm = Builder.AddrSpace.wasm.externref, .non_integral = true, .size = 8, .abi = 8 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.wasm.funcref, .non_integral = true, .size = 8, .abi = 8 },
+            .{ .zig = .variable, .llvm = Builder.AddrSpace.wasm.variable, .non_integral = true },
+            .{ .zig = .externref, .llvm = Builder.AddrSpace.wasm.externref, .non_integral = true, .size = 8, .abi = 8 },
+            .{ .zig = .funcref, .llvm = Builder.AddrSpace.wasm.funcref, .non_integral = true, .size = 8, .abi = 8 },
         },
         .m68k => &.{
             .{ .zig = .generic, .llvm = .default, .abi = 16, .pref = 32 },

@@ -630,20 +630,34 @@ pub fn main(init: process.Init.Minimal) !void {
         .sub_path = "zig-out",
     };
 
-    const install_lib_path: Path = if (override_lib_dir) |cwd_relative| .{
-        .root_dir = .cwd(),
-        .sub_path = cwd_relative,
-    } else try install_prefix_path.join(arena, "lib");
+    // Standard installation convention (matching CMake, Autotools, and Meson):
+    // 1. Absolute paths => used as-is.
+    // 2. Relative paths => used as relative to the install prefix (NOT CWD).
+    //
+    // REF: https://github.com/mesonbuild/meson/pull/9903
+    const install_lib_path: Path = if (override_lib_dir) |lib_dir|
+        if (Dir.path.isAbsolute(lib_dir)) .{
+            .root_dir = .cwd(),
+            .sub_path = lib_dir,
+        } else try install_prefix_path.join(arena, lib_dir)
+    else
+        try install_prefix_path.join(arena, "lib");
 
-    const install_bin_path: Path = if (override_bin_dir) |cwd_relative| .{
-        .root_dir = .cwd(),
-        .sub_path = cwd_relative,
-    } else try install_prefix_path.join(arena, "bin");
+    const install_bin_path: Path = if (override_bin_dir) |bin_dir|
+        if (Dir.path.isAbsolute(bin_dir)) .{
+            .root_dir = .cwd(),
+            .sub_path = bin_dir,
+        } else try install_prefix_path.join(arena, bin_dir)
+    else
+        try install_prefix_path.join(arena, "bin");
 
-    const install_include_path: Path = if (override_include_dir) |cwd_relative| .{
-        .root_dir = .cwd(),
-        .sub_path = cwd_relative,
-    } else try install_prefix_path.join(arena, "include");
+    const install_include_path: Path = if (override_include_dir) |include_dir|
+        if (Dir.path.isAbsolute(include_dir)) .{
+            .root_dir = .cwd(),
+            .sub_path = include_dir,
+        } else try install_prefix_path.join(arena, include_dir)
+    else
+        try install_prefix_path.join(arena, "include");
 
     const now = Io.Clock.Timestamp.now(io, .awake);
 

@@ -72,6 +72,8 @@ pub const Os = struct {
 
         tios,
 
+        ashetos,
+
         // LLVM tags deliberately omitted:
         // - bridgeos
         // - cheriotrtos
@@ -215,6 +217,8 @@ pub const Os = struct {
                 .vulkan,
 
                 .tios,
+
+                .ashetos,
                 => .semver,
 
                 .hurd => .hurd,
@@ -696,6 +700,12 @@ pub const Os = struct {
                         .max = .{ .major = 5, .minor = 8, .patch = 4 },
                     },
                 },
+                .ashetos => .{
+                    .semver = .{
+                        .min = .{ .major = 0, .minor = 1, .patch = 0 },
+                        .max = .{ .major = 0, .minor = 1, .patch = 0 },
+                    },
+                },
                 .vulkan => .{
                     .semver = .{
                         .min = .{ .major = 1, .minor = 2, .patch = 0 },
@@ -956,6 +966,8 @@ pub const Abi = enum {
             .psp => .eabihf,
             .vita => .eabihf,
             .wasi, .emscripten => .musl,
+
+            .ashetos => .eabi,
 
             .contiki,
             .hermit,
@@ -2321,6 +2333,7 @@ pub fn requiresLibC(target: *const Target) bool {
         .@"3ds",
         .tios,
         .wiiu,
+        .ashetos,
         => false,
     };
 }
@@ -2449,6 +2462,7 @@ pub const DynamicLinker = struct {
             .tvos,
             .visionos,
             .watchos,
+            .ashetos,
             => .arch_os,
             .hurd,
             .linux,
@@ -2876,6 +2890,8 @@ pub const DynamicLinker = struct {
                 else => none,
             },
 
+            .ashetos => init("KERNEL:/runtime/dynamic-linker"),
+
             // Operating systems in this list have been verified as not having a standard
             // dynamic linker path.
             .freestanding,
@@ -3174,7 +3190,10 @@ pub fn cTypeByteSize(t: *const Target, c_type: CType) u16 {
 
 pub fn cTypeBitSize(target: *const Target, c_type: CType) u16 {
     switch (target.os.tag) {
-        .freestanding, .other => switch (target.cpu.arch) {
+        .freestanding,
+        .other,
+        .ashetos,
+        => switch (target.cpu.arch) {
             .msp430,
             .x86_16,
             => switch (c_type) {

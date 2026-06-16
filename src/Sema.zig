@@ -1241,6 +1241,8 @@ fn analyzeBodyInner(
             .optional_type                => try sema.zirOptionalType(block, inst),
             .ptr_type                     => try sema.zirPtrType(block, inst),
             .ref                          => try sema.zirRef(block, inst),
+            .deref                        => try sema.zirDeref(block, inst),
+            .ref_deref                    => try sema.zirRefDeref(block, inst),
             .shr                          => try sema.zirShr(block, inst, .shr),
             .shr_exact                    => try sema.zirShr(block, inst, .shr_exact),
             .slice_end                    => try sema.zirSliceEnd(block, inst),
@@ -1563,11 +1565,6 @@ fn analyzeBodyInner(
             },
             .validate_ptr_array_init => {
                 try sema.zirValidatePtrArrayInit(block, inst);
-                i += 1;
-                continue;
-            },
-            .validate_deref => {
-                try sema.zirValidateDeref(block, inst);
                 i += 1;
                 continue;
             },
@@ -3080,6 +3077,69 @@ fn zirRef(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.Ins
     const inst_data = sema.code.instructions.items(.data)[@intFromEnum(inst)].un_tok;
     const operand = sema.resolveInst(inst_data.operand);
     return sema.analyzeRef(block, block.tokenOffset(inst_data.src_tok), operand, .none);
+}
+
+fn zirDeref(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.Inst.Ref {
+    const inst_data = sema.code.instructions.items(.data)[@intFromEnum(inst)].un_node;
+    const src = block.nodeOffset(inst_data.src_node);
+    const ptr_src = block.src(.{ .node_offset_deref_ptr = inst_data.src_node });
+    const operand = sema.resolveInst(inst_data.operand);
+
+    try sema.validateDeref(block, src, operand, sema.typeOf(operand));
+
+    return sema.analyzeLoad(block, src, operand, ptr_src);
+}
+
+fn zirRefDeref(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.Inst.Ref {
+    const pt = sema.pt;
+    const zcu = pt.zcu;
+    const inst_data = sema.code.instructions.items(.data)[@intFromEnum(inst)].un_node;
+    const src = block.nodeOffset(inst_data.src_node);
+    const ptr_src = block.src(.{ .node_offset_deref_ptr = inst_data.src_node });
+    const operand = sema.resolveInst(inst_data.operand);
+    const operand_ty = sema.typeOf(operand);
+
+    try sema.validateDeref(block, src, operand, operand_ty);
+
+    const ptr_info = operand_ty.ptrInfo(zcu);
+    return switch (ptr_info.flags.size) {
+        .many, .slice => unreachable, // cannot be dereferenced
+        .c => ptr: {
+            var single_ptr_flags = ptr_info.flags;
+            single_ptr_flags.size = .one;
+            single_ptr_flags.is_allowzero = false;
+            const single_ptr_ty = try pt.ptrType(.{
+                .child = ptr_info.child,
+                .flags = single_ptr_flags,
+            });
+            break :ptr try sema.coerceCompatiblePtrs(block, single_ptr_ty, operand, ptr_src);
+        },
+        .one => operand,
+    };
+}
+
+fn validateDeref(
+    sema: *Sema,
+    block: *Block,
+    src: LazySrcLoc,
+    ref: Air.Inst.Ref,
+    ty: Type,
+) CompileError!void {
+    const pt = sema.pt;
+    const zcu = pt.zcu;
+    if (ty.zigTypeTag(zcu) != .pointer) {
+        return sema.fail(block, src, "cannot dereference non-pointer type '{f}'", .{ty.fmt(pt)});
+    } else switch (ty.ptrSize(zcu)) {
+        .one, .c => {},
+        .many => return sema.fail(block, src, "index syntax required for unknown-length pointer type '{f}'", .{ty.fmt(pt)}),
+        .slice => return sema.fail(block, src, "index syntax required for slice type '{f}'", .{ty.fmt(pt)}),
+    }
+    if (sema.resolveValue(ref)) |val| {
+        // Error for deref of undef pointer, unless the pointee is OPV in which case it's legal.
+        if (val.isUndef(zcu) and ty.childType(zcu).classify(zcu) != .one_possible_value) {
+            return sema.fail(block, src, "cannot dereference undefined value", .{});
+        }
+    }
 }
 
 fn zirEnsureResultUsed(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!void {
@@ -4603,30 +4663,6 @@ fn zirValidatePtrArrayInit(
         },
 
         else => unreachable,
-    }
-}
-
-fn zirValidateDeref(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!void {
-    const pt = sema.pt;
-    const zcu = pt.zcu;
-    const inst_data = sema.code.instructions.items(.data)[@intFromEnum(inst)].un_node;
-    const src = block.nodeOffset(inst_data.src_node);
-    const operand = sema.resolveInst(inst_data.operand);
-    const operand_ty = sema.typeOf(operand);
-
-    if (operand_ty.zigTypeTag(zcu) != .pointer) {
-        return sema.fail(block, src, "cannot dereference non-pointer type '{f}'", .{operand_ty.fmt(pt)});
-    } else switch (operand_ty.ptrSize(zcu)) {
-        .one, .c => {},
-        .many => return sema.fail(block, src, "index syntax required for unknown-length pointer type '{f}'", .{operand_ty.fmt(pt)}),
-        .slice => return sema.fail(block, src, "index syntax required for slice type '{f}'", .{operand_ty.fmt(pt)}),
-    }
-
-    if (sema.resolveValue(operand)) |val| {
-        // Error for deref of undef pointer, unless the pointee is OPV in which case it's legal.
-        if (val.isUndef(zcu) and operand_ty.childType(zcu).classify(zcu) != .one_possible_value) {
-            return sema.fail(block, src, "cannot dereference undefined value", .{});
-        }
     }
 }
 
@@ -10866,7 +10902,7 @@ fn finishSwitchBr(
 const ValidatedSwitchBlock = struct {
     seen_enum_fields: []const ?LazySrcLoc,
     seen_errors: std.AutoHashMapUnmanaged(InternPool.NullTerminatedString, LazySrcLoc),
-    seen_ranges: []const RangeSet.Range,
+    seen_ranges: std.MultiArrayList(RangeSet.Range).Slice,
     true_src: ?LazySrcLoc,
     false_src: ?LazySrcLoc,
     void_src: ?LazySrcLoc,
@@ -10901,7 +10937,7 @@ const ValidatedSwitchBlock = struct {
         error_names: InternPool.NullTerminatedString.Slice,
         seen_enum_fields: []const ?LazySrcLoc,
         seen_errors: *const std.AutoHashMapUnmanaged(InternPool.NullTerminatedString, LazySrcLoc),
-        seen_ranges: []const RangeSet.Range,
+        seen_ranges: std.MultiArrayList(RangeSet.Range).Slice,
         seen_true: bool,
         seen_false: bool,
         seen_void: bool,
@@ -10938,13 +10974,13 @@ const ValidatedSwitchBlock = struct {
                         else => unreachable,
                     };
                     while (it.next_idx < it.seen_ranges.len and
-                        cur_val.eql(it.seen_ranges[it.next_idx].first, int_ty, zcu))
+                        cur_val.eql(it.seen_ranges.items(.first)[it.next_idx], int_ty, zcu))
                     {
                         defer it.next_idx += 1;
                         const incr = try arith.incrementDefinedInt(
                             sema,
                             int_ty,
-                            it.seen_ranges[it.next_idx].last,
+                            it.seen_ranges.items(.last)[it.next_idx],
                         );
                         if (incr.overflow) {
                             it.next_val = null;
@@ -11432,7 +11468,7 @@ fn validateSwitchBlock(
     return .{
         .seen_enum_fields = seen_enum_fields,
         .seen_errors = seen_errors,
-        .seen_ranges = range_set.ranges.items,
+        .seen_ranges = range_set.ranges.slice(),
         .true_src = true_src,
         .false_src = false_src,
         .void_src = void_src,
@@ -18777,6 +18813,18 @@ fn structInitAnon(
         break :rs runtime_index;
     };
 
+    // A field can't be `comptime` if it references a `comptime var` but the aggregate can still be comptime-known.
+    // Replace these fields with `.none` only for generating the type.
+    const values_no_comptime = if (!any_values) values else blk: {
+        const new_values = try sema.arena.alloc(InternPool.Index, types.len);
+        for (values, new_values) |val, *new_val| {
+            if (val != .none and Value.fromInterned(val).canMutateComptimeVarState(zcu)) {
+                new_val.* = .none;
+            } else new_val.* = val;
+        }
+        break :blk new_values;
+    };
+
     // We treat anonymous struct types as reified types, because there are similarities: they have
     // no captures, and instead use a form of structural equivalence which we can easy represent by
     // hashing the field names/types/values. They also perform layout resolution immediately. These
@@ -18785,7 +18833,7 @@ fn structInitAnon(
     const type_hash: u64 = hash: {
         var hasher = std.hash.Wyhash.init(0);
         hasher.update(std.mem.sliceAsBytes(types));
-        hasher.update(std.mem.sliceAsBytes(values));
+        hasher.update(std.mem.sliceAsBytes(values_no_comptime));
         hasher.update(std.mem.sliceAsBytes(names));
         break :hash hasher.final();
     };
@@ -18809,9 +18857,9 @@ fn structInitAnon(
             @memcpy(wip.field_names.get(ip), names);
             @memcpy(wip.field_types.get(ip), types);
             if (any_values) {
-                @memcpy(wip.field_values.get(ip), values);
+                @memcpy(wip.field_values.get(ip), values_no_comptime);
                 @memset(wip.field_is_comptime_bits.getAll(ip), 0);
-                for (values, 0..) |val, field_index| {
+                for (values_no_comptime, 0..) |val, field_index| {
                     if (val == .none) continue;
                     const bit_bag_index = field_index / 32;
                     const mask = @as(u32, 1) << @intCast(field_index % 32);
@@ -18838,6 +18886,15 @@ fn structInitAnon(
         const struct_val = try pt.aggregateValue(struct_ty, values);
         return sema.addConstantMaybeRef(struct_val, is_ref);
     };
+
+    for (values, 0..) |field_val, i| {
+        if (field_val == .none) continue; // runtime-known
+        const field_src = block.src(.{ .init_elem = .{
+            .init_node_offset = src.offset.node_offset.x,
+            .elem_index = @intCast(i),
+        } });
+        try sema.validateRuntimeValue(block, field_src, .fromIntern(field_val));
+    }
 
     if (is_ref) {
         const target = zcu.getTarget();
@@ -19095,12 +19152,10 @@ fn arrayInitAnon(
         .values = values_no_comptime,
     }));
 
-    const runtime_src = opt_runtime_src orelse {
+    _ = opt_runtime_src orelse {
         const tuple_val = try pt.aggregateValue(tuple_ty, values);
         return sema.addConstantMaybeRef(tuple_val, is_ref);
     };
-
-    try sema.requireRuntimeBlock(block, src, runtime_src);
 
     for (operands, 0..) |operand, i| {
         const operand_src = block.src(.{ .init_elem = .{

@@ -927,15 +927,14 @@ fn expr(gz: *GenZir, scope: *Scope, ri: ResultInfo, node: Ast.Node.Index) InnerE
 
         .deref => {
             const lhs = try expr(gz, scope, .{ .rl = .none }, tree.nodeData(node).node);
-            _ = try gz.addUnNode(.validate_deref, lhs, node);
             switch (ri.rl) {
                 .ref,
                 .ref_coerced_ty,
                 .ref_const,
-                => return lhs,
+                => return gz.addUnNode(.ref_deref, lhs, node),
 
                 else => {
-                    const result = try gz.addUnNode(.load, lhs, node);
+                    const result = try gz.addUnNode(.deref, lhs, node);
                     return rvalue(gz, ri, result, node);
                 },
             }
@@ -2759,6 +2758,8 @@ fn addEnsureResult(gz: *GenZir, maybe_unused_result: Zir.Inst.Ref, statement: As
             .mulwrap,
             .mul_sat,
             .ref,
+            .deref,
+            .ref_deref,
             .shl,
             .shl_sat,
             .shr,
@@ -2932,7 +2933,6 @@ fn addEnsureResult(gz: *GenZir, maybe_unused_result: Zir.Inst.Ref, statement: As
             .memcpy,
             .memset,
             .memmove,
-            .validate_deref,
             .validate_destructure,
             .save_err_ret_index,
             .restore_err_ret_index_unconditional,
@@ -3130,7 +3130,7 @@ fn varDecl(
     }
 
     const align_inst: Zir.Inst.Ref = if (var_decl.ast.align_node.unwrap()) |align_node|
-        try expr(gz, scope, coerced_align_ri, align_node)
+        try comptimeExpr(gz, scope, coerced_align_ri, align_node, .@"align")
     else
         .none;
 
@@ -3477,7 +3477,7 @@ fn assignDestructureMaybeDecls(
                 const this_variable_comptime = is_comptime or (is_const and value_is_comptime);
 
                 const align_inst: Zir.Inst.Ref = if (full_var_decl.ast.align_node.unwrap()) |align_node|
-                    try expr(gz, scope, coerced_align_ri, align_node)
+                    try comptimeExpr(gz, scope, coerced_align_ri, align_node, .@"align")
                 else
                     .none;
 

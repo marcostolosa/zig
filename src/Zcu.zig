@@ -1531,7 +1531,7 @@ pub const SrcLoc = struct {
             .node_offset_deref_ptr => |node_off| {
                 const tree = try src_loc.file_scope.getTree(zcu);
                 const node = node_off.toAbsolute(src_loc.base_node);
-                return tree.nodeToSpan(node);
+                return tree.nodeToSpan(tree.nodeData(node).node);
             },
             .node_offset_asm_source => |node_off| {
                 const tree = try src_loc.file_scope.getTree(zcu);
@@ -4699,6 +4699,7 @@ pub fn callconvSupported(zcu: *Zcu, cc: std.lang.CallingConvention) union(enum) 
         .stage2_spirv => switch (cc) {
             .spirv_device, .spirv_kernel => true,
             .spirv_fragment, .spirv_vertex => target.os.tag == .vulkan or target.os.tag == .opengl,
+            .spirv_task, .spirv_mesh => target.os.tag == .vulkan,
             else => false,
         },
     };

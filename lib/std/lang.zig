@@ -140,7 +140,7 @@ pub const CallingConvention = union(enum(u8)) {
     pub const kernel: CallingConvention = switch (builtin.target.cpu.arch) {
         .amdgcn => .amdgcn_kernel,
         .nvptx, .nvptx64 => .nvptx_kernel,
-        .spirv32, .spirv64 => .spirv_kernel,
+        .spirv32, .spirv64 => .{ .spirv_kernel = .{ .x = 1, .y = 1, .z = 1 } },
         else => unreachable,
     };
 
@@ -337,11 +337,13 @@ pub const CallingConvention = union(enum(u8)) {
     nvptx_device,
     nvptx_kernel,
 
-    // Calling conventions for kernels and shaders on the `spirv`, `spirv32`, and `spirv64` architectures.
+    // Calling conventions for kernels and shaders on the `spirv32` and `spirv64` architectures.
     spirv_device,
-    spirv_kernel,
-    spirv_fragment,
     spirv_vertex,
+    spirv_kernel: SpirvKernelOptions,
+    spirv_fragment: SpirvFragmentOptions,
+    spirv_task: SpirvKernelOptions,
+    spirv_mesh: SpirvMeshOptions,
 
     // Calling conventions for the `ez80` architecture.
     ez80_cet,
@@ -471,6 +473,36 @@ pub const CallingConvention = union(enum(u8)) {
             /// Save all registers using the CPU's fast register bank.
             bank,
         };
+    };
+
+    pub const SpirvKernelOptions = struct {
+        x: u32,
+        y: u32,
+        z: u32,
+    };
+
+    pub const SpirvFragmentOptions = struct {
+        pub const DepthAssumption = enum(u2) {
+            none = 0,
+            greater = 1,
+            less = 2,
+            unchanged = 3,
+        };
+
+        pixel_centered_integer: bool = false,
+        depth_assumption: DepthAssumption = .none,
+    };
+
+    pub const SpirvMeshOptions = struct {
+        pub const StageOutput = enum(u2) {
+            output_points = 0,
+            output_lines = 1,
+            output_triangles = 2,
+        };
+
+        stage_output: StageOutput = .output_triangles,
+        max_primitives: u32 = 1,
+        max_vertices: u32 = 3,
     };
 
     /// Returns the array of `std.Target.Cpu.Arch` to which this `CallingConvention` applies.
@@ -968,10 +1000,9 @@ pub const VaListArm = extern struct {
 /// This data structure is used by the Zig language code generation and
 /// therefore must be kept in sync with the compiler implementation.
 pub const VaListHexagon = extern struct {
-    __gpr: c_long,
-    __fpr: c_long,
-    __overflow_arg_area: *anyopaque,
-    __reg_save_area: *anyopaque,
+    __current_saved_reg_area_pointer: *anyopaque,
+    __saved_reg_area_end_pointer: *anyopaque,
+    __overflow_area_pointer: *anyopaque,
 };
 
 /// This data structure is used by the Zig language code generation and
@@ -987,9 +1018,10 @@ pub const VaListPowerPc = extern struct {
 /// This data structure is used by the Zig language code generation and
 /// therefore must be kept in sync with the compiler implementation.
 pub const VaListS390x = extern struct {
-    __current_saved_reg_area_pointer: *anyopaque,
-    __saved_reg_area_end_pointer: *anyopaque,
-    __overflow_area_pointer: *anyopaque,
+    __gpr: c_long,
+    __fpr: c_long,
+    __overflow_arg_area: *anyopaque,
+    __reg_save_area: *anyopaque,
 };
 
 /// This data structure is used by the Zig language code generation and

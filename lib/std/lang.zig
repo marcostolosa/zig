@@ -1169,11 +1169,12 @@ pub const ExternOptions = struct {
 
     pub const Decoration = union(enum) {
         location: u32,
+        flat: u32,
         descriptor: Descriptor,
 
         pub const Descriptor = struct {
-            binding: u32,
             set: u32,
+            binding: u32,
         };
     };
 

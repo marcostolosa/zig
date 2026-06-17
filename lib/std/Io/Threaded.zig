@@ -1563,7 +1563,7 @@ pub const splat_buffer_size = 64;
 /// NtWaitForMultipleObjects accepts. We use this value also for poll() on
 /// posix systems.
 const poll_buffer_len = 64;
-pub const default_PATH = "/usr/local/bin:/bin/:/usr/bin";
+pub const default_PATH = "/usr/local/bin:/bin:/usr/bin";
 /// There are multiple kernel bugs being worked around with retries.
 const max_windows_kernel_bug_retries = 13;
 
@@ -13704,7 +13704,7 @@ fn netLookupFallible(
         // Check for equal to "localhost(.)" or ends in ".localhost(.)"
         const localhost = if (name[name.len - 1] == '.') "localhost." else "localhost";
         if (std.mem.endsWith(u8, name, localhost) and
-            (name.len == localhost.len or name[name.len - localhost.len] == '.'))
+            (name.len == localhost.len or name[name.len - localhost.len - 1] == '.'))
         {
             var results_buffer: [3]HostName.LookupResult = undefined;
             var results_index: usize = 0;

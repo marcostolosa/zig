@@ -2331,7 +2331,6 @@ pub fn supportsAddressSpace(
     const is_nvptx = arch.isNvptx();
     const is_spirv = arch.isSpirV();
     const is_gpu = is_nvptx or is_spirv or arch == .amdgcn;
-    const is_wasm = arch.isWasm();
 
     return switch (address_space) {
         .generic => true,
@@ -2348,7 +2347,7 @@ pub fn supportsAddressSpace(
             (is_spirv and (context == null or context == .constant or context == .pointer)),
         .param => is_nvptx,
         .input, .output, .uniform, .push_constant, .storage_buffer, .physical_storage_buffer => is_spirv,
-        .variable, .externref, .funcref => is_wasm,
+        .variable, .externref, .funcref => target.cpu.has(.wasm, .reference_tyoes),
     };
 }
 

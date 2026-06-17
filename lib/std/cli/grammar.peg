@@ -124,7 +124,6 @@ OptionValue <- STRING
 
 
 # A short-cluster is a group of single-character aliases for long options.
-# The following examples come from full command-line:
 #
 # Example:"x" is a ShortNoArg in .{"tar", "-xvf", "files.tar.gz"}
 # Example: "v" is a ShortNoArg in .{"tar", "-xvf", "files.tar.gz"}

@@ -54,7 +54,11 @@ pub const Command = struct {
 };
 
 pub const Argument = struct {
-    field: std.builtin.Type.StructField,
+    /// Field name in the Parsed.args struct.
+    name: [:0]const u8,
+    /// Type of field in Parsed.args.
+    type: type,
+    attrs: std.builtin.Type.Struct.FieldAttributes,
     count: Count,
     /// The single-line help sentence next to each option in a list of options.
     help: [:0]const u8,
@@ -115,12 +119,12 @@ pub const Argument = struct {
         };
 
         return .{
-            .field = .{
-                .name = @tagName(name),
-                .type = T,
+            .name = @tagName(name),
+            .type = T,
+            .attrs = .{
                 .default_value_ptr = default_value_ptr,
-                .alignment = null,
-                .is_comptime = false,
+                .@"align" = null,
+                .@"comptime" = false,
             },
             .count = options.count,
             .help = options.help,
@@ -129,7 +133,7 @@ pub const Argument = struct {
     }
 
     pub inline fn isOptional(comptime self: Argument) bool {
-        return @typeInfo(self.field.type) == .optional or self.field.defaultValue() != null;
+        return @typeInfo(self.type) == .optional or self.attrs.defaultValue(self.type) != null;
     }
 };
 
@@ -142,14 +146,14 @@ pub fn Parsed(comptime command: Command) type {
         const num_args = command.named_args.len + command.positional_args.len;
         var field_types: [num_args]type = undefined;
         var field_names: [num_args][]const u8 = undefined;
-        var field_attrs: [num_args]std.builtin.Type.StructField.Attributes = undefined;
+        var field_attrs: [num_args]std.builtin.Type.Struct.FieldAttributes = undefined;
         inline for (&field_types, &field_names, &field_attrs, command.named_args ++ command.positional_args) |*field_type, *field_name, *field_attr, arg| {
-            field_type.* = arg.field.type;
-            field_name.* = arg.field.name;
+            field_type.* = arg.type;
+            field_name.* = arg.name;
             field_attr.* = .{
-                .@"comptime" = arg.field.is_comptime,
-                .@"align" = arg.field.alignment,
-                .default_value_ptr = arg.field.default_value_ptr,
+                .@"comptime" = arg.attrs.@"comptime",
+                .@"align" = arg.attrs.@"align",
+                .default_value_ptr = arg.attrs.default_value_ptr,
             };
         }
         break :blk @Struct(
@@ -168,7 +172,7 @@ pub fn Parsed(comptime command: Command) type {
             field_type.* = Parsed(subcommand);
             field_name.* = @tagName(subcommand.name);
         }
-        const field_attrs: [command.subcommands.len]std.builtin.Type.UnionField.Attributes = @splat(.{});
+        const field_attrs: [command.subcommands.len]std.builtin.Type.Union.FieldAttributes = @splat(.{});
         const bits = if (field_names.len != 0) std.math.log2_int_ceil(usize, field_names.len) else 0;
         const TagInt = @Int(.unsigned, bits);
         comptime var field_values: [field_names.len]TagInt = undefined;
@@ -421,7 +425,7 @@ test parseRequiresAlloc {
 
 fn validateCommand(comptime command: Command) void {
     inline for (command.named_args) |arg| {
-        if (std.mem.eql(u8, arg.field.name, "help")) {
+        if (std.mem.eql(u8, arg.name, "help")) {
             @compileError("named argument --help is reserved by the parser and may not be used.");
         }
         if (arg.short == 'h') {
@@ -433,7 +437,7 @@ fn validateCommand(comptime command: Command) void {
     var seen_optional = false;
     inline for (command.positional_args) |arg| {
         if (seen_optional and !arg.isOptional()) {
-            @compileError("Optional positional arguments must follow required positional arguments. Offender: " ++ arg.field.name);
+            @compileError("Optional positional arguments must follow required positional arguments. Offender: " ++ arg.name);
         }
         if (arg.isOptional()) {
             seen_optional = true;
@@ -443,14 +447,14 @@ fn validateCommand(comptime command: Command) void {
     // Multiple optional positionals makes parsing ambiguous.
     var last_optional_positional: ?[]const u8 = null;
     inline for (command.positional_args) |arg| {
-        if (arg.field.defaultValue() != null) {
+        if (arg.attrs.defaultValue(arg.type) != null) {
             if (last_optional_positional) |other_optional_positional_name| {
                 @compileError("multiple optional positional arguments is prohibited. Offenders: " ++
                     other_optional_positional_name ++
                     " " ++
-                    arg.field.name);
+                    arg.name);
             }
-            last_optional_positional = arg.field.name;
+            last_optional_positional = arg.name;
         }
     }
 
@@ -462,16 +466,16 @@ fn validateCommand(comptime command: Command) void {
                 @compileError("multiple unlimited positional arguments is prohibited. Offenders: " ++
                     other_positional_unlimited_name ++
                     ", " ++
-                    arg.field.name);
+                    arg.name);
             }
-            last_positional_unlimited = arg.field.name;
+            last_positional_unlimited = arg.name;
         }
     }
 
     // Unlimited positional arguments must be the last argument.
     inline for (command.positional_args, 0..) |arg, i| {
         if (arg.count == .unlimited and i + 1 != command.positional_args.len) {
-            @compileError("Unlimited positional argument must be the last positional argument. Offender: " ++ arg.field.name);
+            @compileError("Unlimited positional argument must be the last positional argument. Offender: " ++ arg.name);
         }
     }
 
@@ -481,9 +485,9 @@ fn validateCommand(comptime command: Command) void {
             if (i == j) continue;
             if (lhs_arg.short != null and rhs_arg.short != null and lhs_arg.short.? == rhs_arg.short.?) {
                 @compileError("Arguments with the same shorthand are prohibited. Offenders: " ++
-                    "--" ++ lhs_arg.field.name ++ " (-" ++ [_]u8{lhs_arg.short.?} ++
+                    "--" ++ lhs_arg.name ++ " (-" ++ [_]u8{lhs_arg.short.?} ++
                     "), " ++
-                    "--" ++ rhs_arg.field.name ++ " (-" ++ [_]u8{rhs_arg.short.?} ++ ")");
+                    "--" ++ rhs_arg.name ++ " (-" ++ [_]u8{rhs_arg.short.?} ++ ")");
             }
         }
     }
@@ -492,7 +496,7 @@ fn validateCommand(comptime command: Command) void {
     inline for (command.positional_args ++ command.named_args) |arg| {
         if (arg.short) |short| {
             if (short == '-') {
-                @compileError("Argument with shorthand \"-\" is prohibited. Offender: " ++ "--" ++ arg.field.name);
+                @compileError("Argument with shorthand \"-\" is prohibited. Offender: " ++ "--" ++ arg.name);
             }
         }
     }
@@ -627,9 +631,9 @@ pub fn writeCommandGeneratedHelp(
         try out.writeAll("\n");
         try out.writeAll("POSITIONAL ARGUMENTS\n");
         inline for (command.positional_args) |positional| {
-            try out.print("  {s}\n", .{positional.field.name});
+            try out.print("  {s}\n", .{positional.name});
             if (positional.help.len > 0) try writeIndented(positional.help, 4, out);
-            if (positional.field.defaultValue()) |default_value| {
+            if (positional.attrs.defaultValue(positional.type)) |default_value| {
                 if (@typeInfo(@TypeOf(default_value)) != .optional) {
                     try out.writeAll("    Default:");
                     try writeArgumentDefaultValue(positional, out);
@@ -646,20 +650,20 @@ pub fn writeCommandGeneratedHelp(
     inline for (command.named_args) |named| {
         try out.writeAll("\n");
         const Value = switch (named.count) {
-            .one => named.field.type,
-            .unlimited => std.meta.Child(named.field.type),
+            .one => named.type,
+            .unlimited => std.meta.Child(named.type),
         };
         if (named.short) |short| try out.print("  -{c}, ", .{short}) else try out.writeAll("  ");
         if (@typeInfo(Value) == .bool) {
-            try out.print("--{s}, --no-{s}\n", .{ named.field.name, named.field.name });
+            try out.print("--{s}, --no-{s}\n", .{ named.name, named.name });
         } else {
             switch (@typeInfo(Value)) {
-                .@"enum" => try out.print("--{s} {{{s}}}\n", .{ named.field.name, helpTypeName(Value) }),
-                else => try out.print("--{s} <{s}>\n", .{ named.field.name, helpTypeName(Value) }),
+                .@"enum" => try out.print("--{s} {{{s}}}\n", .{ named.name, helpTypeName(Value) }),
+                else => try out.print("--{s} <{s}>\n", .{ named.name, helpTypeName(Value) }),
             }
         }
         if (named.help.len > 0) try writeIndented(named.help, 4, out);
-        if (named.field.defaultValue()) |default_value| {
+        if (named.attrs.defaultValue(named.type)) |default_value| {
             if (@typeInfo(@TypeOf(default_value)) != .optional) {
                 try out.writeAll("    Default:");
                 try writeArgumentDefaultValue(named, out);
@@ -715,7 +719,7 @@ pub fn writeCommandUsage(
                 s = s ++ if (positional.isOptional()) "[" else "<";
                 defer s = s ++ if (positional.isOptional()) "]" else ">";
 
-                s = s ++ positional.field.name;
+                s = s ++ positional.name;
                 switch (positional.count) {
                     .one => {},
                     .unlimited => s = s ++ " ...",
@@ -792,15 +796,15 @@ fn UnlimitedArgStruct(comptime command: Command) type {
 
     var field_types: [num_unlimited]type = undefined;
     var field_names: [num_unlimited][]const u8 = undefined;
-    var field_attrs: [num_unlimited]std.builtin.Type.StructField.Attributes = undefined;
+    var field_attrs: [num_unlimited]std.builtin.Type.Struct.FieldAttributes = undefined;
 
     var num_populated: usize = 0;
     inline for (command.named_args ++ command.positional_args) |arg| {
         switch (arg.count) {
             .unlimited => {
-                field_types[num_populated] = std.ArrayList(std.meta.Child(arg.field.type));
-                field_names[num_populated] = arg.field.name;
-                field_attrs[num_populated] = .{ .default_value_ptr = &std.ArrayList(std.meta.Child(arg.field.type)).empty };
+                field_types[num_populated] = std.ArrayList(std.meta.Child(arg.type));
+                field_names[num_populated] = arg.name;
+                field_attrs[num_populated] = .{ .default_value_ptr = &std.ArrayList(std.meta.Child(arg.type)).empty };
                 num_populated += 1;
             },
             .one => continue,
@@ -826,9 +830,9 @@ fn DefinedArgStruct(comptime command: Command) type {
     const num_args = command.named_args.len + command.positional_args.len;
     var field_types: [num_args]type = @splat(Defined);
     var field_names: [num_args][]const u8 = undefined;
-    var field_attrs: [num_args]std.builtin.Type.StructField.Attributes = @splat(.{ .default_value_ptr = &Defined.undefined });
+    var field_attrs: [num_args]std.builtin.Type.Struct.FieldAttributes = @splat(.{ .default_value_ptr = &Defined.undefined });
     inline for (command.named_args ++ command.positional_args, &field_names) |arg, *field_name| {
-        field_name.* = arg.field.name;
+        field_name.* = arg.name;
     }
     return @Struct(
         .auto,
@@ -870,8 +874,8 @@ fn parseRecursive(
     // args with default values are not required so they are filled in here first.
     // If found during parsing later, the default values are overwritten with the user-provided values.
     inline for (command.named_args ++ command.positional_args) |arg| {
-        @field(result_args, arg.field.name) = arg.field.defaultValue() orelse continue;
-        @field(defined, arg.field.name) = .defined;
+        @field(result_args, arg.name) = arg.attrs.defaultValue(arg.type) orelse continue;
+        @field(defined, arg.name) = .defined;
     }
 
     var began_forced_positional: bool = false;
@@ -891,15 +895,15 @@ fn parseRecursive(
             // long args, like "--verbose"
             inline for (command.named_args) |arg| {
                 const Value = switch (arg.count) {
-                    .one => arg.field.type,
-                    .unlimited => std.meta.Child(arg.field.type),
+                    .one => arg.type,
+                    .unlimited => std.meta.Child(arg.type),
                 };
                 var value: union(enum) { found: Value, not_found } = .not_found;
 
-                const long_token: []const u8 = "--" ++ arg.field.name; // like "--verbose"
+                const long_token: []const u8 = "--" ++ arg.name; // like "--verbose"
 
                 if (@typeInfo(Value) == .bool) {
-                    const no_long_token: []const u8 = "--no-" ++ arg.field.name; // like "--no-verbose"
+                    const no_long_token: []const u8 = "--no-" ++ arg.name; // like "--no-verbose"
 
                     if (std.mem.eql(u8, os_arg, long_token)) {
                         value = .{ .found = true };
@@ -926,10 +930,10 @@ fn parseRecursive(
                 switch (value) {
                     .found => |found_value| {
                         switch (arg.count) {
-                            .one => @field(result_args, arg.field.name) = found_value,
-                            .unlimited => try @field(unlimited_args, arg.field.name).append(maybe_arena, found_value),
+                            .one => @field(result_args, arg.name) = found_value,
+                            .unlimited => try @field(unlimited_args, arg.name).append(maybe_arena, found_value),
                         }
-                        @field(defined, arg.field.name) = .defined;
+                        @field(defined, arg.name) = .defined;
                         continue :next_os_arg;
                     },
                     .not_found => {},
@@ -951,25 +955,25 @@ fn parseRecursive(
                         const short = arg.short orelse continue;
                         if (char == short) {
                             const Value = switch (arg.count) {
-                                .one => arg.field.type,
-                                .unlimited => std.meta.Child(arg.field.type),
+                                .one => arg.type,
+                                .unlimited => std.meta.Child(arg.type),
                             };
 
                             if (@typeInfo(Value) == .bool) {
                                 switch (arg.count) {
-                                    .one => @field(result_args, arg.field.name) = true,
-                                    .unlimited => try @field(unlimited_args, arg.field.name).append(maybe_arena, true),
+                                    .one => @field(result_args, arg.name) = true,
+                                    .unlimited => try @field(unlimited_args, arg.name).append(maybe_arena, true),
                                 }
-                                @field(defined, arg.field.name) = .defined;
+                                @field(defined, arg.name) = .defined;
                                 continue :next_char;
                             } else {
                                 if (!is_last) return usageErrorExit(options, "Short flag: {c} requires a value, so it must be in the last position of the short cluster: -{s}.", .{ short, suffix });
                                 const value = try parseValue(options, Value, iter.next() orelse return usageErrorExit(options, "Missing argument for option: {c} in short cluster: -{s}", .{ short, suffix }));
                                 switch (arg.count) {
-                                    .one => @field(result_args, arg.field.name) = value,
-                                    .unlimited => try @field(unlimited_args, arg.field.name).append(maybe_arena, value),
+                                    .one => @field(result_args, arg.name) = value,
+                                    .unlimited => try @field(unlimited_args, arg.name).append(maybe_arena, value),
                                 }
-                                @field(defined, arg.field.name) = .defined;
+                                @field(defined, arg.name) = .defined;
 
                                 assert(is_last);
                                 continue :next_os_arg;
@@ -999,18 +1003,18 @@ fn parseRecursive(
             if (i == positional_idx) {
                 switch (arg.count) {
                     .one => {
-                        const value = try parseValue(options, arg.field.type, os_arg);
-                        @field(result_args, arg.field.name) = value;
-                        @field(defined, arg.field.name) = .defined;
+                        const value = try parseValue(options, arg.type, os_arg);
+                        @field(result_args, arg.name) = value;
+                        @field(defined, arg.name) = .defined;
                         positional_idx += 1;
                         continue :next_os_arg;
                     },
                     .unlimited => {
                         comptime assert(i + 1 == command.positional_args.len); // unlimited positional must be last
                         // note: incrementing positional_idx during unlimited arg parsing is useless
-                        const value = try parseValue(options, std.meta.Child(arg.field.type), os_arg);
-                        try @field(unlimited_args, arg.field.name).append(maybe_arena, value);
-                        @field(defined, arg.field.name) = .defined;
+                        const value = try parseValue(options, std.meta.Child(arg.type), os_arg);
+                        try @field(unlimited_args, arg.name).append(maybe_arena, value);
+                        @field(defined, arg.name) = .defined;
 
                         continue :next_os_arg;
                     },
@@ -1026,13 +1030,13 @@ fn parseRecursive(
             .defined => {},
             .undefined => {
                 inline for (command.named_args) |arg| {
-                    if (comptime std.mem.eql(u8, arg.field.name, arg_name)) {
-                        return usageErrorExit(options, "missing required named argument: {s}", .{"--" ++ arg.field.name});
+                    if (comptime std.mem.eql(u8, arg.name, arg_name)) {
+                        return usageErrorExit(options, "missing required named argument: {s}", .{"--" ++ arg.name});
                     }
                 }
                 inline for (command.positional_args) |arg| {
-                    if (comptime std.mem.eql(u8, arg.field.name, arg_name)) {
-                        return usageErrorExit(options, "missing required positional argument: {s}", .{arg.field.name});
+                    if (comptime std.mem.eql(u8, arg.name, arg_name)) {
+                        return usageErrorExit(options, "missing required positional argument: {s}", .{arg.name});
                     }
                 }
                 comptime unreachable;
@@ -1121,12 +1125,12 @@ fn helpTypeName(comptime T: type) [:0]const u8 {
         },
         .@"enum" => |info| blk: {
             comptime var s: [:0]const u8 = "";
-            inline for (info.fields, 0..) |field, i| {
+            inline for (info.field_names, 0..) |field_name, i| {
                 if (i == 0) {
-                    s = s ++ field.name;
+                    s = s ++ field_name;
                     continue;
                 }
-                s = s ++ "|" ++ field.name;
+                s = s ++ "|" ++ field_name;
             }
             break :blk s;
         },
@@ -1136,7 +1140,7 @@ fn helpTypeName(comptime T: type) [:0]const u8 {
 }
 
 fn writeArgumentDefaultValue(comptime arg: Argument, out: *std.Io.Writer) std.Io.Writer.Error!void {
-    const default_value = arg.field.defaultValue() orelse comptime unreachable;
+    const default_value = arg.attrs.defaultValue(arg.type) orelse comptime unreachable;
     switch (arg.count) {
         .one => {
             try out.writeAll(" ");

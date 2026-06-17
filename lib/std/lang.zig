@@ -569,7 +569,6 @@ pub const AddressSpace = enum(u5) {
     lut,
 
     // Web Assembly
-    variable,
     externref,
     funcref,
 };

@@ -9842,7 +9842,7 @@ fn fileReadStreamingWindows(file: File, data: []const []u8) File.ReadStreamingEr
             else => |status| iosb.u.Status = status,
         }
     } else {
-        const syscall: Syscall = try .start();
+        const alertable_syscall: AlertableSyscall = try .start();
         while (true) switch (windows.ntdll.NtReadFile(
             file.handle,
             null, // event
@@ -9854,13 +9854,24 @@ fn fileReadStreamingWindows(file: File, data: []const []u8) File.ReadStreamingEr
             null, // byte offset
             null, // key
         )) {
-            .PENDING => unreachable, // unrecoverable: wrong File nonblocking flag
+            .PENDING => {
+                const infinite_timeout: windows.LARGE_INTEGER = std.math.minInt(windows.LARGE_INTEGER);
+                while (true) switch (windows.ntdll.NtWaitForSingleObject(file.handle, .TRUE, &infinite_timeout)) {
+                    .SUCCESS => break alertable_syscall.finish(),
+                    .USER_APC, .ALERTED, .TIMEOUT => {
+                        try alertable_syscall.checkCancel();
+                        continue;
+                    },
+                    else => |status| return alertable_syscall.unexpectedNtstatus(status),
+                };
+                break;
+            },
             .CANCELLED => {
-                try syscall.checkCancel();
+                try alertable_syscall.checkCancel();
                 continue;
             },
             else => |status| {
-                syscall.finish();
+                alertable_syscall.finish();
                 iosb.u.Status = status;
                 break;
             },
@@ -15321,7 +15332,7 @@ fn childKillWindows(t: *Threaded, child: *process.Child, exit_code: windows.UINT
             // sure the process is really no longer running:
             const minimal_timeout: windows.LARGE_INTEGER = -1;
             return switch (windows.ntdll.NtWaitForSingleObject(handle, .FALSE, &minimal_timeout)) {
-                windows.NTSTATUS.WAIT_0 => error.AlreadyTerminated,
+                .SUCCESS => error.AlreadyTerminated,
                 else => error.AccessDenied,
             };
         },
@@ -15335,7 +15346,7 @@ fn childWaitWindows(child: *process.Child) process.Child.WaitError!process.Child
     const alertable_syscall: AlertableSyscall = try .start();
     const infinite_timeout: windows.LARGE_INTEGER = std.math.minInt(windows.LARGE_INTEGER);
     while (true) switch (windows.ntdll.NtWaitForSingleObject(handle, .TRUE, &infinite_timeout)) {
-        windows.NTSTATUS.WAIT_0 => break alertable_syscall.finish(),
+        .SUCCESS => break alertable_syscall.finish(),
         .USER_APC, .ALERTED, .TIMEOUT => {
             try alertable_syscall.checkCancel();
             continue;

@@ -5,8 +5,10 @@ const intFromFloat = @import("./int_from_float.zig").intFromFloat;
 comptime {
     if (compiler_rt.want_ppc_abi) {
         symbol(&__fixunstfsi, "__fixunskfsi");
-    } else if (compiler_rt.want_sparc_abi) {
+    } else if (compiler_rt.want_sparc64_abi) {
         symbol(&_Qp_qtoui, "_Qp_qtoui");
+    } else if (compiler_rt.want_sparc32_abi) {
+        symbol(&_Q_qtou, "_Q_qtou");
     }
     symbol(&__fixunstfsi, "__fixunstfsi");
 }
@@ -16,5 +18,9 @@ pub fn __fixunstfsi(a: f128) callconv(.c) u32 {
 }
 
 fn _Qp_qtoui(a: *const f128) callconv(.c) u32 {
+    return intFromFloat(u32, a.*);
+}
+
+fn _Q_qtou(a: *const f128) callconv(.c) u32 {
     return intFromFloat(u32, a.*);
 }

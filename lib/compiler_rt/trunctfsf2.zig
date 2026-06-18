@@ -5,8 +5,10 @@ const symbol = @import("../compiler_rt.zig").symbol;
 comptime {
     if (compiler_rt.want_ppc_abi) {
         symbol(&__trunctfsf2, "__trunckfsf2");
-    } else if (compiler_rt.want_sparc_abi) {
+    } else if (compiler_rt.want_sparc64_abi) {
         symbol(&_Qp_qtos, "_Qp_qtos");
+    } else if (compiler_rt.want_sparc32_abi) {
+        symbol(&_Q_qtos, "_Q_qtos");
     }
     symbol(&__trunctfsf2, "__trunctfsf2");
 }
@@ -16,5 +18,9 @@ pub fn __trunctfsf2(a: f128) callconv(.c) f32 {
 }
 
 fn _Qp_qtos(a: *const f128) callconv(.c) f32 {
+    return truncf(f32, f128, a.*);
+}
+
+fn _Q_qtos(a: *const f128) callconv(.c) f32 {
     return truncf(f32, f128, a.*);
 }

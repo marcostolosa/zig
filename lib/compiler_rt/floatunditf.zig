@@ -5,8 +5,10 @@ const floatFromInt = @import("./float_from_int.zig").floatFromInt;
 comptime {
     if (compiler_rt.want_ppc_abi) {
         symbol(&__floatunditf, "__floatundikf");
-    } else if (compiler_rt.want_sparc_abi) {
+    } else if (compiler_rt.want_sparc64_abi) {
         symbol(&_Qp_uxtoq, "_Qp_uxtoq");
+    } else if (compiler_rt.want_sparc32_abi) {
+        @export(&_Q_ulltoq, "_Q_ulltoq");
     }
     symbol(&__floatunditf, "__floatunditf");
 }
@@ -16,5 +18,9 @@ pub fn __floatunditf(a: u64) callconv(.c) f128 {
 }
 
 fn _Qp_uxtoq(c: *f128, a: u64) callconv(.c) void {
+    c.* = floatFromInt(f128, a);
+}
+
+fn _Q_ulltoq(c: *f128, a: u64) callconv(.c) void {
     c.* = floatFromInt(f128, a);
 }

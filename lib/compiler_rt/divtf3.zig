@@ -9,8 +9,10 @@ const wideMultiply = compiler_rt.wideMultiply;
 comptime {
     if (compiler_rt.want_ppc_abi) {
         symbol(&__divtf3, "__divkf3");
-    } else if (compiler_rt.want_sparc_abi) {
+    } else if (compiler_rt.want_sparc64_abi) {
         symbol(&_Qp_div, "_Qp_div");
+    } else if (compiler_rt.want_sparc32_abi) {
+        symbol(&_Q_div, "_Q_div");
     }
     symbol(&__divtf3, "__divtf3");
 }
@@ -20,6 +22,10 @@ pub fn __divtf3(a: f128, b: f128) callconv(.c) f128 {
 }
 
 fn _Qp_div(c: *f128, a: *const f128, b: *const f128) callconv(.c) void {
+    c.* = div(a.*, b.*);
+}
+
+fn _Q_div(c: *f128, a: *const f128, b: *const f128) callconv(.c) void {
     c.* = div(a.*, b.*);
 }
 

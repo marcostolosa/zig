@@ -5,8 +5,10 @@ const symbol = @import("../compiler_rt.zig").symbol;
 comptime {
     if (compiler_rt.want_ppc_abi) {
         symbol(&__floatditf, "__floatdikf");
-    } else if (compiler_rt.want_sparc_abi) {
+    } else if (compiler_rt.want_sparc64_abi) {
         symbol(&_Qp_xtoq, "_Qp_xtoq");
+    } else if (compiler_rt.want_sparc32_abi) {
+        symbol(&_Q_lltoq, "_Q_lltoq");
     }
     symbol(&__floatditf, "__floatditf");
 }
@@ -16,5 +18,9 @@ pub fn __floatditf(a: i64) callconv(.c) f128 {
 }
 
 fn _Qp_xtoq(c: *f128, a: i64) callconv(.c) void {
+    c.* = floatFromInt(f128, a);
+}
+
+fn _Q_lltoq(c: *f128, a: i64) callconv(.c) void {
     c.* = floatFromInt(f128, a);
 }

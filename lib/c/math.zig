@@ -38,6 +38,7 @@ comptime {
         symbol(&hypotl, "hypotl");
         symbol(&lrintl, "lrintl");
         symbol(&lroundl, "lroundl");
+        symbol(&llroundl, "llroundl");
         symbol(&modfl, "modfl");
         symbol(&rintl, "rintl");
     }
@@ -79,6 +80,8 @@ comptime {
         symbol(&lrintf, "lrintf");
         symbol(&lround, "lround");
         symbol(&lroundf, "lroundf");
+        symbol(&llround, "llround");
+        symbol(&llroundf, "llroundf");
         symbol(&modf, "modf");
         symbol(&nan, "nan");
         symbol(&nanf, "nanf");
@@ -290,6 +293,18 @@ fn lroundf(x: f32) callconv(.c) c_long {
 }
 
 fn lroundl(x: c_longdouble) callconv(.c) c_long {
+    return @round(x);
+}
+
+fn llround(x: f64) callconv(.c) c_longlong {
+    return @round(x);
+}
+
+fn llroundf(x: f32) callconv(.c) c_longlong {
+    return @round(x);
+}
+
+fn llroundl(x: c_longdouble) callconv(.c) c_longlong {
     return @round(x);
 }
 

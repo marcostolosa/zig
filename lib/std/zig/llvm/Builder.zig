@@ -11389,7 +11389,7 @@ pub fn print(self: *Builder, w: *Writer) (Writer.Error || Allocator.Error)!void 
                             .none => {},
                             .unpredictable => try w.writeAll(", !unpredictable !{}"),
                             _ => try w.print("{f}", .{
-                                try metadata_formatter.fmt(", !prof ", extra.weights.toMetadata(), null),
+                                try metadata_formatter.fmt("!prof ", extra.weights.toMetadata(), null),
                             }),
                         }
                     },
@@ -11824,7 +11824,7 @@ pub fn print(self: *Builder, w: *Writer) (Writer.Error || Allocator.Error)!void 
                 },
                 .lexical_block => {
                     const extra = self.metadataExtraData(Metadata.LexicalBlock, metadata_item.data);
-                    try metadata_formatter.specialized(.@"distinct !", .DILexicalBlock, .{
+                    try metadata_formatter.specialized(.@"!", .DILexicalBlock, .{
                         .scope = extra.scope,
                         .file = extra.file,
                         .line = extra.line,
@@ -11889,13 +11889,13 @@ pub fn print(self: *Builder, w: *Writer) (Writer.Error || Allocator.Error)!void 
                         }),
                         .name = extra.name,
                         .scope = extra.scope,
-                        .file = null,
-                        .line = null,
+                        .file = extra.file,
+                        .line = extra.line,
                         .baseType = extra.underlying_type,
                         .size = extra.bitSize(),
                         .@"align" = extra.bitAlign(),
                         .offset = null,
-                        .flags = null,
+                        .flags = Metadata.DIFlags{ .Vector = kind == .composite_vector_type },
                         .elements = extra.fields_tuple,
                         .runtimeLang = null,
                         .vtableHolder = null,
@@ -11944,11 +11944,20 @@ pub fn print(self: *Builder, w: *Writer) (Writer.Error || Allocator.Error)!void 
                 },
                 .subroutine_type => {
                     const extra = self.metadataExtraData(Metadata.SubroutineType, metadata_item.data);
-                    try metadata_formatter.specialized(.@"!", .DISubroutineType, .{
-                        .flags = null,
-                        .cc = null,
-                        .types = extra.types_tuple,
-                    }, w);
+                    if (extra.types_tuple.unwrap()) |types| {
+                        try metadata_formatter.specialized(.@"!", .DISubroutineType, .{
+                            .flags = null,
+                            .cc = null,
+                            .types = types,
+                        }, w);
+                    } else {
+                        // Set types explicitly to null
+                        try metadata_formatter.specialized(.@"!", .DISubroutineType, .{
+                            .flags = null,
+                            .cc = null,
+                            .types = "null",
+                        }, w);
+                    }
                 },
                 .enumerator_unsigned,
                 .enumerator_signed_positive,
@@ -15786,7 +15795,7 @@ pub fn toBitcode(self: *Builder, allocator: Allocator, producer: Producer) bitco
                             .underlying_type = extra.underlying_type,
                             .size_in_bits = extra.bitSize(),
                             .align_in_bits = extra.bitAlign(),
-                            .flags = if (kind == .composite_vector_type) .{ .Vector = true } else .{},
+                            .flags = .{ .Vector = kind == .composite_vector_type },
                             .elements = extra.fields_tuple,
                         }, metadata_adapter);
                     },

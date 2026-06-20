@@ -181,11 +181,9 @@ pub fn destroy(self: Allocator, ptr: anytype) void {
     const T = info.child;
     if (@sizeOf(T) == 0) return;
     const non_const_ptr = @as([*]u8, @ptrCast(@constCast(ptr)));
-    self.rawFree(
-        non_const_ptr[0..@sizeOf(T)],
-        .fromByteUnits(info.attrs.@"align" orelse @alignOf(T)),
-        @returnAddress(),
-    );
+    const bytes = non_const_ptr[0..@sizeOf(T)];
+    @memset(bytes, undefined);
+    self.rawFree(bytes, .fromByteUnits(info.attrs.@"align" orelse @alignOf(T)), @returnAddress());
 }
 
 /// Allocates an array of `n` items of type `T` and sets all the

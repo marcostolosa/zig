@@ -9,19 +9,17 @@ comptime {
     }
 }
 
-var dot_buf: [2]c_char = .{ '.', 0 };
-var slash_buf: [2]c_char = .{ '/', 0 };
+const c_dot: [1:0]c_char = .{'.'};
+const c_slash: [1:0]c_char = .{'/'};
 
 fn dirname(s: ?[*:0]c_char) callconv(.c) [*:0]c_char {
-    const dot: [*:0]c_char = @ptrCast(&dot_buf);
-    const slash: [*:0]c_char = @ptrCast(&slash_buf);
+    const dot = @constCast(&c_dot);
+    const slash = @constCast(&c_slash);
 
-    if (s == null) return dot;
-
-    const ptr = s.?;
+    const ptr = s orelse return dot;
     if (ptr[0] == 0) return dot;
 
-    var i = std.mem.len(@as([*:0]u8, @ptrCast(ptr))) - 1;
+    var i = std.mem.len(ptr) - 1;
 
     while (true) : (i -= 1) {
         if (ptr[i] != '/') break;

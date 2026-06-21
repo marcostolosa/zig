@@ -17,12 +17,8 @@ var failing_allocator_instance = FailingAllocator.init(base_allocator_instance.a
 });
 var base_allocator_instance = std.heap.FixedBufferAllocator.init("");
 
-pub var allocator_instance: std.heap.SafeAllocator = undefined;
-pub const allocator = if (builtin.is_test) allocator_instance.allocator() else @compileError("not testing");
-
-pub var io_instance: Io.Threaded = undefined;
-pub const io = if (builtin.is_test) io_instance.io() else @compileError("not testing");
-
+pub var allocator: std.mem.Allocator = if (builtin.is_test) undefined else @compileError("not testing");
+pub var io: Io = if (builtin.is_test) undefined else @compileError("not testing");
 pub var environ: Environ = if (builtin.is_test) undefined else @compileError("not testing");
 
 /// TODO https://github.com/ziglang/zig/issues/5738
@@ -1254,6 +1250,9 @@ pub const FuzzInputOptions = struct {
 };
 
 /// Inline to avoid coverage instrumentation.
+///
+/// This is allowed to override `allocator` and `io`, though the original
+/// instances are still usable and are preserved upon return.
 pub inline fn fuzz(
     context: anytype,
     comptime testOne: fn (context: @TypeOf(context), smith: *Smith) anyerror!void,

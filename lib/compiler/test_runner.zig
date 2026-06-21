@@ -20,6 +20,7 @@ var stdin_buffer: [4096]u8 = undefined;
 var stdout_buffer: [4096]u8 = undefined;
 var stdin_reader: Io.File.Reader = undefined;
 var stdout_writer: Io.File.Writer = undefined;
+var proc_init: std.process.Init.Minimal = undefined;
 const runner_threaded_io: Io = Io.Threaded.global_single_threaded.io();
 
 /// Keep in sync with logic in `std.Build.addRunArtifact` which decides whether
@@ -50,6 +51,7 @@ pub fn main(init: std.process.Init.Minimal) void {
     var listen = false;
     var opt_cache_dir: ?[]const u8 = null;
 
+    testing.environ = init.environ;
     for (args[1..]) |arg| {
         if (std.mem.eql(u8, arg, "--listen=-")) {
             listen = true;
@@ -68,14 +70,15 @@ pub fn main(init: std.process.Init.Minimal) void {
         fuzz_abi.fuzzer_init(.fromSlice(cache_dir));
     }
 
+    proc_init = init;
     if (listen) {
-        return mainServer(init) catch |err| panic("internal test runner failure: {t}", .{err});
+        return mainServer() catch |err| panic("internal test runner failure: {t}", .{err});
     } else {
-        return mainTerminal(init);
+        return mainTerminal();
     }
 }
 
-fn mainServer(init: std.process.Init.Minimal) !void {
+fn mainServer() !void {
     @disableInstrumentation();
     stdin_reader = .initStreaming(.stdin(), runner_threaded_io, &stdin_buffer);
     stdout_writer = .initStreaming(.stdout(), runner_threaded_io, &stdout_buffer);
@@ -122,23 +125,27 @@ fn mainServer(init: std.process.Init.Minimal) !void {
             },
 
             .run_test => {
-                testing.environ = init.environ;
-                testing.allocator_instance = .init(std.heap.page_allocator, .{
-                    .canary = 0xc3a701ba,
-                    .check_write_after_free = true,
-                });
-                testing.io_instance = .init(testing.allocator, .{
-                    .argv0 = .init(init.args),
-                    .environ = init.environ,
-                });
-                log_err_count = 0;
+                // Communicate with the build server before initializing resources
+                // to avoid leaks incase of an error
                 const index = try server.receiveBody_u32();
                 const test_fn = builtin.test_functions[index];
-                is_fuzz_test = false;
-
                 // let the build server know we're starting the test now
                 try server.serveStringMessage(.test_started, &.{});
 
+                var safe_gpa: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{
+                    .canary = 0xc3a701ba,
+                    .check_write_after_free = true,
+                });
+                testing.allocator = safe_gpa.allocator();
+
+                var threaded_io: Io.Threaded = .init(testing.allocator, .{
+                    .argv0 = .init(proc_init.args),
+                    .environ = proc_init.environ,
+                });
+                testing.io = threaded_io.io();
+
+                assert(log_err_count == 0);
+                is_fuzz_test = false;
                 const TestResults = std.zig.Server.Message.TestResults;
                 const status: TestResults.Status = if (test_fn.func()) |v| s: {
                     v;
@@ -152,8 +159,9 @@ fn mainServer(init: std.process.Init.Minimal) !void {
                         break :s .fail;
                     },
                 };
-                testing.io_instance.deinit();
-                const leak_count = testing.allocator_instance.deinit();
+
+                threaded_io.deinit();
+                const leak_count = safe_gpa.deinit();
                 try server.serveTestResults(.{
                     .index = index,
                     .flags = .{
@@ -169,22 +177,22 @@ fn mainServer(init: std.process.Init.Minimal) !void {
                         ),
                     },
                 });
+                log_err_count = 0;
             },
             .start_fuzzing => {
                 // This ensures that this code won't be analyzed and hence reference fuzzer symbols
                 // since they are not present.
                 if (!builtin.fuzz) unreachable;
 
-                var gpa_instance: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
-                defer if (gpa_instance.deinit() != 0) {
-                    @panic("internal test runner memory leak");
-                };
-                const gpa = gpa_instance.allocator();
-                var io_instance: Io.Threaded = .init(gpa, .{
-                    .argv0 = .init(init.args),
-                    .environ = init.environ,
+                var safe_gpa: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
+                defer if (safe_gpa.deinit() != 0) @panic("internal test runner memory leak");
+                const gpa = safe_gpa.allocator();
+
+                var threaded_io: Io.Threaded = .init(gpa, .{
+                    .argv0 = .init(proc_init.args),
+                    .environ = proc_init.environ,
                 });
-                defer io_instance.deinit();
+                defer threaded_io.deinit();
 
                 const mode: fuzz_abi.LimitKind = @fromBackingInt(@intCast(try server.receiveBody_u8()));
                 const amount_or_instance = try server.receiveBody_u64();
@@ -207,7 +215,7 @@ fn mainServer(init: std.process.Init.Minimal) !void {
                     .indexes = test_indexes,
                     .server = &server,
                     .gpa = gpa,
-                    .threaded_io = &io_instance,
+                    .io = threaded_io.io(),
                     .input_poller = undefined,
                 };
 
@@ -255,7 +263,7 @@ fn mainServer(init: std.process.Init.Minimal) !void {
     }
 }
 
-fn mainTerminal(init: std.process.Init.Minimal) void {
+fn mainTerminal() void {
     @disableInstrumentation();
     if (builtin.fuzz) @panic("fuzz test requires server");
 
@@ -272,20 +280,23 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
 
     var leaks: usize = 0;
     for (test_fn_list, 0..) |test_fn, i| {
-        testing.allocator_instance = .init(std.heap.page_allocator, .{
+        var safe_gpa: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{
             .canary = 0xc3a701ba,
             .check_write_after_free = true,
         });
-        testing.io_instance = .init(testing.allocator, .{
-            .argv0 = .init(init.args),
-            .environ = init.environ,
+        defer if (safe_gpa.deinit() != 0) {
+            leaks += 1;
+        };
+        testing.allocator = safe_gpa.allocator();
+
+        var threaded_io: Io.Threaded = .init(testing.allocator, .{
+            .argv0 = .init(proc_init.args),
+            .environ = proc_init.environ,
         });
-        defer {
-            testing.io_instance.deinit();
-            if (testing.allocator_instance.deinit() != 0) leaks += 1;
-        }
+        defer threaded_io.deinit();
+        testing.io = threaded_io.io();
+
         testing.log_level = .warn;
-        testing.environ = init.environ;
 
         const test_node = root_node.start(test_fn.name, 0);
         if (!have_tty) {
@@ -376,8 +387,9 @@ pub fn mainSimple() anyerror!void {
         else => false,
     };
 
-    testing.allocator_instance = .init(std.heap.page_allocator, .{});
-    testing.io_instance = .init(testing.allocator, .{});
+    testing.allocator = std.heap.page_allocator;
+    var threaded_io: Io.Threaded = .init(testing.allocator, .{});
+    testing.io = threaded_io.io();
 
     var passed: u64 = 0;
     var skipped: u64 = 0;
@@ -421,7 +433,7 @@ var fuzz_runner: if (builtin.fuzz) struct {
     indexes: []u32,
     server: *std.zig.Server,
     gpa: std.mem.Allocator,
-    threaded_io: *Io.Threaded,
+    io: Io,
     input_poller: Io.Future(Io.Cancelable!void),
 
     comptime {
@@ -435,19 +447,22 @@ var fuzz_runner: if (builtin.fuzz) struct {
             error.WriteFailed => panic("failed to write to stdout: {t}", .{stdout_writer.err.?}),
         };
 
-        testing.allocator_instance = .init(std.heap.page_allocator, .{
+        var safe_gpa: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{
             .canary = 0xc3a701ba,
             .check_write_after_free = true,
         });
-        defer if (testing.allocator_instance.deinit() != 0) std.process.exit(1);
-        is_fuzz_test = false;
+        defer if (safe_gpa.deinit() != 0) @panic("memory leaks detected");
+        testing.allocator = safe_gpa.allocator();
 
-        testing.io_instance = .init(testing.allocator, .{
-            .argv0 = fuzz_runner.threaded_io.argv0,
-            .environ = fuzz_runner.threaded_io.environ.process_environ,
+        var threaded_io: Io.Threaded = .init(testing.allocator, .{
+            .argv0 = .init(proc_init.args),
+            .environ = proc_init.environ,
         });
-        defer testing.io_instance.deinit();
+        defer threaded_io.deinit();
+        testing.io = threaded_io.io();
 
+        assert(log_err_count == 0);
+        is_fuzz_test = false;
         builtin.test_functions[fuzz_runner.indexes[i]].func() catch |err| switch (err) {
             error.SkipZigTest => return,
             else => {
@@ -478,8 +493,7 @@ var fuzz_runner: if (builtin.fuzz) struct {
 
     export fn runner_start_input_poller() void {
         @disableInstrumentation();
-        const io = fuzz_runner.threaded_io.io();
-        const future = io.concurrent(inputPoller, .{}) catch |e| switch (e) {
+        const future = fuzz_runner.io.concurrent(inputPoller, .{}) catch |e| switch (e) {
             error.ConcurrencyUnavailable => @panic("failed to spawn concurrent fuzz input poller"),
         };
         fuzz_runner.input_poller = future;
@@ -487,20 +501,17 @@ var fuzz_runner: if (builtin.fuzz) struct {
 
     export fn runner_stop_input_poller() void {
         @disableInstrumentation();
-        const io = fuzz_runner.threaded_io.io();
-        assert(fuzz_runner.input_poller.cancel(io) == error.Canceled);
+        assert(fuzz_runner.input_poller.cancel(fuzz_runner.io) == error.Canceled);
     }
 
     export fn runner_futex_wait(ptr: *const u32, expected: u32) bool {
         @disableInstrumentation();
-        const io = fuzz_runner.threaded_io.io();
-        return io.futexWait(u32, ptr, expected) == error.Canceled;
+        return fuzz_runner.io.futexWait(u32, ptr, expected) == error.Canceled;
     }
 
     export fn runner_futex_wake(ptr: *const u32, waiters: u32) void {
         @disableInstrumentation();
-        const io = fuzz_runner.threaded_io.io();
-        io.futexWake(u32, ptr, waiters);
+        fuzz_runner.io.futexWake(u32, ptr, waiters);
     }
 
     fn inputPoller() Io.Cancelable!void {
@@ -572,12 +583,22 @@ pub fn fuzz(
 
         fn test_one() callconv(.c) bool {
             @disableInstrumentation();
-            testing.allocator_instance = .init(std.heap.page_allocator, .{
+
+            var safe_gpa: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{
                 .canary = 0xcacce5e0,
                 .check_write_after_free = true,
             });
-            defer if (testing.allocator_instance.deinit() != 0) std.process.exit(1);
-            log_err_count = 0;
+            defer if (safe_gpa.deinit() != 0) @panic("memory leaks detected");
+            testing.allocator = safe_gpa.allocator();
+
+            var threaded_io: Io.Threaded = .init(testing.allocator, .{
+                .argv0 = .init(proc_init.args),
+                .environ = proc_init.environ,
+            });
+            defer threaded_io.deinit();
+            testing.io = threaded_io.io();
+
+            assert(log_err_count == 0);
             testOne(ctx, @constCast(&testing.Smith{ .in = null })) catch |err| switch (err) {
                 error.SkipZigTest => return true,
                 else => {
@@ -591,19 +612,19 @@ pub fn fuzz(
                     std.process.exit(1);
                 },
             };
-            if (log_err_count != 0) {
-                const stderr = std.debug.lockStderr(&.{}).terminal();
-                stderr.writer.print("error logs detected\n", .{}) catch {};
-                std.process.exit(1);
-            }
+            if (log_err_count != 0) @panic("error logs detected");
             return false;
         }
     };
 
     if (builtin.fuzz) {
-        // Preserve the calling test's allocator state
-        const prev_allocator_state = testing.allocator_instance;
-        defer testing.allocator_instance = prev_allocator_state;
+        // Preserve the calling test's interfaces
+        const prev_allocator = testing.allocator;
+        defer testing.allocator = prev_allocator;
+        testing.allocator = undefined;
+        const prev_io = testing.io;
+        defer testing.io = prev_io;
+        testing.io = undefined;
 
         global.ctx = context;
         fuzz_abi.fuzzer_set_test(&global.test_one);

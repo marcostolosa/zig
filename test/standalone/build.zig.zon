@@ -102,6 +102,9 @@
         .libfuzzer = .{
             .path = "libfuzzer",
         },
+        .fuzz_testing_interfaces = .{
+            .path = "fuzz_testing_interfaces",
+        },
         .load_dynamic_library = .{
             .path = "load_dynamic_library",
         },

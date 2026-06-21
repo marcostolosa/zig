@@ -328,7 +328,6 @@ const TestMapVoid = StaticStringMap(void);
 const TestKVVoid = struct { []const u8 };
 const TestMapWithEql = StaticStringMapWithEql(TestEnum, eqlAsciiIgnoreCase);
 const testing = std.testing;
-const test_alloc = testing.allocator;
 
 test "list literal of list literals" {
     const slice: []const TestKV = &.{
@@ -345,8 +344,8 @@ test "list literal of list literals" {
     try testing.expect(null == map.get("NOTHING"));
 
     // runtime init(), deinit()
-    const map_rt = try TestMap.init(slice, test_alloc);
-    defer map_rt.deinit(test_alloc);
+    const map_rt = try TestMap.init(slice, testing.allocator);
+    defer map_rt.deinit(testing.allocator);
     try testMap(map_rt);
     // Default comparison is case sensitive
     try testing.expect(null == map_rt.get("NOTHING"));
@@ -457,10 +456,10 @@ test "empty" {
     const m2 = StaticStringMapWithEql(usize, eqlAsciiIgnoreCase).initComptime(.{});
     try testing.expect(null == m2.get("anything"));
 
-    const m3 = try StaticStringMap(usize).init(.{}, test_alloc);
+    const m3 = try StaticStringMap(usize).init(.{}, testing.allocator);
     try testing.expect(null == m3.get("anything"));
 
-    const m4 = try StaticStringMapWithEql(usize, eqlAsciiIgnoreCase).init(.{}, test_alloc);
+    const m4 = try StaticStringMapWithEql(usize, eqlAsciiIgnoreCase).init(.{}, testing.allocator);
     try testing.expect(null == m4.get("anything"));
 }
 

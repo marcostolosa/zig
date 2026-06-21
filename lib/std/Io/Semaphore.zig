@@ -67,13 +67,11 @@ pub fn post(s: *Semaphore, io: Io) void {
 }
 
 test wait {
-    const io = testing.io;
-
     const Context = struct {
         sem: Semaphore = .{ .permits = 1 },
         n: u32 = 0,
 
-        fn worker(ctx: *@This()) !void {
+        fn worker(ctx: *@This(), io: Io) !void {
             try ctx.sem.wait(io);
             ctx.n += 1;
             ctx.sem.post(io);
@@ -82,25 +80,24 @@ test wait {
 
     var ctx: Context = .{};
 
+    const io = testing.io;
     var group: Io.Group = .init;
     defer group.cancel(io);
 
     const num_workers = 3;
-    for (0..num_workers) |_| group.async(io, Context.worker, .{&ctx});
+    for (0..num_workers) |_| group.async(io, Context.worker, .{ &ctx, io });
 
     try group.await(io);
     try testing.expectEqual(num_workers, ctx.n);
 }
 
 test waitTimeout {
-    const io = testing.io;
-
     const Context = struct {
         ready: Io.Event = .unset,
         sem: Semaphore = .{ .permits = 0 },
         value: u32 = 0,
 
-        fn worker(ctx: *@This()) !void {
+        fn worker(ctx: *@This(), io: Io) !void {
             defer ctx.ready.set(io);
 
             try testing.expectError(error.Timeout, ctx.sem.waitTimeout(io, .{ .duration = .{
@@ -118,7 +115,8 @@ test waitTimeout {
 
     var ctx: Context = .{};
 
-    var future = io.concurrent(Context.worker, .{&ctx}) catch |err| switch (err) {
+    const io = testing.io;
+    var future = io.concurrent(Context.worker, .{ &ctx, io }) catch |err| switch (err) {
         error.ConcurrencyUnavailable => return error.SkipZigTest,
     };
     defer future.cancel(io) catch {};
@@ -132,13 +130,11 @@ test waitTimeout {
 }
 
 test waitUncancelable {
-    const io = testing.io;
-
     const Context = struct {
         sem: Semaphore = .{ .permits = 1 },
         n: u32 = 0,
 
-        fn worker(ctx: *@This()) !void {
+        fn worker(ctx: *@This(), io: Io) !void {
             ctx.sem.waitUncancelable(io);
             ctx.n += 1;
             ctx.sem.post(io);
@@ -147,11 +143,12 @@ test waitUncancelable {
 
     var ctx: Context = .{};
 
+    const io = testing.io;
     var group: Io.Group = .init;
     defer group.cancel(io);
 
     const num_workers = 3;
-    for (0..num_workers) |_| group.async(io, Context.worker, .{&ctx});
+    for (0..num_workers) |_| group.async(io, Context.worker, .{ &ctx, io });
 
     try group.await(io);
     try testing.expectEqual(num_workers, ctx.n);

@@ -205,10 +205,10 @@ fn setupSymlinkAbsolute(io: Io, target: []const u8, link: []const u8, flags: Sym
 }
 
 test "Dir.readLink" {
-    const io = testing.io;
-
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
+
             // Create some targets
             const file_target_path = try ctx.transformPath("file.txt");
             try ctx.dir.writeFile(io, .{ .sub_path = file_target_path, .data = "nonsense" });
@@ -270,8 +270,6 @@ fn testReadLinkAbsolute(io: Io, target_path: []const u8, symlink_path: []const u
 }
 
 test "File.stat on a File that is a symlink returns Kind.sym_link" {
-    const io = testing.io;
-
     // This test requires getting a file descriptor of a symlink which is not
     // possible on all targets.
     switch (builtin.target.os.tag) {
@@ -281,6 +279,8 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
 
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
+
             const dir_target_path = try ctx.transformPath("subdir");
             try ctx.dir.createDir(io, dir_target_path, .default_dir);
 
@@ -299,10 +299,10 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
 }
 
 test "Dir.statFile on a symlink" {
-    const io = testing.io;
-
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
+
             const dir_target_path = try ctx.transformPath("test_file");
             try ctx.dir.writeFile(io, .{
                 .sub_path = dir_target_path,
@@ -321,10 +321,10 @@ test "Dir.statFile on a symlink" {
 }
 
 test "openDir" {
-    const io = testing.io;
-
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
+
             const allocator = ctx.arena.allocator();
             const subdir_path = try ctx.transformPath("subdir");
             try ctx.dir.createDir(io, subdir_path, .default_dir);
@@ -869,10 +869,9 @@ test "file operations on directories" {
     // TODO: fix this test on FreeBSD. https://github.com/ziglang/zig/issues/1759
     if (native_os == .freebsd) return error.SkipZigTest;
 
-    const io = testing.io;
-
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
             const test_dir_name = try ctx.transformPath("test_dir");
 
             try ctx.dir.createDir(io, test_dir_name, .default_dir);

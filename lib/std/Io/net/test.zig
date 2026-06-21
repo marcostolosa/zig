@@ -268,17 +268,17 @@ test "listen on a unix socket, send bytes, receive bytes" {
     defer server.socket.close(io);
 
     const S = struct {
-        fn clientFn(path: []const u8) !void {
+        fn clientFn(client_io: Io, path: []const u8) !void {
             const server_path: net.UnixAddress = try .init(path);
-            var stream = try server_path.connect(io);
-            defer stream.close(io);
+            var stream = try server_path.connect(client_io);
+            defer stream.close(client_io);
 
-            var stream_writer = stream.writer(io, &.{});
+            var stream_writer = stream.writer(client_io, &.{});
             try stream_writer.interface.writeAll("Hello world!");
         }
     };
 
-    var client_task = io.concurrent(S.clientFn, .{socket_path}) catch |err| switch (err) {
+    var client_task = io.concurrent(S.clientFn, .{ io, socket_path }) catch |err| switch (err) {
         error.ConcurrencyUnavailable => return error.SkipZigTest,
     };
     defer client_task.cancel(io) catch {};
@@ -323,13 +323,13 @@ test "listen on a unix socket, pass file descriptor" {
     defer server.socket.close(io);
 
     const S = struct {
-        fn clientFn(path: []const u8, file_path: []const u8) !void {
-            const temp_file = try Io.Dir.cwd().createFile(io, file_path, .{});
-            defer temp_file.close(io);
+        fn clientFn(client_io: Io, path: []const u8, file_path: []const u8) !void {
+            const temp_file = try Io.Dir.cwd().createFile(client_io, file_path, .{});
+            defer temp_file.close(client_io);
 
             const server_path: net.UnixAddress = try .init(path);
-            var stream = try server_path.connect(io);
-            defer stream.close(io);
+            var stream = try server_path.connect(client_io);
+            defer stream.close(client_io);
 
             var cmsg_buf: [net.cmsg.space(@sizeOf(posix.fd_t))]u8 align(Io.net.cmsg_align) = @splat(0);
 
@@ -343,13 +343,13 @@ test "listen on a unix socket, pass file descriptor" {
             const fds: []posix.fd_t = @ptrCast(net.cmsg.data(header));
             fds[0] = temp_file.handle;
 
-            var stream_writer = stream.writer(io, &.{});
+            var stream_writer = stream.writer(client_io, &.{});
             stream_writer.control = &cmsg_buf;
             try stream_writer.interface.writeAll("Hello world!");
         }
     };
 
-    var client_task = io.concurrent(S.clientFn, .{ socket_path, temp_file_path }) catch |err| switch (err) {
+    var client_task = io.concurrent(S.clientFn, .{ io, socket_path, temp_file_path }) catch |err| switch (err) {
         error.ConcurrencyUnavailable => return error.SkipZigTest,
     };
     defer client_task.cancel(io) catch {};

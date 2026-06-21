@@ -1625,8 +1625,6 @@ fn testThreadName(io: Io, thread: *Thread) !void {
 test "setName, getName" {
     if (builtin.single_threaded) return error.SkipZigTest;
 
-    const io = testing.io;
-
     const Context = struct {
         start_wait_event: Io.Event = .unset,
         test_done_event: Io.Event = .unset,
@@ -1635,7 +1633,7 @@ test "setName, getName" {
         done: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
         thread: Thread = undefined,
 
-        pub fn run(ctx: *@This()) !void {
+        pub fn run(ctx: *@This(), io: Io) !void {
             // Wait for the main thread to have set the thread field in the context.
             try ctx.start_wait_event.wait(io);
 
@@ -1656,7 +1654,8 @@ test "setName, getName" {
     };
 
     var context = Context{};
-    var thread = try spawn(.{}, Context.run, .{&context});
+    const io = testing.io;
+    var thread = try spawn(.{}, Context.run, .{ &context, io });
 
     context.thread = thread;
     context.start_wait_event.set(io);

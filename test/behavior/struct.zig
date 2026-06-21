@@ -1810,12 +1810,11 @@ test "assign to slice.len of global variable" {
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const S = struct {
-        const allocator = std.testing.allocator;
-        var list = std.array_list.Managed(u32).init(allocator);
+        var items: []const u8 = "1234";
     };
 
-    S.list.items.len = 0;
-    try expect(S.list.items.len == 0);
+    S.items.len = 0;
+    try expect(S.items.len == 0);
 }
 
 test "pointers to fields of volatile pointer to struct are also volatile" {

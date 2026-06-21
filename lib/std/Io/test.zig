@@ -779,14 +779,12 @@ test "Event signaling" {
         return error.SkipZigTest;
     }
 
-    const io = testing.io;
-
     const Context = struct {
         in: Io.Event = .unset,
         out: Io.Event = .unset,
         value: usize = 0,
 
-        fn input(self: *@This()) !void {
+        fn input(self: *@This(), io: Io) !void {
             // wait for the value to become 1
             try self.in.wait(io);
             self.in.reset();
@@ -806,7 +804,7 @@ test "Event signaling" {
             self.out.set(io);
         }
 
-        fn output(self: *@This()) !void {
+        fn output(self: *@This(), io: Io) !void {
             // start with 0 and bump the value for input to see 1
             try testing.expectEqual(self.value, 0);
             self.value = 1;
@@ -830,10 +828,11 @@ test "Event signaling" {
 
     var ctx = Context{};
 
-    const thread = try std.Thread.spawn(.{}, Context.output, .{&ctx});
+    const io = testing.io;
+    const thread = try std.Thread.spawn(.{}, Context.output, .{ &ctx, io });
     defer thread.join();
 
-    try ctx.input();
+    try ctx.input(io);
 }
 
 test "Event broadcast" {
@@ -842,14 +841,12 @@ test "Event broadcast" {
         return error.SkipZigTest;
     }
 
-    const io = testing.io;
-
     const num_threads = 10;
     const Barrier = struct {
         event: Io.Event = .unset,
         counter: std.atomic.Value(usize) = std.atomic.Value(usize).init(num_threads),
 
-        fn wait(self: *@This()) !void {
+        fn wait(self: *@This(), io: Io) !void {
             if (self.counter.fetchSub(1, .acq_rel) == 1) {
                 self.event.set(io);
             }
@@ -861,19 +858,20 @@ test "Event broadcast" {
         start_barrier: Barrier = .{},
         finish_barrier: Barrier = .{},
 
-        fn run(self: *@This()) !void {
-            try self.start_barrier.wait();
-            try self.finish_barrier.wait();
+        fn run(self: *@This(), io: Io) !void {
+            try self.start_barrier.wait(io);
+            try self.finish_barrier.wait(io);
         }
     };
 
     var ctx = Context{};
     var threads: [num_threads - 1]std.Thread = undefined;
 
-    for (&threads) |*t| t.* = try std.Thread.spawn(.{}, Context.run, .{&ctx});
+    const io = testing.io;
+    for (&threads) |*t| t.* = try std.Thread.spawn(.{}, Context.run, .{ &ctx, io });
     defer for (threads) |t| t.join();
 
-    try ctx.run();
+    try ctx.run(io);
 }
 
 test "Select" {
@@ -966,15 +964,13 @@ test "Select.cancel with no tasks, no deadlock" {
 }
 
 test "Condition.waitTimeout" {
-    const io = testing.io;
-
     const Context = struct {
         ready: Io.Event = .unset,
         mutex: Io.Mutex = .init,
         cond: Io.Condition = .init,
         value: u32 = 0,
 
-        fn worker(ctx: *@This()) !void {
+        fn worker(ctx: *@This(), io: Io) !void {
             defer ctx.ready.set(io);
 
             try ctx.mutex.lock(io);
@@ -995,7 +991,8 @@ test "Condition.waitTimeout" {
 
     var ctx: Context = .{};
 
-    var future = io.concurrent(Context.worker, .{&ctx}) catch |err| switch (err) {
+    const io = testing.io;
+    var future = io.concurrent(Context.worker, .{ &ctx, io }) catch |err| switch (err) {
         error.ConcurrencyUnavailable => return error.SkipZigTest,
     };
     defer future.cancel(io) catch {};
@@ -1011,15 +1008,13 @@ test "Condition.waitTimeout" {
 }
 
 test "Condition.waitUncancelable" {
-    const io = testing.io;
-
     const Context = struct {
         ready: Io.Event = .unset,
         mutex: Io.Mutex = .init,
         cond: Io.Condition = .init,
         value: u32 = 0,
 
-        fn worker(ctx: *@This()) !void {
+        fn worker(ctx: *@This(), io: Io) !void {
             defer ctx.ready.set(io);
 
             try ctx.mutex.lock(io);
@@ -1038,7 +1033,8 @@ test "Condition.waitUncancelable" {
 
     var ctx: Context = .{};
 
-    var future = io.concurrent(Context.worker, .{&ctx}) catch |err| switch (err) {
+    const io = testing.io;
+    var future = io.concurrent(Context.worker, .{ &ctx, io }) catch |err| switch (err) {
         error.ConcurrencyUnavailable => return error.SkipZigTest,
     };
     defer future.cancel(io) catch {};

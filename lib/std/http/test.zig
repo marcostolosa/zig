@@ -43,11 +43,11 @@ test "trailers" {
             var send_buffer: [1024]u8 = undefined;
             var remaining: usize = 1;
             while (remaining != 0) : (remaining -= 1) {
-                var stream = try net_server.accept(io);
-                defer stream.close(io);
+                var stream = try net_server.accept(test_server.io);
+                defer stream.close(test_server.io);
 
-                var connection_br = stream.reader(io, &recv_buffer);
-                var connection_bw = stream.writer(io, &send_buffer);
+                var connection_br = stream.reader(test_server.io, &recv_buffer);
+                var connection_bw = stream.writer(test_server.io, &send_buffer);
                 var server = http.Server.init(&connection_br.interface, &connection_bw.interface);
 
                 try expectEqual(.ready, server.reader.state);
@@ -127,11 +127,11 @@ test "HTTP server handles a chunked transfer coding request" {
             const net_server = &test_server.net_server;
             var recv_buffer: [8192]u8 = undefined;
             var send_buffer: [500]u8 = undefined;
-            var stream = try net_server.accept(io);
-            defer stream.close(io);
+            var stream = try net_server.accept(test_server.io);
+            defer stream.close(test_server.io);
 
-            var connection_br = stream.reader(io, &recv_buffer);
-            var connection_bw = stream.writer(io, &send_buffer);
+            var connection_br = stream.reader(test_server.io, &recv_buffer);
+            var connection_bw = stream.writer(test_server.io, &send_buffer);
             var server = http.Server.init(&connection_br.interface, &connection_bw.interface);
             var request = try server.receiveHead();
 
@@ -197,11 +197,11 @@ test "echo content server" {
             var send_buffer: [100]u8 = undefined;
 
             accept: while (!test_server.shutting_down) {
-                var stream = try net_server.accept(io);
-                defer stream.close(io);
+                var stream = try net_server.accept(test_server.io);
+                defer stream.close(test_server.io);
 
-                var connection_br = stream.reader(io, &recv_buffer);
-                var connection_bw = stream.writer(io, &send_buffer);
+                var connection_br = stream.reader(test_server.io, &recv_buffer);
+                var connection_bw = stream.writer(test_server.io, &send_buffer);
                 var http_server = http.Server.init(&connection_br.interface, &connection_bw.interface);
 
                 while (http_server.reader.state == .ready) {
@@ -295,11 +295,11 @@ test "Server.Request.respondStreaming non-chunked, unknown content-length" {
             var send_buffer: [500]u8 = undefined;
             var remaining: usize = 1;
             while (remaining != 0) : (remaining -= 1) {
-                var stream = try net_server.accept(io);
-                defer stream.close(io);
+                var stream = try net_server.accept(test_server.io);
+                defer stream.close(test_server.io);
 
-                var connection_br = stream.reader(io, &recv_buffer);
-                var connection_bw = stream.writer(io, &send_buffer);
+                var connection_br = stream.reader(test_server.io, &recv_buffer);
+                var connection_bw = stream.writer(test_server.io, &send_buffer);
                 var server = http.Server.init(&connection_br.interface, &connection_bw.interface);
 
                 try expectEqual(.ready, server.reader.state);
@@ -366,11 +366,11 @@ test "receiving arbitrary http headers from the client" {
             var send_buffer: [777]u8 = undefined;
             var remaining: usize = 1;
             while (remaining != 0) : (remaining -= 1) {
-                var stream = try net_server.accept(io);
-                defer stream.close(io);
+                var stream = try net_server.accept(test_server.io);
+                defer stream.close(test_server.io);
 
-                var connection_br = stream.reader(io, &recv_buffer);
-                var connection_bw = stream.writer(io, &send_buffer);
+                var connection_br = stream.reader(test_server.io, &recv_buffer);
+                var connection_bw = stream.writer(test_server.io, &send_buffer);
                 var server = http.Server.init(&connection_br.interface, &connection_bw.interface);
 
                 try expectEqual(.ready, server.reader.state);
@@ -432,11 +432,11 @@ test "general client/server API coverage" {
             var send_buffer: [100]u8 = undefined;
 
             outer: while (!test_server.shutting_down) {
-                var stream = try net_server.accept(io);
-                defer stream.close(io);
+                var stream = try net_server.accept(test_server.io);
+                defer stream.close(test_server.io);
 
-                var connection_br = stream.reader(io, &recv_buffer);
-                var connection_bw = stream.writer(io, &send_buffer);
+                var connection_br = stream.reader(test_server.io, &recv_buffer);
+                var connection_bw = stream.writer(test_server.io, &send_buffer);
                 var http_server = http.Server.init(&connection_br.interface, &connection_bw.interface);
 
                 while (http_server.reader.state == .ready) {
@@ -445,12 +445,12 @@ test "general client/server API coverage" {
                         else => |e| return e,
                     };
 
-                    try handleRequest(&request, net_server.socket.address.getPort());
+                    try handleRequest(test_server, &request, net_server.socket.address.getPort());
                 }
             }
         }
 
-        fn handleRequest(request: *http.Server.Request, listen_port: u16) !void {
+        fn handleRequest(test_server: *TestServer, request: *http.Server.Request, listen_port: u16) !void {
             const log = std.log.scoped(.server);
             const gpa = std.testing.allocator;
 
@@ -552,7 +552,7 @@ test "general client/server API coverage" {
             } else if (mem.eql(u8, target, "/%2525")) {
                 try request.respond("Encoded redirect successful!\n", .{});
             } else if (mem.eql(u8, target, "/redirect/invalid")) {
-                const invalid_port = try getUnusedTcpPort();
+                const invalid_port = try getUnusedTcpPort(test_server);
                 const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}", .{invalid_port});
                 defer gpa.free(location);
 
@@ -573,10 +573,10 @@ test "general client/server API coverage" {
             }
         }
 
-        fn getUnusedTcpPort() !u16 {
+        fn getUnusedTcpPort(test_server: *TestServer) !u16 {
             const addr = try net.IpAddress.parse("127.0.0.1", 0);
-            var s = try addr.listen(io, .{});
-            defer s.deinit(io);
+            var s = try addr.listen(test_server.io, .{});
+            defer s.deinit(test_server.io);
             return s.socket.address.getPort();
         }
     });
@@ -921,11 +921,11 @@ test "Server streams both reading and writing" {
             var recv_buffer: [1024]u8 = undefined;
             var send_buffer: [777]u8 = undefined;
 
-            var stream = try net_server.accept(io);
-            defer stream.close(io);
+            var stream = try net_server.accept(test_server.io);
+            defer stream.close(test_server.io);
 
-            var connection_br = stream.reader(io, &recv_buffer);
-            var connection_bw = stream.writer(io, &send_buffer);
+            var connection_br = stream.reader(test_server.io, &recv_buffer);
+            var connection_bw = stream.writer(test_server.io, &send_buffer);
             var server = http.Server.init(&connection_br.interface, &connection_bw.interface);
             var request = try server.receiveHead();
             var read_buffer: [100]u8 = undefined;
@@ -1185,11 +1185,11 @@ test "redirect to different connection" {
             var recv_buffer: [888]u8 = undefined;
             var send_buffer: [777]u8 = undefined;
 
-            var stream = try net_server.accept(io);
-            defer stream.close(io);
+            var stream = try net_server.accept(test_server.io);
+            defer stream.close(test_server.io);
 
-            var connection_br = stream.reader(io, &recv_buffer);
-            var connection_bw = stream.writer(io, &send_buffer);
+            var connection_br = stream.reader(test_server.io, &recv_buffer);
+            var connection_bw = stream.writer(test_server.io, &send_buffer);
             var server = http.Server.init(&connection_br.interface, &connection_bw.interface);
             var request = try server.receiveHead();
             try expectEqualStrings(request.head.target, "/ok");
@@ -1209,16 +1209,16 @@ test "redirect to different connection" {
             var recv_buffer: [999]u8 = undefined;
             var send_buffer: [100]u8 = undefined;
 
-            var stream = try net_server.accept(io);
-            defer stream.close(io);
+            var stream = try net_server.accept(test_server.io);
+            defer stream.close(test_server.io);
 
             var loc_buf: [50]u8 = undefined;
             const new_loc = try std.mem.print(&loc_buf, "http://127.0.0.1:{d}/ok", .{
                 global.other_port.?,
             });
 
-            var connection_br = stream.reader(io, &recv_buffer);
-            var connection_bw = stream.writer(io, &send_buffer);
+            var connection_br = stream.reader(test_server.io, &recv_buffer);
+            var connection_bw = stream.writer(test_server.io, &send_buffer);
             var server = http.Server.init(&connection_br.interface, &connection_bw.interface);
             var request = try server.receiveHead();
             try expectEqualStrings(request.head.target, "/help");
@@ -1275,12 +1275,12 @@ test "boot failed connections from the pool" {
             var send_buffer: [500]u8 = undefined;
 
             accept: while (!test_server.shutting_down) {
-                var stream = try net_server.accept(io);
-                defer stream.close(io);
+                var stream = try net_server.accept(test_server.io);
+                defer stream.close(test_server.io);
 
                 for (0..2) |i| {
-                    var connection_br = stream.reader(io, &recv_buffer);
-                    var connection_bw = stream.writer(io, &send_buffer);
+                    var connection_br = stream.reader(test_server.io, &recv_buffer);
+                    var connection_bw = stream.writer(test_server.io, &send_buffer);
                     var server = http.Server.init(&connection_br.interface, &connection_bw.interface);
                     var request = server.receiveHead() catch |err| switch (err) {
                         error.HttpConnectionClosing => continue :accept,

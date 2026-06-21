@@ -206,7 +206,7 @@ pub const Fe = struct {
         return (a.toBytes()[0] & 1) != 0;
     }
 
-    /// Conditonally replace a field element with `a` if `c` is positive
+    /// Conditionally replace a field element with `a` if `c` is positive
     pub fn cMov(fe: *Fe, a: Fe, c: u64) void {
         const mask: u64 = 0 -% c;
         var x = fe.*;

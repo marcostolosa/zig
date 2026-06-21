@@ -122,7 +122,7 @@ pub fn Field(comptime params: FieldParams) type {
             return @as(u1, @truncate(s[0])) != 0;
         }
 
-        /// Conditonally replace a field element with `a` if `c` is positive.
+        /// Conditionally replace a field element with `a` if `c` is positive.
         pub fn cMov(fe: *Fe, a: Fe, c: u1) void {
             fiat.selectznz(&fe.limbs, c, fe.limbs, a.limbs);
         }

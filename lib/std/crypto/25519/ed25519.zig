@@ -306,7 +306,7 @@ pub const Ed25519 = struct {
         /// Secret scalar.
         secret_key: SecretKey,
 
-        /// Deterministically derive a key pair from a cryptograpically secure secret seed.
+        /// Deterministically derive a key pair from a cryptographically secure secret seed.
         ///
         /// To create a new key, applications should generally call `generate()` instead of this function.
         ///

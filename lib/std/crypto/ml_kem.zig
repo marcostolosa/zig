@@ -382,7 +382,7 @@ fn Kyber(comptime p: Params) type {
             secret_key: SecretKey,
             public_key: PublicKey,
 
-            /// Deterministically derive a key pair from a cryptograpically secure secret seed.
+            /// Deterministically derive a key pair from a cryptographically secure secret seed.
             ///
             /// Except in tests, applications should generally call `generate()` instead of this function.
             pub fn generateDeterministic(seed: [seed_length]u8) !KeyPair {
@@ -911,7 +911,7 @@ const Poly = struct {
         var r: usize = 0; // index into invNTTReductions
         var p = a;
 
-        // We basically do the oppposite of NTT, but postpone dividing by 2 in the
+        // We basically do the opposite of NTT, but postpone dividing by 2 in the
         // inverse of the Cooley-Tukey butterfly and accumulate that into a big
         // division by 2⁷ at the end.  See the comments in the ntt() function.
 

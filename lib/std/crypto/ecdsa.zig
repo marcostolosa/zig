@@ -312,7 +312,7 @@ pub fn Ecdsa(comptime Curve: type, comptime Hash: type) type {
             /// Secret scalar.
             secret_key: SecretKey,
 
-            /// Deterministically derive a key pair from a cryptograpically secure secret seed.
+            /// Deterministically derive a key pair from a cryptographically secure secret seed.
             ///
             /// Except in tests, applications should generally call `generate()` instead of this function.
             pub fn generateDeterministic(seed: [seed_length]u8) IdentityElementError!KeyPair {

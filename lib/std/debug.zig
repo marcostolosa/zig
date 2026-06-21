@@ -431,7 +431,9 @@ pub const CpuContextPtr = if (cpu_context.Native == noreturn) noreturn else *con
 /// ReleaseFast and ReleaseSmall mode. Outside of a test block, this assert
 /// function is the correct function to use.
 pub fn assert(ok: bool) void {
-    @disableInstrumentation();
+    @disableInstrumentation(); // This branch is not tracked for fuzzing as it always leads to a
+    // crash, making tracking it pointless. Without this, the instrumentation makes this function
+    // unlikely to be inlined leading to a significant performance penalty.
     if (!ok) unreachable; // assertion failure
 }
 

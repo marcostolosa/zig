@@ -1005,7 +1005,7 @@ const Poly = struct {
         var in_off: usize = 0;
         var out_off: usize = 0;
 
-        const batch_size: usize = comptime math.lcm(d, 8);
+        const batch_size: usize = comptime math.lcmWide(u8, d, 8);
         const in_batch_size: usize = comptime batch_size / d;
         const out_batch_size: usize = comptime batch_size / 8;
 
@@ -1069,7 +1069,7 @@ const Poly = struct {
         var in_off: usize = 0;
         var out_off: usize = 0;
 
-        const batch_size: usize = comptime math.lcm(d, 8);
+        const batch_size: usize = comptime math.lcmWide(u8, d, 8);
         const in_batch_size: usize = comptime batch_size / 8;
         const out_batch_size: usize = comptime batch_size / d;
 

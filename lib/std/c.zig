@@ -10453,6 +10453,28 @@ pub const fstatat = switch (native_os) {
     else => private.fstatat,
 };
 
+pub const Statvfs = switch (native_abi) {
+    .gnu => extern struct {
+        bsize: blksize_t, // Filesystem block size
+        frsize: c_ulong, // Fragment size
+        blocks: c_ulong, // Size of fs in f_frsize units
+        bfree: c_ulong, // Number of free blocks
+        bavail: c_ulong, // Number of free blocks for unprivileged users
+        files: c_ulong, // Number of inodes
+        ffree: c_ulong, // Number of free inodes
+        favail: c_ulong, // Number of free inodes for unprivileged users
+        fsid: u64, // Filesystem ID
+        flags: linux.ST, // Mount flags
+        namemax: c_ulong, // Maximum filename length
+        type: c_uint, // this is nonstandard but apparently present in gnu ????
+        _padding: [5]c_int = @splat(0),
+    },
+    .musl => linux.Statvfs,
+    else => unreachable,
+};
+
+pub extern "c" fn statvfs(path: [*:0]const u8, buf: *Statvfs) c_int;
+pub extern "c" fn fstatvfs(file: fd_t, buf: *Statvfs) c_int;
 pub extern "c" fn statx(dirfd: fd_t, path: [*:0]const u8, flags: u32, mask: linux.STATX, buf: *linux.Statx) c_int;
 
 pub const getpwent = switch (native_os) {

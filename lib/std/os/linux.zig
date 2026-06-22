@@ -2937,6 +2937,54 @@ pub fn fstatfs(fd: fd_t, statfs_buf: *Statfs) usize {
         syscall2(.fstatfs, fd, @intFromPtr(statfs_buf));
 }
 
+pub fn statvfs(path: [*:0]const u8, statvfs_buf: *Statvfs) usize {
+    var _statfs: Statfs = undefined;
+    const ret = statfs(path, &_statfs);
+    statvfs_buf.* = .{
+        .bsize = _statfs.bsize,
+        .frsize = _statfs.frsize,
+        .blocks = _statfs.blocks,
+        .bfree = _statfs.bfree,
+        .bavail = _statfs.bavail,
+
+        .files = _statfs.files,
+        .ffree = _statfs.ffree,
+        .favail = _statfs.ffree,
+        .fsid = @bitCast(_statfs.fsid),
+        .flags = _statfs.flags,
+        .namemax = _statfs.namelen,
+    };
+
+    statvfs_buf.flags._padding1 = 0;
+    statvfs_buf.flags._ = 0;
+
+    return ret;
+}
+
+pub fn fstatvfs(fd: fd_t, statvfs_buf: *Statvfs) usize {
+    var _statfs: Statfs = undefined;
+    const ret = fstatfs(fd, &_statfs);
+    statvfs_buf.* = .{
+        .bsize = _statfs.bsize,
+        .frsize = _statfs.frsize,
+        .blocks = _statfs.blocks,
+        .bfree = _statfs.bfree,
+        .bavail = _statfs.bavail,
+
+        .files = _statfs.files,
+        .ffree = _statfs.ffree,
+        .favail = _statfs.ffree,
+        .fsid = _statfs.fsid,
+        .flags = _statfs.flags,
+        .namemax = _statfs.namelen,
+    };
+
+    statvfs_buf.flags._padding1 = 0;
+    statvfs_buf.flags._ = 0;
+
+    return ret;
+}
+
 pub fn listxattr(path: [*:0]const u8, list: [*]u8, size: usize) usize {
     return syscall3(.listxattr, @intFromPtr(path), @intFromPtr(list), size);
 }
@@ -8414,7 +8462,7 @@ pub const ST = packed struct(c_ulong) {
     NODEV: bool,
     NOEXEC: bool,
     SYNCHRONOUS: bool,
-    _padding1: bool,
+    _padding1: u1,
     MANDLOCK: bool,
     WRITE: bool,
     APPEND: bool,
@@ -8422,16 +8470,18 @@ pub const ST = packed struct(c_ulong) {
     NOATIME: bool,
     NODIRATIME: bool,
     RELATIME: bool,
-    _: @Int(.unsigned, @bitSizeOf(c_ulong) - 13),
+    NOSYMFOLLOW: bool,
+    _: @Int(.unsigned, @bitSizeOf(c_ulong) - 14),
 };
 
 pub const Statfs = extern struct {
     // to quote the man page: "the statfs structure is defined approximately as follows"
     type: FSTYPE,
-    size: blksize_t,
+    bsize: blksize_t,
     blocks: blkcnt_t,
     bfree: blkcnt_t,
     bavail: blkcnt_t,
+
     files: u64,
     ffree: u64,
     fsid: fsid_t,
@@ -8439,6 +8489,21 @@ pub const Statfs = extern struct {
     frsize: c_ulong,
     flags: ST,
     spare: [4]c_ulong,
+};
+
+pub const Statvfs = extern struct {
+    bsize: blksize_t, // Filesystem block size
+    frsize: c_ulong, // Fragment size
+    blocks: blkcnt_t, // Size of fs in f_frsize units
+    bfree: blkcnt_t, // Number of free blocks
+    bavail: blkcnt_t, // Number of free blocks for unprivileged users
+    files: u64, // Number of inodes
+    ffree: u64, // Number of free inodes
+    favail: u64, // Number of free inodes for unprivileged users
+    fsid: u64, // Filesystem ID
+    flags: ST, // Mount flags
+    namemax: c_ulong, // Maximum filename length
+    _padding: [6]c_int = @splat(0),
 };
 
 pub const addrinfo = extern struct {

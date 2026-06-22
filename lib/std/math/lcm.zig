@@ -1,8 +1,8 @@
 //! Least common multiple (https://mathworld.wolfram.com/LeastCommonMultiple.html)
 const std = @import("std");
 
-/// Returns the least common multiple (LCM) of two integers (`a` and `b`) if the Type supports it
-/// Otherwise throws a Memory Overflow error.
+/// Returns the least common multiple (LCM) of two integers (`a` and `b`)
+/// Returns a `error.Overflow` error if the final Result exceeds the bounds of `T`.
 /// For example, the LCM of `8` and `12` is `24`, that is, `lcm(8, 12) == 24`.
 /// If any of the arguments is zero, then the returned value is 0.
 pub fn lcm(comptime T: type, a: T, b: T) (error{Overflow}!T) {
@@ -24,21 +24,20 @@ pub fn lcm(comptime T: type, a: T, b: T) (error{Overflow}!T) {
     }
 }
 
-/// Returns the least common multiple (LCM) of two integers (`a` and `b`) will never return an Overflow error.
+/// Returns the least common multiple (LCM) of two integers (`a` and `b`) return type is wide enough to guarantee no overflow.
 /// For example, the LCM of `254` and `255` is `64770`, that is, `lcm(254, 255) == 64770`.
-/// lcm implementation will return error.Overflow but lcmwide will return the value 64770
 /// If any of the arguments is zero, then the returned value is 0.
-pub fn lcmwide(comptime T: type, a: T, b: T) @Int(.unsigned, @typeInfo(T).int.bits + @typeInfo(T).int.bits) {
+pub fn lcmWide(comptime T: type, a: T, b: T) @Int(.unsigned, @typeInfo(T).int.bits + @typeInfo(T).int.bits) {
     // If an argument is zero, then the returned value is 0.
     if (a == 0 or b == 0) return 0;
 
-    // Return Type of the lcm wide tiwe with number of bits equal to bitsize(a) + bitsize(b)
+    // Return Type of the lcm wide is equal to bitsize(a) + bitsize(b)
     const returnType = @Int(.unsigned, @typeInfo(T).int.bits + @typeInfo(T).int.bits);
 
-    const valA: returnType = @as(returnType, @abs(a));
-    const valB: returnType = @as(returnType, @abs(b));
+    const val_a: returnType = @as(returnType, @abs(a));
+    const val_b: returnType = @as(returnType, @abs(b));
 
-    return valA * valB / std.math.gcd(valA, valB);
+    return val_a * val_b / std.math.gcd(val_a, val_b);
 }
 
 test lcm {
@@ -60,9 +59,9 @@ test lcm {
     try expectEqual(lcm(u245, 1216342683557601535506311712, 436522681849110124616458784), 16592536571065866494401400422922201534178938447014944);
 }
 
-test lcmwide {
+test lcmWide {
     const expectEqual = std.testing.expectEqual;
 
-    try expectEqual(lcmwide(u8, 30, 133), 3990);
-    try expectEqual(lcmwide(u8, 255, 254), 64770);
+    try expectEqual(lcmWide(u8, 30, 133), 3990);
+    try expectEqual(lcmWide(u8, 255, 254), 64770);
 }

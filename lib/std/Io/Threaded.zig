@@ -14166,24 +14166,81 @@ pub fn addressToPosix(a: *const IpAddress, storage: *PosixAddress) posix.socklen
 
 fn addressUnixToPosix(a: *const net.UnixAddress, storage: *UnixAddress) posix.socklen_t {
     storage.un.family = posix.AF.UNIX;
-    var path_len = switch (native_os) {
-        .windows => @min(a.path.len, storage.un.path.len),
-        else => a.path.len,
-    };
+    var path_len = if (net.UnixAddress.max_len == storage.un.path.len) a.path.len else @min(a.path.len, storage.un.path.len);
     // With the AFD API, `sockaddr.un` is purely informational, so
     // use a suffix which is usually the most relevant part of a path.
     @memcpy(storage.un.path[0..path_len], a.path[a.path.len - path_len ..]);
-    if (storage.un.path.len - path_len > 0) {
+    if (!a.isAbstract() and (storage.un.path.len - path_len > 0)) {
         @branchHint(.likely);
         storage.un.path[path_len] = 0;
         path_len += 1;
     }
     switch (native_os) {
         .windows => {
-            if (storage.un.path[0] == 0) @memset(storage.un.path[path_len..], 0);
+            if (a.isAbstract()) @memset(storage.un.path[path_len..], 0);
             return @sizeOf(posix.sockaddr.un);
         },
         else => return @intCast(@offsetOf(posix.sockaddr.un, "path") + path_len),
+    }
+}
+
+test addressUnixToPosix {
+    if (!net.has_unix_sockets) return error.SkipZigTest;
+
+    var storage: UnixAddress = .{ .un = undefined };
+    var addr: net.UnixAddress = undefined;
+
+    const max_size = @sizeOf(posix.sockaddr.un);
+    const base_unix_len: usize = @intCast(@offsetOf(posix.sockaddr.un, "path"));
+
+    {
+        const path: [net.UnixAddress.max_len]u8 = @splat('a');
+        addr = try .init(&path);
+        try std.testing.expectEqual(max_size, addressUnixToPosix(&addr, &storage));
+        try std.testing.expectEqualStrings(path[0..storage.un.path.len], storage.un.path[0..]);
+    }
+    {
+        const path = "/hello";
+        addr = try .init(path);
+        storage.un.path[path.len] = 5;
+        try std.testing.expectEqual(
+            if (native_os == .windows) max_size else base_unix_len + path.len + 1,
+            addressUnixToPosix(&addr, &storage),
+        );
+        try std.testing.expectEqual(0, storage.un.path[path.len]);
+        try std.testing.expectEqualStrings(path, storage.un.path[0..path.len]);
+    }
+    {
+        const path = "\x00hello";
+        addr = try .init(path);
+        storage.un.path[path.len] = 5;
+
+        try std.testing.expectEqual(
+            if (native_os == .windows) max_size else base_unix_len + path.len,
+            addressUnixToPosix(&addr, &storage),
+        );
+
+        try std.testing.expectEqual(
+            // for windows all bytes that are not part of name for abstract socket are set to 0
+            if (native_os == .windows) 0 else 5,
+            storage.un.path[path.len],
+        );
+        try std.testing.expectEqualStrings(path, storage.un.path[0..path.len]);
+    }
+    {
+        const path = "";
+        addr = try .init(path);
+        storage.un.path[path.len] = 5;
+        try std.testing.expectEqual(
+            if (native_os == .windows) max_size else base_unix_len,
+            addressUnixToPosix(&addr, &storage),
+        );
+        try std.testing.expectEqual(
+            // for windows all bytes that are not part of name for abstract socket are set to 0
+            if (native_os == .windows) 0 else 5,
+            storage.un.path[path.len],
+        );
+        try std.testing.expectEqualStrings(path, storage.un.path[0..path.len]);
     }
 }
 

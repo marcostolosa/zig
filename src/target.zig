@@ -65,7 +65,8 @@ pub fn libCxxNeedsLibUnwind(target: *const std.Target) bool {
 pub fn requiresPic(target: *const std.Target, linking_libc: bool) bool {
     return ((target.os.tag == .windows or target.os.tag == .uefi) and (target.cpu.arch == .aarch64 or target.cpu.arch == .x86_64)) or
         target.requiresLibC() or
-        (linking_libc and target.isGnuLibC());
+        (linking_libc and target.isGnuLibC()) or
+        target.os.tag == .ashetos;
 }
 
 pub fn requiresPicForDynamicLink(target: *const std.Target) bool {
@@ -94,7 +95,7 @@ pub fn supports_fpic(target: *const std.Target) bool {
 
 pub fn defaultPie(target: *const std.Target) bool {
     return switch (target.os.tag) {
-        .openbsd, .serenity => true,
+        .openbsd, .serenity, .ashetos => true,
         else => target.os.tag.isDarwin(),
     };
 }

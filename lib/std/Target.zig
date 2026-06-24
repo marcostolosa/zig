@@ -177,6 +177,8 @@ pub const Os = struct {
                 .emscripten,
 
                 .mesa3d,
+
+                .ashetos,
                 => .none,
 
                 .contiki,
@@ -217,8 +219,6 @@ pub const Os = struct {
                 .vulkan,
 
                 .tios,
-
-                .ashetos,
                 => .semver,
 
                 .hurd => .hurd,
@@ -416,6 +416,8 @@ pub const Os = struct {
                 .emscripten,
 
                 .mesa3d,
+
+                .ashetos,
                 => .{ .none = {} },
 
                 .contiki => .{
@@ -698,12 +700,6 @@ pub const Os = struct {
                     .semver = .{
                         .min = .{ .major = 5, .minor = 0, .patch = 0 },
                         .max = .{ .major = 5, .minor = 8, .patch = 4 },
-                    },
-                },
-                .ashetos => .{
-                    .semver = .{
-                        .min = .{ .major = 0, .minor = 1, .patch = 0 },
-                        .max = .{ .major = 0, .minor = 1, .patch = 0 },
                     },
                 },
                 .vulkan => .{
@@ -2462,7 +2458,6 @@ pub const DynamicLinker = struct {
             .tvos,
             .visionos,
             .watchos,
-            .ashetos,
             => .arch_os,
             .hurd,
             .linux,
@@ -2503,6 +2498,7 @@ pub const DynamicLinker = struct {
             .vita,
 
             .tios,
+            .ashetos,
             => .none,
         };
     }
@@ -2890,8 +2886,6 @@ pub const DynamicLinker = struct {
                 else => none,
             },
 
-            .ashetos => init("KERNEL:/runtime/dynamic-linker"),
-
             // Operating systems in this list have been verified as not having a standard
             // dynamic linker path.
             .freestanding,
@@ -2926,6 +2920,7 @@ pub const DynamicLinker = struct {
             .vulkan,
 
             .tios,
+            .ashetos,
             => none,
 
             // TODO go over each item in this list and either move it to the above list, or

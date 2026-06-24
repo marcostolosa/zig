@@ -2924,6 +2924,13 @@ pub const StrtabString = enum(u32) {
     };
 };
 
+pub fn strtabStringNoLlvmIntrinsic(self: *Builder, bytes: []const u8) Allocator.Error!StrtabString {
+    return if (std.mem.startsWith(u8, bytes, "llvm."))
+        self.strtabStringFmt("\x01{s}", .{bytes})
+    else
+        self.strtabString(bytes);
+}
+
 pub fn strtabString(self: *Builder, bytes: []const u8) Allocator.Error!StrtabString {
     try self.strtab_string_bytes.ensureUnusedCapacity(self.gpa, bytes.len);
     try self.strtab_string_indices.ensureUnusedCapacity(self.gpa, 1);

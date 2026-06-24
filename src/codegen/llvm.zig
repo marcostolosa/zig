@@ -1026,7 +1026,7 @@ pub const Object = struct {
         if (!gop.found_existing) {
             errdefer assert(o.nav_map.remove(func.owner_nav));
             // First time lowering this NAV! Create a fresh global.
-            const llvm_name = try o.builder.strtabString(nav.fqn.toSlice(ip));
+            const llvm_name = try o.builder.strtabStringNoLlvmIntrinsic(nav.fqn.toSlice(ip));
             gop.value_ptr.* = try o.builder.addGlobal(llvm_name, .{
                 .type = .void, // placeholder; populated below
                 .kind = .{ .alias = .none }, // placeholder; populated below
@@ -1319,7 +1319,7 @@ pub const Object = struct {
         if (!gop.found_existing) {
             errdefer assert(o.nav_map.remove(nav_id));
             // First time lowering this NAV! Create a fresh global.
-            const llvm_name = try o.builder.strtabString(nav.fqn.toSlice(ip));
+            const llvm_name = try o.builder.strtabStringNoLlvmIntrinsic(nav.fqn.toSlice(ip));
             gop.value_ptr.* = try o.builder.addGlobal(llvm_name, .{
                 .type = .void, // placeholder; populated below
                 .kind = .{ .alias = .none }, // placeholder; populated below
@@ -4186,7 +4186,7 @@ pub const Object = struct {
             errdefer assert(o.nav_map.remove(nav_id));
             // The NAV hasn't been lowered yet, so generate a placeholder global whose details will
             // be filled in later.
-            const llvm_name = try o.builder.strtabString(nav.fqn.toSlice(ip));
+            const llvm_name = try o.builder.strtabStringNoLlvmIntrinsic(nav.fqn.toSlice(ip));
             gop.value_ptr.* = try o.builder.addGlobal(llvm_name, .{
                 .type = .void, // placeholder; populated by `updateNav`/`updateFunc`
                 .kind = .{ .alias = .none }, // placeholder; populated by `updateNav`/`updateFunc`

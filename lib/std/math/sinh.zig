@@ -56,7 +56,7 @@ fn sinh32(x: f32) f32 {
     }
 
     // |x| > log(FLT_MAX) or nan
-    return 2 * h * expo2(ax);
+    return expo2(ax, 2 * h);
 }
 
 fn sinh64(x: f64) f64 {
@@ -88,7 +88,7 @@ fn sinh64(x: f64) f64 {
     }
 
     // |x| > log(DBL_MAX) or nan
-    return 2 * h * expo2(ax);
+    return expo2(ax, 2 * h);
 }
 
 test sinh {

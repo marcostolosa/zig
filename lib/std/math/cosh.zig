@@ -50,7 +50,7 @@ fn cosh32(x: f32) f32 {
     }
 
     // |x| > log(FLT_MAX) or nan
-    return expo2(ax);
+    return expo2(ax, 1.0);
 }
 
 fn cosh64(x: f64) f64 {
@@ -83,7 +83,7 @@ fn cosh64(x: f64) f64 {
     }
 
     // |x| > log(CBL_MAX) or nan
-    return expo2(ax);
+    return expo2(ax, 1.0);
 }
 
 test cosh {

@@ -203,19 +203,19 @@ pub fn Integer(comptime size: u16) type {
             return index;
         }
 
-        /// Returns true iff every corresponding bit in both
+        /// Returns true if every corresponding bit in both
         /// bit sets are the same.
         pub fn eql(self: Self, other: Self) bool {
             return bit_length == 0 or self.mask == other.mask;
         }
 
-        /// Returns true iff the first bit set is the subset
+        /// Returns true if the first bit set is the subset
         /// of the second one.
         pub fn subsetOf(self: Self, other: Self) bool {
             return self.intersectWith(other).eql(self);
         }
 
-        /// Returns true iff the first bit set is the superset
+        /// Returns true if the first bit set is the superset
         /// of the second one.
         pub fn supersetOf(self: Self, other: Self) bool {
             return other.subsetOf(self);
@@ -581,7 +581,7 @@ pub fn Array(comptime MaskIntType: type, comptime size: usize) type {
             return offset + index;
         }
 
-        /// Returns true iff every corresponding bit in both
+        /// Returns true if every corresponding bit in both
         /// bit sets are the same.
         pub fn eql(self: Self, other: Self) bool {
             var i: usize = 0;
@@ -592,13 +592,13 @@ pub fn Array(comptime MaskIntType: type, comptime size: usize) type {
             } else true;
         }
 
-        /// Returns true iff the first bit set is the subset
+        /// Returns true if the first bit set is the subset
         /// of the second one.
         pub fn subsetOf(self: Self, other: Self) bool {
             return self.intersectWith(other).eql(self);
         }
 
-        /// Returns true iff the first bit set is the superset
+        /// Returns true if the first bit set is the superset
         /// of the second one.
         pub fn supersetOf(self: Self, other: Self) bool {
             return other.subsetOf(self);
@@ -1003,7 +1003,7 @@ pub const Dynamic = struct {
         return offset + index;
     }
 
-    /// Returns true iff every corresponding bit in both
+    /// Returns true if every corresponding bit in both
     /// bit sets are the same.
     pub fn eql(self: Self, other: Self) bool {
         if (self.bit_length != other.bit_length) {
@@ -1018,7 +1018,7 @@ pub const Dynamic = struct {
         } else true;
     }
 
-    /// Returns true iff the first bit set is the subset
+    /// Returns true if the first bit set is the subset
     /// of the second one.
     pub fn subsetOf(self: Self, other: Self) bool {
         if (self.bit_length != other.bit_length) {
@@ -1033,7 +1033,7 @@ pub const Dynamic = struct {
         } else true;
     }
 
-    /// Returns true iff the first bit set is the superset
+    /// Returns true if the first bit set is the superset
     /// of the second one.
     pub fn supersetOf(self: Self, other: Self) bool {
         if (self.bit_length != other.bit_length) {
@@ -1225,7 +1225,7 @@ pub const DynamicManaged = struct {
         return self.unmanaged.toggleFirstSet();
     }
 
-    /// Returns true iff every corresponding bit in both
+    /// Returns true if every corresponding bit in both
     /// bit sets are the same.
     pub fn eql(self: Self, other: Self) bool {
         return self.unmanaged.eql(other.unmanaged);

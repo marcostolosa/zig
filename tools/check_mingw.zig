@@ -3,18 +3,27 @@ const Io = std.Io;
 const Dir = Io.Dir;
 const Preprocessor = @import("preprocessor");
 
-pub fn main(init: std.process.Init) !void {
+const Args = struct {
+    zig_src_mingw_lib_path: []const u8,
+
+    pub const @"--help": std.cli.Help(Args) = .{
+        .args = .{
+            .zig_src_mingw_lib_path = .{
+                .description = "Path to 'zig/lib/libc/mingw'",
+            },
+        },
+    };
+};
+
+pub fn main(init: std.process.Init, args: Args) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
-
-    const zig_src_mingw_lib_path = args[1];
 
     const mingw_include_path = try Dir.path.join(arena, &.{
-        zig_src_mingw_lib_path, "def-include",
+        args.zig_src_mingw_lib_path, "def-include",
     });
     const mingw_libcommon_path = try Dir.path.join(arena, &.{
-        zig_src_mingw_lib_path, "lib-common",
+        args.zig_src_mingw_lib_path, "lib-common",
     });
 
     var mingw_libcommon_dir = Dir.cwd().openDir(io, mingw_libcommon_path, .{ .iterate = true }) catch |err| {

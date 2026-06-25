@@ -45,6 +45,59 @@ pub fn getHostAlloc(uri: Uri, arena: Allocator) GetHostAllocError!HostName {
     return .{ .bytes = bytes };
 }
 
+pub const QueryIterator = struct {
+    query: Component,
+    index: usize = 0,
+
+    pub const Entry = struct {
+        name: Component,
+        value: Component,
+    };
+
+    pub fn next(it: *QueryIterator) ?Entry {
+        const query_string = switch (it.query) {
+            .raw, .percent_encoded => |s| s,
+        };
+
+        if (it.index >= query_string.len) return null;
+
+        const section = getSection(query_string, it.index);
+        it.index += section.len + 1; // No `- 1`, section ends with '&'.
+
+        return getEntry(it.query, section);
+    }
+
+    fn getSection(str: []const u8, start: usize) []const u8 {
+        if (std.mem.findScalar(u8, str[start..], '&')) |rel_i|
+            return str[start .. start + rel_i];
+
+        return str[start..str.len];
+    }
+
+    fn getEntry(tag: std.meta.Tag(Component), bytes: []const u8) Entry {
+        if (std.mem.findScalar(u8, bytes, '=')) |i| {
+            const name = bytes[0..i];
+            const value = if (i + 1 > bytes.len) "" else bytes[i + 1 .. bytes.len];
+            return switch (tag) {
+                inline else => |t| .{
+                    .name = @unionInit(Component, @tagName(t), name),
+                    .value = @unionInit(Component, @tagName(t), value),
+                },
+            };
+        }
+        return switch (tag) {
+            inline else => |t| .{
+                .name = @unionInit(Component, @tagName(t), bytes),
+                .value = @unionInit(Component, @tagName(t), ""),
+            },
+        };
+    }
+};
+
+pub fn queryIterator(uri: Uri) QueryIterator {
+    return .{ .query = uri.query.? };
+}
+
 pub const Component = union(enum) {
     /// Invalid characters in this component must be percent encoded
     /// before being printed as part of a URI.
@@ -877,4 +930,18 @@ test "URI malformed input" {
     try std.testing.expectError(error.InvalidFormat, std.Uri.parse("http://]["));
     try std.testing.expectError(error.InvalidFormat, std.Uri.parse("http://]@["));
     try std.testing.expectError(error.InvalidFormat, std.Uri.parse("http://lo]s\x85hc@[/8\x10?0Q"));
+}
+
+test QueryIterator {
+    const uri_raw = try Uri.parse("git+https://codeberg.org/ziglang/zig?ref=master&foo=bar&baz=");
+    var it_raw = uri_raw.queryIterator();
+    try std.testing.expectEqualDeep(QueryIterator.Entry{ .name = .{ .percent_encoded = "ref" }, .value = .{ .percent_encoded = "master" } }, it_raw.next().?);
+    try std.testing.expectEqualDeep(QueryIterator.Entry{ .name = .{ .percent_encoded = "foo" }, .value = .{ .percent_encoded = "bar" } }, it_raw.next().?);
+    try std.testing.expectEqualDeep(QueryIterator.Entry{ .name = .{ .percent_encoded = "baz" }, .value = .{ .percent_encoded = "" } }, it_raw.next().?);
+    try std.testing.expectEqual(null, it_raw.next());
+
+    const uri_pct = try Uri.parse("git+https://codeberg.org/ziglang/zig?ref%3Dmaster%26foo%3Dbar%26baz%3D");
+    var it_pct = uri_pct.queryIterator();
+    try std.testing.expectEqualDeep(QueryIterator.Entry{ .name = .{ .percent_encoded = "ref%3Dmaster%26foo%3Dbar%26baz%3D" }, .value = .{ .percent_encoded = "" } }, it_pct.next().?);
+    try std.testing.expectEqual(null, it_pct.next());
 }

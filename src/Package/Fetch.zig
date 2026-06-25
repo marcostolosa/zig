@@ -1262,11 +1262,14 @@ fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u
                     break :want_ref try fragment.toRawMaybeAlloc(arena);
 
                 if (uri.query) |query| {
-                    var it = uri.queryIterator();
+                    var it: std.Uri.QueryIterator = .{ .query = query };
                     while (it.next()) |entry| {
-                        const name = switch (entry.name) { .raw, .percent_encoded => |s| s };
+                        const name = switch (entry.name) {
+                            .raw, .percent_encoded => |s| s,
+                        };
+
                         if (std.mem.eql(u8, name, "ref"))
-                            break :want_ref switch (entry.value) { .raw, .percent_encoded => |s| s };
+                            break :want_ref try entry.value.toRawMaybeAlloc(arena);
                     }
                 }
 

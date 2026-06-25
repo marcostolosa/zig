@@ -45,6 +45,12 @@ pub fn getHostAlloc(uri: Uri, arena: Allocator) GetHostAllocError!HostName {
     return .{ .bytes = bytes };
 }
 
+/// Query parsing is not defined in RFC3986, this is derived from
+/// <https://url.spec.whatwg.org/#concept-urlencoded-parser>
+///
+/// Notable deviations:
+/// * Does not convert '+' to ' ' - left to caller
+/// * Does not UTF-8 decode any percent encoded components - left to caller
 pub const QueryIterator = struct {
     query: Component,
     index: usize = 0,
@@ -54,6 +60,7 @@ pub const QueryIterator = struct {
         value: Component,
     };
 
+    /// Returned component slices point into `query`
     pub fn next(it: *QueryIterator) ?Entry {
         const query_string = switch (it.query) {
             .raw, .percent_encoded => |s| s,
@@ -61,42 +68,33 @@ pub const QueryIterator = struct {
 
         if (it.index >= query_string.len) return null;
 
-        const section = getSection(query_string, it.index);
-        it.index += section.len + 1; // No `- 1`, section ends with '&'.
+        var sequence_end = std.mem.findScalarPos(u8, query_string, it.index, '&') orelse query_string.len;
 
-        return getEntry(it.query, section);
-    }
+        // Skip empty sequences, ie. '&&'
+        while (sequence_end - it.index == 0 and it.index < query_string.len) {
+            it.index += 1;
+            sequence_end = std.mem.findScalarPos(u8, query_string, it.index, '&') orelse query_string.len;
+        }
 
-    fn getSection(str: []const u8, start: usize) []const u8 {
-        if (std.mem.findScalar(u8, str[start..], '&')) |rel_i|
-            return str[start .. start + rel_i];
+        const sequence = query_string[it.index..sequence_end];
+        if (sequence.len == 0) return null;
+        it.index += sequence.len + 1;
 
-        return str[start..str.len];
+        return getEntry(it.query, sequence);
     }
 
     fn getEntry(tag: std.meta.Tag(Component), bytes: []const u8) Entry {
-        if (std.mem.findScalar(u8, bytes, '=')) |i| {
-            const name = bytes[0..i];
-            const value = if (i + 1 > bytes.len) "" else bytes[i + 1 .. bytes.len];
-            return switch (tag) {
-                inline else => |t| .{
-                    .name = @unionInit(Component, @tagName(t), name),
-                    .value = @unionInit(Component, @tagName(t), value),
-                },
-            };
-        }
+        const i = std.mem.findScalar(u8, bytes, '=') orelse bytes.len;
+        const name = bytes[0..i];
+        const value = bytes[@min(i + 1, bytes.len)..];
         return switch (tag) {
             inline else => |t| .{
-                .name = @unionInit(Component, @tagName(t), bytes),
-                .value = @unionInit(Component, @tagName(t), ""),
+                .name = @unionInit(Component, @tagName(t), name),
+                .value = @unionInit(Component, @tagName(t), value),
             },
         };
     }
 };
-
-pub fn queryIterator(uri: Uri) QueryIterator {
-    return .{ .query = uri.query.? };
-}
 
 pub const Component = union(enum) {
     /// Invalid characters in this component must be percent encoded
@@ -933,15 +931,19 @@ test "URI malformed input" {
 }
 
 test QueryIterator {
-    const uri_raw = try Uri.parse("git+https://codeberg.org/ziglang/zig?ref=master&foo=bar&baz=");
-    var it_raw = uri_raw.queryIterator();
+    const uri_raw = try Uri.parse("git+https://codeberg.org/ziglang/zig?ref=master&next=seq&no_val=&=no_name&dbl==eq&&skip=&&&empty=&&&&");
+    var it_raw: QueryIterator = .{ .query = uri_raw.query.? };
     try std.testing.expectEqualDeep(QueryIterator.Entry{ .name = .{ .percent_encoded = "ref" }, .value = .{ .percent_encoded = "master" } }, it_raw.next().?);
-    try std.testing.expectEqualDeep(QueryIterator.Entry{ .name = .{ .percent_encoded = "foo" }, .value = .{ .percent_encoded = "bar" } }, it_raw.next().?);
-    try std.testing.expectEqualDeep(QueryIterator.Entry{ .name = .{ .percent_encoded = "baz" }, .value = .{ .percent_encoded = "" } }, it_raw.next().?);
+    try std.testing.expectEqualDeep(QueryIterator.Entry{ .name = .{ .percent_encoded = "next" }, .value = .{ .percent_encoded = "seq" } }, it_raw.next().?);
+    try std.testing.expectEqualDeep(QueryIterator.Entry{ .name = .{ .percent_encoded = "no_val" }, .value = .{ .percent_encoded = "" } }, it_raw.next().?);
+    try std.testing.expectEqualDeep(QueryIterator.Entry{ .name = .{ .percent_encoded = "" }, .value = .{ .percent_encoded = "no_name" } }, it_raw.next().?);
+    try std.testing.expectEqualDeep(QueryIterator.Entry{ .name = .{ .percent_encoded = "dbl" }, .value = .{ .percent_encoded = "=eq" } }, it_raw.next().?);
+    try std.testing.expectEqualDeep(QueryIterator.Entry{ .name = .{ .percent_encoded = "skip" }, .value = .{ .percent_encoded = "" } }, it_raw.next().?);
+    try std.testing.expectEqualDeep(QueryIterator.Entry{ .name = .{ .percent_encoded = "empty" }, .value = .{ .percent_encoded = "" } }, it_raw.next().?);
     try std.testing.expectEqual(null, it_raw.next());
 
     const uri_pct = try Uri.parse("git+https://codeberg.org/ziglang/zig?ref%3Dmaster%26foo%3Dbar%26baz%3D");
-    var it_pct = uri_pct.queryIterator();
+    var it_pct: QueryIterator = .{ .query = uri_pct.query.? };
     try std.testing.expectEqualDeep(QueryIterator.Entry{ .name = .{ .percent_encoded = "ref%3Dmaster%26foo%3Dbar%26baz%3D" }, .value = .{ .percent_encoded = "" } }, it_pct.next().?);
     try std.testing.expectEqual(null, it_pct.next());
 }

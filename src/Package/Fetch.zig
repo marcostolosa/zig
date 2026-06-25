@@ -1257,8 +1257,22 @@ fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u
         };
 
         const want_oid = want_oid: {
-            const want_ref =
-                if (uri.fragment) |fragment| try fragment.toRawMaybeAlloc(arena) else "HEAD";
+            const want_ref = want_ref: {
+                if (uri.fragment) |fragment|
+                    break :want_ref try fragment.toRawMaybeAlloc(arena);
+
+                if (uri.query) |query| {
+                    var it = uri.queryIterator();
+                    while (it.next()) |entry| {
+                        const name = switch (entry.name) { .raw, .percent_encoded => |s| s };
+                        if (std.mem.eql(u8, name, "ref"))
+                            break :want_ref switch (entry.value) { .raw, .percent_encoded => |s| s };
+                    }
+                }
+
+                break :want_ref "HEAD";
+            };
+
             if (git.Oid.parseAny(want_ref)) |oid| break :want_oid oid else |_| {}
 
             const want_ref_head = try std.fmt.allocPrint(arena, "refs/heads/{s}", .{want_ref});

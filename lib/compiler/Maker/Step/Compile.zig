@@ -596,7 +596,7 @@ fn lowerZigArgs(
     }
 
     switch (conf_comp.test_runner.u) {
-        .default => {},
+        .none => {},
         .simple, .server => |lp| (try zig_args.addManyAsArray(gpa, 2)).* = .{
             "--test-runner", try maker.resolveLazyPathIndexAbs(arena, lp, compile_index),
         },

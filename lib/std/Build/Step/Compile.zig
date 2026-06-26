@@ -365,6 +365,20 @@ pub const TestRunner = struct {
     /// tests are complete, or they can use `std.zig.Server` over stdio to interact more closely
     /// with the build system.
     mode: enum { simple, server },
+
+    pub const default: @This() = .{
+        .path = .{
+            .relative = .{
+                .base = .zig_lib,
+                .sub_path = std.fmt.comptimePrint("{s}{c}{s}", .{
+                    "compiler",
+                    std.fs.path.sep,
+                    "test_runner.zig",
+                }),
+            },
+        },
+        .mode = .simple,
+    };
 };
 
 pub fn create(owner: *std.Build, options: Options) *Compile {

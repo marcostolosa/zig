@@ -655,7 +655,7 @@ pub const TestOptions = struct {
     root_module: *Module,
     max_rss: u64 = 0,
     filters: []const []const u8 = &.{},
-    test_runner: ?Step.Compile.TestRunner = null,
+    test_runner: ?Step.Compile.TestRunner = .default,
     use_llvm: ?bool = null,
     use_lld: ?bool = null,
     zig_lib_dir: ?LazyPath = null,
@@ -770,8 +770,13 @@ pub fn addRunArtifact(b: *Build, exe: *Step.Compile) *Step.Run {
     run_step.producer = exe;
     run_step.addArtifactArg(exe);
     if (exe.kind == .@"test") {
-        const test_server_mode: bool = s: {
-            if (exe.test_runner) |r| break :s r.mode == .server;
+        const test_server_mode: bool = if (exe.test_runner) |test_runner| s: {
+            switch (test_runner.path) {
+                .relative => |rp| if (!rp.eql(Step.Compile.TestRunner.default.path.relative)) {
+                    break :s test_runner.mode == .server;
+                },
+                else => break :s test_runner.mode == .server,
+            }
             if (exe.use_llvm == false) {
                 // The default test runner does not use the server protocol if the selected backend
                 // is too immature to support it. Keep this logic in sync with `need_simple` in the
@@ -793,10 +798,11 @@ pub fn addRunArtifact(b: *Build, exe: *Step.Compile) *Step.Run {
                 }
             }
             break :s true;
-        };
+        } else false;
+
         if (test_server_mode) {
             run_step.enableTestRunnerMode();
-        } else if (exe.test_runner == null) {
+        } else {
             // If a test runner does not use the `std.zig.Server` protocol, it can instead
             // communicate failure via its exit code.
             run_step.expectExitCode(0);

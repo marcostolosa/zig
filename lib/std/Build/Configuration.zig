@@ -799,9 +799,9 @@ pub const Step = extern struct {
             none: void,
         };
         pub const TestRunner = union(@This().Tag) {
-            pub const Tag = enum(u2) { default, simple, server };
+            pub const Tag = enum(u2) { none, simple, server };
 
-            default: void,
+            none: void,
             simple: LazyPath.Index,
             server: LazyPath.Index,
         };

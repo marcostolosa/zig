@@ -173,7 +173,7 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                             .test_runner = if (c.test_runner) |tr| switch (tr.mode) {
                                 .simple => .simple,
                                 .server => .server,
-                            } else .default,
+                            } else .none,
                             .wasi_exec_model = .init(c.wasi_exec_model),
                             .win32_manifest = c.win32_manifest != null,
                             .win32_module_definition = c.win32_module_definition != null,
@@ -260,7 +260,7 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                         .test_runner = .{ .u = if (c.test_runner) |tr| switch (tr.mode) {
                             .simple => .{ .simple = try s.addLazyPath(tr.path) },
                             .server => .{ .server = try s.addLazyPath(tr.path) },
-                        } else .default },
+                        } else .none },
 
                         .emit_directory = .{ .value = c.emit_directory.unwrap() },
                         .generated_docs = .{ .value = c.generated_docs.unwrap() },

@@ -992,11 +992,14 @@ const FuzzTestRunner = struct {
     ctx: FuzzContext,
     coverage_id: ?u64,
 
+    spawn_options: process.SpawnOptions,
+    main_progress_node: std.Progress.Node,
+
     instances: []Instance,
     /// The indexes of this are layed out such that it is effectively an array
     /// of `[instances.len][3]Io.Operation.Storage` of stdin, stdout, stderr.
     batch: Io.Batch,
-    /// LIFO. Stream of message bodies trailed by PendingBroadcastFooter.
+    /// LIFO. Stream of message bodies trailed by `PendingBroadcastFooter`.
     pending_broadcasts: std.ArrayList(u8),
     broadcast: std.ArrayList(u8),
     broadcast_undelivered: u32,
@@ -1009,7 +1012,8 @@ const FuzzTestRunner = struct {
         stdin_vec: [1][]u8,
         stdout_vec: [1][]u8,
         stderr_vec: [1][]u8,
-        progress_node: std.Progress.Node,
+        progress_node: ?std.Progress.Node,
+        reduce_run: u32 = 0,
 
         fn messageHeader(instance: *Instance) InHeader {
             assert(instance.message.items.len >= @sizeOf(InHeader));
@@ -1046,14 +1050,7 @@ const FuzzTestRunner = struct {
         const gpa = maker.gpa;
         const io = graph.io;
 
-        const n_instances = switch (ctx.fuzz.mode) {
-            .forever => graph.max_jobs orelse @min(
-                std.Thread.getCpuCount() catch 1,
-                (std.math.maxInt(u32) - 2) / 3,
-            ),
-            .limit => 1,
-        };
-        const instances = try gpa.alloc(Instance, n_instances);
+        const instances = try gpa.alloc(Instance, ctx.instances);
         errdefer gpa.free(instances);
         const batch_storage = try gpa.alloc(Io.Operation.Storage, instances.len * 3);
         errdefer gpa.free(batch_storage);
@@ -1071,7 +1068,7 @@ const FuzzTestRunner = struct {
         for (0.., instances) |id, *instance| {
             errdefer for (instances[0..id]) |*spawned| {
                 spawned.child.kill(io);
-                spawned.progress_node.end();
+                spawned.progress_node.?.end();
             };
             instance.child = try process.spawn(io, spawn_options);
             instance.progress_node = progress_node.start("starting fuzzer", 0);
@@ -1081,6 +1078,9 @@ const FuzzTestRunner = struct {
             .run = run,
             .run_index = run_index,
             .ctx = ctx,
+
+            .spawn_options = spawn_options,
+            .main_progress_node = progress_node,
             .coverage_id = null,
 
             .instances = instances,
@@ -1107,7 +1107,7 @@ const FuzzTestRunner = struct {
             instance.child.kill(io);
             instance.message.deinit(gpa);
             instance.stderr.deinit(gpa);
-            instance.progress_node.end();
+            if (instance.progress_node) |node| node.end();
             total_rss += instance.child.resource_usage_statistics.getMaxRss() orelse 0;
         }
         step.result_peak_rss = @max(step.result_peak_rss, total_rss);
@@ -1117,7 +1117,6 @@ const FuzzTestRunner = struct {
     fn startInstances(f: *FuzzTestRunner) !void {
         const maker = f.ctx.fuzz.maker;
         const run_index = f.run_index;
-        const run = f.run;
 
         const graph = maker.graph;
         const io = graph.io;
@@ -1125,33 +1124,37 @@ const FuzzTestRunner = struct {
 
         for (0.., f.instances) |id, *instance| {
             const id32: u32 = @intCast(id);
-            var writer = instance.child.stdin.?.writerStreaming(io, &.{});
+
+            var buf: [4096]u8 = undefined;
+            var writer = instance.child.stdin.?.writerStreaming(io, &buf);
             const client: std.zig.Client = .{
                 .in = undefined,
                 .out = &writer.interface,
             };
-            (switch (f.ctx.fuzz.mode) {
-                .forever => client.serveRunFuzzTestMessage(
-                    run.fuzz_tests.items,
-                    .forever,
-                    id32,
-                ),
-                .limit => |limit| client.serveRunFuzzTestMessage(
-                    run.fuzz_tests.items,
-                    .iterations,
-                    limit.amount,
-                ),
-            }) catch |write_err| {
-                // The runner unexpectedly closed stdin, which means it crashed during initialization.
-                // Clean up everything and wait for the child to exit.
-                instance.child.stdin.?.close(io);
-                instance.child.stdin = null;
-                const term = try instance.child.wait(io);
-                return step.fail(
-                    maker,
-                    "unable to write stdin ({t}); test process unexpectedly {f}",
-                    .{ write_err, fmtTerm(term) },
-                );
+            client.serveRunFuzzTestMessage(
+                .{
+                    .main_instance = id == 0,
+                    .mode = f.ctx.fuzz.mode,
+                },
+                switch (f.ctx.fuzz.mode) {
+                    .forever => undefined,
+                    .limit => |limit| limit.amount,
+                },
+                f.ctx.first_mmap_index + id32,
+                f.run.fuzz_tests.items,
+            ) catch |e| switch (e) {
+                error.WriteFailed => {
+                    // The runner unexpectedly closed stdin, which means it crashed during
+                    // initialization. Clean up everything and wait for the child to exit.
+                    instance.child.stdin.?.close(io);
+                    instance.child.stdin = null;
+                    const term = try instance.child.wait(io);
+                    return step.fail(
+                        maker,
+                        "unable to write stdin ({t}); test process unexpectedly {f}",
+                        .{ writer.err.?, fmtTerm(term) },
+                    );
+                },
             };
 
             try f.addStdoutRead(id32, @sizeOf(InHeader));
@@ -1170,19 +1173,19 @@ const FuzzTestRunner = struct {
                 const id = completion.index / 3;
                 const result = completion.result;
                 switch (completion.index % 3) {
-                    0 => try f.completeStdinWrite(id, result.file_write_streaming catch |e| switch (e) {
+                    stdin_i => try f.completeStdinWrite(id, result.file_write_streaming catch |e| switch (e) {
                         // Avoid calling `instanceEos` until EndOfStream is seen with stderr so
                         // that all stderr is collected.
                         error.BrokenPipe => continue,
                         else => |write_e| return write_e,
                     }),
-                    1 => try f.completeStdoutRead(id, result.file_read_streaming catch |e| switch (e) {
+                    stdout_i => try f.completeStdoutRead(id, result.file_read_streaming catch |e| switch (e) {
                         // Avoid calling `instanceEos` until EndOfStream is seen with stderr so
                         // that all stderr is collected.
                         error.EndOfStream => continue,
                         else => |read_e| return read_e,
                     }),
-                    2 => try f.completeStderrRead(id, result.file_read_streaming catch |e| switch (e) {
+                    stderr_i => try f.completeStderrRead(id, result.file_read_streaming catch |e| switch (e) {
                         error.EndOfStream => return f.instanceEos(id),
                         else => |read_e| return read_e,
                     }),
@@ -1262,7 +1265,7 @@ const FuzzTestRunner = struct {
             },
             .fuzz_test_change => {
                 const test_i = std.mem.readInt(u32, body[0..4], .little);
-                instance.progress_node.setName(run.fuzz_tests.items[test_i]);
+                instance.progress_node.?.setName(run.fuzz_tests.items[test_i]);
             },
             .broadcast_fuzz_input => {
                 if (f.instances.len == 1) {
@@ -1359,99 +1362,382 @@ const FuzzTestRunner = struct {
         instance.child.stdin = null;
         const term = try instance.child.wait(io);
         if (!termMatches(.{ .exited = 0 }, term)) {
+            try f.maybeSaveCrash(id, term);
             step.takeResultStderr(gpa, try f.mergedStderr(gpa));
-            try f.saveCrash(id, term);
             return step.fail(maker, "test process unexpectedly {f}", .{fmtTerm(term)});
         }
     }
 
-    fn saveCrash(f: *FuzzTestRunner, id: u32, term: process.Child.Term) !void {
+    const InputHeader = std.Build.abi.fuzz.MmapInputHeader;
+
+    fn maybeSaveCrash(
+        f: *FuzzTestRunner,
+        id: u32,
+        term: process.Child.Term,
+    ) !void {
         const fuzz = f.ctx.fuzz;
         const run_index = f.run_index;
         const run = f.run;
 
         const maker = fuzz.maker;
+        const gpa = maker.gpa;
         const step = maker.stepByIndex(run_index);
         const graph = maker.graph;
         const io = graph.io;
         const cache_root = graph.local_cache_root;
 
-        if (f.coverage_id == null) return;
+        var crash = try f.loadCrash(id) orelse return;
+        defer crash.deinit(gpa);
+        const full_crash_name = "f" ++ Dir.path.sep_str ++ "crash-full";
+        const reduced_crash_name = "f" ++ Dir.path.sep_str ++ "crash";
 
-        // Search for the input file corresponding to the instance
-        const InputHeader = std.Build.abi.fuzz.MmapInputHeader;
-        var in_r_buf: [@sizeOf(InputHeader)]u8 = undefined;
-        var in_r: Io.File.Reader = undefined;
-        var in_f: Io.File = undefined;
-        var in_name_buf: [12]u8 = undefined;
-        var in_name: []const u8 = undefined;
-        var i: u32 = 0;
-        const header: InputHeader = while (true) : ({
-            if (i == std.math.maxInt(u32)) return;
-            i += 1;
-        }) {
-            const name_prefix = "f" ++ Dir.path.sep_str ++ "in";
-            in_name = std.mem.print(&in_name_buf, name_prefix ++ "{x}", .{i}) catch unreachable;
-            in_f = cache_root.handle.openFile(io, in_name, .{
+        cache_root.handle.writeFile(io, .{
+            .sub_path = full_crash_name,
+            .data = crash.input,
+            // Lock the file in case other run steps also find crashes,
+            // so that it is at least correct for one of them.
+            .flags = .{ .lock = .exclusive },
+        }) catch |e| return step.fail(
+            maker,
+            "failed to write file '{f}{s}': {t}",
+            .{ cache_root, full_crash_name, e },
+        );
+
+        try f.reduceCrash(&crash);
+
+        cache_root.handle.writeFile(io, .{
+            .sub_path = reduced_crash_name,
+            .data = crash.input,
+            // Lock the file in case other run steps also find crashes,
+            // so that it is at least correct for one of them.
+            .flags = .{ .lock = .exclusive },
+        }) catch |e| return step.fail(
+            maker,
+            "failed to write file '{f}{s}': {t}",
+            .{ cache_root, reduced_crash_name, e },
+        );
+
+        step.takeResultStderr(gpa, try f.mergedStderr(gpa));
+        return step.fail(
+            maker,
+            "test '{s}' {f}; reduced input saved to '{f}{s}'; original input saved to '{f}{s}'",
+            .{
+                run.fuzz_tests.items[crash.test_i],
+                fmtTerm(term),
+                cache_root,
+                reduced_crash_name,
+                cache_root,
+                full_crash_name,
+            },
+        );
+    }
+
+    /// Overwrites `crash` with the reduced crash.
+    fn reduceCrash(f: *FuzzTestRunner, crash: *Crash) !void {
+        const maker = f.ctx.fuzz.maker;
+        const graph = maker.graph;
+        const gpa = maker.gpa;
+        const io = graph.io;
+
+        // Check that timing is available, otherwise the below would immediately end.
+        if (Io.Clock.awake.resolution(io)) |resolution| {
+            if (resolution.nanoseconds == 0) return;
+        } else |_| return;
+
+        for (f.instances) |*instance| {
+            instance.progress_node.?.end();
+            instance.progress_node = null;
+        }
+        f.main_progress_node.increaseEstimatedTotalItems(1);
+        const max_seconds = 8;
+        const start_len = crash.input.len;
+        const reduce_name_fmt = "Reducing Crash ({}s before giving up) ({} bytes -> {})";
+        var reduce_name_buf: [
+            std.fmt.count(reduce_name_fmt, .{
+                max_seconds,
+                std.math.maxInt(u32),
+                std.math.maxInt(u32),
+            })
+        ]u8 = undefined;
+        // The full name of the node will be set below, so use a placeholder here.
+        const reduce_node = f.main_progress_node.start("Reducing Crash", 0);
+
+        f.reduceInstancesKill();
+        reduced: while (crash.input.len != 0) {
+            try f.reduceRestartAllInstances(crash);
+            defer f.reduceInstancesKill();
+
+            var rem_seconds: u8 = max_seconds;
+            while (true) {
+                reduce_node.setName(std.mem.print(&reduce_name_buf, reduce_name_fmt, .{
+                    rem_seconds,
+                    start_len,
+                    crash.input.len,
+                }) catch unreachable);
+                const next_second: Io.Timeout = .{ .deadline = .fromNow(io, .{
+                    .raw = .fromSeconds(1),
+                    .clock = .awake,
+                }) };
+                while (f.batch.awaitConcurrent(io, next_second)) {
+                    while (f.batch.next()) |completion| {
+                        const id = completion.index / 3;
+                        const result = completion.result;
+
+                        assert(completion.index % 3 == stderr_i);
+                        if (result.file_read_streaming) |n| {
+                            try f.completeStderrRead(id, n);
+                        } else |e| switch (e) {
+                            error.EndOfStream => if (try f.reduceInstanceCrash(crash, id)) |new| {
+                                crash.deinit(gpa);
+                                crash.* = new;
+                                continue :reduced;
+                            } else {
+                                try f.reduceRestartInstance(crash, id);
+                            },
+                            else => |read_e| return read_e,
+                        }
+                    }
+
+                    // In the case of the instances repeatedly crashing, there may be constant
+                    // batch completions causing the timeout to not be observed. So, check it
+                    // here before continuing.
+                    if (Io.Timestamp.now(io, .awake).nanoseconds >=
+                        next_second.deadline.raw.nanoseconds)
+                    {
+                        break;
+                    }
+                } else |e| switch (e) {
+                    error.Canceled => return error.Canceled,
+                    error.ConcurrencyUnavailable => return error.ConcurrencyUnavailable,
+                    error.Timeout => {},
+                }
+                rem_seconds -= 1;
+                if (rem_seconds == 0) break :reduced;
+            }
+        }
+
+        reduce_node.end();
+    }
+
+    fn reduceInstancesKill(f: *FuzzTestRunner) void {
+        const io = f.ctx.fuzz.maker.graph.io;
+        for (f.instances) |*instance| instance.child.kill(io);
+        f.batch.cancel(io);
+        f.clearBatch();
+    }
+
+    fn reduceRestartAllInstances(f: *FuzzTestRunner, crash: *const Crash) !void {
+        for (0..f.instances.len) |id| {
+            try f.reduceRestartInstance(crash, @intCast(id));
+        }
+    }
+
+    fn reduceRestartInstance(f: *FuzzTestRunner, crash: *const Crash, id: u32) !void {
+        const instance = &f.instances[id];
+
+        const maker = f.ctx.fuzz.maker;
+        const io = maker.graph.io;
+        const step = maker.stepByIndex(f.run_index);
+
+        var message_buf: [start_reduce_message_buf_len]u8 align(4) = undefined;
+        var message_vec = try reduceMessageVec(
+            &message_buf,
+            f.ctx.first_mmap_index + id,
+            instance.reduce_run,
+            f.run.fuzz_tests.items[crash.test_i],
+            crash,
+        );
+        instance.reduce_run +%= 1;
+
+        var spawn_options = f.spawn_options;
+        spawn_options.stdout = .ignore; // There is no communication back to the build runner in
+        // reduce mode. The only actionable message the test runner sends is the version string,
+        // however it is already known to be correct since this is the same executable as used
+        // while fuzzing.
+        instance.child = try process.spawn(io, spawn_options);
+
+        var fw = instance.child.stdin.?.writerStreaming(io, &.{});
+        fw.interface.writeVecAll(&message_vec) catch |e| switch (e) {
+            error.WriteFailed => {
+                // The runner unexpectedly closed stdin, which means it crashed during
+                // initialization. Clean up everything and wait for the child to exit.
+                instance.child.stdin.?.close(io);
+                instance.child.stdin = null;
+                const term = try instance.child.wait(io);
+                return step.fail(
+                    maker,
+                    "unable to write stdin ({t}); test process unexpectedly {f}",
+                    .{ fw.err.?, fmtTerm(term) },
+                );
+            },
+        };
+
+        try f.addStderrRead(id);
+    }
+
+    const start_reduce_message_buf_len = @sizeOf(OutHeader) + 16;
+    fn reduceMessageVec(
+        buf: *align(4) [start_reduce_message_buf_len]u8,
+        mmap_index: u32,
+        run_number: u32,
+        test_name: []const u8,
+        crash: *const Crash,
+    ) error{Overflow}![4][]const u8 {
+        var bytes_len = 16 + @as(u32, @intCast(test_name.len));
+        if (crash.meta.len > std.math.maxInt(u32)) return error.Overflow;
+        bytes_len = try std.math.add(u32, bytes_len, @intCast(crash.input.len));
+        bytes_len = try std.math.add(u32, bytes_len, @intCast(crash.meta.len));
+
+        @as(*OutHeader, @ptrCast(buf[0..@sizeOf(OutHeader)])).* = .{
+            .tag = .start_fuzzing_reduce,
+            .bytes_len = bytes_len,
+        };
+        mem.writeInt(u32, buf[@sizeOf(OutHeader) + 0 ..][0..4], mmap_index, .little);
+        mem.writeInt(u32, buf[@sizeOf(OutHeader) + 4 ..][0..4], run_number, .little);
+        mem.writeInt(u32, buf[@sizeOf(OutHeader) + 8 ..][0..4], @intCast(test_name.len), .little);
+        mem.writeInt(u32, buf[@sizeOf(OutHeader) + 12 ..][0..4], @intCast(crash.input.len), .little);
+
+        return .{ buf, test_name, crash.input, crash.meta };
+    }
+
+    fn reduceInstanceCrash(f: *FuzzTestRunner, prev: *const Crash, id: u32) !?Crash {
+        const maker = f.ctx.fuzz.maker;
+        // Ensure that the child has exited so that the crash is saved
+        f.instances[id].child.kill(maker.graph.io);
+
+        var new = try f.loadCrash(id) orelse return null;
+        new.test_i = prev.test_i;
+        if (new.input.len >= prev.input.len) {
+            new.deinit(maker.gpa);
+            return null;
+        }
+        return new;
+    }
+
+    const Crash = struct {
+        input: []u8,
+        meta: []u8,
+        test_i: u32,
+
+        pub fn deinit(c: *Crash, gpa: Allocator) void {
+            gpa.free(c.input);
+            gpa.free(c.meta);
+            c.* = undefined;
+        }
+    };
+
+    fn loadCrash(f: *FuzzTestRunner, id: u32) !?Crash {
+        const fuzz = f.ctx.fuzz;
+        const run_index = f.run_index;
+        const run = f.run;
+
+        const maker = fuzz.maker;
+        const gpa = maker.gpa;
+        const step = maker.stepByIndex(run_index);
+        const graph = maker.graph;
+        const io = graph.io;
+        const cache_root = graph.local_cache_root;
+
+        const prefix = "f" ++ Dir.path.sep_str;
+        const input_prefix = prefix ++ "in";
+        const meta_prefix = prefix ++ "meta";
+        var path_buf: [@as(usize, @max(input_prefix.len, meta_prefix.len)) + 8]u8 = undefined;
+
+        const mmap_index = f.ctx.first_mmap_index + id;
+        const input_bytes, const test_i = input: {
+            const path = std.mem.print(&path_buf, input_prefix ++ "{x}", .{mmap_index}) catch
+                unreachable;
+            const file = cache_root.handle.openFile(io, path, .{
                 .lock = .exclusive,
                 .lock_nonblocking = true,
             }) catch |e| switch (e) {
-                error.FileNotFound => return,
-                error.WouldBlock => continue, // Can not be from
-                // the crashed instance since it is still locked.
-                else => return step.fail(maker, "failed to open file '{f}{s}': {t}", .{
-                    cache_root, in_name, e,
-                }),
+                error.FileNotFound => return null,
+                else => return step.fail(
+                    maker,
+                    "failed to open file '{f}{s}': {t}",
+                    .{ cache_root, path, e },
+                ),
+            };
+            defer file.close(io);
+
+            var r = file.readerStreaming(io, &.{});
+            const header = r.interface.takeStruct(InputHeader, .little) catch |e| switch (e) {
+                error.ReadFailed => return step.fail(
+                    maker,
+                    "failed to read file '{f}{s}': {t}",
+                    .{ cache_root, path, r.err.? },
+                ),
+                error.EndOfStream => return null,
+            };
+            if (header.test_i >= run.fuzz_tests.items.len) return null;
+
+            var bytes = try gpa.alloc(u8, header.len);
+            const n = r.interface.readSliceShort(bytes) catch |e| switch (e) {
+                error.ReadFailed => return step.fail(
+                    maker,
+                    "failed to read file '{f}{s}': {t}",
+                    .{ cache_root, path, r.err.? },
+                ),
             };
 
-            in_r = in_f.readerStreaming(io, &in_r_buf);
-            const header = in_r.interface.takeStruct(InputHeader, .little) catch |e| {
-                in_f.close(io);
-                switch (e) {
-                    error.ReadFailed => return step.fail(maker, "failed to read file '{f}{s}': {t}", .{
-                        cache_root, in_name, in_r.err.?,
-                    }),
-                    error.EndOfStream => continue,
-                }
-            };
-
-            if (header.pc_digest == f.coverage_id.? and
-                header.instance_id == id and
-                header.test_i < run.fuzz_tests.items.len)
-            {
-                break header;
+            if (n != bytes.len) {
+                // The input file is corrupted, however we can still try reducing it.
+                bytes = try gpa.realloc(bytes, header.len);
             }
-
-            in_f.close(io);
+            break :input .{ bytes, header.test_i };
         };
-        defer in_f.close(io);
+        errdefer gpa.free(input_bytes);
 
-        // Save it to a seperate file
-        const crash_name = "f" ++ Dir.path.sep_str ++ "crash";
-        const out = cache_root.handle.createFile(io, crash_name, .{
-            .lock = .exclusive, // Multiple run steps could have found a crash at the same time
-        }) catch |e| return step.fail(maker, "failed to create file '{f}{s}': {t}", .{
-            cache_root, crash_name, e,
-        });
-        defer out.close(io);
+        const meta_bytes = meta: {
+            const path = std.mem.print(&path_buf, meta_prefix ++ "{x}", .{mmap_index}) catch
+                unreachable;
+            const file = cache_root.handle.openFile(io, path, .{
+                .lock = .exclusive,
+                .lock_nonblocking = true,
+            }) catch |e| switch (e) {
+                error.FileNotFound => return null,
+                else => return step.fail(
+                    maker,
+                    "failed to open file '{f}{s}': {t}",
+                    .{ cache_root, path, e },
+                ),
+            };
+            defer file.close(io);
 
-        var out_w_buf: [512]u8 = undefined;
-        var out_w = out.writerStreaming(io, &out_w_buf);
-        _ = out_w.interface.sendFileAll(&in_r, .limited(header.len)) catch |e| switch (e) {
-            error.ReadFailed => return step.fail(maker, "failed to read file '{f}{s}': {t}", .{
-                cache_root, in_name, in_r.err.?,
-            }),
-            error.WriteFailed => return step.fail(maker, "failed to write file '{f}{s}': {t}", .{
-                cache_root, crash_name, out_w.err.?,
-            }),
+            var buf: [@sizeOf(u32)]u8 = undefined;
+            var r = file.readerStreaming(io, &buf);
+            const len = r.interface.takeInt(u32, .little) catch |e| switch (e) {
+                error.ReadFailed => return step.fail(
+                    maker,
+                    "failed to read file '{f}{s}': {t}",
+                    .{ cache_root, path, r.err.? },
+                ),
+                error.EndOfStream => return null,
+            };
+
+            const n_bytes = std.math.mul(usize, len, 4) catch return error.OutOfMemory;
+            var bytes = try gpa.alloc(u8, n_bytes);
+            const n = r.interface.readSliceShort(bytes) catch |e| switch (e) {
+                error.ReadFailed => return step.fail(
+                    maker,
+                    "failed to read file '{f}{s}': {t}",
+                    .{ cache_root, path, r.err.? },
+                ),
+            };
+
+            if (n != bytes.len) {
+                // The input file is corrupted, however we can still try reducing it.
+                bytes = try gpa.realloc(bytes, mem.Alignment.@"4".backward(bytes.len));
+            }
+            break :meta bytes;
         };
+        errdefer gpa.free(meta_bytes);
 
-        return step.fail(maker, "test '{s}' {f}; input saved to '{f}{s}'", .{
-            run.fuzz_tests.items[header.test_i],
-            fmtTerm(term),
-            cache_root,
-            crash_name,
-        });
+        return .{
+            .input = input_bytes,
+            .meta = meta_bytes,
+            .test_i = test_i,
+        };
     }
 
     fn instanceBroadcast(f: *FuzzTestRunner, from_id: u32, bytes: []const u8) !void {
@@ -1502,13 +1788,17 @@ const FuzzTestRunner = struct {
         }
     }
 
-    fn mergedStderr(f: *FuzzTestRunner, gpa: Allocator) Allocator.Error![]const u8 {
-        // Collect any available stderr
+    fn clearBatch(f: *FuzzTestRunner) void {
         while (f.batch.next()) |completion| {
-            if (completion.index % 3 != 2) continue;
+            if (completion.index % 3 != stderr_i) continue;
             const len = completion.result.file_read_streaming catch continue;
             f.instances[completion.index / 3].stderr.items.len += len;
         }
+    }
+
+    fn mergedStderr(f: *FuzzTestRunner, gpa: Allocator) Allocator.Error![]const u8 {
+        // Collect any available stderr
+        f.clearBatch();
 
         var stderr_len: usize = 0;
         for (f.instances) |*instance| stderr_len += instance.stderr.items.len;
@@ -1901,6 +2191,8 @@ pub fn rerunInFuzzMode(
     run_index: Configuration.Step.Index,
     fuzz: *Fuzz,
     prog_node: std.Progress.Node,
+    instances: u32,
+    first_mmap_index: u32,
 ) !void {
     const maker = fuzz.maker;
     const graph = maker.graph;
@@ -2018,6 +2310,8 @@ pub fn rerunInFuzzMode(
     const tmp_dir_path = "tmp" ++ Dir.path.sep_str ++ std.fmt.hex(rand_int);
     try runCommand(arena, run, run_index, maker, prog_node, argv_list.items, &.{}, &.{}, &.{}, &.{}, null, has_side_effects, tmp_dir_path, .{
         .fuzz = fuzz,
+        .instances = instances,
+        .first_mmap_index = first_mmap_index,
     });
 }
 
@@ -2156,6 +2450,8 @@ fn fmtTerm(term: ?process.Child.Term) std.fmt.Alt(?process.Child.Term, formatTer
 
 const FuzzContext = struct {
     fuzz: *Fuzz,
+    instances: u32,
+    first_mmap_index: u32,
 };
 
 fn runCommand(

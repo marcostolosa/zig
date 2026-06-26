@@ -33,7 +33,7 @@ queue_mutex: Io.Mutex,
 queue_cond: Io.Condition,
 msg_queue: std.ArrayList(Msg),
 
-pub const Mode = union(enum) {
+pub const Mode = union(abi.Mode) {
     forever: struct { ws: *WebServer },
     limit: Limited,
 
@@ -137,7 +137,14 @@ pub fn start(fuzz: *Fuzz) void {
     const graph = maker.graph;
     const io = graph.io;
 
-    fuzz.prog_node = fuzz.root_prog_node.start("Fuzzing", 0);
+    const max_jobs = @min(graph.max_jobs, std.math.maxInt(u32));
+    const n_steps: u32 = @intCast(fuzz.run_steps.len);
+    const workers = switch (fuzz.mode) {
+        .forever => @max(max_jobs, n_steps),
+        .limit => n_steps,
+    };
+
+    fuzz.prog_node = fuzz.root_prog_node.start("Fuzzing", workers);
 
     if (fuzz.mode == .forever) {
         // For polling messages and sending updates to subscribers.
@@ -145,10 +152,28 @@ pub fn start(fuzz: *Fuzz) void {
             fatal("unable to spawn coverage task: {t}", .{err});
     }
 
+    var instances_per = max_jobs / n_steps;
+    var instances_extra = max_jobs % n_steps; // Number of instances that will be unfairly distributed
+    if (instances_per == 0 or fuzz.mode == .limit) {
+        // The number of jobs is instead limited by `io`.
+        instances_per = 1;
+        instances_extra = 0;
+    }
+
+    var first_mmap_index: u32 = 0;
     for (fuzz.run_steps) |run_index| {
+        var instances = instances_per;
+        if (instances_extra != 0) {
+            instances += 1;
+            instances_extra -= 1;
+        }
+        assert(instances != 0);
+
         const run = &maker.stepByIndex(run_index).extended.run;
         assert(run.rebuilt_executable != null);
-        fuzz.group.async(io, fuzzWorkerRun, .{ fuzz, run_index });
+        fuzz.group.async(io, fuzzWorkerRun, .{ fuzz, run_index, instances, first_mmap_index });
+
+        first_mmap_index += instances;
     }
 }
 
@@ -244,14 +269,25 @@ fn rebuildTestsWorkerRunFallible(
     };
 }
 
-fn fuzzWorkerRun(fuzz: *Fuzz, run_index: Configuration.Step.Index) void {
+fn fuzzWorkerRun(
+    fuzz: *Fuzz,
+    run_index: Configuration.Step.Index,
+    instances: u32,
+    first_mmap_index: u32,
+) void {
     const maker = fuzz.maker;
     const graph = maker.graph;
     const io = graph.io;
     const conf = &maker.scanned_config.configuration;
     const run = &maker.stepByIndex(run_index).extended.run;
 
-    run.rerunInFuzzMode(run_index, fuzz, fuzz.prog_node) catch |err| switch (err) {
+    run.rerunInFuzzMode(
+        run_index,
+        fuzz,
+        fuzz.prog_node,
+        instances,
+        first_mmap_index,
+    ) catch |err| switch (err) {
         error.MakeFailed => {
             var buf: [256]u8 = undefined;
             const stderr = io.lockStderr(&buf, graph.stderr_mode) catch |e| switch (e) {

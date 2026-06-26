@@ -142,7 +142,7 @@ pub const fuzz = struct {
     /// Returns if `error.SkipZigTest` was indicated
     pub const TestOne = *const fn () callconv(.c) bool;
 
-    /// A unique value to identify the related requests across runs
+    /// A unique value to identify related requests across runs
     pub const Uid = packed struct(u32) {
         kind: enum(u1) { int, bytes },
         hash: u31,
@@ -168,10 +168,12 @@ pub const fuzz = struct {
     ///
     /// `fuzzer_init` must be called first.
     pub extern fn fuzzer_main(
+        flags: Flags,
+        mmap_index: u32,
+        /// Undefined if `flags.mode != .limit`
+        iterations: u64,
         n_tests: u32,
         seed: u32,
-        limit_kind: LimitKind,
-        amount_or_instance: u64,
     ) void;
     pub extern fn runner_test_run(i: u32) void;
     pub extern fn runner_test_name(i: u32) Slice;
@@ -196,6 +198,16 @@ pub const fuzz = struct {
     /// Must be called from inside a test function where `fuzzer_set_test` has been called first.
     pub extern fn fuzzer_start_test() void;
 
+    /// Runs the fuzzer in its crash reducing mode. `fuzzer_init` must be called first.
+    pub extern fn fuzzer_reduce(
+        mmap_index: u32,
+        run_number: u32,
+        mmaped_input: Slice,
+        mmaped_meta: Slice32,
+        seed: u32,
+        test_one: TestOne,
+    ) noreturn;
+
     pub extern fn fuzzer_int(uid: Uid, weights: Weights) u64;
     pub extern fn fuzzer_eos(uid: Uid, weights: Weights) bool;
     pub extern fn fuzzer_bytes(uid: Uid, out: MutSlice, weights: Weights) void;
@@ -215,6 +227,19 @@ pub const fuzz = struct {
         }
 
         pub fn fromSlice(s: []const u8) Slice {
+            return .{ .ptr = s.ptr, .len = s.len };
+        }
+    };
+
+    pub const Slice32 = extern struct {
+        ptr: [*]const u32,
+        len: usize,
+
+        pub fn toSlice(s: Slice32) []const u32 {
+            return s.ptr[0..s.len];
+        }
+
+        pub fn fromSlice(s: []const u32) Slice32 {
             return .{ .ptr = s.ptr, .len = s.len };
         }
     };
@@ -259,7 +284,7 @@ pub const fuzz = struct {
         max: u64,
         weight: u64,
 
-        /// `inline` to propogate comptimeness
+        // `inline` to propogate comptimeness
         inline fn intFromValue(x: anytype) u64 {
             const T = @TypeOf(x);
             return switch (@typeInfo(T)) {
@@ -294,12 +319,12 @@ pub const fuzz = struct {
             };
         }
 
-        /// `inline` to propogate comptimeness
+        // `inline` to propogate comptimeness
         pub inline fn value(T: type, x: T, weight: u64) Weight {
             return .{ .min = intFromValue(x), .max = intFromValue(x), .weight = weight };
         }
 
-        /// `inline` to propogate comptimeness
+        // `inline` to propogate comptimeness
         pub inline fn rangeAtMost(T: type, at_least: T, at_most: T, weight: u64) Weight {
             std.debug.assert(intFromValue(at_least) <= intFromValue(at_most));
             return .{
@@ -309,7 +334,7 @@ pub const fuzz = struct {
             };
         }
 
-        /// `inline` to propogate comptimeness
+        // `inline` to propogate comptimeness
         pub inline fn rangeLessThan(T: type, at_least: T, less_than: T, weight: u64) Weight {
             std.debug.assert(intFromValue(at_least) < intFromValue(less_than));
             return .{
@@ -320,7 +345,16 @@ pub const fuzz = struct {
         }
     };
 
-    pub const LimitKind = enum(u8) { forever, iterations };
+    pub const Flags = packed struct(u8) {
+        main_instance: bool,
+        mode: Mode,
+        _: u6 = 0,
+    };
+
+    pub const Mode = enum(u1) {
+        forever,
+        limit,
+    };
 
     /// libfuzzer uses this and its usize is the one that counts. To match the ABI,
     /// make the ints be the size of the target used with libfuzzer.
@@ -363,8 +397,6 @@ pub const fuzz = struct {
 
     /// Fields are little-endian
     pub const MmapInputHeader = extern struct {
-        pc_digest: u64 align(4), // aligned so header does not have padding
-        instance_id: u32,
         test_i: u32,
         len: u32,
     };

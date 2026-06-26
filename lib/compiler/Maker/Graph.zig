@@ -50,7 +50,7 @@ build_id: ?std.zig.BuildId = null,
 error_limit: ?u32 = null,
 /// Steps should use `io` to limit the number of jobs, however in the case of
 /// a single step spawning a fixed number of processes this can be used.
-max_jobs: ?u32 = null,
+max_jobs: usize,
 
 /// After following the steps in https://codeberg.org/ziglang/infra/src/branch/master/libc-update/glibc.md,
 /// this will be the directory $glibc-build-dir/install/glibcs

@@ -234,6 +234,7 @@ pub fn main(init: process.Init.Minimal) !void {
         .zig_lib_directory = zig_lib_directory,
         .build_root_directory = undefined,
         .random_seed = parseRandomSeed(seed_arg),
+        .max_jobs = @backingInt(threaded.async_limit) + 1,
     };
 
     const cmd = stringToEnum(enum { libc, init, fetch, build, @"cache-cat" }, cmd_name) orelse

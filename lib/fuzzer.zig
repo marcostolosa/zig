@@ -48,7 +48,11 @@ const gpa = switch (builtin.mode) {
 // Seperate from `exec` to allow initialization before `exec` is.
 var log_f: ?Io.File = null;
 var exec: Executable = undefined;
-var fuzzer: Fuzzer = undefined;
+var source: union(enum) {
+    fuzzer: Fuzzer,
+    reduce: Reduce,
+    none: void,
+} = .none;
 var current_test_name: ?[]const u8 = null;
 
 fn bitsetUsizes(elems: usize) usize {
@@ -280,6 +284,53 @@ const Executable = struct {
     }
 };
 
+fn weightsContain(int: u64, weights: []const abi.Weight) bool {
+    var contains: bool = false;
+    for (weights) |w| {
+        contains |= w.min <= int and int <= w.max;
+    }
+    return contains;
+}
+
+fn weightsContainBytes(bytes: []const u8, weights: []const abi.Weight) bool {
+    if (weights[0].min == 0 and weights[0].max == 0xff) {
+        // Fast path: all bytes are valid
+        return true;
+    }
+
+    var contains: bool = true;
+    for (bytes) |b| {
+        contains &= weightsContain(b, weights);
+    }
+    return contains;
+}
+
+fn sumWeightsInclusive(weights: []const abi.Weight) u64 {
+    var sum: u64 = math.maxInt(u64);
+    for (weights) |w| {
+        sum +%= (w.max - w.min +% 1) *% w.weight;
+    }
+    return sum;
+}
+
+fn weightedValue(weights: []const abi.Weight, incl_sum: u64, rng: u64) u64 {
+    var incl_n = rng;
+    const limit = incl_sum +% 1;
+    if (limit != 0) incl_n = std.Random.limitRangeBiased(u64, incl_n, limit);
+
+    for (weights) |w| {
+        // (w.max - w.min + 1) * w.weight - 1
+        const incl_vals = (w.max - w.min) * w.weight + (w.weight - 1);
+        if (incl_n > incl_vals) {
+            incl_n -= incl_vals + 1;
+        } else {
+            const val = w.min + incl_n / w.weight;
+            assert(val <= w.max);
+            return val;
+        }
+    } else unreachable;
+}
+
 const Fuzzer = struct {
     tests: []Test,
     test_i: u32,
@@ -320,10 +371,7 @@ const Fuzzer = struct {
         },
     },
 
-    /// As values are provided to the Smith, they are appended to this. If the test
-    /// crashes, this can be recovered and used to obtain the crashing values. It is
-    /// also used to rerun fresh inputs.
-    mmap_input: MemoryMappedInput,
+    mmap: Mmaps,
     /// The instance is responsible for updating the filesystem corpus.
     ///
     /// Since different fuzzer instances can be out of sync due to finding inputs before recieving
@@ -540,10 +588,7 @@ const Fuzzer = struct {
         };
 
         pub const Index = enum(u32) {
-            pub const reserved_start: Index = .bytes_dry;
-            /// Only touches `Fuzzer.smith`.
-            bytes_dry = math.maxInt(u32) - 1,
-            /// Only touches `Fuzzer.smith` and `Fuzzer.input_builder`.
+            pub const reserved_start: Index = .bytes_fresh;
             bytes_fresh = math.maxInt(u32),
             _,
         };
@@ -752,40 +797,15 @@ const Fuzzer = struct {
         };
     };
 
-    pub fn init(n_tests: u32, seed: u64, instance_id: u32, limit: ?u64) Fuzzer {
+    pub fn init(
+        main_instance: bool,
+        mmap_index: u32,
+        iterations: ?u64,
+        n_tests: u32,
+        seed: u64,
+    ) Fuzzer {
         const pcs = exec.pc_counters.len;
         if (pcs > math.maxInt(u32)) @panic("too many pcs");
-
-        const mmap_input = map: {
-            // Find a free input file. `instance_id` should give one that is not in use;
-            // however, this may not be the case if there are multiple libfuzzers running.
-            var input_i = instance_id;
-            const input_f = while (true) {
-                var name_buf: [10]u8 = undefined;
-                name_buf[0..2].* = "in".*;
-                const hex = std.mem.print(name_buf[2..], "{x}", .{input_i}) catch unreachable;
-                const name = name_buf[0 .. 2 + hex.len];
-
-                if (exec.cache_f.createFile(io, name, .{
-                    .read = true,
-                    .truncate = false,
-                    .lock = .exclusive,
-                    .lock_nonblocking = true,
-                })) |f| {
-                    break f;
-                } else |e| switch (e) {
-                    // To ensure no input file is unused to avoid the number of input files
-                    // growing indefinitely across runs, they are linearly searched through.
-                    //
-                    // This could be avoided by creating a shared file holding the current number
-                    // of input files in use; however, using multiple libfuzzers is uncommon and
-                    // there should not be that many input files to search through anyways.
-                    error.WouldBlock => input_i += 1,
-                    else => panic("failed to create file '{s}': {t}", .{ name, e }),
-                }
-            };
-            break :map MemoryMappedInput.init(input_f, instance_id, input_i);
-        };
 
         const tests = gpa.alloc(Test, n_tests) catch @panic("OOM");
         const seen_pcs_len = bitsetUsizes(pcs);
@@ -801,7 +821,7 @@ const Fuzzer = struct {
             const dirname = std.fmt.hex(std.hash.Wyhash.hash(0, name));
 
             const lock_file = file: {
-                if (instance_id != 0) break :file undefined;
+                if (!main_instance) break :file undefined;
 
                 exec.cache_f.createDir(io, &dirname, .default_dir) catch |e| switch (e) {
                     error.PathAlreadyExists => {},
@@ -836,7 +856,7 @@ const Fuzzer = struct {
                 .lock_file = lock_file,
                 .received = .empty,
 
-                .limit = limit,
+                .limit = iterations,
                 .batch_cycles = 1,
                 .batches = 0,
                 .batches_since_find = 0,
@@ -864,8 +884,8 @@ const Fuzzer = struct {
             .uid_data_i = .empty,
             .mut_data = undefined,
 
-            .mmap_input = mmap_input,
-            .main_instance = instance_id == 0,
+            .mmap = .init(mmap_index),
+            .main_instance = main_instance,
         };
     }
 
@@ -897,7 +917,7 @@ const Fuzzer = struct {
         }
         gpa.free(f.tests);
         f.input_builder.deinit();
-        f.mmap_input.deinit();
+        f.mmap.deinit();
         f.* = undefined;
     }
 
@@ -1010,6 +1030,7 @@ const Fuzzer = struct {
     }
 
     fn rngLessThan(f: *Fuzzer, T: type, limit: T) T {
+        assert(limit != 0);
         return std.Random.limitRangeBiased(T, f.rngInt(T), limit);
     }
 
@@ -1056,7 +1077,7 @@ const Fuzzer = struct {
     ///
     /// Returns if `error.SkipZigTest` was indicated
     fn runBytes(f: *Fuzzer, bytes: []const u8, mode: Input.Index) bool {
-        assert(mode == .bytes_dry or mode == .bytes_fresh);
+        assert(@backingInt(mode) >= @backingInt(Input.Index.reserved_start));
 
         f.bytes_input = .{ .in = bytes };
         f.tests[f.test_i].corpus_pos = mode;
@@ -1182,16 +1203,16 @@ const Fuzzer = struct {
     pub fn newInputExternal(f: *Fuzzer, bytes: []const u8) void {
         // All inputs including the corpus are required to go through the memory
         // mapped input in case they cause a crash so they can be identified.
-        f.mmap_input.appendSlice(bytes);
+        f.mmap.input.appendSlice(bytes);
         f.newInput();
-        f.mmap_input.clearRetainingCapacity();
+        f.mmap.input.clearRetainingCapacity();
     }
 
     fn newInput(f: *Fuzzer) void {
         const t = &f.tests[f.test_i];
         const new_is_mut = t.start_mut_corpus != math.maxInt(u32);
         assert(new_is_mut == (t.corpus.len >= t.start_mut_corpus));
-        const bytes = f.mmap_input.inputSlice();
+        const bytes = f.mmap.input.inputSlice();
         // `error.SkipZigTest` here can be from one of these causes:
         // * A previous corpus input after the test has changed
         // * An input provided by the test
@@ -1348,8 +1369,11 @@ const Fuzzer = struct {
     /// Returns if `error.SkipZigTest` was indicated
     fn run(f: *Fuzzer, input_uids: usize) bool {
         @memset(exec.pc_counters, 0);
+
         f.uid_data_i.items.len = input_uids;
         @memset(f.uid_data_i.items, 0);
+
+        f.mmap.meta.clearRetainingCapacity();
         f.req_values = 0;
         f.req_bytes = 0;
 
@@ -1373,7 +1397,7 @@ const Fuzzer = struct {
     }
 
     pub fn cycle(f: *Fuzzer) void {
-        assert(f.mmap_input.len == 0);
+        assert(f.mmap.input.len == 0);
 
         const t = &f.tests[f.test_i];
         const corpus = t.corpus.slice();
@@ -1433,13 +1457,13 @@ const Fuzzer = struct {
         if (!skip and f.isFresh()) {
             @branchHint(.unlikely);
 
-            abi.runner_broadcast_input(f.test_i, .fromSlice(f.mmap_input.inputSlice()));
+            abi.runner_broadcast_input(f.test_i, .fromSlice(f.mmap.input.inputSlice()));
             f.newInput();
         } else {
             assert(@backingInt(t.corpus_pos) < t.corpus.len);
             t.corpus_pos = @fromBackingInt(@intCast((@backingInt(t.corpus_pos) + 1) % t.corpus.len));
         }
-        f.mmap_input.clearRetainingCapacity();
+        f.mmap.input.clearRetainingCapacity();
     }
 
     fn takeReceived(f: *Fuzzer) void {
@@ -1455,9 +1479,9 @@ const Fuzzer = struct {
                 const bytes = rem[0..len];
                 rem = rem[len..];
 
-                f.mmap_input.appendSlice(bytes);
+                f.mmap.input.appendSlice(bytes);
                 f.newInput();
-                f.mmap_input.clearRetainingCapacity();
+                f.mmap.input.clearRetainingCapacity();
 
                 if (rem.len == 0) break;
             }
@@ -1608,53 +1632,6 @@ const Fuzzer = struct {
             }
             unreachable;
         }
-    }
-
-    fn weightsContain(int: u64, weights: []const abi.Weight) bool {
-        var contains: bool = false;
-        for (weights) |w| {
-            contains |= w.min <= int and int <= w.max;
-        }
-        return contains;
-    }
-
-    fn weightsContainBytes(bytes: []const u8, weights: []const abi.Weight) bool {
-        if (weights[0].min == 0 and weights[0].max == 0xff) {
-            // Fast path: all bytes are valid
-            return true;
-        }
-
-        var contains: bool = true;
-        for (bytes) |b| {
-            contains &= weightsContain(b, weights);
-        }
-        return contains;
-    }
-
-    fn sumWeightsInclusive(weights: []const abi.Weight) u64 {
-        var sum: u64 = math.maxInt(u64);
-        for (weights) |w| {
-            sum +%= (w.max - w.min +% 1) *% w.weight;
-        }
-        return sum;
-    }
-
-    fn weightedValue(f: *Fuzzer, weights: []const abi.Weight, incl_sum: u64) u64 {
-        var incl_n: u64 = f.rngInt(u64);
-        const limit = incl_sum +% 1;
-        if (limit != 0) incl_n = std.Random.limitRangeBiased(u64, incl_n, limit);
-
-        for (weights) |w| {
-            // (w.max - w.min + 1) * w.weight - 1
-            const incl_vals = (w.max - w.min) * w.weight + (w.weight - 1);
-            if (incl_n > incl_vals) {
-                incl_n -= incl_vals + 1;
-            } else {
-                const val = w.min + incl_n / w.weight;
-                assert(val <= w.max);
-                return val;
-            }
-        } else unreachable;
     }
 
     const Untyped = union {
@@ -1917,47 +1894,55 @@ const Fuzzer = struct {
 
     pub fn nextInt(f: *Fuzzer, uid: Uid, weights: []const abi.Weight) u64 {
         const t = &f.tests[f.test_i];
+        f.mmap.meta.writeEntry(.{ .kind = .int, .hash = @truncate(uid.hash) });
         f.req_values += 1;
         if (@backingInt(t.corpus_pos) >= @backingInt(Input.Index.reserved_start)) {
             @branchHint(.unlikely);
             const int = f.bytes_input.valueWeightedWithHash(u64, weights, undefined);
-            if (t.corpus_pos == .bytes_fresh) {
-                f.input_builder.checkSmithedLen(8);
-                f.input_builder.addInt(uid, int);
+            switch (t.corpus_pos) {
+                _ => unreachable,
+                .bytes_fresh => {
+                    f.input_builder.checkSmithedLen(8);
+                    f.input_builder.addInt(uid, int);
+                },
             }
             return int;
         }
         const int = f.nextIntInner(uid, weights);
-        f.mmap_input.appendLittleInt(u64, int);
+        f.mmap.input.appendLittleInt(u64, int);
         return int;
     }
 
     fn nextIntInner(f: *Fuzzer, uid: Uid, weights: []const abi.Weight) u64 {
         return switch (f.nextUntyped(uid, weights)) {
             .copy => |u| u.int,
-            .mutate, .fresh => f.weightedValue(weights, sumWeightsInclusive(weights)),
+            .mutate, .fresh => weightedValue(weights, sumWeightsInclusive(weights), f.rngInt(u64)),
         };
     }
 
     pub fn nextEos(f: *Fuzzer, uid: Uid, weights: []const abi.Weight) bool {
         const t = &f.tests[f.test_i];
+        f.mmap.meta.writeEntry(.{ .kind = .eos, .hash = @truncate(uid.hash) });
         f.req_values += 1;
         if (@backingInt(t.corpus_pos) >= @backingInt(Input.Index.reserved_start)) {
             @branchHint(.unlikely);
             const eos = f.bytes_input.eosWeightedWithHash(weights, undefined);
-            if (t.corpus_pos == .bytes_fresh) {
-                f.input_builder.checkSmithedLen(1);
-                f.input_builder.addInt(uid, @intFromBool(eos));
+            switch (t.corpus_pos) {
+                _ => unreachable,
+                .bytes_fresh => {
+                    f.input_builder.checkSmithedLen(1);
+                    f.input_builder.addInt(uid, @intFromBool(eos));
+                },
             }
             return eos;
         }
         // `nextIntInner` is already gauraunteed to eventually return `1`
         const eos = @as(u1, @intCast(f.nextIntInner(uid, weights))) != 0;
-        f.mmap_input.appendLittleInt(u8, @intFromBool(eos));
+        f.mmap.input.appendLittleInt(u8, @intFromBool(eos));
         return eos;
     }
 
-    fn mutateBytes(f: *Fuzzer, in: []u8, out: []u8, weights: []const abi.Weight) void {
+    fn mutateBytes(f: *Fuzzer, in: []const u8, out: []u8, weights: []const abi.Weight) void {
         assert(in.len != 0);
         const weights_incl_sum = sumWeightsInclusive(weights);
 
@@ -1987,7 +1972,7 @@ const Fuzzer = struct {
                 .random => {
                     const n = f.rngLessThan(u32, opts.limitSmall(rem_out.len)) + 1;
                     for (rem_out[0..n]) |*o| {
-                        o.* = @intCast(f.weightedValue(weights, weights_incl_sum));
+                        o.* = @intCast(weightedValue(weights, weights_incl_sum, f.rngInt(u64)));
                     }
                     rem_out = rem_out[n..];
                 },
@@ -2022,7 +2007,7 @@ const Fuzzer = struct {
         const copy = @min(rem_out.len, rem_copy.len);
         @memcpy(rem_out[0..copy], rem_copy[0..copy]);
         for (rem_out[copy..]) |*o| {
-            o.* = @intCast(f.weightedValue(weights, weights_incl_sum));
+            o.* = @intCast(weightedValue(weights, weights_incl_sum, f.rngInt(u64)));
         }
     }
 
@@ -2038,7 +2023,7 @@ const Fuzzer = struct {
                 @memcpy(out[0..u.bytes.len], u.bytes);
                 const weights_incl_sum = sumWeightsInclusive(weights);
                 for (out[u.bytes.len..]) |*o| {
-                    o.* = @intCast(f.weightedValue(weights, weights_incl_sum));
+                    o.* = @intCast(weightedValue(weights, weights_incl_sum, f.rngInt(u64)));
                 }
             },
             .mutate => |u| {
@@ -2048,7 +2033,7 @@ const Fuzzer = struct {
             .fresh => {
                 const weights_incl_sum = sumWeightsInclusive(weights);
                 for (out) |*o| {
-                    o.* = @intCast(f.weightedValue(weights, weights_incl_sum));
+                    o.* = @intCast(weightedValue(weights, weights_incl_sum, f.rngInt(u64)));
                 }
             },
         }
@@ -2056,21 +2041,31 @@ const Fuzzer = struct {
 
     pub fn nextBytes(f: *Fuzzer, uid: Uid, out: []u8, weights: []const abi.Weight) void {
         const t = &f.tests[f.test_i];
-        f.req_values += 1;
-        f.req_bytes +%= @truncate(out.len); // This function should panic since the 32-bit
-        // data limit is exceeded, so wrapping is fine.
+        defer {
+            // The 32-bit limit on `MemoryMmapedInput` has already been checked (since this is
+            // a `defer`) so this `@intCast` is safe.
+            const len: u32 = @intCast(out.len);
+
+            f.mmap.meta.writeEntry(.{ .kind = .bytes, .hash = @truncate(uid.hash) });
+            f.mmap.meta.writeInt(len);
+            f.req_values += 1;
+            f.req_bytes += len;
+        }
         if (@backingInt(t.corpus_pos) >= @backingInt(Input.Index.reserved_start)) {
             @branchHint(.unlikely);
             f.bytes_input.bytesWeightedWithHash(out, weights, undefined);
-            if (t.corpus_pos == .bytes_fresh) {
-                f.input_builder.checkSmithedLen(out.len);
-                f.input_builder.addBytes(uid, out);
+            switch (t.corpus_pos) {
+                _ => unreachable,
+                .bytes_fresh => {
+                    f.input_builder.checkSmithedLen(out.len);
+                    f.input_builder.addBytes(uid, out);
+                },
             }
             return;
         }
 
         f.nextBytesInner(uid, out, weights);
-        f.mmap_input.appendSlice(out);
+        f.mmap.input.appendSlice(out);
     }
 
     fn nextSliceInner(
@@ -2085,7 +2080,11 @@ const Fuzzer = struct {
                 var len: u32 = @intCast(u.bytes.len);
                 if (!weightsContain(len, len_weights)) {
                     @branchHint(.unlikely);
-                    len = @intCast(f.weightedValue(len_weights, sumWeightsInclusive(len_weights)));
+                    len = @intCast(weightedValue(
+                        len_weights,
+                        sumWeightsInclusive(len_weights),
+                        f.rngInt(u64),
+                    ));
                 }
 
                 if (u.bytes.len >= len) {
@@ -2097,7 +2096,7 @@ const Fuzzer = struct {
                 @memcpy(buf[0..u.bytes.len], u.bytes);
                 const weights_incl_sum = sumWeightsInclusive(byte_weights);
                 for (buf[u.bytes.len..len]) |*o| {
-                    o.* = @intCast(f.weightedValue(byte_weights, weights_incl_sum));
+                    o.* = @intCast(weightedValue(byte_weights, weights_incl_sum, f.rngInt(u64)));
                 }
                 return len;
             },
@@ -2118,22 +2117,24 @@ const Fuzzer = struct {
                             break :len len;
                         }
                     }
-                    break :len @intCast(f.weightedValue(
+                    break :len @intCast(weightedValue(
                         len_weights,
                         sumWeightsInclusive(len_weights),
+                        f.rngInt(u64),
                     ));
                 };
                 f.mutateBytes(u.bytes, buf[0..len], byte_weights);
                 return len;
             },
             .fresh => {
-                const len: u32 = @intCast(f.weightedValue(
+                const len: u32 = @intCast(weightedValue(
                     len_weights,
                     sumWeightsInclusive(len_weights),
+                    f.rngInt(u64),
                 ));
                 const weights_incl_sum = sumWeightsInclusive(byte_weights);
                 for (buf[0..len]) |*o| {
-                    o.* = @intCast(f.weightedValue(byte_weights, weights_incl_sum));
+                    o.* = @intCast(weightedValue(byte_weights, weights_incl_sum, f.rngInt(u64)));
                 }
                 return len;
             },
@@ -2148,6 +2149,7 @@ const Fuzzer = struct {
         byte_weights: []const abi.Weight,
     ) u32 {
         const t = &f.tests[f.test_i];
+        f.mmap.meta.writeEntry(.{ .kind = .slice, .hash = @truncate(uid.hash) });
         f.req_values += 1;
         if (@backingInt(t.corpus_pos) >= @backingInt(Input.Index.reserved_start)) {
             @branchHint(.unlikely);
@@ -2157,16 +2159,20 @@ const Fuzzer = struct {
                 byte_weights,
                 undefined,
             );
-            if (t.corpus_pos == .bytes_fresh) {
-                f.input_builder.checkSmithedLen(@as(usize, 4) + n);
-                f.input_builder.addBytes(uid, buf[0..n]);
+            switch (t.corpus_pos) {
+                _ => unreachable,
+                .bytes_fresh => {
+                    f.input_builder.checkSmithedLen(@as(usize, 4) + n);
+                    f.input_builder.addBytes(uid, buf[0..n]);
+                },
             }
+            f.req_bytes += n;
             return n;
         }
 
         const n = f.nextSliceInner(uid, buf, len_weights, byte_weights);
-        f.mmap_input.appendLittleInt(u32, n);
-        f.mmap_input.appendSlice(buf[0..n]);
+        f.mmap.input.appendLittleInt(u32, n);
+        f.mmap.input.appendSlice(buf[0..n]);
         f.req_bytes += n;
         return n;
     }
@@ -2194,16 +2200,26 @@ export fn fuzzer_coverage() abi.Coverage {
 }
 
 export fn fuzzer_main(
+    flags: abi.Flags,
+    mmap_index: u32,
+    iterations: u64,
     n_tests: u32,
     seed: u32,
-    limit_kind: abi.LimitKind,
-    amount_or_instance: u64,
 ) void {
-    fuzzer = .init(
+    assert(source == .none);
+    source = .{ .fuzzer = undefined };
+    defer source = .none;
+    const fuzzer = &source.fuzzer;
+
+    fuzzer.* = .init(
+        flags.main_instance,
+        mmap_index,
+        switch (flags.mode) {
+            .forever => null,
+            .limit => iterations,
+        },
         n_tests,
-        seed ^ amount_or_instance, // seed is otherwise the same for all instances
-        if (limit_kind == .forever) @as(u32, @intCast(amount_or_instance)) else 0,
-        if (limit_kind == .forever) null else amount_or_instance,
+        seed ^ mmap_index, // seed is otherwise the same for all instances
     );
     defer fuzzer.deinit();
     abi.runner_start_input_poller();
@@ -2220,7 +2236,7 @@ export fn fuzzer_main(
 }
 
 export fn fuzzer_receive_input(test_i: u32, bytes_slice: abi.Slice) bool {
-    const recv = &fuzzer.tests[test_i].received;
+    const recv = &source.fuzzer.tests[test_i].received;
     if (recv.state.startWrite()) return true;
     defer recv.state.finishWrite();
 
@@ -2234,40 +2250,802 @@ export fn fuzzer_receive_input(test_i: u32, bytes_slice: abi.Slice) bool {
 }
 
 fn runTest(i: u32) void {
-    fuzzer.test_i = i;
-    fuzzer.mmap_input.setTest(i);
+    source.fuzzer.test_i = i;
+    source.fuzzer.mmap.input.setTest(i);
     current_test_name = abi.runner_test_name(i).toSlice();
     abi.runner_test_run(i);
 }
 
 export fn fuzzer_set_test(test_one: abi.TestOne) void {
-    fuzzer.test_one = test_one;
+    source.fuzzer.test_one = test_one;
 }
 
 export fn fuzzer_new_input(bytes: abi.Slice) void {
     if (bytes.len == 0) return; // An entry of length zero is always present
-    if (fuzzer.tests[fuzzer.test_i].start_mut_corpus != math.maxInt(u32)) return; // Test ran previously
-    fuzzer.newInputExternal(bytes.toSlice());
+    if (source.fuzzer.tests[source.fuzzer.test_i].start_mut_corpus != math.maxInt(u32))
+        return; // Test ran previously
+    source.fuzzer.newInputExternal(bytes.toSlice());
 }
 
 export fn fuzzer_start_test() void {
-    fuzzer.ensureCorpusLoaded();
-    fuzzer.batch();
+    source.fuzzer.ensureCorpusLoaded();
+    source.fuzzer.batch();
+}
+
+const Reduce = struct {
+    const Value = struct {
+        off: u32,
+        len: Len,
+        uid_next: Index,
+
+        pub const Len = enum(u32) {
+            int1 = math.maxInt(u32) - 1,
+            int8 = math.maxInt(u32),
+            _,
+
+            const reserved_start: Len = .int1;
+
+            pub fn isInt(l: Len) bool {
+                return switch (l) {
+                    .int1, .int8 => true,
+                    _ => false,
+                };
+            }
+        };
+
+        pub const Index = enum(u32) {
+            null = math.maxInt(u32),
+            _,
+
+            pub const max: Index = .null;
+        };
+    };
+
+    /// Inside `Reduce` this is normally impossible due to the high
+    /// bits of the `hash` field being lost in `MemoryMappedMeta.Entry`.
+    const null_uid: Uid = @bitCast(@as(u32, math.maxInt(u32)));
+
+    input: []const u8,
+    values: []Value,
+    /// The keys of this must not be modified after `init`.
+    uid_pos: UidPos,
+    /// The start of a chain of values belonging to the corresponding uid.
+    /// This is copied to `uid_pos.values()` at the start of each run.
+    uid_head: []Value.Index,
+
+    xoshiro: std.Random.Xoshiro256,
+    mut: struct {
+        /// Takes precedence over per-uid mutations
+        ordered: struct {
+            /// Only increases
+            delete_until: Value.Index,
+            /// Only increases
+            mutate_until: Value.Index,
+            /// May be `null_uid`
+            insert_until_uid: Uid,
+        },
+        /// Indexes correspond to `uid_pos.values()`.
+        uid: []UidMut,
+        /// Indexes correspond to `uid_pos.values()`.
+        uid_count: []u8,
+        /// To ensure at least one mutation occurs, if there is no other
+        /// mutation occuring at this index, a mutation will start here.
+        suggested: Value.Index,
+    },
+
+    test_one: abi.TestOne,
+    mmap: Mmaps,
+
+    const UidPos = std.array_hash_map.Custom(Uid, Value.Index, Uid.hashmap_ctx, false);
+    const UidMut = enum {
+        none,
+        count_insert,
+        count_mutate,
+    };
+
+    /// `input` and `meta` may not be invalidated until `deinit` is called.
+    pub fn init(
+        mmap_index: u32,
+        /// Assumed to not include the header.
+        mmaped_input: []const u8,
+        /// Assumed to not include the header.
+        mmaped_meta: []const u32,
+        seed: u64,
+        test_one: abi.TestOne,
+    ) Reduce {
+        // This should be the same as `mmaped_input` due to the length restriction on
+        // `MemoryMappedInput`, however if the file got corrupted for some reason
+        // (the process did crash!) we still want to reduce partially invalid inputs.
+        const input = mmaped_input[0..@min(mmaped_input.len, @backingInt(Value.Len.reserved_start))];
+        const meta = mmaped_meta;
+
+        const Entry = MemoryMappedMeta.Entry;
+        // This may be larger than the actual number of values due to `Entry.kind.slice`
+        // or a corrupt `input`, so it is resized at the end to its true length.
+        const values = gpa.alloc(Value, mmaped_meta.len) catch @panic("OOM");
+        var uid_pos: UidPos = .empty; // Used to track the tail of the value linked lists below.
+        var uid_head: std.ArrayList(Value.Index) = .empty;
+
+        var entry_i: u32 = 0;
+        var input_i: u32 = 0;
+        var value_i: u32 = 0;
+
+        while (entry_i != meta.len) {
+            const entry: Entry = @bitCast(meta[entry_i]);
+            entry_i += 1;
+
+            const uid: Uid = .{
+                .kind = switch (entry.kind) {
+                    .int, .eos => .int,
+                    .bytes, .slice => .bytes,
+                },
+                .hash = entry.hash,
+            };
+            const gop = uid_pos.getOrPut(gpa, uid) catch @panic("OOM");
+            if (gop.found_existing) {
+                values[@backingInt(gop.value_ptr.*)].uid_next = @fromBackingInt(value_i);
+            } else {
+                uid_head.append(gpa, @fromBackingInt(value_i)) catch @panic("OOM");
+            }
+            gop.value_ptr.* = @fromBackingInt(value_i);
+
+            switch (entry.kind) {
+                .int => {
+                    if (input.len - input_i < 8) {
+                        @branchHint(.cold);
+                        break;
+                    }
+                    values[value_i] = .{
+                        .off = input_i,
+                        .len = .int8,
+                        .uid_next = .null,
+                    };
+                    value_i += 1;
+                    input_i += 8;
+                },
+                .eos => {
+                    if (input.len - input_i < 1) {
+                        @branchHint(.cold);
+                        break;
+                    }
+                    values[value_i] = .{
+                        .off = input_i,
+                        .len = .int1,
+                        .uid_next = .null,
+                    };
+                    value_i += 1;
+                    input_i += 1;
+                },
+                .bytes => {
+                    if (entry_i == meta.len) {
+                        @branchHint(.cold);
+                        break;
+                    }
+                    const len = meta[entry_i];
+                    entry_i += 1;
+
+                    if (input.len - input_i < len) {
+                        @branchHint(.cold);
+                        break;
+                    }
+                    values[value_i] = .{
+                        .off = input_i,
+                        .len = @fromBackingInt(len),
+                        .uid_next = .null,
+                    };
+                    value_i += 1;
+                    input_i += len;
+                },
+                .slice => {
+                    if (input.len - input_i < 4) {
+                        @branchHint(.cold);
+                        break;
+                    }
+                    const len = mem.readInt(u32, input[input_i..][0..4], .little);
+                    input_i += 4;
+
+                    if (input.len - input_i < len) {
+                        @branchHint(.cold);
+                        break;
+                    }
+                    values[value_i] = .{
+                        .off = input_i,
+                        .len = @fromBackingInt(len),
+                        .uid_next = .null,
+                    };
+                    value_i += 1;
+                    input_i += len;
+                },
+            }
+        }
+
+        const mmap: Mmaps = .init(mmap_index);
+        if (value_i == 0) {
+            // The input cannot be reduced. `mmap` still gets initialized to be empty
+            // so the build runner will see the empty input and stop reducing.
+            std.process.exit(0);
+        }
+
+        const n_uids = uid_pos.values().len;
+        assert(uid_head.items.len == n_uids);
+        return .{
+            .input = input,
+            .values = gpa.realloc(values, value_i) catch @panic("OOM"),
+            .uid_pos = uid_pos,
+            .uid_head = uid_head.toOwnedSlice(gpa) catch @panic("OOM"),
+
+            .xoshiro = .init(seed),
+            .mut = .{
+                .ordered = .{
+                    .delete_until = undefined,
+                    .mutate_until = undefined,
+                    .insert_until_uid = undefined,
+                },
+                .uid = gpa.alloc(UidMut, n_uids) catch @panic("OOM"),
+                .uid_count = gpa.alloc(u8, n_uids) catch @panic("OOM"),
+                .suggested = undefined,
+            },
+
+            .test_one = test_one,
+            .mmap = mmap,
+        };
+    }
+
+    pub fn cycle(r: *Reduce) void {
+        @memcpy(r.uid_pos.values(), r.uid_head);
+
+        r.mut.ordered = .{
+            .delete_until = @fromBackingInt(0),
+            .mutate_until = @fromBackingInt(0),
+            .insert_until_uid = null_uid,
+        };
+        @memset(r.mut.uid, .none);
+        @memset(r.mut.uid_count, undefined);
+        r.mut.suggested = @fromBackingInt(r.rngLessThan(u32, @intCast(r.values.len)));
+
+        _ = r.test_one();
+        r.mmap.input.clearRetainingCapacity();
+        r.mmap.meta.clearRetainingCapacity();
+    }
+
+    fn rngInt(r: *Reduce, T: type) T {
+        comptime assert(@bitSizeOf(T) <= 64);
+        const Unsigned = @Int(.unsigned, @bitSizeOf(T));
+        return @bitCast(@as(Unsigned, @truncate(r.xoshiro.next())));
+    }
+
+    fn rngLessThan(r: *Reduce, T: type, limit: T) T {
+        assert(limit != 0);
+        return std.Random.limitRangeBiased(T, r.rngInt(T), limit);
+    }
+
+    fn weightsMinValue(weights: []const abi.Weight) u64 {
+        var min: u64 = weights[0].min;
+        for (weights[1..]) |w| min = @min(min, w.min);
+        return min;
+    }
+
+    fn weightsMaxValue(weights: []const abi.Weight) u64 {
+        var max: u64 = weights[0].max;
+        for (weights[1..]) |w| max = @max(max, w.max);
+        return max;
+    }
+
+    fn highestWeightedValue(weights: []const abi.Weight) u64 {
+        var at: usize = 0;
+        for (1.., weights[1..]) |i, w| {
+            if (w.weight > weights[at].weight) {
+                at = i;
+            }
+        }
+        return weights[at].min;
+    }
+
+    fn weightsMaxValueLessThan(weights: []const abi.Weight, less_than: u64) u64 {
+        // Assert that there are any value less than the value
+        for (weights) |w| (if (w.min <= less_than) break) else unreachable;
+
+        var max: u64 = 0;
+        for (weights) |w| {
+            if (w.min <= less_than and w.max > max) {
+                max = @min(w.max, less_than);
+            }
+        }
+        return max;
+    }
+
+    const Next = union(enum) {
+        copy: Value,
+        mutate: Value,
+        fresh: void,
+        eos: void,
+        /// It is known the new input will exceed the original's length,
+        /// so give a value unlikely to crash the test.
+        ///
+        /// The callee must not assume `min_input_len` bytes can be written
+        /// to `MemoryMappedInput`.
+        give_up: void,
+    };
+
+    /// Writes the meta entry. If `kind == .slice`, the callee is responsible for writing the
+    /// final length.
+    fn nextAny(
+        r: *Reduce,
+        kind: MemoryMappedMeta.Entry.Kind,
+        uid_full: Uid,
+        min_input_len: u32,
+    ) Next {
+        const meta_entry: MemoryMappedMeta.Entry = .{
+            .kind = kind,
+            .hash = @truncate(uid_full.hash),
+        };
+        r.mmap.meta.writeEntry(meta_entry);
+
+        if (r.mmap.input.len +| min_input_len >= r.input.len) {
+            return .give_up;
+        }
+
+        const uid: Uid = .{ .kind = uid_full.kind, .hash = meta_entry.hash };
+        const uid_i = r.uid_pos.getIndex(uid) orelse return .fresh;
+        const value_i = &r.uid_pos.values()[uid_i];
+
+        if (r.mut.ordered.insert_until_uid != null_uid) {
+            if (r.mut.ordered.insert_until_uid == uid) {
+                r.mut.ordered.insert_until_uid = null_uid;
+            } else {
+                return .fresh;
+            }
+        }
+
+        // If `value_i.* == .null`, the loop condition will be `false` since it is the max value.
+        while (@backingInt(value_i.*) < @backingInt(r.mut.ordered.delete_until)) {
+            value_i.* = r.values[@backingInt(value_i.*)].uid_next;
+        }
+
+        if (@backingInt(value_i.*) < @backingInt(r.mut.ordered.mutate_until)) {
+            const value = r.values[@backingInt(value_i.*)];
+            value_i.* = value.uid_next;
+            return .{ .mutate = value };
+        }
+
+        // This must come after the above since `value_i` may have been advanced to `.null`
+        if (value_i.* == .null) {
+            return .fresh;
+        }
+
+        if (r.mut.uid[uid_i] != .none) {
+            const next: Next = switch (r.mut.uid[uid_i]) {
+                .none => unreachable,
+                .count_insert => .fresh,
+                .count_mutate => next: {
+                    const value = r.values[@backingInt(value_i.*)];
+                    value_i.* = value.uid_next;
+                    break :next .{ .mutate = value };
+                },
+            };
+
+            r.mut.uid_count[uid_i] -= 1;
+            if (r.mut.uid_count[uid_i] == 0) {
+                r.mut.uid[uid_i] = .none;
+            }
+
+            return next;
+        }
+
+        // Decide if a new mutation is happening, either if it is at the predetermined index
+        // or with a 1 in values chance. The random chance for EOS is higher.
+        const sporadic_mut_chance: u32 = if (kind == .eos) 3 else 1;
+        // The condition is inside a while statement to allow another mutation to start
+        // immediately after a fixed delete.
+        while (value_i.* == r.mut.suggested or
+            r.rngLessThan(u32, @intCast(r.values.len)) < sporadic_mut_chance)
+        {
+            const mut: packed struct {
+                n: u4,
+                count: u4,
+            } = @bitCast(r.rngInt(u8));
+            const count = @as(u8, mut.count) + 1;
+
+            switch (mut.n) {
+                0...3 => {
+                    if (kind != .eos or mut.n == 0) {
+                        // Truncate the input.
+                        r.mut.ordered.delete_until = .max;
+                        return .fresh;
+                    } else {
+                        // Delete until the next `true`.
+                        while (true) {
+                            const value = r.values[@backingInt(value_i.*)];
+                            if (value.len == .int1 and r.input[value.off] != 0) {
+                                r.mut.ordered.delete_until = value_i.*;
+                                value_i.* = value.uid_next;
+                                return .eos;
+                            }
+
+                            value_i.* = value.uid_next;
+                            if (value_i.* == .null) {
+                                // No `true` value so this becomes a truncate.
+                                r.mut.ordered.delete_until = .max;
+                                return .eos;
+                            }
+                        }
+                    }
+                },
+                4...7 => {
+                    // Delete until the next of this uid.
+                    value_i.* = r.values[@backingInt(value_i.*)].uid_next;
+                    r.mut.ordered.delete_until = value_i.*;
+                },
+                8...9 => {
+                    // Delete until `count` ahead of this uid.
+                    for (0..count) |_| {
+                        value_i.* = r.values[@backingInt(value_i.*)].uid_next;
+                        if (value_i.* == .null) break;
+                    }
+                    r.mut.ordered.delete_until = value_i.*;
+                },
+                10...11 => {
+                    // Delete the next `count` inside this uid.
+                    for (0..count) |_| {
+                        value_i.* = r.values[@backingInt(value_i.*)].uid_next;
+                        if (value_i.* == .null) break;
+                    }
+                },
+                12 => {
+                    // Replace the next `count`.
+                    r.mut.ordered.mutate_until = @fromBackingInt(@backingInt(value_i.*) +| count);
+
+                    const value = r.values[@backingInt(value_i.*)];
+                    value_i.* = value.uid_next;
+                    return .{ .mutate = value };
+                },
+                13 => {
+                    // Replace until the next of this uid.
+                    const value = r.values[@backingInt(value_i.*)];
+                    value_i.* = value.uid_next;
+
+                    r.mut.ordered.delete_until = value_i.*;
+                    r.mut.ordered.insert_until_uid = uid;
+
+                    return .{ .mutate = value };
+                },
+                14 => {
+                    // Replace `count` inside this uid;
+                    if (count != 1) {
+                        r.mut.uid[uid_i] = .count_mutate;
+                        r.mut.uid_count[uid_i] = count - 1;
+                    }
+
+                    const value = r.values[@backingInt(value_i.*)];
+                    value_i.* = value.uid_next;
+                    return .{ .mutate = value };
+                },
+                15 => {
+                    // Insert `count` inside this uid.
+                    if (count != 1) {
+                        r.mut.uid[uid_i] = .count_insert;
+                        r.mut.uid_count[uid_i] = count - 1;
+                    }
+                    return .fresh;
+                },
+            }
+
+            if (value_i.* == .null) {
+                return .fresh;
+            }
+        }
+
+        const value = r.values[@backingInt(value_i.*)];
+        value_i.* = value.uid_next;
+        return .{ .copy = value };
+    }
+
+    pub fn nextInt(r: *Reduce, uid_full: Uid, weights: []const abi.Weight) u64 {
+        const int = int: switch (r.nextAny(.int, uid_full, 8)) {
+            .copy => |v| {
+                switch (v.len) {
+                    .int1 => {
+                        @branchHint(.cold); // Hash collision: this is an EOS value.
+                        continue :int .fresh;
+                    },
+                    .int8 => {},
+                    _ => unreachable,
+                }
+
+                const int = mem.readInt(u64, r.input[v.off..][0..8], .little);
+                if (!weightsContain(int, weights)) {
+                    @branchHint(.unlikely);
+                    continue :int .fresh;
+                }
+                break :int int;
+            },
+            .mutate, .fresh => weightedValue(weights, sumWeightsInclusive(weights), r.rngInt(u64)),
+            .eos => unreachable,
+            .give_up => highestWeightedValue(weights),
+        };
+        r.mmap.input.appendLittleInt(u64, int);
+        return int;
+    }
+
+    pub fn nextEos(r: *Reduce, uid_full: Uid, weights: []const abi.Weight) bool {
+        const eos = eos: switch (r.nextAny(.eos, uid_full, 1)) {
+            .copy => |v| {
+                switch (v.len) {
+                    .int1 => {},
+                    .int8 => {
+                        @branchHint(.cold); // Hash collision: this is an int value.
+                        continue :eos .fresh;
+                    },
+                    _ => unreachable,
+                }
+
+                const eos = r.input[v.off] != 0;
+                if (!eos) {
+                    var true_only: bool = true;
+                    for (weights) |w| true_only &= @as(u1, @intCast(w.min)) == 1;
+                    if (true_only) break :eos true;
+                }
+                break :eos eos;
+            },
+            .mutate, .fresh => weightedValue(
+                weights,
+                sumWeightsInclusive(weights),
+                r.rngInt(u64),
+            ) != 0,
+            .eos, .give_up => true,
+        };
+        r.mmap.input.appendLittleInt(u8, @intFromBool(eos));
+        return eos;
+    }
+
+    fn replaceInvalidBytes(r: *Reduce, buf: []u8, weights: []const abi.Weight) void {
+        if (!weightsContainBytes(buf, weights)) {
+            @branchHint(.unlikely);
+            const weights_incl_sum = sumWeightsInclusive(weights);
+            for (buf) |*b| {
+                if (!weightsContain(b.*, weights)) {
+                    b.* = @intCast(weightedValue(weights, weights_incl_sum, r.rngInt(u64)));
+                }
+            }
+        }
+    }
+
+    fn copyBytes(r: *Reduce, src: Value, out: []u8, weights: []const abi.Weight) void {
+        assert(!src.len.isInt());
+        const in = r.input[src.off..][0..@backingInt(src.len)];
+        const len = @min(in.len, out.len);
+        @memcpy(out[0..len], in[0..len]);
+        r.replaceInvalidBytes(out[0..len], weights);
+
+        if (len < out.len) {
+            @branchHint(.unlikely);
+            r.freshBytes(out[len..], weights);
+        }
+    }
+
+    fn mutateBytes(r: *Reduce, src: Value, out: []u8, weights: []const abi.Weight) void {
+        assert(!src.len.isInt());
+        var in_rem = r.input[src.off..][0..@backingInt(src.len)];
+        var out_rem = out;
+
+        while (out_rem.len != 0) {
+            if (in_rem.len == 0) {
+                r.freshBytes(out_rem, weights);
+                out_rem = undefined;
+                break;
+            }
+
+            switch (r.rngInt(u2)) {
+                0...1 => {
+                    // Copy from `in_rem`.
+                    const in_rem_len: u32 = @intCast(in_rem.len);
+                    const len = r.rngLessThan(u32, @min(in_rem_len, out_rem.len)) + 1;
+
+                    @memcpy(out_rem[0..len], in_rem[0..len]);
+                    r.replaceInvalidBytes(out_rem[0..len], weights);
+
+                    in_rem = in_rem[len..];
+                    out_rem = out_rem[len..];
+                },
+                2 => {
+                    // Discard from `in_rem`.
+                    const in_rem_len: u32 = @intCast(in_rem.len);
+                    const len = r.rngLessThan(u32, in_rem_len) + 1;
+                    in_rem = in_rem[len..];
+                },
+                3 => {
+                    // Write new bytes.
+                    const len = r.rngLessThan(u32, @intCast(out_rem.len)) + 1;
+                    r.freshBytes(out_rem[0..len], weights);
+                    out_rem = out_rem[len..];
+                },
+            }
+        }
+    }
+
+    fn freshBytes(r: *Reduce, out: []u8, weights: []const abi.Weight) void {
+        const weights_incl_sum = sumWeightsInclusive(weights);
+        for (out) |*o| {
+            o.* = @intCast(weightedValue(weights, weights_incl_sum, r.rngInt(u64)));
+        }
+    }
+
+    pub fn nextBytes(r: *Reduce, uid_full: Uid, out: []u8, weights: []const abi.Weight) void {
+        const out_len = math.cast(u32, out.len) orelse @panic("too much smith data requested");
+        switch (r.nextAny(.bytes, uid_full, out_len)) {
+            .copy => |v| r.copyBytes(v, out, weights),
+            .mutate => |v| r.mutateBytes(v, out, weights),
+            .fresh => r.freshBytes(out, weights),
+            .eos => unreachable,
+            .give_up => @memset(out, @intCast(highestWeightedValue(weights))),
+        }
+        r.mmap.input.appendSlice(out);
+        r.mmap.meta.writeInt(out_len);
+    }
+
+    fn nextSliceFreshLen(r: *Reduce, len_weights: []const abi.Weight) u32 {
+        const len: u32 = @intCast(weightedValue(
+            len_weights,
+            sumWeightsInclusive(len_weights),
+            r.rngInt(u64),
+        ));
+        const len_limit = @as(u32, @intCast(r.input.len)) - (r.mmap.input.len + 4);
+        if (len > len_limit) {
+            // Instead of clamping each weight range to be less than `len_limit` when selecting a
+            // random value, clamping the result better reflects the caller wanting a longer slice.
+            return @intCast(weightsMaxValueLessThan(len_weights, len_limit));
+        }
+        return len;
+    }
+
+    pub fn nextSlice(
+        r: *Reduce,
+        uid_full: Uid,
+        buf: []u8,
+        len_weights: []const abi.Weight,
+        byte_weights: []const abi.Weight,
+    ) u32 {
+        const min_len: u32 = @intCast(weightsMinValue(len_weights));
+        const min_input_len = math.add(u32, min_len, 4) catch @panic("too much smith data requested");
+
+        const len: u32 = len: switch (r.nextAny(.slice, uid_full, min_input_len)) {
+            .copy => |v| {
+                const len_limit = @as(u32, @intCast(r.input.len)) - (r.mmap.input.len + 4);
+                var len = @min(@backingInt(v.len), buf.len, len_limit);
+                if (!weightsContain(len, len_weights)) {
+                    len = r.nextSliceFreshLen(len_weights);
+                }
+                r.copyBytes(v, buf[0..len], byte_weights);
+                break :len len;
+            },
+            .mutate => |v| {
+                const len_limit = @as(u32, @intCast(r.input.len)) - (r.mmap.input.len + 4);
+                const len: u32 = mutate_len: switch (r.rngInt(u3)) {
+                    0 => {
+                        // New random length.
+                        break :mutate_len r.nextSliceFreshLen(len_weights);
+                    },
+                    1 => {
+                        // Scaled offset from minimum length.
+                        const max_len: u32 = @intCast(weightsMaxValue(len_weights));
+                        const max_off = @max((max_len - min_len) / 4, 8);
+                        const len = @as(u64, min_len) + r.rngLessThan(u32, max_off);
+
+                        if (len > len_limit or !weightsContain(len, len_weights)) {
+                            continue :mutate_len 0;
+                        }
+                        break :mutate_len @intCast(len);
+                    },
+                    2...3 => {
+                        // Small offset from minimum length.
+                        const len = @as(u64, min_len) + r.rngInt(u3);
+
+                        if (len > len_limit or !weightsContain(len, len_weights)) {
+                            continue :mutate_len 0;
+                        }
+                        break :mutate_len @intCast(len);
+                    },
+                    4...7 => |n| { // This range is necessary due to the below condition.
+                        if (@backingInt(v.len) > len_limit) {
+                            assert(n > math.maxInt(u2));
+                            continue :mutate_len @as(u2, @truncate(n));
+                        } // Otherwise, `min_rng_len == max_rng_len` is possible.
+
+                        // Scaled offset from the current length.
+                        const max_len: u32 = @intCast(weightsMaxValue(len_weights));
+                        const min_off = @max((max_len - min_len) / 2, 8);
+                        const max_off = @max((max_len - min_len) / 4, 8);
+                        const min_rng_len = @max(@backingInt(v.len) -| min_off, min_len);
+                        const max_rng_len = @min(@backingInt(v.len) +| max_off, max_len, len_limit);
+                        const len = min_rng_len + r.rngLessThan(u32, max_rng_len - min_rng_len + 1);
+
+                        if (!weightsContain(len, len_weights)) {
+                            continue :mutate_len 0;
+                        }
+                        break :mutate_len len;
+                    },
+                };
+                assert(len <= len_limit);
+                r.mutateBytes(v, buf[0..len], byte_weights);
+                break :len len;
+            },
+            .fresh => {
+                const len = r.nextSliceFreshLen(len_weights);
+                r.freshBytes(buf[0..len], byte_weights);
+                break :len len;
+            },
+            .eos => unreachable,
+            .give_up => {
+                @memset(buf[0..min_len], @intCast(highestWeightedValue(byte_weights)));
+                break :len min_len;
+            },
+        };
+        r.mmap.input.appendLittleInt(u32, len);
+        r.mmap.input.appendSlice(buf[0..len]);
+        return len;
+    }
+};
+
+export fn fuzzer_reduce(
+    mmap_index: u32,
+    run_number: u32,
+    mmaped_input: abi.Slice,
+    mmaped_meta: abi.Slice32,
+    seed: u32,
+    test_one: abi.TestOne,
+) noreturn {
+    assert(source == .none);
+    source = .{ .reduce = undefined };
+    defer source = .none;
+    const reduce = &source.reduce;
+
+    reduce.* = .init(
+        mmap_index,
+        mmaped_input.toSlice(),
+        mmaped_meta.toSlice(),
+        // seed is otherwise the same for all instances and across crashes
+        (seed ^ mmap_index) | (@as(u64, run_number) << 32),
+        test_one,
+    );
+    while (true) {
+        reduce.cycle();
+    }
 }
 
 export fn fuzzer_int(uid: Uid, weights: abi.Weights) u64 {
     assert(uid.kind == .int);
-    return fuzzer.nextInt(uid, weights.toSlice());
+    switch (source) {
+        .fuzzer => |*fuzzer| {
+            @branchHint(.likely);
+            return fuzzer.nextInt(uid, weights.toSlice());
+        },
+        .reduce => |*reducer| return reducer.nextInt(uid, weights.toSlice()),
+        .none => unreachable,
+    }
 }
 
 export fn fuzzer_eos(uid: Uid, weights: abi.Weights) bool {
     assert(uid.kind == .int);
-    return fuzzer.nextEos(uid, weights.toSlice());
+    switch (source) {
+        .fuzzer => |*fuzzer| {
+            @branchHint(.likely);
+            return fuzzer.nextEos(uid, weights.toSlice());
+        },
+        .reduce => |*reducer| return reducer.nextEos(uid, weights.toSlice()),
+        .none => unreachable,
+    }
 }
 
 export fn fuzzer_bytes(uid: Uid, out: abi.MutSlice, weights: abi.Weights) void {
     assert(uid.kind == .bytes);
-    return fuzzer.nextBytes(uid, out.toSlice(), weights.toSlice());
+    switch (source) {
+        .fuzzer => |*fuzzer| {
+            @branchHint(.likely);
+            return fuzzer.nextBytes(uid, out.toSlice(), weights.toSlice());
+        },
+        .reduce => |*reducer| return reducer.nextBytes(uid, out.toSlice(), weights.toSlice()),
+        .none => unreachable,
+    }
 }
 
 export fn fuzzer_slice(
@@ -2277,7 +3055,24 @@ export fn fuzzer_slice(
     byte_weights: abi.Weights,
 ) u32 {
     assert(uid.kind == .bytes);
-    return fuzzer.nextSlice(uid, buf.toSlice(), len_weights.toSlice(), byte_weights.toSlice());
+    switch (source) {
+        .fuzzer => |*fuzzer| {
+            @branchHint(.likely);
+            return fuzzer.nextSlice(
+                uid,
+                buf.toSlice(),
+                len_weights.toSlice(),
+                byte_weights.toSlice(),
+            );
+        },
+        .reduce => |*reducer| return reducer.nextSlice(
+            uid,
+            buf.toSlice(),
+            len_weights.toSlice(),
+            byte_weights.toSlice(),
+        ),
+        .none => unreachable,
+    }
 }
 
 export fn fuzzer_unslide_address(addr: usize) usize {
@@ -2313,6 +3108,85 @@ export fn __sanitizer_cov_pcs_init(start: usize, end: usize) void {
     _ = end;
 }
 
+const Mmaps = struct {
+    /// As values are provided to the Smith, they are appended to this. If the test
+    /// crashes, this can be recovered and used to obtain the crashing input. It is
+    /// also used to rerun fresh inputs.
+    input: MemoryMappedInput,
+    /// Contains extra information about the contents of `input` which is used which reducing
+    /// crashes. This must be seperate from `input` since corpus inputs, which contain no metadata,
+    /// go through `input` in case they cause a crash. This is also updated even when running new
+    /// inputs for that reason.
+    meta: MemoryMappedMeta,
+
+    pub fn init(mmap_index: u32) Mmaps {
+        var name_buf: ["meta".len + 8]u8 = undefined;
+
+        const input_name = std.mem.print(&name_buf, "in{x}", .{mmap_index}) catch unreachable;
+        const input_file = exec.cache_f.createFile(io, input_name, .{
+            .read = true,
+            .truncate = false,
+            .lock = .exclusive,
+            .lock_nonblocking = true,
+        }) catch |e| panic("failed to create file '{s}': {t}", .{ input_name, e });
+
+        const meta_name = std.mem.print(&name_buf, "meta{x}", .{mmap_index}) catch unreachable;
+        const meta_file = exec.cache_f.createFile(io, meta_name, .{
+            .read = true,
+            .truncate = false,
+            .lock = .exclusive,
+            .lock_nonblocking = true,
+        }) catch |e| panic("failed to create file '{s}': {t}", .{ meta_name, e });
+
+        return .{
+            .input = .init(input_file, mmap_index),
+            .meta = .init(meta_file, mmap_index),
+        };
+    }
+
+    pub fn deinit(mmaps: *Mmaps) void {
+        mmaps.input.deinit();
+        mmaps.meta.deinit();
+    }
+
+    const page_size = std.heap.page_size_min;
+    const page_align: mem.Alignment = .fromByteUnits(page_size);
+
+    fn createMap(file: Io.File, name_prefix: []const u8, mmap_index: u32) Io.File.MemoryMap {
+        const size = file.length(io) catch |e|
+            panic("failed to get length of '{s}{x}': {t}", .{ name_prefix, mmap_index, e });
+        const aligned_size = @max(page_align.forward(size), page_size);
+        if (aligned_size - size != 0) {
+            file.setLength(io, aligned_size) catch |e|
+                panic("failed to resize '{s}{x}': {t}", .{ name_prefix, mmap_index, e });
+        }
+        return file.createMemoryMap(io, .{ .len = aligned_size }) catch |e|
+            panic("failed to memmap input file '{s}{x}': {t}", .{ name_prefix, mmap_index, e });
+    }
+
+    fn resize(mmap: *Io.File.MemoryMap, min_capacity: usize, max_capacity: comptime_int) !void {
+        assert(min_capacity <= max_capacity);
+        const new_capacity = @min(growCapacity(min_capacity), max_capacity);
+        assert(new_capacity % page_size == 0);
+
+        try mmap.file.setLength(io, new_capacity);
+        mmap.setLength(io, new_capacity) catch |maybe_e| switch (maybe_e) {
+            error.OperationUnsupported => {
+                const f = mmap.file;
+                mmap.destroy(io);
+                mmap.* = try f.createMemoryMap(io, .{ .len = new_capacity });
+            },
+            else => |e| return e,
+        };
+    }
+
+    /// Called when memory growth is necessary. Returns a capacity larger than
+    /// minimum that grows super-linearly.
+    fn growCapacity(minimum: usize) usize {
+        return page_align.forward(minimum +| (minimum / 2 + page_size));
+    }
+};
+
 /// Reusable and recoverable input.
 ///
 /// Has a 32-bit limit on the input length. This has the nice side effect that `u32`
@@ -2327,27 +3201,17 @@ const MemoryMappedInput = struct {
     in_i: u32,
 
     /// `file` becomes owned by the returned `MemoryMappedInput`
-    pub fn init(file: Io.File, instance_id: u32, in_i: u32) MemoryMappedInput {
-        var size = file.length(io) catch |e|
-            panic("failed to get length of 'in{x}': {t}", .{ in_i, e });
-        if (size < std.heap.page_size_max) {
-            size = std.heap.page_size_max;
-            file.setLength(io, size) catch |e|
-                panic("failed to resize 'in{x}': {t}", .{ in_i, e });
-        }
-        const map = file.createMemoryMap(io, .{ .len = size }) catch |e|
-            panic("failed to memmap input file 'in{x}': {t}", .{ in_i, e });
-        @as(*volatile Header, @ptrCast(map.memory)).* = .{
-            .pc_digest = mem.nativeToLittle(u64, exec.pc_digest),
-            .instance_id = mem.nativeToLittle(u32, instance_id),
+    pub fn init(file: Io.File, mmap_index: u32) MemoryMappedInput {
+        const l: MemoryMappedInput = .{
+            .len = 0,
+            .mmap = Mmaps.createMap(file, "in", mmap_index),
+            .in_i = mmap_index,
+        };
+        l.header().* = .{
             .test_i = 0,
             .len = 0,
         };
-        return .{
-            .len = 0,
-            .mmap = map,
-            .in_i = in_i,
-        };
+        return l;
     }
 
     pub fn deinit(l: *MemoryMappedInput) void {
@@ -2373,40 +3237,31 @@ const MemoryMappedInput = struct {
             // in order to keep the capacity page aligned and to allow those values to
             // reserved for other places.
             if (min_capacity > max_capacity) @panic("too much smith data requested");
-
-            const new_capacity = @min(growCapacity(min_capacity), max_capacity);
-            l.mmap.file.setLength(io, new_capacity) catch |e|
-                panic("failed to resize 'in{x}': {t}", .{ l.in_i, e });
-            l.mmap.setLength(io, new_capacity) catch |se| switch (se) {
-                error.OperationUnsupported => {
-                    const f = l.mmap.file;
-                    l.mmap.destroy(io);
-                    l.mmap = f.createMemoryMap(io, .{ .len = new_capacity }) catch |e|
-                        panic("failed to memory map 'in{x}': {t}", .{ l.in_i, e });
-                },
-                else => panic("failed to resize memory map of 'in{x}': {t}", .{ l.in_i, se }),
-            };
+            Mmaps.resize(&l.mmap, min_capacity, max_capacity) catch |e|
+                panic("failed to resize memory map of 'in{x}': {t}", .{ l.in_i, e });
         }
     }
 
     // Only writing has side effects, so volatile is not needed
-    pub fn inputSlice(l: *MemoryMappedInput) []const u8 {
+    pub fn inputSlice(l: MemoryMappedInput) []const u8 {
         return l.mmap.memory[@sizeOf(Header)..][0..l.len];
     }
 
-    // Writing has side effectsd, so volatile is necessary
-    pub fn writeSlice(l: *MemoryMappedInput) []volatile u8 {
+    // Writing has side effects, so volatile is necessary
+    pub fn writeSlice(l: MemoryMappedInput) []align(Mmaps.page_size) volatile u8 {
         return l.mmap.memory;
     }
 
+    fn header(l: MemoryMappedInput) *volatile Header {
+        return @ptrCast(l.writeSlice()[0..@sizeOf(Header)]);
+    }
+
     fn writeLen(l: *MemoryMappedInput) void {
-        l.writeSlice()[@offsetOf(Header, "len")..][0..4].* =
-            @bitCast(mem.nativeToLittle(u32, l.len));
+        l.header().len = mem.nativeToLittle(u32, l.len);
     }
 
     pub fn setTest(l: *MemoryMappedInput, i: u32) void {
-        l.writeSlice()[@offsetOf(Header, "test_i")..][0..4].* =
-            @bitCast(mem.nativeToLittle(u32, i));
+        l.header().test_i = mem.nativeToLittle(u32, i);
     }
 
     /// Invalidates all element pointers.
@@ -2430,19 +3285,83 @@ const MemoryMappedInput = struct {
     /// Invalidates item pointers if more space is required.
     pub fn appendLittleInt(l: *MemoryMappedInput, T: type, x: T) void {
         l.ensureUnusedCapacity(@sizeOf(T));
-        l.writeSlice()[@sizeOf(Header) + l.len ..][0..@sizeOf(T)].* =
-            @bitCast(mem.nativeToLittle(T, x));
+        l.writeSlice()[@sizeOf(Header) + l.len ..][0..@sizeOf(T)].* = @bitCast(x);
         l.len += @sizeOf(T);
         l.writeLen();
     }
+};
 
-    /// Called when memory growth is necessary. Returns a capacity larger than
-    /// minimum that grows super-linearly.
-    fn growCapacity(minimum: usize) usize {
-        return mem.alignForward(
-            usize,
-            minimum +| (minimum / 2 + std.heap.page_size_max),
-            std.heap.page_size_max,
-        );
+const MemoryMappedMeta = struct {
+    /// In `u32`s.
+    len: u32,
+    /// Directly accessing `memory` is unsafe, use `writeSlice`.
+    ///
+    /// The memory is an array of `u32`s. The first `u32` contains the length. The rest
+    /// is a stream of `Entry` and their trailing data when necessary.
+    mmap: Io.File.MemoryMap,
+    in_i: u32,
+
+    pub const Entry = packed struct(u32) {
+        kind: Kind,
+        /// `@truncate(Uid.hash)`. Since the highest bit is lost, `Reduce` clears the
+        /// highest bit in all `Uid.hash`es passed to it so this can be used to construct
+        /// `Uid`s for its hash tables.
+        hash: u30,
+
+        pub const Kind = enum(u2) {
+            int,
+            eos,
+            /// Trailed by a `u32` length.
+            bytes,
+            slice,
+        };
+    };
+
+    /// `file` becomes owned by the returned `MemoryMappedMeta`
+    pub fn init(file: Io.File, mmap_index: u32) MemoryMappedMeta {
+        const l: MemoryMappedMeta = .{
+            .len = 0,
+            .mmap = Mmaps.createMap(file, "meta", mmap_index),
+            .in_i = mmap_index,
+        };
+        l.writeSlice()[0] = 0;
+        return l;
+    }
+
+    pub fn deinit(l: *MemoryMappedMeta) void {
+        const f = l.mmap.file;
+        l.mmap.write(io) catch |e| panic("failed to write memory map of 'meta{x}': {t}", .{ l.in_i, e });
+        l.mmap.destroy(io);
+        f.close(io);
+        l.* = undefined;
+    }
+
+    // Writing has side effects, so volatile is necessary
+    pub fn writeSlice(l: MemoryMappedMeta) []align(Mmaps.page_size) volatile u32 {
+        return @ptrCast(l.mmap.memory);
+    }
+
+    pub fn writeInt(l: *MemoryMappedMeta, x: u32) void {
+        if (l.writeSlice()[1..].len == l.len) {
+            @branchHint(.unlikely);
+
+            const max_capacity = 4 << 32;
+            Mmaps.resize(&l.mmap, l.mmap.memory.len + 4, max_capacity) catch |e|
+                panic("failed to resize memory map of 'meta{x}': {t}", .{ l.in_i, e });
+        }
+
+        l.writeSlice()[1..][l.len] = x; // Little-endian does not need forced here since the non-
+        // header u32s are opaque outside the fuzzer and the same executable is used when reducing.
+        l.len += 1;
+        l.writeSlice()[0] = mem.nativeToLittle(u32, l.len);
+    }
+
+    pub fn writeEntry(l: *MemoryMappedMeta, e: Entry) void {
+        return l.writeInt(@bitCast(e));
+    }
+
+    pub fn clearRetainingCapacity(l: *MemoryMappedMeta) void {
+        l.len = 0;
+        l.writeSlice()[0] = 0;
     }
 };

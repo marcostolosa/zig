@@ -51,7 +51,7 @@ pub fn main(init: std.process.Init) !void {
     defer cache_dir.close(io);
 
     abi.fuzzer_init(.fromSlice(cache_dir_path));
-    abi.fuzzer_main(1, 0, .iterations, 100);
+    abi.fuzzer_main(.{ .mode = .limit, .main_instance = true }, 0, 100, 1, 0);
 
     const pc_digest = abi.fuzzer_coverage().id;
     const coverage_file_path = "v/" ++ std.fmt.hex(pc_digest);

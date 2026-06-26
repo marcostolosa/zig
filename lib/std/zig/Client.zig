@@ -48,18 +48,33 @@ pub const Message = struct {
         /// Ask the test runner to run a particular test.
         /// The message body is a u32 test index.
         run_test,
-        /// Ask the test runner to start fuzzing a set of test forever or each for a given amount of
-        /// iterations. After this is sent, the only allowed message is `new_fuzz_input`.
+        /// Ask the test runner to start fuzzing a set of tests forever or each for a given amount
+        /// of iterations. After this is sent, the only allowed message is `new_fuzz_input`.
         ///
         /// The message body is:
-        /// - a u8 test limit kind (std.Build.api.fuzz.LimitKind)
-        /// - a u64 value whose meaning depends on FuzzLimitKind (either a limit amount or an instance id)
+        /// - a `std.Build.abi.fuzz.Flags`
+        /// - a u32 index of which mmap file to take
+        /// - If `Flags.mode == .limit`
+        ///   - a u64 limit
         /// - a u32 number of tests followed by n elements of
         ///   - a u32 test name len.
         ///   - a test name with the above length
         start_fuzzing,
         /// The message body has the same format as in Server.
         new_fuzz_input,
+        /// Ask the test runner to start reducing a crashing fuzz input. After this is sent, no
+        /// other messages are allowed. The test runner is expected to be killed to finish.
+        ///
+        /// The message body is:
+        /// - a u32 index of which mmap file to take
+        /// - a u32 run number (to construct a unique seed)
+        /// - a u32 length of the test name
+        /// - a u32 length of the crashing input
+        /// and is trailed by:
+        /// - the test name
+        /// - the crashing input
+        /// - the metadata of the input in the remaining bytes, which is a multiple of four
+        start_fuzzing_reduce,
         /// Body is a sequence of Arg
         args,
 
@@ -113,7 +128,7 @@ pub const Message = struct {
     };
 
     comptime {
-        assert(@sizeOf(std.Build.abi.fuzz.LimitKind) == 1);
+        assert(@sizeOf(std.Build.abi.fuzz.Flags) == 1);
     }
 };
 
@@ -166,26 +181,30 @@ pub fn serveRunTest(c: *const Client, index: u32) !void {
 
 pub fn serveRunFuzzTestMessage(
     c: *const Client,
+    flags: std.Build.abi.fuzz.Flags,
+    /// Undefined unless `flags.mode == .limit`.
+    limit: u64,
+    mmap_index: u32,
     test_names: []const []const u8,
-    kind: std.Build.abi.fuzz.LimitKind,
-    amount_or_instance: u64,
 ) !void {
+    const header_bytes = 1 + 4 + @as(u32, 8) * @intFromBool(flags.mode == .limit) + 4;
+    var bytes_len = header_bytes + @as(u32, @intCast(test_names.len)) * 4;
+    for (test_names) |name| bytes_len += @intCast(name.len);
+
     try c.serveMessageHeader(.{
         .tag = .start_fuzzing,
-        .bytes_len = 1 + 8 + 4 + count: {
-            var bytes_len: u32 = @intCast(test_names.len * 4);
-            for (test_names) |name| {
-                bytes_len += @intCast(name.len);
-            }
-            break :count bytes_len;
-        },
+        .bytes_len = bytes_len,
     });
-    try c.out.writeByte(@backingInt(kind));
-    try c.out.writeInt(u64, amount_or_instance, .little);
+    try c.out.writeByte(@bitCast(flags));
+    try c.out.writeInt(u32, mmap_index, .little);
+    switch (flags.mode) {
+        .forever => {},
+        .limit => try c.out.writeInt(u64, limit, .little),
+    }
     try c.out.writeInt(u32, @intCast(test_names.len), .little);
-    for (test_names) |test_name| {
-        try c.out.writeInt(u32, @intCast(test_name.len), .little);
-        try c.out.writeAll(test_name);
+    for (test_names) |name| {
+        try c.out.writeInt(u32, @intCast(name.len), .little);
+        try c.out.writeAll(name);
     }
     try c.out.flush();
 }

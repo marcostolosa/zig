@@ -3374,6 +3374,18 @@ fn buildOutputType(
         });
         test_mod.deps = try main_mod.deps.clone(arena);
         break :test_mod test_mod;
+    } else if (root_src_file != null and (arg_mode == .zig_test or arg_mode == .zig_test_obj)) test_mod: {
+        break :test_mod try Package.Module.create(arena, .{
+            .paths = .{
+                .root = try .fromRoot(arena, dirs, .zig_lib, "compiler"),
+                .root_src_path = "test_runner.zig",
+            },
+            .fully_qualified_name = "root",
+            .cc_argv = &.{},
+            .inherited = .{},
+            .global = create_module.resolved_options,
+            .parent = main_mod,
+        });
     } else main_mod;
 
     const target = &main_mod.resolved_target.result;

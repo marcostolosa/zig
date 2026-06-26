@@ -188,6 +188,8 @@ pub const Parsed = struct {
     subject_alt_name_slice: Slice,
     validity: Validity,
     version: Version,
+    is_ca: bool,
+    path_len: ?u32,
 
     pub const PubKeyAlgo = union(AlgorithmCategory) {
         rsaEncryption: void,
@@ -237,6 +239,7 @@ pub const Parsed = struct {
 
     pub const VerifyError = error{
         CertificateIssuerMismatch,
+        CertificateIssuerNotCA,
         CertificateNotYetValid,
         CertificateExpired,
         CertificateSignatureAlgorithmUnsupported,
@@ -259,6 +262,12 @@ pub const Parsed = struct {
         // subject name.
         if (!mem.eql(u8, parsed_subject.issuer(), parsed_issuer.subject())) {
             return error.CertificateIssuerMismatch;
+        }
+
+        // RFC 5280, section 4.2.1.9
+        // Ensure the issuer is allowed to sign certificates
+        if (!parsed_issuer.is_ca) {
+            return error.CertificateIssuerNotCA;
         }
 
         if (now_sec < parsed_subject.validity.not_before)
@@ -495,6 +504,7 @@ pub fn parse(cert: Certificate) ParseError!Parsed {
 
     // Extensions
     var subject_alt_name_slice = der.Element.Slice.empty;
+    var basic_constraints_slice = der.Element.Slice.empty;
     ext: {
         if (version == .v1)
             break :ext;
@@ -524,7 +534,44 @@ pub fn parse(cert: Certificate) ParseError!Parsed {
                 try der.Element.parse(cert_bytes, critical_elem.slice.end);
             switch (ext_id) {
                 .subject_alt_name => subject_alt_name_slice = ext_bytes_elem.slice,
+                .basic_constraints => basic_constraints_slice = ext_bytes_elem.slice,
                 else => continue,
+            }
+        }
+    }
+
+    // Parse basic constraints extensions
+    var is_ca = false;
+    var path_len: ?u32 = null;
+    
+    if (basic_constraints_slice.start != basic_constraints_slice.end) {
+        const bc_bytes = cert_bytes[basic_constraints_slice.start..basic_constraints_slice.end];
+        const bc_seq = try der.Element.parse(bc_bytes, 0);
+        if (bc_seq.identifier.tag == .sequence) {
+            var bc_i = bc_seq.slice.start;
+            if (bc_i < bc_seq.slice.end) {
+                const ca_elem = try der.Element.parse(bc_bytes, bc_i);
+                if (ca_elem.identifier.tag == .boolean) {
+                    if (ca_elem.slice.end - ca_elem.slice.start != 1) {
+                        return error.CertificateFieldHasInvalidLength;
+                    }
+                    is_ca = bc_bytes[ca_elem.slice.start] == 0xFF;
+                    bc_i = ca_elem.slice.end;
+                }
+                // Checking pathLenConstraint (optional INTEGER)
+                if (bc_i < bc_seq.slice.end) {
+                    const pl_elem = try der.Element.parse(bc_bytes, bc_i);
+                    if (pl_elem.identifier.tag == .integer) {
+                        if (pl_elem.slice.end - pl_elem.slice.start > 4) {
+                            return error.CertificateFieldHasInvalidLength;
+                        }
+                        var pl: u32 = 0;
+                        for (bc_bytes[pl_elem.slice.start..pl_elem.slice.end]) |b| {
+                            pl = (pl << 8) | b;
+                        }
+                        path_len = pl;
+                    }
+                }
             }
         }
     }
@@ -545,6 +592,8 @@ pub fn parse(cert: Certificate) ParseError!Parsed {
         },
         .subject_alt_name_slice = subject_alt_name_slice,
         .version = version,
+        .is_ca = is_ca,
+        .path_len = path_len,
     };
 }
 

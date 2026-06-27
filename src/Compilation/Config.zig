@@ -453,10 +453,7 @@ pub fn resolve(options: Options) ResolveError!Config {
 
     const pie = b: {
         switch (options.output_mode) {
-            .Exe => if (target.os.tag == .fuchsia or
-                (target.abi.isAndroid() and link_mode == .dynamic) or
-                target.os.tag == .ashetos)
-            {
+            .Exe => if (target_util.requiresPie(target, link_mode)) {
                 if (options.pie == false) return error.TargetRequiresPie;
                 break :b true;
             },

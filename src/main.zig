@@ -3360,22 +3360,27 @@ fn buildOutputType(
         break :m null;
     };
 
-    const root_mod = if (test_runner_path) |test_runner| test_mod: {
-        const test_mod = try Module.create(arena, .{
-            .paths = .{
-                .root = try .fromUnresolved(arena, dirs, &.{fs.path.dirname(test_runner) orelse "."}),
-                .root_src_path = fs.path.basename(test_runner),
-            },
-            .fully_qualified_name = "root",
-            .cc_argv = &.{},
-            .inherited = .{},
-            .global = create_module.resolved_options,
-            .parent = main_mod,
-        });
-        test_mod.deps = try main_mod.deps.clone(arena);
-        break :test_mod test_mod;
-    } else if (root_src_file != null and (arg_mode == .zig_test or arg_mode == .zig_test_obj)) test_mod: {
-        break :test_mod try Package.Module.create(arena, .{
+    const test_mod_needed = test_runner_path != null or
+        (root_src_file != null and (arg_mode == .zig_test or arg_mode == .zig_test_obj));
+
+    const root_mod = if (!test_mod_needed) main_mod else root_mod: {
+        if (test_runner_path) |test_runner| {
+            const test_mod = try Module.create(arena, .{
+                .paths = .{
+                    .root = try .fromUnresolved(arena, dirs, &.{fs.path.dirname(test_runner) orelse "."}),
+                    .root_src_path = fs.path.basename(test_runner),
+                },
+                .fully_qualified_name = "root",
+                .cc_argv = &.{},
+                .inherited = .{},
+                .global = create_module.resolved_options,
+                .parent = main_mod,
+            });
+            test_mod.deps = try main_mod.deps.clone(arena);
+            break :root_mod test_mod;
+        }
+
+        break :root_mod try Module.create(arena, .{
             .paths = .{
                 .root = try .fromRoot(arena, dirs, .zig_lib, "compiler"),
                 .root_src_path = "test_runner.zig",
@@ -3386,7 +3391,7 @@ fn buildOutputType(
             .global = create_module.resolved_options,
             .parent = main_mod,
         });
-    } else main_mod;
+    };
 
     const target = &main_mod.resolved_target.result;
 

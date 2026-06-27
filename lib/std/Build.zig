@@ -770,35 +770,30 @@ pub fn addRunArtifact(b: *Build, exe: *Step.Compile) *Step.Run {
     run_step.producer = exe;
     run_step.addArtifactArg(exe);
     if (exe.kind == .@"test") {
-        const test_server_mode: bool = if (exe.test_runner) |test_runner| s: {
-            switch (test_runner.path) {
-                .relative => |rp| if (!rp.eql(Step.Compile.TestRunner.default.path.relative)) {
-                    break :s test_runner.mode == .server;
-                },
-                else => break :s test_runner.mode == .server,
-            }
-            if (exe.use_llvm == false) {
-                // The default test runner does not use the server protocol if the selected backend
-                // is too immature to support it. Keep this logic in sync with `need_simple` in the
-                // default test runner implementation.
-                switch (exe.rootModuleTarget().cpu.arch) {
-                    // stage2_aarch64
-                    .aarch64,
-                    .aarch64_be,
-                    // stage2_powerpc
-                    .powerpc,
-                    .powerpcle,
-                    .powerpc64,
-                    .powerpc64le,
-                    // stage2_riscv64
-                    .riscv64,
-                    => break :s false,
+        var test_server_mode = false;
+        if (exe.test_runner) |test_runner| {
+            const default_path = Step.Compile.TestRunner.default.path.relative;
+            const use_default = test_runner.path == .relative and default_path.eql(test_runner.path.relative);
+            // The default test runner does not use the server protocol if the selected backend
+            // is too immature to support it. Keep this logic in sync with `need_simple` in the
+            // default test runner implementation.
+            const server_mode_supported = switch (exe.rootModuleTarget().cpu.arch) {
+                // stage2_aarch64
+                .aarch64,
+                .aarch64_be,
+                // stage2_powerpc
+                .powerpc,
+                .powerpcle,
+                .powerpc64,
+                .powerpc64le,
+                // stage2_riscv64
+                .riscv64,
+                => false,
+                else => true,
+            };
 
-                    else => {},
-                }
-            }
-            break :s true;
-        } else false;
+            test_server_mode = if (use_default) exe.use_llvm != false or server_mode_supported else test_runner.mode == .server;
+        }
 
         if (test_server_mode) {
             run_step.enableTestRunnerMode();

@@ -77,7 +77,7 @@ static void assert_or_panic(bool ok) {
 #  define ZIG_NO_COMPLEX
 #endif
 
-#ifdef ZIG_PPC32
+#ifdef __powerpc__
 #  define ZIG_NO_COMPLEX
 #endif
 
@@ -15385,7 +15385,7 @@ void run_c_tests(void) {
 #if !(defined(__i386__) && defined(_WIN32))
 #ifndef __loongarch__
 #ifndef ZIG_MIPS64
-#ifndef __powerpc__
+#ifndef ZIG_PPC32
     {
         struct Struct_i32_i32 s = {1, 2};
         zig_struct_i32_i32(s);
@@ -15398,7 +15398,7 @@ void run_c_tests(void) {
 #ifndef __hexagon__
 #ifndef __loongarch__
 #ifndef ZIG_MIPS64
-#ifndef __powerpc__
+#ifndef ZIG_PPC32
     {
         struct BigStruct s = {1, 2, 3, 4, 5};
         zig_big_struct(s);
@@ -15430,7 +15430,7 @@ void run_c_tests(void) {
 #ifndef __i386__
 #ifndef __loongarch__
 #ifndef ZIG_MIPS64
-#ifndef __powerpc__
+#ifndef ZIG_PPC32
     {
         struct SplitStructInts s = {1234, 100, 1337};
         zig_split_struct_ints(s);
@@ -15444,7 +15444,7 @@ void run_c_tests(void) {
 #ifndef __hexagon__
 #ifndef __loongarch__
 #ifndef ZIG_MIPS64
-#ifndef __powerpc__
+#ifndef ZIG_PPC32
     {
         struct MedStructMixed s = {1234, 100.0f, 1337.0f};
         zig_med_struct_mixed(s);
@@ -15458,7 +15458,7 @@ void run_c_tests(void) {
 #ifndef __i386__
 #ifndef __loongarch__
 #ifndef ZIG_MIPS64
-#ifndef __powerpc__
+#ifndef ZIG_PPC32
     {
         struct SplitStructMixed s = {1234, 100, 1337.0f};
         zig_split_struct_mixed(s);
@@ -15472,7 +15472,7 @@ void run_c_tests(void) {
 #ifndef __hexagon__
 #ifndef __loongarch__
 #ifndef ZIG_MIPS64
-#ifndef __powerpc__
+#ifndef ZIG_PPC32
     {
         struct BigStruct s = {30, 31, 32, 33, 34};
         struct BigStruct res = zig_big_struct_both(s);

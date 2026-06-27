@@ -543,7 +543,7 @@ pub fn parse(cert: Certificate) ParseError!Parsed {
     // Parse basic constraints extensions
     var is_ca = false;
     var path_len: ?u32 = null;
-    
+
     if (basic_constraints_slice.start != basic_constraints_slice.end) {
         const bc_bytes = cert_bytes[basic_constraints_slice.start..basic_constraints_slice.end];
         const bc_seq = try der.Element.parse(bc_bytes, 0);

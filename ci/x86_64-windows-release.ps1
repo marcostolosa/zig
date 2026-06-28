@@ -74,11 +74,16 @@ stage3-release\bin\zig.exe build `
   -Dversion-string="$(stage3-release\bin\zig version)"
 CheckLastExitCode
 
-# Compare-Object returns an error code if the files differ.
+# SHA256 hash comparison returns an error code if the files differ.
 Write-Output "If the following command fails, it means nondeterminism has been"
 Write-Output "introduced, making stage3 and stage4 no longer byte-for-byte identical."
-Compare-Object (Get-Content stage3-release\bin\zig.exe) (Get-Content stage4-release\bin\zig.exe)
-CheckLastExitCode
+$hash3 = (Get-FileHash "stage3-release\bin\zig.exe" -Algorithm SHA256).Hash
+$hash4 = (Get-FileHash "stage4-release\bin\zig.exe" -Algorithm SHA256).Hash
+
+if ($hash3 -ne $hash4) {
+    Write-Error "Nondeterminism detected: stage3 and stage4 differ!"
+    exit 1
+}
 
 Write-Output "Build x86_64-windows-msvc behavior tests using the C backend..."
 stage3-release\bin\zig.exe build-obj `
@@ -111,7 +116,7 @@ Enter-VsDevShell -VsInstallPath "C:\Program Files (x86)\Microsoft Visual Studio\
 CheckLastExitCode
 
 Write-Output "Build and run behavior tests with msvc..."
-cl /I..\lib /W3 /Z7 behavior-x86_64-windows-msvc.c compiler_rt-x86_64-windows-msvc.c /link /nologo /debug /subsystem:console kernel32.lib ntdll.lib libcmt.lib
+cl /I..\lib /W3 /O2 behavior-x86_64-windows-msvc.c compiler_rt-x86_64-windows-msvc.c /link /nologo /subsystem:console kernel32.lib ntdll.lib libcmt.lib
 CheckLastExitCode
 
 .\behavior-x86_64-windows-msvc

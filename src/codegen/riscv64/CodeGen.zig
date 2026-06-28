@@ -51,7 +51,7 @@ const InnerError = codegen.Error || error{OutOfRegisters};
 
 pub fn legalizeFeatures(_: *const std.Target) *const Air.Legalize.Features {
     return comptime &.initMany(&.{
-        .expand_intcast_safe,
+        .expand_int_cast_safe,
         .expand_int_from_float_safe,
         .expand_int_from_float_optimized_safe,
         .expand_add_safe,
@@ -1453,7 +1453,7 @@ fn genBody(func: *Func, body: []const Air.Inst.Index) InnerError!void {
             .add_safe,
             .sub_safe,
             .mul_safe,
-            .intcast_safe,
+            .int_cast_safe,
             .int_from_float_safe,
             .int_from_float_optimized_safe,
             => return func.fail("TODO implement safety_checked_instructions", .{}),
@@ -1479,7 +1479,14 @@ fn genBody(func: *Func, body: []const Air.Inst.Index) InnerError!void {
             .ret_ptr         => try func.airRetPtr(inst),
             .arg             => try func.airArg(inst),
             .assembly        => try func.airAsm(inst),
-            .bitcast         => try func.airBitCast(inst),
+            .bit_cast        => try func.airBitCast(inst),
+            .ptr_cast        => try func.airBitCast(inst),
+            .ptr_from_int    => try func.airBitCast(inst),
+            .int_from_ptr    => try func.airBitCast(inst),
+            .error_cast      => try func.airBitCast(inst),
+            .error_from_int  => try func.airBitCast(inst),
+            .int_from_error  => try func.airBitCast(inst),
+            .union_from_enum => try func.airBitCast(inst),
             .block           => try func.airBlock(inst),
             .br              => try func.airBr(inst),
             .repeat          => try func.airRepeat(inst),
@@ -1493,7 +1500,7 @@ fn genBody(func: *Func, body: []const Air.Inst.Index) InnerError!void {
             .dbg_empty_stmt  => func.finishAirBookkeeping(),
             .fptrunc         => try func.airFptrunc(inst),
             .fpext           => try func.airFpext(inst),
-            .intcast         => try func.airIntCast(inst),
+            .int_cast        => try func.airIntCast(inst),
             .trunc           => try func.airTrunc(inst),
             .is_non_null     => try func.airIsNonNull(inst),
             .is_non_null_ptr => try func.airIsNonNullPtr(inst),
@@ -1512,7 +1519,7 @@ fn genBody(func: *Func, body: []const Air.Inst.Index) InnerError!void {
             .store           => try func.airStore(inst, false),
             .store_safe      => try func.airStore(inst, true),
             .struct_field_ptr=> try func.airStructFieldPtr(inst),
-            .struct_field_val=> try func.airStructFieldVal(inst),
+            .agg_field_val   => try func.airAggFieldVal(inst),
             .float_from_int  => try func.airFloatFromInt(inst),
             .int_from_float  => try func.airIntFromFloat(inst),
             .cmpxchg_strong  => try func.airCmpxchg(inst, .strong),
@@ -3953,9 +3960,7 @@ fn airPtrElemPtr(func: *Func, inst: Air.Inst.Index) !void {
         const elem_ptr_ty = func.typeOfIndex(inst);
         const base_ptr_ty = func.typeOf(extra.lhs);
 
-        if (elem_ptr_ty.ptrInfo(zcu).flags.vector_index != .none) {
-            @panic("audit");
-        }
+        assert(elem_ptr_ty.ptrInfo(zcu).flags.vector_index == .none);
 
         const base_ptr_mcv = try func.resolveInst(extra.lhs);
         const base_ptr_lock: ?RegisterLock = switch (base_ptr_mcv) {
@@ -4586,7 +4591,7 @@ fn structFieldPtr(func: *Func, inst: Air.Inst.Index, operand: Air.Inst.Ref, inde
     return dst_mcv.offset(field_offset);
 }
 
-fn airStructFieldVal(func: *Func, inst: Air.Inst.Index) !void {
+fn airAggFieldVal(func: *Func, inst: Air.Inst.Index) !void {
     const pt = func.pt;
     const zcu = pt.zcu;
 
@@ -4683,7 +4688,7 @@ fn airStructFieldVal(func: *Func, inst: Air.Inst.Index) !void {
                     break :result dst_mcv;
                 }
 
-                return func.fail("TODO: airStructFieldVal load_frame field_off non multiple of 8", .{});
+                return func.fail("TODO: airAggFieldVal load_frame field_off non multiple of 8", .{});
             },
             else => return func.fail("TODO: airStructField {s}", .{@tagName(src_mcv)}),
         }

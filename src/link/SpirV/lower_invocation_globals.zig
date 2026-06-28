@@ -71,7 +71,7 @@ const ModuleInfo = struct {
         arena: Allocator,
         parser: *BinaryModule.Parser,
         binary: BinaryModule,
-    ) BinaryModule.ParseError!ModuleInfo {
+    ) !ModuleInfo {
         var entry_points: std.array_hash_map.Auto(ResultId, void) = .empty;
         var functions: std.array_hash_map.Auto(ResultId, Fn) = .empty;
         var fn_types = std.AutoHashMap(ResultId, struct {
@@ -79,9 +79,9 @@ const ModuleInfo = struct {
             param_types: []const ResultId,
         }).init(arena);
         var calls: std.array_hash_map.Auto(ResultId, void) = .empty;
-        var callee_store = std.array_list.Managed(ResultId).init(arena);
+        var callee_store: std.ArrayList(ResultId) = .empty;
         var function_invocation_globals: std.array_hash_map.Auto(ResultId, void) = .empty;
-        var result_id_offsets = std.array_list.Managed(u16).init(arena);
+        var result_id_offsets: std.ArrayList(u16) = .empty;
         var invocation_globals: std.array_hash_map.Auto(ResultId, InvocationGlobal) = .empty;
 
         var maybe_current_function: ?ResultId = null;
@@ -164,7 +164,7 @@ const ModuleInfo = struct {
                     }
 
                     const first_callee = callee_store.items.len;
-                    try callee_store.appendSlice(calls.keys());
+                    try callee_store.appendSlice(arena, calls.keys());
 
                     const fn_type = fn_types.get(fn_ty_id) orelse {
                         log.err("Function {f} has invalid OpFunction type", .{current_function});
@@ -366,6 +366,8 @@ const ModuleBuilder = struct {
     /// The first ID of the new entry points. Entry points are allocated from
     /// here according to their index in `info.entry_points`.
     entry_point_new_id_base: u32,
+    /// OpName operands saved for invocation globals to re-emit.
+    global_names: std.array_hash_map.Auto(ResultId, []const Word) = .empty,
     /// A set of all function types in the new program. SPIR-V mandates that these are unique,
     /// and until a general type deduplication pass is programmed, we just handle it here via this.
     function_types: std.array_hash_map.Custom(FunctionType, ResultId, FunctionType.Context, true) = .empty,
@@ -395,22 +397,49 @@ const ModuleBuilder = struct {
         return @enumFromInt(self.id_bound);
     }
 
-    fn finalize(self: *ModuleBuilder, a: Allocator, binary: *BinaryModule) !void {
+    fn finalize(self: *ModuleBuilder, arena: Allocator, binary: *BinaryModule) !void {
         binary.id_bound = self.id_bound;
-        binary.instructions = try a.dupe(Word, self.section.instructions.items);
+        binary.instructions = try arena.dupe(Word, self.section.instructions.items);
         // Nothing is removed in this pass so we don't need to change any of the maps,
         // just make sure the section is updated.
-        binary.sections.functions = self.new_functions_section orelse binary.instructions.len;
+        binary.functions_start = self.new_functions_section orelse binary.instructions.len;
+    }
+
+    fn emitGlobalNames(self: *ModuleBuilder, info: ModuleInfo) !void {
+        for (info.functions.keys(), info.functions.values()) |func, fn_info| {
+            if (info.dead_initializers.contains(func)) continue;
+            const new_info = self.function_new_info.get(func) orelse continue;
+            for (fn_info.invocation_globals.keys(), 0..) |global, i| {
+                if (!info.live_invocation_globals.contains(global)) continue;
+                const name_words = self.global_names.get(global) orelse continue;
+                const id = new_info.invocationGlobalId(i);
+                try self.section.emitRaw(self.arena, .OpName, 1 + name_words.len);
+                self.section.writeOperand(ResultId, id);
+                self.section.writeWords(name_words);
+            }
+        }
     }
 
     /// Process everything from `binary` up to the first function and emit it into the builder.
     fn processPreamble(self: *ModuleBuilder, binary: BinaryModule, info: ModuleInfo) !void {
+        var emitted_global_names = false;
         var it = binary.iterateInstructions();
         while (it.next()) |inst| {
+            if (!emitted_global_names) switch (inst.opcode.class()) {
+                .annotation, .type_declaration, .constant_creation => {
+                    try self.emitGlobalNames(info);
+                    emitted_global_names = true;
+                },
+                else => {},
+            };
+
             switch (inst.opcode) {
                 .OpName => {
                     const id: ResultId = @enumFromInt(inst.operands[0]);
-                    if (info.invocation_globals.contains(id)) continue;
+                    if (info.invocation_globals.contains(id)) {
+                        try self.global_names.put(self.arena, id, inst.operands[1..]);
+                        continue;
+                    }
                     if (info.dead_initializers.contains(id)) continue;
                 },
                 .OpExtInstImport => {
@@ -428,29 +457,34 @@ const ModuleBuilder = struct {
                 },
                 .OpEntryPoint => {
                     const original_id: ResultId = @enumFromInt(inst.operands[1]);
-                    const new_id_index = info.entry_points.getIndex(original_id).?;
-                    const new_id: ResultId = @enumFromInt(self.entry_point_new_id_base + new_id_index);
-                    try self.section.emitRaw(self.arena, .OpEntryPoint, inst.operands.len);
-                    self.section.writeWord(inst.operands[0]);
-                    self.section.writeOperand(ResultId, new_id);
-                    self.section.writeWords(inst.operands[2..]);
+                    const fn_info = info.functions.get(original_id).?;
+                    if (fn_info.invocation_globals.count() > 0) {
+                        const new_id_index = info.entry_points.getIndex(original_id).?;
+                        const new_id: ResultId = @enumFromInt(self.entry_point_new_id_base + new_id_index);
+                        try self.section.emitRaw(self.arena, .OpEntryPoint, inst.operands.len);
+                        self.section.writeWord(inst.operands[0]);
+                        self.section.writeOperand(ResultId, new_id);
+                        self.section.writeWords(inst.operands[2..]);
+                    } else {
+                        try self.section.emitRawInstruction(self.arena, inst.opcode, inst.operands);
+                    }
                     continue;
                 },
                 .OpExecutionMode, .OpExecutionModeId => {
                     const original_id: ResultId = @enumFromInt(inst.operands[0]);
-                    const new_id_index = info.entry_points.getIndex(original_id).?;
-                    const new_id: ResultId = @enumFromInt(self.entry_point_new_id_base + new_id_index);
-                    try self.section.emitRaw(self.arena, inst.opcode, inst.operands.len);
-                    self.section.writeOperand(ResultId, new_id);
-                    self.section.writeWords(inst.operands[1..]);
+                    const fn_info = info.functions.get(original_id).?;
+                    if (fn_info.invocation_globals.count() > 0) {
+                        const new_id_index = info.entry_points.getIndex(original_id).?;
+                        const new_id: ResultId = @enumFromInt(self.entry_point_new_id_base + new_id_index);
+                        try self.section.emitRaw(self.arena, inst.opcode, inst.operands.len);
+                        self.section.writeOperand(ResultId, new_id);
+                        self.section.writeWords(inst.operands[1..]);
+                    } else {
+                        try self.section.emitRawInstruction(self.arena, inst.opcode, inst.operands);
+                    }
                     continue;
                 },
                 .OpTypeFunction => {
-                    // Re-emitted in `emitFunctionTypes()`. We can do this because
-                    // OpTypeFunction's may not currently be used anywhere that is not
-                    // directly with an OpFunction. For now we ignore Intels function
-                    // pointers extension, that is not a problem with a generalized
-                    // pass anyway.
                     continue;
                 },
                 .OpFunction => break,
@@ -458,6 +492,10 @@ const ModuleBuilder = struct {
             }
 
             try self.section.emitRawInstruction(self.arena, inst.opcode, inst.operands);
+        }
+
+        if (!emitted_global_names) {
+            try self.emitGlobalNames(info);
         }
     }
 
@@ -525,12 +563,12 @@ const ModuleBuilder = struct {
         binary: BinaryModule,
         info: ModuleInfo,
     ) !void {
-        var result_id_offsets = std.array_list.Managed(u16).init(self.arena);
-        var operands = std.array_list.Managed(u32).init(self.arena);
+        var result_id_offsets: std.ArrayList(u16) = .empty;
+        var operands: std.ArrayList(u32) = .empty;
 
         var maybe_current_function: ?ResultId = null;
         var skip_until_end: bool = false;
-        var it = binary.iterateInstructionsFrom(binary.sections.functions);
+        var it = binary.iterateInstructionsFrom(binary.functions_start);
         self.new_functions_section = self.section.instructions.items.len;
         while (it.next()) |inst| {
             if (skip_until_end) {
@@ -541,7 +579,7 @@ const ModuleBuilder = struct {
             try parser.parseInstructionResultIds(binary, inst, &result_id_offsets);
 
             operands.items.len = 0;
-            try operands.appendSlice(inst.operands);
+            try operands.appendSlice(self.arena, inst.operands);
 
             // Replace the result-ids with the global's new result-id if required.
             for (result_id_offsets.items) |off| {
@@ -624,6 +662,7 @@ const ModuleBuilder = struct {
 
         for (info.entry_points.keys(), 0..) |func, entry_point_index| {
             const fn_info = info.functions.get(func).?;
+            if (fn_info.invocation_globals.count() == 0) continue;
             const ep_id: ResultId = @enumFromInt(self.entry_point_new_id_base + @as(u32, @intCast(entry_point_index)));
             const fn_type = self.function_types.get(.{
                 .return_type = fn_info.return_type,
@@ -741,14 +780,14 @@ pub fn run(parser: *BinaryModule.Parser, binary: *BinaryModule, progress: std.Pr
     const sub_node = progress.start("Lower invocation globals", 6);
     defer sub_node.end();
 
-    var arena = std.heap.ArenaAllocator.init(parser.a);
-    defer arena.deinit();
-    const a = arena.allocator();
+    var arena_state = std.heap.ArenaAllocator.init(parser.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
 
-    var info = try ModuleInfo.parse(a, parser, binary.*);
-    try info.resolve(a);
+    var info = try ModuleInfo.parse(arena, parser, binary.*);
+    try info.resolve(arena);
 
-    var builder = try ModuleBuilder.init(a, binary.*, info);
+    var builder = try ModuleBuilder.init(arena, binary.*, info);
     sub_node.completeOne();
     try builder.deriveNewFnInfo(info);
     sub_node.completeOne();
@@ -760,5 +799,5 @@ pub fn run(parser: *BinaryModule.Parser, binary: *BinaryModule, progress: std.Pr
     sub_node.completeOne();
     try builder.emitNewEntryPoints(info);
     sub_node.completeOne();
-    try builder.finalize(parser.a, binary);
+    try builder.finalize(parser.gpa, binary);
 }

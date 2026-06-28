@@ -9,7 +9,6 @@ const maxInt = std.math.maxInt;
 
 test "switch with numbers" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testSwitchWithNumbers(13);
 }
@@ -25,7 +24,6 @@ fn testSwitchWithNumbers(x: u32) !void {
 
 test "switch with all ranges" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
 
     try expect(testSwitchWithAllRanges(50, 3) == 1);
     try expect(testSwitchWithAllRanges(101, 0) == 2);
@@ -214,8 +212,6 @@ test "undefined.u0" {
 
 test "switch with disjoint range" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
-
     var q: u8 = 0;
     _ = &q;
     switch (q) {
@@ -226,8 +222,6 @@ test "switch with disjoint range" {
 }
 
 test "switch variable for range and multiple prongs" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
-
     const S = struct {
         fn doTheTest() !void {
             try doTheSwitch(16);
@@ -801,6 +795,7 @@ test "enum value without tag name used as switch item" {
 }
 
 test "switch item sizeof" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     const S = struct {
         fn doTheTest() !void {
             var a: usize = 0;
@@ -1578,4 +1573,23 @@ test "repeated switch analysis overrides previous analysis results" {
             else => unreachable,
         };
     }
+}
+
+test "union field pointer capture preserves alignment in inline prong" {
+    const U = union(enum) {
+        a: u32,
+        b: u32,
+        fn doTheTest(u: *align(1) const @This()) !void {
+            switch (u.*) {
+                inline .a, .b => |*a_ptr| {
+                    comptime assert(@TypeOf(a_ptr) == *align(1) const u32);
+                    try expect(a_ptr.* == 123);
+                },
+            }
+        }
+    };
+    try U.doTheTest(&.{ .a = 123 });
+    try U.doTheTest(&.{ .b = 123 });
+    try comptime U.doTheTest(&.{ .a = 123 });
+    try comptime U.doTheTest(&.{ .b = 123 });
 }

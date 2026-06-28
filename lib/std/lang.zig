@@ -567,6 +567,10 @@ pub const AddressSpace = enum(u5) {
 
     /// This address space only addresses the "lookup" ram
     lut,
+
+    // Web Assembly
+    externref,
+    funcref,
 };
 
 /// This data structure is used by the Zig language code generation and
@@ -834,7 +838,7 @@ pub const Type = union(enum) {
             pub const Usage = union(enum(u2)) {
                 unknown: type,
                 sampled: type,
-                storage,
+                storage: type,
             };
 
             pub const Format = enum(u4) {
@@ -1169,11 +1173,12 @@ pub const ExternOptions = struct {
 
     pub const Decoration = union(enum) {
         location: u32,
+        flat: u32,
         descriptor: Descriptor,
 
         pub const Descriptor = struct {
-            binding: u32,
             set: u32,
+            binding: u32,
         };
     };
 

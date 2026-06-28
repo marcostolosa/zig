@@ -63,16 +63,22 @@ pub const cpu_context = @import("debug/cpu_context.zig");
 /// ```
 pub const SelfInfo = if (@hasDecl(root, "debug") and @hasDecl(root.debug, "SelfInfo"))
     root.debug.SelfInfo
-else switch (std.Target.ObjectFormat.default(native_os, native_arch)) {
-    .coff => if (native_os == .windows) @import("debug/SelfInfo/Windows.zig") else void,
-    .elf => switch (native_os) {
-        .freestanding, .other => void,
-        else => @import("debug/SelfInfo/Elf.zig"),
-    },
-    .macho => @import("debug/SelfInfo/MachO.zig"),
-    .plan9, .spirv, .wasm => void,
-    .c, .hex, .raw => unreachable,
-};
+else
+    TargetInfo(native_os, native_arch);
+
+/// Returns the default `SelfInfo` for the given `os` and `arch`.
+pub fn TargetInfo(os: std.Target.Os.Tag, arch: std.Target.Cpu.Arch) type {
+    return switch (std.Target.ObjectFormat.default(os, arch)) {
+        .coff => if (os == .windows) @import("debug/SelfInfo/Windows.zig") else void,
+        .elf => switch (os) {
+            .freestanding, .other => void,
+            else => @import("debug/SelfInfo/Elf.zig"),
+        },
+        .macho => @import("debug/SelfInfo/MachO.zig"),
+        .plan9, .spirv, .wasm => void,
+        .c, .hex, .raw => unreachable,
+    };
+}
 
 pub const SelfInfoError = error{
     /// The required debug info is invalid or corrupted.
@@ -501,7 +507,16 @@ pub fn defaultPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
     if (use_trap_panic) @trap();
 
     switch (builtin.os.tag) {
-        .freestanding, .other, .@"3ds", .psp, .vita => {
+        .freestanding,
+        .other,
+
+        .@"3ds",
+        .wiiu,
+
+        .psx,
+        .psp,
+        .vita,
+        => {
             @trap();
         },
         .uefi => {

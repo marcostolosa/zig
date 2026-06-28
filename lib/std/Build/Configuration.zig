@@ -571,6 +571,8 @@ pub const Step = extern struct {
         flags2: Flags2,
         args: Storage.LengthPrefixedList(Arg.Index),
         cwd: Storage.FlagOptional(.flags, .cwd, LazyPath.Index),
+        preopen_names: Storage.LengthPrefixedList(String),
+        preopen_paths: Storage.LengthPrefixedList(LazyPath.Index),
         captured_stdout: Storage.FlagOptional(.flags, .captured_stdout, CapturedStream),
         captured_stderr: Storage.FlagOptional(.flags, .captured_stderr, CapturedStream),
         file_inputs: Storage.LengthPrefixedList(LazyPath.Index),
@@ -585,6 +587,8 @@ pub const Step = extern struct {
         expect_stderr_match: Storage.FlagLengthPrefixedList(.flags2, .expect_stderr_match, Bytes),
         expect_stdout_match: Storage.FlagLengthPrefixedList(.flags2, .expect_stdout_match, Bytes),
         expect_term_value: Storage.FlagOptional(.flags2, .expect_term, u32),
+        expect_stdout_snapshot: Storage.FlagOptional(.flags2, .expect_stdout_snapshot, LazyPath.Index),
+        expect_stderr_snapshot: Storage.FlagOptional(.flags2, .expect_stderr_snapshot, LazyPath.Index),
 
         pub const CapturedStream = extern struct {
             generated_file: GeneratedFileIndex,
@@ -610,7 +614,8 @@ pub const Step = extern struct {
                 producer: bool,
                 generated: bool,
                 dep_file: bool,
-                _: u21 = 0,
+                make_absolute: bool,
+                _: u20 = 0,
             };
 
             pub const Tag = enum(u4) {
@@ -683,7 +688,9 @@ pub const Step = extern struct {
             expect_stdout_match: bool,
             expect_term: bool,
             expect_term_status: ExpectTermStatus,
-            _: u25 = 0,
+            expect_stdout_snapshot: bool,
+            expect_stderr_snapshot: bool,
+            _: u23 = 0,
         };
     };
 
@@ -697,7 +704,6 @@ pub const Step = extern struct {
         root_name: String,
 
         filters: Storage.FlagLengthPrefixedList(.flags, .filters_len, String),
-        exec_cmd_args: Storage.FlagLengthPrefixedList(.flags, .exec_cmd_args_len, OptionalString),
         installed_headers: Storage.FlagLengthPrefixedList(.flags, .installed_headers_len, Storage.Extended(InstalledHeader.Flags, InstalledHeader)),
         force_undefined_symbols: Storage.FlagLengthPrefixedList(.flags, .force_undefined_symbols_len, String),
         expect_errors: Storage.FlagUnion(.flags4, .expect_errors, ExpectErrors),
@@ -926,7 +932,6 @@ pub const Step = extern struct {
             tag: Tag = .compile,
 
             filters_len: bool,
-            exec_cmd_args_len: bool,
             installed_headers_len: bool,
             force_undefined_symbols_len: bool,
 
@@ -953,6 +958,7 @@ pub const Step = extern struct {
             force_load_objc: bool,
             discard_local_symbols: bool,
             mingw_unicode_entry_point: bool,
+            _: u1 = 0,
         };
 
         pub const Flags2 = packed struct(u32) {
@@ -2271,6 +2277,8 @@ pub const TargetQuery = struct {
         gnux32,
         eabi,
         eabihf,
+        abin32,
+        x32,
         ilp32,
         android,
         androideabi,
@@ -2304,6 +2312,8 @@ pub const TargetQuery = struct {
                 .gnux32 => .gnux32,
                 .eabi => .eabi,
                 .eabihf => .eabihf,
+                .abin32 => .abin32,
+                .x32 => .x32,
                 .ilp32 => .ilp32,
                 .android => .android,
                 .androideabi => .androideabi,
@@ -2337,6 +2347,8 @@ pub const TargetQuery = struct {
                 .gnux32 => .gnux32,
                 .eabi => .eabi,
                 .eabihf => .eabihf,
+                .abin32 => .abin32,
+                .x32 => .x32,
                 .ilp32 => .ilp32,
                 .android => .android,
                 .androideabi => .androideabi,
@@ -2584,6 +2596,8 @@ pub const TargetQuery = struct {
         windows,
         uefi,
         @"3ds",
+        wiiu,
+        psx,
         ps3,
         ps4,
         ps5,
@@ -2632,6 +2646,8 @@ pub const TargetQuery = struct {
                 .windows => .windows,
                 .uefi => .uefi,
                 .@"3ds" => .@"3ds",
+                .wiiu => .wiiu,
+                .psx => .psx,
                 .ps3 => .ps3,
                 .ps4 => .ps4,
                 .ps5 => .ps5,
@@ -2680,6 +2696,8 @@ pub const TargetQuery = struct {
                 .windows => .windows,
                 .uefi => .uefi,
                 .@"3ds" => .@"3ds",
+                .wiiu => .wiiu,
+                .psx => .psx,
                 .ps3 => .ps3,
                 .ps4 => .ps4,
                 .ps5 => .ps5,
@@ -3202,7 +3220,8 @@ pub const Storage = enum {
                 .@"extern" => {
                     const n = @divExact(@sizeOf(Field), @sizeOf(u32));
                     defer i.* += n;
-                    return @bitCast(buffer[i.*..][0..n].*);
+                    const ptr: *align(@alignOf(u32)) const Field = @ptrCast(buffer[i.*..][0..n]);
+                    return ptr.*;
                 },
             },
             else => comptime unreachable,
@@ -3368,7 +3387,8 @@ pub const Storage = enum {
                 },
                 .@"extern" => {
                     const n = @divExact(@sizeOf(Field), @sizeOf(u32));
-                    buffer[i..][0..n].* = @bitCast(value);
+                    const ptr: *align(@alignOf(Field)) const [n]u32 = @ptrCast(&value);
+                    buffer[i..][0..n].* = ptr.*;
                     return n;
                 },
             },

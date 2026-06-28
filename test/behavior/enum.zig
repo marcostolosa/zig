@@ -26,7 +26,6 @@ const EnumFromIntNumber = enum { Zero, One, Two, Three, Four };
 
 test "int to enum" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testEnumFromIntEval(3);
 }
@@ -932,7 +931,6 @@ test "constant enum initialization with differing sizes" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     try test3_1(test3_foo);
     try test3_2(test3_bar);
 }
@@ -974,8 +972,8 @@ test "@tagName" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try expect(mem.eql(u8, testEnumTagNameBare(BareNumber.Three), "Three"));
     comptime assert(mem.eql(u8, testEnumTagNameBare(BareNumber.Three), "Three"));
@@ -1318,6 +1316,8 @@ test "switch on an extern enum with negative value" {
 }
 
 test "switch on an enum with small signed tag type" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const E = enum(i3) {
         y = -2,
         z = -1,

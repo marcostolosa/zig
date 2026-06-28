@@ -431,8 +431,6 @@ test "type pun @ptrFromInt" {
 }
 
 test "type pun null pointer-like optional" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const p: ?*u8 = null;
     // note that expectEqual hides the bug
     try testing.expect(@as(*const ?*i8, @ptrCast(&p)).* == null);
@@ -518,7 +516,6 @@ fn fieldPtrTest() u32 {
 }
 test "pointer in aggregate field can mutate comptime state" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     try comptime std.testing.expect(fieldPtrTest() == 2);
 }
 
@@ -585,4 +582,22 @@ test "comptime store to extern struct reinterpreted as byte array" {
     @memset(bytes, 0);
 
     comptime std.debug.assert(val.x == 0);
+}
+
+test "reinterpret sentinel-terminated array as packed struct" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
+    const S = packed struct(u16) { lo: u8, hi: u8 };
+    const data: [2:0]u8 = .{ 0x12, 0x34 };
+    const ptr: *align(1) const S = @ptrCast(&data);
+    switch (endian) {
+        .little => {
+            try testing.expect(ptr.lo == 0x12);
+            try testing.expect(ptr.hi == 0x34);
+        },
+        .big => {
+            try testing.expect(ptr.lo == 0x34);
+            try testing.expect(ptr.hi == 0x12);
+        },
+    }
 }

@@ -766,19 +766,19 @@ test "Event smoke test" {
     try testing.expectEqual(false, event.isSet());
 
     // waits should timeout as there's no other thread to set the event
-    try testing.expectError(error.Timeout, event.waitTimeout(io, .{ .duration = .{
-        .raw = .zero,
-        .clock = .awake,
-    } }));
-    try testing.expectError(error.Timeout, event.waitTimeout(io, .{ .duration = .{
-        .raw = .fromMilliseconds(1),
-        .clock = .awake,
-    } }));
+    try testing.expectError(error.Timeout, event.waitTimeout(io, .fromDuration(
+        .zero,
+        .awake,
+    )));
+    try testing.expectError(error.Timeout, event.waitTimeout(io, .fromDuration(
+        .fromMilliseconds(1),
+        .awake,
+    )));
 
     // set the event again and make sure waits complete
     event.set(io);
     try event.wait(io);
-    try event.waitTimeout(io, .{ .duration = .{ .raw = .fromMilliseconds(1), .clock = .awake } });
+    try event.waitTimeout(io, .fromDuration(.fromMilliseconds(1), .awake));
     try testing.expectEqual(true, event.isSet());
 }
 
@@ -989,10 +989,10 @@ test "Condition.waitTimeout" {
             try ctx.mutex.lock(io);
             defer ctx.mutex.unlock(io);
 
-            try expectError(error.Timeout, ctx.cond.waitTimeout(io, &ctx.mutex, .{ .duration = .{
-                .raw = .fromMilliseconds(1),
-                .clock = .awake,
-            } }));
+            try expectError(error.Timeout, ctx.cond.waitTimeout(io, &ctx.mutex, .fromDuration(
+                .fromMilliseconds(1),
+                .awake,
+            )));
             try expectEqual(0, ctx.value);
 
             ctx.ready.set(io);

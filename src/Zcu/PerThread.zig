@@ -4513,7 +4513,6 @@ pub fn runCodegen(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) Ru
                 comp.config.use_llvm,
             )) {
                 else => unreachable, // assertion failure
-                .stage2_spirv,
                 .stage2_llvm,
                 => {},
             },
@@ -4545,8 +4544,12 @@ fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) e
     tracy_trace.addText(fqn.toSlice(ip));
     tracy_trace.addTextFmt("func_ip_index={d}", .{func_index});
 
+    Air.Verify.run(pt, func_index, air);
+
     if (codegen.legalizeFeatures(pt, nav)) |features| {
         try air.legalize(pt, features);
+        // Verify the AIR again post-legalization.
+        Air.Verify.run(pt, func_index, air);
     }
 
     var liveness: ?Air.Liveness = if (codegen.wantsLiveness(pt, nav))
@@ -4593,18 +4596,6 @@ fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) e
     }
 
     const lf = comp.bin_file orelse return error.NoLinkFile;
-
-    // Just like LLVM, the SPIR-V backend can't multi-threaded due to SPIR-V design limitations.
-    if (lf.cast(.spirv)) |spirv_file| {
-        assert(zcu.pending_codegen_jobs.load(.monotonic) == 2); // only one codegen at a time (but the value is 2 because 1 is the base)
-        spirv_file.updateFunc(pt, func_index, air, &liveness) catch |err| {
-            switch (err) {
-                error.OutOfMemory => comp.link_diags.setAllocFailure(),
-            }
-            return error.AlreadyReported;
-        };
-        return error.BackendDoesNotProduceMir;
-    }
 
     return codegen.generateFunction(lf, pt, func_index, air, &liveness);
 }

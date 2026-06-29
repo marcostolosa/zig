@@ -338,8 +338,6 @@ test "coerce an anon struct literal to optional struct" {
 test "0-bit child type coerced to optional return ptr result location" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const S = struct {
         fn doTheTest() !void {
             var y = Foo{};
@@ -365,7 +363,6 @@ test "0-bit child type coerced to optional" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const S = struct {
         fn doTheTest() !void {
             var it: Foo = .{
@@ -429,7 +426,6 @@ test "optional pointer to zero bit optional payload" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const B = struct {
         fn foo(_: *@This()) void {}
@@ -514,8 +510,6 @@ test "mutable optional of noreturn" {
 }
 
 test "orelse on C pointer" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     // TODO https://github.com/ziglang/zig/issues/6597
     const foo: [*c]const u8 = "hey";
     const d = foo orelse @compileError("bad");
@@ -669,4 +663,15 @@ test "global comptime only optional" {
         assert(S.null == null);
         assert(S.void.?.* == void);
     }
+}
+
+test "optional ptr payload alignment" {
+    const S = struct {
+        fn doTheTest(p: *align(1) ?u32) !void {
+            comptime assert(@TypeOf(&p.*.?) == *align(1) u32);
+            try expect(p.*.? == 10);
+        }
+    };
+    var x: ?u32 = 10;
+    try S.doTheTest(&x);
 }

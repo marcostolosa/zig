@@ -22,8 +22,6 @@ test "array to slice" {
 test "arrays" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     var array: [5]u32 = undefined;
 
     var i: u32 = 0;
@@ -51,7 +49,6 @@ test "runtime array concat with comptime slice" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     var a: [1]u8 = .{1};
     const b = (comptime @as([]const u8, &.{0})) ++ &a;
     const c = &a ++ (comptime @as([]const u8, &.{0}));
@@ -95,6 +92,24 @@ test "array concat with tuple" {
     {
         const seq = .{ 3, 4 } ++ array;
         try std.testing.expectEqualSlices(u8, &.{ 3, 4, 1, 2 }, &seq);
+    }
+}
+
+test "array concat with undefined tuple" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
+    {
+        const array: [2]u64 = .{ 1, 2 };
+        var seq = array ++ @as(struct { u32, u16 }, undefined);
+        seq[2] = 3;
+        seq[3] = 4;
+        try std.testing.expectEqualSlices(u64, &.{ 1, 2, 3, 4 }, &seq);
+    }
+    {
+        const array: [2]u64 = undefined;
+        var seq = @as(struct { u32, u16 }, undefined) ++ array;
+        for (&seq, 1..) |*s, i| s.* = i;
+        try std.testing.expectEqualSlices(u64, &.{ 1, 2, 3, 4 }, &seq);
     }
 }
 
@@ -639,6 +654,8 @@ test "array of array agregate init" {
 }
 
 test "pointer to array has ptr field" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const arr: *const [5]u32 = &.{ 10, 20, 30, 40, 50 };
     try std.testing.expect(arr.ptr == @as([*]const u32, arr));
     try std.testing.expect(arr.ptr[0] == 10);
@@ -1054,16 +1071,12 @@ test "initialize many-pointer with reference to empty array initializer" {
 }
 
 test "initialize sentinel-terminated slice with reference to empty array initializer" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const a: [:0]const u8 = &.{};
     comptime assert(a.len == 0);
     comptime assert(a[0] == 0);
 }
 
 test "initialize sentinel-terminated many-pointer with reference to empty array initializer" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const a: [*:0]const u8 = &.{};
     comptime assert(a[0] == 0);
 }
@@ -1138,6 +1151,8 @@ test "resist alias of explicit copy of array passed as arg" {
 }
 
 test "access element through reference" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const S = struct {
         fn doTheTest(x: u8) !void {
             {

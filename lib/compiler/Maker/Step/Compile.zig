@@ -45,12 +45,14 @@ pub fn make(
 
     try lowerZigArgs(arena, compile, compile_index, maker, progress_node, &argv, false);
 
+    const incremental = conf_comp.flags4.incremental.toBool() orelse graph.incremental == true;
+
     const maybe_output_dir = Step.evalZigProcess(
         compile_index,
         maker,
         argv.items,
         progress_node,
-        (graph.incremental == true) and (maker.watch or maker.web_server != null),
+        incremental and (maker.watch or maker.web_server != null),
     ) catch |err| switch (err) {
         error.NeedCompileErrorCheck => {
             try checkCompileErrors(arena, maker, compile_index);
@@ -765,18 +767,6 @@ fn lowerZigArgs(
 
     if (conf_comp.flags2.linker_enable_new_dtags.toBool()) |enabled| {
         try zig_args.append(gpa, if (enabled) "--enable-new-dtags" else "--disable-new-dtags");
-    }
-
-    if (conf_comp.flags3.kind == .@"test" and conf_comp.exec_cmd_args.slice.len != 0) {
-        for (conf_comp.exec_cmd_args.slice) |cmd_arg| {
-            try zig_args.ensureUnusedCapacity(gpa, 2);
-            if (cmd_arg.slice(conf)) |arg| {
-                zig_args.appendAssumeCapacity("--test-cmd");
-                zig_args.appendAssumeCapacity(arg);
-            } else {
-                zig_args.appendAssumeCapacity("--test-cmd-bin");
-            }
-        }
     }
 
     if (graph.sysroot) |sysroot| try zig_args.appendSlice(gpa, &.{ "--sysroot", sysroot });

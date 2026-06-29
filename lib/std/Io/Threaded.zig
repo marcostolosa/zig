@@ -8176,31 +8176,16 @@ fn dirReadLinkWindows(dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLink
     defer windows.CloseHandle(result_handle);
 
     var reparse_buf: [windows.MAXIMUM_REPARSE_DATA_BUFFER_SIZE]u8 align(@alignOf(windows.REPARSE_DATA_BUFFER)) = undefined;
-
-    syscall = try .start();
-    while (true) switch (windows.ntdll.NtFsControlFile(
-        result_handle,
-        null, // event
-        null, // APC routine
-        null, // APC context
-        &io_status_block,
-        .GET_REPARSE_POINT,
-        null, // input buffer
-        0, // input buffer length
-        &reparse_buf,
-        reparse_buf.len,
-    )) {
-        .SUCCESS => {
-            syscall.finish();
-            break;
-        },
-        .CANCELLED => {
-            try syscall.checkCancel();
-            continue;
-        },
-        .NOT_A_REPARSE_POINT => return syscall.fail(error.NotLink),
-        else => |status| return syscall.unexpectedNtstatus(status),
-    };
+    switch ((try deviceIoControl(&.{
+        .file = .{ .handle = result_handle, .flags = .{ .nonblocking = true } },
+        .code = .GET_REPARSE_POINT,
+        .out = &reparse_buf,
+    })).u.Status) {
+        .SUCCESS => {},
+        .CANCELLED => unreachable,
+        .NOT_A_REPARSE_POINT => return error.NotLink,
+        else => |status| return windows.unexpectedStatus(status),
+    }
 
     const reparse_struct: *const windows.REPARSE_DATA_BUFFER = @ptrCast(@alignCast(&reparse_buf));
     const IoReparseTagInt = @typeInfo(windows.IO_REPARSE_TAG).@"struct".backing_integer.?;
@@ -11393,7 +11378,8 @@ fn netWriteFile(
     _ = header;
     _ = file_reader;
     _ = limit;
-    @panic("TODO implement netWriteFile");
+    // TODO implement netWriteFile
+    return error.Unimplemented;
 }
 
 fn fileWriteFilePositional(
@@ -14188,9 +14174,11 @@ fn addressUnixToPosix(a: *const net.UnixAddress, storage: *UnixAddress) posix.so
 }
 
 fn address4FromPosix(in: *const posix.sockaddr.in) net.Ip4Address {
+    // The network byte order address in `in.addr` is already the byte order we want.
+    const addr_bytes: *const [4]u8 = @ptrCast(&in.addr);
     return .{
         .port = std.mem.bigToNative(u16, in.port),
-        .bytes = @bitCast(in.addr),
+        .bytes = addr_bytes.*,
     };
 }
 
@@ -14204,9 +14192,11 @@ fn address6FromPosix(in6: *const posix.sockaddr.in6) net.Ip6Address {
 }
 
 fn address4ToPosix(a: net.Ip4Address) posix.sockaddr.in {
+    // The byte order of `a.bytes` is already equivalent to a network byte order address.
+    const addr_raw: *align(1) const u32 = @ptrCast(&a.bytes);
     return .{
         .port = std.mem.nativeToBig(u16, a.port),
-        .addr = @bitCast(a.bytes),
+        .addr = addr_raw.*,
     };
 }
 
@@ -14410,13 +14400,6 @@ pub fn nanosecondsFromPosix(timespec: *const posix.timespec) i96 {
 }
 
 fn timestampToPosix(nanoseconds: i96) posix.timespec {
-    if (builtin.zig_backend == .stage2_wasm) {
-        // Workaround for https://codeberg.org/ziglang/zig/issues/30575
-        return .{
-            .sec = @intCast(@divTrunc(nanoseconds, std.time.ns_per_s)),
-            .nsec = @intCast(@rem(nanoseconds, std.time.ns_per_s)),
-        };
-    }
     return .{
         .sec = @intCast(@divFloor(nanoseconds, std.time.ns_per_s)),
         .nsec = @intCast(@mod(nanoseconds, std.time.ns_per_s)),

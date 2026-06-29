@@ -103,7 +103,6 @@ test "comptime_int @floatFromInt" {
 }
 
 test "@floatFromInt" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
@@ -282,8 +281,6 @@ test "type coercion from int to float" {
 test "@intFromFloat" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     try testIntFromFloats();
     try comptime testIntFromFloats();
 }
@@ -347,7 +344,6 @@ fn expectTruncCast(comptime F: type, f: F, comptime I: type, i: I) !void {
 test "implicitly cast indirect pointer to maybe-indirect pointer" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const S = struct {
         const Self = @This();
         x: u8,
@@ -437,8 +433,6 @@ test "implicit cast from *[N]T to [*c]T" {
 }
 
 test "*usize to *void" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     var i = @as(usize, 0);
     const v: *void = @ptrCast(&i);
     v.* = {};
@@ -510,7 +504,6 @@ test "array coercion to undefined at runtime" {
 
     var array = [4]u8{ 3, 4, 5, 6 };
     var undefined_val = [4]u8{ 0xAA, 0xAA, 0xAA, 0xAA };
-
     try expect(std.mem.eql(u8, &array, &array));
     array = undefined;
     try expect(std.mem.eql(u8, &array, &undefined_val));
@@ -2559,7 +2552,7 @@ test "peer type resolution: many compatible pointers" {
 test "peer type resolution: tuples with comptime fields" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
+    // if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
 
     const a = .{ 1, 2 };
     const b = .{ @as(u32, 3), @as(i16, 4) };
@@ -3157,4 +3150,20 @@ test "coerce enum to union with zero-bit fields through local variables" {
     result = runtime;
 
     try expect(result == .foo);
+}
+
+test "coercing a coerced function" {
+    const S = struct {
+        fn doTheTest() !void {
+            const bar: fn (anytype, anytype) void = foo;
+            higherOrder(1, bar);
+        }
+
+        fn foo(_: anytype, _: void) void {}
+
+        fn higherOrder(x: anytype, f: fn (@TypeOf(x), void) void) void {
+            _ = f(x, {});
+        }
+    };
+    try S.doTheTest();
 }

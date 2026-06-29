@@ -304,8 +304,6 @@ test "@min/@max notices bounds from vector types when element of comptime-known 
 }
 
 test "@min/@max of signed and unsigned runtime integers" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     var x: i32 = -1;
     var y: u31 = 1;
     _ = .{ &x, &y };

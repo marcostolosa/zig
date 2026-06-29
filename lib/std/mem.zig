@@ -4379,7 +4379,7 @@ pub fn alignPointerOffset(ptr: anytype, align_to: usize) ?usize {
 ///   type.
 pub fn alignPointer(ptr: anytype, align_to: usize) ?@TypeOf(ptr) {
     const adjust_off = alignPointerOffset(ptr, align_to) orelse return null;
-    // Avoid the use of ptrFromInt to avoid losing the pointer provenance info.
+    // Avoid the use of `@ptrFromInt` to avoid losing the pointer provenance info.
     return @alignCast(ptr + adjust_off);
 }
 

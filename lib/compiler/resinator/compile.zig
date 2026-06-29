@@ -3215,7 +3215,7 @@ pub const StringTable = struct {
                 string_i += 1;
             }
 
-            // This intCast will never be able to fail due to the length constraints on string literals.
+            // This `@intCast` will never be able to fail due to the length constraints on string literals.
             //
             // - STRINGTABLE resource definitions can can only provide one string literal per index.
             // - STRINGTABLE strings are limited to maxInt(u16) UTF-16 code units (see 'string_len_in_utf16_code_units'

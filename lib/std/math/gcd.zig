@@ -31,7 +31,7 @@ pub fn gcd(a: anytype, b: anytype) @TypeOf(a, b) {
 
     var diff = y -% x;
     while (diff != 0) : (diff = y -% x) {
-        // ctz is invariant under negation, we
+        // `@ctz` is invariant under negation, we
         // put it here to ease data dependencies,
         // makes the CPU happy.
         const zeros = @ctz(diff);

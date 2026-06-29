@@ -80,7 +80,7 @@ test.zig:15:13: note: operand must be a slice, a many pointer or a pointer to an
 test.zig:20:5: error: non-matching copy lengths
 test.zig:20:13: note: length 6 here
 test.zig:20:20: note: length 5 here
-test.zig:24:13: error: cannot memset constant pointer
+test.zig:24:13: error: cannot @memset constant pointer
 test.zig:29:13: error: cannot copy to constant pointer
 test.zig:33:13: error: type '[5]u8' is not an indexable pointer
 test.zig:33:13: note: operand must be a slice, a many pointer or a pointer to an array

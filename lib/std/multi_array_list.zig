@@ -545,7 +545,7 @@ pub fn MultiArrayList(comptime T: type) type {
                     if (@sizeOf(field_type) != 0) {
                         const field = @as(Field, @fromBackingInt(@intCast(i)));
                         const dest_slice = self_slice.items(field)[new_len..];
-                        // We use memset here for more efficient codegen in safety-checked,
+                        // We use `@memset` here for more efficient codegen in safety-checked,
                         // valgrind-enabled builds. Otherwise the valgrind client request
                         // will be repeated for every element.
                         @memset(dest_slice, undefined);

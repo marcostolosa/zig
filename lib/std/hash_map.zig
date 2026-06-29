@@ -518,7 +518,7 @@ fn Custom(
         // This is actually a midway pointer to the single buffer containing
         // a `Header` field, the `Metadata`s and `Entry`s.
         // At `-@sizeOf(Header)` is the Header field.
-        // At `sizeOf(Metadata) * capacity + offset`, which is pointed to by
+        // At `@sizeOf(Metadata) * capacity + offset`, which is pointed to by
         // self.header().entries, is the array of entries.
         // This means that the hashmap only holds one live allocation, to
         // reduce memory fragmentation and struct size.

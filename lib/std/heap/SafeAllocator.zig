@@ -954,7 +954,7 @@ fn allocBucket(
             @branchHint(.likely);
             break;
         };
-        // b.fill was changed during a resize (or a sporadic cmpxchgWeak failure)
+        // b.fill was changed during a resize (or a sporadic `@cmpxchgWeak` failure)
     }
 
     const memory = b.bytes(s)[start..end];

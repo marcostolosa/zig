@@ -382,7 +382,7 @@ pub fn AlignedManaged(comptime T: type, comptime alignment: ?mem.Alignment) type
         /// Allocates more memory as necessary.
         /// Invalidates element pointers if additional memory is needed.
         /// The function is inline so that a comptime-known `value` parameter will
-        /// have a more optimal memset codegen in case it has a repeated byte pattern.
+        /// have a more optimal `@memset` codegen in case it has a repeated byte pattern.
         pub inline fn appendNTimes(self: *Self, value: T, n: usize) Allocator.Error!void {
             const old_len = self.items.len;
             try self.resize(try addOrOom(old_len, n));
@@ -392,7 +392,7 @@ pub fn AlignedManaged(comptime T: type, comptime alignment: ?mem.Alignment) type
         /// Append a value to the list `n` times.
         /// Never invalidates element pointers.
         /// The function is inline so that a comptime-known `value` parameter will
-        /// have a more optimal memset codegen in case it has a repeated byte pattern.
+        /// have a more optimal `@memset` codegen in case it has a repeated byte pattern.
         /// Asserts that the list can hold the additional items.
         pub inline fn appendNTimesAssumeCapacity(self: *Self, value: T, n: usize) void {
             const new_len = self.items.len + n;
@@ -1200,7 +1200,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
         /// Allocates more memory as necessary.
         /// Invalidates element pointers if additional memory is needed.
         /// The function is inline so that a comptime-known `value` parameter will
-        /// have a more optimal memset codegen in case it has a repeated byte pattern.
+        /// have a more optimal `@memset` codegen in case it has a repeated byte pattern.
         pub inline fn appendNTimes(self: *Self, gpa: Allocator, value: T, n: usize) Allocator.Error!void {
             const old_len = self.items.len;
             try self.resize(gpa, try addOrOom(old_len, n));
@@ -1212,7 +1212,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
         /// Never invalidates element pointers.
         ///
         /// The function is inline so that a comptime-known `value` parameter will
-        /// have better memset codegen in case it has a repeated byte pattern.
+        /// have better `@memset` codegen in case it has a repeated byte pattern.
         ///
         /// Asserts that the list can hold the additional items.
         pub inline fn appendNTimesAssumeCapacity(self: *Self, value: T, n: usize) void {
@@ -1227,7 +1227,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
         /// Never invalidates element pointers.
         ///
         /// The function is inline so that a comptime-known `value` parameter will
-        /// have better memset codegen in case it has a repeated byte pattern.
+        /// have better `@memset` codegen in case it has a repeated byte pattern.
         ///
         /// If the list lacks unused capacity for the additional items, returns
         /// `error.OutOfMemory`.

@@ -13,7 +13,7 @@ test "@memset on array pointers" {
 
 fn testMemsetArray() !void {
     {
-        // memset array to non-undefined, ABI size == 1
+        // `@memset` array to non-undefined, ABI size == 1
         var foo: [20]u8 = undefined;
         @memset(&foo, 'A');
         try expect(foo[0] == 'A');
@@ -21,7 +21,7 @@ fn testMemsetArray() !void {
         try expect(foo[19] == 'A');
     }
     {
-        // memset array to non-undefined, ABI size > 1
+        // `@memset` array to non-undefined, ABI size > 1
         var foo: [20]u32 = undefined;
         @memset(&foo, 1234);
         try expect(foo[0] == 1234);
@@ -64,7 +64,7 @@ test "@memset on slices" {
 
 fn testMemsetSlice() !void {
     {
-        // memset slice to non-undefined, ABI size == 1
+        // `@memset` slice to non-undefined, ABI size == 1
         var array: [20]u8 = undefined;
         var len = array.len;
         _ = &len;
@@ -75,7 +75,7 @@ fn testMemsetSlice() !void {
         try expect(slice[19] == 'A');
     }
     {
-        // memset slice to non-undefined, ABI size > 1
+        // `@memset` slice to non-undefined, ABI size > 1
         var array: [20]u32 = undefined;
         var len = array.len;
         _ = &len;

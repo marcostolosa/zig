@@ -67,7 +67,7 @@ pub fn Deque(comptime T: type) type {
             const old_buffer = deque.buffer;
             if (gpa.remap(old_buffer, new_capacity)) |new_buffer| {
                 // If the items wrap around the end of the buffer we need to do
-                // a memcpy to prevent a gap after resizing the buffer.
+                // a `@memcpy` to prevent a gap after resizing the buffer.
                 if (deque.head > old_buffer.len - deque.len) {
                     // The gap splits the items in the deque into head and tail parts.
                     // Choose the shorter part to copy.

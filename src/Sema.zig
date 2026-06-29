@@ -24879,7 +24879,7 @@ fn zirMemset(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!void
     const dest_ptr_info = dest_ptr_ty.ptrInfo(zcu);
 
     if (dest_ptr_info.flags.is_const) {
-        return sema.fail(block, dest_src, "cannot memset constant pointer", .{});
+        return sema.fail(block, dest_src, "cannot @memset constant pointer", .{});
     }
 
     const dest_elem_ty: Type = dest_elem_ty: {

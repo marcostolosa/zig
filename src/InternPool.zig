@@ -370,7 +370,7 @@ pub fn rehashTrackedInsts(
         const have_capacity = shard.shared.tracked_inst_map.header().capacity; // no acquire because we hold the mutex
         if (have_capacity >= want_capacity) {
             if (have_capacity == 1) {
-                // The map is `.empty` -- we can't memset the entries, or we'll segfault, because
+                // The map is `.empty` -- we can't `@memset` the entries, or we'll segfault, because
                 // the buffer is secretly constant.
             } else {
                 @memset(shard.shared.tracked_inst_map.entries[0..have_capacity], .{ .value = .none, .hash = undefined });

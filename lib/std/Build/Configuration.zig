@@ -1403,6 +1403,7 @@ pub const Step = extern struct {
         include_dirs: Storage.UnionList(.flags, .include_dirs, Module.IncludeDir),
         system_libs: Storage.FlagLengthPrefixedList(.flags, .system_libs, SystemLib.Index),
         c_macros: Storage.FlagLengthPrefixedList(.flags, .c_macros, String),
+        c_flags: Storage.FlagLengthPrefixedList(.flags, .c_flags, String),
         target: ResolvedTarget.OptionalIndex,
 
         pub const Flags = packed struct(u32) {
@@ -1410,9 +1411,10 @@ pub const Step = extern struct {
             include_dirs: bool,
             system_libs: bool,
             c_macros: bool,
+            c_flags: bool,
             link_libc: bool,
             optimize: Module.Optimize,
-            _: u20 = 0,
+            _: u19 = 0,
         };
     };
 

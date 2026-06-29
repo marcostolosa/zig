@@ -12,6 +12,7 @@ source: std.Build.LazyPath,
 include_dirs: std.ArrayList(std.Build.Module.IncludeDir) = .empty,
 system_libs: std.ArrayList(std.Build.Module.SystemLib) = .empty,
 c_macros: std.ArrayList(Configuration.String) = .empty,
+c_flags: std.ArrayList(Configuration.String) = .empty,
 target: std.Build.ResolvedTarget,
 optimize: std.builtin.Optimize,
 output_file: Configuration.GeneratedFileIndex,
@@ -169,6 +170,22 @@ pub fn defineCMacroRaw(translate_c: *TranslateC, name_and_value: []const u8) voi
     const wc = &graph.wip_configuration;
     const macro_string = wc.addString(name_and_value) catch @panic("OOM");
     translate_c.c_macros.append(arena, macro_string) catch @panic("OOM");
+}
+
+/// Add an arbitrary C compiler flag.
+pub fn addCFlag(translate_c: *TranslateC, flag: []const u8) void {
+    const graph = translate_c.step.owner.graph;
+    const arena = graph.arena;
+    const wc = &graph.wip_configuration;
+    const flag_string = wc.addString(flag) catch @panic("OOM");
+    translate_c.c_flags.append(arena, flag_string) catch @panic("OOM");
+}
+
+/// Add multiple arbitrary C compiler flags.
+pub fn addCFlags(translate_c: *TranslateC, flags: []const []const u8) void {
+    for (flags) |flag| {
+        translate_c.addCFlag(flag);
+    }
 }
 
 pub fn linkSystemLibrary(

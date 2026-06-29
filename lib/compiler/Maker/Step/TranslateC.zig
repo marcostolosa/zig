@@ -63,6 +63,10 @@ pub fn make(
         (try argv.addManyAsArray(arena, 2)).* = .{ "-D", c_macro.slice(conf) };
     }
 
+    for (conf_tc.c_flags.slice) |c_flag| {
+        try argv.append(arena, c_flag.slice(conf));
+    }
+
     var prev_search_strategy: std.Build.Module.SystemLib.SearchStrategy = .paths_first;
     var prev_preferred_link_mode: std.builtin.LinkMode = .dynamic;
     var seen_system_libs: std.array_hash_map.Auto(Configuration.String, []const []const u8) = .empty;

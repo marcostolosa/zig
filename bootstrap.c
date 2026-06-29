@@ -239,6 +239,8 @@ int main(int argc, char **argv) {
             "-Istage1",
 #if defined(__APPLE__)
             "-Wl,-stack_size,0x10000000",
+#elif defined(_WIN32)
+            "-Wl,--stack,0x10000000",
 #else
             "-Wl,-z,stack-size=0x10000000",
 #endif

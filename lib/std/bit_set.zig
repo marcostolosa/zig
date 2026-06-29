@@ -14,7 +14,7 @@
 //!   inefficient code for larger sets, especially in debug mode.
 //!
 //! Array:
-//!   A bit set with static size, which is backed by an array of usize.
+//!   A bit set with static size, which is backed by an array of `MaskIntType`.
 //!   This set is good for sets with a larger size, but may use
 //!   more bytes than necessary if your set is small.
 //!
@@ -334,7 +334,7 @@ pub fn Integer(comptime size: u16) type {
 /// Deprecated: use `Array`.
 pub const ArrayBitSet = Array;
 
-/// A bit set with static size, which is backed by an array of usize.
+/// A bit set with static size, which is backed by an array of `MaskIntType`.
 /// This set is good for sets with a larger size, but may use
 /// more bytes than necessary if your set is small.
 pub fn Array(comptime MaskIntType: type, comptime size: usize) type {

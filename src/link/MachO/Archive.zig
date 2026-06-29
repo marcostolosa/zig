@@ -91,10 +91,18 @@ pub fn writeHeader(
     object_size: usize,
     format: Format,
     writer: *Writer,
+    object_name_start: ?usize,
 ) !void {
     var hdr: ar_hdr = .{};
 
-    const object_name_len = mem.alignForward(usize, object_name.len + 1, ptrWidth(format));
+    var object_name_len = mem.alignForward(usize, object_name.len + 1, ptrWidth(format));
+
+    if (object_name_start) |name_start| {
+        const record_start = name_start + object_name_len;
+        const extra_padding = mem.alignForward(usize, record_start, 8) - record_start;
+        object_name_len += extra_padding;
+    }
+
     const total_object_size = object_size + object_name_len;
 
     {
@@ -193,7 +201,7 @@ pub const ArSymtab = struct {
     pub fn write(ar: ArSymtab, format: Format, macho_file: *MachO, writer: *Writer) !void {
         const ptr_width = ptrWidth(format);
         // Header
-        try writeHeader(SYMDEF, ar.size(format), format, writer);
+        try writeHeader(SYMDEF, ar.size(format), format, writer, null);
         // Symtab size
         try writeInt(format, ar.entries.items.len * 2 * ptr_width, writer);
         // Symtab entries

@@ -184,6 +184,7 @@ pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation, module_obj_path: ?
                     state.file_off = pos;
                     pos += @sizeOf(Archive.ar_hdr);
                     pos += mem.alignForward(usize, zo.basename.len + 1, ptr_width);
+                    pos = mem.alignForward(usize, pos, 8);
                     pos += try macho_file.cast(usize, state.size);
                 },
                 .object => |o| {
@@ -192,6 +193,7 @@ pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation, module_obj_path: ?
                     state.file_off = pos;
                     pos += @sizeOf(Archive.ar_hdr);
                     pos += mem.alignForward(usize, std.fs.path.basename(o.path).len + 1, ptr_width);
+                    pos = mem.alignForward(usize, pos, 8);
                     pos += try macho_file.cast(usize, state.size);
                 },
                 else => unreachable,
@@ -223,7 +225,8 @@ pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation, module_obj_path: ?
         if (padding > 0) {
             writer.splatByteAll(0, padding) catch unreachable;
         }
-        macho_file.getFile(index).?.writeAr(format, macho_file, &writer) catch |err|
+        const object_name_start = aligned + @sizeOf(Archive.ar_hdr);
+        macho_file.getFile(index).?.writeAr(format, macho_file, &writer, object_name_start) catch |err|
             return diags.fail("failed to write archive: {t}", .{err});
     }
 

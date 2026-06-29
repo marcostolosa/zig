@@ -322,11 +322,11 @@ pub const File = union(enum) {
         };
     }
 
-    pub fn writeAr(file: File, ar_format: Archive.Format, macho_file: *MachO, writer: anytype) !void {
+    pub fn writeAr(file: File, ar_format: Archive.Format, macho_file: *MachO, writer: anytype, object_name_start: usize) !void {
         return switch (file) {
             .dylib, .internal => unreachable,
-            .zig_object => |x| x.writeAr(ar_format, writer),
-            .object => |x| x.writeAr(ar_format, macho_file, writer),
+            .zig_object => |x| x.writeAr(ar_format, writer, object_name_start),
+            .object => |x| x.writeAr(ar_format, macho_file, writer, object_name_start),
         };
     }
 

@@ -259,11 +259,11 @@ pub const Inst = struct {
         /// `[N:S]T` syntax. Source location is the array type expression node.
         /// Uses the `pl_node` union field. Payload is `ArrayTypeSentinel`.
         array_type_sentinel,
-        /// `@Int` builtin.
+        /// Implements the `@Int` builtin.
         /// Uses the `pl_node` union field with `Bin` payload.
         /// lhs is signedness, rhs is bit count.
         reify_int,
-        /// `@Vector` builtin.
+        /// Implements the `@Vector` builtin.
         /// Uses the `pl_node` union field with `Bin` payload.
         /// lhs is length, rhs is element type.
         vector_type,

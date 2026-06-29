@@ -8,7 +8,7 @@ comptime {
     } else if (compiler_rt.want_sparc_abi) {
         symbol(&_Qp_itoq, "_Qp_itoq");
     } else if (compiler_rt.want_sparc32_abi) {
-        symbol(&_Q_itoq, "_Q_itoq");
+        symbol(&__floatsitf, "_Q_itoq");
     }
     symbol(&__floatsitf, "__floatsitf");
 }
@@ -18,9 +18,5 @@ pub fn __floatsitf(a: i32) callconv(.c) f128 {
 }
 
 fn _Qp_itoq(c: *f128, a: i32) callconv(.c) void {
-    c.* = floatFromInt(f128, a);
-}
-
-fn _Q_itoq(c: *f128, a: i32) callconv(.c) void {
     c.* = floatFromInt(f128, a);
 }

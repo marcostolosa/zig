@@ -8,7 +8,7 @@ comptime {
     } else if (compiler_rt.want_sparc_abi) {
         symbol(&_Qp_mul, "_Qp_mul");
     } else if (compiler_rt.want_sparc32_abi) {
-        symbol(&_Q_mul, "_Q_mul");
+        symbol(&__multf3, "_Q_mul");
     }
     symbol(&__multf3, "__multf3");
 }
@@ -18,9 +18,5 @@ pub fn __multf3(a: f128, b: f128) callconv(.c) f128 {
 }
 
 fn _Qp_mul(c: *f128, a: *const f128, b: *const f128) callconv(.c) void {
-    c.* = mulf3(f128, a.*, b.*);
-}
-
-fn _Q_mul(c: *f128, a: *const f128, b: *const f128) callconv(.c) void {
     c.* = mulf3(f128, a.*, b.*);
 }

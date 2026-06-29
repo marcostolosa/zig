@@ -8,7 +8,7 @@ comptime {
     } else if (compiler_rt.want_sparc64_abi) {
         symbol(&_Qp_qtoux, "_Qp_qtoux");
     } else if (compiler_rt.want_sparc32_abi) {
-        symbol(&_Q_qtoull, "_Q_qtoull");
+        symbol(&__fixunstfdi, "_Q_qtoull");
     }
     symbol(&__fixunstfdi, "__fixunstfdi");
 }
@@ -18,9 +18,5 @@ pub fn __fixunstfdi(a: f128) callconv(.c) u64 {
 }
 
 fn _Qp_qtoux(a: *const f128) callconv(.c) u64 {
-    return intFromFloat(u64, a.*);
-}
-
-fn _Q_qtoull(a: *const f128) callconv(.c) u64 {
     return intFromFloat(u64, a.*);
 }

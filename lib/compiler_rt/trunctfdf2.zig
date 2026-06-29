@@ -8,7 +8,7 @@ comptime {
     } else if (compiler_rt.want_sparc64_abi) {
         symbol(&_Qp_qtod, "_Qp_qtod");
     } else if (compiler_rt.want_sparc32_abi) {
-        symbol(&_Q_qtod, "_Q_qtod");
+        symbol(&__trunctfdf2, "_Q_qtod");
     }
     symbol(&__trunctfdf2, "__trunctfdf2");
 }
@@ -18,9 +18,5 @@ pub fn __trunctfdf2(a: f128) callconv(.c) f64 {
 }
 
 fn _Qp_qtod(a: *const f128) callconv(.c) f64 {
-    return truncf(f64, f128, a.*);
-}
-
-fn _Q_qtod(a: *const f128) callconv(.c) f64 {
     return truncf(f64, f128, a.*);
 }

@@ -8,7 +8,7 @@ comptime {
     } else if (compiler_rt.want_sparc64_abi) {
         symbol(&_Qp_dtoq, "_Qp_dtoq");
     } else if (compiler_rt.want_sparc32_abi) {
-        symbol(&_Q_dtoq, "_Q_dtoq");
+        symbol(&__extenddftf2, "_Q_dtoq");
     }
     symbol(&__extenddftf2, "__extenddftf2");
 }
@@ -18,9 +18,5 @@ pub fn __extenddftf2(a: f64) callconv(.c) f128 {
 }
 
 fn _Qp_dtoq(c: *f128, a: f64) callconv(.c) void {
-    c.* = extendf(f128, f64, @as(u64, @bitCast(a)));
-}
-
-fn _Q_dtoq(c: *f128, a: f64) callconv(.c) void {
     c.* = extendf(f128, f64, @as(u64, @bitCast(a)));
 }

@@ -8,7 +8,7 @@ comptime {
     } else if (compiler_rt.want_sparc64_abi) {
         symbol(&_Qp_sub, "_Qp_sub");
     } else if (compiler_rt.want_sparc32_abi) {
-        symbol(&_Q_sub, "_Q_sub");
+        symbol(&__subtf3, "_Q_sub");
     }
     symbol(&__subtf3, "__subtf3");
 }
@@ -18,10 +18,6 @@ pub fn __subtf3(a: f128, b: f128) callconv(.c) f128 {
 }
 
 fn _Qp_sub(c: *f128, a: *const f128, b: *const f128) callconv(.c) void {
-    c.* = sub(a.*, b.*);
-}
-
-fn _Q_sub(c: *f128, a: *const f128, b: *const f128) callconv(.c) void {
     c.* = sub(a.*, b.*);
 }
 

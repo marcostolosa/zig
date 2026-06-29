@@ -8,7 +8,7 @@ comptime {
     } else if (compiler_rt.want_sparc64_abi) {
         symbol(&_Qp_uitoq, "_Qp_uitoq");
     } else if (compiler_rt.want_sparc32_abi) {
-        symbol(&_Q_utoq, "_Q_utoq");
+        symbol(&__floatunsitf, "_Q_utoq");
     }
     symbol(&__floatunsitf, "__floatunsitf");
 }
@@ -18,9 +18,5 @@ pub fn __floatunsitf(a: u32) callconv(.c) f128 {
 }
 
 fn _Qp_uitoq(c: *f128, a: u32) callconv(.c) void {
-    c.* = floatFromInt(f128, a);
-}
-
-fn _Q_utoq(c: *f128, a: u32) callconv(.c) void {
     c.* = floatFromInt(f128, a);
 }

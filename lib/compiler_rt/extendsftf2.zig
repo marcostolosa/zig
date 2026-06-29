@@ -8,7 +8,7 @@ comptime {
     } else if (compiler_rt.want_sparc64_abi) {
         symbol(&_Qp_stoq, "_Qp_stoq");
     } else if (compiler_rt.want_sparc32_abi) {
-        symbol(&_Q_stoq, "_Q_stoq");
+        symbol(&__extendsftf2, "_Q_stoq");
     }
     symbol(&__extendsftf2, "__extendsftf2");
 }
@@ -18,9 +18,5 @@ pub fn __extendsftf2(a: f32) callconv(.c) f128 {
 }
 
 fn _Qp_stoq(c: *f128, a: f32) callconv(.c) void {
-    c.* = extendf(f128, f32, @as(u32, @bitCast(a)));
-}
-
-fn _Q_stoq(c: *f128, a: f32) callconv(.c) void {
     c.* = extendf(f128, f32, @as(u32, @bitCast(a)));
 }

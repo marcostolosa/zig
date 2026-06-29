@@ -38,6 +38,8 @@ body: Section = .{},
 args: std.ArrayList(Id) = .empty,
 next_arg_index: u32 = 0,
 block_stack: std.ArrayList(*Block) = .empty,
+/// Stack of active native-fast-path loop contexts (see `LoopFrame`).
+loop_frames: std.ArrayList(LoopFrame) = .empty,
 block_label: Id = .none,
 /// Whether the current block has been terminated by a terminator
 /// instruction (e.g. OpKill from inline assembly). When true, no further
@@ -114,6 +116,20 @@ pub fn legalizeFeatures(_: *const std.Target) *const Air.Legalize.Features {
 
 const LoopSwitch = struct { cond_var: Id, continue_label: Id };
 
+/// Active context for a loop emitted via the native structured fast path
+/// (`tryLoopFastPath`). While such a frame is on `loop_frames`, `airBr` routes
+/// branches to the loop body block (continue) and the loop's exit block (break)
+/// directly to the SPIR-V continue/merge labels instead of through the
+/// merge-ladder discriminator mechanism.
+const LoopFrame = struct {
+    /// AIR `block` instruction wrapping the loop body; `br` here means "continue".
+    body_block_inst: Air.Inst.Index,
+    /// AIR `block` instruction enclosing the loop; `br` here means "break".
+    exit_block_inst: Air.Inst.Index,
+    continue_label: Id,
+    merge_label: Id,
+};
+
 /// Pointer-typed AIR refs should resolve through `resolvePtr` to handle the
 /// `tracked_allocas` case explicitly at every use site.
 const Ptr = union(enum) {
@@ -161,6 +177,7 @@ const Block = union(enum) {
 pub fn deinit(cg: *CodeGen) void {
     const gpa = cg.gpa;
     cg.block_stack.deinit(gpa);
+    cg.loop_frames.deinit(gpa);
     cg.block_results.deinit(gpa);
     cg.args.deinit(gpa);
     cg.tracked_allocas.deinit(gpa);
@@ -4291,6 +4308,10 @@ fn store(cg: *CodeGen, value_ty: Type, ptr_id: Id, value_id: Id, options: Memory
 
 fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) !void {
     for (body) |inst| {
+        // Inside a native-fast-path loop, a `br` to continue/break terminates the
+        // current SPIR-V block directly; anything following it is unreachable and
+        // must not be emitted into the (now closed) block.
+        if (cg.loop_frames.items.len > 0 and cg.block_terminated) return;
         try cg.genInst(inst);
     }
 }
@@ -7429,6 +7450,7 @@ fn lowerBlock(cg: *CodeGen, inst: Air.Inst.Index, body: []const Air.Inst.Index) 
 
 fn airBr(cg: *CodeGen, inst: Air.Inst.Index) !void {
     const zcu = cg.zcu;
+    const gpa = cg.gpa;
     const br = cg.air.instructions.items(.data)[@intFromEnum(inst)].br;
     const operand_ty = cg.typeOf(br.operand);
 
@@ -7436,6 +7458,24 @@ fn airBr(cg: *CodeGen, inst: Air.Inst.Index) !void {
         const operand_id = try cg.resolve(br.operand);
         const block_result_var_id = cg.block_results.get(br.block_inst).?;
         try cg.store(operand_ty, block_result_var_id, operand_id, .{});
+    }
+
+    // Native fast path: a branch to the active loop's body block is a `continue`,
+    // and a branch to its enclosing exit block is a `break`. Both map directly to
+    // structured SPIR-V labels (the loop's continue target / merge block) without
+    // going through the merge-ladder discriminator mechanism.
+    if (cg.loop_frames.items.len > 0) {
+        const lf = cg.loop_frames.items[cg.loop_frames.items.len - 1];
+        if (br.block_inst == lf.body_block_inst) {
+            try cg.body.emit(gpa, .OpBranch, .{ .target_label = lf.continue_label });
+            cg.block_terminated = true;
+            return;
+        }
+        if (br.block_inst == lf.exit_block_inst) {
+            try cg.body.emit(gpa, .OpBranch, .{ .target_label = lf.merge_label });
+            cg.block_terminated = true;
+            return;
+        }
     }
 
     const next_block = try cg.constInt(.u32, @intFromEnum(br.block_inst));
@@ -7492,9 +7532,106 @@ fn airCondBr(cg: *CodeGen, inst: Air.Inst.Index) !void {
     try cg.structuredBreak(next_block);
 }
 
+/// Fast path for the common `while`/`for` shape:
+///   loop { inner_block { <cond preamble>; cond_br(continue: br inner, exit: br outer) } repeat }
+/// Emits a canonical structured loop with the condition in the `OpLoopMerge`
+/// header (the shape SPIRV-Cross and other consumers recover as a native loop),
+/// instead of the merge-ladder discriminator. Returns true if it handled `inst`.
+fn tryLoopFastPath(cg: *CodeGen, loop_body: []const Air.Inst.Index) !bool {
+    const gpa = cg.gpa;
+    const tags = cg.air.instructions.items(.tag);
+    const datas = cg.air.instructions.items(.data);
+
+    // Recognize `loop { <inner block>; repeat }`.
+    if (loop_body.len != 2) return false;
+    const inner = loop_body[0];
+    if (tags[@intFromEnum(inner)] != .block) return false;
+    if (tags[@intFromEnum(loop_body[1])] != .repeat) return false;
+
+    const inner_body = cg.air.unwrapBlock(inner).body;
+    if (inner_body.len == 0) return false;
+    const cond_br_inst = inner_body[inner_body.len - 1];
+    if (tags[@intFromEnum(cond_br_inst)] != .cond_br) return false;
+    const cb = cg.air.unwrapCondBr(cond_br_inst);
+
+    // One arm must `continue` (end in `br inner`); the other must be a single
+    // `br <enclosing block>` (`break` out of the loop).
+    if (cb.then_body.len == 0 or cb.else_body.len == 0) return false;
+    const then_last = cb.then_body[cb.then_body.len - 1];
+    const else_last = cb.else_body[cb.else_body.len - 1];
+    if (tags[@intFromEnum(then_last)] != .br or tags[@intFromEnum(else_last)] != .br) return false;
+    const then_tgt = datas[@intFromEnum(then_last)].br.block_inst;
+    const else_tgt = datas[@intFromEnum(else_last)].br.block_inst;
+
+    var cont_body: []const Air.Inst.Index = undefined;
+    var exit_block_inst: Air.Inst.Index = undefined;
+    var cond_true_continues: bool = undefined;
+    if (then_tgt == inner and cb.else_body.len == 1 and else_tgt != inner) {
+        cont_body = cb.then_body;
+        exit_block_inst = else_tgt;
+        cond_true_continues = true;
+    } else if (else_tgt == inner and cb.then_body.len == 1 and then_tgt != inner) {
+        cont_body = cb.else_body;
+        exit_block_inst = then_tgt;
+        cond_true_continues = false;
+    } else return false;
+
+    const header_label = cg.allocId();
+    const body_label = cg.allocId();
+    const continue_label = cg.allocId();
+    const merge_label = cg.allocId();
+
+    try cg.body.emit(gpa, .OpBranch, .{ .target_label = header_label });
+    try cg.beginSpvBlock(header_label);
+
+    // Condition preamble lives in the header so the conditional branch is covered
+    // by the OpLoopMerge (a two-way branch in the body would need OpSelectionMerge).
+    try cg.genBody(inner_body[0 .. inner_body.len - 1]);
+    const cond_id = try cg.resolve(cb.condition);
+
+    try cg.body.emit(gpa, .OpLoopMerge, .{
+        .merge_block = merge_label,
+        .continue_target = continue_label,
+        .loop_control = .{},
+    });
+    if (cond_true_continues) {
+        try cg.body.emit(gpa, .OpBranchConditional, .{ .condition = cond_id, .true_label = body_label, .false_label = merge_label });
+    } else {
+        try cg.body.emit(gpa, .OpBranchConditional, .{ .condition = cond_id, .true_label = merge_label, .false_label = body_label });
+    }
+
+    try cg.beginSpvBlock(body_label);
+    try cg.loop_frames.append(gpa, .{
+        .body_block_inst = inner,
+        .exit_block_inst = exit_block_inst,
+        .continue_label = continue_label,
+        .merge_label = merge_label,
+    });
+    // The continue arm, minus its trailing `br inner` (handled by the fall-through
+    // to `continue_label` below; nested continues/breaks are handled in airBr).
+    try cg.genBody(cont_body[0 .. cont_body.len - 1]);
+    _ = cg.loop_frames.pop();
+
+    if (!cg.block_terminated) {
+        try cg.body.emit(gpa, .OpBranch, .{ .target_label = continue_label });
+    }
+
+    try cg.beginSpvBlock(continue_label);
+    try cg.body.emit(gpa, .OpBranch, .{ .target_label = header_label });
+
+    // The loop's single exit breaks `exit_block_inst`; hand that back to the
+    // enclosing block's structured machinery.
+    try cg.beginSpvBlock(merge_label);
+    const next_block = try cg.constInt(.u32, @intFromEnum(exit_block_inst));
+    try cg.structuredBreak(next_block);
+    return true;
+}
+
 fn airLoop(cg: *CodeGen, inst: Air.Inst.Index) !void {
     const gpa = cg.gpa;
     const block = cg.air.unwrapBlock(inst);
+
+    if (try cg.tryLoopFastPath(block.body)) return;
 
     const body_label = cg.allocId();
 

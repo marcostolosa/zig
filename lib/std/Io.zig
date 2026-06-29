@@ -1154,21 +1154,17 @@ pub const Timeout = union(enum) {
     pub const Error = error{Timeout};
 
     pub fn fromDuration(d: Duration, clock: Clock) Timeout {
-        return .{
-            .duration = .{
-                .raw = d,
-                .clock = clock,
-            }
-        };
+        return .{ .duration = .{
+            .raw = d,
+            .clock = clock,
+        } };
     }
 
     pub fn fromTimestamp(t: Timestamp, clock: Clock) Timeout {
-        return .{
-            .timestamp = .{
-                .raw = t,
-                .clock = clock,
-            }
-        };
+        return .{ .timestamp = .{
+            .raw = t,
+            .clock = clock,
+        } };
     }
 
     pub fn toTimestamp(t: Timeout, io: Io) ?Clock.Timestamp {

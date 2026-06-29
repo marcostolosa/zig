@@ -944,6 +944,7 @@ fn serialize(b: *std.Build, wc: *Configuration.Wip, writer: *Io.Writer) !void {
                                 .include_dirs = tc.include_dirs.items.len != 0,
                                 .system_libs = system_libs.len != 0,
                                 .c_macros = tc.c_macros.items.len != 0,
+                                .c_flags = tc.c_flags.items.len != 0,
                                 .link_libc = tc.link_libc,
                                 .optimize = .init(tc.optimize),
                             },
@@ -952,6 +953,7 @@ fn serialize(b: *std.Build, wc: *Configuration.Wip, writer: *Io.Writer) !void {
                             .include_dirs = .init(try s.initIncludeDirList(tc.include_dirs.items)),
                             .system_libs = .{ .slice = system_libs },
                             .c_macros = .{ .slice = tc.c_macros.items },
+                            .c_flags = .{ .slice = tc.c_flags.items },
                             .target = try addOptionalResolvedTarget(wc, tc.target),
                         });
                     },

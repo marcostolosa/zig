@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <errno.h>
 
 static const char *get_c_compiler(void) {
     const char *cc = getenv("CC");
@@ -9,7 +10,11 @@ static const char *get_c_compiler(void) {
 }
 
 static void panic(const char *reason) {
-    fprintf(stderr, "%s\n", reason);
+    if (errno != 0) {
+        fprintf(stderr, "bootstrap panic: %s (%s)\n", reason, strerror(errno));
+    } else {
+        fprintf(stderr, "bootstrap panic: %s\n", reason);
+    }
     abort();
 }
 
@@ -56,21 +61,27 @@ static void panic(const char *reason) {
     #define GCC_BUG_119085_PRESENT 0
 #endif
 
-#if defined(__WIN32__)
-#error TODO write the functionality for executing child process into this build script
+#if defined(_WIN32)
+#include <process.h>
+
+static void run(const char **argv) {
+    int status = _spawnvp(_P_WAIT, argv[0], (const char *const *)argv);
+    if (status != 0) {
+        panic("child process failed");
+    }
+}
 #else
 
 #include <unistd.h>
-#include <errno.h>
 #include <sys/wait.h>
 
-static void run(char **argv) {
+static void run(const char **argv) {
     pid_t pid = fork();
     if (pid == -1)
         panic("fork failed");
     if (pid == 0) {
         // child
-        execvp(argv[0], argv);
+        execvp(argv[0], (char *const *)argv);
         exit(1);
     }
 
@@ -93,13 +104,13 @@ static void print_and_run(const char **argv) {
         fprintf(stderr, " %s", *arg);
     }
     fprintf(stderr, "\n");
-    run((char **)argv);
+    run(argv);
 }
 
 static const char *get_host_os(void) {
     const char *host_os = getenv("ZIG_HOST_TARGET_OS");
     if (host_os != NULL) return host_os;
-#if defined(__WIN32__)
+#if defined(_WIN32)
     return "windows";
 #elif defined(__APPLE__)
     return "macos";
@@ -136,8 +147,8 @@ static const char *get_host_abi(void) {
 static const char *get_host_triple(void) {
     const char *host_triple = getenv("ZIG_HOST_TARGET_TRIPLE");
     if (host_triple != NULL) return host_triple;
-    static char global_buffer[100];
-    sprintf(global_buffer, "%s-%s%s", get_host_arch(), get_host_os(), get_host_abi());
+    static char global_buffer[128];
+    snprintf(global_buffer, sizeof(global_buffer), "%s-%s%s", get_host_arch(), get_host_os(), get_host_abi());
     return global_buffer;
 }
 

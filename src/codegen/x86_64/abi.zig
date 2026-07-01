@@ -290,7 +290,12 @@ pub fn classifySystemV(ty: Type, zcu: *Zcu, target: *const std.Target, ctx: Cont
                 .@"packed" => {
                     if (ty_size <= 8) return Class.one_integer;
                     if (ty_size <= 16) return Class.two_integers;
-                    unreachable; // frontend should not have allowed this type as extern
+                    // System V ABI passes aggregates > 16 bytes via memory.
+                    // Internal backend context (.other) classifies for register moves.
+                    if (ctx != .other) return Class.stack;
+                    if (ty_size <= 24) return Class.three_integers;
+                    if (ty_size <= 32) return Class.four_integers;
+                    return Class.stack;
                 },
             }
             if (ty_size > 64) return Class.stack;

@@ -998,8 +998,20 @@ pub const Symbol = struct {
         };
     }
 
-    pub fn size(sym: *const Symbol) u32 {
-        return if (sym.flags.extra_tag == .size) sym.extra.size else 0;
+    pub fn size(sym: *const Symbol, coff: *Coff) u32 {
+        var size_sym = sym;
+        while (size_sym.flags.extra_tag == .next_alias_si)
+            size_sym = size_sym.extra.next_alias_si.get(coff);
+        if (size_sym.flags.extra_tag != .size) return 0;
+        return size_sym.extra.size;
+    }
+
+    pub fn setSize(sym: *Symbol, coff: *Coff, new_size: u32) void {
+        var size_sym = sym;
+        while (size_sym.flags.extra_tag == .next_alias_si)
+            size_sym = size_sym.extra.next_alias_si.get(coff);
+        assert(size_sym.flags.extra_tag == .size);
+        size_sym.extra.size = new_size;
     }
 
     pub const SectionNumber = enum(i16) {
@@ -1494,12 +1506,13 @@ pub const Reloc = extern struct {
     }
 
     pub fn delete(reloc: *Reloc, coff: *Coff) void {
+        log.debug("deleteReloc({d})", .{reloc - coff.relocs.items.ptr});
         if (reloc.sri != .none) {
-            // TODO: Need to remove this from the COFF relocation table (maybe removeswap?)
-            // TODO: If this was the last reloc causing something to be in the symbol table, we should remove
-            //       the symbol table entry (and unset sti). That will require flushSymbolTableIndex on the
-            //       swapped symbol if we exchange indices
-            @panic("TODO implement symbol table reloc deletions");
+            const loc_sym = reloc.loc.get(coff);
+            const entry = reloc.sri.entry(coff, loc_sym.section_number).?;
+
+            // On every supported architecture, a reloc type of 0 is .ABSOLUTE, and is a no-op
+            @memset(std.mem.asBytes(entry), 0);
         }
 
         switch (reloc.prev) {
@@ -3264,7 +3277,7 @@ fn flushSymbolTableEntry(coff: *Coff, index: u32, pt: Zcu.PerThread) !void {
     };
 
     coff.targetStore(&entry.value, switch (sym.section_number) {
-        .UNDEFINED => if (entry.storage_class == .WEAK_EXTERNAL) 0 else sym.size(),
+        .UNDEFINED => if (entry.storage_class == .WEAK_EXTERNAL) 0 else sym.size(coff),
         .ABSOLUTE,
         .DEBUG,
         => unreachable,
@@ -3731,6 +3744,9 @@ fn addRelocAssumeCapacity(
             } else .none;
 
             const sri: Section.RelocationIndex = blk: {
+                // TODO: Once the API for using free relocs exist, if this is about to consume a
+                //       free reloc, then we can use the existing (cleared) .sri on the reloc
+
                 const section = loc_sn.section(coff);
                 const header = loc_sn.header(coff);
                 const old_num_relocations = coff.targetLoad(&header.number_of_relocations);
@@ -4894,7 +4910,7 @@ fn loadObject(
                         symbol.si = global_gop.value_ptr.si;
                         if (!global_gop.found_existing or symbol.si.get(coff).ni == .none) {
                             const sym = symbol.si.get(coff);
-                            sym.setExtra(.{ .size = @max(sym.size(), size) });
+                            sym.setExtra(.{ .size = @max(sym.size(coff), size) });
                         }
                     },
                     else => unreachable,
@@ -5481,6 +5497,7 @@ fn updateNavInner(coff: *Coff, pt: Zcu.PerThread, nav_index: InternPool.Nav.Inde
             error.WriteFailed => return nw.err.?,
             else => |e| return e,
         };
+
         si.get(coff).extra.size = @intCast(nw.interface.end);
         try si.applyLocationRelocs(coff);
     }
@@ -5601,7 +5618,8 @@ fn updateFuncInner(
         error.WriteFailed => return nw.err.?,
         else => |e| return e,
     };
-    si.get(coff).extra.size = @intCast(nw.interface.end);
+
+    si.get(coff).setSize(coff, @intCast(nw.interface.end));
     try si.applyLocationRelocs(coff);
 }
 
@@ -6216,7 +6234,8 @@ fn flushUav(
         error.WriteFailed => return nw.err.?,
         else => |e| return e,
     };
-    si.get(coff).extra.size = @intCast(nw.interface.end);
+
+    si.get(coff).setSize(coff, @intCast(nw.interface.end));
     try si.applyLocationRelocs(coff);
 }
 
@@ -6822,7 +6841,8 @@ fn flushLazy(coff: *Coff, pt: Zcu.PerThread, lmr: Node.LazyMapRef) !void {
         error.WriteFailed => return nw.err.?,
         else => |e| return e,
     };
-    si.get(coff).extra.size = @intCast(nw.interface.end);
+
+    si.get(coff).setSize(coff, @intCast(nw.interface.end));
     try si.applyLocationRelocs(coff);
 }
 

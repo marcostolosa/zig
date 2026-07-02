@@ -5035,6 +5035,27 @@ fn flushWriterError(dwarf: *Dwarf, pt: Zcu.PerThread) (UpdateError || Writer.Err
         dwarf.debug_line_str.section.dirty = false;
     }
     if (dwarf.debug_loclists.section.dirty) {
+        for (dwarf.debug_loclists.section.units.items) |*unit| {
+            header_aw.clearRetainingCapacity();
+            try header_aw.ensureTotalCapacity(unit.header_len);
+            const unit_len = (if (unit.next.unwrap()) |next_unit|
+                dwarf.debug_loclists.section.getUnit(next_unit).off
+            else
+                dwarf.debug_loclists.section.len) - unit.off - dwarf.unitLengthBytes();
+
+            switch (dwarf.format) {
+                .@"32" => hw.writeInt(u32, @intCast(unit_len), dwarf.endian) catch unreachable,
+                .@"64" => {
+                    hw.writeInt(u32, std.math.maxInt(u32), dwarf.endian) catch unreachable;
+                    hw.writeInt(u64, unit_len, dwarf.endian) catch unreachable;
+                },
+            }
+            hw.writeInt(u16, 5, dwarf.endian) catch unreachable;
+            hw.writeByte(@intFromEnum(dwarf.address_size)) catch unreachable;
+            hw.writeByte(0) catch unreachable;
+            hw.writeInt(u32, 1, dwarf.endian) catch unreachable;
+            try unit.replaceHeader(&dwarf.debug_loclists.section, dwarf, header_aw.written());
+        }
         dwarf.debug_loclists.section.dirty = false;
     }
     if (dwarf.debug_rnglists.section.dirty) {

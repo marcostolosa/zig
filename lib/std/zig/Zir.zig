@@ -68,11 +68,11 @@ fn ExtraData(comptime T: type) type {
 /// Returns the requested data, as well as the new index which is at the start of the
 /// trailers for the object.
 pub fn extraData(code: Zir, comptime T: type, index: usize) ExtraData(T) {
-    const fields = @typeInfo(T).@"struct".fields;
+    const info = @typeInfo(T).@"struct";
     var i: usize = index;
     var result: T = undefined;
-    inline for (fields) |field| {
-        @field(result, field.name) = switch (field.type) {
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        @field(result, field_name) = switch (field_type) {
             u32 => code.extra[i],
 
             Inst.Ref,
@@ -250,9 +250,6 @@ pub const Inst = struct {
         /// Array concatenation. `a ++ b`
         /// Uses the `pl_node` union field. Payload is `Bin`.
         array_cat,
-        /// Array multiplication `a ** b`
-        /// Uses the `pl_node` union field. Payload is `ArrayMul`.
-        array_mul,
         /// `[N]T` syntax. No source location provided.
         /// Uses the `pl_node` union field. Payload is `Bin`. lhs is length, rhs is element type.
         array_type,
@@ -570,12 +567,21 @@ pub const Inst = struct {
         /// Uses the `pl_node` field with payload `Bin`.
         merge_error_sets,
         /// Turns an R-Value into a const L-Value. In other words, it takes a value,
-        /// stores it in a memory location, and returns a const pointer to it. If the value
-        /// is `comptime`, the memory location is global static constant data. Otherwise,
-        /// the memory location is in the stack frame, local to the scope containing the
-        /// instruction.
+        /// stores it in a memory location, and returns a const single-item pointer to it.
+        /// If the value is `comptime`, the memory location is global static constant data.
+        /// Otherwise, the memory location is in the stack frame, local to the scope
+        /// containing the instruction.
         /// Uses the `un_tok` union field.
         ref,
+        /// Implements the dereference operand (`.*`). Checks that operand is a pointer
+        /// that supports being directly dereferenced.
+        /// Uses the `un_node` union field.
+        deref,
+        /// Emitted when a dereference (`.*`) with a reference result location occurs.
+        /// Checks that operand is a pointer that supports being directly dereferenced
+        /// and returns a single-item pointer to the dereferenced memory location.
+        /// Uses the `un_node` union field.
+        ref_deref,
         /// Sends control flow back to the function's callee.
         /// Includes an operand as the return value.
         /// Includes an AST node source location.
@@ -597,13 +603,6 @@ pub const Inst = struct {
         /// name is added to it.
         /// Uses the `str_tok` union field.
         ret_err_value,
-        /// A string name is provided which is an anonymous error set value.
-        /// If the current function has an inferred error set, the error given by the
-        /// name is added to it.
-        /// Results in the error code. Note that control flow is not diverted with
-        /// this instruction; a following 'ret' instruction will do the diversion.
-        /// Uses the `str_tok` union field.
-        ret_err_value_code,
         /// Obtains a pointer to the return value.
         /// Uses the `node` union field.
         ret_ptr,
@@ -727,9 +726,6 @@ pub const Inst = struct {
         /// - `if (eu) |payload| {...} else |err| {...}`, AST node is the `if`.
         /// Uses the `pl_node` union field. Payload is `SwitchBlock`.
         switch_block_err_union,
-        /// Check that operand type supports the dereference operand (.*).
-        /// Uses the `un_node` field.
-        validate_deref,
         /// Check that the operand's type is an array or tuple with the given number of elements.
         /// Uses the `pl_node` field. Payload is `ValidateDestructure`.
         validate_destructure,
@@ -1066,9 +1062,6 @@ pub const Inst = struct {
         /// A defer statement.
         /// Uses the `defer` union field.
         @"defer",
-        /// An errdefer statement with a code.
-        /// Uses the `err_defer_code` union field.
-        defer_err_code,
 
         /// Requests that Sema update the saved error return trace index for the enclosing
         /// block, if the operand is .none or of an error/error-union type.
@@ -1112,7 +1105,6 @@ pub const Inst = struct {
                 .alloc_inferred_comptime_mut,
                 .make_ptr_const,
                 .array_cat,
-                .array_mul,
                 .array_type,
                 .array_type_sentinel,
                 .reify_int,
@@ -1184,6 +1176,8 @@ pub const Inst = struct {
                 .mulwrap,
                 .mul_sat,
                 .ref,
+                .deref,
+                .ref_deref,
                 .shl,
                 .shl_sat,
                 .shr,
@@ -1227,7 +1221,6 @@ pub const Inst = struct {
                 .switch_block,
                 .switch_block_ref,
                 .switch_block_err_union,
-                .validate_deref,
                 .validate_destructure,
                 .union_init,
                 .field_type_ref,
@@ -1295,14 +1288,12 @@ pub const Inst = struct {
                 .memmove,
                 .min,
                 .@"resume",
-                .ret_err_value_code,
                 .extended,
                 .ret_ptr,
                 .ret_type,
                 .@"try",
                 .try_ptr,
                 .@"defer",
-                .defer_err_code,
                 .save_err_ret_index,
                 .for_len,
                 .opt_eu_base_ptr_init,
@@ -1368,7 +1359,6 @@ pub const Inst = struct {
                 .atomic_store,
                 .store_node,
                 .store_to_inferred_ptr,
-                .validate_deref,
                 .validate_destructure,
                 .@"export",
                 .set_runtime_safety,
@@ -1377,7 +1367,6 @@ pub const Inst = struct {
                 .memmove,
                 .check_comptime_control_flow,
                 .@"defer",
-                .defer_err_code,
                 .save_err_ret_index,
                 .restore_err_ret_index_unconditional,
                 .restore_err_ret_index_fn_entry,
@@ -1409,7 +1398,6 @@ pub const Inst = struct {
                 .resolve_inferred_alloc,
                 .make_ptr_const,
                 .array_cat,
-                .array_mul,
                 .array_type,
                 .array_type_sentinel,
                 .reify_int,
@@ -1474,6 +1462,8 @@ pub const Inst = struct {
                 .mulwrap,
                 .mul_sat,
                 .ref,
+                .deref,
+                .ref_deref,
                 .shl,
                 .shl_sat,
                 .shr,
@@ -1574,7 +1564,6 @@ pub const Inst = struct {
                 .max,
                 .min,
                 .@"resume",
-                .ret_err_value_code,
                 .@"break",
                 .break_inline,
                 .condbr,
@@ -1644,7 +1633,6 @@ pub const Inst = struct {
                 .param_anytype = .str_tok,
                 .param_anytype_comptime = .str_tok,
                 .array_cat = .pl_node,
-                .array_mul = .pl_node,
                 .array_type = .pl_node,
                 .array_type_sentinel = .pl_node,
                 .reify_int = .pl_node,
@@ -1728,11 +1716,12 @@ pub const Inst = struct {
                 .merge_error_sets = .pl_node,
                 .mod_rem = .pl_node,
                 .ref = .un_tok,
+                .deref = .un_node,
+                .ref_deref = .un_node,
                 .ret_node = .un_node,
                 .ret_load = .un_node,
                 .ret_implicit = .un_tok,
                 .ret_err_value = .str_tok,
-                .ret_err_value_code = .str_tok,
                 .ret_ptr = .node,
                 .ret_type = .node,
                 .ptr_type = .ptr_type,
@@ -1765,7 +1754,6 @@ pub const Inst = struct {
                 .switch_block = .pl_node,
                 .switch_block_ref = .pl_node,
                 .switch_block_err_union = .pl_node,
-                .validate_deref = .un_node,
                 .validate_destructure = .pl_node,
                 .field_type_ref = .pl_node,
                 .union_init = .pl_node,
@@ -1866,7 +1854,6 @@ pub const Inst = struct {
                 .@"resume" = .un_node,
 
                 .@"defer" = .@"defer",
-                .defer_err_code = .defer_err_code,
 
                 .save_err_ret_index = .save_err_ret_index,
                 .restore_err_ret_index_unconditional = .un_node,
@@ -1899,7 +1886,7 @@ pub const Inst = struct {
 
         // Uncomment to view how many tag slots are available.
         //comptime {
-        //    @compileLog("ZIR tags left: ", 256 - @typeInfo(Tag).@"enum".fields.len);
+        //    @compileLog("ZIR tags left: ", 256 - @typeInfo(Tag).@"enum".field_names.len);
         //}
     };
 
@@ -2077,6 +2064,9 @@ pub const Inst = struct {
         /// `operand` is payload index to `ReifyEnum`.
         /// `small` contains `NameStrategy`.
         reify_enum,
+        /// Implements builtin `@SpirvType`.
+        /// `operand` is payload index to `ReifyFn`.
+        reify_spirv_type,
         /// Implements the `@cmpxchgStrong` and `@cmpxchgWeak` builtins.
         /// `small` 0=>weak 1=>strong
         /// `operand` is payload index to `Cmpxchg`.
@@ -2141,10 +2131,10 @@ pub const Inst = struct {
         /// Guaranteed to not have the `ptr_cast` flag.
         /// Uses the `pl_node` union field with payload `FieldParentPtr`.
         field_parent_ptr,
-        /// Get a type or value from `std.builtin`.
+        /// Get a type or value from `std.lang`.
         /// `operand` is `src_node: Ast.Node.Offset`.
-        /// `small` is an `Inst.BuiltinValue`.
-        builtin_value,
+        /// `small` is an `Inst.StdLangValue`.
+        std_lang_value,
         /// Provide a `@branchHint` for the current block.
         /// `operand` is payload index to `UnNode`.
         /// `small` is unused.
@@ -2213,7 +2203,6 @@ pub const Inst = struct {
     /// and `[]Ref`.
     pub const Ref = enum(u32) {
         u0_type,
-        i0_type,
         u1_type,
         u8_type,
         i8_type,
@@ -2348,7 +2337,7 @@ pub const Inst = struct {
 
         _,
 
-        pub const static_len = @typeInfo(@This()).@"enum".fields.len - 1;
+        pub const static_len = @typeInfo(@This()).@"enum".field_names.len - 1;
 
         pub fn toIndex(inst: Ref) ?Index {
             assert(inst != .none);
@@ -2441,7 +2430,7 @@ pub const Inst = struct {
                 has_bit_range: bool,
                 _: u1 = 0,
             },
-            size: std.builtin.Type.Pointer.Size,
+            size: std.lang.Type.Pointer.Size,
             /// Index into extra. See `PtrType`.
             payload_index: u32,
         },
@@ -2449,7 +2438,7 @@ pub const Inst = struct {
             /// Offset from Decl AST node index.
             /// `Tag` determines which kind of AST node this points to.
             src_node: Ast.Node.Offset,
-            signedness: std.builtin.Signedness,
+            signedness: std.lang.Signedness,
             bit_count: u16,
         },
         @"unreachable": struct {
@@ -2483,10 +2472,6 @@ pub const Inst = struct {
         @"defer": struct {
             index: u32,
             len: u32,
-        },
-        defer_err_code: struct {
-            err_code: Ref,
-            payload_index: u32,
         },
         save_err_ret_index: struct {
             operand: Ref, // If error type (or .none), save new trace index
@@ -2538,7 +2523,6 @@ pub const Inst = struct {
             inst_node,
             str_op,
             @"defer",
-            defer_err_code,
             save_err_ret_index,
             elem_val_imm,
             declaration,
@@ -3079,7 +3063,7 @@ pub const Inst = struct {
         callee: Ref,
 
         pub const Flags = packed struct {
-            /// std.builtin.CallModifier in packed form
+            /// std.lang.CallModifier in packed form
             pub const PackedModifier = u3;
             pub const PackedArgsLen = u27;
 
@@ -3091,7 +3075,7 @@ pub const Inst = struct {
             comptime {
                 if (@sizeOf(Flags) != 4 or @bitSizeOf(Flags) != 32)
                     @compileError("Layout of Call.Flags needs to be updated!");
-                if (@bitSizeOf(std.builtin.CallModifier) != @bitSizeOf(PackedModifier))
+                if (@bitSizeOf(std.lang.CallModifier) != @bitSizeOf(PackedModifier))
                     @compileError("Call.Flags.PackedModifier needs to be updated!");
             }
         };
@@ -3214,7 +3198,7 @@ pub const Inst = struct {
 
     pub const ReifySliceArgInfo = enum(u16) {
         /// Input element type is `type`.
-        /// Output element type is `std.builtin.Type.Fn.Param.Attributes`.
+        /// Output element type is `std.lang.Type.Fn.ParamAttributes`.
         type_to_fn_param_attrs,
         /// Input element type is `[]const u8`.
         /// Output element type is `type`.
@@ -3222,10 +3206,10 @@ pub const Inst = struct {
         /// Identical to `string_to_struct_field_type` aside from emitting slightly different error messages.
         string_to_union_field_type,
         /// Input element type is `[]const u8`.
-        /// Output element type is `std.builtin.Type.StructField.Attributes`.
+        /// Output element type is `std.lang.Type.Struct.FieldAttributes`.
         string_to_struct_field_attrs,
         /// Input element type is `[]const u8`.
-        /// Output element type is `std.builtin.Type.UnionField.Attributes`.
+        /// Output element type is `std.lang.Type.Union.FieldAttributes`.
         string_to_union_field_attrs,
     };
 
@@ -3295,6 +3279,14 @@ pub const Inst = struct {
         mode: Ref,
         field_names: Ref,
         field_values: Ref,
+    };
+
+    pub const ReifySpirvType = struct {
+        src_line: u32,
+        /// This node is absolute, because `reify` instructions are tracked across updates, and
+        /// this simplifies the logic for getting source locations for types.
+        node: Ast.Node.Index,
+        operand: Ref,
     };
 
     /// Trailing:
@@ -3496,7 +3488,7 @@ pub const Inst = struct {
             has_decls_len: bool,
             has_fields_len: bool,
             name_strategy: NameStrategy,
-            layout: std.builtin.Type.ContainerLayout,
+            layout: std.lang.Type.ContainerLayout,
             /// Always `false` if `layout != .@"packed"`.
             has_backing_int_type: bool,
             any_field_aligns: bool,
@@ -3592,7 +3584,7 @@ pub const Inst = struct {
         }
     };
 
-    pub const BuiltinValue = enum(u16) {
+    pub const StdLangValue = enum(u16) {
         // Types
         atomic_order,
         atomic_rmw_op,
@@ -3612,6 +3604,7 @@ pub const Inst = struct {
         fn_attributes,
         container_layout,
         enum_mode,
+        spirv_type_options,
         // Values
         calling_convention_c,
         calling_convention_inline,
@@ -3716,7 +3709,7 @@ pub const Inst = struct {
                 };
             }
 
-            pub fn layout(k: Kind) std.builtin.Type.ContainerLayout {
+            pub fn layout(k: Kind) std.lang.Type.ContainerLayout {
                 return switch (k) {
                     .auto, .tagged_explicit, .tagged_enum, .tagged_enum_explicit => .auto,
                     .@"extern" => .@"extern",
@@ -3974,12 +3967,6 @@ pub const Inst = struct {
         column: u32,
     };
 
-    pub const DeferErrCode = struct {
-        remapped_err_code: Index,
-        index: u32,
-        len: u32,
-    };
-
     pub const ValidateDestructure = struct {
         /// The value being destructured.
         operand: Ref,
@@ -3987,15 +3974,6 @@ pub const Inst = struct {
         destructure_node: Ast.Node.Offset,
         /// The expected field count.
         expect_len: u32,
-    };
-
-    pub const ArrayMul = struct {
-        /// The result type of the array multiplication operation, or `.none` if none was available.
-        res_ty: Ref,
-        /// The LHS of the array multiplication.
-        lhs: Ref,
-        /// The RHS of the array multiplication.
-        rhs: Ref,
     };
 
     pub const RestoreErrRetIndex = struct {
@@ -4021,30 +3999,30 @@ pub const DeclContents = struct {
     /// This is a simple optional because ZIR guarantees that a `func`/`func_inferred`/`func_fancy` instruction
     /// can only occur once per `declaration`.
     func_decl: ?Inst.Index,
-    explicit_types: std.ArrayList(Inst.Index),
+    type_decls: std.ArrayList(Inst.Index),
     other: std.ArrayList(Inst.Index),
 
     pub const init: DeclContents = .{
         .func_decl = null,
-        .explicit_types = .empty,
+        .type_decls = .empty,
         .other = .empty,
     };
 
     pub fn clear(contents: *DeclContents) void {
         contents.func_decl = null;
-        contents.explicit_types.clearRetainingCapacity();
+        contents.type_decls.clearRetainingCapacity();
         contents.other.clearRetainingCapacity();
     }
 
     pub fn deinit(contents: *DeclContents, gpa: Allocator) void {
-        contents.explicit_types.deinit(gpa);
+        contents.type_decls.deinit(gpa);
         contents.other.deinit(gpa);
     }
 };
 
 /// Find all tracked ZIR instructions, recursively, within a `declaration` instruction. Does not recurse through
 /// nested declarations; to find all declarations, call this function recursively on the type declarations discovered
-/// in `contents.explicit_types`.
+/// in `contents.type_decls`.
 ///
 /// This populates an `ArrayList` because an iterator would need to allocate memory anyway.
 pub fn findTrackable(zir: Zir, gpa: Allocator, contents: *DeclContents, decl_inst: Zir.Inst.Index) !void {
@@ -4064,15 +4042,49 @@ pub fn findTrackable(zir: Zir, gpa: Allocator, contents: *DeclContents, decl_ins
     if (decl.value_body) |b| try zir.findTrackableBody(gpa, contents, &found_defers, b);
 }
 
-/// Like `findTrackable`, but only considers the `main_struct_inst` instruction. This may return more than
-/// just that instruction because it will also traverse fields.
-pub fn findTrackableRoot(zir: Zir, gpa: Allocator, contents: *DeclContents) !void {
+/// `findTrackable` does not recurse into field expressions in a type. Instead, this function will
+/// scan specifically field expressions in a given type declaration for trackable ZIR instructions.
+pub fn findTrackableFields(
+    zir: *const Zir,
+    gpa: Allocator,
+    contents: *DeclContents,
+    type_decl_inst: Zir.Inst.Index,
+) Allocator.Error!void {
     contents.clear();
 
     var found_defers: std.AutoHashMapUnmanaged(u32, void) = .empty;
     defer found_defers.deinit(gpa);
 
-    try zir.findTrackableInner(gpa, contents, &found_defers, .main_struct_inst);
+    assert(zir.instructions.items(.tag)[@intFromEnum(type_decl_inst)] == .extended);
+    switch (zir.instructions.items(.data)[@intFromEnum(type_decl_inst)].extended.opcode) {
+        .struct_decl => {
+            const struct_decl = zir.getStructDecl(type_decl_inst);
+            var it = struct_decl.iterateFields();
+            while (it.next()) |field| {
+                try zir.findTrackableBody(gpa, contents, &found_defers, field.type_body);
+                if (field.align_body) |b| try zir.findTrackableBody(gpa, contents, &found_defers, b);
+                if (field.default_body) |b| try zir.findTrackableBody(gpa, contents, &found_defers, b);
+            }
+        },
+        .union_decl => {
+            const union_decl = zir.getUnionDecl(type_decl_inst);
+            var it = union_decl.iterateFields();
+            while (it.next()) |field| {
+                if (field.type_body) |b| try zir.findTrackableBody(gpa, contents, &found_defers, b);
+                if (field.align_body) |b| try zir.findTrackableBody(gpa, contents, &found_defers, b);
+                if (field.value_body) |b| try zir.findTrackableBody(gpa, contents, &found_defers, b);
+            }
+        },
+        .enum_decl => {
+            const enum_decl = zir.getEnumDecl(type_decl_inst);
+            var it = enum_decl.iterateFields();
+            while (it.next()) |field| {
+                if (field.value_body) |b| try zir.findTrackableBody(gpa, contents, &found_defers, b);
+            }
+        },
+        .opaque_decl => {},
+        else => unreachable,
+    }
 }
 
 fn findTrackableInner(
@@ -4115,7 +4127,6 @@ fn findTrackableInner(
         .param_anytype,
         .param_anytype_comptime,
         .array_cat,
-        .array_mul,
         .array_type,
         .array_type_sentinel,
         .reify_int,
@@ -4184,11 +4195,12 @@ fn findTrackableInner(
         .for_len,
         .merge_error_sets,
         .ref,
+        .deref,
+        .ref_deref,
         .ret_node,
         .ret_load,
         .ret_implicit,
         .ret_err_value,
-        .ret_err_value_code,
         .ret_ptr,
         .ret_type,
         .ptr_type,
@@ -4218,7 +4230,6 @@ fn findTrackableInner(
         .enum_literal,
         .decl_literal,
         .decl_literal_no_coerce,
-        .validate_deref,
         .validate_destructure,
         .field_type_ref,
         .opt_eu_base_ptr_init,
@@ -4379,7 +4390,7 @@ fn findTrackableInner(
                 .restore_err_ret_index,
                 .closure_get,
                 .field_parent_ptr,
-                .builtin_value,
+                .std_lang_value,
                 .branch_hint,
                 .inplace_arith_result_ty,
                 .tuple_decl,
@@ -4396,49 +4407,19 @@ fn findTrackableInner(
                     try zir.findTrackableBody(gpa, contents, defers, body);
                 },
 
-                // Reifications and opaque declarations need tracking, but have no bodies.
+                // Reifications need tracking.
                 .reify_enum,
                 .reify_struct,
                 .reify_union,
-                .opaque_decl,
+                .reify_spirv_type,
                 => return contents.other.append(gpa, inst),
 
-                // Struct declarations need tracking and have bodies.
-                .struct_decl => {
-                    try contents.explicit_types.append(gpa, inst);
-
-                    const struct_decl = zir.getStructDecl(inst);
-                    var it = struct_decl.iterateFields();
-                    while (it.next()) |field| {
-                        try zir.findTrackableBody(gpa, contents, defers, field.type_body);
-                        if (field.align_body) |b| try zir.findTrackableBody(gpa, contents, defers, b);
-                        if (field.default_body) |b| try zir.findTrackableBody(gpa, contents, defers, b);
-                    }
-                },
-
-                // Union declarations need tracking and have bodies.
-                .union_decl => {
-                    try contents.explicit_types.append(gpa, inst);
-
-                    const union_decl = zir.getUnionDecl(inst);
-                    var it = union_decl.iterateFields();
-                    while (it.next()) |field| {
-                        if (field.type_body) |b| try zir.findTrackableBody(gpa, contents, defers, b);
-                        if (field.align_body) |b| try zir.findTrackableBody(gpa, contents, defers, b);
-                        if (field.value_body) |b| try zir.findTrackableBody(gpa, contents, defers, b);
-                    }
-                },
-
-                // Enum declarations need tracking and have bodies.
-                .enum_decl => {
-                    try contents.explicit_types.append(gpa, inst);
-
-                    const enum_decl = zir.getEnumDecl(inst);
-                    var it = enum_decl.iterateFields();
-                    while (it.next()) |field| {
-                        if (field.value_body) |b| try zir.findTrackableBody(gpa, contents, defers, b);
-                    }
-                },
+                // Type declarations need tracking.
+                .struct_decl,
+                .union_decl,
+                .enum_decl,
+                .opaque_decl,
+                => return contents.type_decls.append(gpa, inst),
             }
         },
 
@@ -4615,15 +4596,6 @@ fn findTrackableInner(
             const gop = try defers.getOrPut(gpa, inst_data.index);
             if (!gop.found_existing) {
                 const body = zir.bodySlice(inst_data.index, inst_data.len);
-                try zir.findTrackableBody(gpa, contents, defers, body);
-            }
-        },
-        .defer_err_code => {
-            const inst_data = datas[@intFromEnum(inst)].defer_err_code;
-            const extra = zir.extraData(Inst.DeferErrCode, inst_data.payload_index).data;
-            const gop = try defers.getOrPut(gpa, extra.index);
-            if (!gop.found_existing) {
-                const body = zir.bodySlice(extra.index, extra.len);
                 try zir.findTrackableBody(gpa, contents, defers, body);
             }
         },
@@ -4893,7 +4865,7 @@ pub fn getAssociatedSrcHash(zir: Zir, inst: Zir.Inst.Index) ?std.zig.SrcHash {
             const extra_index = extra.end +
                 extra.data.ret_ty.body_len +
                 extra.data.body_len +
-                @typeInfo(Inst.Func.SrcLocs).@"struct".fields.len;
+                @typeInfo(Inst.Func.SrcLocs).@"struct".field_names.len;
             return @bitCast([4]u32{
                 zir.extra[extra_index + 0],
                 zir.extra[extra_index + 1],
@@ -4920,7 +4892,7 @@ pub fn getAssociatedSrcHash(zir: Zir, inst: Zir.Inst.Index) ?std.zig.SrcHash {
             } else extra_index += @intFromBool(bits.has_ret_ty_ref);
             extra_index += @intFromBool(bits.has_any_noalias);
             extra_index += extra.data.body_len;
-            extra_index += @typeInfo(Zir.Inst.Func.SrcLocs).@"struct".fields.len;
+            extra_index += @typeInfo(Zir.Inst.Func.SrcLocs).@"struct".field_names.len;
             return @bitCast([4]u32{
                 zir.extra[extra_index + 0],
                 zir.extra[extra_index + 1],
@@ -5232,6 +5204,7 @@ pub fn assertTrackable(zir: Zir, inst_idx: Zir.Inst.Index) void {
             .reify_enum,
             .reify_struct,
             .reify_union,
+            .reify_spirv_type,
             => {}, // tracked in order, as the owner instructions of explicit container types
             else => unreachable, // assertion failure; not trackable
         },
@@ -5337,7 +5310,7 @@ pub const UnwrappedStructDecl = struct {
 
     decls: []const Inst.Index,
 
-    layout: std.builtin.Type.ContainerLayout,
+    layout: std.lang.Type.ContainerLayout,
     backing_int_type_body: ?[]const Inst.Index,
 
     field_names: []const NullTerminatedString,

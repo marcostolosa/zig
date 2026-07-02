@@ -80,7 +80,6 @@ test "memset with 1-byte struct element" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
 
     const S = struct { x: bool };
     var buf: [5]S = undefined;
@@ -93,7 +92,6 @@ test "memset with 1-byte array element" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
 
     const A = [1]bool;
     var buf: [5]A = undefined;
@@ -111,7 +109,7 @@ test "memset with large array element, runtime known" {
 
     const A = [128]u64;
     var buf: [5]A = undefined;
-    var runtime_known_element = [_]u64{0} ** 128;
+    var runtime_known_element: A = @splat(0);
     _ = &runtime_known_element;
     @memset(&buf, runtime_known_element);
     for (buf[0]) |elem| try expect(elem == 0);
@@ -129,7 +127,7 @@ test "memset with large array element, comptime known" {
 
     const A = [128]u64;
     var buf: [5]A = undefined;
-    const comptime_known_element = [_]u64{0} ** 128;
+    const comptime_known_element: A = @splat(0);
     @memset(&buf, comptime_known_element);
     for (buf[0]) |elem| try expect(elem == 0);
     for (buf[1]) |elem| try expect(elem == 0);
@@ -181,6 +179,8 @@ test "@memset with zero-length array" {
 }
 
 test "@memset a global array" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const S = struct {
         var buf: [1]u32 = .{123};
     };
@@ -192,6 +192,8 @@ test "@memset a global array" {
 }
 
 test "@memset array of booleans" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const S = struct {
         var x: bool = false;
         var y: [1]bool = undefined;

@@ -878,9 +878,9 @@ pub fn resolveRelocsNonAlloc(self: Atom, elf_file: *Elf, code: []u8, undefs: any
 pub fn addExtra(atom: *Atom, opts: Extra.AsOptionals, elf_file: *Elf) void {
     const file_ptr = atom.file(elf_file).?;
     var extras = file_ptr.atomExtra(atom.extra_index);
-    inline for (@typeInfo(@TypeOf(opts)).@"struct".fields) |field| {
-        if (@field(opts, field.name)) |x| {
-            @field(extras, field.name) = x;
+    inline for (@typeInfo(@TypeOf(opts)).@"struct".field_names) |field_name| {
+        if (@field(opts, field_name)) |x| {
+            @field(extras, field_name) = x;
         }
     }
     file_ptr.setAtomExtra(atom.extra_index, extras);
@@ -983,7 +983,7 @@ const x86_64 = struct {
                 }
             },
 
-            .PC32 => {
+            .PC32, .PC64 => {
                 try atom.scanReloc(symbol, rel, pcRelocAction(symbol, elf_file), elf_file);
             },
 
@@ -1083,6 +1083,7 @@ const x86_64 = struct {
 
             .PLT32 => mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(S + A - P)), .little),
             .PC32 => mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(S + A - P)), .little),
+            .PC64 => mem.writeInt(i64, code[r_offset..][0..8], S + A - P, .little),
 
             .GOTPCREL => mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(G + GOT + A - P)), .little),
             .GOTPC32 => mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(GOT + A - P)), .little),

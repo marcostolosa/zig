@@ -26,11 +26,11 @@ prologue: Prologue,
 
 /// Not directly used by `Emit`, but the linker needs this to merge it with a global set.
 /// Value is the explicit alignment if greater than natural alignment, `.none` otherwise.
-uavs: std.AutoArrayHashMapUnmanaged(InternPool.Index, Alignment),
+uavs: std.array_hash_map.Auto(InternPool.Index, Alignment),
 /// Not directly used by `Emit`, but the linker needs this to merge it with a global set.
-indirect_function_set: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, void),
+indirect_function_set: std.array_hash_map.Auto(InternPool.Nav.Index, void),
 /// Not directly used by `Emit`, but the linker needs this to ensure these types are interned.
-func_tys: std.AutoArrayHashMapUnmanaged(InternPool.Index, void),
+func_tys: std.array_hash_map.Auto(InternPool.Index, void),
 /// Not directly used by `Emit`, but the linker needs this to add it to its own refcount.
 error_name_table_ref_count: u32,
 
@@ -731,11 +731,11 @@ pub fn lower(mir: *const Mir, wasm: *Wasm, code: *std.ArrayList(u8)) std.mem.All
 }
 
 pub fn extraData(self: *const Mir, comptime T: type, index: usize) struct { data: T, end: usize } {
-    const fields = std.meta.fields(T);
+    const info = @typeInfo(T).@"struct";
     var i: usize = index;
     var result: T = undefined;
-    inline for (fields) |field| {
-        @field(result, field.name) = switch (field.type) {
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        @field(result, field_name) = switch (field_type) {
             u32 => self.extra[i],
             i32 => @bitCast(self.extra[i]),
             Wasm.UavsObjIndex,
@@ -743,7 +743,7 @@ pub fn extraData(self: *const Mir, comptime T: type, index: usize) struct { data
             InternPool.Nav.Index,
             InternPool.Index,
             => @enumFromInt(self.extra[i]),
-            else => |field_type| @compileError("Unsupported field type " ++ @typeName(field_type)),
+            else => @compileError("Unsupported field type " ++ @typeName(field_type)),
         };
         i += 1;
     }
@@ -1028,6 +1028,9 @@ pub const Intrinsic = enum(u32) {
     tanf,
     tanq,
     truncq,
+    memcpy,
+    memmove,
+    memset,
     __addo_limb64,
     __subo_limb64,
     __cmp_limb64,

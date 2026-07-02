@@ -40,7 +40,7 @@ const Thread = struct {
     steal_ready_search_index: u32,
     /// For ensuring multiple fibers waiting on the same file descriptor and
     /// filter use the same kevent.
-    wait_queues: std.AutoArrayHashMapUnmanaged(WaitQueueKey, *Fiber),
+    wait_queues: std.array_hash_map.Auto(WaitQueueKey, *Fiber),
 
     const WaitQueueKey = struct {
         ident: usize,
@@ -79,7 +79,7 @@ const Fiber = struct {
     awaiter: ?*Fiber,
     queue_next: ?*Fiber,
     cancel_thread: ?*Thread,
-    awaiting_completions: std.StaticBitSet(3),
+    awaiting_completions: std.bit_set.Static(3),
 
     const finished: ?*Fiber = @ptrFromInt(@alignOf(Thread));
 
@@ -877,7 +877,7 @@ fn dirAccess(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, options: Dir
     _ = options;
     @panic("TODO");
 }
-fn dirCreateFile(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, flags: File.CreateFlags) File.OpenError!File {
+fn dirCreateFile(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, flags: Dir.CreateFileOptions) File.OpenError!File {
     const k: *Kqueue = @ptrCast(@alignCast(userdata));
     _ = k;
     _ = dir;
@@ -885,7 +885,7 @@ fn dirCreateFile(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, flags: F
     _ = flags;
     @panic("TODO");
 }
-fn dirOpenFile(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, flags: File.OpenFlags) File.OpenError!File {
+fn dirOpenFile(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, flags: Dir.OpenFileOptions) File.OpenError!File {
     const k: *Kqueue = @ptrCast(@alignCast(userdata));
     _ = k;
     _ = dir;
@@ -1401,9 +1401,9 @@ fn openSocketPosix(
     };
     errdefer closeFd(socket_fd);
 
-    if (options.ip6_only) {
+    if (options.ip6_only) |ip6_only| {
         if (posix.IPV6 == void) return error.OptionUnsupported;
-        try setSocketOption(k, socket_fd, posix.IPPROTO.IPV6, posix.IPV6.V6ONLY, 0);
+        try setSocketOption(k, socket_fd, posix.IPPROTO.IPV6, posix.IPV6.V6ONLY, @intFromBool(ip6_only));
     }
 
     return socket_fd;

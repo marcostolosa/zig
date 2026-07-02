@@ -19,8 +19,7 @@ const Air = @import("../../Air.zig");
 const Mir = @import("Mir.zig");
 const Emit = @import("Emit.zig");
 const Type = @import("../../Type.zig");
-const CodeGenError = codegen.CodeGenError;
-const Endian = std.builtin.Endian;
+const Endian = std.lang.Endian;
 const Alignment = InternPool.Alignment;
 
 const build_options = @import("build_options");
@@ -39,7 +38,7 @@ const gp = abi.RegisterClass.gp;
 
 const Self = @This();
 
-const InnerError = CodeGenError || error{OutOfRegisters};
+const InnerError = codegen.Error || error{OutOfRegisters};
 
 pub fn legalizeFeatures(_: *const std.Target) ?*const Air.Legalize.Features {
     return null;
@@ -57,12 +56,10 @@ liveness: Air.Liveness,
 bin_file: *link.File,
 target: *const std.Target,
 func_index: InternPool.Index,
-err_msg: ?*ErrorMsg,
 args: []MCValue,
 ret_mcv: MCValue,
 fn_type: Type,
 arg_index: usize,
-src_loc: Zcu.LazySrcLoc,
 stack_align: Alignment,
 
 /// MIR Instructions
@@ -79,7 +76,7 @@ end_di_column: u32,
 /// which is a relative jump, based on the address following the reloc.
 exitlude_jump_relocs: std.ArrayList(usize) = .empty,
 
-reused_operands: std.StaticBitSet(Air.Liveness.bpi - 1) = undefined,
+reused_operands: std.bit_set.Static(Air.Liveness.bpi - 1) = undefined,
 
 /// Whenever there is a runtime branch, we push a Branch onto this stack,
 /// and pop it off when the runtime branch joins. This provides an "overlay"
@@ -203,7 +200,7 @@ const MCValue = union(enum) {
 };
 
 const Branch = struct {
-    inst_table: std.AutoArrayHashMapUnmanaged(Air.Inst.Index, MCValue) = .empty,
+    inst_table: std.array_hash_map.Auto(Air.Inst.Index, MCValue) = .empty,
 
     fn deinit(self: *Branch, gpa: Allocator) void {
         self.inst_table.deinit(gpa);
@@ -264,11 +261,10 @@ const BigTomb = struct {
 pub fn generate(
     lf: *link.File,
     pt: Zcu.PerThread,
-    src_loc: Zcu.LazySrcLoc,
     func_index: InternPool.Index,
     air: *const Air,
     liveness: *const ?Air.Liveness,
-) CodeGenError!Mir {
+) codegen.Error!Mir {
     const zcu = pt.zcu;
     const gpa = zcu.gpa;
     const func = zcu.funcInfo(func_index);
@@ -292,13 +288,11 @@ pub fn generate(
         .target = target,
         .bin_file = lf,
         .func_index = func_index,
-        .err_msg = null,
         .args = undefined, // populated after `resolveCallingConventionValues`
         .ret_mcv = undefined, // populated after `resolveCallingConventionValues`
         .fn_type = func_ty,
         .arg_index = 0,
         .branch_stack = &branch_stack,
-        .src_loc = src_loc,
         .stack_align = undefined,
         .end_di_line = func.rbrace_line,
         .end_di_column = func.rbrace_column,
@@ -307,10 +301,7 @@ pub fn generate(
     defer function.blocks.deinit(gpa);
     defer function.exitlude_jump_relocs.deinit(gpa);
 
-    var call_info = function.resolveCallingConventionValues(func_ty, .callee) catch |err| switch (err) {
-        error.CodegenFail => return error.CodegenFail,
-        else => |e| return e,
-    };
+    var call_info = try function.resolveCallingConventionValues(func_ty, .callee);
     defer call_info.deinit(&function);
 
     function.args = call_info.args;
@@ -319,18 +310,16 @@ pub fn generate(
     function.max_end_stack = call_info.stack_byte_count;
 
     function.gen() catch |err| switch (err) {
-        error.CodegenFail => return error.CodegenFail,
         error.OutOfRegisters => return function.fail("ran out of registers (Zig compiler bug)", .{}),
         else => |e| return e,
     };
 
-    var mir: Mir = .{
+    try function.mir_extra.shrinkToLen(gpa);
+
+    return .{
         .instructions = function.mir_instructions.toOwnedSlice(),
-        .extra = &.{}, // fallible, so populated after errdefer
+        .extra = function.mir_extra.toOwnedSliceAssert(),
     };
-    errdefer mir.deinit(gpa);
-    mir.extra = try function.mir_extra.toOwnedSlice(gpa);
-    return mir;
 }
 
 fn gen(self: *Self) !void {
@@ -499,8 +488,6 @@ fn genBody(self: *Self, body: []const Air.Inst.Index) InnerError!void {
             .shl_exact       => try self.airBinOp(inst, .shl_exact),
             .shr             => try self.airBinOp(inst, .shr),
             .shr_exact       => try self.airBinOp(inst, .shr_exact),
-            .bool_and        => try self.airBinOp(inst, .bool_and),
-            .bool_or         => try self.airBinOp(inst, .bool_or),
             .bit_and         => try self.airBinOp(inst, .bit_and),
             .bit_or          => try self.airBinOp(inst, .bit_or),
             .xor             => try self.airBinOp(inst, .xor),
@@ -551,7 +538,14 @@ fn genBody(self: *Self, body: []const Air.Inst.Index) InnerError!void {
             .ret_ptr         => try self.airRetPtr(inst),
             .arg             => try self.airArg(inst),
             .assembly        => try self.airAsm(inst),
-            .bitcast         => try self.airBitCast(inst),
+            .bit_cast        => try self.airBitCast(inst),
+            .ptr_cast        => try self.airBitCast(inst),
+            .ptr_from_int    => try self.airBitCast(inst),
+            .int_from_ptr    => try self.airBitCast(inst),
+            .error_cast      => try self.airBitCast(inst),
+            .error_from_int  => try self.airBitCast(inst),
+            .int_from_error  => try self.airBitCast(inst),
+            .union_from_enum => try self.airBitCast(inst),
             .block           => try self.airBlock(inst),
             .br              => try self.airBr(inst),
             .repeat          => return self.fail("TODO implement `repeat`", .{}),
@@ -563,7 +557,7 @@ fn genBody(self: *Self, body: []const Air.Inst.Index) InnerError!void {
             .cond_br         => try self.airCondBr(inst),
             .fptrunc         => @panic("TODO try self.airFptrunc(inst)"),
             .fpext           => @panic("TODO try self.airFpext(inst)"),
-            .intcast         => try self.airIntCast(inst),
+            .int_cast        => try self.airIntCast(inst),
             .trunc           => try self.airTrunc(inst),
             .is_non_null     => try self.airIsNonNull(inst),
             .is_non_null_ptr => @panic("TODO try self.airIsNonNullPtr(inst)"),
@@ -582,7 +576,7 @@ fn genBody(self: *Self, body: []const Air.Inst.Index) InnerError!void {
             .store           => try self.airStore(inst, false),
             .store_safe      => try self.airStore(inst, true),
             .struct_field_ptr=> try self.airStructFieldPtr(inst),
-            .struct_field_val=> try self.airStructFieldVal(inst),
+            .agg_field_val   => try self.airAggFieldVal(inst),
             .array_to_slice  => try self.airArrayToSlice(inst),
             .float_from_int    => try self.airFloatFromInt(inst),
             .int_from_float    => try self.airIntFromFloat(inst),
@@ -702,7 +696,7 @@ fn genBody(self: *Self, body: []const Air.Inst.Index) InnerError!void {
             .add_safe,
             .sub_safe,
             .mul_safe,
-            .intcast_safe,
+            .int_cast_safe,
             .int_from_float_safe,
             .int_from_float_optimized_safe,
             => @panic("TODO implement safety_checked_instructions"),
@@ -722,6 +716,7 @@ fn genBody(self: *Self, body: []const Air.Inst.Index) InnerError!void {
             .work_item_id => unreachable,
             .work_group_size => unreachable,
             .work_group_id => unreachable,
+            .spirv_runtime_array_len => unreachable,
             // zig fmt: on
         }
 
@@ -756,7 +751,7 @@ fn airAddSubWithOverflow(self: *Self, inst: Air.Inst.Index) !void {
         switch (lhs_ty.zigTypeTag(zcu)) {
             .vector => return self.fail("TODO implement add_with_overflow/sub_with_overflow for vectors", .{}),
             .int => {
-                assert(lhs_ty.eql(rhs_ty, zcu));
+                assert(lhs_ty.eql(rhs_ty));
                 const int_info = lhs_ty.intInfo(zcu);
                 switch (int_info.bits) {
                     32, 64 => {
@@ -836,7 +831,7 @@ fn airAggregateInit(self: *Self, inst: Air.Inst.Index) !void {
     };
 
     if (elements.len <= Air.Liveness.bpi - 1) {
-        var buf = [1]Air.Inst.Ref{.none} ** (Air.Liveness.bpi - 1);
+        var buf: [Air.Liveness.bpi - 1]Air.Inst.Ref = @splat(.none);
         @memcpy(buf[0..elements.len], elements);
         return self.finishAir(inst, result, buf);
     }
@@ -947,7 +942,7 @@ fn airAsm(self: *Self, inst: Air.Inst.Index) !void {
     };
 
     simple: {
-        var buf = [1]Air.Inst.Ref{.none} ** (Air.Liveness.bpi - 1);
+        var buf: [Air.Liveness.bpi - 1]Air.Inst.Ref = @splat(.none);
         var buf_index: usize = 0;
         for (outputs) |output| {
             if (output == .none) continue;
@@ -1258,7 +1253,7 @@ fn airByteSwap(self: *Self, inst: Air.Inst.Index) !void {
     return self.finishAir(inst, result, .{ ty_op.operand, .none, .none });
 }
 
-fn airCall(self: *Self, inst: Air.Inst.Index, modifier: std.builtin.CallModifier) !void {
+fn airCall(self: *Self, inst: Air.Inst.Index, modifier: std.lang.CallModifier) !void {
     if (modifier == .always_tail) return self.fail("TODO implement tail calls for {}", .{self.target.cpu.arch});
 
     const call = self.air.unwrapCall(inst);
@@ -1347,7 +1342,7 @@ fn airCall(self: *Self, inst: Air.Inst.Index, modifier: std.builtin.CallModifier
     const result = info.return_value;
 
     if (args.len + 1 <= Air.Liveness.bpi - 1) {
-        var buf = [1]Air.Inst.Ref{.none} ** (Air.Liveness.bpi - 1);
+        var buf: [Air.Liveness.bpi - 1]Air.Inst.Ref = @splat(.none);
         buf[0] = call.callee;
         @memcpy(buf[1..][0..args.len], args);
         return self.finishAir(inst, result, buf);
@@ -1671,7 +1666,7 @@ fn airIntCast(self: *Self, inst: Air.Inst.Index) !void {
     const info_a = operand_ty.intInfo(zcu);
     const info_b = self.typeOfIndex(inst).intInfo(zcu);
     if (info_a.signedness != info_b.signedness)
-        return self.fail("TODO gen intcast sign safety in semantic analysis", .{});
+        return self.fail("TODO gen int_cast sign safety in semantic analysis", .{});
 
     if (info_a.bits == info_b.bits)
         return self.finishAir(inst, operand, .{ ty_op.operand, .none, .none });
@@ -1809,7 +1804,7 @@ fn airMod(self: *Self, inst: Air.Inst.Index) !void {
     const rhs = try self.resolveInst(bin_op.rhs);
     const lhs_ty = self.typeOf(bin_op.lhs);
     const rhs_ty = self.typeOf(bin_op.rhs);
-    assert(lhs_ty.eql(rhs_ty, self.pt.zcu));
+    assert(lhs_ty.eql(rhs_ty));
 
     if (self.liveness.isUnused(inst))
         return self.finishAir(inst, .dead, .{ bin_op.lhs, bin_op.rhs, .none });
@@ -1962,7 +1957,7 @@ fn airMulWithOverflow(self: *Self, inst: Air.Inst.Index) !void {
         switch (lhs_ty.zigTypeTag(zcu)) {
             .vector => return self.fail("TODO implement mul_with_overflow for vectors", .{}),
             .int => {
-                assert(lhs_ty.eql(rhs_ty, zcu));
+                assert(lhs_ty.eql(rhs_ty));
                 const int_info = lhs_ty.intInfo(zcu);
                 switch (int_info.bits) {
                     1...32 => {
@@ -2478,7 +2473,7 @@ fn airStructFieldPtrIndex(self: *Self, inst: Air.Inst.Index, index: u8) !void {
     return self.finishAir(inst, result, .{ ty_op.operand, .none, .none });
 }
 
-fn airStructFieldVal(self: *Self, inst: Air.Inst.Index) !void {
+fn airAggFieldVal(self: *Self, inst: Air.Inst.Index) !void {
     const ty_pl = self.air.instructions.items(.data)[@intFromEnum(inst)].ty_pl;
     const extra = self.air.extraData(Air.StructField, ty_pl.payload).data;
     const operand = extra.struct_operand;
@@ -2541,7 +2536,7 @@ fn airStructFieldVal(self: *Self, inst: Air.Inst.Index) !void {
                     else => unreachable,
                 }
             },
-            else => return self.fail("TODO implement codegen struct_field_val for {}", .{mcv}),
+            else => return self.fail("TODO implement codegen agg_field_val for {}", .{mcv}),
         }
     };
 
@@ -2792,7 +2787,7 @@ fn binOp(
                 .float => return self.fail("TODO binary operations on floats", .{}),
                 .vector => return self.fail("TODO binary operations on vectors", .{}),
                 .int => {
-                    assert(lhs_ty.eql(rhs_ty, zcu));
+                    assert(lhs_ty.eql(rhs_ty));
                     const int_info = lhs_ty.intInfo(zcu);
                     if (int_info.bits <= 64) {
                         // Only say yes if the operation is
@@ -2882,7 +2877,7 @@ fn binOp(
             switch (lhs_ty.zigTypeTag(zcu)) {
                 .vector => return self.fail("TODO binary operations on vectors", .{}),
                 .int => {
-                    assert(lhs_ty.eql(rhs_ty, zcu));
+                    assert(lhs_ty.eql(rhs_ty));
                     const int_info = lhs_ty.intInfo(zcu);
                     if (int_info.bits <= 64) {
                         const rhs_immediate_ok = switch (tag) {
@@ -2936,26 +2931,6 @@ fn binOp(
                         const addr = try self.binOp(tag, lhs, offset, Type.manyptr_u8, Type.usize, null);
                         return addr;
                     }
-                },
-                else => unreachable,
-            }
-        },
-
-        .bool_and,
-        .bool_or,
-        => {
-            switch (lhs_ty.zigTypeTag(zcu)) {
-                .bool => {
-                    assert(lhs != .immediate); // should have been handled by Sema
-                    assert(rhs != .immediate); // should have been handled by Sema
-
-                    const mir_tag: Mir.Inst.Tag = switch (tag) {
-                        .bool_and => .@"and",
-                        .bool_or => .@"or",
-                        else => unreachable,
-                    };
-
-                    return try self.binOpRegister(mir_tag, lhs, rhs, lhs_ty, rhs_ty, metadata);
                 },
                 else => unreachable,
             }
@@ -3469,15 +3444,15 @@ fn errUnionPayload(self: *Self, error_union_mcv: MCValue, error_union_ty: Type) 
     }
 }
 
-fn fail(self: *Self, comptime format: []const u8, args: anytype) error{ OutOfMemory, CodegenFail } {
+fn fail(self: *Self, comptime format: []const u8, args: anytype) error{ OutOfMemory, AlreadyReported } {
     @branchHint(.cold);
     const zcu = self.pt.zcu;
     const func = zcu.funcInfo(self.func_index);
-    const msg = try ErrorMsg.create(zcu.gpa, self.src_loc, format, args);
+    const msg = try ErrorMsg.create(zcu.gpa, zcu.navSrcLoc(func.owner_nav), format, args);
     return zcu.codegenFailMsg(func.owner_nav, msg);
 }
 
-fn failMsg(self: *Self, msg: *ErrorMsg) error{ OutOfMemory, CodegenFail } {
+fn failMsg(self: *Self, msg: *ErrorMsg) error{ OutOfMemory, AlreadyReported } {
     @branchHint(.cold);
     const zcu = self.pt.zcu;
     const func = zcu.funcInfo(self.func_index);
@@ -4059,21 +4034,14 @@ fn genTypedValue(self: *Self, val: Value) InnerError!MCValue {
     const mcv: MCValue = switch (try codegen.genTypedValue(
         self.bin_file,
         pt,
-        self.src_loc,
         val,
         self.target,
     )) {
-        .mcv => |mcv| switch (mcv) {
-            .none => .none,
-            .undef => .undef,
-            .load_got, .load_symbol, .load_direct, .lea_symbol, .lea_direct => unreachable, // TODO
-            .immediate => |imm| .{ .immediate = imm },
-            .memory => |addr| .{ .memory = addr },
-        },
-        .fail => |msg| {
-            self.err_msg = msg;
-            return error.CodegenFail;
-        },
+        .none => .none,
+        .undef => .undef,
+        .load_got, .load_symbol, .load_direct, .lea_symbol, .lea_direct => unreachable, // TODO
+        .immediate => |imm| .{ .immediate = imm },
+        .memory => |addr| .{ .memory = addr },
     };
     return mcv;
 }
@@ -4265,7 +4233,7 @@ fn minMax(
 ) InnerError!MCValue {
     const pt = self.pt;
     const zcu = pt.zcu;
-    assert(lhs_ty.eql(rhs_ty, zcu));
+    assert(lhs_ty.eql(rhs_ty));
     switch (lhs_ty.zigTypeTag(zcu)) {
         .float => return self.fail("TODO min/max on floats", .{}),
         .vector => return self.fail("TODO min/max on vectors", .{}),
@@ -4725,7 +4693,7 @@ fn truncRegister(
     self: *Self,
     operand_reg: Register,
     dest_reg: Register,
-    int_signedness: std.builtin.Signedness,
+    int_signedness: std.lang.Signedness,
     int_bits: u16,
 ) !void {
     switch (int_bits) {

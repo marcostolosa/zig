@@ -7,11 +7,11 @@ set -e
 
 TARGET="x86_64-linux-musl"
 MCPU="baseline"
-CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.16.0-dev.104+689461e31"
+CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
-export PATH="$HOME/deps/wasmtime-v42.0.1-x86_64-linux:$HOME/deps/qemu-linux-x86_64-10.2.2/bin:$HOME/local/bin:$PATH"
+export PATH="$HOME/deps/wasmtime-v46.0.1-x86_64-linux:$HOME/deps/qemu-linux-x86_64-11.0.2/bin:$HOME/local/bin:$PATH"
 
 # Override the cache directories because they won't actually help other CI runs
 # which will be testing alternate versions of zig, and ultimately would just
@@ -39,10 +39,7 @@ cmake .. \
   -DZIG_TARGET_MCPU="$MCPU" \
   -DZIG_STATIC=ON \
   -DZIG_NO_LIB=ON \
-  -GNinja \
-  -DCMAKE_C_LINKER_DEPFILE_SUPPORTED=FALSE \
-  -DCMAKE_CXX_LINKER_DEPFILE_SUPPORTED=FALSE
-# https://github.com/ziglang/zig/issues/22213
+  -GNinja
 
 # Now cmake will use zig as the C/C++ compiler. We reset the environment variables
 # so that installation and testing do not get affected by them.
@@ -51,24 +48,33 @@ unset CXX
 
 ninja install
 
-# simultaneously test building self-hosted without LLVM and with 32-bit arm
+# Must not be set while using the other `zig cc` which has its own zig lib dir.
+export ZIG_LIB_DIR="$PWD/../lib"
+
+# Covers several things:
+# 1. building the compiler without LLVM
+# 2. 32-bit
+# 3. arm
 stage3-release/bin/zig build \
   -Dtarget=arm-linux-musleabihf \
   -Dno-lib
 
 stage3-release/bin/zig build test docs \
   --maxrss ${ZSF_MAX_RSS:-0} \
-  -Dlldb=$HOME/deps/lldb-zig/Release-e0a42bb34/bin/lldb \
-  -Dlibc-test-path=$HOME/deps/libc-test-f2bac77 \
+  -Dlldb=$HOME/deps/lldb-zig/Release-7c1090fd46/bin/lldb \
+  -Dlibc-test-path=$HOME/deps/libc-test-b95fe84 \
   -fqemu \
   --libc-runtimes $HOME/deps/glibc-2.43-musl-1.2.5 \
   -fwasmtime \
   -Dstatic-llvm \
   -Dtarget=native-native-musl \
   --search-prefix "$PREFIX" \
-  --zig-lib-dir "$PWD/../lib" \
   -Denable-superhtml \
   --test-timeout 12m
+
+# Ensure that the fuzzer at least compiles.
+stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=ReleaseSafe
+stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=Debug
 
 # Ensure that stage3 and stage4 are byte-for-byte identical.
 stage3-release/bin/zig build \
@@ -81,7 +87,6 @@ stage3-release/bin/zig build \
   -Duse-zig-libcxx \
   -Dversion-string="$(stage3-release/bin/zig version)"
 
-# diff returns an error code if the files differ.
 echo "If the following command fails, it means nondeterminism has been"
 echo "introduced, making stage3 and stage4 no longer byte-for-byte identical."
 diff stage3-release/bin/zig stage4-release/bin/zig
@@ -94,6 +99,7 @@ cd ../build-new
 
 export CC="$ZIG cc -target $TARGET -mcpu=$MCPU"
 export CXX="$ZIG c++ -target $TARGET -mcpu=$MCPU"
+unset ZIG_LIB_DIR
 
 cmake .. \
   -DCMAKE_PREFIX_PATH="$PREFIX" \
@@ -112,11 +118,12 @@ unset CXX
 
 ninja install
 
+export ZIG_LIB_DIR="$PWD/../lib"
+
 stage3/bin/zig test ../test/behavior.zig
 stage3/bin/zig build -p stage4 \
   -Dstatic-llvm \
   -Dtarget=native-native-musl \
   -Dno-lib \
-  --search-prefix "$PREFIX" \
-  --zig-lib-dir "$PWD/../lib"
+  --search-prefix "$PREFIX"
 stage4/bin/zig test ../test/behavior.zig

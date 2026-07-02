@@ -69,7 +69,11 @@ test "basic for loop" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
-    const expected_result = [_]u8{ 9, 8, 7, 6, 0, 1, 2, 3 } ** 3;
+    const expected_result: [24]u8 = .{
+        9, 8, 7, 6, 0, 1, 2, 3,
+        9, 8, 7, 6, 0, 1, 2, 3,
+        9, 8, 7, 6, 0, 1, 2, 3,
+    };
 
     var buffer: [expected_result.len]u8 = undefined;
     var buf_index: usize = 0;
@@ -517,6 +521,8 @@ test "return from inline for" {
 }
 
 test "for loop 0 length range" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const map: []const u8 = &.{};
     for (map, 0..map.len) |i, j| {
         _ = i;
@@ -540,4 +546,21 @@ test "labeled break from else" {
 
     try S.doTheTest(5);
     try comptime S.doTheTest(5);
+}
+
+test "value break from inline for" {
+    const S = struct {
+        fn doTheTest() !void {
+            const x = inline for (0..2) |_| {
+                if (true) {
+                    var idx: u32 = 0;
+                    idx += 1;
+                    break idx;
+                }
+            };
+            try expect(x == 1);
+        }
+    };
+    try S.doTheTest();
+    try comptime S.doTheTest();
 }

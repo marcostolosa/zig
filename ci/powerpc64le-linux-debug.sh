@@ -7,7 +7,7 @@ set -e
 
 TARGET="powerpc64le-linux-musl"
 MCPU="baseline"
-CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.16.0-dev.1594+9fa433d71"
+CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
@@ -31,10 +31,7 @@ cmake .. \
   -DZIG_TARGET_MCPU="$MCPU" \
   -DZIG_STATIC=ON \
   -DZIG_NO_LIB=ON \
-  -GNinja \
-  -DCMAKE_C_LINKER_DEPFILE_SUPPORTED=FALSE \
-  -DCMAKE_CXX_LINKER_DEPFILE_SUPPORTED=FALSE
-# https://github.com/ziglang/zig/issues/22213
+  -GNinja
 
 # Now cmake will use zig as the C/C++ compiler. We reset the environment variables
 # so that installation and testing do not get affected by them.
@@ -42,6 +39,9 @@ unset CC
 unset CXX
 
 ninja install
+
+# Must be done after zig cc is finished.
+export ZIG_LIB_DIR="$PWD/../lib"
 
 # No -fqemu and -fwasmtime here as they're covered by the x86_64-linux scripts.
 stage3-debug/bin/zig build test docs \
@@ -51,7 +51,6 @@ stage3-debug/bin/zig build test docs \
   -Dtarget=native-native-musl \
   -Dcpu=native+longcall \
   --search-prefix "$PREFIX" \
-  --zig-lib-dir "$PWD/../lib" \
   --test-timeout 4m
 
 stage3-debug/bin/zig build \

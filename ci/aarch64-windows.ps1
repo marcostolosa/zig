@@ -1,10 +1,9 @@
 $TARGET = "aarch64-windows-gnu"
-$ZIG_LLVM_CLANG_LLD_NAME = "zig+llvm+lld+clang-$TARGET-0.16.0-dev.104+689461e31"
+$ZIG_LLVM_CLANG_LLD_NAME = "zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
 $MCPU = "baseline"
 $ZIG_LLVM_CLANG_LLD_URL = "https://ziglang.org/deps/$ZIG_LLVM_CLANG_LLD_NAME.zip"
 $PREFIX_PATH = "$(Get-Location)\..\$ZIG_LLVM_CLANG_LLD_NAME"
 $ZIG = "$PREFIX_PATH\bin\zig.exe"
-$ZIG_LIB_DIR = "$(Get-Location)\lib"
 $ZSF_MAX_RSS = if ($Env:ZSF_MAX_RSS) { $Env:ZSF_MAX_RSS } else { 0 }
 
 if (!(Test-Path "..\$ZIG_LLVM_CLANG_LLD_NAME.zip")) {
@@ -53,10 +52,12 @@ CheckLastExitCode
 ninja install
 CheckLastExitCode
 
+# Must be done after zig cc is finished.
+$Env:ZIG_LIB_DIR="$(Get-Location)\..\lib"
+
 Write-Output "Main test suite..."
 & "stage3-release\bin\zig.exe" build test docs `
   --maxrss $ZSF_MAX_RSS `
-  --zig-lib-dir "$ZIG_LIB_DIR" `
   --search-prefix "$PREFIX_PATH" `
   -Dstatic-llvm `
   -Dskip-non-native `

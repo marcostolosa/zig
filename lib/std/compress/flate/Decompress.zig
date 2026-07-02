@@ -129,8 +129,7 @@ fn discardDirect(r: *Reader, limit: std.Io.Limit) Reader.Error!usize {
     }
     const n = r.stream(&writer, limit) catch |err| switch (err) {
         error.WriteFailed => unreachable,
-        error.ReadFailed => return error.ReadFailed,
-        error.EndOfStream => return error.EndOfStream,
+        error.ReadFailed, error.EndOfStream => |e| return e,
     };
     assert(n <= @intFromEnum(limit));
     return n;
@@ -258,7 +257,7 @@ fn streamFallible(d: *Decompress, w: *Writer, limit: std.Io.Limit) Reader.Stream
                 return error.ReadFailed;
             }
         },
-        error.WriteFailed => return error.WriteFailed,
+        error.WriteFailed => |e| return e,
         else => |e| {
             // In the event of an error, state is unmodified so that it can be
             // better used to diagnose the failure.
@@ -579,7 +578,7 @@ fn peekBitsShortEnding(d: *Decompress, n: u4) !u16 {
 }
 
 fn tossBitsShort(d: *Decompress, n: u4) !void {
-    if (d.input.bufferedLen() * 8 + d.consumed_bits < n) return error.EndOfStream;
+    if (d.input.bufferedLen() * 8 - d.consumed_bits < n) return error.EndOfStream;
     d.tossBits(n);
 }
 
@@ -724,7 +723,7 @@ fn HuffmanDecoder(
             if (alphabet_size == 286)
                 if (lens[256] == 0) return error.MissingEndOfBlockCode;
 
-            var count = [_]u16{0} ** (@as(usize, max_code_bits) + 1);
+            var count: [@as(usize, max_code_bits) + 1]u16 = @splat(0);
             var max: usize = 0;
             for (lens) |n| {
                 if (n == 0) continue;
@@ -1063,6 +1062,15 @@ test "bug 18966" {
         @embedFile("testdata/fuzz/bug_18966.input"),
         @embedFile("testdata/fuzz/bug_18966.expect"),
     );
+}
+
+test "truncated input ending when reading dynamic length bits" {
+    try testFailure(.raw, &[_]u8{
+        0x15, 0xd5, 0x07, 0x3b, 0x16, 0x0c, 0x03, 0x86,
+        0x61, 0x2b, 0xa3, 0xec, 0xec, 0x15, 0x95, 0x6c,
+        0x92, 0x4d, 0x19, 0x95, 0x4a, 0xb6, 0x22, 0x23,
+        0xc9,
+    }, error.EndOfStream);
 }
 
 test "reading into empty buffer" {

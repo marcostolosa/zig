@@ -63,16 +63,22 @@ pub const cpu_context = @import("debug/cpu_context.zig");
 /// ```
 pub const SelfInfo = if (@hasDecl(root, "debug") and @hasDecl(root.debug, "SelfInfo"))
     root.debug.SelfInfo
-else switch (std.Target.ObjectFormat.default(native_os, native_arch)) {
-    .coff => if (native_os == .windows) @import("debug/SelfInfo/Windows.zig") else void,
-    .elf => switch (native_os) {
-        .freestanding, .other => void,
-        else => @import("debug/SelfInfo/Elf.zig"),
-    },
-    .macho => @import("debug/SelfInfo/MachO.zig"),
-    .plan9, .spirv, .wasm => void,
-    .c, .hex, .raw => unreachable,
-};
+else
+    TargetInfo(native_os, native_arch);
+
+/// Returns the default `SelfInfo` for the given `os` and `arch`.
+pub fn TargetInfo(os: std.Target.Os.Tag, arch: std.Target.Cpu.Arch) type {
+    return switch (std.Target.ObjectFormat.default(os, arch)) {
+        .coff => if (os == .windows) @import("debug/SelfInfo/Windows.zig") else void,
+        .elf => switch (os) {
+            .freestanding, .other => void,
+            else => @import("debug/SelfInfo/Elf.zig"),
+        },
+        .macho => @import("debug/SelfInfo/MachO.zig"),
+        .plan9, .spirv, .wasm => void,
+        .c, .hex, .raw => unreachable,
+    };
+}
 
 pub const SelfInfoError = error{
     /// The required debug info is invalid or corrupted.
@@ -258,6 +264,9 @@ pub const sys_can_stack_trace = switch (builtin.cpu.arch) {
     .bpfeb,
     => false,
 
+    // https://codeberg.org/ziglang/zig/issues/31127
+    .avr => false,
+
     else => true,
 };
 
@@ -305,6 +314,9 @@ pub fn unlockStderr() void {
 /// Alternatively, use the higher-level `std.log` or `Io.lockStderr` to
 /// integrate with the application's chosen `Io` implementation.
 pub fn print(comptime fmt: []const u8, args: anytype) void {
+    const io = std.Options.debug_io;
+    const prev = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev);
     var buffer: [64]u8 = undefined;
     const stderr = lockStderr(&buffer);
     defer unlockStderr();
@@ -323,6 +335,9 @@ pub inline fn getSelfDebugInfo() !*SelfInfo {
 /// Tries to print a hexadecimal view of the bytes, unbuffered, and ignores any error returned.
 /// Obtains the stderr mutex while dumping.
 pub fn dumpHex(bytes: []const u8) void {
+    const io = std.Options.debug_io;
+    const prev = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev);
     const stderr = lockStderr(&.{}).terminal();
     defer unlockStderr();
     dumpHexFallible(stderr, bytes) catch {};
@@ -479,7 +494,6 @@ const use_trap_panic = switch (builtin.zig_backend) {
     .stage2_powerpc,
     .stage2_riscv64,
     .stage2_spirv,
-    .stage2_wasm,
     .stage2_x86,
     => true,
     else => false,
@@ -492,7 +506,16 @@ pub fn defaultPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
     if (use_trap_panic) @trap();
 
     switch (builtin.os.tag) {
-        .freestanding, .other, .@"3ds", .vita => {
+        .freestanding,
+        .other,
+
+        .@"3ds",
+        .wiiu,
+
+        .psx,
+        .psp,
+        .vita,
+        => {
             @trap();
         },
         .uefi => {
@@ -517,7 +540,7 @@ pub fn defaultPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
 
             if (uefi.system_table.boot_services) |bs| {
                 // ExitData buffer must be allocated using boot_services.allocatePool (spec: page 220)
-                const exit_data = uefi.raw_pool_allocator.dupeZ(u16, exit_msg) catch @trap();
+                const exit_data = uefi.raw_pool_allocator.dupeSentinel(u16, exit_msg, 0) catch @trap();
                 bs.exit(uefi.handle, .aborted, exit_data) catch {};
             }
             @trap();
@@ -786,6 +809,9 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, t: Io.Termin
 }
 /// A thin wrapper around `writeCurrentStackTrace` which writes to stderr and ignores write errors.
 pub fn dumpCurrentStackTrace(options: StackUnwindOptions) void {
+    const io = std.Options.debug_io;
+    const prev = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev);
     const stderr = lockStderr(&.{}).terminal();
     defer unlockStderr();
     writeCurrentStackTrace(.{
@@ -876,6 +902,9 @@ fn writeTrace(
 }
 /// A thin wrapper around `writeStackTrace` which writes to stderr and ignores write errors.
 pub fn dumpStackTrace(st: *const StackTrace) void {
+    const io = std.Options.debug_io;
+    const prev = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev);
     const stderr = lockStderr(&.{}).terminal();
     defer unlockStderr();
     writeStackTrace(st, stderr) catch |err| switch (err) {
@@ -885,6 +914,9 @@ pub fn dumpStackTrace(st: *const StackTrace) void {
 
 /// A thin wrapper around `writeErrorReturnTrace` which writes to stderr and ignores write errors.
 pub fn dumpErrorReturnTrace(et: *const std.builtin.StackTrace) void {
+    const io = std.Options.debug_io;
+    const prev = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev);
     const stderr = lockStderr(&.{}).terminal();
     defer unlockStderr();
     writeErrorReturnTrace(et, stderr) catch |err| switch (err) {
@@ -991,6 +1023,8 @@ const StackIterator = union(enum) {
         .sh,
         .sheb,
         .xcore,
+        .xtensa,
+        .xtensaeb,
         => .useless,
         .hexagon,
         // The PowerPC ABIs don't actually strictly require a backchain pointer; they allow omitting
@@ -1197,8 +1231,9 @@ fn printSourceAtAddress(
 
     // Initialize the symbol array with space for at least one element, allocating this on the stack
     // in the common case where only one element is needed
-    var symbol_fallback_allocator = std.heap.stackFallback(@sizeOf(Symbol) + @alignOf(Symbol) - 1, getDebugInfoAllocator());
-    const symbol_allocator = symbol_fallback_allocator.get();
+    var buf: [1]Symbol = undefined;
+    var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&buf), getDebugInfoAllocator());
+    const symbol_allocator = bfa.allocator();
     var symbols = std.ArrayList(Symbol).initCapacity(symbol_allocator, 1) catch unreachable;
     defer symbols.deinit(symbol_allocator);
 
@@ -1380,7 +1415,7 @@ test printLineFromFile {
         try writer.flush();
 
         try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 });
-        try expectEqualStrings(("a" ** overlap) ++ "\n", aw.written());
+        try expectEqualStrings(&@as([overlap]u8, @splat('a')) ++ "\n", aw.written());
         aw.clearRetainingCapacity();
     }
     {
@@ -1394,7 +1429,7 @@ test printLineFromFile {
         try writer.splatByteAll('a', std.heap.page_size_max);
 
         try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
-        try expectEqualStrings(("a" ** std.heap.page_size_max) ++ "\n", aw.written());
+        try expectEqualStrings(&@as([std.heap.page_size_max]u8, @splat('a')) ++ "\n", aw.written());
         aw.clearRetainingCapacity();
     }
     {
@@ -1409,14 +1444,16 @@ test printLineFromFile {
 
         try expectError(error.EndOfStream, printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 }));
 
+        const many_a: [3 * std.heap.page_size_max]u8 = @splat('a');
+
         try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
-        try expectEqualStrings(("a" ** (3 * std.heap.page_size_max)) ++ "\n", aw.written());
+        try expectEqualStrings(&many_a ++ "\n", aw.written());
         aw.clearRetainingCapacity();
 
         try writer.writeAll("a\na");
 
         try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
-        try expectEqualStrings(("a" ** (3 * std.heap.page_size_max)) ++ "a\n", aw.written());
+        try expectEqualStrings(&many_a ++ "a\n", aw.written());
         aw.clearRetainingCapacity();
 
         try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 2, .column = 0 });
@@ -1576,12 +1613,12 @@ fn handleSegfaultPosix(sig: posix.SIG, info: *const posix.siginfo_t, ctx_ptr: ?*
             .tvos,
             .visionos,
             .watchos,
+            .haiku,
             => @intFromPtr(info.addr),
             .linux,
             => @intFromPtr(info.fields.sigfault.addr),
             .netbsd,
             => @intFromPtr(info.info.reason.fault.addr),
-            .haiku,
             .openbsd,
             => @intFromPtr(info.data.fault.addr),
             .illumos,

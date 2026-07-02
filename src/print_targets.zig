@@ -9,7 +9,6 @@ const Target = std.Target;
 const assert = std.debug.assert;
 
 const glibc = @import("libs/glibc.zig");
-const introspect = @import("introspect.zig");
 const target = @import("target.zig");
 
 pub fn cmdTargets(
@@ -20,7 +19,7 @@ pub fn cmdTargets(
     native_target: *const Target,
 ) !void {
     _ = args;
-    var zig_lib_directory = introspect.findZigLibDir(allocator, io) catch |err|
+    var zig_lib_directory = std.zig.findZigLibDir(allocator, io) catch |err|
         fatal("unable to find zig installation directory: {t}", .{err});
     defer zig_lib_directory.handle.close(io);
     defer allocator.free(zig_lib_directory.path.?);
@@ -31,7 +30,7 @@ pub fn cmdTargets(
         allocator,
         .limited(glibc.abilists_max_size),
     ) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
+        error.OutOfMemory => |e| return e,
         else => fatal("unable to read " ++ glibc.abilists_path ++ ": {t}", .{err}),
     };
     defer allocator.free(abilists_contents);

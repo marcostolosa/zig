@@ -12,7 +12,7 @@ const Compilation = @import("../Compilation.zig");
 const build_options = @import("build_options");
 const trace = @import("../tracy.zig").trace;
 const Cache = std.Build.Cache;
-const Module = @import("../Package/Module.zig");
+const Module = @import("../Module.zig");
 const link = @import("../link.zig");
 
 pub const Lib = struct {
@@ -703,7 +703,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
     const full_abilists_path = try comp.dirs.zig_lib.join(arena, &.{abilists_path});
     const abilists_index = try man.addFile(full_abilists_path, abilists_max_size);
 
-    if (try man.hit()) {
+    if (try man.hit(prog_node)) {
         const digest = man.final();
 
         return queueSharedObjects(comp, .{
@@ -1277,7 +1277,7 @@ fn buildSharedLib(
     try comp.updateSubCompilation(sub_compilation, misc_task, prog_node);
 }
 
-pub fn needsCrt0(output_mode: std.builtin.OutputMode) ?CrtFile {
+pub fn needsCrt0(output_mode: std.lang.OutputMode) ?CrtFile {
     return switch (output_mode) {
         .Obj, .Lib => null,
         .Exe => .scrt1_o,

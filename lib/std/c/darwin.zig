@@ -54,7 +54,7 @@ pub const EXC = enum(exception_type_t) {
 
     _,
 
-    pub const TYPES_COUNT = @typeInfo(EXC).@"enum".fields.len;
+    pub const TYPES_COUNT = @typeInfo(EXC).@"enum".field_names.len;
     pub const SOFT_SIGNAL = 0x10003;
 
     pub const MASK = packed struct(u32) {
@@ -379,6 +379,18 @@ pub const COPYFILE = packed struct(u32) {
 pub const copyfile_state_t = *opaque {};
 pub extern "c" fn fcopyfile(from: fd_t, to: fd_t, state: ?copyfile_state_t, flags: COPYFILE) c_int;
 pub extern "c" fn __getdirentries64(fd: c_int, buf_ptr: [*]u8, buf_len: usize, basep: *i64) isize;
+
+pub const RENAME = packed struct(u32) {
+    SECLUDE: bool = false,
+    SWAP: bool = false,
+    EXCL: bool = false,
+    RESERVED1: bool = false,
+    NOFOLLOW_ANY: bool = false,
+    RESOLVE_BENEATH: bool = false,
+    _: u26 = 0,
+};
+
+pub extern "c" fn renameatx_np(fromfd: c_int, from: [*:0]const u8, tofd: c_int, to: [*:0]const u8, flags: RENAME) c_int;
 
 pub extern "c" fn mach_absolute_time() u64;
 pub extern "c" fn mach_continuous_time() u64;
@@ -1184,6 +1196,10 @@ pub const CPUFAMILY = enum(u32) {
     ARM_BRAVA = 0x17d5b93a,
     ARM_TAHITI = 0x75d4acb9,
     ARM_TUPAI = 0x204526d0,
+    ARM_HIDRA = 0x1d5a87e8,
+    ARM_SOTRA = 0xf76c5b1a,
+    ARM_THERA = 0xab345f09,
+    ARM_TILOS = 0x01d7a72b,
     _,
 };
 
@@ -1490,6 +1506,8 @@ pub const E = enum(u16) {
     OWNERDEAD = 105,
     /// Interface output queue is full
     QFULL = 106,
+    /// Capabilities insufficient
+    NOTCAPABLE = 107,
     _,
 };
 

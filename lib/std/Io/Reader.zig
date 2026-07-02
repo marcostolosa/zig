@@ -200,8 +200,7 @@ pub fn defaultDiscard(r: *Reader, limit: Limit) Error!usize {
     var d: Writer.Discarding = .init(r.buffer);
     var n = r.stream(&d.writer, limit) catch |err| switch (err) {
         error.WriteFailed => unreachable,
-        error.ReadFailed => return error.ReadFailed,
-        error.EndOfStream => return error.EndOfStream,
+        error.ReadFailed, error.EndOfStream => |e| return e,
     };
     // If `stream` wrote to `r.buffer` without going through the writer,
     // we need to discard as much of the buffered data as possible.
@@ -227,10 +226,16 @@ pub fn streamExact64(r: *Reader, w: *Writer, n: u64) StreamError!void {
 
 /// "Pump" exactly `n` bytes from the reader to the writer.
 ///
-/// When draining `w`, ensures that at least `preserve_len` bytes remain
-/// buffered.
+/// On success, at least `preserve_len` bytes will remain buffered if there are
+/// enough buffered bytes to do so.
+/// The amount buffered by the writer after the call will only be less than
+/// `preserve_len` if `w.end + n` is less than `preserve_len` before the call.
+/// The intentionally preserved bytes will include up to `preserve_len -| n` bytes from
+/// the previously buffered bytes, plus `@min(n, preserve_len)` of the newly
+/// "pumped" bytes.
 ///
-/// Asserts `Writer.buffer` capacity exceeds `preserve_len`.
+/// Asserts `Writer.buffer` capacity is at least `preserve_len`.
+/// `n` can be greater than the `Writer.buffer` capacity.
 pub fn streamExactPreserve(r: *Reader, w: *Writer, preserve_len: usize, n: usize) StreamError!void {
     if (w.end + n <= w.buffer.len) {
         @branchHint(.likely);
@@ -243,11 +248,10 @@ pub fn streamExactPreserve(r: *Reader, w: *Writer, preserve_len: usize, n: usize
         remaining -= try r.stream(w, .limited(remaining - preserve_len));
         if (w.end + remaining <= w.buffer.len) return streamExact(r, w, remaining);
     }
-    // All the next bytes received must be preserved.
-    if (preserve_len < w.end) {
-        @memmove(w.buffer[0..preserve_len], w.buffer[w.end - preserve_len ..][0..preserve_len]);
-        w.end = preserve_len;
-    }
+    // Offset the amount preserved by the amount we have left to stream
+    // since the remaining bytes are always going to be part of that
+    // preservation.
+    try w.rebase(preserve_len -| remaining, remaining);
     return streamExact(r, w, remaining);
 }
 
@@ -379,7 +383,7 @@ pub fn appendRemainingAligned(
         const n = stream(r, &a.writer, remaining) catch |err| switch (err) {
             error.EndOfStream => return,
             error.WriteFailed => return error.OutOfMemory,
-            error.ReadFailed => return error.ReadFailed,
+            error.ReadFailed => |e| return e,
         };
         remaining = remaining.subtract(n).?;
     }
@@ -400,7 +404,7 @@ pub fn appendRemainingUnlimited(r: *Reader, gpa: Allocator, list: *ArrayList(u8)
     }
     _ = streamRemaining(r, &a.writer) catch |err| switch (err) {
         error.WriteFailed => return error.OutOfMemory,
-        error.ReadFailed => return error.ReadFailed,
+        error.ReadFailed => |e| return e,
     };
 }
 
@@ -428,7 +432,7 @@ pub fn readVec(r: *Reader, data: [][]u8) Error!usize {
         defer data[i] = buf;
         return n + (r.vtable.readVec(r, data[i..]) catch |err| switch (err) {
             error.EndOfStream => if (n == 0) return error.EndOfStream else 0,
-            error.ReadFailed => return error.ReadFailed,
+            error.ReadFailed => |e| return e,
         });
     }
     const n = seek - r.seek;
@@ -639,7 +643,7 @@ pub fn discardShort(r: *Reader, n: usize) ShortError!usize {
     while (true) {
         const discard_len = r.vtable.discard(r, .limited(remaining)) catch |err| switch (err) {
             error.EndOfStream => return n - remaining,
-            error.ReadFailed => return error.ReadFailed,
+            error.ReadFailed => |e| return e,
         };
         remaining -= discard_len;
         if (remaining == 0) return n;
@@ -687,7 +691,7 @@ pub fn readSliceShort(r: *Reader, buffer: []u8) ShortError!usize {
         data[0] = buffer[i..];
         i += readVec(r, &data) catch |err| switch (err) {
             error.EndOfStream => return i,
-            error.ReadFailed => return error.ReadFailed,
+            error.ReadFailed => |e| return e,
         };
         if (buffer.len - i == 0) return buffer.len;
     }
@@ -1009,7 +1013,7 @@ pub fn streamDelimiterLimit(
     var remaining = @intFromEnum(limit);
     while (remaining != 0) {
         const available = Limit.limited(remaining).slice(r.peekGreedy(1) catch |err| switch (err) {
-            error.ReadFailed => return error.ReadFailed,
+            error.ReadFailed => |e| return e,
             error.EndOfStream => return @intFromEnum(limit) - remaining,
         });
         if (std.mem.findScalar(u8, available, delimiter)) |delimiter_index| {
@@ -1080,7 +1084,7 @@ pub fn discardDelimiterLimit(r: *Reader, delimiter: u8, limit: Limit) DiscardDel
     var remaining = @intFromEnum(limit);
     while (remaining != 0) {
         const available = Limit.limited(remaining).slice(r.peekGreedy(1) catch |err| switch (err) {
-            error.ReadFailed => return error.ReadFailed,
+            error.ReadFailed => |e| return e,
             error.EndOfStream => return @intFromEnum(limit) - remaining,
         });
         if (std.mem.findScalar(u8, available, delimiter)) |delimiter_index| {
@@ -1278,7 +1282,7 @@ pub fn takeEnum(r: *Reader, comptime Enum: type, endian: std.builtin.Endian) Tak
 /// Asserts the buffer was initialized with a capacity at least `@sizeOf(Enum)`.
 pub fn takeEnumNonexhaustive(r: *Reader, comptime Enum: type, endian: std.builtin.Endian) Error!Enum {
     const info = @typeInfo(Enum).@"enum";
-    comptime assert(!info.is_exhaustive);
+    comptime assert(info.mode != .exhaustive);
     comptime assert(@bitSizeOf(info.tag_type) == @sizeOf(info.tag_type) * 8);
     return takeEnum(r, Enum, endian) catch |err| switch (err) {
         error.InvalidEnumTag => unreachable,
@@ -2098,7 +2102,6 @@ test "deserialize signed LEB128" {
     try testing.expectEqual(std.math.minInt(i128), testLeb128(i128, "\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x7E"));
 
     // Specific cases
-    try testing.expectEqual(0, testLeb128(i0, "\x00"));
     try testing.expectEqual(0, testLeb128(i2, "\x00"));
     try testing.expectEqual(0, testLeb128(i8, "\x00"));
 
@@ -2135,8 +2138,6 @@ test "deserialize signed LEB128" {
     try testing.expectError(error.EndOfStream, testLeb128(i128, &end_of_stream));
 
     // Overflow
-    try testing.expectError(error.Overflow, testLeb128(i0, "\x01"));
-    try testing.expectError(error.Overflow, testLeb128(i0, "\x7F"));
     try testing.expectError(error.Overflow, testLeb128(i8, "\x80\x01"));
     try testing.expectError(error.Overflow, testLeb128(i8, "\xFF\x7E"));
     try testing.expectError(error.Overflow, testLeb128(i8, "\x80\x80\x40"));
@@ -2146,7 +2147,6 @@ test "deserialize signed LEB128" {
     try testing.expectError(error.Overflow, testLeb128(i64, "\x80\x80\x80\x80\x80\x80\x80\x80\x80\x01"));
     try testing.expectError(error.Overflow, testLeb128(i64, "\x80\x80\x80\x80\x80\x80\x80\x80\x80\x40"));
 
-    try testing.expectError(error.Overflow, testLeb128(i0, &overflow));
     try testing.expectError(error.Overflow, testLeb128(i7, &overflow));
     try testing.expectError(error.Overflow, testLeb128(i8, &overflow));
     try testing.expectError(error.Overflow, testLeb128(i14, &overflow));
@@ -2160,7 +2160,6 @@ test "deserialize signed LEB128" {
     try testing.expectEqual(0x80, testLeb128(i64, "\x80\x81\x00"));
     try testing.expectEqual(0x80, testLeb128(i64, "\x80\x81\x80\x00"));
 
-    try testing.expectEqual(0, testLeb128(i0, &long_zero));
     try testing.expectEqual(0, testLeb128(i7, &long_zero));
     try testing.expectEqual(0, testLeb128(i8, &long_zero));
     try testing.expectEqual(0, testLeb128(i14, &long_zero));
@@ -2304,6 +2303,50 @@ fn testLeb128(comptime T: type, encoded: []const u8) !T {
     const result = reader.takeLeb128(T);
     try testing.expectEqual(reader.seek, reader.end);
     return result;
+}
+
+test streamExactPreserve {
+    try testStreamExactPreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 5, .stream_len = 5 });
+    try testStreamExactPreserve(.{ .buf_len = 10, .fill_len = 9, .preserve = 5, .stream_len = 2 });
+    try testStreamExactPreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 5, .stream_len = 6 });
+    try testStreamExactPreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .stream_len = 6 });
+    try testStreamExactPreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 5, .stream_len = 10 });
+    try testStreamExactPreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .stream_len = 10 });
+    try testStreamExactPreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .stream_len = 11 });
+    try testStreamExactPreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .stream_len = 80 });
+    try testStreamExactPreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .stream_len = 85 });
+    try testStreamExactPreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .stream_len = 6 });
+    try testStreamExactPreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .stream_len = 11 });
+    try testStreamExactPreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .stream_len = 80 });
+    try testStreamExactPreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .stream_len = 85 });
+}
+
+fn testStreamExactPreserve(options: struct { buf_len: u4, fill_len: u4, preserve: u4, stream_len: u8 }) !void {
+    assert(options.fill_len <= options.buf_len);
+    assert(options.preserve <= options.buf_len);
+
+    var input: [256]u8 = undefined;
+    for (&input, 0..) |*val, i| {
+        val.* = @as(u8, @intCast(i % 26)) + 'a';
+    }
+    const expected_out = input[0 .. options.fill_len + options.stream_len];
+    const expected_preserved = expected_out[expected_out.len -| options.preserve..];
+
+    var r: Reader = .fixed(&input);
+    var out_buf: [256]u8 = undefined;
+    var fw: Writer = .fixed(&out_buf);
+    var indirect_buffer: [16]u8 = undefined;
+    var twi: std.testing.WriterIndirect = .init(&fw, indirect_buffer[0..options.buf_len]);
+    const w = &twi.interface;
+
+    try r.streamExact(w, options.fill_len);
+    try r.streamExactPreserve(w, options.preserve, options.stream_len);
+
+    try std.testing.expectEqualStrings(expected_preserved, w.buffer[w.end -| options.preserve..w.end]);
+
+    try w.flush();
+
+    try std.testing.expectEqualStrings(expected_out, fw.buffered());
 }
 
 test {

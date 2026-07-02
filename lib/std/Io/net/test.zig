@@ -92,6 +92,11 @@ test "invalid but parseable IPv6 scope ids" {
     try testing.expectError(error.InterfaceNotFound, net.IpAddress.resolveIp6(io, "ff01::fb%123s45678901234", 0));
 }
 
+test "oversized IPv6 scope id" {
+    const long_scope: [256]u8 = @splat('a');
+    try testing.expectError(error.ParseFailed, net.IpAddress.resolveIp6(testing.io, "ff01::fb%" ++ &long_scope, 0));
+}
+
 test "parse and render IPv4 addresses" {
     try testIp4ParseAndRender("0.0.0.0");
     try testIp4ParseAndRender("255.255.255.255");
@@ -136,21 +141,22 @@ test "resolve DNS" {
         };
 
         var addresses_found: usize = 0;
+        var found_canonical_name = false;
 
         while (results.getOne(io)) |result| switch (result) {
             .address => |address| {
                 if (address.eql(&localhost_v4) or address.eql(&localhost_v6))
                     addresses_found += 1;
             },
-            .canonical_name => |canonical_name| try testing.expectEqualStrings(
-                if (canonical_name.bytes[canonical_name.bytes.len - 1] == '.') "localhost." else "localhost",
-                canonical_name.bytes,
-            ),
+            // We can't test the actual string here because it might be "localhost.localdomain"
+            // or even the computer host name (as on Windows).
+            .canonical_name => found_canonical_name = true,
         } else |err| switch (err) {
             error.Closed => {},
             error.Canceled => |e| return e,
         }
 
+        try testing.expect(found_canonical_name);
         try testing.expect(addresses_found != 0);
     }
 
@@ -350,6 +356,8 @@ test "decompress compressed DNS name" {
 }
 
 test "cancel accept" {
+    if (builtin.cpu.arch.isSPARC() and builtin.os.tag == .linux) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/35347
+
     const io = testing.io;
     const localhost: net.IpAddress = .{ .ip4 = .loopback(0) };
 

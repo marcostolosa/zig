@@ -5,17 +5,17 @@ const builtin = @import("builtin");
 
 fn ShardedTable(comptime Key: type, comptime mask_bit_count: comptime_int, comptime V: type) type {
     const key_bits = @typeInfo(Key).int.bits;
-    std.debug.assert(Key == std.meta.Int(.unsigned, key_bits));
+    std.debug.assert(Key == @Int(.unsigned, key_bits));
     std.debug.assert(key_bits >= mask_bit_count);
     const shard_key_bits = mask_bit_count;
-    const ShardKey = std.meta.Int(.unsigned, mask_bit_count);
+    const ShardKey = @Int(.unsigned, mask_bit_count);
     const shift_amount = key_bits - shard_key_bits;
     return struct {
         const Self = @This();
         shards: [1 << shard_key_bits]?*Node,
 
         pub fn create() Self {
-            return Self{ .shards = [_]?*Node{null} ** (1 << shard_key_bits) };
+            return .{ .shards = @splat(null) };
         }
 
         fn getShardKey(key: Key) ShardKey {

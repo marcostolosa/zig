@@ -39,10 +39,10 @@ fn logOverride(
     fw.interface.flush() catch panic("failed to write to fuzzer log: {t}", .{fw.err.?});
 }
 
-var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+var safe_allocator: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
 const gpa = switch (builtin.mode) {
-    .Debug => debug_allocator.allocator(),
-    .ReleaseFast, .ReleaseSmall, .ReleaseSafe => std.heap.smp_allocator,
+    .Debug, .ReleaseSafe => safe_allocator.allocator(),
+    .ReleaseFast, .ReleaseSmall => std.heap.smp_allocator,
 };
 
 // Seperate from `exec` to allow initialization before `exec` is.
@@ -171,6 +171,8 @@ const Executable = struct {
 
         const cache_dir = Io.Dir.cwd().createDirPathOpen(io, cache_dir_path, .{}) catch |e|
             panic("failed to open directory '{s}': {t}", .{ cache_dir_path, e });
+        cache_dir.createDirPath(io, "tmp") catch |e|
+            panic("failed to create directory 'tmp': {t}", .{e});
         log_f = cache_dir.createFile(io, "tmp/libfuzzer.log", .{ .truncate = false }) catch |e|
             panic("failed to create file 'tmp/libfuzzer.log': {t}", .{e});
         self.cache_f = cache_dir.createDirPathOpen(io, "f", .{}) catch |e|
@@ -338,7 +340,7 @@ const Fuzzer = struct {
             quality_buf: []Input.Best,
             input_buf: []Input.Best.Map,
         },
-        seen_uids: std.ArrayHashMapUnmanaged(Uid, struct {
+        seen_uids: std.array_hash_map.Custom(Uid, struct {
             slices: union {
                 ints: std.ArrayList([]u64),
                 bytes: std.ArrayList(Input.Data.Bytes),
@@ -503,7 +505,7 @@ const Fuzzer = struct {
                 }
             };
 
-            pub const UidSlices = std.ArrayHashMapUnmanaged(Uid, struct {
+            pub const UidSlices = std.array_hash_map.Custom(Uid, struct {
                 base: u32,
                 len: u32,
             }, Uid.hashmap_ctx, false);
@@ -582,7 +584,7 @@ const Fuzzer = struct {
         };
 
         pub const Builder = struct {
-            uid_slices: std.ArrayHashMapUnmanaged(Uid, union {
+            uid_slices: std.array_hash_map.Custom(Uid, union {
                 ints: std.MultiArrayList(struct {
                     value: u64,
                     order_i: u32,

@@ -73,23 +73,19 @@ pub fn writeInst(
 }
 
 pub fn dump(air: Air, pt: Zcu.PerThread, liveness: ?Air.Liveness) void {
-    const comp = pt.zcu.comp;
-    const io = comp.io;
-    var buffer: [512]u8 = undefined;
-    const stderr = try io.lockStderr(&buffer, null);
-    defer io.unlockStderr();
+    var buffer: [4096]u8 = undefined;
+    const stderr = std.debug.lockStderr(&buffer);
+    defer std.debug.unlockStderr();
     const w = &stderr.file_writer.interface;
-    air.write(w, pt, liveness);
+    air.write(w, pt, liveness) catch return;
 }
 
 pub fn dumpInst(air: Air, inst: Air.Inst.Index, pt: Zcu.PerThread, liveness: ?Air.Liveness) void {
-    const comp = pt.zcu.comp;
-    const io = comp.io;
-    var buffer: [512]u8 = undefined;
-    const stderr = try io.lockStderr(&buffer, null);
-    defer io.unlockStderr();
+    var buffer: [4096]u8 = undefined;
+    const stderr = std.debug.lockStderr(&buffer);
+    defer std.debug.unlockStderr();
     const w = &stderr.file_writer.interface;
-    air.writeInst(w, inst, pt, liveness);
+    air.writeInst(w, inst, pt, liveness) catch return;
 }
 
 const Writer = struct {
@@ -148,8 +144,6 @@ const Writer = struct {
             .cmp_gte,
             .cmp_gt,
             .cmp_neq,
-            .bool_and,
-            .bool_or,
             .store,
             .store_safe,
             .array_elem_val,
@@ -234,12 +228,19 @@ const Writer = struct {
             .arg => try w.writeArg(s, inst),
 
             .not,
-            .bitcast,
+            .bit_cast,
+            .ptr_cast,
+            .ptr_from_int,
+            .int_from_ptr,
+            .error_cast,
+            .error_from_int,
+            .int_from_error,
+            .union_from_enum,
             .load,
             .fptrunc,
             .fpext,
-            .intcast,
-            .intcast_safe,
+            .int_cast,
+            .int_cast_safe,
             .trunc,
             .optional_payload,
             .optional_payload_ptr,
@@ -307,7 +308,8 @@ const Writer = struct {
             => try w.writeDbgVar(s, inst),
 
             .struct_field_ptr => try w.writeStructField(s, inst),
-            .struct_field_val => try w.writeStructField(s, inst),
+            .agg_field_val => try w.writeStructField(s, inst),
+            .spirv_runtime_array_len => try w.writeStructField(s, inst),
             .inferred_alloc => @panic("TODO"),
             .inferred_alloc_comptime => @panic("TODO"),
             .assembly => try w.writeAssembly(s, inst),
@@ -518,7 +520,6 @@ const Writer = struct {
         try w.writeOperand(s, inst, 1, bin.lhs);
         try s.writeAll(", ");
         try w.writeOperand(s, inst, 2, bin.rhs);
-        try s.writeAll(", ");
     }
 
     fn writeLegalizeCompilerRtCall(w: *Writer, s: *std.Io.Writer, inst: Air.Inst.Index) Error!void {
@@ -627,7 +628,7 @@ const Writer = struct {
         w: *Writer,
         s: *std.Io.Writer,
         inst: Air.Inst.Index,
-        order: std.builtin.AtomicOrder,
+        order: std.lang.AtomicOrder,
     ) Error!void {
         const bin_op = w.air.instructions.items(.data)[@intFromEnum(inst)].bin_op;
         try w.writeOperand(s, inst, 0, bin_op.lhs);

@@ -106,7 +106,7 @@ global_scope: *Scope.Root,
 mangle_count: u32 = 0,
 
 /// Table of declarations for enum, struct, union and typedef types.
-type_decls: std.AutoArrayHashMapUnmanaged(Node.Index, []const u8) = .empty,
+type_decls: std.array_hash_map.Auto(Node.Index, []const u8) = .empty,
 /// Table of record decls that have been demoted to opaques.
 opaque_demotes: std.HashMapUnmanaged(QualType, void, QualTypeHashContext, std.hash_map.default_max_load_percentage) = .empty,
 /// Table of unnamed enums and records that are child types of typedefs.
@@ -123,7 +123,7 @@ anonymous_record_field_names: std.HashMapUnmanaged(
 /// a list of names that we found by visiting all the top level decls without
 /// translating them. The other maps are updated as we translate; this one is updated
 /// up front in a pre-processing step.
-global_names: std.StringArrayHashMapUnmanaged(void) = .empty,
+global_names: std.array_hash_map.String(void) = .empty,
 
 /// This is similar to `global_names`, but contains names which we would
 /// *like* to use, but do not strictly *have* to if they are unavailable.
@@ -132,11 +132,11 @@ global_names: std.StringArrayHashMapUnmanaged(void) = .empty,
 /// may be mangled.
 /// This is distinct from `global_names` so we can detect at a type
 /// declaration whether or not the name is available.
-weak_global_names: std.StringArrayHashMapUnmanaged(void) = .empty,
+weak_global_names: std.array_hash_map.String(void) = .empty,
 
 /// Set of identifiers known to refer to typedef declarations.
 /// Used when parsing macros.
-typedefs: std.StringArrayHashMapUnmanaged(void) = .empty,
+typedefs: std.array_hash_map.String(void) = .empty,
 
 /// The lhs lval of a compound assignment expression.
 compound_assign_dummy: ?ZigNode = null,
@@ -475,8 +475,12 @@ pub const builtin_typedef_map = std.StaticStringMap([]const u8).initComptime(.{
     .{ "int8_t", "i8" },
     .{ "uint16_t", "u16" },
     .{ "int16_t", "i16" },
+    .{ "uint24_t", "u24" },
+    .{ "int24_t", "i24" },
     .{ "uint32_t", "u32" },
     .{ "int32_t", "i32" },
+    .{ "uint48_t", "u48" },
+    .{ "int48_t", "i48" },
     .{ "uint64_t", "u64" },
     .{ "int64_t", "i64" },
     .{ "intptr_t", "isize" },
@@ -1293,7 +1297,7 @@ fn transType(t: *Translator, scope: *Scope, qt: QualType, source_loc: TokenIndex
                     error.SelfReferential => {},
                     error.UnsupportedTranslation => {},
                     error.UnsupportedType => {},
-                    error.OutOfMemory => return error.OutOfMemory,
+                    error.OutOfMemory => |e| return e,
                 }
             }
             continue :loop typeof_ty.base.type(t.comp);
@@ -4095,7 +4099,7 @@ fn createIntNode(t: *Translator, int: aro.Value) !ZigNode {
     big.positive = true;
 
     const str = big.toStringAlloc(t.arena, 10, .lower) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
+        error.OutOfMemory => |e| return e,
     };
     const res = try ZigTag.integer_literal.create(t.arena, str);
     if (is_negative) return ZigTag.negate.create(t.arena, res);

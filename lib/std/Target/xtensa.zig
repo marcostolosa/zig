@@ -15,6 +15,7 @@ pub const Feature = enum {
     div32,
     exception,
     extendedl32r,
+    forced_atomics,
     fp,
     highpriinterrupts,
     highpriinterrupts_level3,
@@ -34,6 +35,7 @@ pub const Feature = enum {
     prid,
     regprotect,
     rvector,
+    s32c1i,
     sext,
     threadptr,
     timers1,
@@ -48,7 +50,7 @@ pub const featureSetHasAny = CpuFeature.FeatureSetFns(Feature).featureSetHasAny;
 pub const featureSetHasAll = CpuFeature.FeatureSetFns(Feature).featureSetHasAll;
 
 pub const all_features = blk: {
-    const len = @typeInfo(Feature).@"enum".fields.len;
+    const len = @typeInfo(Feature).@"enum".field_names.len;
     std.debug.assert(len <= CpuFeature.Set.needed_bit_count);
     var result: [len]CpuFeature = undefined;
     result[@intFromEnum(Feature.bool)] = .{
@@ -99,6 +101,11 @@ pub const all_features = blk: {
     result[@intFromEnum(Feature.extendedl32r)] = .{
         .llvm_name = "extendedl32r",
         .description = "Enable Xtensa Extended L32R option",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
+    result[@intFromEnum(Feature.forced_atomics)] = .{
+        .llvm_name = "forced-atomics",
+        .description = "Assume that lock-free native-width atomics are available",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@intFromEnum(Feature.fp)] = .{
@@ -206,6 +213,11 @@ pub const all_features = blk: {
         .description = "Enable Xtensa Relocatable Vector option",
         .dependencies = featureSet(&[_]Feature{}),
     };
+    result[@intFromEnum(Feature.s32c1i)] = .{
+        .llvm_name = "s32c1i",
+        .description = "Enable Xtensa S32C1I option",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
     result[@intFromEnum(Feature.sext)] = .{
         .llvm_name = "sext",
         .description = "Enable Xtensa Sign Extend option",
@@ -239,12 +251,65 @@ pub const all_features = blk: {
     const ti = @typeInfo(Feature);
     for (&result, 0..) |*elem, i| {
         elem.index = i;
-        elem.name = ti.@"enum".fields[i].name;
+        elem.name = ti.@"enum".field_names[i];
     }
     break :blk result;
 };
 
 pub const cpu = struct {
+    pub const esp32: CpuModel = .{
+        .name = "esp32",
+        .llvm_name = "esp32",
+        .features = featureSet(&[_]Feature{
+            .bool,
+            .clamps,
+            .coprocessor,
+            .dcache,
+            .debug,
+            .density,
+            .dfpaccel,
+            .div32,
+            .exception,
+            .fp,
+            .highpriinterrupts_level7,
+            .interrupt,
+            .loop,
+            .mac16,
+            .minmax,
+            .miscsr,
+            .mul16,
+            .mul32,
+            .mul32high,
+            .nsa,
+            .prid,
+            .regprotect,
+            .rvector,
+            .s32c1i,
+            .sext,
+            .threadptr,
+            .timers3,
+            .windowed,
+        }),
+    };
+    pub const esp8266: CpuModel = .{
+        .name = "esp8266",
+        .llvm_name = "esp8266",
+        .features = featureSet(&[_]Feature{
+            .debug,
+            .density,
+            .exception,
+            .extendedl32r,
+            .highpriinterrupts_level3,
+            .interrupt,
+            .mul16,
+            .mul32,
+            .nsa,
+            .prid,
+            .regprotect,
+            .rvector,
+            .timers1,
+        }),
+    };
     pub const generic: CpuModel = .{
         .name = "generic",
         .llvm_name = "generic",

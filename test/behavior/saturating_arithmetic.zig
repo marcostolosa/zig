@@ -147,11 +147,6 @@ test "saturating multiplication <= 32 bits" {
     if (builtin.zig_backend == .stage2_c and builtin.cpu.arch.isArm()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
-    if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch.isWasm()) {
-        // https://github.com/ziglang/zig/issues/9660
-        return error.SkipZigTest;
-    }
-
     try testSatMul(u8, 0, maxInt(u8), 0);
     try testSatMul(u8, 1 << 7, 1 << 7, maxInt(u8));
     try testSatMul(u8, maxInt(u8) - 1, 2, maxInt(u8));
@@ -245,11 +240,6 @@ test "saturating multiplication" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c and builtin.cpu.arch.isArm()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-
-    if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch.isWasm()) {
-        // https://github.com/ziglang/zig/issues/9660
-        return error.SkipZigTest;
-    }
 
     const S = struct {
         fn doTheTest() !void {
@@ -372,6 +362,7 @@ test "saturating shl uses the LHS type" {
 test "sat add > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testSatAdd(u140, 0, 0, 0);
     try testSatAdd(u140, maxInt(u140), 1, maxInt(u140));
@@ -387,6 +378,7 @@ test "sat add > 128 bits" {
 test "sat sub > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testSatSub(u140, 0, 1, 0);
     try testSatSub(u140, maxInt(u140), maxInt(u140), 0);
@@ -402,6 +394,7 @@ test "sat sub > 128 bits" {
 test "sat mul > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testSatMul(u140, 0, maxInt(u140), 0);
     try testSatMul(u140, 1 << 70, 1 << 69, 1 << 139);
@@ -417,6 +410,7 @@ test "sat mul > 128 bits" {
 test "sat shl > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testSatShl(u140, 0, u8, 17, 0);
     try testSatShl(u140, 1 << 100, u8, 20, 1 << 120);

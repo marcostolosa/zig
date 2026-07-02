@@ -235,7 +235,7 @@ pub const ModuleBlock = struct {
         is_const: AddrSpaceAndIsConst,
         initid: u32,
         linkage: Builder.Linkage,
-        alignment: std.meta.Int(.unsigned, @bitSizeOf(Builder.Alignment)),
+        alignment: @Int(.unsigned, @bitSizeOf(Builder.Alignment)),
         section: usize,
         visibility: Builder.Visibility,
         thread_local: Builder.ThreadLocal,
@@ -275,7 +275,7 @@ pub const ModuleBlock = struct {
         is_proto: bool,
         linkage: Builder.Linkage,
         paramattr: usize,
-        alignment: std.meta.Int(.unsigned, @bitSizeOf(Builder.Alignment)),
+        alignment: @Int(.unsigned, @bitSizeOf(Builder.Alignment)),
         section: usize,
         visibility: Builder.Visibility,
         unnamed_addr: Builder.UnnamedAddr,
@@ -696,6 +696,7 @@ pub const ModuleBlock = struct {
             ModuleBlock.FunctionBlock.Select,
             ModuleBlock.FunctionBlock.SelectFast,
             ModuleBlock.FunctionBlock.Cast,
+            ModuleBlock.FunctionBlock.TruncNoWrap,
             ModuleBlock.FunctionBlock.Alloca,
             ModuleBlock.FunctionBlock.GetElementPtr,
             ModuleBlock.FunctionBlock.ExtractValue,
@@ -1086,6 +1087,24 @@ pub const ModuleBlock = struct {
             opcode: CastOpcode,
         };
 
+        pub const TruncNoWrap = struct {
+            pub const Flags = packed struct(u2) {
+                no_unsigned_wrap: bool,
+                no_signed_wrap: bool,
+            };
+            pub const ops = [_]AbbrevOp{
+                .{ .literal = @intFromEnum(ModuleBlock.FunctionBlock.Code.INST_CAST) },
+                ValueAbbrev,
+                .{ .fixed_runtime = Builder.Type },
+                .{ .literal = @intFromEnum(Builder.CastOpcode.trunc) },
+                .{ .fixed = @bitSizeOf(Flags) },
+            };
+
+            val: u32,
+            type_index: Builder.Type,
+            flags: Flags,
+        };
+
         pub const Alloca = struct {
             pub const Flags = packed struct(u11) {
                 align_lower: u5,
@@ -1214,7 +1233,7 @@ pub const ModuleBlock = struct {
             };
             ptr: u32,
             ty: Builder.Type,
-            alignment: std.meta.Int(.unsigned, @bitSizeOf(Builder.Alignment)),
+            alignment: @Int(.unsigned, @bitSizeOf(Builder.Alignment)),
             is_volatile: bool,
         };
 
@@ -1230,7 +1249,7 @@ pub const ModuleBlock = struct {
             };
             ptr: u32,
             ty: Builder.Type,
-            alignment: std.meta.Int(.unsigned, @bitSizeOf(Builder.Alignment)),
+            alignment: @Int(.unsigned, @bitSizeOf(Builder.Alignment)),
             is_volatile: bool,
             success_ordering: Builder.AtomicOrdering,
             sync_scope: Builder.SyncScope,
@@ -1246,7 +1265,7 @@ pub const ModuleBlock = struct {
             };
             ptr: u32,
             val: u32,
-            alignment: std.meta.Int(.unsigned, @bitSizeOf(Builder.Alignment)),
+            alignment: @Int(.unsigned, @bitSizeOf(Builder.Alignment)),
             is_volatile: bool,
         };
 
@@ -1262,7 +1281,7 @@ pub const ModuleBlock = struct {
             };
             ptr: u32,
             val: u32,
-            alignment: std.meta.Int(.unsigned, @bitSizeOf(Builder.Alignment)),
+            alignment: @Int(.unsigned, @bitSizeOf(Builder.Alignment)),
             is_volatile: bool,
             success_ordering: Builder.AtomicOrdering,
             sync_scope: Builder.SyncScope,
@@ -1317,7 +1336,7 @@ pub const ModuleBlock = struct {
             is_volatile: bool,
             success_ordering: Builder.AtomicOrdering,
             sync_scope: Builder.SyncScope,
-            alignment: std.meta.Int(.unsigned, @bitSizeOf(Builder.Alignment)),
+            alignment: @Int(.unsigned, @bitSizeOf(Builder.Alignment)),
         };
 
         pub const CmpXchg = struct {
@@ -1341,7 +1360,7 @@ pub const ModuleBlock = struct {
             sync_scope: Builder.SyncScope,
             failure_ordering: Builder.AtomicOrdering,
             is_weak: bool,
-            alignment: std.meta.Int(.unsigned, @bitSizeOf(Builder.Alignment)),
+            alignment: @Int(.unsigned, @bitSizeOf(Builder.Alignment)),
         };
 
         pub const Fence = struct {

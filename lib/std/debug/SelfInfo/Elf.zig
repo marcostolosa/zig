@@ -92,31 +92,25 @@ pub fn getModuleSlide(si: *SelfInfo, io: Io, address: usize) Error!usize {
 }
 
 pub const can_unwind: bool = s: {
-    // The DWARF code can't deal with ILP32 ABIs yet: https://github.com/ziglang/zig/issues/25447
-    switch (builtin.target.abi) {
-        .gnuabin32,
-        .muslabin32,
-        .gnux32,
-        .muslx32,
-        => break :s false,
-        else => {},
-    }
-
     // Notably, we are yet to support unwinding on ARM. There, unwinding is not done through
     // `.eh_frame`, but instead with the `.ARM.exidx` section, which has a different format.
     const archs: []const std.Target.Cpu.Arch = switch (builtin.target.os.tag) {
         // Not supported yet: arm
         .haiku => &.{
             .aarch64,
-            .m68k,
             .riscv64,
             .x86,
             .x86_64,
         },
-        // Not supported yet: arm/armeb/thumb/thumbeb, xtensa/xtensaeb
+        .illumos => &.{
+            .x86,
+            .x86_64,
+        },
+        // Not supported yet: arm/armeb/thumb/thumbeb, hppa, hppa64, microblaze/microblazeel
         .linux => &.{
             .aarch64,
             .aarch64_be,
+            .alpha,
             .arc,
             .csky,
             .loongarch32,
@@ -146,29 +140,29 @@ pub const can_unwind: bool = s: {
         .freebsd => &.{
             .aarch64,
             .riscv64,
-            .x86_64,
-        },
-        // Not supported yet: arm/armeb, mips64/mips64el
-        .netbsd => &.{
-            .aarch64,
-            .aarch64_be,
-            .m68k,
-            .mips,
-            .mipsel,
             .x86,
             .x86_64,
         },
-        // Not supported yet: arm
-        .openbsd => &.{
+        // Not supported yet: arm/armeb, hppa, mips64/mips64el, sh/sheb
+        .netbsd => &.{
             .aarch64,
-            .mips64,
-            .mips64el,
+            .aarch64_be,
+            .alpha,
+            .m68k,
+            .mips,
+            .mipsel,
+            .riscv32,
             .riscv64,
             .x86,
             .x86_64,
         },
-
-        .illumos => &.{
+        // Not supported yet: arm, hppa, sh
+        .openbsd => &.{
+            .aarch64,
+            .m88k,
+            .mips64,
+            .mips64el,
+            .riscv64,
             .x86,
             .x86_64,
         },

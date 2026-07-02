@@ -281,7 +281,9 @@ pub const IpAddress = union(enum) {
         /// The socket is restricted to sending and receiving IPv6 packets only.
         /// In this case, an IPv4 and an IPv6 application can bind to a single port
         /// at the same time.
-        ip6_only: bool = false,
+        ///
+        /// The default is determined by system configuration.
+        ip6_only: ?bool = null,
         /// Allow the socket to send datagrams to broadcast addresses.
         /// When not enabled any attempt to send datagrams to a broadcast address
         /// will fail with `error.AccessDenied`
@@ -574,7 +576,7 @@ pub const Ip6Address = struct {
                         const name = text[text_i..];
                         if (name.len == 0) return .incomplete;
                         interface_name_text = name;
-                        text_i = @intCast(text.len);
+                        text_i = std.math.cast(u8, text.len) orelse return .{ .overflow = text.len };
                         continue :state .end;
                     },
                     else => return .{ .invalid_byte = text_i },
@@ -590,11 +592,7 @@ pub const Ip6Address = struct {
                         if (remaining != 0) return .incomplete;
                     }
 
-                    // Workaround that can be removed when this proposal is
-                    // implemented https://github.com/ziglang/zig/issues/19755
-                    if ((comptime @import("builtin").cpu.arch.endian()) != .big) {
-                        for (&parts) |*part| part.* = @byteSwap(part.*);
-                    }
+                    for (&parts) |*part| part.* = @byteSwap(part.*);
 
                     return .{ .success = .{
                         .bytes = @bitCast(parts),
@@ -1245,6 +1243,15 @@ pub const Stream = struct {
 
     const max_iovecs_len = 8;
 
+    /// This is a low-level API that calls the `Io` interface function directly.
+    /// For a higher level API, see `reader`.
+    pub fn read(s: *const Stream, io: Io, data: [][]u8) Reader.Error!usize {
+        return (try io.operate(.{ .net_read = .{
+            .socket_handle = s.socket.handle,
+            .data = data,
+        } })).net_read;
+    }
+
     pub fn close(s: *const Stream, io: Io) void {
         io.vtable.netClose(io.userdata, (&s.socket.handle)[0..1]);
     }
@@ -1259,16 +1266,7 @@ pub const Stream = struct {
         stream: Stream,
         err: ?Error,
 
-        pub const Error = error{
-            SystemResources,
-            ConnectionResetByPeer,
-            Timeout,
-            SocketUnconnected,
-            /// The file descriptor does not hold the required rights to read
-            /// from it.
-            AccessDenied,
-            NetworkDown,
-        } || Io.Cancelable || Io.UnexpectedError;
+        pub const Error = Io.Operation.NetRead.Error || Io.Cancelable;
 
         pub fn init(stream: Stream, io: Io, buffer: []u8) Reader {
             return .{
@@ -1302,7 +1300,7 @@ pub const Stream = struct {
             const dest_n, const data_size = try io_r.writableVector(&iovecs_buffer, data);
             const dest = iovecs_buffer[0..dest_n];
             assert(dest[0].len > 0);
-            const n = io.vtable.netRead(io.userdata, r.stream.socket.handle, dest) catch |err| {
+            const n = r.stream.read(io, dest) catch |err| {
                 r.err = err;
                 return error.ReadFailed;
             };
@@ -1352,9 +1350,17 @@ pub const Stream = struct {
             SocketNotBound,
         } || Io.UnexpectedError || Io.Cancelable;
 
-        pub const WriteFileError = error{
-            NetworkDown,
-        } || Io.Cancelable || Io.UnexpectedError;
+        pub const WriteFileError = Error || error{
+            /// The `Io` implementation cannot offer a more efficient
+            /// file-to-socket path; the caller should fall back to read-based
+            /// copying. See `Io.Writer.sendFile`.
+            Unimplemented,
+            /// Reached the end of the file being read.
+            EndOfStream,
+            /// The source `File.Reader` failed; detailed diagnostics are found
+            /// on that struct.
+            ReadFailed,
+        };
 
         pub fn init(stream: Stream, io: Io, buffer: []u8) Writer {
             return .{
@@ -1383,10 +1389,25 @@ pub const Stream = struct {
         }
 
         fn sendFile(io_w: *Io.Writer, file_reader: *Io.File.Reader, limit: Io.Limit) Io.Writer.FileError!usize {
-            _ = io_w;
-            _ = file_reader;
-            _ = limit;
-            return error.Unimplemented; // TODO
+            const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
+            const io = w.io;
+            const header = io_w.buffered();
+            const handle = w.stream.socket.handle;
+            const n = io.vtable.netWriteFile(io.userdata, handle, header, file_reader, limit) catch |err| switch (err) {
+                error.Canceled => {
+                    w.err = error.Canceled;
+                    return error.WriteFailed;
+                },
+                error.EndOfStream,
+                error.Unimplemented,
+                error.ReadFailed,
+                => |e| return e,
+                else => |e| {
+                    w.write_file_err = e;
+                    return error.WriteFailed;
+                },
+            };
+            return io_w.consume(n);
         }
     };
 

@@ -13,6 +13,7 @@ const LazySrcLoc = Zcu.LazySrcLoc;
 const InternPool = @import("../InternPool.zig");
 const Alignment = InternPool.Alignment;
 const arith = @import("arith.zig");
+const trace = @import("../tracy.zig").trace;
 
 pub const LayoutResolveReason = enum {
     variable,
@@ -35,7 +36,7 @@ pub const LayoutResolveReason = enum {
     @"export",
     @"extern",
     asm_out_type,
-    builtin_type,
+    std_lang_type,
 
     /// Written after string: "while resolving type 'T' "
     /// e.g. "while resolving type 'MyStruct' for variable declared here"
@@ -62,7 +63,7 @@ pub const LayoutResolveReason = enum {
             .@"export"     => "for export here",
             .@"extern"     => "for extern declaration here",
             .asm_out_type  => "for inline assembly output type declared here",
-            .builtin_type  => "from 'std.builtin'",
+            .std_lang_type  => "from 'std.lang'",
             // zig fmt: on
         };
     }
@@ -90,6 +91,10 @@ fn ensureLayoutResolvedInner(sema: *Sema, ty: Type, orig_ty: Type, reason: *cons
         .error_set_type,
         .inferred_error_set_type,
         => {},
+
+        .spirv_type => if (ty.isSpirvRuntimeArray(zcu)) {
+            return ensureLayoutResolvedInner(sema, ty.childType(zcu), orig_ty, reason);
+        },
 
         .func_type => |func_type| {
             for (func_type.param_types.get(ip)) |param_ty| {
@@ -173,6 +178,11 @@ pub fn resolveStructLayout(sema: *Sema, struct_ty: Type) CompileError!void {
     const io = comp.io;
     const gpa = comp.gpa;
     const ip = &zcu.intern_pool;
+
+    const tracy = trace(@src());
+    defer tracy.end();
+    tracy.addText(struct_ty.containerTypeName(ip).toSlice(ip));
+    tracy.addTextFmt("ip_index={d}", .{struct_ty.toIntern()});
 
     assert(sema.owner.unwrap().type_layout == struct_ty.toIntern());
 
@@ -282,10 +292,12 @@ pub fn resolveStructLayout(sema: *Sema, struct_ty: Type) CompileError!void {
     }
 
     // Resolve the layout of all fields, and check their types are allowed.
+    const fields_len = struct_obj.field_types.len;
     for (struct_obj.field_types.get(ip), 0..) |field_ty_ip, field_index| {
         const field_ty: Type = .fromInterned(field_ty_ip);
         assert(!field_ty.isGenericPoison());
         const field_ty_src = block.src(.{ .container_field_type = @intCast(field_index) });
+        const field_name_src = block.src(.{ .container_field_name = @intCast(field_index) });
         try sema.ensureLayoutResolved(field_ty, field_ty_src, .field);
         if (field_ty.zigTypeTag(zcu) == .@"opaque") {
             return sema.failWithOwnedErrorMsg(&block, msg: {
@@ -296,6 +308,35 @@ pub fn resolveStructLayout(sema: *Sema, struct_ty: Type) CompileError!void {
                 break :msg msg;
             });
         }
+        if (field_ty.zigTypeTag(zcu) == .spirv) {
+            if (field_ty.isSpirvRuntimeArray(zcu)) {
+                if (struct_obj.layout != .@"extern") {
+                    return sema.failWithOwnedErrorMsg(&block, msg: {
+                        const msg = try sema.errMsg(struct_ty.srcLoc(zcu), "non-extern struct cannot contain fields of type '{f}'", .{field_ty.fmt(pt)});
+                        errdefer msg.destroy(gpa);
+                        try sema.errNote(field_name_src, msg, "while checking this field", .{});
+                        break :msg msg;
+                    });
+                }
+                if (field_index != fields_len - 1) {
+                    return sema.failWithOwnedErrorMsg(&block, msg: {
+                        const msg = try sema.errMsg(struct_ty.srcLoc(zcu), "struct field of type '{f}' must be the last field", .{field_ty.fmt(pt)});
+                        errdefer msg.destroy(gpa);
+                        try sema.errNote(field_name_src, msg, "while checking this field", .{});
+                        break :msg msg;
+                    });
+                }
+            } else {
+                return sema.failWithOwnedErrorMsg(&block, msg: {
+                    const msg = try sema.errMsg(field_ty_src, "cannot directly embed SPIR-V type '{f}' in struct", .{field_ty.fmt(pt)});
+                    errdefer msg.destroy(gpa);
+                    try sema.errNote(field_ty_src, msg, "opaque types have unknown size", .{});
+                    try sema.addDeclaredHereNote(msg, field_ty);
+                    break :msg msg;
+                });
+            }
+        }
+
         if (struct_obj.layout == .@"extern" and !field_ty.validateExtern(.struct_field, zcu)) {
             return sema.failWithOwnedErrorMsg(&block, msg: {
                 const msg = try sema.errMsg(field_ty_src, "extern structs cannot contain fields of type '{f}'", .{field_ty.fmt(pt)});
@@ -407,7 +448,10 @@ pub fn resolveStructLayout(sema: *Sema, struct_ty: Type) CompileError!void {
         const field_ty: Type = .fromInterned(struct_obj.field_types.get(ip)[field_idx]);
         const offset = resolved_field_aligns[field_idx].forward(cur_offset);
         struct_obj.field_offsets.get(ip)[field_idx] = @truncate(offset); // truncate because the overflow is handled below
-        cur_offset = offset + field_ty.abiSize(zcu);
+        // A SPIR-V `runtime_array` always trails the struct and
+        // contributes nothing to the struct's static size.
+        const field_size = if (field_ty.isSpirvRuntimeArray(zcu)) 0 else field_ty.abiSize(zcu);
+        cur_offset = offset + field_size;
     }
     const struct_size: u32 = switch (class) {
         .no_possible_value => 0,
@@ -548,6 +592,11 @@ pub fn resolveStructDefaults(sema: *Sema, struct_ty: Type) CompileError!void {
     const gpa = comp.gpa;
     const ip = &zcu.intern_pool;
 
+    const tracy = trace(@src());
+    defer tracy.end();
+    tracy.addText(struct_ty.containerTypeName(ip).toSlice(ip));
+    tracy.addTextFmt("ip_index={d}", .{struct_ty.toIntern()});
+
     assert(sema.owner.unwrap().struct_defaults == struct_ty.toIntern());
 
     // We always depend on the layout of `struct_ty`. However, we don't actually need to resolve it
@@ -654,6 +703,11 @@ pub fn resolveUnionLayout(sema: *Sema, union_ty: Type) CompileError!void {
     const io = comp.io;
     const gpa = comp.gpa;
     const ip = &zcu.intern_pool;
+
+    const tracy = trace(@src());
+    defer tracy.end();
+    tracy.addText(union_ty.containerTypeName(ip).toSlice(ip));
+    tracy.addTextFmt("ip_index={d}", .{union_ty.toIntern()});
 
     assert(sema.owner.unwrap().type_layout == union_ty.toIntern());
 
@@ -838,6 +892,14 @@ pub fn resolveUnionLayout(sema: *Sema, union_ty: Type) CompileError!void {
                 const msg = try sema.errMsg(field_ty_src, "cannot directly embed opaque type '{f}' in union", .{field_ty.fmt(pt)});
                 errdefer msg.destroy(gpa);
                 try sema.errNote(field_ty_src, msg, "opaque types have unknown size", .{});
+                try sema.addDeclaredHereNote(msg, field_ty);
+                break :msg msg;
+            });
+        }
+        if (field_ty.zigTypeTag(zcu) == .spirv) {
+            return sema.failWithOwnedErrorMsg(&block, msg: {
+                const msg = try sema.errMsg(field_ty_src, "SPIR-V type '{f}' have unknown size and therefore cannot be directly embedded in unions", .{field_ty.fmt(pt)});
+                errdefer msg.destroy(gpa);
                 try sema.addDeclaredHereNote(msg, field_ty);
                 break :msg msg;
             });
@@ -1133,6 +1195,11 @@ pub fn resolveEnumLayout(sema: *Sema, enum_ty: Type) CompileError!void {
     const io = comp.io;
     const gpa = comp.gpa;
     const ip = &zcu.intern_pool;
+
+    const tracy = trace(@src());
+    defer tracy.end();
+    tracy.addText(enum_ty.containerTypeName(ip).toSlice(ip));
+    tracy.addTextFmt("ip_index={d}", .{enum_ty.toIntern()});
 
     assert(sema.owner.unwrap().type_layout == enum_ty.toIntern());
 

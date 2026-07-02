@@ -1433,7 +1433,7 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
 
     const color: Color = Color.settingFromEnvironment(environ_map);
     var opt_path_or_url: ?[]const u8 = null;
-    var override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map);
+    var override_global_cache_dir: ?[]const u8 = null;
     var override_local_cache_dir: ?[]const u8 = EnvVar.ZIG_LOCAL_CACHE_DIR.get(environ_map);
     var override_pkg_dir: ?[]const u8 = EnvVar.ZIG_LOCAL_PKG_DIR.get(environ_map);
     var debug_hash: bool = false;
@@ -1516,11 +1516,18 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
             break :ls &local_storage;
         },
     };
+    const global_cache: Cache.Directory = d: {
+        if (override_global_cache_dir) |path| break :d .{
+            .path = path,
+            .handle = try Io.Dir.cwd().createDirPathOpen(io, path, .{}),
+        };
+        break :d graph.global_cache_root;
+    };
 
     var job_queue: Fetch.JobQueue = .{
         .io = io,
         .http_client = &http_client,
-        .global_cache = graph.global_cache_root,
+        .global_cache = global_cache,
         .local_storage = local_storage_ptr,
         .recursive = false,
         .read_only = false,

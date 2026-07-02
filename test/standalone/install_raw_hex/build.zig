@@ -9,7 +9,7 @@ pub fn build(b: *std.Build) void {
         .cpu_arch = .thumb,
         .cpu_model = .{ .explicit = &std.Target.arm.cpu.cortex_m4 },
         .os_tag = .freestanding,
-        .abi = .gnueabihf,
+        .abi = .gnueabi,
     });
 
     const optimize: std.builtin.OptimizeMode = .Debug;

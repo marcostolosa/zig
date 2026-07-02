@@ -36,7 +36,7 @@ fn cosh32(x: f32) f32 {
     // |x| < log(2)
     if (ux < 0x3F317217) {
         if (ux < 0x3F800000 - (12 << 23)) {
-            math.raiseOverflow();
+            math.raiseInexact();
             return 1.0;
         }
         const t = math.expm1(ax);

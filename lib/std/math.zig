@@ -177,24 +177,34 @@ test approxEqRel {
     }
 }
 
+// When it is possible to separate fenv from libc and import it fully under
+// std library without any issues. This check can be removed
+// const c_fenv_available = builtin.link_libc and (builtin.os.tag == .linux or builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.os.tag == .netbsd or builtin.os.tag == .openbsd or (builtin.os.tag == .freebsd and builtin.cpu.arch != .aarch64 and builtin.cpu.arch != .aarch64_be));
+
 pub fn raiseInvalid() void {
-    // Raise INVALID fpu exception
+    // if (comptime c_fenv_available) {
+    //     _ = std.c.feraiseexcept(@intCast(std.c.FE.INVALID));
+    // }
 }
-
 pub fn raiseUnderflow() void {
-    // Raise UNDERFLOW fpu exception
+    // if (comptime c_fenv_available) {
+    //     _ = std.c.feraiseexcept(@intCast(std.c.FE.UNDERFLOW));
+    // }
 }
-
 pub fn raiseOverflow() void {
-    // Raise OVERFLOW fpu exception
+    // if (comptime c_fenv_available) {
+    //     _ = std.c.feraiseexcept(@intCast(std.c.FE.OVERFLOW));
+    // }
 }
-
 pub fn raiseInexact() void {
-    // Raise INEXACT fpu exception
+    // if (comptime c_fenv_available) {
+    //     _ = std.c.feraiseexcept(@intCast(std.c.FE.INEXACT));
+    // }
 }
-
 pub fn raiseDivByZero() void {
-    // Raise INEXACT fpu exception
+    // if (comptime c_fenv_available) {
+    //     _ = std.c.feraiseexcept(@intCast(std.c.FE.DIV_BY_ZERO));
+    // }
 }
 
 pub const isNan = @import("math/isnan.zig").isNan;

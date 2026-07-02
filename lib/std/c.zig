@@ -11206,6 +11206,282 @@ pub extern "c" fn rintf(x: f32) f32;
 pub extern "c" fn rint(x: f64) f64;
 pub extern "c" fn rintl(x: c_longdouble) c_longdouble;
 
+// fenv
+
+pub const fexcept_t = switch (native_os) {
+    .linux, .wasi, .openbsd, .netbsd, .freebsd => switch (native_arch) {
+        .x86_64,
+        .x86,
+        .mips,
+        .mips64,
+        .mips64el,
+        .mipsel,
+        => u16,
+        else => u32,
+    },
+    .windows => u32,
+    else => @compileError("Unimplemented"),
+};
+
+pub const FE = switch (native_os) {
+    .linux, .wasi, .netbsd, .openbsd, .freebsd => switch (native_arch) {
+        .x86_64, .x86 => struct {
+            pub const INVALID: fexcept_t = 1;
+            pub const DENORM: fexcept_t = 2;
+            pub const DIV_BY_ZERO: fexcept_t = 4;
+            pub const OVERFLOW: fexcept_t = 8;
+            pub const UNDERFLOW: fexcept_t = 16;
+            pub const INEXACT: fexcept_t = 32;
+            pub const ALL_EXCEPT: fexcept_t = if (native_abi.isMusl()) 63 else 61;
+
+            pub const TO_NEAREST: fexcept_t = 0;
+            pub const DOWNWARD: fexcept_t = 0x400;
+            pub const UPWARD: fexcept_t = 0x800;
+            pub const TOWARD_ZERO: fexcept_t = 0xc00;
+        },
+        .s390x => struct {
+            pub const INVALID: fexcept_t = 0x00800000;
+            pub const DIV_BY_ZERO: fexcept_t = 0x00400000;
+            pub const OVERFLOW: fexcept_t = 0x00200000;
+            pub const UNDERFLOW: fexcept_t = 0x00100000;
+            pub const INEXACT: fexcept_t = 0x00080000;
+            pub const ALL_EXCEPT: fexcept_t = 0x00f80000;
+
+            pub const TO_NEAREST: fexcept_t = 0;
+            pub const DOWNWARD: fexcept_t = 3;
+            pub const UPWARD: fexcept_t = 2;
+            pub const TOWARD_ZERO: fexcept_t = 1;
+        },
+        .riscv32, .riscv32be, .riscv64, .riscv64be => struct {
+            pub const INVALID: fexcept_t = if (native_abi.float() == .hard) 16 else 0;
+            pub const DIV_BY_ZERO: fexcept_t = if (native_abi.float() == .hard) 8 else 0;
+            pub const OVERFLOW: fexcept_t = if (native_abi.float() == .hard) 4 else 0;
+            pub const UNDERFLOW: fexcept_t = if (native_abi.float() == .hard) 2 else 0;
+            pub const INEXACT: fexcept_t = if (native_abi.float() == .hard) 1 else 0;
+            pub const ALL_EXCEPT: fexcept_t = if (native_abi.float() == .hard) 31 else 0;
+
+            pub const TO_NEAREST: fexcept_t = 0;
+            pub const DOWNWARD: fexcept_t = if (native_abi.float() == .hard) 2 else 0;
+            pub const UPWARD: fexcept_t = if (native_abi.float() == .hard) 3 else 0;
+            pub const TOWARD_ZERO: fexcept_t = if (native_abi.float() == .hard) 1 else 0;
+        },
+        .powerpc64, .powerpc64le => struct {
+            pub const INVALID: fexcept_t = 0x20000000;
+            pub const DIV_BY_ZERO: fexcept_t = 0x04000000;
+            pub const OVERFLOW: fexcept_t = 0x10000000;
+            pub const UNDERFLOW: fexcept_t = 0x08000000;
+            pub const INEXACT: fexcept_t = 0x02000000;
+            pub const ALL_EXCEPT: fexcept_t = 0x3e080000;
+
+            pub const TO_NEAREST: fexcept_t = 0;
+            pub const DOWNWARD: fexcept_t = 3;
+            pub const UPWARD: fexcept_t = 2;
+            pub const TOWARD_ZERO: fexcept_t = 1;
+        },
+        .powerpcle, .powerpc => struct {
+            pub const INVALID: fexcept_t = if (native_abi.float() == .hard) 0x20000000 else 0;
+            pub const DIV_BY_ZERO: fexcept_t = if (native_abi.float() == .hard) 0x04000000 else 0;
+            pub const OVERFLOW: fexcept_t = if (native_abi.float() == .hard) 0x10000000 else 0;
+            pub const UNDERFLOW: fexcept_t = if (native_abi.float() == .hard) 0x08000000 else 0;
+            pub const INEXACT: fexcept_t = if (native_abi.float() == .hard) 0x02000000 else 0;
+            pub const ALL_EXCEPT: fexcept_t = if (native_abi.float() == .hard) 0x3e080000 else 0;
+            pub const ALL_INVALID: fexcept_t = if (native_abi.float() == .hard) 0x01f80700 else 0;
+            pub const SOFTWARE_INVALID: fexcept_t = if (native_abi.float() == .hard) 0x00000400 else 0;
+
+            pub const TO_NEAREST: fexcept_t = 0;
+            pub const DOWNWARD: fexcept_t = if (native_abi.float() == .hard) 3 else 0;
+            pub const UPWARD: fexcept_t = if (native_abi.float() == .hard) 2 else 0;
+            pub const TOWARD_ZERO: fexcept_t = if (native_abi.float() == .hard) 1 else 0;
+        },
+        .mips, .mipsel, .mips64, .mips64el => struct {
+            pub const INVALID: fexcept_t = if (native_abi.float() == .hard) 64 else 0;
+            pub const DIV_BY_ZERO: fexcept_t = if (native_abi.float() == .hard) 32 else 0;
+            pub const OVERFLOW: fexcept_t = if (native_abi.float() == .hard) 16 else 0;
+            pub const UNDERFLOW: fexcept_t = if (native_abi.float() == .hard) 8 else 0;
+            pub const INEXACT: fexcept_t = if (native_abi.float() == .hard) 4 else 0;
+            pub const ALL_EXCEPT: fexcept_t = if (native_abi.float() == .hard) 124 else 0;
+
+            pub const TO_NEAREST: fexcept_t = 0;
+            pub const DOWNWARD: fexcept_t = if (native_abi.float() == .hard) 3 else 0;
+            pub const UPWARD: fexcept_t = if (native_abi.float() == .hard) 2 else 0;
+            pub const TOWARD_ZERO: fexcept_t = if (native_abi.float() == .hard) 1 else 0;
+        },
+        .m68k => struct {
+            pub const INVALID: fexcept_t =
+                if (builtin.target.cpu.features.isEnabled(@intFromEnum(std.Target.m68k.Feature.isa_68881))) 128 else 0;
+            pub const DIV_BY_ZERO: fexcept_t = if (builtin.target.cpu.features.isEnabled(@intFromEnum(std.Target.m68k.Feature.isa_68881))) 16 else 0;
+            pub const OVERFLOW: fexcept_t = if (builtin.target.cpu.features.isEnabled(@intFromEnum(std.Target.m68k.Feature.isa_68881))) 64 else 0;
+            pub const UNDERFLOW: fexcept_t = if (builtin.target.cpu.features.isEnabled(@intFromEnum(std.Target.m68k.Feature.isa_68881))) 32 else 0;
+            pub const INEXACT: fexcept_t = if (builtin.target.cpu.features.isEnabled(@intFromEnum(std.Target.m68k.Feature.isa_68881))) 8 else 0;
+            pub const ALL_EXCEPT: fexcept_t = if (builtin.target.cpu.features.isEnabled(@intFromEnum(std.Target.m68k.Feature.isa_68881))) 0xf8 else 0;
+
+            pub const TO_NEAREST: fexcept_t = 0;
+            pub const DOWNWARD: fexcept_t = if (builtin.target.cpu.features.isEnabled(@intFromEnum(std.Target.m68k.Feature.isa_68881))) 32 else 0;
+            pub const UPWARD: fexcept_t = if (builtin.target.cpu.features.isEnabled(@intFromEnum(std.Target.m68k.Feature.isa_68881))) 48 else 0;
+            pub const TOWARD_ZERO: fexcept_t = if (builtin.target.cpu.features.isEnabled(@intFromEnum(std.Target.m68k.Feature.isa_68881))) 16 else 0;
+        },
+        .loongarch64 => struct {
+            pub const INVALID: fexcept_t = if (native_abi.float() == .hard) 0x100000 else 0;
+            pub const DIV_BY_ZERO: fexcept_t = if (native_abi.float() == .hard) 0x080000 else 0;
+            pub const OVERFLOW: fexcept_t = if (native_abi.float() == .hard) 0x040000 else 0;
+            pub const UNDERFLOW: fexcept_t = if (native_abi.float() == .hard) 0x020000 else 0;
+            pub const INEXACT: fexcept_t = if (native_abi.float() == .hard) 0x010000 else 0;
+            pub const ALL_EXCEPT: fexcept_t = if (native_abi.float() == .hard) 0x1f0000 else 0;
+
+            pub const TO_NEAREST: fexcept_t = 0;
+            pub const DOWNWARD: fexcept_t = if (native_abi.float() == .hard) 0x300 else 0;
+            pub const UPWARD: fexcept_t = if (native_abi.float() == .hard) 0x200 else 0;
+            pub const TOWARD_ZERO: fexcept_t = if (native_abi.float() == .hard) 0x100 else 0;
+        },
+        .hexagon => struct {
+            pub const INVALID: fexcept_t = 2;
+            pub const DIV_BY_ZERO: fexcept_t = 4;
+            pub const OVERFLOW: fexcept_t = 8;
+            pub const UNDERFLOW: fexcept_t = 16;
+            pub const INEXACT: fexcept_t = 32;
+            pub const ALL_EXCEPT: fexcept_t = 62;
+            pub const USR_FE_MASK: fexcept_t = 0x3fc0003f;
+
+            pub const TO_NEAREST: fexcept_t = 0;
+            pub const DOWNWARD: fexcept_t = 2;
+            pub const UPWARD: fexcept_t = 3;
+            pub const TOWARD_ZERO: fexcept_t = 1;
+        },
+        .arm, .armeb, .thumb, .thumbeb => struct {
+            pub const INVALID: fexcept_t = if (native_abi.float() == .hard) 1 else 0;
+            pub const DIV_BY_ZERO: fexcept_t = if (native_abi.float() == .hard) 2 else 0;
+            pub const OVERFLOW: fexcept_t = if (native_abi.float() == .hard) 4 else 0;
+            pub const UNDERFLOW: fexcept_t = if (native_abi.float() == .hard) 8 else 0;
+            pub const INEXACT: fexcept_t = if (native_abi.float() == .hard) 16 else 0;
+            pub const ALL_EXCEPT: fexcept_t = if (native_abi.float() == .hard) 31 else 0;
+
+            pub const TO_NEAREST: fexcept_t = 0;
+            pub const DOWNWARD: fexcept_t = if (native_abi.float() == .hard) 0x00800000 else 0;
+            pub const UPWARD: fexcept_t = if (native_abi.float() == .hard) 0x00400000 else 0;
+            pub const TOWARD_ZERO: fexcept_t = if (native_abi.float() == .hard) 0x00c00000 else 0;
+        },
+        .aarch64, .aarch64_be => struct {
+            pub const INVALID: fexcept_t = 1;
+            pub const DIV_BY_ZERO: fexcept_t = 2;
+            pub const OVERFLOW: fexcept_t = 4;
+            pub const UNDERFLOW: fexcept_t = 8;
+            pub const INEXACT: fexcept_t = 16;
+            pub const ALL_EXCEPT: fexcept_t = 31;
+
+            pub const TO_NEAREST: fexcept_t = 0;
+            pub const DOWNWARD: fexcept_t = 0x00800000;
+            pub const UPWARD: fexcept_t = 0x00400000;
+            pub const TOWARD_ZERO: fexcept_t = 0x00c00000;
+        },
+        else => struct {
+            pub const INVALID: fexcept_t = 0;
+            pub const DIV_BY_ZERO: fexcept_t = 0;
+            pub const OVERFLOW: fexcept_t = 0;
+            pub const UNDERFLOW: fexcept_t = 0;
+            pub const INEXACT: fexcept_t = 0;
+            pub const ALL_EXCEPT: fexcept_t = 0;
+
+            pub const TO_NEAREST: fexcept_t = 0;
+            pub const DOWNWARD: fexcept_t = 0;
+            pub const UPWARD: fexcept_t = 0;
+            pub const TOWARD_ZERO: fexcept_t = 0;
+        },
+    },
+    // from https://gitlab.winehq.org/wine/wine/-/blob/master/include/msvcrt/float.h?ref_type=heads
+    .windows => struct {
+        pub const INVALID: fexcept_t = 0x00000010;
+        pub const DIV_BY_ZERO: fexcept_t = 0x00000008;
+        pub const OVERFLOW: fexcept_t = 0x00000004;
+        pub const UNDERFLOW: fexcept_t = 0x00000002;
+        pub const INEXACT: fexcept_t = 0x00000001;
+        pub const ALL_EXCEPT: fexcept_t = 0x0000001F;
+
+        pub const TO_NEAREST: fexcept_t = 0;
+        pub const DOWNWARD: fexcept_t = 0x100;
+        pub const UPWARD: fexcept_t = 0x200;
+        pub const TOWARD_ZERO: fexcept_t = 0x300;
+    },
+    else => @compileError("Unimplemented"),
+};
+
+pub const fenv_t = switch (native_os) {
+    .linux,
+    .wasi,
+    .netbsd,
+    .openbsd,
+    .freebsd,
+    => switch (native_arch) {
+        .x86_64 => extern struct {
+            control_word: u16 = 0x037f,
+            unused1: u16 = 0xFFFF, // unable to find a reason why this is not 0x0000
+            status_word: u16 = 0x0000,
+            unused2: u16 = 0xFFFF, // this as well
+            tags: u16 = 0xffff,
+            unused3: u16 = 0xFFFF, // this as well
+            eip: u32 = 0x00000000,
+            cs_selector: u16 = 0x0000,
+            opcode_unused4: u16 = 0x0000,
+            // opcode: u11 = 0b00000000000,
+            // unused4: u5 = 0b00000,
+            data_offset: u32 = 0x00000000,
+            data_selector: u16 = 0x0000,
+            unused5: u16 = 0xFFFF,
+            mxcsr: u32 = 0x00001f80,
+        },
+        .x86 => extern struct {
+            control_word: u16 = 0x037f,
+            unused1: u16 = 0xFFFF, // unable to find a reason why this is not 0x0000
+            status_word: u16 = 0x0000,
+            unused2: u16 = 0xFFFF, // this as well
+            tags: u16 = 0xffff,
+            unused3: u16 = 0xFFFF, // this as well
+            eip: u32 = 0x00000000,
+            cs_selector: u16 = 0x0000,
+            opcode_unused4: u16 = 0x0000,
+            // opcode: u11 = 0b00000000000,
+            // unused4: u5 = 0b00000,
+            data_offset: u32 = 0x00000000,
+            data_selector: u16 = 0x0000,
+            unused5: u16 = 0xFFFF,
+        },
+        .powerpc64le, .powerpc64, .powerpc, .powerpcle => extern struct {
+            cw: f64 = 0,
+        },
+        .m68k => extern struct {
+            control_register: u32 = 0,
+            status_register: u32 = 0,
+            instruction_address: u32 = 0,
+        },
+        .aarch64, .aarch64_be => extern struct {
+            fpcr: u32 = 0,
+            fpsr: u32 = 0,
+        },
+        else => extern struct {
+            cw: u32 = 0,
+        },
+    },
+    // taken from wine https://gitlab.winehq.org/wine/wine/-/blob/master/include/msvcrt/fenv.h?ref_type=heads
+    .windows => extern struct {
+        cntrl: u32 = 0,
+        stat: u32 = 0,
+    },
+    else => @compileError("Unimplemented"),
+};
+
+pub extern "c" fn feclearexcept(excepts: c_int) c_int;
+pub extern "c" fn fegetexceptflag(flagp: ?*fexcept_t, excepts: c_int) c_int;
+pub extern "c" fn feraiseexcept(excepts: c_int) c_int;
+pub extern "c" fn fesetexceptflag(flagp: ?*const fexcept_t, excepts: c_int) c_int;
+pub extern "c" fn fetestexcept(excepts: c_int) c_int;
+
+pub extern "c" fn fegetround() c_int;
+pub extern "c" fn fesetround(rounding_mode: c_int) c_int;
+
+pub extern "c" fn fegetenv(envp: ?*fenv_t) c_int;
+pub extern "c" fn feholdexcept(envp: ?*fenv_t) c_int;
+pub extern "c" fn fesetenv(envp: ?*const fenv_t) c_int;
+pub extern "c" fn feupdateenv(envp: ?*const fenv_t) c_int;
+
 // OS-specific bits. These are protected from being used on the wrong OS by
 // comptime assertions inside each OS-specific file.
 

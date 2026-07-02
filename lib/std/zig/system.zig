@@ -463,6 +463,14 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
         if (result.cpu.arch.isXtensa() and result.abi == .call0) {
             result.cpu.features.removeFeature(@intFromEnum(Target.xtensa.Feature.windowed));
         }
+
+        if ((result.cpu.arch.isRiscv32() or result.cpu.arch.isRiscv64()) and result.abi.float() == .hard) {
+            result.cpu.features.addFeature(@intFromEnum(Target.riscv.Feature.zicsr));
+            result.cpu.features.addFeature(@intFromEnum(Target.riscv.Feature.f));
+            if (result.abi.isMusl()) {
+                result.cpu.features.addFeature(@intFromEnum(Target.riscv.Feature.d));
+            }
+        }
     }
 
     // It's possible that we detect the native ABI, but fail to detect the OS version or were told

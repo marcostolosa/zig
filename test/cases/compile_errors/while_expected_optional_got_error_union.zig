@@ -10,4 +10,4 @@ fn bar() anyerror!i32 {
 // error
 //
 // :2:15: error: expected optional type, found 'anyerror!i32'
-// :2:15: note: consider using 'try', 'catch', or 'if'/'else' with an error capture like 'else |err|'
+// :2:15: note: consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture

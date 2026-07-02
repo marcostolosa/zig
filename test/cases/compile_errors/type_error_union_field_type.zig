@@ -13,4 +13,4 @@ comptime {
 //
 //:6:14: error: expected type 'type', found 'error{}!type'
 //:6:14: note: cannot convert error union to payload type
-//:6:14: note: consider using 'try', 'catch', or 'if'
+//:6:14: note: consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture

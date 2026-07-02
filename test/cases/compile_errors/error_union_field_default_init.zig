@@ -10,4 +10,4 @@ export fn foo() void {
 //
 //:2:18: error: expected type 'u32', found 'error{}!u32'
 //:2:18: note: cannot convert error union to payload type
-//:2:18: note: consider using 'try', 'catch', or 'if'
+//:2:18: note: consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture

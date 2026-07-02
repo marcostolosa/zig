@@ -2435,7 +2435,7 @@ fn failWithExpectedOptionalType(sema: *Sema, block: *Block, src: LazySrcLoc, non
         });
         errdefer msg.destroy(sema.gpa);
         if (non_optional_ty.zigTypeTag(pt.zcu) == .error_union) {
-            try sema.errNote(src, msg, "consider using 'try', 'catch', or 'if'/'else' with an error capture like 'else |err|'", .{});
+            try sema.errNote(src, msg, "consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture", .{});
         }
         try addDeclaredHereNote(sema, msg, non_optional_ty);
         break :msg msg;
@@ -2531,7 +2531,7 @@ fn failWithInvalidFieldAccess(
         const msg = msg: {
             const msg = try sema.errMsg(src, "error union type '{f}' does not support field access", .{object_ty.fmt(pt)});
             errdefer msg.destroy(sema.gpa);
-            try sema.errNote(src, msg, "consider using 'try', 'catch', or 'if'", .{});
+            try sema.errNote(src, msg, "consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture", .{});
             break :msg msg;
         };
         return sema.failWithOwnedErrorMsg(block, msg);
@@ -3165,7 +3165,7 @@ fn ensureResultUsed(
             const msg = msg: {
                 const msg = try sema.errMsg(src, "error union is ignored", .{});
                 errdefer msg.destroy(sema.gpa);
-                try sema.errNote(src, msg, "consider using 'try', 'catch', or 'if'", .{});
+                try sema.errNote(src, msg, "consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture", .{});
                 break :msg msg;
             };
             return sema.failWithOwnedErrorMsg(block, msg);
@@ -3196,7 +3196,7 @@ fn zirEnsureResultNonError(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Com
             const msg = msg: {
                 const msg = try sema.errMsg(src, "error union is discarded", .{});
                 errdefer msg.destroy(sema.gpa);
-                try sema.errNote(src, msg, "consider using 'try', 'catch', or 'if'", .{});
+                try sema.errNote(src, msg, "consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture", .{});
                 break :msg msg;
             };
             return sema.failWithOwnedErrorMsg(block, msg);
@@ -4060,7 +4060,7 @@ fn zirForLen(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.
                     try sema.errNote(arg_src, msg, "for loop operand must be a range, array, slice, tuple, or vector", .{});
 
                     if (object_ty.zigTypeTag(zcu) == .error_union) {
-                        try sema.errNote(arg_src, msg, "consider using 'try', 'catch', or 'if'", .{});
+                        try sema.errNote(arg_src, msg, "consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture", .{});
                     }
 
                     break :msg msg;
@@ -4684,7 +4684,7 @@ fn zirValidateDestructure(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Comp
             if (operand_ty.zigTypeTag(pt.zcu) == .error_union) {
                 const base_op_ty = operand_ty.errorUnionPayload(zcu);
                 if (base_op_ty.destructurable(zcu))
-                    try sema.errNote(src, msg, "consider using 'try', 'catch', or 'if'", .{});
+                    try sema.errNote(src, msg, "consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture", .{});
             }
             break :msg msg;
         });
@@ -26505,7 +26505,7 @@ fn fieldCallBind(
             );
         }
         if (concrete_ty.zigTypeTag(zcu) == .error_union) {
-            try sema.errNote(src, msg, "consider using 'try', 'catch', or 'if'", .{});
+            try sema.errNote(src, msg, "consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture", .{});
         }
         if (is_double_ptr) {
             try sema.errNote(src, msg, "method invocation only supports up to one level of implicit pointer dereferencing", .{});
@@ -28241,7 +28241,7 @@ fn coerceExtra(
             (try sema.coerceInMemoryAllowed(block, inst_ty.errorUnionPayload(zcu), dest_ty, false, target, dest_ty_src, inst_src, null)) == .ok)
         {
             try sema.errNote(inst_src, msg, "cannot convert error union to payload type", .{});
-            try sema.errNote(inst_src, msg, "consider using 'try', 'catch', or 'if'", .{});
+            try sema.errNote(inst_src, msg, "consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture", .{});
         }
 
         // ?T to T

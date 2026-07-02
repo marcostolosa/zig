@@ -12,5 +12,5 @@ export fn entry2() void {
 // error
 //
 // :2:12: error: error union is discarded
-// :2:12: note: consider using 'try', 'catch', or 'if'
+// :2:12: note: consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture
 // :9:9: error: error set is discarded

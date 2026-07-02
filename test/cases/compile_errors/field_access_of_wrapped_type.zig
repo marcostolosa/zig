@@ -15,4 +15,4 @@ export fn f2() void {
 // :6:8: error: optional type '?tmp.Foo' does not support field access
 // :6:8: note: consider using '.?', 'orelse', or 'if'
 // :10:8: error: error union type 'anyerror!tmp.Foo' does not support field access
-// :10:8: note: consider using 'try', 'catch', or 'if'
+// :10:8: note: consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture

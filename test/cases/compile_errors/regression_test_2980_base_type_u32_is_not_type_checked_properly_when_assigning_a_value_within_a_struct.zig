@@ -18,4 +18,4 @@ export fn entry() void {
 //
 // :12:15: error: expected type 'u32', found '@typeInfo(@typeInfo(@TypeOf(tmp.get_uval)).@"fn".return_type.?).error_union.error_set!u32'
 // :12:15: note: cannot convert error union to payload type
-// :12:15: note: consider using 'try', 'catch', or 'if'
+// :12:15: note: consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture

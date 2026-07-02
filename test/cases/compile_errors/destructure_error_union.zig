@@ -10,4 +10,4 @@ pub export fn entry() void {
 //
 // :4:28: error: type 'anyerror!struct { u8, u8 }' cannot be destructured
 // :4:26: note: result destructured here
-// :4:28: note: consider using 'try', 'catch', or 'if'
+// :4:28: note: consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture

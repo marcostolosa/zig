@@ -15,5 +15,5 @@ fn bar2() anyerror {
 // error
 //
 // :2:14: error: error union is ignored
-// :2:14: note: consider using 'try', 'catch', or 'if'
+// :2:14: note: consider using 'try', 'catch', or 'if'/'while' with an 'else |err|' capture
 // :9:15: error: error set is ignored

@@ -2435,7 +2435,7 @@ fn failWithExpectedOptionalType(sema: *Sema, block: *Block, src: LazySrcLoc, non
         });
         errdefer msg.destroy(sema.gpa);
         if (non_optional_ty.zigTypeTag(pt.zcu) == .error_union) {
-            try sema.errNote(src, msg, "consider using 'try', 'catch', or 'if'", .{});
+            try sema.errNote(src, msg, "consider using 'try', 'catch', or 'if'/'else' with an error capture like 'else |err|'", .{});
         }
         try addDeclaredHereNote(sema, msg, non_optional_ty);
         break :msg msg;

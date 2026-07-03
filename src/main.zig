@@ -4039,7 +4039,24 @@ fn createModule(
         }
 
         const target_query = std.zig.parseTargetQueryOrReportFatalError(arena, target_parse_options);
-        const target = std.zig.resolveTargetQueryOrFatal(io, target_query);
+        var target = std.zig.resolveTargetQueryOrFatal(io, target_query);
+
+        if (target_query.dynamic_linker == null) {
+            if (std.zig.EnvVar.LIBRARY_PATH.get(environ_map)) |lib_path| {
+                if (target.dynamic_linker.get()) |standard_path| {
+                    const linker_basename = fs.path.basename(standard_path);
+                    var it = mem.tokenizeScalar(u8, lib_path, ':');
+                    while (it.next()) |dir| {
+                        const candidate = try std.fmt.allocPrint(arena, "{s}/{s}", .{ dir, linker_basename });
+                        if (Io.Dir.accessAbsolute(io, candidate, .{})) |_| {
+                            target.dynamic_linker.set(candidate);
+                            break;
+                        } else |_| {}
+                    }
+                }
+            }
+        }
+
         break :t .{
             .result = target,
             .is_native_os = target_query.isNativeOs(),

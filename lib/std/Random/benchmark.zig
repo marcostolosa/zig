@@ -1,5 +1,5 @@
-// zig run -O ReleaseFast --zig-lib-dir ../.. benchmark.zig
-
+// cd ..
+// zig run -Ofast --zig-lib-dir .. Random/benchmark.zig
 const builtin = @import("builtin");
 
 const std = @import("std");

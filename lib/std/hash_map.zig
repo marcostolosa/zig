@@ -344,11 +344,13 @@ pub fn HashMap(
         }
 
         /// Inserts a new `Entry` into the hash map, returning the previous one, if any.
+        /// The existing key is left untouched.
         pub fn fetchPut(self: *Self, key: K, value: V) Allocator.Error!?KV {
             return self.unmanaged.fetchPutContext(self.allocator, key, value, self.ctx);
         }
 
         /// Inserts a new `Entry` into the hash map, returning the previous one, if any.
+        /// The existing key is left untouched.
         /// If insertion happens, asserts there is enough capacity without allocating.
         pub fn fetchPutAssumeCapacity(self: *Self, key: K, value: V) ?KV {
             return self.unmanaged.fetchPutAssumeCapacityContext(key, value, self.ctx);
@@ -895,6 +897,7 @@ fn Custom(
         }
 
         /// Inserts a new `Entry` into the hash map, returning the previous one, if any.
+        /// The existing key is left untouched.
         pub fn fetchPut(self: *Self, allocator: Allocator, key: K, value: V) Allocator.Error!?KV {
             if (@sizeOf(Context) != 0)
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call fetchPutContext instead.");
@@ -914,6 +917,7 @@ fn Custom(
         }
 
         /// Inserts a new `Entry` into the hash map, returning the previous one, if any.
+        /// The existing key is left untouched.
         /// If insertion happens, asserts there is enough capacity without allocating.
         pub fn fetchPutAssumeCapacity(self: *Self, key: K, value: V) ?KV {
             if (@sizeOf(Context) != 0)

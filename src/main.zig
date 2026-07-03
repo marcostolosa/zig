@@ -4145,9 +4145,10 @@ fn createModule(
         }
 
         // Trigger native system library path detection if necessary.
-        if (create_module.sysroot == null and
-            resolved_target.is_native_os and resolved_target.is_native_abi and
-            create_module.want_native_include_dirs)
+        if (std.zig.EnvVar.LIBRARY_PATH.isSet(environ_map) or
+            (create_module.sysroot == null and
+                resolved_target.is_native_os and resolved_target.is_native_abi and
+                create_module.want_native_include_dirs))
         {
             var paths = std.zig.system.NativePaths.detect(arena, io, target, environ_map) catch |err|
                 fatal("unable to detect native system paths: {t}", .{err});

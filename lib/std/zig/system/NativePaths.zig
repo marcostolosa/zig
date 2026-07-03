@@ -196,6 +196,7 @@ pub fn detect(
             var it = mem.tokenizeScalar(u8, library_path, ':');
             while (it.next()) |dir| {
                 try self.addLibDir(dir);
+                try self.addRPath(dir);
             }
         }
     }

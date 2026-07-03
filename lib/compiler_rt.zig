@@ -443,7 +443,6 @@ pub const gnu_f16_abi = switch (builtin.cpu.arch) {
 
 pub const want_sparc64_abi = builtin.cpu.arch == .sparc64;
 pub const want_sparc32_abi = builtin.cpu.arch == .sparc;
-pub const want_sparc_abi = builtin.cpu.arch.isSPARC();
 
 pub fn F16T(comptime OtherType: type) type {
     return switch (builtin.cpu.arch) {

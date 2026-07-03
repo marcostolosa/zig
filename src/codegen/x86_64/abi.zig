@@ -290,6 +290,8 @@ pub fn classifySystemV(ty: Type, zcu: *Zcu, target: *const std.Target, ctx: Cont
                 .@"packed" => {
                     if (ty_size <= 8) return Class.one_integer;
                     if (ty_size <= 16) return Class.two_integers;
+                    if (ty_size <= 24) return Class.three_integers;
+                    if (ty_size <= 32) return Class.four_integers;
                     return Class.stack;
                 },
             }

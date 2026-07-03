@@ -46,6 +46,11 @@ block_label: Id = .none,
 /// branch instructions should be emitted for the current block.
 block_terminated: bool = false,
 block_results: std.AutoHashMapUnmanaged(Air.Inst.Index, Id) = .empty,
+/// Interned `u32` constants encoding "jump to block <inst>" (the structured
+/// control-flow discriminator). Interning lets `lowerBlock` recognize a block
+/// with a single static self-exit (`next_block == this_block` by id) and skip
+/// the discriminator compare/branch entirely.
+block_id_consts: std.AutoHashMapUnmanaged(Air.Inst.Index, Id) = .empty,
 inst_results: std.AutoHashMapUnmanaged(Air.Inst.Index, Id) = .empty,
 tracked_allocas: std.AutoHashMapUnmanaged(Id, ?Id) = .empty,
 loop_switches: std.AutoHashMapUnmanaged(Air.Inst.Index, LoopSwitch) = .empty,
@@ -178,6 +183,7 @@ pub fn deinit(cg: *CodeGen) void {
     const gpa = cg.gpa;
     cg.block_stack.deinit(gpa);
     cg.loop_frames.deinit(gpa);
+    cg.block_id_consts.deinit(gpa);
     cg.block_results.deinit(gpa);
     cg.args.deinit(gpa);
     cg.tracked_allocas.deinit(gpa);
@@ -1509,6 +1515,18 @@ fn constInt(cg: *CodeGen, ty: Type, value: anytype) !Id {
 
     if (!ty.isVector(zcu)) return result_id;
     return cg.constructCompositeSplat(ty, result_id);
+}
+
+/// Interned `u32` constant encoding "control flow should next jump to block
+/// `inst`" (the structured control-flow discriminator). Reusing one id per
+/// target block lets `lowerBlock` detect a single static self-exit by id
+/// equality and skip the discriminator compare/branch.
+fn blockIdConst(cg: *CodeGen, inst: Air.Inst.Index) !Id {
+    const gop = try cg.block_id_consts.getOrPut(cg.gpa, inst);
+    if (!gop.found_existing) {
+        gop.value_ptr.* = try cg.constInt(.u32, @intFromEnum(inst));
+    }
+    return gop.value_ptr.*;
 }
 
 /// Construct a composite value from its constituents.
@@ -7381,7 +7399,21 @@ fn lowerBlock(cg: *CodeGen, inst: Air.Inst.Index, body: []const Air.Inst.Index) 
     assert(cg.block_stack.items.len > 0);
 
     // Check if the target of the branch was this current block.
-    const this_block = try cg.constInt(.u32, @intFromEnum(inst));
+    const this_block = try cg.blockIdConst(inst);
+    const sblock = cg.block_stack.getLast().?;
+
+    // Single static self-exit: the block is only ever left by falling through to
+    // its own continuation (`next_block` equals this block's id, which only
+    // happens with exactly one incoming break targeting it). Within a selection
+    // parent we continue emitting in the current block, with no discriminator
+    // compare/branch and nothing to propagate outward.
+    if (!ty.isNoReturn(zcu) and next_block == this_block and sblock.* == .selection) {
+        if (maybe_block_result_var_id) |block_result_var_id| {
+            return try cg.load(ty, block_result_var_id, .{});
+        }
+        return null;
+    }
+
     const jump_to_this_block_id = cg.allocId();
     const bool_ty_id = try cg.resolveType(.bool, .direct);
     try cg.body.emit(gpa, .OpIEqual, .{
@@ -7390,8 +7422,6 @@ fn lowerBlock(cg: *CodeGen, inst: Air.Inst.Index, body: []const Air.Inst.Index) 
         .operand_1 = next_block,
         .operand_2 = this_block,
     });
-
-    const sblock = cg.block_stack.getLast().?;
 
     if (ty.isNoReturn(zcu)) {
         // If this block is noreturn, this instruction is the last of a block,
@@ -7478,7 +7508,7 @@ fn airBr(cg: *CodeGen, inst: Air.Inst.Index) !void {
         }
     }
 
-    const next_block = try cg.constInt(.u32, @intFromEnum(br.block_inst));
+    const next_block = try cg.blockIdConst(br.block_inst);
     try cg.structuredBreak(next_block);
 }
 
@@ -7622,7 +7652,7 @@ fn tryLoopFastPath(cg: *CodeGen, loop_body: []const Air.Inst.Index) !bool {
     // The loop's single exit breaks `exit_block_inst`; hand that back to the
     // enclosing block's structured machinery.
     try cg.beginSpvBlock(merge_label);
-    const next_block = try cg.constInt(.u32, @intFromEnum(exit_block_inst));
+    const next_block = try cg.blockIdConst(exit_block_inst);
     try cg.structuredBreak(next_block);
     return true;
 }

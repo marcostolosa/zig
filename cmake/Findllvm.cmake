@@ -1,7 +1,3 @@
-# Copyright (c) 2014 Andrew Kelley
-# This file is MIT licensed.
-# See http://opensource.org/licenses/MIT
-
 # LLVM_FOUND
 # LLVM_INCLUDE_DIRS
 # LLVM_LIBRARIES

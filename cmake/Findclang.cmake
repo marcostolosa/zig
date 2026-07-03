@@ -1,7 +1,3 @@
-# Copyright (c) 2016 Andrew Kelley
-# This file is MIT licensed.
-# See http://opensource.org/licenses/MIT
-
 # CLANG_FOUND
 # CLANG_INCLUDE_DIRS
 # CLANG_LIBRARIES

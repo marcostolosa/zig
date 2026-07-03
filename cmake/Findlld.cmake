@@ -1,7 +1,3 @@
-# Copyright (c) 2017 Andrew Kelley
-# This file is MIT licensed.
-# See http://opensource.org/licenses/MIT
-
 # LLD_FOUND
 # LLD_INCLUDE_DIRS
 # LLD_LIBRARIES

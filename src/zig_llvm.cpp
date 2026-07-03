@@ -1,12 +1,4 @@
 /*
- * Copyright (c) 2015 Andrew Kelley
- *
- * This file is part of zig, which is MIT licensed.
- * See http://opensource.org/licenses/MIT
- */
-
-
-/*
  * The point of this file is to contain all the LLVM C++ API interaction so that:
  * 1. The compile time of other files is kept under control.
  * 2. Provide a C interface to the LLVM functions we need for self-hosting purposes.

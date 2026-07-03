@@ -1925,19 +1925,6 @@ pub const THREAD = struct {
     };
 };
 
-pub const MEMORY = struct {
-    pub const BASIC_INFORMATION = extern struct {
-        BaseAddress: PVOID,
-        AllocationBase: PVOID,
-        AllocationProtect: DWORD,
-        PartitionId: WORD,
-        RegionSize: SIZE_T,
-        State: DWORD,
-        Protect: DWORD,
-        Type: DWORD,
-    };
-};
-
 // ref: km/ntifs.h
 
 pub const HEAP = opaque {
@@ -4996,8 +4983,8 @@ pub const KAFFINITY = usize;
 pub const KPRIORITY = i32;
 
 pub const CLIENT_ID = extern struct {
-    UniqueProcess: HANDLE,
-    UniqueThread: HANDLE,
+    UniqueProcess: ?HANDLE,
+    UniqueThread: ?HANDLE,
 };
 
 pub const TEB = extern struct {

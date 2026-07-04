@@ -348,7 +348,7 @@ pub const FunctionIndex = enum(u32) {
         return fromResolution(wasm, .fromIpNav(wasm, nav_index));
     }
 
-    pub fn fromTagNameType(wasm: *const Wasm, tag_type: InternPool.Index) ?FunctionIndex {
+    pub fn fromTagIndexType(wasm: *const Wasm, tag_type: InternPool.Index) ?FunctionIndex {
         const zcu_func: ZcuFunc.Index = @enumFromInt(wasm.zcu_funcs.getIndex(tag_type) orelse return null);
         return fromResolution(wasm, .pack(wasm, .{ .zcu_func = zcu_func }));
     }
@@ -423,8 +423,8 @@ pub const OutputFunctionIndex = enum(u32) {
         return fromIpIndex(wasm, nav.resolved.?.value);
     }
 
-    pub fn fromTagNameType(wasm: *const Wasm, tag_type: InternPool.Index) OutputFunctionIndex {
-        return fromFunctionIndex(wasm, FunctionIndex.fromTagNameType(wasm, tag_type).?);
+    pub fn fromTagIndexType(wasm: *const Wasm, tag_type: InternPool.Index) OutputFunctionIndex {
+        return fromFunctionIndex(wasm, FunctionIndex.fromTagIndexType(wasm, tag_type).?);
     }
 
     pub fn fromSymbolName(wasm: *const Wasm, name: String) OutputFunctionIndex {
@@ -891,8 +891,6 @@ pub const ZcuFunc = union {
     pub const TagName = extern struct {
         symbol_name: String,
         type_index: FunctionType.Index,
-        /// Index into `Wasm.tag_name_offs`.
-        table_index: u32,
     };
 
     /// Index into `Wasm.zcu_funcs`.
@@ -932,7 +930,7 @@ pub const ZcuFunc = union {
             switch (ip.indexToKey(i.key(wasm).*)) {
                 .func => |func| {
                     const fn_info = zcu.typeToFunc(.fromInterned(func.ty)).?;
-                    return wasm.getExistingFunctionType(fn_info.cc, fn_info.param_types.get(ip), .fromInterned(fn_info.return_type), target).?;
+                    return wasm.getExistingFunctionType(fn_info.cc, fn_info.param_types.get(ip), .fromInterned(fn_info.return_type), fn_info.is_var_args, target).?;
                 },
                 .enum_type => {
                     return i.value(wasm).tag_name.type_index;
@@ -2290,7 +2288,7 @@ pub const ZcuImportIndex = enum(u32) {
         const nav_index = index.ptr(wasm).*;
         const ext = ip.indexToKey(ip.getNav(nav_index).resolved.?.value).@"extern";
         const fn_info = zcu.typeToFunc(.fromInterned(ext.ty)).?;
-        return getExistingFunctionType(wasm, fn_info.cc, fn_info.param_types.get(ip), .fromInterned(fn_info.return_type), target).?;
+        return getExistingFunctionType(wasm, fn_info.cc, fn_info.param_types.get(ip), .fromInterned(fn_info.return_type), fn_info.is_var_args, target).?;
     }
 
     pub fn globalType(index: ZcuImportIndex, wasm: *const Wasm) ObjectGlobal.Type {
@@ -3209,7 +3207,7 @@ pub fn updateFunc(
     for (mir.indirect_function_set.keys()) |nav| wasm.zcu_indirect_function_set.putAssumeCapacity(nav, {});
     for (mir.func_tys.keys()) |func_ty| {
         const fn_info = zcu.typeToFunc(.fromInterned(func_ty)).?;
-        _ = try wasm.internFunctionType(fn_info.cc, fn_info.param_types.get(ip), .fromInterned(fn_info.return_type), target);
+        _ = try wasm.internFunctionType(fn_info.cc, fn_info.param_types.get(ip), .fromInterned(fn_info.return_type), fn_info.is_var_args, target);
     }
     wasm.error_name_table_ref_count += mir.error_name_table_ref_count;
     // We need to populate UAV data. In theory, we can lower the UAV values while we fill `mir.uavs`.
@@ -3281,7 +3279,7 @@ pub fn updateNav(wasm: *Wasm, pt: Zcu.PerThread, nav_index: InternPool.Nav.Index
                 wasm.function_imports.putAssumeCapacity(name, .fromZcuImport(zcu_import, wasm));
                 // Ensure there is a corresponding function type table entry.
                 const fn_info = zcu.typeToFunc(.fromInterned(ext.ty)).?;
-                _ = try internFunctionType(wasm, fn_info.cc, fn_info.param_types.get(ip), .fromInterned(fn_info.return_type), target);
+                _ = try internFunctionType(wasm, fn_info.cc, fn_info.param_types.get(ip), .fromInterned(fn_info.return_type), fn_info.is_var_args, target);
             } else {
                 wasm.data_imports.putAssumeCapacity(name, .fromZcuImport(zcu_import, wasm));
             }
@@ -3928,9 +3926,10 @@ pub fn internFunctionType(
     cc: std.lang.CallingConvention,
     params: []const InternPool.Index,
     return_type: Zcu.Type,
+    is_var_args: bool,
     target: *const std.Target,
 ) Allocator.Error!FunctionType.Index {
-    try convertZcuFnType(wasm.base.comp, cc, params, return_type, target, &wasm.params_scratch, &wasm.returns_scratch);
+    try convertZcuFnType(wasm.base.comp, cc, params, return_type, is_var_args, target, &wasm.params_scratch, &wasm.returns_scratch);
     return wasm.addFuncType(.{
         .params = try wasm.internValtypeList(wasm.params_scratch.items),
         .returns = try wasm.internValtypeList(wasm.returns_scratch.items),
@@ -3942,9 +3941,10 @@ pub fn getExistingFunctionType(
     cc: std.lang.CallingConvention,
     params: []const InternPool.Index,
     return_type: Zcu.Type,
+    is_var_args: bool,
     target: *const std.Target,
 ) ?FunctionType.Index {
-    convertZcuFnType(wasm.base.comp, cc, params, return_type, target, &wasm.params_scratch, &wasm.returns_scratch) catch |err| switch (err) {
+    convertZcuFnType(wasm.base.comp, cc, params, return_type, is_var_args, target, &wasm.params_scratch, &wasm.returns_scratch) catch |err| switch (err) {
         error.OutOfMemory => return null,
     };
     return wasm.getExistingFuncType(.{
@@ -4013,7 +4013,7 @@ pub fn stackPointerSymbolIndex(wasm: *Wasm) Allocator.Error!SymbolTableIndex {
     return @enumFromInt(gop.index);
 }
 
-pub fn tagNameSymbolIndex(wasm: *Wasm, ip_index: InternPool.Index) Allocator.Error!SymbolTableIndex {
+pub fn tagTableIndexSymbolIndex(wasm: *Wasm, ip_index: InternPool.Index) Allocator.Error!SymbolTableIndex {
     const comp = wasm.base.comp;
     assert(comp.config.output_mode == .Obj);
     const gpa = comp.gpa;
@@ -4171,11 +4171,22 @@ pub fn errorNameTableAddr(wasm: *Wasm) u32 {
     return wasm.flush_buffer.data_segments.get(.__zig_error_name_table).?;
 }
 
+pub fn tagIndexTableAddr(wasm: *Wasm, ip_index: InternPool.Index) u32 {
+    assert(wasm.flush_buffer.memory_layout_finished);
+    const comp = wasm.base.comp;
+    assert(comp.config.output_mode != .Obj);
+    const f = &wasm.flush_buffer;
+    const table_base_addr = f.data_segments.get(.__zig_tag_name_table).?;
+    const table_index = f.enum_tag_name_table.get(ip_index).?;
+    return table_base_addr + table_index * 8;
+}
+
 fn convertZcuFnType(
     comp: *Compilation,
     cc: std.lang.CallingConvention,
     params: []const InternPool.Index,
     return_type: Zcu.Type,
+    is_var_args: bool,
     target: *const std.Target,
     params_buffer: *std.ArrayList(std.wasm.Valtype),
     returns_buffer: *std.ArrayList(std.wasm.Valtype),
@@ -4225,6 +4236,10 @@ fn convertZcuFnType(
             },
             else => try params_buffer.append(gpa, CodeGen.typeToValtype(param_type, zcu, target)),
         }
+    }
+
+    if (is_var_args) {
+        try params_buffer.append(gpa, .i32);
     }
 }
 

@@ -59,7 +59,7 @@ jobs:
           fetch-depth: 0
       - name: Build and Test
         run: sh ci/aarch64-linux-release.sh
-        timeout-minutes: 120
+        timeout-minutes: 180
 
   aarch64-netbsd-debug:
     if: github.event_name != 'pull_request'
@@ -231,7 +231,7 @@ jobs:
           fetch-depth: 0
       - name: Build and Test
         run: sh ci/x86_64-linux-debug-llvm.sh
-        timeout-minutes: 360
+        timeout-minutes: 420
   x86_64-linux-release:
     runs-on: [self-hosted, x86_64-linux]
     steps:

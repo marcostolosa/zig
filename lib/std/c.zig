@@ -2671,6 +2671,9 @@ pub const SEEK = switch (native_os) {
     },
     else => void,
 };
+
+pub const ST = linux.ST; // not tested on non-linux
+
 pub const SHUT = switch (native_os) {
     .linux => linux.SHUT,
     .emscripten => emscripten.SHUT,
@@ -10455,7 +10458,7 @@ pub const fstatat = switch (native_os) {
 
 pub const Statvfs = switch (native_abi) {
     .gnu => extern struct {
-        bsize: blksize_t, // Filesystem block size
+        bsize: c_ulong, // Filesystem block size
         frsize: c_ulong, // Fragment size
         blocks: c_ulong, // Size of fs in f_frsize units
         bfree: c_ulong, // Number of free blocks
@@ -10463,14 +10466,48 @@ pub const Statvfs = switch (native_abi) {
         files: c_ulong, // Number of inodes
         ffree: c_ulong, // Number of free inodes
         favail: c_ulong, // Number of free inodes for unprivileged users
-        fsid: u64, // Filesystem ID
-        flags: linux.ST, // Mount flags
+        fsid: c_ulong, // Filesystem ID
+        __unused: if (@bitSizeOf(usize) == 32) c_int else void,
+        flags: ST, // Mount flags
         namemax: c_ulong, // Maximum filename length
-        type: c_uint, // this is nonstandard but apparently present in gnu ????
+        type: c_uint, // this is not mentioned in the headers but both gnu and musl have it...
         _padding: [5]c_int = @splat(0),
     },
-    .musl => linux.Statvfs,
-    else => unreachable,
+    .musl => switch (native_endian) {
+        .little => extern struct {
+            bsize: c_ulong,
+            frsize: c_ulong,
+            blocks: blkcnt_t,
+            bfree: blkcnt_t,
+            bavail: blkcnt_t,
+            files: fsfilcnt_t,
+            ffree: fsfilcnt_t,
+            favail: fsfilcnt_t,
+            fsid: c_ulong,
+            _: @Int(.unsigned, 8 * (2 * @sizeOf(c_int) - @sizeOf(c_long))),
+            flags: ST,
+            namemax: c_ulong,
+            type: c_uint,
+            __reserved: [5]c_int,
+        },
+        .big => extern struct {
+            bsize: c_ulong,
+            frsize: c_ulong,
+            blocks: blkcnt_t,
+            bfree: blkcnt_t,
+            bavail: blkcnt_t,
+            files: fsfilcnt_t,
+            ffree: fsfilcnt_t,
+            favail: fsfilcnt_t,
+            _: @Int(.unsigned, 8 * (2 * @sizeOf(c_int) - @sizeOf(c_long))),
+            fsid: c_ulong,
+            flags: ST,
+            namemax: c_ulong,
+            type: c_uint,
+            __reserved: [5]c_int,
+        },
+    },
+    else => @compileError("TODO: implement statvfs struct for this abi"),
 };
 
 pub extern "c" fn statvfs(path: [*:0]const u8, buf: *Statvfs) c_int;

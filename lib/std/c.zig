@@ -10470,7 +10470,7 @@ pub const Statvfs = switch (native_abi) {
         __unused: if (@bitSizeOf(usize) == 32) c_int else void,
         flags: ST, // Mount flags
         namemax: c_ulong, // Maximum filename length
-        type: c_uint, // this is not mentioned in the headers but both gnu and musl have it...
+        type: c_uint, // this is not mentioned in man page but both gnu and musl have it...
         _padding: [5]c_int = @splat(0),
     },
     .musl => switch (native_endian) {

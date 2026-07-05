@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("../../std.zig");
+const api_guards = @import("../api_guards.zig");
 const SYS = std.os.linux.SYS;
 
 pub const syscall_arg_t = u32;
@@ -7,6 +8,9 @@ pub const syscall_arg_t = u32;
 pub fn syscall0(
     number: SYS,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("int $0x80"
         : [ret] "={eax}" (-> u32),
         : [number] "{eax}" (@intFromEnum(number)),
@@ -17,6 +21,9 @@ pub fn syscall1(
     number: SYS,
     arg1: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("int $0x80"
         : [ret] "={eax}" (-> u32),
         : [number] "{eax}" (@intFromEnum(number)),
@@ -29,6 +36,9 @@ pub fn syscall2(
     arg1: syscall_arg_t,
     arg2: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("int $0x80"
         : [ret] "={eax}" (-> u32),
         : [number] "{eax}" (@intFromEnum(number)),
@@ -43,6 +53,9 @@ pub fn syscall3(
     arg2: syscall_arg_t,
     arg3: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("int $0x80"
         : [ret] "={eax}" (-> u32),
         : [number] "{eax}" (@intFromEnum(number)),
@@ -59,6 +72,9 @@ pub fn syscall4(
     arg3: syscall_arg_t,
     arg4: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("int $0x80"
         : [ret] "={eax}" (-> u32),
         : [number] "{eax}" (@intFromEnum(number)),
@@ -77,6 +93,9 @@ pub fn syscall5(
     arg4: syscall_arg_t,
     arg5: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("int $0x80"
         : [ret] "={eax}" (-> u32),
         : [number] "{eax}" (@intFromEnum(number)),
@@ -97,6 +116,9 @@ pub fn syscall6(
     arg5: syscall_arg_t,
     arg6: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // arg6 can't be passed to asm in a register because ebp might be reserved as the frame pointer
     // and there are no more GPRs available; so we'll need a memory operand for it. Adding that
     // memory operand means that on PIC we might need a reference to the GOT, which in turn needs
@@ -127,6 +149,9 @@ pub fn syscall6(
 }
 
 pub fn socketcall(call: u32, args: [*]const u32) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("int $0x80"
         : [ret] "={eax}" (-> u32),
         : [number] "{eax}" (@intFromEnum(SYS.socketcall)),
@@ -136,6 +161,9 @@ pub fn socketcall(call: u32, args: [*]const u32) u32 {
 }
 
 pub fn clone() callconv(.naked) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // __clone(func, stack, flags, arg, ptid, tls, ctid)
     //         +8,   +12,   +16,   +20, +24,  +28, +32
     //
@@ -186,6 +214,9 @@ pub fn clone() callconv(.naked) u32 {
 }
 
 pub fn restore() callconv(.naked) noreturn {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     switch (builtin.zig_backend) {
         .stage2_c => asm volatile (
             \\ addl $4, %%esp
@@ -204,6 +235,9 @@ pub fn restore() callconv(.naked) noreturn {
 }
 
 pub fn restore_rt() callconv(.naked) noreturn {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     switch (builtin.zig_backend) {
         .stage2_c => asm volatile (
             \\ movl %[number], %%eax

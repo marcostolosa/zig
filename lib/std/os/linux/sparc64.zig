@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("../../std.zig");
+const api_guards = @import("../api_guards.zig");
 const SYS = std.os.linux.SYS;
 
 pub const syscall_arg_t = u64;
@@ -7,6 +8,9 @@ pub const syscall_arg_t = u64;
 pub fn syscall0(
     number: SYS,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
@@ -22,6 +26,9 @@ pub fn syscall1(
     number: SYS,
     arg1: syscall_arg_t,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
@@ -39,6 +46,9 @@ pub fn syscall2(
     arg1: syscall_arg_t,
     arg2: syscall_arg_t,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
@@ -58,6 +68,9 @@ pub fn syscall3(
     arg2: syscall_arg_t,
     arg3: syscall_arg_t,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
@@ -79,6 +92,9 @@ pub fn syscall4(
     arg3: syscall_arg_t,
     arg4: syscall_arg_t,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
@@ -102,6 +118,9 @@ pub fn syscall5(
     arg4: syscall_arg_t,
     arg5: syscall_arg_t,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
@@ -127,6 +146,9 @@ pub fn syscall6(
     arg5: syscall_arg_t,
     arg6: syscall_arg_t,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
@@ -147,6 +169,9 @@ pub fn syscall6(
 pub fn syscall_pipe(
     fd: *[2]std.os.linux.fd_t,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ mov %[arg], %%g3
         \\ t 0x6d
@@ -167,6 +192,9 @@ pub fn syscall_pipe(
 }
 
 pub fn syscall_fork() u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // Linux/sparc64 fork() returns two values in %o0 and %o1:
     // - On the parent's side, %o0 is the child's PID and %o1 is 0.
     // - On the child's side, %o0 is the parent's PID and %o1 is 1.
@@ -189,6 +217,9 @@ pub fn syscall_fork() u64 {
 }
 
 pub fn clone() callconv(.naked) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // __clone(func, stack, flags, arg, ptid, tls, ctid)
     //         i0,   i1,    i2,    i3,  i4,   i5,  sp
     //
@@ -262,6 +293,9 @@ pub const restore = restore_rt;
 // Need to use C ABI here instead of naked
 // to prevent an infinite loop when calling rt_sigreturn.
 pub fn restore_rt() callconv(.c) void {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("t 0x6d"
         :
         : [number] "{g1}" (@intFromEnum(SYS.rt_sigreturn)),

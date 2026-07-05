@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("../../std.zig");
+const api_guards = @import("../api_guards.zig");
 const SYS = std.os.linux.SYS;
 
 pub const syscall_arg_t = u32;
@@ -7,6 +8,9 @@ pub const syscall_arg_t = u32;
 pub fn syscall0(
     number: SYS,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ trapa #31
         \\ or r0, r0
@@ -23,6 +27,9 @@ pub fn syscall1(
     number: SYS,
     arg1: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ trapa #31
         \\ or r0, r0
@@ -41,6 +48,9 @@ pub fn syscall2(
     arg1: syscall_arg_t,
     arg2: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ trapa #31
         \\ or r0, r0
@@ -61,6 +71,9 @@ pub fn syscall3(
     arg2: syscall_arg_t,
     arg3: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ trapa #31
         \\ or r0, r0
@@ -83,6 +96,9 @@ pub fn syscall4(
     arg3: syscall_arg_t,
     arg4: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ trapa #31
         \\ or r0, r0
@@ -107,6 +123,9 @@ pub fn syscall5(
     arg4: syscall_arg_t,
     arg5: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ trapa #31
         \\ or r0, r0
@@ -133,6 +152,9 @@ pub fn syscall6(
     arg5: syscall_arg_t,
     arg6: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ trapa #31
         \\ or r0, r0
@@ -152,6 +174,9 @@ pub fn syscall6(
 }
 
 pub fn clone() callconv(.naked) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // __clone(func, stack, flags, arg, ptid, tls, ctid)
     //         r4,   r5,    r6,    r7,  +0,   +4,  +8
     //
@@ -209,6 +234,9 @@ pub fn clone() callconv(.naked) u32 {
 }
 
 pub fn restore() callconv(.naked) noreturn {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     asm volatile (
         \\ trapa #31
         \\ or r0, r0
@@ -222,6 +250,9 @@ pub fn restore() callconv(.naked) noreturn {
 }
 
 pub fn restore_rt() callconv(.naked) noreturn {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     asm volatile (
         \\ trapa #31
         \\ or r0, r0

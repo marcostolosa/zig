@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("../../std.zig");
+const api_guards = @import("../api_guards.zig");
 const SYS = std.os.linux.SYS;
 
 pub const syscall_arg_t = u32;
@@ -7,6 +8,9 @@ pub const syscall_arg_t = u32;
 pub fn syscall0(
     number: SYS,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("trap0(#1)"
         : [ret] "={r0}" (-> u32),
         : [number] "{r6}" (@intFromEnum(number)),
@@ -17,6 +21,9 @@ pub fn syscall1(
     number: SYS,
     arg1: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("trap0(#1)"
         : [ret] "={r0}" (-> u32),
         : [number] "{r6}" (@intFromEnum(number)),
@@ -29,6 +36,9 @@ pub fn syscall2(
     arg1: syscall_arg_t,
     arg2: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("trap0(#1)"
         : [ret] "={r0}" (-> u32),
         : [number] "{r6}" (@intFromEnum(number)),
@@ -43,6 +53,9 @@ pub fn syscall3(
     arg2: syscall_arg_t,
     arg3: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("trap0(#1)"
         : [ret] "={r0}" (-> u32),
         : [number] "{r6}" (@intFromEnum(number)),
@@ -59,6 +72,9 @@ pub fn syscall4(
     arg3: syscall_arg_t,
     arg4: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("trap0(#1)"
         : [ret] "={r0}" (-> u32),
         : [number] "{r6}" (@intFromEnum(number)),
@@ -70,6 +86,9 @@ pub fn syscall4(
 }
 
 pub fn syscall5(number: SYS, arg1: u32, arg2: u32, arg3: u32, arg4: u32, arg5: u32) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("trap0(#1)"
         : [ret] "={r0}" (-> u32),
         : [number] "{r6}" (@intFromEnum(number)),
@@ -90,6 +109,9 @@ pub fn syscall6(
     arg5: syscall_arg_t,
     arg6: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("trap0(#1)"
         : [ret] "={r0}" (-> u32),
         : [number] "{r6}" (@intFromEnum(number)),
@@ -103,6 +125,9 @@ pub fn syscall6(
 }
 
 pub fn clone() callconv(.naked) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // __clone(func, stack, flags, arg, ptid, tls, ctid)
     //         r0,   r1,    r2,    r3,  r4,   r5,  +0
     //

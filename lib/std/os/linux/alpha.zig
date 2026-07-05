@@ -1,8 +1,12 @@
 const builtin = @import("builtin");
 const std = @import("../../std.zig");
+const api_guards = @import("../api_guards.zig");
 const SYS = std.os.linux.SYS;
 
 pub fn syscall0(number: SYS) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ callsys
         \\ beq $19, 1f
@@ -35,6 +39,9 @@ pub fn syscall0(number: SYS) u64 {
 }
 
 pub fn syscall1(number: SYS, arg1: u64) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // These registers are both inputs and clobbers.
     var r16_out: u64 = undefined;
     return asm volatile (
@@ -70,6 +77,9 @@ pub fn syscall1(number: SYS, arg1: u64) u64 {
 }
 
 pub fn syscall2(number: SYS, arg1: u64, arg2: u64) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // These registers are both inputs and clobbers.
     var r16_out: u64 = undefined;
     var r17_out: u64 = undefined;
@@ -107,6 +117,9 @@ pub fn syscall2(number: SYS, arg1: u64, arg2: u64) u64 {
 }
 
 pub fn syscall3(number: SYS, arg1: u64, arg2: u64, arg3: u64) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // These registers are both inputs and clobbers.
     var r16_out: u64 = undefined;
     var r17_out: u64 = undefined;
@@ -146,6 +159,9 @@ pub fn syscall3(number: SYS, arg1: u64, arg2: u64, arg3: u64) u64 {
 }
 
 pub fn syscall4(number: SYS, arg1: u64, arg2: u64, arg3: u64, arg4: u64) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // These registers are both inputs and clobbers.
     var r16_out: u64 = undefined;
     var r17_out: u64 = undefined;
@@ -188,6 +204,9 @@ pub fn syscall4(number: SYS, arg1: u64, arg2: u64, arg3: u64, arg4: u64) u64 {
 }
 
 pub fn syscall5(number: SYS, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // These registers are both inputs and clobbers.
     var r16_out: u64 = undefined;
     var r17_out: u64 = undefined;
@@ -240,6 +259,9 @@ pub fn syscall6(
     arg5: u64,
     arg6: u64,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // These registers are both inputs and clobbers.
     var r16_out: u64 = undefined;
     var r17_out: u64 = undefined;
@@ -286,6 +308,9 @@ pub fn syscall6(
 }
 
 pub fn clone() callconv(.naked) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // __clone(func, stack, flags, arg, ptid, tls, ctid)
     //         a0,   a1,    a2,    a3,  a4,   a5,  +0
     //
@@ -338,6 +363,9 @@ pub fn clone() callconv(.naked) u64 {
 }
 
 pub fn restore() noreturn {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     asm volatile (
     // v0 = $0, a0 = $16, sp = $30
         \\ mov $30, $16
@@ -347,6 +375,9 @@ pub fn restore() noreturn {
 }
 
 pub fn restore_rt() noreturn {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     asm volatile (
     // v0 = $0, a0 = $16, sp = $30
         \\ mov $30, $16

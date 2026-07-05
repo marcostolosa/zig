@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("../../std.zig");
+const api_guards = @import("../api_guards.zig");
 const SYS = std.os.linux.SYS;
 
 pub const syscall_arg_t = u32;
@@ -7,6 +8,9 @@ pub const syscall_arg_t = u32;
 pub fn syscall0(
     number: SYS,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // r0 is both an input register and a clobber. musl and glibc achieve this with
     // a "+" constraint, which isn't supported in Zig, so instead we separately list
     // r0 as both an input and an output. (Listing it as an input and a clobber would
@@ -27,6 +31,9 @@ pub fn syscall1(
     number: SYS,
     arg1: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // r0 is both an input and a clobber.
     var r0_out: u32 = undefined;
     return asm volatile (
@@ -46,6 +53,9 @@ pub fn syscall2(
     arg1: syscall_arg_t,
     arg2: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // These registers are both inputs and clobbers.
     var r0_out: u32 = undefined;
     var r4_out: u32 = undefined;
@@ -69,6 +79,9 @@ pub fn syscall3(
     arg2: syscall_arg_t,
     arg3: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // These registers are both inputs and clobbers.
     var r0_out: u32 = undefined;
     var r4_out: u32 = undefined;
@@ -96,6 +109,9 @@ pub fn syscall4(
     arg3: syscall_arg_t,
     arg4: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // These registers are both inputs and clobbers.
     var r0_out: u32 = undefined;
     var r4_out: u32 = undefined;
@@ -127,6 +143,9 @@ pub fn syscall5(
     arg4: syscall_arg_t,
     arg5: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // These registers are both inputs and clobbers.
     var r0_out: u32 = undefined;
     var r4_out: u32 = undefined;
@@ -162,6 +181,9 @@ pub fn syscall6(
     arg5: syscall_arg_t,
     arg6: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // These registers are both inputs and clobbers.
     var r0_out: u32 = undefined;
     var r4_out: u32 = undefined;
@@ -192,6 +214,9 @@ pub fn syscall6(
 }
 
 pub fn clone() callconv(.naked) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // __clone(func, stack, flags, arg, ptid, tls, ctid)
     //         3,    4,     5,     6,   7,    8,   9
     //
@@ -262,6 +287,9 @@ pub fn clone() callconv(.naked) u32 {
 }
 
 pub fn restore() callconv(.naked) noreturn {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     switch (builtin.zig_backend) {
         .stage2_c => asm volatile (
             \\ li 0, %[number]
@@ -278,6 +306,9 @@ pub fn restore() callconv(.naked) noreturn {
 }
 
 pub fn restore_rt() callconv(.naked) noreturn {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     switch (builtin.zig_backend) {
         .stage2_c => asm volatile (
             \\ li 0, %[number]

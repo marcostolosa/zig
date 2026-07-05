@@ -4,6 +4,7 @@
 //! Save and restore r7 around the syscall without touching the stack pointer not
 //! to break the frame chain.
 const std = @import("../../std.zig");
+const api_guards = @import("../api_guards.zig");
 const SYS = std.os.linux.SYS;
 const arm = @import("arm.zig");
 
@@ -12,6 +13,9 @@ pub const syscall_arg_t = arm.syscall_arg_t;
 pub fn syscall0(
     number: SYS,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     var buf: [2]syscall_arg_t = .{ @intFromEnum(number), undefined };
     return asm volatile (
         \\ str r7, [%[tmp], #4]
@@ -27,6 +31,9 @@ pub fn syscall1(
     number: SYS,
     arg1: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     var buf: [2]syscall_arg_t = .{ @intFromEnum(number), undefined };
     return asm volatile (
         \\ str r7, [%[tmp], #4]
@@ -44,6 +51,9 @@ pub fn syscall2(
     arg1: syscall_arg_t,
     arg2: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     var buf: [2]syscall_arg_t = .{ @intFromEnum(number), undefined };
     return asm volatile (
         \\ str r7, [%[tmp], #4]
@@ -63,6 +73,9 @@ pub fn syscall3(
     arg2: syscall_arg_t,
     arg3: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     var buf: [2]syscall_arg_t = .{ @intFromEnum(number), undefined };
     return asm volatile (
         \\ str r7, [%[tmp], #4]
@@ -84,6 +97,9 @@ pub fn syscall4(
     arg3: syscall_arg_t,
     arg4: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     var buf: [2]syscall_arg_t = .{ @intFromEnum(number), undefined };
     return asm volatile (
         \\ str r7, [%[tmp], #4]
@@ -107,6 +123,9 @@ pub fn syscall5(
     arg4: syscall_arg_t,
     arg5: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     var buf: [2]syscall_arg_t = .{ @intFromEnum(number), undefined };
     return asm volatile (
         \\ str r7, [%[tmp], #4]
@@ -132,6 +151,9 @@ pub fn syscall6(
     arg5: syscall_arg_t,
     arg6: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     var buf: [2]syscall_arg_t = .{ @intFromEnum(number), undefined };
     return asm volatile (
         \\ str r7, [%[tmp], #4]

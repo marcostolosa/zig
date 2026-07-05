@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("../../std.zig");
+const api_guards = @import("../api_guards.zig");
 const SYS = std.os.linux.SYS;
 
 pub const syscall_arg_t = u64;
@@ -7,6 +8,9 @@ pub const syscall_arg_t = u64;
 pub fn syscall0(
     number: SYS,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("syscall"
         : [ret] "={rax}" (-> u32),
         : [number] "{rax}" (@intFromEnum(number)),
@@ -17,6 +21,9 @@ pub fn syscall1(
     number: SYS,
     arg1: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("syscall"
         : [ret] "={rax}" (-> u32),
         : [number] "{rax}" (@intFromEnum(number)),
@@ -29,6 +36,9 @@ pub fn syscall2(
     arg1: syscall_arg_t,
     arg2: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("syscall"
         : [ret] "={rax}" (-> u32),
         : [number] "{rax}" (@intFromEnum(number)),
@@ -43,6 +53,9 @@ pub fn syscall3(
     arg2: syscall_arg_t,
     arg3: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("syscall"
         : [ret] "={rax}" (-> u32),
         : [number] "{rax}" (@intFromEnum(number)),
@@ -59,6 +72,9 @@ pub fn syscall4(
     arg3: syscall_arg_t,
     arg4: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("syscall"
         : [ret] "={rax}" (-> u32),
         : [number] "{rax}" (@intFromEnum(number)),
@@ -77,6 +93,9 @@ pub fn syscall5(
     arg4: syscall_arg_t,
     arg5: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("syscall"
         : [ret] "={rax}" (-> u32),
         : [number] "{rax}" (@intFromEnum(number)),
@@ -97,6 +116,9 @@ pub fn syscall6(
     arg5: syscall_arg_t,
     arg6: syscall_arg_t,
 ) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("syscall"
         : [ret] "={rax}" (-> u32),
         : [number] "{rax}" (@intFromEnum(number)),
@@ -114,6 +136,9 @@ pub fn syscall_lseek(
     offset: std.os.linux.off_t,
     whence: u32,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile ("syscall"
         : [ret] "={rax}" (-> u64),
         : [number] "{rax}" (@intFromEnum(SYS.lseek)),
@@ -124,6 +149,9 @@ pub fn syscall_lseek(
 }
 
 pub fn clone() callconv(.naked) u32 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     asm volatile (
         \\      movl $0x40000038,%%eax // SYS_clone
         \\      mov %%rdi,%%r11
@@ -160,6 +188,9 @@ pub fn clone() callconv(.naked) u32 {
 pub const restore = restore_rt;
 
 pub fn restore_rt() callconv(.naked) noreturn {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     switch (builtin.zig_backend) {
         .stage2_c => asm volatile (
             \\ movl %[number], %%eax

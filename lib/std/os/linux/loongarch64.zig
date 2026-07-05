@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("../../std.zig");
+const api_guards = @import("../api_guards.zig");
 const SYS = std.os.linux.SYS;
 
 pub const syscall_arg_t = u64;
@@ -7,6 +8,9 @@ pub const syscall_arg_t = u64;
 pub fn syscall0(
     number: SYS,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ syscall 0
         : [ret] "={$r4}" (-> u64),
@@ -18,6 +22,9 @@ pub fn syscall1(
     number: SYS,
     arg1: syscall_arg_t,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ syscall 0
         : [ret] "={$r4}" (-> u64),
@@ -31,6 +38,9 @@ pub fn syscall2(
     arg1: syscall_arg_t,
     arg2: syscall_arg_t,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ syscall 0
         : [ret] "={$r4}" (-> u64),
@@ -46,6 +56,9 @@ pub fn syscall3(
     arg2: syscall_arg_t,
     arg3: syscall_arg_t,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ syscall 0
         : [ret] "={$r4}" (-> u64),
@@ -63,6 +76,9 @@ pub fn syscall4(
     arg3: syscall_arg_t,
     arg4: syscall_arg_t,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ syscall 0
         : [ret] "={$r4}" (-> u64),
@@ -82,6 +98,9 @@ pub fn syscall5(
     arg4: syscall_arg_t,
     arg5: syscall_arg_t,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ syscall 0
         : [ret] "={$r4}" (-> u64),
@@ -103,6 +122,9 @@ pub fn syscall6(
     arg5: syscall_arg_t,
     arg6: syscall_arg_t,
 ) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     return asm volatile (
         \\ syscall 0
         : [ret] "={$r4}" (-> u64),
@@ -117,6 +139,9 @@ pub fn syscall6(
 }
 
 pub fn clone() callconv(.naked) u64 {
+    comptime {
+        api_guards.ensureOsTag(.linux);
+    }
     // __clone(func, stack, flags, arg, ptid, tls, ctid)
     //           a0,    a1,    a2,  a3,   a4,  a5,   a6
     // sys_clone(flags, stack, ptid, ctid, tls)

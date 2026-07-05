@@ -492,6 +492,8 @@ fn waitZigTest(
                 const tr_hdr = body_r.takeStruct(std.zig.Server.Message.TestResults, .little) catch unreachable;
                 assert(tr_hdr.index == active_test_index);
 
+                defer stderr.tossBuffered();
+
                 switch (tr_hdr.flags.status) {
                     .pass => {},
                     .skip => results.skip_count +|= 1,
@@ -507,7 +509,6 @@ fn waitZigTest(
                 if (tr_hdr.flags.status == .fail) {
                     const name = md.testName(tr_hdr.index);
                     const stderr_bytes = std.mem.trim(u8, stderr.buffered(), "\n");
-                    stderr.tossBuffered();
                     if (stderr_bytes.len == 0) {
                         try step.addError(maker, "'{s}' failed without output", .{name});
                     } else {

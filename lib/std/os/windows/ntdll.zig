@@ -59,6 +59,10 @@ const USER_THREAD_START_ROUTINE = windows.USER_THREAD_START_ROUTINE;
 const PS = windows.PS;
 const TEB = windows.TEB;
 
+comptime {
+    windows.ensureWindows();
+}
+
 // ref: km/ntifs.h
 
 pub extern "ntdll" fn RtlCreateHeap(

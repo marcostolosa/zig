@@ -21,6 +21,16 @@ pub const ws2_32 = @import("windows/ws2_32.zig");
 pub const crypt32 = @import("windows/crypt32.zig");
 pub const nls = @import("windows/nls.zig");
 
+pub fn ensureWindows() void {
+    if (builtin.os.tag != .windows) {
+        const tagName = std.enums.tagName;
+        const targetAsString = tagName(std.Target.Os.Tag, builtin.os.tag);
+        const errorString = "Windows API shouldn't be used from non-Windows targets.";
+        const currentTarget = if (targetAsString != null) " Current target: " ++ targetAsString.? else "";
+        @compileError(errorString ++ currentTarget);
+    }
+}
+
 pub const current_process: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
 
 pub const PS = struct {

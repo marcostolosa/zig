@@ -24,6 +24,16 @@ const iovec_const = std.posix.iovec_const;
 const winsize = std.posix.winsize;
 const ACCMODE = std.posix.ACCMODE;
 
+comptime {
+    if (builtin.os.tag != .linux) {
+        const tagName = std.enums.tagName;
+        const targetAsString = tagName(std.Target.Os.Tag, builtin.os.tag);
+        const errorString = "Linux API shouldn't be used from non-Linux targets.";
+        const currentTarget = if (targetAsString != null) " Current target: " ++ targetAsString.? else "";
+        @compileError(errorString ++ currentTarget);
+    }
+}
+
 test {
     if (builtin.os.tag == .linux) {
         _ = @import("linux/test.zig");

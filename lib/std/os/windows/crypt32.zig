@@ -10,6 +10,10 @@ const LPCWSTR = windows.LPCWSTR;
 const FILETIME = windows.FILETIME;
 const HANDLE = windows.HANDLE;
 
+comptime {
+    windows.ensureWindows();
+}
+
 // ref: um/wincrypt.h
 
 pub const HCRYPTPROV_LEGACY = enum(usize) { NULL = 0 };

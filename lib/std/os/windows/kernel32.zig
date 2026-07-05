@@ -13,6 +13,10 @@ const SECURITY_ATTRIBUTES = windows.SECURITY_ATTRIBUTES;
 const SIZE_T = windows.SIZE_T;
 const STARTUPINFOW = windows.STARTUPINFOW;
 
+comptime {
+    windows.ensureWindows();
+}
+
 pub extern "kernel32" fn CreateProcessW(
     lpApplicationName: ?LPCWSTR,
     lpCommandLine: ?LPWSTR,

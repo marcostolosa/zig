@@ -1,5 +1,6 @@
 const std = @import("../../std.zig");
 const windows = std.os.windows;
+const externs = @import("./externs.zig");
 
 const BOOL = windows.BOOL;
 const DWORD = windows.DWORD;
@@ -13,7 +14,7 @@ const SECURITY_ATTRIBUTES = windows.SECURITY_ATTRIBUTES;
 const SIZE_T = windows.SIZE_T;
 const STARTUPINFOW = windows.STARTUPINFOW;
 
-pub extern "kernel32" fn CreateProcessW(
+pub fn CreateProcessW(
     lpApplicationName: ?LPCWSTR,
     lpCommandLine: ?LPWSTR,
     lpProcessAttributes: ?*SECURITY_ATTRIBUTES,
@@ -24,4 +25,17 @@ pub extern "kernel32" fn CreateProcessW(
     lpCurrentDirectory: ?LPCWSTR,
     lpStartupInfo: *STARTUPINFOW,
     lpProcessInformation: *PROCESS.INFORMATION,
-) callconv(.winapi) BOOL;
+) callconv(.winapi) BOOL {
+    return externs.kernel32.CreateProcessW(
+        lpApplicationName,
+        lpCommandLine,
+        lpProcessAttributes,
+        lpThreadAttributes,
+        bInheritHandles,
+        dwCreationFlags,
+        lpEnvironment,
+        lpCurrentDirectory,
+        lpStartupInfo,
+        lpProcessInformation,
+    );
+}

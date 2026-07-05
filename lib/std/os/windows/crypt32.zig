@@ -1,5 +1,6 @@
 const std = @import("../../std.zig");
 const windows = std.os.windows;
+const externs = @import("./externs.zig");
 
 const BOOL = windows.BOOL;
 const DWORD = windows.DWORD;
@@ -109,13 +110,21 @@ pub const CERT_STORE = struct {
     };
 };
 
-pub extern "crypt32" fn CertOpenStore(
+pub fn CertOpenStore(
     lpszStoreProvider: CERT_STORE.PROV,
     dwEncodingType: ENCODING.TYPE,
     hCryptProv: HCRYPTPROV_LEGACY,
     dwFlags: CERT_STORE.FLAG,
     pvPara: ?*const anyopaque,
-) callconv(.winapi) ?HCERTSTORE;
+) callconv(.winapi) ?HCERTSTORE {
+    return externs.crypt32.CertOpenStore(
+        lpszStoreProvider,
+        dwEncodingType,
+        hCryptProv,
+        dwFlags,
+        pvPara,
+    );
+}
 
 pub const CERT_CLOSE_STORE_FLAG = packed struct(DWORD) {
     FORCE: bool = false,
@@ -123,33 +132,61 @@ pub const CERT_CLOSE_STORE_FLAG = packed struct(DWORD) {
     Reserved2: u30 = 0,
 };
 
-pub extern "crypt32" fn CertCloseStore(
+pub fn CertCloseStore(
     hCertStore: HCERTSTORE,
     dwFlags: CERT_CLOSE_STORE_FLAG,
-) callconv(.winapi) BOOL;
+) callconv(.winapi) BOOL {
+    return externs.crypt32.CertCloseStore(
+        hCertStore,
+        dwFlags,
+    );
+}
 
-pub extern "crypt32" fn CertEnumCertificatesInStore(
+pub fn CertEnumCertificatesInStore(
     hCertStore: HCERTSTORE,
     pPrevCertContext: ?*CERT_CONTEXT,
-) callconv(.winapi) ?*CERT_CONTEXT;
+) callconv(.winapi) ?*CERT_CONTEXT {
+    return externs.crypt32.CertEnumCertificatesInStore(
+        hCertStore,
+        pPrevCertContext,
+    );
+}
 
-pub extern "crypt32" fn CertFreeCertificateContext(
+pub fn CertFreeCertificateContext(
     pCertContext: ?*const CERT_CONTEXT,
-) callconv(.winapi) BOOL;
+) callconv(.winapi) BOOL {
+    return externs.crypt32.CertFreeCertificateContext(
+        pCertContext,
+    );
+}
 
-pub extern "crypt32" fn CertAddEncodedCertificateToStore(
+pub fn CertAddEncodedCertificateToStore(
     hCertStore: ?HCERTSTORE,
     dwCertEncodingType: ENCODING.TYPE,
     pbCertEncoded: [*]const BYTE,
     cbCertEncoded: DWORD,
     dwAddDisposition: CERT_STORE.ADD,
     ppCertContext: ?*?*const CERT_CONTEXT,
-) callconv(.winapi) BOOL;
+) callconv(.winapi) BOOL {
+    return externs.crypt32.CertAddEncodedCertificateToStore(
+        hCertStore,
+        dwCertEncodingType,
+        pbCertEncoded,
+        cbCertEncoded,
+        dwAddDisposition,
+        ppCertContext,
+    );
+}
 
-pub extern "crypt32" fn CertOpenSystemStoreW(
+pub fn CertOpenSystemStoreW(
     hProv: HCRYPTPROV_LEGACY,
     szSubsystemProtocol: LPCWSTR,
-) callconv(.winapi) ?HCERTSTORE;
+) callconv(.winapi) ?HCERTSTORE {
+    return externs.crypt32.CertOpenSystemStoreW(
+        hProv,
+        szSubsystemProtocol,
+    );
+}
 
 pub const HCERTCHAINENGINE = enum(usize) {
     CURRENT_USER = 0x0,
@@ -260,7 +297,7 @@ pub const HTTPSPolicyCallbackData = extern struct {
     pub const AUTHTYPE = enum(DWORD) { CLIENT = 1, SERVER = 2, _ };
 };
 
-pub extern "crypt32" fn CertGetCertificateChain(
+pub fn CertGetCertificateChain(
     hChainEngine: HCERTCHAINENGINE,
     pCertContext: *const CERT_CONTEXT,
     pTime: ?*const FILETIME,
@@ -269,15 +306,37 @@ pub extern "crypt32" fn CertGetCertificateChain(
     dwFlags: CERT_CHAIN,
     pvReserved: ?*const anyopaque,
     ppChainContext: **const CERT_CHAIN.CONTEXT,
-) callconv(.winapi) BOOL;
+) callconv(.winapi) BOOL {
+    return externs.crypt32.CertGetCertificateChain(
+        hChainEngine,
+        pCertContext,
+        pTime,
+        hAdditionalStore,
+        pChainPara,
+        dwFlags,
+        pvReserved,
+        ppChainContext,
+    );
+}
 
-pub extern "crypt32" fn CertFreeCertificateChain(
+pub fn CertFreeCertificateChain(
     pChainContext: *const CERT_CHAIN.CONTEXT,
-) callconv(.winapi) void;
+) callconv(.winapi) void {
+    return externs.crypt32.CertFreeCertificateChain(
+        pChainContext,
+    );
+}
 
-pub extern "crypt32" fn CertVerifyCertificateChainPolicy(
+pub fn CertVerifyCertificateChainPolicy(
     pszPolicyOID: CERT_CHAIN.POLICY,
     pChainContext: *const CERT_CHAIN.CONTEXT,
     pPolicyPara: *const CERT_CHAIN.POLICY.PARA,
     pPolicyStatus: *CERT_CHAIN.POLICY.STATUS,
-) callconv(.winapi) BOOL;
+) callconv(.winapi) BOOL {
+    return externs.crypt32.CertVerifyCertificateChainPolicy(
+        pszPolicyOID,
+        pChainContext,
+        pPolicyPara,
+        pPolicyStatus,
+    );
+}

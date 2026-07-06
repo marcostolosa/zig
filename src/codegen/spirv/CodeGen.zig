@@ -7593,23 +7593,29 @@ fn tryLoopFastPath(cg: *CodeGen, loop_body: []const Air.Inst.Index) !bool {
     const then_tgt = datas[@intFromEnum(then_last)].br.block_inst;
     const else_tgt = datas[@intFromEnum(else_last)].br.block_inst;
 
-    var cont_body: []const Air.Inst.Index = undefined;
-    var exit_block_inst: Air.Inst.Index = undefined;
-    var cond_true_continues: bool = undefined;
-    if (then_tgt == inner and cb.else_body.len == 1 and else_tgt != inner) {
-        cont_body = cb.then_body;
-        exit_block_inst = else_tgt;
-        cond_true_continues = true;
-    } else if (else_tgt == inner and cb.then_body.len == 1 and then_tgt != inner) {
-        cont_body = cb.else_body;
-        exit_block_inst = then_tgt;
-        cond_true_continues = false;
-    } else return false;
-
     const header_label = cg.allocId();
     const body_label = cg.allocId();
     const continue_label = cg.allocId();
     const merge_label = cg.allocId();
+
+    // Identify which arm continues the loop (`br inner`) and which is the single
+    // `br <enclosing block>` break. The condition steers directly to `body_label`
+    // (continue) or `merge_label` (break), so no discriminator is needed.
+    var cont_body: []const Air.Inst.Index = undefined;
+    var exit_block_inst: Air.Inst.Index = undefined;
+    var cond_true_label: Id = undefined;
+    var cond_false_label: Id = undefined;
+    if (then_tgt == inner and cb.else_body.len == 1 and else_tgt != inner) {
+        cont_body = cb.then_body;
+        exit_block_inst = else_tgt;
+        cond_true_label = body_label;
+        cond_false_label = merge_label;
+    } else if (else_tgt == inner and cb.then_body.len == 1 and then_tgt != inner) {
+        cont_body = cb.else_body;
+        exit_block_inst = then_tgt;
+        cond_true_label = merge_label;
+        cond_false_label = body_label;
+    } else return false;
 
     try cg.body.emit(gpa, .OpBranch, .{ .target_label = header_label });
     try cg.beginSpvBlock(header_label);
@@ -7624,11 +7630,7 @@ fn tryLoopFastPath(cg: *CodeGen, loop_body: []const Air.Inst.Index) !bool {
         .continue_target = continue_label,
         .loop_control = .{},
     });
-    if (cond_true_continues) {
-        try cg.body.emit(gpa, .OpBranchConditional, .{ .condition = cond_id, .true_label = body_label, .false_label = merge_label });
-    } else {
-        try cg.body.emit(gpa, .OpBranchConditional, .{ .condition = cond_id, .true_label = merge_label, .false_label = body_label });
-    }
+    try cg.body.emit(gpa, .OpBranchConditional, .{ .condition = cond_id, .true_label = cond_true_label, .false_label = cond_false_label });
 
     try cg.beginSpvBlock(body_label);
     try cg.loop_frames.append(gpa, .{
@@ -7637,10 +7639,10 @@ fn tryLoopFastPath(cg: *CodeGen, loop_body: []const Air.Inst.Index) !bool {
         .continue_label = continue_label,
         .merge_label = merge_label,
     });
+    defer _ = cg.loop_frames.pop();
     // The continue arm, minus its trailing `br inner` (handled by the fall-through
     // to `continue_label` below; nested continues/breaks are handled in airBr).
     try cg.genBody(cont_body[0 .. cont_body.len - 1]);
-    _ = cg.loop_frames.pop();
 
     if (!cg.block_terminated) {
         try cg.body.emit(gpa, .OpBranch, .{ .target_label = continue_label });

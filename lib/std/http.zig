@@ -30,7 +30,6 @@ pub const Method = enum {
     OPTIONS,
     TRACE,
     PATCH,
-    /// RFC10008
     QUERY,
 
     /// Returns true if a request of this method is allowed to have a body

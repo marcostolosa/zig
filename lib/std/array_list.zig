@@ -2427,7 +2427,10 @@ test "toOwnedSliceSentinel" {
 }
 
 test "toOwnedSliceAssert" {
-    var failing_allocator: testing.FailingAllocator = .init(testing.allocator, .{
+    var fba_buf: [1024]u8 = undefined;
+    var fba: std.heap.FixedBufferAllocator = .init(&fba_buf);
+
+    var failing_allocator: testing.FailingAllocator = .init(fba.allocator(), .{
         .fail_index = 2,
     });
     const a = failing_allocator.allocator();

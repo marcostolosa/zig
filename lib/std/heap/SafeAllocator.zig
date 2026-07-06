@@ -44,6 +44,7 @@ pub const Options = struct {
 
     stack_trace_frames: usize = if (is_debug and std.debug.sys_can_stack_trace) 7 else 0,
     check_write_after_free: bool = is_debug,
+    no_resize: bool = is_debug,
     /// A unique value used to check that allocations created by other
     /// `SafeAllocator` instances are not passed to this one.
     canary: u32 = 0x85dff10f,
@@ -83,6 +84,7 @@ large_alloc_threshold: usize,
 
 canary: u32,
 check_write_after_free: bool,
+no_resize: bool,
 
 fn bucketSize(s: *SafeAllocator) u32 {
     return @as(u32, 1) << s.bucket_size_log2;
@@ -646,6 +648,7 @@ pub fn init(
 
         .canary = options.canary,
         .check_write_after_free = options.check_write_after_free,
+        .no_resize = options.no_resize,
     };
 }
 
@@ -1182,6 +1185,11 @@ fn resize(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, r
     const f: *AllocFooter = .of(memory);
     f.startModify(.resized, s, .{ .memory = memory, .alignment = alignment });
 
+    if (s.no_resize) {
+        f.modify.setNone();
+        return false;
+    }
+
     // Check that the allocation is not moving between a bucket and large allocation. This is
     // done after the above so that it is still checked that valid memory is passed and there
     // is no double modify.
@@ -1249,6 +1257,11 @@ fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ra
     const s: *SafeAllocator = @ptrCast(@alignCast(ctx));
     const f: *AllocFooter = .of(memory);
     f.startModify(.remaped, s, .{ .memory = memory, .alignment = alignment });
+
+    if (s.no_resize) {
+        f.modify.setNone();
+        return null;
+    }
 
     // Check that the allocation is not moving between a bucket and large allocation. This is
     // done after the above so that it is still checked that valid memory is passed and there

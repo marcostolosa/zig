@@ -144,9 +144,11 @@ pub fn getStackTrace(self: *FailingAllocator) std.debug.StackTrace {
 }
 
 test FailingAllocator {
+    var fba_buf: [256]u8 = undefined;
     // Fail on allocation
     {
-        var failing_allocator_state = FailingAllocator.init(std.testing.allocator, .{
+        var fba: std.heap.FixedBufferAllocator = .init(&fba_buf);
+        var failing_allocator_state = FailingAllocator.init(fba.allocator(), .{
             .fail_index = 2,
         });
         const failing_alloc = failing_allocator_state.allocator();
@@ -159,7 +161,8 @@ test FailingAllocator {
     }
     // Fail on resize
     {
-        var failing_allocator_state = FailingAllocator.init(std.testing.allocator, .{
+        var fba: std.heap.FixedBufferAllocator = .init(&fba_buf);
+        var failing_allocator_state = FailingAllocator.init(fba.allocator(), .{
             .resize_fail_index = 1,
         });
         const failing_alloc = failing_allocator_state.allocator();

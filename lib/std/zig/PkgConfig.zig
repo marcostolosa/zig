@@ -95,7 +95,6 @@ pub const Parsed = struct {
     cflags: []const []const u8,
     libs: []const []const u8,
     unknown_flags: []const []const u8,
-    pthread: bool,
 };
 
 pub const ParseError = Allocator.Error || error{InvalidPkgConfigOutput};
@@ -106,7 +105,6 @@ pub fn parse(arena: Allocator, stdout: []const u8) ParseError!Parsed {
     var zig_libs: std.ArrayList([]const u8) = .empty;
     var unknown_flags: std.ArrayList([]const u8) = .empty;
     var arg_it = mem.tokenizeAny(u8, stdout, " \r\n\t");
-    var pthread = false;
 
     while (arg_it.next()) |arg| {
         if (mem.eql(u8, arg, "-I")) {
@@ -131,8 +129,6 @@ pub fn parse(arena: Allocator, stdout: []const u8) ParseError!Parsed {
             try zig_cflags.append(arena, arg);
         } else if (mem.cutPrefix(u8, arg, "-Wl,-rpath,")) |rest| {
             try zig_cflags.appendSlice(arena, &.{ "-rpath", rest });
-        } else if (mem.eql(u8, arg, "-pthread")) {
-            pthread = true;
         } else {
             try unknown_flags.append(arena, arg);
         }
@@ -146,6 +142,5 @@ pub fn parse(arena: Allocator, stdout: []const u8) ParseError!Parsed {
         .cflags = zig_cflags.toOwnedSliceAssert(),
         .libs = zig_libs.toOwnedSliceAssert(),
         .unknown_flags = unknown_flags.toOwnedSliceAssert(),
-        .pthread = pthread,
     };
 }

@@ -20,6 +20,8 @@ pub const Version = enum {
 /// https://datatracker.ietf.org/doc/html/rfc7231#section-4 Initial definition
 ///
 /// https://datatracker.ietf.org/doc/html/rfc5789#section-2 PATCH
+///
+/// https://datatracker.ietf.org/doc/html/rfc10008#name-query-method QUERY
 pub const Method = enum {
     GET,
     HEAD,

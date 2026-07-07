@@ -231,9 +231,14 @@ const Bucket = struct {
 
     fn allocFooterBefore(b: *Bucket, s: *SafeAllocator, at: u32, is_extended: bool) ?*AllocFooter {
         if (at - @sizeOf(Bucket) == 0) return null;
-        const off = at - AllocFooter.lenBucket(s, is_extended);
+        const off = at - AllocFooter.lenBucket(is_extended, s.stack_trace_size);
         assert(off >= @sizeOf(Bucket));
         return @ptrCast(@alignCast(b.bytes(s)[off..]));
+    }
+
+    fn allocFooterPrev(b: *Bucket, s: *SafeAllocator, f: *AllocFooter) ?*AllocFooter {
+        if (f.isExtended()) return f.extended().container.toBucketPrev();
+        return b.allocFooterBefore(s, Bucket.fillAt(s, f.userMemory().ptr), f.data.prev_extended);
     }
 
     /// Checks that no writes after frees were performed.
@@ -251,12 +256,12 @@ const Bucket = struct {
                 // to panic even if this thread still sees `.freed`.
                 .unordered,
             ).storedXor(&footer.modify);
-            if (modify != .freed or footer.actualChecksum(s) != footer.checksum ^ s.canary) {
+            if (modify != .freed or footer.actualChecksum() != footer.checksum ^ s.canary) {
                 panic("corrupted footer metadata in bucket at *{x}", .{@intFromPtr(&footer)});
             }
 
-            s.checkFreed(footer);
-            footer = footer.bucketPrev(b, s) orelse break;
+            if (s.check_write_after_free) checkFreed(footer, s.stack_trace_size);
+            footer = b.allocFooterPrev(s, footer) orelse break;
         }
     }
 };
@@ -315,9 +320,26 @@ const AllocFooter = struct {
         len: usize,
         container: Container,
 
-        const Container = union {
-            bucket_prev: ?*AllocFooter,
-            large_entry: *Allocs.Entry,
+        /// Cannot be a plain union since another instance may access the wrong field when
+        /// calculating the footer's checksum which is used to report the canary mismatch.
+        const Container = enum(usize) {
+            _,
+
+            fn toBucketPrev(c: Container) ?*AllocFooter {
+                return @ptrFromInt(@backingInt(c));
+            }
+
+            fn fromBucketPrev(prev: ?*AllocFooter) Container {
+                return @fromBackingInt(@intFromPtr(prev));
+            }
+
+            fn toLargeEntry(c: Container) *Allocs.Entry {
+                return @ptrFromInt(@backingInt(c));
+            }
+
+            fn fromLargeEntry(ent: *Allocs.Entry) Container {
+                return @fromBackingInt(@intFromPtr(ent));
+            }
         };
 
         comptime {
@@ -332,7 +354,6 @@ const AllocFooter = struct {
         none = 0x2962,
         resized = 0x0030,
         remaped = 0x9068,
-        freeing = 0x7f3d,
         freed = 0xb98b,
         _,
 
@@ -344,8 +365,8 @@ const AllocFooter = struct {
             return switch (m) {
                 .resized => "resize",
                 .remaped => "remap",
-                .freeing => "free",
-                _, .none, .freed => unreachable,
+                .freed => "free",
+                _, .none => unreachable,
             };
         }
 
@@ -353,7 +374,6 @@ const AllocFooter = struct {
             return switch (m) {
                 .resized => "after resize",
                 .remaped => "after remap",
-                .freeing => "during free",
                 .freed => "after free",
                 _, .none => unreachable,
             };
@@ -361,7 +381,7 @@ const AllocFooter = struct {
 
         fn storedXor(m: Modify, ptr: *Modify) Modify {
             const addr_hash: u16 = @truncate(std.hash.int(@intFromPtr(ptr)));
-            return @fromBackingInt(@intCast(@backingInt(m) ^ addr_hash));
+            return @fromBackingInt(@backingInt(m) ^ addr_hash);
         }
     };
 
@@ -391,11 +411,6 @@ const AllocFooter = struct {
         return @fromBackingInt(@intCast(high | f.data.alignment));
     }
 
-    fn bucketPrev(f: *AllocFooter, b: *Bucket, s: *SafeAllocator) ?*AllocFooter {
-        if (f.isExtended()) return f.extended().container.bucket_prev;
-        return b.allocFooterBefore(s, Bucket.fillAt(s, f.userMemory().ptr), f.data.prev_extended);
-    }
-
     fn tracesPtr(f: *AllocFooter) [*]usize {
         const off_footer = @divExact(@sizeOf(AllocFooter), @sizeOf(usize));
         const off_extended = @as(usize, @divExact(@sizeOf(Extended), @sizeOf(usize))) *
@@ -403,27 +418,20 @@ const AllocFooter = struct {
         return @as([*]usize, @ptrCast(f))[off_footer + off_extended ..];
     }
 
-    fn allocTrace(f: *AllocFooter, s: *SafeAllocator) []usize {
-        return f.tracesPtr()[0..s.stack_trace_size];
+    fn allocTrace(f: *AllocFooter, stack_trace_size: usize) []usize {
+        return f.tracesPtr()[0..stack_trace_size];
     }
 
-    fn freeTrace(f: *AllocFooter, s: *SafeAllocator) []usize {
-        const trace_size = s.stack_trace_size;
-        return f.tracesPtr()[trace_size..][0..trace_size];
+    fn freeTrace(f: *AllocFooter, stack_trace_size: usize) []usize {
+        return f.tracesPtr()[stack_trace_size..][0..stack_trace_size];
     }
 
-    fn actualChecksum(f: *AllocFooter, s: *SafeAllocator) u32 {
+    fn actualChecksum(f: *AllocFooter) u32 {
         if (f.isExtended()) {
-            const len = f.extended().len;
-            const addr: usize = if (s.isLarge(len, f.userAlign()))
-                @intFromPtr(f.extended().container.large_entry)
-            else
-                @intFromPtr(f.extended().container.bucket_prev);
-
-            const len_bytes: [@sizeOf(usize)]u8 = @bitCast(len);
-            const container: [@sizeOf(usize)]u8 = @bitCast(addr);
-            const regular_bytes: [2]u8 = @bitCast(f.data);
-            const data_bytes = len_bytes ++ container ++ regular_bytes;
+            const regular_bytes: [@sizeOf(Data)]u8 = @bitCast(f.data);
+            const len_bytes: [@sizeOf(usize)]u8 = @bitCast(f.extended().len);
+            const container: [@sizeOf(usize)]u8 = @bitCast(f.extended().container);
+            const data_bytes = regular_bytes ++ len_bytes ++ container;
 
             return @truncate(std.hash.Wyhash.hash(@truncate(@intFromPtr(f)), &data_bytes));
         }
@@ -444,34 +452,34 @@ const AllocFooter = struct {
         return len >= Data.Len.extended_start or @backingInt(alignment) > math.maxInt(u2);
     }
 
-    fn lenBucket(s: *SafeAllocator, is_extended: bool) usize {
+    fn lenBucket(is_extended: bool, stack_trace_size: usize) usize {
         return Alignment.forward(.@"8", @sizeOf(AllocFooter) +
             @as(usize, @sizeOf(Extended)) * @intFromBool(is_extended) +
-            s.stack_trace_size * @sizeOf(usize) * 2);
+            stack_trace_size * @sizeOf(usize) * 2);
     }
 
-    fn lenLarge(s: *SafeAllocator) usize {
-        return @sizeOf(AllocFooter) + @sizeOf(Extended) + s.stack_trace_size * @sizeOf(usize);
+    fn lenLarge(stack_trace_size: usize) usize {
+        return @sizeOf(AllocFooter) + @sizeOf(Extended) + stack_trace_size * @sizeOf(usize);
     }
 
-    fn allocLenBucket(s: *SafeAllocator, len: usize, is_extended: bool) usize {
-        return allocOffset(len) + lenBucket(s, is_extended);
+    fn allocLenBucket(user_len: usize, is_extended: bool, stack_trace_size: usize) usize {
+        return allocOffset(user_len) + lenBucket(is_extended, stack_trace_size);
     }
 
-    fn allocLenLarge(s: *SafeAllocator, len: usize) usize {
-        return allocOffset(len) + lenLarge(s);
+    fn allocLenLarge(user_len: usize, stack_trace_size: usize) usize {
+        return allocOffset(user_len) + lenLarge(stack_trace_size);
     }
 
-    fn allocOffsetOrOom(len: usize) error{OutOfMemory}!usize {
-        return alignForwardOrOom(.of(AllocFooter), len);
+    fn allocOffsetOrOom(user_len: usize) error{OutOfMemory}!usize {
+        return alignForwardOrOom(.of(AllocFooter), user_len);
     }
 
     fn allocLenBucketOrOom(
-        s: *SafeAllocator,
         len: usize,
         is_extended: bool,
+        stack_trace_size: usize,
     ) error{OutOfMemory}!usize {
-        return addOrOom(try allocOffsetOrOom(len), lenBucket(s, is_extended));
+        return addOrOom(try allocOffsetOrOom(len), lenBucket(is_extended, stack_trace_size));
     }
 
     fn of(user_memory: []u8) *AllocFooter {
@@ -481,7 +489,13 @@ const AllocFooter = struct {
         return @ptrFromInt(aligned_start + allocOffset(user_memory.len));
     }
 
-    fn startModify(f: *AllocFooter, m: Modify, s: *SafeAllocator, mem_fmt: FormatMemory) void {
+    fn startModify(
+        f: *AllocFooter,
+        m: Modify,
+        mem_fmt: FormatMemory,
+        canary: u32,
+        stack_trace_size: usize,
+    ) void {
         const prev = @atomicRmw(
             Modify,
             &f.modify,
@@ -505,56 +519,47 @@ const AllocFooter = struct {
                     prev.stateName(),
                     mem_fmt,
                     // The stack trace may have been overwritten, but at least give it a try
-                    formatStackTrace(f.allocTrace(s)),
+                    formatStackTrace(f.allocTrace(stack_trace_size)),
                     op_name,
                 }),
-                .freeing, .freed => {
-                    if (prev == .freeing) {
-                        // Wait for trace to become available
-                        const complete: Modify = .storedXor(.freed, &f.modify);
-                        while (@atomicLoad(Modify, &f.modify, .monotonic) != complete) {}
-                        const b: *Bucket = .of(s, @ptrCast(f));
-                        b.alloc_count.fenceAcqRel();
-                    }
-                    if (m == .freeing) {
-                        panic(
-                            \\double free of {f}
-                            \\alloc: {f}
-                            \\first free: {f}
-                            \\second free:
-                            // (panic stack trace)
-                        , .{
-                            mem_fmt,
-                            formatStackTrace(f.allocTrace(s)),
-                            formatStackTrace(f.freeTrace(s)),
-                        });
-                    } else {
-                        panic(
-                            \\{s} {s} of {f}
-                            \\alloc: {f}
-                            \\free: {f}
-                            \\{s}:
-                            // (panic stack trace)
-                        , .{
-                            op_name,
-                            prev.stateName(),
-                            mem_fmt,
-                            formatStackTrace(f.allocTrace(s)),
-                            formatStackTrace(f.freeTrace(s)),
-                            op_name,
-                        });
-                    }
+                .freed => if (m == .freed) {
+                    panic(
+                        \\double free of {f}
+                        \\alloc: {f}
+                        \\first free: {f}
+                        \\second free:
+                        // (panic stack trace)
+                    , .{
+                        mem_fmt,
+                        formatStackTrace(f.allocTrace(stack_trace_size)),
+                        formatStackTrace(f.freeTrace(stack_trace_size)),
+                    });
+                } else {
+                    panic(
+                        \\{s} {s} of {f}
+                        \\alloc: {f}
+                        \\free: {f}
+                        \\{s}:
+                        // (panic stack trace)
+                    , .{
+                        op_name,
+                        prev.stateName(),
+                        mem_fmt,
+                        formatStackTrace(f.allocTrace(stack_trace_size)),
+                        formatStackTrace(f.freeTrace(stack_trace_size)),
+                        op_name,
+                    });
                 },
                 _ => panic(
                     "{s} of invalid memory {f} or corrupted metadata",
-                    .{ m.opName(), mem_fmt },
+                    .{ op_name, mem_fmt },
                 ),
             }
             comptime unreachable;
         }
 
-        const expected_checksum = f.actualChecksum(s);
-        if (f.checksum ^ s.canary != expected_checksum) {
+        const expected_checksum = f.actualChecksum();
+        if (f.checksum ^ canary != expected_checksum) {
             @branchHint(.cold);
             const other_canary = f.checksum ^ expected_checksum;
             panic(
@@ -573,47 +578,49 @@ const AllocFooter = struct {
             , .{ op_name, mem_fmt, FormatMemory{
                 .memory = f.userMemory(),
                 .alignment = f.userAlign(),
-            }, formatStackTrace(f.allocTrace(s)), op_name });
+            }, formatStackTrace(f.allocTrace(stack_trace_size)), op_name });
         }
     }
 
-    /// It is the caller's responsibility to `.acquire` fence the respective `Bucket.alloc_count`.
-    fn populate(
-        memory: []align(@alignOf(AllocFooter)) u8,
-        len: usize,
-        alignment: Alignment,
-        ra: usize,
-        /// `true` for large allocations
+    const PopulateOptions = struct {
+        canary: u32,
         is_extended: bool,
-        /// `false` for large allocations
+        stack_trace_size: usize,
+
+        user_len: usize,
+        user_align: Alignment,
+        ra: usize,
+
         prev_extended: bool,
         container: Extended.Container,
-        s: *SafeAllocator,
-    ) *AllocFooter {
-        const footer: *AllocFooter = @ptrCast(@alignCast(memory[allocOffset(len)..].ptr));
+    };
 
-        if (!is_extended) {
+    /// It is the caller's responsibility to `.acquire` fence the respective `Bucket.alloc_count`.
+    fn populate(memory: []align(@alignOf(AllocFooter)) u8, p: PopulateOptions) *AllocFooter {
+        const footer: *AllocFooter = @ptrCast(@alignCast(memory[allocOffset(p.user_len)..].ptr));
+
+        if (!p.is_extended) {
             footer.data = .{
-                .len = @fromBackingInt(@intCast(len)),
-                .alignment = @intCast(@backingInt(alignment)),
-                .prev_extended = prev_extended,
+                .len = @fromBackingInt(@intCast(p.user_len)),
+                .alignment = @intCast(@backingInt(p.user_align)),
+                .prev_extended = p.prev_extended,
             };
             assert(!footer.isExtended());
         } else {
             footer.data = .{
-                .len = @fromBackingInt(@intCast(Data.Len.extended_start + (@backingInt(alignment) >> 2))),
-                .alignment = @truncate(@backingInt(alignment)),
-                .prev_extended = prev_extended,
+                .len = @fromBackingInt(Data.Len.extended_start + (@backingInt(p.user_align) >> 2)),
+                .alignment = @truncate(@backingInt(p.user_align)),
+                .prev_extended = p.prev_extended,
             };
             assert(footer.isExtended());
             footer.extended().* = .{
-                .len = len,
-                .container = container,
+                .len = p.user_len,
+                .container = p.container,
             };
         }
 
-        captureStackTrace(footer.allocTrace(s), ra);
-        footer.checksum = footer.actualChecksum(s) ^ s.canary;
+        captureStackTrace(footer.allocTrace(p.stack_trace_size), p.ra);
+        footer.checksum = footer.actualChecksum() ^ p.canary;
         footer.modify.setNone();
 
         return footer;
@@ -705,7 +712,7 @@ fn deinitLeakedBucket(s: *SafeAllocator, b: *Bucket, log: bool) usize {
         ).storedXor(&footer.modify);
 
         const bad_modify = modify != .none and modify != .freed;
-        if (bad_modify or footer.actualChecksum(s) != footer.checksum ^ s.canary) {
+        if (bad_modify or footer.actualChecksum() != footer.checksum ^ s.canary) {
             panic("corrupted footer metadata in bucket at *{x}", .{@intFromPtr(&footer)});
         }
 
@@ -715,13 +722,13 @@ fn deinitLeakedBucket(s: *SafeAllocator, b: *Bucket, log: bool) usize {
                 if (log) scoped_log.err("leaked {f} allocated at: {f}", .{ FormatMemory{
                     .memory = footer.userMemory(),
                     .alignment = footer.userAlign(),
-                }, formatStackTrace(footer.allocTrace(s)) });
+                }, formatStackTrace(footer.allocTrace(s.stack_trace_size)) });
             },
-            .freed => s.checkFreed(footer),
+            .freed => if (s.check_write_after_free) checkFreed(footer, s.stack_trace_size),
             else => unreachable,
         }
 
-        footer = footer.bucketPrev(b, s) orelse break;
+        footer = b.allocFooterPrev(s, footer) orelse break;
     }
     s.backing.rawFree(b.bytes(s), @fromBackingInt(@intCast(s.bucket_size_log2)), 0);
 
@@ -731,7 +738,7 @@ fn deinitLeakedBucket(s: *SafeAllocator, b: *Bucket, log: bool) usize {
 
 fn deinitLargeAlloc(s: *SafeAllocator, footer: *AllocFooter, log: bool) void {
     const modify = footer.modify.storedXor(&footer.modify);
-    if (modify != .none or footer.checksum ^ s.canary != footer.actualChecksum(s)) {
+    if (modify != .none or footer.checksum ^ s.canary != footer.actualChecksum()) {
         panic("corrupted footer metadata at *{x}", .{@intFromPtr(&footer)});
     }
 
@@ -739,10 +746,10 @@ fn deinitLargeAlloc(s: *SafeAllocator, footer: *AllocFooter, log: bool) void {
     if (log) scoped_log.err("leaked {f} allocated at {f}", .{ FormatMemory{
         .memory = memory,
         .alignment = footer.userAlign(),
-    }, formatStackTrace(footer.allocTrace(s)) });
+    }, formatStackTrace(footer.allocTrace(s.stack_trace_size)) });
 
     s.backing.rawFree(
-        memory.ptr[0..AllocFooter.allocLenLarge(s, memory.len)],
+        memory.ptr[0..AllocFooter.allocLenLarge(memory.len, s.stack_trace_size)],
         AllocFooter.allocAlign(footer.userAlign()),
         0,
     );
@@ -785,13 +792,16 @@ fn addOrOom(a: usize, b: usize) error{OutOfMemory}!usize {
 
 fn isLarge(s: *SafeAllocator, len: usize, alignment: Alignment) bool {
     const max_align_waste = alignment.toByteUnits() - 1;
-    const max_use = max_align_waste + AllocFooter.allocLenBucket(s, len, true);
+    const max_use = max_align_waste + AllocFooter.allocLenBucket(len, true, s.stack_trace_size);
     return max_use >= s.large_alloc_threshold;
 }
 
 fn isLargeOrOom(s: *SafeAllocator, len: usize, alignment: Alignment) error{OutOfMemory}!bool {
     const max_align_waste = alignment.toByteUnits() - 1;
-    const max_use = try addOrOom(max_align_waste, try AllocFooter.allocLenBucketOrOom(s, len, true));
+    const max_use = try addOrOom(
+        max_align_waste,
+        try AllocFooter.allocLenBucketOrOom(len, true, s.stack_trace_size),
+    );
     return max_use >= s.large_alloc_threshold;
 }
 
@@ -825,8 +835,7 @@ fn freeAllocEntry(t: *Thread, ent: *Allocs.Entry) void {
     t.free_entry = ent;
 }
 
-fn overwriteFreed(s: *SafeAllocator, bytes: []u8) void {
-    if (!s.check_write_after_free) return;
+fn overwriteFreed(bytes: []u8) void {
     // 0x55 is used so that undefined writes of 0xaa are still caught. Another option would be a
     // stream of random bytes seeded by the address, however that makes debugging reads after frees
     // more difficult and has a performance penalty and so is not worth catching slightly more
@@ -835,8 +844,7 @@ fn overwriteFreed(s: *SafeAllocator, bytes: []u8) void {
 }
 
 /// Returns the first address of a write after free
-fn checkFreed(s: *SafeAllocator, footer: *AllocFooter) void {
-    if (!s.check_write_after_free) return;
+fn checkFreed(footer: *AllocFooter, stack_trace_size: usize) void {
     const memory = footer.userMemory();
     for (memory) |*b| if (b.* != 0x55) {
         panic(
@@ -848,8 +856,8 @@ fn checkFreed(s: *SafeAllocator, footer: *AllocFooter) void {
         , .{
             @intFromPtr(b),
             FormatMemory{ .memory = memory, .alignment = footer.userAlign() },
-            formatStackTrace(footer.allocTrace(s)),
-            formatStackTrace(footer.freeTrace(s)),
+            formatStackTrace(footer.allocTrace(stack_trace_size)),
+            formatStackTrace(footer.freeTrace(stack_trace_size)),
         });
     };
 }
@@ -914,7 +922,7 @@ fn allocBucket(
 ) ?[*]u8 {
     const fill = &b.fill;
     const is_extended = AllocFooter.requiresExtended(len, alignment);
-    const alloc_len: u32 = @intCast(AllocFooter.allocLenBucket(s, len, is_extended));
+    const alloc_len: u32 = @intCast(AllocFooter.allocLenBucket(len, is_extended, s.stack_trace_size));
     const alloc_align = AllocFooter.allocAlign(alignment);
 
     var prev_fill = @atomicLoad(Bucket.Fill, fill, .monotonic);
@@ -961,16 +969,18 @@ fn allocBucket(
     }
 
     const memory = b.bytes(s)[start..end];
-    _ = AllocFooter.populate(
-        @alignCast(memory),
-        len,
-        alignment,
-        ra,
-        is_extended,
-        prev_fill.last_is_extended,
-        .{ .bucket_prev = b.lastAlloc(s, prev_fill) },
-        s,
-    );
+    _ = AllocFooter.populate(@alignCast(memory), .{
+        .canary = s.canary,
+        .is_extended = is_extended,
+        .stack_trace_size = s.stack_trace_size,
+
+        .user_len = len,
+        .user_align = alignment,
+        .ra = ra,
+
+        .prev_extended = prev_fill.last_is_extended,
+        .container = .fromBucketPrev(b.lastAlloc(s, prev_fill)),
+    });
 
     assert(@atomicRmw(
         Bucket.AllocCount,
@@ -1008,12 +1018,12 @@ fn advanceBucketAlloc(
     const b: *Bucket = .of(s, @ptrCast(old));
 
     const old_is_extended = old.isExtended();
-    const old_footer_len = AllocFooter.lenBucket(s, old_is_extended);
+    const old_footer_len = AllocFooter.lenBucket(old_is_extended, s.stack_trace_size);
     const old_fill: u32 = @intCast(Bucket.fillAt(s, @ptrCast(old)) + old_footer_len);
 
     const new_is_extended = old_is_extended or start_moved or
         AllocFooter.requiresExtended(new_len, alignment);
-    const new_footer_len = AllocFooter.lenBucket(s, new_is_extended);
+    const new_footer_len = AllocFooter.lenBucket(new_is_extended, s.stack_trace_size);
     const new_fill: u32 = @intCast(new_start + AllocFooter.allocOffset(new_len) + new_footer_len);
 
     assert(old_fill <= new_fill);
@@ -1032,16 +1042,18 @@ fn advanceBucketAlloc(
         return false;
     }
 
-    _ = AllocFooter.populate(
-        @alignCast(b.bytes(s)[new_start..new_fill]),
-        new_len,
-        alignment,
-        ra,
-        new_is_extended,
-        old.data.prev_extended,
-        .{ .bucket_prev = old.bucketPrev(b, s) },
-        s,
-    );
+    _ = AllocFooter.populate(@alignCast(b.bytes(s)[new_start..new_fill]), .{
+        .canary = s.canary,
+        .is_extended = new_is_extended,
+        .stack_trace_size = s.stack_trace_size,
+
+        .user_len = new_len,
+        .user_align = alignment,
+        .ra = ra,
+
+        .prev_extended = old.data.prev_extended,
+        .container = .fromBucketPrev(b.allocFooterPrev(s, old)),
+    });
     b.alloc_count.fenceAcqRel();
     return true;
 }
@@ -1064,23 +1076,25 @@ fn alloc(ctx: *anyopaque, len: usize, alignment: Alignment, ra: usize) ?[*]u8 {
         @branchHint(.unlikely);
 
         const entry = s.newAllocEntry(t, ra) catch return null;
-        const alloc_len = AllocFooter.allocLenLarge(s, len);
+        const alloc_len = AllocFooter.allocLenLarge(len, s.stack_trace_size);
         const alloc_align = AllocFooter.allocAlign(alignment);
         const alloc_ptr = s.backing.rawAlloc(alloc_len, alloc_align, ra) orelse {
             freeAllocEntry(t, entry);
             return null;
         };
 
-        const footer = AllocFooter.populate(
-            @alignCast(alloc_ptr[0..alloc_len]),
-            len,
-            alignment,
-            ra,
-            true,
-            false,
-            .{ .large_entry = entry },
-            s,
-        );
+        const footer = AllocFooter.populate(@alignCast(alloc_ptr[0..alloc_len]), .{
+            .canary = s.canary,
+            .is_extended = true,
+            .stack_trace_size = s.stack_trace_size,
+
+            .user_len = len,
+            .user_align = alignment,
+            .ra = ra,
+
+            .prev_extended = false,
+            .container = .fromLargeEntry(entry),
+        });
         entry.* = .fromLargeAlloc(footer);
 
         return alloc_ptr;
@@ -1121,16 +1135,21 @@ fn alloc(ctx: *anyopaque, len: usize, alignment: Alignment, ra: usize) ?[*]u8 {
 fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, ra: usize) void {
     const s: *SafeAllocator = @ptrCast(@alignCast(ctx));
     const f: *AllocFooter = .of(memory);
-    f.startModify(.freeing, s, .{ .memory = memory, .alignment = alignment });
+    f.startModify(
+        .freed,
+        .{ .memory = memory, .alignment = alignment },
+        s.canary,
+        s.stack_trace_size,
+    );
 
     if (s.isLarge(memory.len, alignment)) {
         @branchHint(.unlikely);
 
         const t = s.acquireThread();
-        freeAllocEntry(t, f.extended().container.large_entry);
+        freeAllocEntry(t, f.extended().container.toLargeEntry());
         t.mutex.unlock();
         s.backing.rawFree(
-            memory.ptr[0..AllocFooter.allocLenLarge(s, memory.len)],
+            memory.ptr[0..AllocFooter.allocLenLarge(memory.len, s.stack_trace_size)],
             AllocFooter.allocAlign(alignment),
             ra,
         );
@@ -1138,27 +1157,8 @@ fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, ra: usize) void {
     }
 
     const b: *Bucket = .of(s, memory.ptr);
-    s.overwriteFreed(memory);
-    captureStackTrace(f.freeTrace(s), ra);
-
-    // Fence the alloc count before setting `f.modify` to `.freed`.
-    // This way, if another thread is waiting for the trace to become
-    // available, it will not be racing with us to see this `.release`.
-    //
-    // The below alloc count update can not be moved up here instead
-    // since that would allow another thread to see the `.freeing` state.
-    b.alloc_count.fenceAcqRel();
-
-    // If this result is different than .freeing, then some other thread
-    // is in the process of panicing. So, just ignore it. (This is also
-    // the reasoning for several other places.)
-    _ = @atomicRmw(
-        AllocFooter.Modify,
-        &f.modify,
-        .Xchg,
-        .storedXor(.freed, &f.modify),
-        .monotonic,
-    );
+    if (s.check_write_after_free) overwriteFreed(memory);
+    captureStackTrace(f.freeTrace(s.stack_trace_size), ra);
 
     const prev_count = @atomicRmw(
         Bucket.AllocCount,
@@ -1183,7 +1183,12 @@ fn resize(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, r
 
     const s: *SafeAllocator = @ptrCast(@alignCast(ctx));
     const f: *AllocFooter = .of(memory);
-    f.startModify(.resized, s, .{ .memory = memory, .alignment = alignment });
+    f.startModify(
+        .resized,
+        .{ .memory = memory, .alignment = alignment },
+        s.canary,
+        s.stack_trace_size,
+    );
 
     if (s.no_resize) {
         f.modify.setNone();
@@ -1207,10 +1212,10 @@ fn resize(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, r
     if (from_large_alloc) {
         @branchHint(.unlikely);
 
-        const entry = f.extended().container.large_entry;
-        const new_alloc_len = AllocFooter.allocLenLarge(s, new_len);
+        const entry = f.extended().container.toLargeEntry();
+        const new_alloc_len = AllocFooter.allocLenLarge(new_len, s.stack_trace_size);
         if (!s.backing.rawResize(
-            memory.ptr[0..AllocFooter.allocLenLarge(s, memory.len)],
+            memory.ptr[0..AllocFooter.allocLenLarge(memory.len, s.stack_trace_size)],
             AllocFooter.allocAlign(alignment),
             new_alloc_len,
             ra,
@@ -1219,16 +1224,18 @@ fn resize(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, r
             return false;
         }
 
-        const new_footer = AllocFooter.populate(
-            @alignCast(memory.ptr[0..new_alloc_len]),
-            new_len,
-            alignment,
-            ra,
-            true,
-            false,
-            .{ .large_entry = entry },
-            s,
-        );
+        const new_footer = AllocFooter.populate(@alignCast(memory.ptr[0..new_alloc_len]), .{
+            .canary = s.canary,
+            .is_extended = true,
+            .stack_trace_size = s.stack_trace_size,
+
+            .user_len = new_len,
+            .user_align = alignment,
+            .ra = ra,
+
+            .prev_extended = false,
+            .container = .fromLargeEntry(entry),
+        });
         assert(entry.kind == .large_alloc);
         entry.* = .fromLargeAlloc(new_footer);
         return true;
@@ -1256,7 +1263,12 @@ fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ra
 
     const s: *SafeAllocator = @ptrCast(@alignCast(ctx));
     const f: *AllocFooter = .of(memory);
-    f.startModify(.remaped, s, .{ .memory = memory, .alignment = alignment });
+    f.startModify(
+        .remaped,
+        .{ .memory = memory, .alignment = alignment },
+        s.canary,
+        s.stack_trace_size,
+    );
 
     if (s.no_resize) {
         f.modify.setNone();
@@ -1280,10 +1292,10 @@ fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ra
     if (from_large_alloc) {
         @branchHint(.unlikely);
 
-        const entry = f.extended().container.large_entry;
-        const new_alloc_len = AllocFooter.allocLenLarge(s, new_len);
+        const entry = f.extended().container.toLargeEntry();
+        const new_alloc_len = AllocFooter.allocLenLarge(new_len, s.stack_trace_size);
         const new_memory = s.backing.rawRemap(
-            memory.ptr[0..AllocFooter.allocLenLarge(s, memory.len)],
+            memory.ptr[0..AllocFooter.allocLenLarge(memory.len, s.stack_trace_size)],
             AllocFooter.allocAlign(alignment),
             new_alloc_len,
             ra,
@@ -1292,16 +1304,18 @@ fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ra
             return null;
         };
 
-        const new_footer = AllocFooter.populate(
-            @alignCast(new_memory[0..new_alloc_len]),
-            new_len,
-            alignment,
-            ra,
-            true,
-            false,
-            .{ .large_entry = entry },
-            s,
-        );
+        const new_footer = AllocFooter.populate(@alignCast(new_memory[0..new_alloc_len]), .{
+            .canary = s.canary,
+            .is_extended = true,
+            .stack_trace_size = s.stack_trace_size,
+
+            .user_len = new_len,
+            .user_align = alignment,
+            .ra = ra,
+
+            .prev_extended = false,
+            .container = .fromLargeEntry(entry),
+        });
         assert(entry.kind == .large_alloc);
         entry.* = .fromLargeAlloc(new_footer);
         return new_memory;
@@ -1333,14 +1347,14 @@ fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ra
         // The footer can be modified in place
         const b: *Bucket = .of(s, @ptrCast(f));
         f.extended().len = new_len;
-        f.checksum = f.actualChecksum(s) ^ s.canary;
-        captureStackTrace(f.allocTrace(s), ra);
-
-        f.modify.setNone();
-        b.alloc_count.fenceAcqRel();
+        f.checksum = f.actualChecksum() ^ s.canary;
+        captureStackTrace(f.allocTrace(s.stack_trace_size), ra);
 
         const new_memory = f.userMemory();
         @memmove(new_memory, memory[0..new_memory.len]);
+
+        f.modify.setNone();
+        b.alloc_count.fenceAcqRel();
         return new_memory.ptr;
     }
 
@@ -1370,14 +1384,7 @@ const fuzz_probs = struct {
         .value(bool, true, 1),
     };
 
-    fn generateOptions(smith: *Smith) Options {
-        @disableInstrumentation();
-
-        const size_log2_weights: []const Smith.Weight = &.{
-            .value(u5, 8, 1024), // 8x odds of below
-            .rangeAtMost(u5, 8, 16, 16),
-            .rangeAtMost(u5, 17, 31, 1), // 1/32 odds of above since these just OOM with the fixed buffer
-        };
+    fn generateFixedBufferOptions(smith: *Smith) FixedBuffer.Options {
         return .{
             .stack_trace_frames = smith.valueWeighted(u16, &.{
                 .value(u16, 0, 1 << 18), // 4x - stack traces have no tested properties except I.B.
@@ -1390,7 +1397,26 @@ const fuzz_probs = struct {
                 .value(bool, false, 31),
                 .value(bool, false, 1),
             }),
+            .no_resize = smith.boolWeighted(1, 3),
             .canary = smith.value(u32),
+        };
+    }
+
+    fn generateOptions(smith: *Smith) Options {
+        @disableInstrumentation();
+
+        const size_log2_weights: []const Smith.Weight = &.{
+            .value(u5, 8, 1024), // 8x odds of below
+            .rangeAtMost(u5, 8, 16, 16),
+            .rangeAtMost(u5, 17, 31, 1), // 1/32 odds of above since these just OOM with the fixed buffer
+        };
+
+        const fixed_options = generateFixedBufferOptions(smith);
+        return .{
+            .stack_trace_frames = fixed_options.stack_trace_frames,
+            .check_write_after_free = fixed_options.check_write_after_free,
+            .no_resize = fixed_options.no_resize,
+            .canary = fixed_options.canary,
 
             .block_size_log2 = smith.valueWeighted(u5, size_log2_weights),
             .bucket_size_log2 = smith.valueWeighted(u5, size_log2_weights),
@@ -1457,6 +1483,11 @@ const fuzz_probs = struct {
             panic("SafeAllocator corrupted allocation data at *{x}", .{@intFromPtr(b)});
         };
     }
+};
+
+const AnySafeAllocator = struct {
+    interface: mem.Allocator,
+    check_write_after_free: bool,
 };
 
 test "fuzz single threaded" {
@@ -1626,6 +1657,25 @@ fn fuzzSingleThreaded(ctx: FuzzSingleThreadedContext, smith: *Smith) !void {
 
     const options = fuzz_probs.generateOptions(smith);
     var s: SafeAllocator = .init(backing_gpa, options);
+    const expected_leaks = try fuzzSingleThreadedInner(.{
+        .interface = s.allocator(),
+        .check_write_after_free = options.check_write_after_free,
+    }, gpa, smith);
+    try std.testing.expectEqual(expected_leaks, s.deinitLog(false));
+
+    const leaks_slice = backing_gpa_instance.allocs.slice();
+    for (0..leaks_slice.len) |i| {
+        const leak = leaks_slice.get(i);
+        std.log.err("SafeAllocator leaked {f}", .{FormatMemory{
+            .memory = leak.ptr[0..leak.len],
+            .alignment = leak.alignment,
+        }});
+    }
+    try std.testing.expectEqual(0, leaks_slice.len); // no leaks
+}
+
+fn fuzzSingleThreadedInner(s: AnySafeAllocator, gpa: mem.Allocator, smith: *Smith) !usize {
+    @disableInstrumentation();
     const no_ra: usize = 0;
 
     var allocs: std.MultiArrayList(struct {
@@ -1646,11 +1696,11 @@ fn fuzzSingleThreaded(ctx: FuzzSingleThreadedContext, smith: *Smith) !void {
                 allocs.ensureUnusedCapacity(gpa, 1) catch break;
 
                 const splat = fuzz_probs.generateSplat(smith);
-                const will_memset = options.check_write_after_free or splat != null;
+                const will_memset = s.check_write_after_free or splat != null;
                 const len = fuzz_probs.generateLen(smith, will_memset);
                 const alignment = smith.valueWeighted(Alignment, fuzz_probs.alignment);
 
-                const ptr = alloc(&s, len, alignment, no_ra) orelse continue;
+                const ptr = s.interface.rawAlloc(len, alignment, no_ra) orelse continue;
                 if (!alignment.check(@intFromPtr(ptr))) @panic("bad returned alignment");
                 const memory = ptr[0..len];
                 if (splat) |b| @memset(memory, b);
@@ -1668,7 +1718,7 @@ fn fuzzSingleThreaded(ctx: FuzzSingleThreadedContext, smith: *Smith) !void {
                 allocs.swapRemove(i);
 
                 fuzz_probs.checkSplat(alloc_info.splat, alloc_info.memory);
-                free(&s, alloc_info.memory, alloc_info.alignment, no_ra);
+                s.interface.rawFree(alloc_info.memory, alloc_info.alignment, no_ra);
                 continue;
             },
             .resize => {
@@ -1681,10 +1731,10 @@ fn fuzzSingleThreaded(ctx: FuzzSingleThreadedContext, smith: *Smith) !void {
 
                 const alloc_memory = &allocs_slice.items(.memory)[i];
                 const splat = prev_alloc.splat;
-                const will_memset = options.check_write_after_free or splat != null;
+                const will_memset = s.check_write_after_free or splat != null;
 
                 const new_len = fuzz_probs.generateLen(smith, will_memset);
-                if (!resize(&s, prev_alloc.memory, prev_alloc.alignment, new_len, no_ra)) {
+                if (!s.interface.rawResize(prev_alloc.memory, prev_alloc.alignment, new_len, no_ra)) {
                     fuzz_probs.checkSplat(prev_alloc.splat, prev_alloc.memory);
                     continue;
                 }
@@ -1706,11 +1756,10 @@ fn fuzzSingleThreaded(ctx: FuzzSingleThreadedContext, smith: *Smith) !void {
                 const alloc_memory = &allocs_slice.items(.memory)[i];
                 const alignment = prev_alloc.alignment;
                 const splat = prev_alloc.splat;
-                const will_memset = options.check_write_after_free or splat != null;
+                const will_memset = s.check_write_after_free or splat != null;
 
                 const new_len = fuzz_probs.generateLen(smith, will_memset);
-                const new_ptr = remap(
-                    &s,
+                const new_ptr = s.interface.rawRemap(
                     prev_alloc.memory,
                     prev_alloc.alignment,
                     new_len,
@@ -1747,16 +1796,7 @@ fn fuzzSingleThreaded(ctx: FuzzSingleThreadedContext, smith: *Smith) !void {
         used_memory.appendAssumeCapacity(.{ .start = new_start, .end = new_end });
     }
 
-    try std.testing.expectEqual(allocs.len, s.deinitLog(false));
-    const leaks_slice = backing_gpa_instance.allocs.slice();
-    for (0..leaks_slice.len) |i| {
-        const leak = leaks_slice.get(i);
-        std.log.err("SafeAllocator leaked {f}", .{FormatMemory{
-            .memory = leak.ptr[0..leak.len],
-            .alignment = leak.alignment,
-        }});
-    }
-    try std.testing.expectEqual(0, leaks_slice.len); // no leaks
+    return allocs.len;
 }
 
 test "fuzz multi threaded" {
@@ -1771,21 +1811,26 @@ test "fuzz multi threaded" {
     // it is necessary to use our own io and gpa instances.
     var threaded_io: std.Io.Threaded = .init(std.heap.smp_allocator, .{});
     defer threaded_io.deinit();
-    const io = threaded_io.io();
 
-    var ops: FuzzMultiThreadedContext.ThreadOps = undefined;
-    ops.run = .{ .n = false };
+    var ops: FuzzMultiThreadedContext.ThreadOps = .{
+        .io = threaded_io.io(),
+        .run = .{ .n = false },
+        .running = undefined,
+
+        .instance = undefined,
+        .items = undefined,
+        .i = undefined,
+    };
+
     var group: std.Io.Group = .init;
-    defer group.cancel(io);
+    defer group.cancel(ops.io);
     for (0..FuzzMultiThreadedContext.n_threads) |_| {
-        try group.concurrent(io, fuzzMultiThreadedWorker, .{ io, &ops });
+        try group.concurrent(ops.io, fuzzMultiThreadedWorker, .{&ops});
     }
 
     try std.testing.fuzz(FuzzMultiThreadedContext{
         .testing_buf = testing_buf,
         .backing_buf = backing_buf,
-
-        .io = io,
         .ops = &ops,
     }, fuzzMultiThreaded, .{});
 }
@@ -1793,22 +1838,21 @@ test "fuzz multi threaded" {
 const FuzzMultiThreadedContext = struct {
     testing_buf: []u8,
     backing_buf: []u8,
-
-    io: std.Io,
     ops: *ThreadOps,
 
     const n_threads = 4;
 
     const ThreadOps = struct {
+        io: std.Io,
         /// Switches between two values for each time a run starts.
         run: Run,
         /// While this can be calculated as `n_threads - (i -| ops.items.len)`,
         /// this also serves as `.release` synchronization for each thread.
         running: u32,
 
-        instance: SafeAllocator,
-        i: usize,
+        instance: mem.Allocator,
         items: []Op,
+        i: usize,
 
         const Run = packed struct(u32) {
             n: bool,
@@ -1877,6 +1921,19 @@ const FuzzMultiThreadedContext = struct {
                     dep.ready.waitUncancelable(io);
                     return dep.memory;
                 }
+            };
+        };
+
+        const Generated = struct {
+            items: []Op,
+            results: []Op.MemoryDependency,
+            leaked_allocs: []Alloc,
+            expected_remaps: usize,
+
+            const Alloc = struct {
+                memory: *Op.MemoryDependency,
+                alignment: Alignment,
+                splat: ?u8,
             };
         };
     };
@@ -2001,29 +2058,61 @@ const FuzzMultiThreadedAllocator = struct {
 fn fuzzMultiThreaded(ctx: FuzzMultiThreadedContext, smith: *Smith) !void {
     @disableInstrumentation();
 
-    var gpa_instance: std.heap.FixedBufferAllocator = .init(ctx.testing_buf);
-    const gpa = gpa_instance.allocator();
-
-    var op_count: u32 = 0;
-    while (!smith.eosWeighted(fuzz_probs.eos)) op_count += 1;
-    const Op = FuzzMultiThreadedContext.ThreadOps.Op;
-    const ops = gpa.alloc(Op, op_count) catch return error.SkipZigTest;
-    const op_results = gpa.alloc(Op.MemoryDependency, op_count) catch return error.SkipZigTest;
-    @memset(op_results, .init);
-
-    const allocs = gpa.alloc(struct {
-        memory: *FuzzMultiThreadedContext.ThreadOps.Op.MemoryDependency,
-        alignment: Alignment,
-        splat: ?u8,
-    }, op_count) catch return error.SkipZigTest;
-    var allocs_n: u32 = 0;
-    var expected_remaps: usize = 0;
-
+    var arena_instance: std.heap.FixedBufferAllocator = .init(ctx.testing_buf);
+    const arena = arena_instance.allocator();
     const options = fuzz_probs.generateOptions(smith);
-    for (ops, op_results) |*op, *result| switch (fuzz_probs.generateOp(smith, allocs_n != 0)) {
+    const ops = try fuzzMultiThreadedGenerateOps(arena, smith, options.check_write_after_free);
+
+    const fails: []bool = arena.alloc(bool, ops.items.len * 2 + smith.value(u8)) catch &.{};
+    const fixed_remaps: []bool = arena.alloc(bool, ops.expected_remaps + smith.value(u8)) catch &.{};
+    for (fails) |*f| f.* = smith.boolWeighted(31, 1);
+    for (fixed_remaps) |*f| f.* = smith.value(bool);
+    var backing_gpa_instance: FuzzMultiThreadedAllocator = .{
+        .gpa = arena,
+
+        .fill = 0,
+        .active_allocs = 0,
+        .fail_i = 0,
+        .fixed_remap_i = 0,
+
+        .buf = ctx.backing_buf,
+        .fails = fails,
+        .fixed_remaps = fixed_remaps,
+    };
+    const backing_gpa = backing_gpa_instance.allocator();
+    var s: SafeAllocator = .init(backing_gpa, options);
+    ctx.ops.instance = s.allocator();
+
+    const expected_leaks = try fuzzMultiThreadedRun(ctx.ops, ops);
+    try std.testing.expectEqual(expected_leaks, s.deinitLog(false));
+    try std.testing.expectEqual(0, backing_gpa_instance.active_allocs); // no leaks
+}
+
+/// Returns the number of expected remaps
+fn fuzzMultiThreadedGenerateOps(
+    arena: mem.Allocator,
+    smith: *Smith,
+    check_write_after_free: bool,
+) !FuzzMultiThreadedContext.ThreadOps.Generated {
+    @disableInstrumentation();
+    const Op = FuzzMultiThreadedContext.ThreadOps.Op;
+    const Generated = FuzzMultiThreadedContext.ThreadOps.Generated;
+
+    var n_ops: u32 = 0;
+    while (!smith.eosWeighted(fuzz_probs.eos)) n_ops += 1;
+    var g: Generated = .{
+        .items = arena.alloc(Op, n_ops) catch return error.SkipZigTest,
+        .results = arena.alloc(Op.MemoryDependency, n_ops) catch return error.SkipZigTest,
+        .leaked_allocs = arena.alloc(Generated.Alloc, n_ops) catch return error.SkipZigTest,
+        .expected_remaps = 0,
+    };
+    @memset(g.results, .init);
+
+    var n_allocs: usize = 0;
+    for (g.items, g.results) |*op, *result| switch (fuzz_probs.generateOp(smith, n_allocs != 0)) {
         .alloc => {
             const splat = fuzz_probs.generateSplat(smith);
-            const will_memset = options.check_write_after_free or splat != null;
+            const will_memset = check_write_after_free or splat != null;
             op.* = .{ .alloc = .{
                 .len = fuzz_probs.generateLen(smith, will_memset),
                 .alignment = smith.valueWeighted(Alignment, fuzz_probs.alignment),
@@ -2031,24 +2120,24 @@ fn fuzzMultiThreaded(ctx: FuzzMultiThreadedContext, smith: *Smith) !void {
                 .splat = splat,
                 .result = result,
             } };
-            allocs[allocs_n] = .{
+            g.leaked_allocs[n_allocs] = .{
                 .memory = result,
                 .alignment = op.alloc.alignment,
                 .splat = splat,
             };
-            allocs_n += 1;
+            n_allocs += 1;
         },
         .free => {
-            const i = smith.valueRangeLessThan(u32, 0, allocs_n);
+            const i = smith.index(n_allocs);
             op.* = .{ .free = .{
-                .memory = allocs[i].memory,
-                .alignment = allocs[i].alignment,
+                .memory = g.leaked_allocs[i].memory,
+                .alignment = g.leaked_allocs[i].alignment,
 
-                .splat = allocs[i].splat,
+                .splat = g.leaked_allocs[i].splat,
             } };
 
-            allocs_n -= 1;
-            allocs[i] = allocs[allocs_n];
+            n_allocs -= 1;
+            g.leaked_allocs[i] = g.leaked_allocs[n_allocs];
         },
         .resize, .remap => |kind| {
             op.* = switch (kind) {
@@ -2061,69 +2150,53 @@ fn fuzzMultiThreaded(ctx: FuzzMultiThreadedContext, smith: *Smith) !void {
                 .resize => &op.resize,
                 else => unreachable,
             };
-            expected_remaps += @intFromBool(kind == .remap);
+            g.expected_remaps += @intFromBool(kind == .remap);
 
-            const i = smith.valueRangeLessThan(u32, 0, allocs_n);
+            const i = smith.index(n_allocs);
             realloc.* = .{
-                .memory = allocs[i].memory,
-                .alignment = allocs[i].alignment,
-                .new_len = fuzz_probs.generateLen(smith, options.check_write_after_free),
+                .memory = g.leaked_allocs[i].memory,
+                .alignment = g.leaked_allocs[i].alignment,
+                .new_len = fuzz_probs.generateLen(smith, check_write_after_free),
 
-                .splat = allocs[i].splat,
+                .splat = g.leaked_allocs[i].splat,
                 .result = result,
             };
-            allocs[i].memory = result;
+            g.leaked_allocs[i].memory = result;
         },
     };
 
-    const fails: []bool = gpa.alloc(bool, ops.len * 2 + smith.value(u8)) catch &.{};
-    const fixed_remaps: []bool = gpa.alloc(bool, expected_remaps + smith.value(u8)) catch &.{};
-    for (fails) |*f| f.* = smith.boolWeighted(31, 1);
-    for (fixed_remaps) |*f| f.* = smith.value(bool);
-    var backing_gpa_instance: FuzzMultiThreadedAllocator = .{
-        .gpa = gpa,
-
-        .fill = 0,
-        .active_allocs = 0,
-        .fail_i = 0,
-        .fixed_remap_i = 0,
-
-        .buf = ctx.backing_buf,
-        .fails = fails,
-        .fixed_remaps = fixed_remaps,
-    };
-    const backing_gpa = backing_gpa_instance.allocator();
-
-    ctx.ops.instance = .init(backing_gpa, options);
-    ctx.ops.i = 0;
-    ctx.ops.items = ops;
-
-    ctx.ops.running = FuzzMultiThreadedContext.n_threads;
-    // Loading `ctx.ops.run` non-atomically is fine since this is the only thread that writes to it.
-    @atomicStore(FuzzMultiThreadedContext.ThreadOps.Run, &ctx.ops.run, ctx.ops.run.next(), .release);
-    ctx.io.futexWake(FuzzMultiThreadedContext.ThreadOps.Run, &ctx.ops.run, math.maxInt(u32));
-    while (true) {
-        const prev_running = @atomicLoad(u32, &ctx.ops.running, .acquire);
-        if (prev_running == 0) break;
-        ctx.io.futexWaitUncancelable(u32, &ctx.ops.running, prev_running);
-    }
-
-    var expected_allocs = allocs_n;
-    for (allocs[0..allocs_n]) |a| {
-        expected_allocs -= @intFromBool(a.memory.memory == null);
-    }
-    try std.testing.expectEqual(expected_allocs, ctx.ops.instance.deinitLog(false));
-    try std.testing.expectEqual(0, backing_gpa_instance.active_allocs); // no leaks
+    g.leaked_allocs = g.leaked_allocs[0..n_allocs];
+    return g;
 }
 
-fn fuzzMultiThreadedWorker(
-    io: std.Io,
+fn fuzzMultiThreadedRun(
     ops: *FuzzMultiThreadedContext.ThreadOps,
-) error{Canceled}!void {
+    g: FuzzMultiThreadedContext.ThreadOps.Generated,
+) !usize {
+    ops.i = 0;
+    ops.items = g.items;
+    ops.running = FuzzMultiThreadedContext.n_threads;
+    // Loading `ops.run` non-atomically is fine since this is the only thread that writes to it.
+    @atomicStore(FuzzMultiThreadedContext.ThreadOps.Run, &ops.run, ops.run.next(), .release);
+    ops.io.futexWake(FuzzMultiThreadedContext.ThreadOps.Run, &ops.run, math.maxInt(u32));
+    while (true) {
+        const prev_running = @atomicLoad(u32, &ops.running, .acquire);
+        if (prev_running == 0) break;
+        ops.io.futexWaitUncancelable(u32, &ops.running, prev_running);
+    }
+
+    var expected_leaks = g.leaked_allocs.len;
+    for (g.leaked_allocs) |a| {
+        expected_leaks -= @intFromBool(a.memory.memory == null);
+    }
+    return expected_leaks;
+}
+
+fn fuzzMultiThreadedWorker(ops: *FuzzMultiThreadedContext.ThreadOps) error{Canceled}!void {
     const no_ra: usize = 0;
     var next_run: FuzzMultiThreadedContext.ThreadOps.Run = .{ .n = true };
     while (true) {
-        try ops.run.wait(next_run, io);
+        try ops.run.wait(next_run, ops.io);
         next_run = .next(next_run);
 
         while (true) {
@@ -2133,14 +2206,14 @@ fn fuzzMultiThreadedWorker(
                 // which the read value was written from, not all previous writer threads.
                 const prev_rem = @atomicRmw(u32, &ops.running, .Sub, 1, .acq_rel);
                 if (prev_rem - 1 == 0) {
-                    io.futexWake(u32, &ops.running, 1);
+                    ops.io.futexWake(u32, &ops.running, 1);
                 }
                 break;
             }
 
             switch (ops.items[i]) {
                 .alloc => |call| {
-                    const alloc_ptr = alloc(&ops.instance, call.len, call.alignment, no_ra);
+                    const alloc_ptr = ops.instance.rawAlloc(call.len, call.alignment, no_ra);
                     if (alloc_ptr) |memory_ptr| {
                         const memory = memory_ptr[0..call.len];
                         if (call.splat) |b| @memset(memory, b);
@@ -2148,29 +2221,27 @@ fn fuzzMultiThreadedWorker(
                     } else {
                         call.result.memory = null;
                     }
-                    call.result.ready.set(io);
+                    call.result.ready.set(ops.io);
                 },
                 .free => |call| {
-                    const memory = call.memory.get(io) orelse continue;
+                    const memory = call.memory.get(ops.io) orelse continue;
                     fuzz_probs.checkSplat(call.splat, memory);
-                    free(&ops.instance, memory, call.alignment, no_ra);
+                    ops.instance.rawFree(memory, call.alignment, no_ra);
                 },
                 .resize, .remap => |call, kind| {
-                    const memory = call.memory.get(io) orelse {
+                    const memory = call.memory.get(ops.io) orelse {
                         call.result.memory = null;
-                        call.result.ready.set(io);
+                        call.result.ready.set(ops.io);
                         continue;
                     };
                     const new_memory: []u8 = switch (kind) {
-                        .remap => if (remap(
-                            &ops.instance,
+                        .remap => if (ops.instance.rawRemap(
                             memory,
                             call.alignment,
                             call.new_len,
                             no_ra,
                         )) |new_ptr| new_ptr[0..call.new_len] else memory,
-                        .resize => if (resize(
-                            &ops.instance,
+                        .resize => if (ops.instance.rawResize(
                             memory,
                             call.alignment,
                             call.new_len,
@@ -2185,9 +2256,464 @@ fn fuzzMultiThreadedWorker(
                     if (call.splat) |b| @memset(new_memory[@min(old_len, new_len)..], b);
 
                     call.result.memory = new_memory;
-                    call.result.ready.set(io);
+                    call.result.ready.set(ops.io);
                 },
             }
         }
     }
+}
+
+/// Provides the same gaurauntees as `SafeAllocator`.
+///
+/// Uses the same allocation metadata format as `SafeAllocator`, so
+/// canary mismatches are still caught and give useful information.
+pub const FixedBuffer = struct {
+    const scoped_log = std.log.scoped(.SafeFixedBufferAllocator);
+
+    pub const Options = struct {
+        const is_debug = @import("builtin").mode == .debug;
+
+        stack_trace_frames: usize = if (is_debug and std.debug.sys_can_stack_trace) 7 else 0,
+        check_write_after_free: bool = is_debug,
+        no_resize: bool = is_debug,
+        /// A unique value used to check that allocations created by other
+        /// `SafeAllocator` instances are not passed to this one.
+        ///
+        /// This is only useful to change if `buf` was allocated inside another
+        /// `SafeAllocator` instance as otherwise `buf` should be unique.
+        canary: u32 = 0x4818d972,
+    };
+
+    // This is treated very similarily to `Bucket`.
+    buf: []align(8) u8,
+    fill: Fill,
+
+    /// In `usize`s
+    stack_trace_size: usize,
+    check_write_after_free: bool,
+    no_resize: bool,
+    canary: u32,
+
+    const Fill = packed struct(usize) {
+        last_is_extended: bool,
+        zero: u2 = 0,
+        hi: @Int(.unsigned, @bitSizeOf(usize) - 3),
+
+        fn index(f: Fill) usize {
+            assert(f.zero == 0);
+            return @as(usize, f.hi) << 3;
+        }
+    };
+
+    pub fn init(buf: []align(8) u8, options: FixedBuffer.Options) FixedBuffer {
+        return .{
+            .buf = buf,
+            .fill = .{ .hi = 0, .last_is_extended = false },
+
+            .stack_trace_size = options.stack_trace_frames +
+                @intFromBool(options.stack_trace_frames != 0),
+            .check_write_after_free = options.check_write_after_free,
+            .no_resize = options.no_resize,
+            .canary = options.canary,
+        };
+    }
+
+    /// Returns the number of leaks
+    pub fn deinit(s: *FixedBuffer) usize {
+        return s.deinitLog(true);
+    }
+
+    /// Same as `deinit`, expect if `log` is `false`, it will not log leaks.
+    pub fn deinitLog(s: *FixedBuffer, log: bool) usize {
+        var leaks: usize = 0;
+        var maybe_footer = s.lastAlloc(s.fill);
+        while (maybe_footer) |footer| {
+            const modify = @atomicRmw(
+                AllocFooter.Modify,
+                &footer.modify,
+                .Xchg,
+                undefined,
+                .monotonic,
+            ).storedXor(&footer.modify);
+
+            const bad_modify = modify != .none and modify != .freed;
+            if (bad_modify or footer.actualChecksum() != footer.checksum ^ s.canary) {
+                panic("corrupted footer metadata at *{x}", .{@intFromPtr(&footer)});
+            }
+
+            switch (modify) {
+                .none => {
+                    leaks += 1;
+                    if (log) FixedBuffer.scoped_log.err("leaked {f} allocated at: {f}", .{
+                        FormatMemory{
+                            .memory = footer.userMemory(),
+                            .alignment = footer.userAlign(),
+                        },
+                        formatStackTrace(footer.allocTrace(s.stack_trace_size)),
+                    });
+                },
+                .freed => if (s.check_write_after_free) checkFreed(footer, s.stack_trace_size),
+                else => unreachable,
+            }
+
+            maybe_footer = s.allocFooterPrev(footer);
+        }
+        return leaks;
+    }
+
+    /// Returned allocator is thread-safe
+    pub fn allocator(s: *FixedBuffer) mem.Allocator {
+        return .{ .ptr = s, .vtable = &FixedBuffer.vtable };
+    }
+
+    fn checkOwnedMemory(
+        s: *FixedBuffer,
+        memory: []u8,
+        alignment: Alignment,
+        m: AllocFooter.Modify,
+    ) void {
+        if (@intFromPtr(memory.ptr) < @intFromPtr(s.buf.ptr) or
+            @intFromPtr(memory.ptr) + memory.len > @intFromPtr(s.buf.ptr) + s.buf.len)
+        {
+            panic("{s} of invalid memory {f}", .{
+                m.opName(),
+                @as(FormatMemory, .{ .memory = memory, .alignment = alignment }),
+            });
+        }
+    }
+
+    fn allocFooterBefore(s: *FixedBuffer, i: usize, is_extended: bool) ?*AllocFooter {
+        if (i == 0) return null;
+        const off = i - AllocFooter.lenBucket(is_extended, s.stack_trace_size);
+        return @ptrCast(@alignCast(s.buf[off..]));
+    }
+
+    fn allocFooterPrev(s: *FixedBuffer, f: *AllocFooter) ?*AllocFooter {
+        if (f.isExtended()) return f.extended().container.toBucketPrev();
+        return s.allocFooterBefore(f.userMemory().ptr - s.buf.ptr, f.data.prev_extended);
+    }
+
+    fn lastAlloc(s: *FixedBuffer, fill: Fill) ?*AllocFooter {
+        return s.allocFooterBefore(fill.index(), fill.last_is_extended);
+    }
+
+    fn growingResize(
+        s: *FixedBuffer,
+        f: *AllocFooter,
+        memory: []const u8,
+        alignment: Alignment,
+        new_len: usize,
+        ra: usize,
+    ) bool {
+        assert(new_len >= memory.len);
+        return s.advanceAlloc(f, memory.ptr - s.buf.ptr, false, alignment, new_len, ra);
+    }
+
+    fn advanceAlloc(
+        s: *FixedBuffer,
+        old: *AllocFooter,
+        new_start: usize,
+        start_moved: bool,
+        alignment: Alignment,
+        new_len: usize,
+        ra: usize,
+    ) bool {
+        const old_is_extended = old.isExtended();
+        const old_footer_len = AllocFooter.lenBucket(old_is_extended, s.stack_trace_size);
+        const old_fill = @intFromPtr(old) - @intFromPtr(s.buf.ptr) + old_footer_len;
+
+        const new_is_extended = old_is_extended or start_moved or
+            AllocFooter.requiresExtended(new_len, alignment);
+        const new_footer_len = AllocFooter.lenBucket(new_is_extended, s.stack_trace_size);
+        const new_footer_off = AllocFooter.allocOffsetOrOom(new_len) catch return false;
+        const new_fill = addOrOom(new_start + new_footer_len, new_footer_off) catch return false;
+
+        assert(old_fill <= new_fill);
+        if (new_fill > s.buf.len) {
+            return false;
+        }
+
+        if (old_fill == new_fill or @cmpxchgStrong(
+            Fill,
+            &s.fill,
+            .{ .last_is_extended = old_is_extended, .hi = @intCast(@shrExact(old_fill, 3)) },
+            .{ .last_is_extended = new_is_extended, .hi = @intCast(@shrExact(new_fill, 3)) },
+            .monotonic,
+            .monotonic,
+        ) != null) {
+            return false;
+        }
+
+        _ = AllocFooter.populate(@alignCast(s.buf[new_start..new_fill]), .{
+            .canary = s.canary,
+            .is_extended = new_is_extended,
+            .stack_trace_size = s.stack_trace_size,
+
+            .user_len = new_len,
+            .user_align = alignment,
+            .ra = ra,
+
+            .prev_extended = old.data.prev_extended,
+            .container = .fromBucketPrev(s.allocFooterPrev(old)),
+        });
+        return true;
+    }
+
+    const vtable: mem.Allocator.VTable = .{
+        .alloc = FixedBuffer.alloc,
+        .free = FixedBuffer.free,
+        .resize = FixedBuffer.resize,
+        .remap = FixedBuffer.remap,
+    };
+
+    fn alloc(ctx: *anyopaque, len: usize, alignment: Alignment, ra: usize) ?[*]u8 {
+        const s: *FixedBuffer = @ptrCast(@alignCast(ctx));
+
+        const is_extended = AllocFooter.requiresExtended(len, alignment);
+        const alloc_len = AllocFooter.allocLenBucketOrOom(
+            len,
+            is_extended,
+            s.stack_trace_size,
+        ) catch return null;
+        const alloc_align = AllocFooter.allocAlign(alignment);
+
+        var prev_fill = @atomicLoad(Fill, &s.fill, .monotonic);
+        var start: usize = undefined;
+        var end: usize = undefined;
+        while (true) {
+            const addr = alignForwardOrOom(
+                alloc_align,
+                @intFromPtr(s.buf.ptr) + prev_fill.index(),
+            ) catch return null;
+            start = addr - @intFromPtr(s.buf.ptr);
+            end = math.add(usize, start, alloc_len) catch return null;
+            if (end > s.buf.len) return null;
+
+            prev_fill = @cmpxchgWeak(
+                Fill,
+                &s.fill,
+                prev_fill,
+                .{ .last_is_extended = is_extended, .hi = @intCast(@shrExact(end, 3)) },
+                .monotonic,
+                .monotonic,
+            ) orelse {
+                @branchHint(.likely);
+                break;
+            };
+        }
+
+        const memory = s.buf[start..end];
+        _ = AllocFooter.populate(@alignCast(memory), .{
+            .canary = s.canary,
+            .is_extended = is_extended,
+            .stack_trace_size = s.stack_trace_size,
+
+            .user_len = len,
+            .user_align = alignment,
+            .ra = ra,
+
+            .prev_extended = prev_fill.last_is_extended,
+            .container = .fromBucketPrev(s.lastAlloc(prev_fill)),
+        });
+
+        return memory.ptr;
+    }
+
+    fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, ra: usize) void {
+        const s: *FixedBuffer = @ptrCast(@alignCast(ctx));
+        s.checkOwnedMemory(memory, alignment, .freed);
+
+        const f: *AllocFooter = .of(memory);
+        f.startModify(
+            .freed,
+            .{ .memory = memory, .alignment = alignment },
+            s.canary,
+            s.stack_trace_size,
+        );
+
+        if (s.check_write_after_free) overwriteFreed(memory);
+        captureStackTrace(f.freeTrace(s.stack_trace_size), ra);
+    }
+
+    fn resize(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ra: usize) bool {
+        const s: *FixedBuffer = @ptrCast(@alignCast(ctx));
+        s.checkOwnedMemory(memory, alignment, .freed);
+
+        const f: *AllocFooter = .of(memory);
+        f.startModify(
+            .resized,
+            .{ .memory = memory, .alignment = alignment },
+            s.canary,
+            s.stack_trace_size,
+        );
+
+        if (s.no_resize) {
+            f.modify.setNone();
+            return false;
+        }
+
+        if (new_len < memory.len) {
+            // Resize shrinks are disallowed in all cases since the linked list would be broken.
+            // Even if this footer is the final one, the fill value would need decreased which
+            // would allow memory to be reused.
+            f.modify.setNone();
+            return false;
+        }
+
+        if (s.growingResize(f, memory, alignment, new_len, ra)) {
+            @branchHint(.likely);
+            return true;
+        } else {
+            f.modify.setNone();
+            return false;
+        }
+    }
+
+    fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ra: usize) ?[*]u8 {
+        const s: *FixedBuffer = @ptrCast(@alignCast(ctx));
+        s.checkOwnedMemory(memory, alignment, .freed);
+
+        const f: *AllocFooter = .of(memory);
+        f.startModify(
+            .resized,
+            .{ .memory = memory, .alignment = alignment },
+            s.canary,
+            s.stack_trace_size,
+        );
+
+        if (s.no_resize) {
+            f.modify.setNone();
+            return null;
+        }
+
+        if (new_len < memory.len) {
+            // Move the allocation forward to avoid bucket reuse
+
+            const fixed_start_addr = @intFromPtr(f) - AllocFooter.allocOffset(new_len);
+            const moved_start_addr = alignForwardOrOom(alignment, fixed_start_addr) catch return null;
+            if (moved_start_addr != fixed_start_addr or !f.isExtended()) {
+                @branchHint(.unlikely);
+                // For `moved_start_addr != fixed_start_addr`: the footer needs moved forward as
+                // well to maintain the correct allocOffset.
+                //
+                // For `!f.isExtended()`: since the memory will no longer be directly after the
+                // previous footer, the footer needs promoted to an extended one to encode the
+                // location of the previous footer.
+                const moved_start = moved_start_addr - @intFromPtr(s.buf.ptr);
+                if (!s.advanceAlloc(f, moved_start, true, alignment, new_len, ra)) {
+                    @branchHint(.unlikely);
+                    f.modify.setNone();
+                    return null;
+                }
+                const new_memory = s.buf[moved_start..][0..new_len];
+                @memmove(new_memory, memory[0..new_memory.len]);
+                return new_memory.ptr;
+            }
+
+            // The footer can be modified in place
+            f.extended().len = new_len;
+            f.checksum = f.actualChecksum() ^ s.canary;
+            captureStackTrace(f.allocTrace(s.stack_trace_size), ra);
+
+            const new_memory = f.userMemory();
+            @memmove(new_memory, memory[0..new_memory.len]);
+
+            f.modify.setNone();
+            return new_memory.ptr;
+        }
+
+        if (s.growingResize(f, memory, alignment, new_len, ra)) {
+            @branchHint(.likely);
+            return memory.ptr;
+        } else {
+            f.modify.setNone();
+            return null;
+        }
+    }
+
+    test "fuzz single threaded" {
+        // This single threaded fuzz test has the following advantages:
+        // * Higher throughput and deterministic, which helps the fuzzer.
+        // * Easier debugging of single-threaded reproducable bugs.
+        const testing_buf = try std.testing.allocator.alloc(u8, 65536);
+        defer std.testing.allocator.free(testing_buf);
+        const backing_buf = try std.testing.allocator.alignedAlloc(u8, .@"8", 1 << 17);
+        defer std.testing.allocator.free(backing_buf);
+        try std.testing.fuzz(FuzzSingleThreadedContext{
+            .testing_buf = testing_buf,
+            .backing_buf = backing_buf,
+        }, FixedBuffer.fuzzSingleThreaded, .{});
+    }
+
+    fn fuzzSingleThreaded(ctx: FuzzSingleThreadedContext, smith: *Smith) !void {
+        @disableInstrumentation();
+
+        var gpa_instance: std.heap.FixedBufferAllocator = .init(ctx.testing_buf);
+        const gpa = gpa_instance.allocator();
+
+        const options = fuzz_probs.generateFixedBufferOptions(smith);
+        const buf_len = smith.index(ctx.backing_buf.len);
+        var s: FixedBuffer = .init(@alignCast(ctx.backing_buf[0..buf_len]), options);
+        const expected_leaks = try fuzzSingleThreadedInner(.{
+            .interface = s.allocator(),
+            .check_write_after_free = options.check_write_after_free,
+        }, gpa, smith);
+        try std.testing.expectEqual(expected_leaks, s.deinitLog(false));
+    }
+
+    test "fuzz multi threaded" {
+        if (@import("builtin").single_threaded) return error.SkipZigTest;
+
+        const testing_buf = try std.testing.allocator.alloc(u8, 65536);
+        defer std.testing.allocator.free(testing_buf);
+        const backing_buf = try std.testing.allocator.alignedAlloc(u8, .@"8", 1 << 17);
+        defer std.testing.allocator.free(backing_buf);
+
+        // `std.testing` instances are overwritten during `std.testing.fuzz` so
+        // it is necessary to use our own io and gpa instances.
+        var threaded_io: std.Io.Threaded = .init(std.heap.smp_allocator, .{});
+        defer threaded_io.deinit();
+
+        var ops: FuzzMultiThreadedContext.ThreadOps = .{
+            .io = threaded_io.io(),
+            .run = .{ .n = false },
+            .running = undefined,
+
+            .instance = undefined,
+            .items = undefined,
+            .i = undefined,
+        };
+
+        var group: std.Io.Group = .init;
+        defer group.cancel(ops.io);
+        for (0..FuzzMultiThreadedContext.n_threads) |_| {
+            try group.concurrent(ops.io, fuzzMultiThreadedWorker, .{&ops});
+        }
+
+        try std.testing.fuzz(FuzzMultiThreadedContext{
+            .testing_buf = testing_buf,
+            .backing_buf = backing_buf,
+            .ops = &ops,
+        }, FixedBuffer.fuzzMultiThreaded, .{});
+    }
+
+    fn fuzzMultiThreaded(ctx: FuzzMultiThreadedContext, smith: *Smith) !void {
+        @disableInstrumentation();
+
+        var arena_instance: std.heap.FixedBufferAllocator = .init(ctx.testing_buf);
+        const arena = arena_instance.allocator();
+        const options = fuzz_probs.generateFixedBufferOptions(smith);
+        const ops = try fuzzMultiThreadedGenerateOps(arena, smith, options.check_write_after_free);
+
+        const buf_len = smith.index(ctx.backing_buf.len);
+        var s: FixedBuffer = .init(@alignCast(ctx.backing_buf[0..buf_len]), options);
+        ctx.ops.instance = s.allocator();
+
+        const expected_leaks = try fuzzMultiThreadedRun(ctx.ops, ops);
+        try std.testing.expectEqual(expected_leaks, s.deinitLog(false));
+    }
+};
+
+test {
+    _ = FixedBuffer;
 }

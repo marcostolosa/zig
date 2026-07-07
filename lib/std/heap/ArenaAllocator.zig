@@ -700,7 +700,7 @@ test "fuzz multi threaded" {
     defer gpa.free(control_buffer);
     var control_instance: std.heap.FixedBufferAllocator = .init(control_buffer);
 
-    const sample_buffer = try gpa.alloc(u8, buffer_size);
+    const sample_buffer = try gpa.alignedAlloc(u8, .@"8", buffer_size);
     defer gpa.free(sample_buffer);
     var sample_instance: FuzzAllocator = .init(sample_buffer);
 
@@ -792,7 +792,7 @@ fn fuzzMultiThreaded(fuzz_init: FuzzContext.Init, smith: *std.testing.Smith) any
         .free_all => {
             try testing.expect(ok);
             try testing.expectEqual(0, new_capacity);
-            fuzz_init.sample_instance.reset();
+            try fuzz_init.sample_instance.reset();
         },
         .retain_with_limit => |limit| if (ok) try testing.expect(new_capacity <= limit),
         .retain_capacity => if (ok) try testing.expectEqual(old_capacity, new_capacity),
@@ -995,14 +995,14 @@ const FuzzContext = struct {
 };
 
 const FuzzAllocator = struct {
-    fba: std.heap.FixedBufferAllocator,
+    fba: std.heap.SafeAllocator.FixedBuffer,
     spurious_failures: [256]u8,
     index: u8,
 
-    fn init(buffer: []u8) FuzzAllocator {
+    fn init(buffer: []align(8) u8) FuzzAllocator {
         @disableInstrumentation();
         return .{
-            .fba = .init(buffer),
+            .fba = .init(buffer, .{}),
             .spurious_failures = undefined, // set with `preprepareFailures`
             .index = 0,
         };
@@ -1018,9 +1018,11 @@ const FuzzAllocator = struct {
         fa.index = 0;
     }
 
-    fn reset(fa: *FuzzAllocator) void {
+    fn reset(fa: *FuzzAllocator) !void {
         @disableInstrumentation();
-        fa.fba.reset();
+        const buf = fa.fba.buf;
+        try std.testing.expectEqual(0, fa.fba.deinit());
+        fa.fba = .init(buf, .{});
     }
 
     fn allocator(fa: *FuzzAllocator) Allocator {
@@ -1043,7 +1045,7 @@ const FuzzAllocator = struct {
 
         const index = @atomicRmw(u8, &fa.index, .Add, 1, .monotonic);
         if (fa.spurious_failures[index] != 0) return null;
-        return fa.fba.threadSafeAllocator().rawAlloc(len, alignment, @returnAddress());
+        return fa.fba.allocator().rawAlloc(len, alignment, @returnAddress());
     }
 
     fn resize(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool {
@@ -1053,7 +1055,7 @@ const FuzzAllocator = struct {
 
         const index = @atomicRmw(u8, &fa.index, .Add, 1, .monotonic);
         if (fa.spurious_failures[index] != 0) return false;
-        return fa.fba.threadSafeAllocator().rawResize(memory, alignment, new_len, @returnAddress());
+        return fa.fba.allocator().rawResize(memory, alignment, new_len, @returnAddress());
     }
 
     fn remap(ctx: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
@@ -1063,13 +1065,13 @@ const FuzzAllocator = struct {
 
         const index = @atomicRmw(u8, &fa.index, .Add, 1, .monotonic);
         if (fa.spurious_failures[index] != 0) return null;
-        return fa.fba.threadSafeAllocator().rawRemap(memory, alignment, new_len, @returnAddress());
+        return fa.fba.allocator().rawRemap(memory, alignment, new_len, @returnAddress());
     }
 
     fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, ret_addr: usize) void {
         @disableInstrumentation();
         const fa: *FuzzAllocator = @ptrCast(@alignCast(ctx));
         _ = ret_addr;
-        return fa.fba.threadSafeAllocator().rawFree(memory, alignment, @returnAddress());
+        return fa.fba.allocator().rawFree(memory, alignment, @returnAddress());
     }
 };

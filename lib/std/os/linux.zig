@@ -2713,6 +2713,8 @@ pub const SCHED = packed struct(i32) {
         RR = 2,
         /// For "batch" style execution of processes
         BATCH = 3,
+        /// "Soft realtime" or "isochronous" scheduling
+        ISO = 4,
         /// Low latency scheduling
         IDLE = 5,
         /// Sporadic task model deadline scheduling

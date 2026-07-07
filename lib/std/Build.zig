@@ -2370,7 +2370,10 @@ fn dependencyInner(
 pub inline fn runPackageScript(b: *Build, comptime build_zig: anytype) void {
     const result: anyerror!void = build_zig.build(b);
     result catch |err| switch (err) {
-        error.LazyDependencyNeeded => assert(b.graph.needed_lazy_dependencies.count() != 0),
+        error.LazyDependencyNeeded => {
+            assert(b.graph.needed_lazy_dependencies.count() != 0);
+            serializeConfigurationExiting(b);
+        },
         else => {
             if (b.dep_prefix.len == 0) {
                 log.err("package {q} configuration failed: {t}", .{ b.dep_prefix, err });

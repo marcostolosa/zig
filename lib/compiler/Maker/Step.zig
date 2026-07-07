@@ -318,7 +318,6 @@ pub fn reset(step: *Step, maker: *Maker) void {
     step.result_duration_ns = null;
     step.result_peak_rss = 0;
     step.test_results = .{};
-    clearWatchInputs(step, maker);
     clearErrorBundle(step, gpa);
 }
 

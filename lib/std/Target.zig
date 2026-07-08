@@ -1230,7 +1230,7 @@ pub const Cpu = struct {
 
             pub const needed_bit_count = 347;
             pub const byte_count = @divCeil(needed_bit_count, 8);
-            pub const usize_count = (byte_count + (@sizeOf(usize) - 1)) / @sizeOf(usize);
+            pub const usize_count = @divCeil(byte_count, @sizeOf(usize));
             pub const Index = std.math.Log2Int(@Int(.unsigned, usize_count * @bitSizeOf(usize)));
             pub const ShiftInt = std.math.Log2Int(usize);
 

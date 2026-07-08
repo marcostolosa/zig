@@ -1846,7 +1846,7 @@ pub fn readVarPackedInt(
     const iN = @Int(.signed, @bitSizeOf(T));
     const Log2N = std.math.Log2Int(T);
 
-    const read_size = (bit_count + (bit_offset % 8) + 7) / 8;
+    const read_size = @divCeil(bit_count + (bit_offset % 8), 8);
     const bit_shift = @as(u3, @intCast(bit_offset % 8));
     const pad = @as(Log2N, @intCast(@bitSizeOf(T) - bit_count));
 
@@ -2083,7 +2083,7 @@ fn writePackedIntLittle(comptime T: type, bytes: []u8, bit_offset: usize, value:
     const bit_count = @as(usize, @bitSizeOf(T));
     const bit_shift = @as(u3, @intCast(bit_offset % 8));
 
-    const store_size = (@bitSizeOf(T) + 7) / 8;
+    const store_size = @divCeil(@bitSizeOf(T), 8);
     const store_tail_bits = @as(u3, @intCast((store_size * 8) - bit_count));
     const StoreInt = @Int(.unsigned, store_size * 8);
 
@@ -2115,9 +2115,9 @@ fn writePackedIntBig(comptime T: type, bytes: []u8, bit_offset: usize, value: T)
 
     const bit_count = @as(usize, @bitSizeOf(T));
     const bit_shift = @as(u3, @intCast(bit_offset % 8));
-    const byte_count = (bit_shift + bit_count + 7) / 8;
+    const byte_count = @divCeil(bit_shift + bit_count, 8);
 
-    const store_size = (@bitSizeOf(T) + 7) / 8;
+    const store_size = @divCeil(@bitSizeOf(T), 8);
     const store_tail_bits = @as(u3, @intCast((store_size * 8) - bit_count));
     const StoreInt = @Int(.unsigned, store_size * 8);
 
@@ -2167,7 +2167,7 @@ pub fn writeVarPackedInt(bytes: []u8, bit_offset: usize, bit_count: usize, value
     const uN = @Int(.unsigned, @bitSizeOf(T));
 
     const bit_shift = @as(u3, @intCast(bit_offset % 8));
-    const write_size = (bit_count + bit_shift + 7) / 8;
+    const write_size = @divCeil(bit_count + bit_shift, 8);
     const lowest_byte = switch (endian) {
         .big => bytes.len - (bit_offset / 8) - write_size,
         .little => bit_offset / 8,

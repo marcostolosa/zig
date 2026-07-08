@@ -1121,7 +1121,7 @@ pub const LiteralsSection = struct {
             encoded_symbol_count: usize,
         ) HuffmanTree.DecodeError!HuffmanTree {
             var weights: [256]u4 = undefined;
-            const weights_byte_count = (encoded_symbol_count + 1) / 2;
+            const weights_byte_count = @divCeil(encoded_symbol_count, 2);
             remaining.* = remaining.subtract(weights_byte_count) orelse return error.EndOfStream;
             for (0..weights_byte_count) |i| {
                 const byte = try in.takeByte();

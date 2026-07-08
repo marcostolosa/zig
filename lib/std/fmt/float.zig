@@ -657,7 +657,7 @@ pub const Backend128_Tables = struct {
     }
 
     fn computeInvPow5(i: u32) [4]u64 {
-        const base = (i + FLOAT128_POW5_TABLE_SIZE - 1) / FLOAT128_POW5_TABLE_SIZE;
+        const base = @divCeil(i, FLOAT128_POW5_TABLE_SIZE);
         const base2 = base * FLOAT128_POW5_TABLE_SIZE;
         const mul = &FLOAT128_POW5_INV_SPLIT[base]; // 1 / 5^base2
         if (i == base2) {
@@ -735,7 +735,7 @@ pub const Backend64_TablesSmall = struct {
     }
 
     fn computeInvPow5(i: u32) [2]u64 {
-        const base = (i + FLOAT64_POW5_TABLE_SIZE - 1) / FLOAT64_POW5_TABLE_SIZE;
+        const base = @divCeil(i, FLOAT64_POW5_TABLE_SIZE);
         const base2 = base * FLOAT64_POW5_TABLE_SIZE;
         const mul = &FLOAT64_POW5_INV_SPLIT2[base]; // 1 / 5^base2
         if (i == base2) {

@@ -1446,7 +1446,7 @@ fn AnalyzeBigOperands(comptime pass: LivenessPass) type {
             total_operands: usize,
         ) !Self {
             const extra_operands = @as(u32, @intCast(total_operands)) -| (bpi - 1);
-            const max_extra_tombs = (extra_operands + 30) / 31;
+            const max_extra_tombs = @divCeil(extra_operands, 31);
 
             const extra_tombs: []u32 = switch (pass) {
                 .loop_analysis => &.{},

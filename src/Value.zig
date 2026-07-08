@@ -560,7 +560,7 @@ pub fn readFromPackedMemory(
             // Slow path, we have to construct a big-int
             const abi_size: usize = @intCast(ty.abiSize(zcu));
             const Limb = std.math.big.Limb;
-            const limb_count = (abi_size + @sizeOf(Limb) - 1) / @sizeOf(Limb);
+            const limb_count = @divCeil(abi_size, @sizeOf(Limb));
             const limbs_buffer = try gpa.alloc(Limb, limb_count);
             defer gpa.free(limbs_buffer);
 
@@ -2121,7 +2121,7 @@ pub fn pointerDerivation(ptr_val: Value, arena: Allocator, pt: Zcu.PerThread, op
                 const elem_ty = cur_ty.childType(zcu);
                 const elem_size = elem_ty.abiSize(zcu);
                 const start_idx = cur_offset / elem_size;
-                const end_idx = (cur_offset + need_bytes + elem_size - 1) / elem_size;
+                const end_idx = @divCeil(cur_offset + need_bytes, elem_size);
                 if (end_idx == start_idx + 1 and ptr_ty_info.flags.size == .one) {
                     const parent = try arena.create(PointerDeriveStep);
                     parent.* = cur_derive;

@@ -787,7 +787,7 @@ fn buildMerkleTreeLayerParallel(
     }
 
     const num_workers = Thread.getCpuCount() catch 1;
-    const parents_per_worker = (num_parents + num_workers - 1) / num_workers;
+    const parents_per_worker = @divCeil(num_parents, num_workers);
     var group: Io.Group = .init;
     defer group.cancel(io);
 
@@ -1012,7 +1012,7 @@ pub const Blake3 = struct {
 
         // Process chunks in parallel
         const num_workers = thread_count;
-        const chunks_per_worker = (num_full_chunks + num_workers - 1) / num_workers;
+        const chunks_per_worker = @divCeil(num_full_chunks, num_workers);
         var group: Io.Group = .init;
         defer group.cancel(io);
 

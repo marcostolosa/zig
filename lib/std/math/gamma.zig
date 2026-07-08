@@ -226,7 +226,7 @@ fn series(comptime T: type, abs: T) T {
 // but not for integer x or |x| < 2^-54, we handle those already
 fn sinpi(comptime T: type, x: T) T {
     const xmod2 = @mod(x, 2); // [0, 2]
-    const n = (@as(u8, @intFromFloat(4 * xmod2)) + 1) / 2; // {0, 1, 2, 3, 4}
+    const n = @divCeil(@as(u8, @intFromFloat(4 * xmod2)), 2); // {0, 1, 2, 3, 4}
     const y = xmod2 - 0.5 * @as(T, @floatFromInt(n)); // [-0.25, 0.25]
     return switch (n) {
         0, 4 => @sin(std.math.pi * y),

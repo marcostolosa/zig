@@ -1050,7 +1050,7 @@ pub fn alignBuffer(
         },
         .center => {
             const left_padding = padding / 2;
-            const right_padding = (padding + 1) / 2;
+            const right_padding = @divCeil(padding, 2);
             try w.splatByteAll(fill, left_padding);
             try w.writeAll(buffer);
             try w.splatByteAll(fill, right_padding);
@@ -1714,7 +1714,7 @@ pub fn printFloatHex(w: *Writer, value: anytype, case: std.fmt.Case, opt_precisi
             mantissa |= 1 << fractional_bits; // Add the implicit integer bit.
     }
 
-    const mantissa_digits = (fractional_bits + 3) / 4;
+    const mantissa_digits = @divCeil(fractional_bits, 4);
     // Fill in zeroes to round the fraction width to a multiple of 4.
     mantissa <<= mantissa_digits * 4 - fractional_bits;
 

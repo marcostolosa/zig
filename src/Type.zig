@@ -967,7 +967,7 @@ pub fn abiAlignment(ty: Type, zcu: *const Zcu) Alignment {
                     }
                     const elem_bits: u32 = @intCast(elem_ty.bitSize(zcu));
                     if (elem_bits == 0) return .@"1";
-                    const bytes = ((elem_bits * vector_type.len) + 7) / 8;
+                    const bytes = @divCeil(elem_bits * vector_type.len, 8);
                     const arch = target.cpu.arch;
                     return .fromByteUnits(std.math.ceilPowerOfTwoAssert(
                         u32,

@@ -15440,7 +15440,7 @@ fn zirAsm(
         }
 
         const constraint = sema.code.nullTerminatedString(output.data.constraint);
-        needed_capacity += (constraint.len + name.len + (2 + 3)) / 4;
+        needed_capacity += @divCeil(constraint.len + name.len + 2, 4);
 
         // AstGen gives us a reference to a variable
         if (arg.* != .none and sema.typeOf(arg.*).isConstPtr(zcu)) {
@@ -15494,7 +15494,7 @@ fn zirAsm(
             };
             if (bad_type) return sema.fail(block, input_src, "unsupported type '{f}' for 'c' constraint", .{uncasted_arg_ty.fmt(pt)});
         }
-        needed_capacity += (constraint.len + name.len + (2 + 3)) / 4;
+        needed_capacity += @divCeil(constraint.len + name.len + 2, 4);
         inputs[arg_i] = .{ .c = constraint, .n = name };
     }
 
@@ -15539,7 +15539,7 @@ fn zirAsm(
         buffer[o.c.len] = 0;
         @memcpy(buffer[o.c.len + 1 ..][0..o.n.len], o.n);
         buffer[o.c.len + 1 + o.n.len] = 0;
-        sema.air_extra.items.len += (o.c.len + o.n.len + (2 + 3)) / 4;
+        sema.air_extra.items.len += @divCeil(o.c.len + o.n.len + 2, 4);
     }
     for (inputs) |input| {
         const buffer = mem.sliceAsBytes(sema.air_extra.unusedCapacitySlice());
@@ -15547,7 +15547,7 @@ fn zirAsm(
         buffer[input.c.len] = 0;
         @memcpy(buffer[input.c.len + 1 ..][0..input.n.len], input.n);
         buffer[input.c.len + 1 + input.n.len] = 0;
-        sema.air_extra.items.len += (input.c.len + input.n.len + (2 + 3)) / 4;
+        sema.air_extra.items.len += @divCeil(input.c.len + input.n.len + 2, 4);
     }
     if (try expr_ty.toType().onePossibleValue(pt)) |opv| return .fromValue(opv);
     return asm_air;

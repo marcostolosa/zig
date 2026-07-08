@@ -379,7 +379,7 @@ pub fn Array(comptime MaskIntType: type, comptime size: usize) type {
         // bits in one mask
         const mask_len = @bitSizeOf(MaskInt);
         // total number of masks
-        const num_masks = (size + mask_len - 1) / mask_len;
+        const num_masks = @divCeil(size, mask_len);
         // padding bits in the last mask (may be 0)
         const last_pad_bits = mask_len * num_masks - size;
         // Mask of valid bits in the last mask.
@@ -813,7 +813,7 @@ pub const Dynamic = struct {
 
     /// Returns the total number of set bits in this bit set.
     pub fn count(self: Self) usize {
-        const num_masks = (self.bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);
+        const num_masks = @divCeil(self.bit_length, @bitSizeOf(MaskInt));
         var total: usize = 0;
         for (self.masks[0..num_masks]) |mask| {
             // Note: This is where we depend on padding bits being zero

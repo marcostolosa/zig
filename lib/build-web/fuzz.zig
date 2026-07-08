@@ -318,7 +318,7 @@ fn updateCoverage() error{OutOfMemory}!void {
     // being fuzzed is not a 64-bit CPU. It also assumes little-endian which
     // can also be incorrect.
     comptime assert(abi.fuzz.CoverageUpdateHeader.trailing[0] == .pc_bits_usize);
-    const n_bitset_elems = (coverage_source_locations.items.len + @bitSizeOf(u64) - 1) / @bitSizeOf(u64);
+    const n_bitset_elems = @divCeil(coverage_source_locations.items.len, @bitSizeOf(u64));
     const covered_bits = std.mem.bytesAsSlice(
         u64,
         recent_coverage_update.items[@sizeOf(abi.fuzz.CoverageUpdateHeader)..][0 .. n_bitset_elems * @sizeOf(u64)],

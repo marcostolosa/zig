@@ -8325,7 +8325,7 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
         else
             undefined,
         .field_is_comptime_bits = if (ini.any_comptime_fields)
-            .{ .tid = tid, .start = field_is_comptime_bits_start, .len = (ini.fields_len + 31) / 32 }
+            .{ .tid = tid, .start = field_is_comptime_bits_start, .len = @divCeil(ini.fields_len, 32) }
         else
             undefined,
     } };
@@ -10723,10 +10723,10 @@ fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !vo
                         n += extra.data.fields_len; // field_default: Index
                     }
                     if (extra.data.flags.any_field_aligns) {
-                        n += (extra.data.fields_len + 3) / 4; // field_align: Alignment
+                        n += @divCeil(extra.data.fields_len, 4); // field_align: Alignment
                     }
                     if (extra.data.flags.any_comptime_fields) {
-                        n += (extra.data.fields_len + 31) / 32; // field_is_comptime_bits: u32
+                        n += @divCeil(extra.data.fields_len, 32); // field_is_comptime_bits: u32
                     }
                     if (extra.data.flags.layout == .auto) {
                         n += extra.data.fields_len; // field_runtime_order: RuntimeOrder
@@ -10770,7 +10770,7 @@ fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !vo
                     }
                     n += extra.data.fields_len; // field_type: Index
                     if (extra.data.flags.any_field_aligns) {
-                        n += (extra.data.fields_len + 3) / 4; // field_align: Alignment
+                        n += @divCeil(extra.data.fields_len, 4); // field_align: Alignment
                     }
                     break :b n * @sizeOf(u32);
                 },

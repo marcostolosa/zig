@@ -2946,7 +2946,7 @@ fn emitTagIndexFunction(
         if (is_big_int) {
             var val_space: Zcu.Value.BigIntSpace = undefined;
             const val_bigint = val.toBigInt(&val_space, zcu);
-            const num_limbs = (int_info.bits + 63) / 64;
+            const num_limbs = @divCeil(int_info.bits, 64);
 
             const limbs = try gpa.alloc(u64, num_limbs);
             defer gpa.free(limbs);

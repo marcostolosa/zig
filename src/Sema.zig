@@ -27841,6 +27841,8 @@ fn coerceExtra(
                     .pointer => p: {
                         if (!sema.checkPtrAttributes(dest_ty, inst_ty, &in_memory_result)) break :p;
                         const inst_info = inst_ty.ptrInfo(zcu);
+                        if (inst_info.packed_offset.host_size != dest_info.packed_offset.host_size or
+                            inst_info.packed_offset.bit_offset != dest_info.packed_offset.bit_offset) break :p;
                         switch (try sema.coerceInMemoryAllowed(
                             block,
                             .fromInterned(dest_info.child),

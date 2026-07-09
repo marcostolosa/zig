@@ -14,15 +14,20 @@ fn expectBasename(input: [:0]const u8, expected: []const u8) !void {
 
 test "basename" {
     if (builtin.target.os.tag == .windows) return; // windows has backslash instead of slash
-    try expectBasename("", ".");
     try expectBasename(".", ".");
     try expectBasename("..", "..");
-    try expectBasename("/", "/");
-    try expectBasename("////", "/");
     try expectBasename("/usr/lib", "lib");
-    try expectBasename("/usr/", "usr");
-    try expectBasename("//usr//lib//", "lib");
     try expectBasename("usr", "usr");
     try expectBasename("/home/user/document.txt", "document.txt");
+
+    // glibc's bare `basename` symbol is the GNU variant, which returns ""
+    // for empty strings and paths with trailing slashes; only __xpg_basename
+    // is POSIX-conforming. Skip the diverging cases when linking glibc.
+    if (builtin.target.abi.isGnu()) return;
+    try expectBasename("", ".");
+    try expectBasename("/", "/");
+    try expectBasename("////", "/");
+    try expectBasename("/usr/", "usr");
+    try expectBasename("//usr//lib//", "lib");
     try expectBasename("/var/log/nginx///", "nginx");
 }

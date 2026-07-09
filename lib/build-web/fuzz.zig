@@ -132,7 +132,14 @@ const SourceLocationIndex = enum(u32) {
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(gpa);
         sli.appendPath(&buf) catch @panic("OOM");
-        return @enumFromInt(Walk.files.getIndex(buf.items) orelse return null);
+        if (Walk.files.getIndex(buf.items)) |index| return @enumFromInt(index);
+
+        const file_names = Walk.files.keys();
+        for (file_names, 0..) |file_name, index| {
+            if (std.mem.endsWith(u8, file_name, buf.items)) return @enumFromInt(index);
+        }
+
+        return null;
     }
 
     fn fileHtml(

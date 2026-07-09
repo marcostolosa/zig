@@ -994,7 +994,6 @@ const src_files = [_][]const u8{
     "musl/src/math/x86_64/remainderl.c",
     "musl/src/math/x86_64/remquol.c",
     "musl/src/misc/a64l.c",
-    "musl/src/misc/basename.c",
     "musl/src/misc/dirname.c",
     "musl/src/misc/fmtmsg.c",
     "musl/src/misc/forkpty.c",

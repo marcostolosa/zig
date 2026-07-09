@@ -12,6 +12,7 @@ test {
     _ = @import("c/strings.zig");
     _ = @import("c/unistd.zig");
     _ = @import("c/wchar.zig");
+    _ = @import("c/libgen.zig");
 }
 
 pub fn expectErrno(expected_errno: c.E) !void {

@@ -447,6 +447,151 @@ inline fn getAArch64CpuFeature(comptime feat_reg: []const u8) u64 {
     );
 }
 
+const riscv = struct {
+    const linux = std.os.linux;
+    const RISCV_HWPROBE = linux.RISCV_HWPROBE;
+
+    fn setFeature(cpu: *Target.Cpu, feature: Target.riscv.Feature, enabled: bool) void {
+        const idx = @as(Target.Cpu.Feature.Set.Index, @backingInt(feature));
+
+        if (enabled) cpu.features.addFeature(idx) else cpu.features.removeFeature(idx);
+    }
+
+    inline fn set(value: u64, mask: u64) bool {
+        return (value & mask) == mask;
+    }
+
+    pub fn detectCpuFeatures(cpu: *Target.Cpu) void {
+        var probes = [_]linux.riscv_hwprobe{
+            .{ .key = RISCV_HWPROBE.KEY.BASE_BEHAVIOR, .value = 0 },
+            .{ .key = RISCV_HWPROBE.KEY.IMA_EXT_0, .value = 0 },
+            .{ .key = RISCV_HWPROBE.KEY.MISALIGNED_SCALAR_PERF, .value = 0 },
+            .{ .key = RISCV_HWPROBE.KEY.MISALIGNED_VECTOR_PERF, .value = 0 },
+            .{ .key = RISCV_HWPROBE.KEY.VENDOR_EXT_MIPS_0, .value = 0 },
+            .{ .key = RISCV_HWPROBE.KEY.VENDOR_EXT_SIFIVE_0, .value = 0 },
+            .{ .key = RISCV_HWPROBE.KEY.IMA_EXT_1, .value = 0 },
+        };
+
+        const rc = linux.sys_riscv_hwprobe(&probes, probes.len, 0, null, 0);
+        if (linux.errno(rc) == .NOSYS)
+            return;
+
+        var ima_support = false;
+        for (probes) |probe| {
+            const value = probe.value;
+
+            switch (probe.key) {
+                RISCV_HWPROBE.KEY.BASE_BEHAVIOR => {
+                    ima_support = set(value, RISCV_HWPROBE.BASE_BEHAVIOR_IMA);
+                    setFeature(cpu, Target.riscv.Feature.i, ima_support);
+                    setFeature(cpu, Target.riscv.Feature.m, ima_support);
+                    setFeature(cpu, Target.riscv.Feature.a, ima_support);
+                },
+
+                RISCV_HWPROBE.KEY.IMA_EXT_0 => {
+                    if (!ima_support) continue;
+                    const fd_support = set(value, RISCV_HWPROBE.IMA_EXT_0.IMA_FD);
+                    setFeature(cpu, .f, fd_support);
+                    setFeature(cpu, .d, fd_support);
+                    setFeature(cpu, .c, set(value, RISCV_HWPROBE.IMA_EXT_0.IMA_C));
+                    setFeature(cpu, .v, set(value, RISCV_HWPROBE.IMA_EXT_0.IMA_V));
+                    setFeature(cpu, .zba, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZBA));
+                    setFeature(cpu, .zbb, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZBB));
+                    setFeature(cpu, .zbs, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZBS));
+                    setFeature(cpu, .zicboz, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZICBOZ));
+                    setFeature(cpu, .zbc, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZBC));
+                    setFeature(cpu, .zbkb, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZBKB));
+                    setFeature(cpu, .zbkc, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZBKC));
+                    setFeature(cpu, .zbkx, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZBKX));
+                    setFeature(cpu, .zknd, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZKND));
+                    setFeature(cpu, .zkne, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZKNE));
+                    setFeature(cpu, .zknh, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZKNH));
+                    setFeature(cpu, .zksed, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZKSED));
+                    setFeature(cpu, .zksh, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZKSH));
+                    setFeature(cpu, .zkt, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZKT));
+                    setFeature(cpu, .zvbb, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVBB));
+                    setFeature(cpu, .zvbc, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVBC));
+                    setFeature(cpu, .zvkb, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVKB));
+                    setFeature(cpu, .zvkg, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVKG));
+                    setFeature(cpu, .zvkned, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVKNED));
+                    setFeature(cpu, .zvknha, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVKNHA));
+                    setFeature(cpu, .zvknhb, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVKNHB));
+                    setFeature(cpu, .zvksed, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVKSED));
+                    setFeature(cpu, .zvksh, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVKSH));
+                    setFeature(cpu, .zvkt, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVKT));
+                    setFeature(cpu, .zfh, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZFH));
+                    setFeature(cpu, .zfhmin, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZFHMIN));
+                    setFeature(cpu, .zihintntl, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZIHINTNTL));
+                    setFeature(cpu, .zvfh, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVFH));
+                    setFeature(cpu, .zvfhmin, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVFHMIN));
+                    setFeature(cpu, .zfa, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZFA));
+                    setFeature(cpu, .ztso, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZTSO));
+                    setFeature(cpu, .zacas, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZACAS));
+                    setFeature(cpu, .zicntr, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZICNTR));
+                    setFeature(cpu, .zicond, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZICOND));
+                    setFeature(cpu, .zihintpause, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZIHINTPAUSE));
+                    setFeature(cpu, .zihpm, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZIHPM));
+                    setFeature(cpu, .zve32x, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVE32X));
+                    setFeature(cpu, .zve32f, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVE32F));
+                    setFeature(cpu, .zve64x, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVE64X));
+                    setFeature(cpu, .zve64f, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVE64F));
+                    setFeature(cpu, .zve64d, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVE64D));
+                    setFeature(cpu, .zimop, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZIMOP));
+                    setFeature(cpu, .zca, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZCA));
+                    setFeature(cpu, .zcb, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZCB));
+                    setFeature(cpu, .zcd, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZCD));
+                    setFeature(cpu, .zcf, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZCF));
+                    setFeature(cpu, .zcmop, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZCMOP));
+                    setFeature(cpu, .zawrs, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZAWRS));
+                    setFeature(cpu, .supm, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_SUPM));
+                    setFeature(cpu, .zicntr, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZICNTR));
+                    setFeature(cpu, .zihpm, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZIHPM));
+                    setFeature(cpu, .zfbfmin, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZFBFMIN));
+                    setFeature(cpu, .zvfbfmin, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVFBFMIN));
+                    setFeature(cpu, .zvfbfwma, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZVFBFWMA));
+                    setFeature(cpu, .zicbom, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZICBOM));
+                    setFeature(cpu, .zaamo, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZAAMO));
+                    setFeature(cpu, .zalrsc, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZALRSC));
+                    setFeature(cpu, .zabha, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZABHA));
+                    setFeature(cpu, .zalasr, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZALASR));
+                    setFeature(cpu, .zicbop, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZICBOP));
+                    setFeature(cpu, .zilsd, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZILSD));
+                    setFeature(cpu, .zclsd, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZCLSD));
+                    setFeature(cpu, .experimental_zicfilp, set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZICFILP));
+                },
+
+                RISCV_HWPROBE.KEY.MISALIGNED_SCALAR_PERF => {
+                    setFeature(cpu, .unaligned_scalar_mem, value == RISCV_HWPROBE.MISALIGNED_SCALAR.FAST);
+                },
+
+                RISCV_HWPROBE.KEY.MISALIGNED_VECTOR_PERF => {
+                    setFeature(cpu, .unaligned_vector_mem, value == RISCV_HWPROBE.MISALIGNED_VECTOR.FAST);
+                },
+
+                RISCV_HWPROBE.KEY.VENDOR_EXT_MIPS_0 => {
+                    if (!ima_support) continue;
+                    setFeature(cpu, .xmipsexectl, set(value, RISCV_HWPROBE.MIPS_VENDOR_EXT_XMIPSEXECTL));
+                },
+
+                RISCV_HWPROBE.KEY.VENDOR_EXT_SIFIVE_0 => {
+                    if (!ima_support) continue;
+                    setFeature(cpu, .xsfvqmaccdod, set(value, RISCV_HWPROBE.SIFIVE_VENDOR_EXT.XSFVQMACCDOD));
+                    setFeature(cpu, .xsfvqmaccqoq, set(value, RISCV_HWPROBE.SIFIVE_VENDOR_EXT.XSFVQMACCQOQ));
+                    setFeature(cpu, .xsfvfnrclipxfqf, set(value, RISCV_HWPROBE.SIFIVE_VENDOR_EXT.XSFVFNRCLIPXFQF));
+                    setFeature(cpu, .xsfvfwmaccqqq, set(value, RISCV_HWPROBE.SIFIVE_VENDOR_EXT.XSFVFWMACCQQQ));
+                },
+
+                RISCV_HWPROBE.KEY.IMA_EXT_1 => {
+                    if (!ima_support) continue;
+                    setFeature(cpu, .experimental_zicfiss, set(value, RISCV_HWPROBE.IMA_EXT_1_EXT_ZICFISS));
+                },
+
+                else => continue,
+            }
+        }
+    }
+};
+
 pub fn detectNativeCpuAndFeatures(io: Io) ?Target.Cpu {
     var file = Io.Dir.openFileAbsolute(io, "/proc/cpuinfo", .{}) catch |err| switch (err) {
         else => return null,
@@ -487,7 +632,17 @@ pub fn detectNativeCpuAndFeatures(io: Io) ?Target.Cpu {
             return PowerpcCpuinfoParser.parse(current_arch, &file_reader.interface) catch null;
         },
         .riscv64, .riscv32 => {
-            return RiscvCpuinfoParser.parse(current_arch, &file_reader.interface) catch null;
+            var cpu = RiscvCpuinfoParser.parse(current_arch, &file_reader.interface) catch null orelse cpu: {
+                const model = Target.Cpu.Model.generic(current_arch);
+                break :cpu Target.Cpu{
+                    .arch = current_arch,
+                    .model = model,
+                    .features = model.features,
+                };
+            };
+
+            riscv.detectCpuFeatures(&cpu);
+            return cpu;
         },
         .s390x => {
             return S390xCpuinfoParser.parse(current_arch, &file_reader.interface) catch null;

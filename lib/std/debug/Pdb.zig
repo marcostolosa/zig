@@ -1152,5 +1152,5 @@ fn readSparseBitVector(reader: *Io.Reader, gpa: Allocator) ![]u32 {
 }
 
 fn blockCountFromSize(size: u32, block_size: u32) u32 {
-    return (size + block_size - 1) / block_size;
+    return @divCeil(size, block_size);
 }

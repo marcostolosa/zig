@@ -814,7 +814,7 @@ fn lowerStruct(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool
         .auto, .@"extern" => try pt.aggregateValue(res_ty, field_values),
         .@"packed" => result: {
             const arena = self.sema.arena;
-            const buf = try arena.alloc(u8, @intCast((res_ty.bitSize(zcu) + 7) / 8));
+            const buf = try arena.alloc(u8, @intCast(@divCeil(res_ty.bitSize(zcu), 8)));
             @memset(buf, 0);
             var bit_offset: u16 = 0;
             for (field_values) |field_ip| {

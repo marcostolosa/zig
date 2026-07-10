@@ -3085,12 +3085,12 @@ pub const Storage = enum {
             /// Valid to call only when deserializing.
             pub fn tag(this: *const @This(), extra: []const u32, i: usize) Tag {
                 const start = @intFromPtr(this.data);
-                const meta_start = start - (this.len * @bitSizeOf(Meta) + 31) / 32;
+                const meta_start = start - @divCeil(this.len * @bitSizeOf(Meta), 32);
                 return loadBits(u32, extra[meta_start..], i * @bitSizeOf(Meta), Meta).tag;
             }
 
             fn extraLen(len: usize) usize {
-                return len + (len * @bitSizeOf(Meta) + 31) / 32;
+                return len + @divCeil(len * @bitSizeOf(Meta), 32);
             }
         };
     }
@@ -3289,7 +3289,7 @@ pub const Storage = enum {
                     else => comptime unreachable,
                 },
                 .auto => switch (Field.storage) {
-                    .flag_optional, .enum_optional => (@sizeOf(Field.Value) + 3) / 4,
+                    .flag_optional, .enum_optional => @divCeil(@sizeOf(Field.Value), 4),
                     .extended => 1,
                     .length_prefixed_list,
                     .flag_length_prefixed_list,
@@ -3395,7 +3395,7 @@ pub const Storage = enum {
                             const Tag = @typeInfo(Field.Union).@"union".tag_type.?;
                             const slice_ptr: [*]const Field.Union = @ptrCast(@alignCast(value.data));
                             const slice = slice_ptr[0..value.len];
-                            const meta_buffer = buffer[i..][0 .. (slice.len * @bitSizeOf(Field.Meta) + 31) / 32];
+                            const meta_buffer = buffer[i..][0..@divCeil(slice.len * @bitSizeOf(Field.Meta), 32)];
                             for (slice[0 .. slice.len - 1], 0..) |elem, elem_index| {
                                 const union_tag: Tag = elem;
                                 storeBits(u32, meta_buffer, elem_index * @bitSizeOf(Field.Meta), @as(Field.Meta, .{

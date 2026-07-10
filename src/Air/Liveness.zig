@@ -151,7 +151,7 @@ pub fn analyze(zcu: *Zcu, air: Air, intern_pool: *InternPool) Allocator.Error!Li
         .air = air,
         .tomb_bits = try gpa.alloc(
             usize,
-            (air.instructions.len * bpi + @bitSizeOf(usize) - 1) / @bitSizeOf(usize),
+            @divCeil(air.instructions.len * bpi, @bitSizeOf(usize)),
         ),
         .extra = .empty,
         .special = .empty,

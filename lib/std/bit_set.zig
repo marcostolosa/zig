@@ -1074,7 +1074,7 @@ pub const Dynamic = struct {
         return @as(MaskInt, @intFromBool(value)) << @as(ShiftInt, @intCast(index));
     }
     fn numMasks(bit_length: usize) usize {
-        return (bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);
+        return @divCeil(bit_length, @bitSizeOf(MaskInt));
     }
 };
 
@@ -1439,8 +1439,8 @@ fn testBitSet(a: anytype, b: anytype, len: usize) !void {
         }
     }
 
-    try testing.expectEqual((len + 1) / 2, a.count());
-    try testing.expectEqual((len + 3) / 4 + (len + 2) / 4, b.count());
+    try testing.expectEqual(@divCeil(len, 2), a.count());
+    try testing.expectEqual(@divCeil(len, 4) + (len + 2) / 4, b.count());
 
     {
         var iter = a.iterator(.{});
@@ -1531,7 +1531,7 @@ fn testBitSet(a: anytype, b: anytype, len: usize) !void {
 
     a.setIntersection(b.*);
     {
-        try testing.expectEqual((len + 3) / 4, a.count());
+        try testing.expectEqual(@divCeil(len, 4), a.count());
 
         var i: usize = 0;
         while (i < len) : (i += 1) {

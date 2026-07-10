@@ -128,7 +128,7 @@ pub fn KeccakF(comptime f: u11) type {
 
         /// Set the words storing the bytes of a given range to zero.
         pub fn clear(self: *Self, from: usize, to: usize) void {
-            @memset(self.st[from / @sizeOf(T) .. (to + @sizeOf(T) - 1) / @sizeOf(T)], 0);
+            @memset(self.st[from / @sizeOf(T) .. @divCeil(to, @sizeOf(T))], 0);
         }
 
         /// Clear the entire state, disabling compiler optimizations.

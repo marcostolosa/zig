@@ -330,7 +330,7 @@ fn atanExtended80(x: f80) f80 {
         // |x| < 0.4375
         if (expman < ((0x3fff - 2) << 8) + 0xc0) {
             // if |x| is small, atanl(x)~=x
-            if (e < 0x3fff - (math.floatMantissaBits(f80) + 1) / 2) {
+            if (e < 0x3fff - @divCeil(math.floatMantissaBits(f80), 2)) {
                 // raise underflow if subnormal
                 if (e == 0) {
                     std.mem.doNotOptimizeAway(@as(f32, @floatCast(x)));

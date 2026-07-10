@@ -8110,8 +8110,8 @@ pub fn getDeclaredStructType(
         ini.fields_len + // field_name
         ini.fields_len + // field_type
         (if (ini.any_field_defaults) ini.fields_len else 0) + // field_default
-        (if (ini.any_field_aligns) (ini.fields_len + 3) / 4 else 0) + // field_align
-        (if (ini.any_comptime_fields) (ini.fields_len + 31) / 32 else 0) + // field_is_comptime_bits
+        (if (ini.any_field_aligns) @divCeil(ini.fields_len, 4) else 0) + // field_align
+        (if (ini.any_comptime_fields) @divCeil(ini.fields_len, 32) else 0) + // field_is_comptime_bits
         (if (!is_extern) ini.fields_len else 0) + // field_runtime_order
         ini.fields_len); // field_offset
 
@@ -8144,10 +8144,10 @@ pub fn getDeclaredStructType(
         extra.appendNTimesAssumeCapacity(.{@backingInt(Index.none)}, ini.fields_len); // field_default
     }
     if (ini.any_field_aligns) {
-        extra.appendNTimesAssumeCapacity(.{0}, (ini.fields_len + 3) / 4); // field_align
+        extra.appendNTimesAssumeCapacity(.{0}, @divCeil(ini.fields_len, 4)); // field_align
     }
     if (ini.any_comptime_fields) {
-        extra.appendNTimesAssumeCapacity(.{0}, (ini.fields_len + 31) / 32); // field_is_comptime_bits
+        extra.appendNTimesAssumeCapacity(.{0}, @divCeil(ini.fields_len, 32)); // field_is_comptime_bits
     }
     if (!is_extern) {
         extra.appendNTimesAssumeCapacity(.{@backingInt(LoadedStructType.RuntimeOrder.unresolved)}, ini.fields_len); // field_runtime_order
@@ -8259,8 +8259,8 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
         ini.fields_len + // field_name
         ini.fields_len + // field_type
         (if (ini.any_field_defaults) ini.fields_len else 0) + // field_default
-        (if (ini.any_field_aligns) (ini.fields_len + 3) / 4 else 0) + // field_align
-        (if (ini.any_comptime_fields) (ini.fields_len + 31) / 32 else 0) + // field_is_comptime_bits
+        (if (ini.any_field_aligns) @divCeil(ini.fields_len, 4) else 0) + // field_align
+        (if (ini.any_comptime_fields) @divCeil(ini.fields_len, 32) else 0) + // field_is_comptime_bits
         (if (!is_extern) ini.fields_len else 0) + // field_runtime_order
         ini.fields_len); // field_offset
 
@@ -8294,11 +8294,11 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
     }
     const field_aligns_start = extra.mutate.len;
     if (ini.any_field_aligns) {
-        extra.appendNTimesAssumeCapacity(.{0}, (ini.fields_len + 3) / 4); // field_align
+        extra.appendNTimesAssumeCapacity(.{0}, @divCeil(ini.fields_len, 4)); // field_align
     }
     const field_is_comptime_bits_start = extra.mutate.len;
     if (ini.any_comptime_fields) {
-        extra.appendNTimesAssumeCapacity(.{0}, (ini.fields_len + 31) / 32); // field_is_comptime_bits
+        extra.appendNTimesAssumeCapacity(.{0}, @divCeil(ini.fields_len, 32)); // field_is_comptime_bits
     }
     if (!is_extern) {
         extra.appendNTimesAssumeCapacity(.{@backingInt(LoadedStructType.RuntimeOrder.unresolved)}, ini.fields_len); // field_runtime_order
@@ -8419,7 +8419,7 @@ pub fn getDeclaredUnionType(
         1 + // captures_len
         ini.captures.len + // capture
         ini.fields_len + // field_type
-        (if (ini.any_field_aligns) (ini.fields_len + 3) / 4 else 0)); // field_align
+        (if (ini.any_field_aligns) @divCeil(ini.fields_len, 4) else 0)); // field_align
 
     const extra_index = addExtraAssumeCapacity(extra, Tag.TypeUnion{
         .zir_index = ini.zir_index,
@@ -8448,7 +8448,7 @@ pub fn getDeclaredUnionType(
     }
     extra.appendNTimesAssumeCapacity(.{@backingInt(Index.none)}, ini.fields_len); // field_type
     if (ini.any_field_aligns) {
-        extra.appendNTimesAssumeCapacity(.{0}, (ini.fields_len + 3) / 4); // field_align
+        extra.appendNTimesAssumeCapacity(.{0}, @divCeil(ini.fields_len, 4)); // field_align
     }
     items.appendAssumeCapacity(.{
         .tag = .type_union,
@@ -8545,7 +8545,7 @@ pub fn getReifiedUnionType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Per
         2 + // type_hash
         ini.fields_len + // reified_field_name
         ini.fields_len + // field_type
-        (if (ini.any_field_aligns) (ini.fields_len + 3) / 4 else 0)); // field_align
+        (if (ini.any_field_aligns) @divCeil(ini.fields_len, 4) else 0)); // field_align
 
     const extra_index = addExtraAssumeCapacity(extra, Tag.TypeUnion{
         .zir_index = ini.zir_index,
@@ -8575,7 +8575,7 @@ pub fn getReifiedUnionType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Per
     extra.appendNTimesAssumeCapacity(.{@backingInt(Index.none)}, ini.fields_len); // field_type
     const field_aligns_start = extra.mutate.len;
     if (ini.any_field_aligns) {
-        extra.appendNTimesAssumeCapacity(.{0}, (ini.fields_len + 3) / 4); // field_align
+        extra.appendNTimesAssumeCapacity(.{0}, @divCeil(ini.fields_len, 4)); // field_align
     }
     items.appendAssumeCapacity(.{
         .tag = .type_union,

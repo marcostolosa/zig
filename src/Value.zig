@@ -892,7 +892,7 @@ pub fn fieldValue(val: Value, pt: Zcu.PerThread, index: usize) !Value {
             var bfa_buf: [128]u8 = undefined;
             var bfa_state: std.heap.BufferFirstAllocator = .init(&bfa_buf, zcu.comp.gpa);
             const bfa = bfa_state.allocator();
-            const buf = try bfa.alloc(u8, @intCast((ty.bitSize(zcu) + 7) / 8));
+            const buf = try bfa.alloc(u8, @intCast(@divCeil(ty.bitSize(zcu), 8)));
             defer bfa.free(buf);
             @memset(buf, 0);
             int_val.writeToPackedMemory(zcu, buf, 0);

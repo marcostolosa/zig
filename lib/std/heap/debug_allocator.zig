@@ -395,7 +395,7 @@ pub fn DebugAllocator(comptime config: Config) type {
         }
 
         fn usedBitsCount(slot_count: usize) usize {
-            return (slot_count + (@bitSizeOf(usize) - 1)) / @bitSizeOf(usize);
+            return @divCeil(slot_count, @bitSizeOf(usize));
         }
 
         fn usedBitsSize(slot_count: usize) usize {

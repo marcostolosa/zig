@@ -57,7 +57,7 @@ inline fn copySmallLength(
         return true;
     }
 
-    if (comptime 2 < (std.math.log2(small_limit) + 1) / 2) {
+    if (comptime 2 < @divCeil(std.math.log2(small_limit), 2)) {
         if (copy16ToSmallLimit(small_limit, dest, src, len)) return true;
     }
 
@@ -87,7 +87,7 @@ inline fn copy16ToSmallLimit(
     len: usize,
 ) bool {
     @setRuntimeSafety(false);
-    inline for (2..(std.math.log2(small_limit) + 1) / 2 + 1) |p| {
+    inline for (2..@divCeil(std.math.log2(small_limit), 2) + 1) |p| {
         const limit = 1 << (2 * p);
         if (len < limit) {
             copyRange4(limit / 4, dest, src, len);

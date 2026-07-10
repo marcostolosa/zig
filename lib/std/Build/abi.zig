@@ -352,7 +352,7 @@ pub const fuzz = struct {
         }
 
         pub fn seenElemsLen(pcs_len: usize) usize {
-            return (pcs_len + @bitSizeOf(usize) - 1) / @bitSizeOf(usize);
+            return @divCeil(pcs_len, @bitSizeOf(usize));
         }
 
         pub fn pcAddrs(header: *const SeenPcsHeader) []const usize {

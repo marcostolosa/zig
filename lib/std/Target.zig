@@ -3526,7 +3526,7 @@ pub fn cTypeAlignment(target: *const Target, c_type: CType) ?u16 {
 
     // Next-power-of-two-aligned, up to a maximum.
     return @min(
-        std.math.ceilPowerOfTwoAssert(u16, ((cTypeBitSize(target, c_type) orelse return null) + 7) / 8),
+        std.math.ceilPowerOfTwoAssert(u16, @divCeil(cTypeBitSize(target, c_type) orelse return null, 8)),
         @as(u16, switch (target.cpu.arch) {
             .msp430,
             .x86_16,

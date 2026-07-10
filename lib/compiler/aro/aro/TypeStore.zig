@@ -498,7 +498,7 @@ pub const QualType = packed struct(u32) {
             .float => |float_ty| float_ty.bits(comp) / 8,
             .complex => |complex| complex.sizeofOrNull(comp),
             .bit_int => |bit_int| {
-                return std.mem.alignForward(u64, (@as(u32, bit_int.bits) + 7) / 8, qt.alignof(comp));
+                return std.mem.alignForward(u64, @divCeil(@as(u32, bit_int.bits), 8), qt.alignof(comp));
             },
             .atomic => |atomic| atomic.sizeofOrNull(comp),
             .vector => |vector| {

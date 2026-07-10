@@ -227,7 +227,7 @@ fn asinExtended80(x: f80) f80 {
 
     // |x| < 0.5
     if (e < 0x3fff - 1) {
-        if (e < 0x3fff - (math.floatMantissaBits(f80) + 1) / 2) {
+        if (e < 0x3fff - @divCeil(math.floatMantissaBits(f80), 2)) {
             // return x with inexact if x!=0
             mem.doNotOptimizeAway(x + 0x1p120);
             return x;

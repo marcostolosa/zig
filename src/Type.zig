@@ -2919,7 +2919,7 @@ pub fn fieldPtrType(ptr_ty: Type, field_index: u32, pt: Zcu.PerThread) Allocator
                         .bit_offset = ptr_info.packed_offset.bit_offset + bit_offset,
                     } else .{
                         .host_size = switch (zcu.comp.getZigBackend()) {
-                            else => @intCast((aggregate_ty.bitSize(zcu) + 7) / 8),
+                            else => @intCast(@divCeil(aggregate_ty.bitSize(zcu), 8)),
                             .stage2_x86_64, .stage2_c => @intCast(aggregate_ty.abiSize(zcu)),
                         },
                         .bit_offset = ptr_info.packed_offset.bit_offset + bit_offset,

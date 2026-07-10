@@ -165,10 +165,10 @@ pub const base64 = struct {
     /// Returns the length of the encoded base64 string for a given length.
     pub fn encodedLen(bin_len: usize, variant: Variant) usize {
         if (variant.padding) {
-            return (bin_len + 2) / 3 * 4;
+            return @divCeil(bin_len, 3) * 4;
         } else {
             const leftover = bin_len % 3;
-            return bin_len / 3 * 4 + (leftover * 4 + 2) / 3;
+            return bin_len / 3 * 4 + @divCeil(leftover * 4, 3);
         }
     }
 

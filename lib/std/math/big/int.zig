@@ -101,7 +101,7 @@ pub fn calcSetStringLimbCount(base: u8, string_len: usize) usize {
 
 pub fn calcPowLimbsBufferLen(a_bit_count: usize, y: usize) usize {
     // The 2 accounts for the minimum space requirement for llmulacc
-    return 2 + (a_bit_count * y + (limb_bits - 1)) / limb_bits;
+    return 2 + @divCeil(a_bit_count * y, limb_bits);
 }
 
 pub fn calcSqrtLimbsBufferLen(a_bit_count: usize) usize {
@@ -952,7 +952,7 @@ pub const Mutable = struct {
         const bytes = std.mem.sliceAsBytes(r.limbs);
 
         var k: usize = 0;
-        while (k < ((bit_count + 1) / 2)) : (k += 1) {
+        while (k < @divCeil(bit_count, 2)) : (k += 1) {
             var i = k;
             var rev_i = bit_count - i - 1;
 
@@ -1019,7 +1019,7 @@ pub const Mutable = struct {
         assert(bytes.len >= byte_count);
 
         var k: usize = 0;
-        while (k < (byte_count + 1) / 2) : (k += 1) {
+        while (k < @divCeil(byte_count, 2)) : (k += 1) {
             var i = k;
             var rev_i = byte_count - k - 1;
 
@@ -2071,8 +2071,8 @@ pub const Mutable = struct {
         if (signedness == .signed) {
             const total_bits = bit_offset + bit_count;
             const last_byte = switch (endian) {
-                .little => ((total_bits + 7) / 8) - 1,
-                .big => buffer.len - ((total_bits + 7) / 8),
+                .little => @divCeil(total_bits, 8) - 1,
+                .big => buffer.len - @divCeil(total_bits, 8),
             };
 
             const sign_bit = @as(u8, 1) << @as(u3, @intCast((total_bits - 1) % 8));

@@ -44,6 +44,9 @@ comptime {
         symbol(&qsort, "qsort");
 
         symbol(&bsearch, "bsearch");
+
+        symbol(&a64l, "a64l");
+        symbol(&l64a, "l64a");
     }
 }
 
@@ -303,4 +306,33 @@ fn bsearch(key: *const anyopaque, base: *const anyopaque, n: usize, size: usize,
         }
     }
     return null;
+}
+
+const a64l_digits = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+fn a64l(str: [*:0]const u8) callconv(.c) c_long {
+    var x: u32 = 0;
+    var e: u32 = 0;
+    for (0..6) |n| {
+        const chr = str[n];
+        if (chr == 0) break;
+        const idx = std.mem.indexOfScalar(u8, a64l_digits, chr) orelse break;
+        x |= @as(u32, @intCast(idx)) << @intCast(e);
+        e += 6;
+    }
+    return @intCast(@as(i32, @bitCast(x)));
+}
+
+threadlocal var static_str: [7]u8 = undefined;
+
+fn l64a(x0: c_long) callconv(.c) [*:0]u8 {
+    static_str = @splat(0);
+    var x: u32 = @bitCast(@as(i32, @truncate(x0)));
+    for (0..6) |n| {
+        if (x == 0) break;
+        static_str[n] = a64l_digits[x & 63];
+        x >>= 6;
+        static_str[n + 1] = 0;
+    }
+    return @ptrCast(&static_str);
 }

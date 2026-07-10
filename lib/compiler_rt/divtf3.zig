@@ -229,9 +229,9 @@ inline fn div(a: f128, b: f128) f128 {
         } else {
             // For denormals with writtenExponent < 0,
             // the implicit bit must be shifted into the mantissa (IEEE 754)
-            const shiftAmount = @as(u7, @intCast(1 - writtenExponent));
-
-            // Check for underflow
+            // Check for underflow before narrowing; 1 - writtenExponent can
+            // exceed u7 when the quotient exponent is very negative.
+            const shiftAmount = 1 - writtenExponent;
             if (shiftAmount > significandBits) {
                 return @bitCast(quotientSign);
             }
@@ -241,7 +241,7 @@ inline fn div(a: f128, b: f128) f128 {
             const roundedQuotient = quotient +% @as(u113, @intFromBool(shouldRound));
 
             // Move to the denormal range and apply the mask
-            const denormQuotient = roundedQuotient >> shiftAmount;
+            const denormQuotient = roundedQuotient >> @as(u7, @intCast(shiftAmount));
             const absResult = denormQuotient & significandMask;
 
             //  Add sign to denormal mantissa and return

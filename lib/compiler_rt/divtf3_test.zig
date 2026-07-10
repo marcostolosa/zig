@@ -56,4 +56,6 @@ test "divtf3" {
     try test__divtf3(std.math.floatMin(f128), 4.0, 0x0000400000000000, 0x0000000000000000);
     try test__divtf3(1.0, 0x1.0000000000000000000000000001p16382, 0x0000ffffffffffff, 0xfffffffffffffffe);
     try test__divtf3(1.2, std.math.floatMax(f128), 0x00004ccccccccccc, 0xcccccccccccccccd);
+    // floatMin / floatMax: quotient exponent far below denormal range, result is +0
+    try test__divtf3(std.math.floatMin(f128), std.math.floatMax(f128), 0x0000000000000000, 0x0000000000000000);
 }

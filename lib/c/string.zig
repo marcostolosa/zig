@@ -274,11 +274,17 @@ fn strlcpy(dst: [*]c_char, src: [*:0]const c_char, dst_total_len: usize) callcon
     return src_bytes.len;
 }
 
-fn memccpy(noalias dst: *anyopaque, noalias src: *const anyopaque, value: c_int, len: usize) callconv(.c) *anyopaque {
+fn memccpy(noalias dst: *anyopaque, noalias src: *const anyopaque, value: c_int, len: usize) callconv(.c) ?*anyopaque {
     const dst_bytes: [*]u8 = @ptrCast(dst);
     const src_bytes: [*]const u8 = @ptrCast(src);
     const value_u8: u8 = @truncate(@as(c_uint, @bitCast(value)));
-    const copying_len = std.mem.findScalar(u8, src_bytes[0..len], value_u8) orelse len;
+
+    const index = std.mem.findScalar(u8, src_bytes[0..len], value_u8) orelse {
+        @memcpy(dst_bytes[0..len], src_bytes[0..len]);
+        return null;
+    };
+
+    const copying_len = index + 1;
     @memcpy(dst_bytes[0..copying_len], src_bytes[0..copying_len]);
     return dst_bytes + copying_len;
 }

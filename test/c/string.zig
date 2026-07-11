@@ -50,3 +50,38 @@ test "strndup" {
     const copy3_u8: [*:0]u8 = @ptrCast(copy3);
     try testing.expectEqualStrings("Hello", std.mem.span(@as([*:0]const u8, copy3_u8)));
 }
+
+test "memccpy" {
+    const src = [_]u8{ 0x10, 0x20, 0x30, 0x40 };
+    var dst: [src.len]u8 = undefined;
+
+    // byte before limit
+    @memset(&dst, @as(u8, 0xaa));
+    var result: ?*anyopaque = c.memccpy(&dst, &src, 0x20, src.len).?;
+    try testing.expectEqual(@intFromPtr(&dst[2]), @intFromPtr(result));
+    try testing.expectEqualSlices(u8, &.{ 0x10, 0x20, 0xaa, 0xaa }, &dst);
+
+    // byte after limit
+    @memset(&dst, @as(u8, 0xaa));
+    result = c.memccpy(&dst, &src, 0x40, 3);
+    try testing.expectEqual(null, result);
+    try testing.expectEqualSlices(u8, &.{ 0x10, 0x20, 0x30, 0xaa }, &dst);
+
+    // byte absent
+    @memset(&dst, @as(u8, 0xaa));
+    result = c.memccpy(&dst, &src, 0xff, src.len);
+    try testing.expectEqual(null, result);
+    try testing.expectEqualSlices(u8, &src, &dst);
+
+    // zero limit
+    @memset(&dst, @as(u8, 0xaa));
+    result = c.memccpy(&dst, &src, 0x20, 0);
+    try testing.expectEqual(null, result);
+    try testing.expectEqualSlices(u8, &.{ 0xaa, 0xaa, 0xaa, 0xaa }, &dst);
+
+    // value truncates to byte
+    @memset(&dst, @as(u8, 0xaa));
+    result = c.memccpy(&dst, &src, 0x4520, src.len).?; // truncated to 0x20
+    try testing.expectEqual(@intFromPtr(&dst[2]), @intFromPtr(result));
+    try testing.expectEqualSlices(u8, &.{ 0x10, 0x20, 0xaa, 0xaa }, &dst);
+}

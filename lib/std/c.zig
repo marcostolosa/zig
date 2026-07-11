@@ -11134,6 +11134,8 @@ pub const ioctl = switch (native_os) {
 
 pub extern "c" fn bzero(s: *anyopaque, n: usize) void;
 
+pub extern "c" fn memccpy(noalias dst: *anyopaque, noalias src: *const anyopaque, value: c_int, len: usize) ?*anyopaque;
+
 pub const swab = switch (builtin.abi) {
     .msvc => private._swab,
     else => private.swab,

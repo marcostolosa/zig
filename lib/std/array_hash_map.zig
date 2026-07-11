@@ -840,12 +840,15 @@ pub fn Custom(
             errdefer other.entries.deinit(gpa);
 
             if (self.index_header) |header| {
-                // TODO: I'm pretty sure this could be memcpy'd instead of
-                // doing all this work.
-                const new_header = try IndexHeader.alloc(gpa, header.bit_index);
-                other.insertAllEntriesIntoNewHeader(if (store_hash) {} else ctx, new_header);
-                other.index_header = new_header;
+                const index_size = hash_map.capacityIndexSize(header.bit_index);
+                const nbytes = @sizeOf(IndexHeader) + index_size * header.length();
+                const bytes = try gpa.alignedAlloc(u8, .of(IndexHeader), nbytes);
+                errdefer gpa.free(bytes);
+                const src_ptr: [*]align(@alignOf(IndexHeader)) const u8 = @ptrCast(header);
+                @memcpy(bytes, src_ptr[0..nbytes]);
+                other.index_header = @ptrCast(@alignCast(bytes.ptr));
             }
+            _ = ctx;
             return other;
         }
 

@@ -588,6 +588,7 @@ pub fn writeAll(w: *Writer, bytes: []const u8) Error!void {
 /// - `s`:
 ///   - for pointer-to-many and C pointers of u8, print as a C-string using zero-termination
 ///   - for slices of u8, print the entire slice as a string without zero-termination
+/// - `q`: same as `s`, but prints the string quoted with escape sequences, as would be used in string literals
 /// - `t`:
 ///   - for enums and tagged unions: prints the tag name
 ///   - for error sets: prints the error name

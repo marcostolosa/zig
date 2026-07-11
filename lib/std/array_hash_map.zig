@@ -843,7 +843,6 @@ pub fn Custom(
                 const index_size = hash_map.capacityIndexSize(header.bit_index);
                 const nbytes = @sizeOf(IndexHeader) + index_size * header.length();
                 const bytes = try gpa.alignedAlloc(u8, .of(IndexHeader), nbytes);
-                errdefer gpa.free(bytes);
                 const src_ptr: [*]align(@alignOf(IndexHeader)) const u8 = @ptrCast(header);
                 @memcpy(bytes, src_ptr[0..nbytes]);
                 other.index_header = @ptrCast(@alignCast(bytes.ptr));

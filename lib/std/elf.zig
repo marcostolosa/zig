@@ -224,6 +224,9 @@ pub const DT_PPC64_NUM = 4;
 pub const DT_IA_64_PLT_RESERVE = (DT_LOPROC + 0);
 pub const DT_IA_64_NUM = 1;
 
+pub const DT_XTENSA_GOT_LOC_OFF = 0x70000000;
+pub const DT_XTENSA_GOT_LOC_SZ = 0x70000001;
+
 pub const DT_NIOS2_GP = 0x70000002;
 
 pub const DF_ORIGIN = 0x00000001;
@@ -481,7 +484,7 @@ pub const PT = enum(Word) {
     _,
 
     /// Number of defined types
-    pub const NUM = @typeInfo(PT).@"enum".fields.len;
+    pub const NUM = @typeInfo(PT).@"enum".field_names.len;
 
     /// Start of OS-specific
     pub const LOOS: PT = @enumFromInt(0x60000000);
@@ -549,7 +552,7 @@ pub const SHT = enum(Word) {
     _,
 
     /// Number of defined types
-    pub const NUM = @typeInfo(SHT).@"enum".fields.len;
+    pub const NUM = @typeInfo(SHT).@"enum".field_names.len;
 
     /// Start of OS-specific
     pub const LOOS: SHT = @enumFromInt(0x60000000);
@@ -592,7 +595,7 @@ pub const STB = enum(u4) {
     _,
 
     /// Number of defined types
-    pub const NUM = @typeInfo(STB).@"enum".fields.len;
+    pub const NUM = @typeInfo(STB).@"enum".field_names.len;
 
     /// Start of OS-specific
     pub const LOOS: STB = @enumFromInt(10);
@@ -628,7 +631,7 @@ pub const STT = enum(u4) {
     _,
 
     /// Number of defined types
-    pub const NUM = @typeInfo(STT).@"enum".fields.len;
+    pub const NUM = @typeInfo(STT).@"enum".field_names.len;
 
     /// Start of OS-specific
     pub const LOOS: STT = @enumFromInt(10);
@@ -812,7 +815,7 @@ pub const Header = struct {
 
     pub fn init(hdr: anytype, endian: Endian) Header {
         // Converting integers to exhaustive enums using `@enumFromInt` could cause a panic.
-        comptime assert(!@typeInfo(OSABI).@"enum".is_exhaustive);
+        comptime assert(@typeInfo(OSABI).@"enum".mode == .nonexhaustive);
         return .{
             .is_64 = switch (@TypeOf(hdr)) {
                 Elf32_Ehdr => false,
@@ -870,8 +873,8 @@ pub const ProgramHeaderBufferIterator = struct {
         if (it.index >= it.phnum) return null;
         defer it.index += 1;
 
-        const size: u64 = if (it.is_64) @sizeOf(Elf64_Phdr) else @sizeOf(Elf32_Phdr);
-        const offset = it.phoff + size * it.index;
+        const size: usize = if (it.is_64) @sizeOf(Elf64_Phdr) else @sizeOf(Elf32_Phdr);
+        const offset = @as(usize, @intCast(it.phoff)) + size * it.index;
         var reader = Io.Reader.fixed(it.buf[offset..]);
 
         return try takeProgramHeader(&reader, it.is_64, it.endian);
@@ -1043,7 +1046,7 @@ pub const Elf32 = struct {
     pub const Addr = u32;
     pub const Off = u32;
     pub const Ehdr = extern struct {
-        ident: [EI.NIDENT]u8,
+        ident: Ident,
         type: ET,
         machine: EM,
         version: Word,
@@ -1133,7 +1136,7 @@ pub const Elf64 = struct {
     pub const Addr = u64;
     pub const Off = u64;
     pub const Ehdr = extern struct {
-        ident: [EI.NIDENT]u8,
+        ident: Ident,
         type: ET,
         machine: EM,
         version: Word,
@@ -1611,6 +1614,20 @@ pub const Sym = switch (@sizeOf(usize)) {
 /// Deprecated, use `std.elf.ElfN.Addr`
 pub const Addr = ElfN.Addr;
 
+pub const Ident = extern struct {
+    magic: [MAGIC.len]u8 = MAGIC.*,
+    class: CLASS,
+    data: DATA,
+    version: u8,
+    osabi: OSABI,
+    abiversion: u8,
+    pad: [7]u8 = @splat(0),
+
+    comptime {
+        assert(@sizeOf(Ident) == EI.NIDENT);
+    }
+};
+
 /// Deprecated, use `@intFromEnum(std.elf.CLASS.NONE)`
 pub const ELFCLASSNONE = @intFromEnum(CLASS.NONE);
 /// Deprecated, use `@intFromEnum(std.elf.CLASS.@"32")`
@@ -1625,7 +1642,15 @@ pub const CLASS = enum(u8) {
     @"64" = 2,
     _,
 
-    pub const NUM = @typeInfo(CLASS).@"enum".fields.len;
+    pub const NUM = @typeInfo(CLASS).@"enum".field_names.len;
+
+    pub inline fn size(class: CLASS) u32 {
+        return switch (class) {
+            .NONE, _ => unreachable,
+            .@"32" => 4,
+            .@"64" => 8,
+        };
+    }
 
     pub fn ElfN(comptime class: CLASS) type {
         return switch (class) {
@@ -1650,7 +1675,15 @@ pub const DATA = enum(u8) {
     @"2MSB" = 2,
     _,
 
-    pub const NUM = @typeInfo(DATA).@"enum".fields.len;
+    pub const NUM = @typeInfo(DATA).@"enum".field_names.len;
+
+    pub inline fn endian(data: DATA) std.lang.Endian {
+        return switch (data) {
+            .NONE, _ => unreachable,
+            .@"2LSB" => .little,
+            .@"2MSB" => .big,
+        };
+    }
 };
 
 pub const OSABI = enum(u8) {
@@ -2984,6 +3017,234 @@ pub const R_PPC64 = enum(u32) {
     _,
 };
 
+/// LoongArch relocations, as of v2.50 of the ABI specs.
+pub const R_LARCH = enum(u32) {
+    NONE = 0,
+    @"32" = 1,
+    @"64" = 2,
+    RELATIVE = 3,
+    COPY = 4,
+    JUMP_SLOT = 5,
+    TLS_DTPMOD32 = 6,
+    TLS_DTPMOD64 = 7,
+    TLS_DTPREL32 = 8,
+    TLS_DTPREL64 = 9,
+    TLS_TPREL32 = 10,
+    TLS_TPREL64 = 11,
+    IRELATIVE = 12,
+    TLS_DESC32 = 13,
+    TLS_DESC64 = 14,
+    MARK_LA = 20,
+    MARK_PCREL = 21,
+    SOP_PUSH_PCREL = 22,
+    SOP_PUSH_ABSOLUTE = 23,
+    SOP_PUSH_DUP = 24,
+    SOP_PUSH_GPREL = 25,
+    SOP_PUSH_TLS_TPREL = 26,
+    SOP_PUSH_TLS_GOT = 27,
+    SOP_PUSH_TLS_GD = 28,
+    SOP_PUSH_PLT_PCREL = 29,
+    SOP_ASSERT = 30,
+    SOP_NOT = 31,
+    SOP_SUB = 32,
+    SOP_SL = 33,
+    SOP_SR = 34,
+    SOP_ADD = 35,
+    SOP_AND = 36,
+    SOP_IF_ELSE = 37,
+    SOP_POP_32_S_10_5 = 38,
+    SOP_POP_32_U_10_12 = 39,
+    SOP_POP_32_S_10_12 = 40,
+    SOP_POP_32_S_10_16 = 41,
+    SOP_POP_32_S_10_16_S2 = 42,
+    SOP_POP_32_S_5_20 = 43,
+    SOP_POP_32_S_0_5_10_16_S2 = 44,
+    SOP_POP_32_S_0_10_10_16_S2 = 45,
+    SOP_POP_32_U = 46,
+    ADD8 = 47,
+    ADD16 = 48,
+    ADD24 = 49,
+    ADD32 = 50,
+    ADD64 = 51,
+    SUB8 = 52,
+    SUB16 = 53,
+    SUB24 = 54,
+    SUB32 = 55,
+    SUB64 = 56,
+    GNU_VTINHERIT = 57,
+    GNU_VTENTRY = 58,
+    B16 = 64,
+    B21 = 65,
+    B26 = 66,
+    ABS_HI20 = 67,
+    ABS_LO12 = 68,
+    ABS64_LO20 = 69,
+    ABS64_HI12 = 70,
+    PCALA_HI20 = 71,
+    PCALA_LO12 = 72,
+    PCALA64_LO20 = 73,
+    PCALA64_HI12 = 74,
+    GOT_PC_HI20 = 75,
+    GOT_PC_LO12 = 76,
+    GOT64_PC_LO20 = 77,
+    GOT64_PC_HI12 = 78,
+    GOT_HI20 = 79,
+    GOT_LO12 = 80,
+    GOT64_LO20 = 81,
+    GOT64_HI12 = 82,
+    TLS_LE_HI20 = 83,
+    TLS_LE_LO12 = 84,
+    TLS_LE64_LO20 = 85,
+    TLS_LE64_HI12 = 86,
+    TLS_IE_PC_HI20 = 87,
+    TLS_IE_PC_LO12 = 88,
+    TLS_IE64_PC_LO20 = 89,
+    TLS_IE64_PC_HI12 = 90,
+    TLS_IE_HI20 = 91,
+    TLS_IE_LO12 = 92,
+    TLS_IE64_LO20 = 93,
+    TLS_IE64_HI12 = 94,
+    TLS_LD_PC_HI20 = 95,
+    TLS_LD_HI20 = 96,
+    TLS_GD_PC_HI20 = 97,
+    TLS_GD_HI20 = 98,
+    @"32_PCREL" = 99,
+    RELAX = 100,
+    DELETE = 101,
+    ALIGN = 102,
+    PCREL20_S2 = 103,
+    CFA = 104,
+    ADD6 = 105,
+    SUB6 = 106,
+    ADD_ULEB128 = 107,
+    SUB_ULEB128 = 108,
+    @"64_PCREL" = 109,
+    CALL36 = 110,
+    TLS_DESC_PC_HI20 = 111,
+    TLS_DESC_PC_LO12 = 112,
+    TLS_DESC64_PC_LO20 = 113,
+    TLS_DESC64_PC_HI12 = 114,
+    TLS_DESC_HI20 = 115,
+    TLS_DESC_LO12 = 116,
+    TLS_DESC64_LO20 = 117,
+    TLS_DESC64_HI12 = 118,
+    TLS_DESC_LD = 119,
+    TLS_DESC_CALL = 120,
+    TLS_LE_HI20_R = 121,
+    TLS_LE_ADD_R = 122,
+    TLS_LE_LO12_R = 123,
+    TLS_LD_PCREL20_S2 = 124,
+    TLS_GD_PCREL20_S2 = 125,
+    TLS_DESC_PCREL20_S2 = 126,
+    CALL30 = 127,
+    PCADD_HI20 = 128,
+    PCADD_LO12 = 129,
+    GOT_PCADD_HI20 = 130,
+    GOT_PCADD_LO12 = 131,
+    TLS_IE_PCADD_HI20 = 132,
+    TLS_IE_PCADD_LO12 = 133,
+    TLS_LD_PCADD_HI20 = 134,
+    TLS_LD_PCADD_LO12 = 135,
+    TLS_GD_PCADD_HI20 = 136,
+    TLS_GD_PCADD_LO12 = 137,
+    TLS_DESC_PCADD_HI20 = 138,
+    TLS_DESC_PCADD_LO12 = 139,
+    _,
+};
+
+pub const R_SPARC = enum(u32) {
+    NONE = 0,
+    @"8" = 1,
+    @"16" = 2,
+    @"32" = 3,
+    DISP8 = 4,
+    DISP16 = 5,
+    DISP32 = 6,
+    WDISP30 = 7,
+    WDISP22 = 8,
+    HI22 = 9,
+    @"22" = 10,
+    @"13" = 11,
+    LO10 = 12,
+    GOT10 = 13,
+    GOT13 = 14,
+    GOT22 = 15,
+    PC10 = 16,
+    PC22 = 17,
+    WPLT30 = 18,
+    COPY = 19,
+    GLOB_DAT = 20,
+    JMP_SLOT = 21,
+    RELATIVE = 22,
+    UA32 = 23,
+    PLT32 = 24,
+    HIPLT22 = 25,
+    LOPLT10 = 26,
+    PCPLT32 = 27,
+    PCPLT22 = 28,
+    PCPLT10 = 29,
+    @"10" = 30,
+    @"11" = 31,
+    @"64" = 32,
+    OLO10 = 33,
+    HH22 = 34,
+    HM10 = 35,
+    LM22 = 36,
+    PC_HH22 = 37,
+    PC_HM10 = 38,
+    PC_LM22 = 39,
+    WDISP16 = 40,
+    WDISP19 = 41,
+    @"7" = 43,
+    @"5" = 44,
+    @"6" = 45,
+    DISP64 = 46,
+    PLT64 = 47,
+    HIX22 = 48,
+    LOX10 = 49,
+    H44 = 50,
+    M44 = 51,
+    L44 = 52,
+    REGISTER = 53,
+    UA64 = 54,
+    UA16 = 55,
+    TLS_GD_HI22 = 56,
+    TLS_GD_LO10 = 57,
+    TLS_GD_ADD = 58,
+    TLS_GD_CALL = 59,
+    TLS_LDM_HI22 = 60,
+    TLS_LDM_LO10 = 61,
+    TLS_LDM_ADD = 62,
+    TLS_LDM_CALL = 63,
+    TLS_LDO_HIX22 = 64,
+    TLS_LDO_LOX10 = 65,
+    TLS_LDO_ADD = 66,
+    TLS_IE_HI22 = 67,
+    TLS_IE_LO10 = 68,
+    TLS_IE_LD = 69,
+    TLS_IE_LDX = 70,
+    TLS_IE_ADD = 71,
+    TLS_LE_HIX22 = 72,
+    TLS_LE_LOX10 = 73,
+    TLS_DTPMOD32 = 74,
+    TLS_DTPMOD64 = 75,
+    TLS_DTPOFF32 = 76,
+    TLS_DTPOFF64 = 77,
+    TLS_TPOFF32 = 78,
+    TLS_TPOFF64 = 79,
+    GOTDATA_HIX22 = 80,
+    GOTDATA_LOX10 = 81,
+    GOTDATA_OP_HIX22 = 82,
+    GOTDATA_OP_LOX10 = 83,
+    GOTDATA_OP = 84,
+    H34 = 85,
+    SIZE32 = 86,
+    SIZE64 = 87,
+    WDISP10 = 88,
+    IRELATIVE = 249,
+    _,
+};
+
 pub const ar_hdr = extern struct {
     /// Member file name, sometimes / terminated.
     ar_name: [16]u8,
@@ -3054,7 +3315,7 @@ pub const ar_hdr = extern struct {
 fn genSpecialMemberName(comptime name: []const u8) *const [16]u8 {
     assert(name.len <= 16);
     const padding = 16 - name.len;
-    return name ++ &[_]u8{0x20} ** padding;
+    return name ++ @as([padding]u8, @splat(0x20));
 }
 
 // Archive files start with the ARMAG identifying string.  Then follows a
@@ -3110,4 +3371,54 @@ pub const gnu_hash = struct {
         try std.testing.expectEqual(0xbac212a0, calculate("syscall"));
         try std.testing.expectEqual(0x8ae9f18e, calculate("flapenguin.me"));
     }
+};
+
+pub const loongarch = struct {
+    /// Ehdr.e_flags bits of LoongArch
+    pub const EFlags = packed struct(Word) {
+        base_abi_modifier: BaseAbiModifier,
+        abi_extension: AbiExtension,
+        abi_version: u2,
+        reserved: u24 = 0,
+
+        pub const BaseAbiModifier = enum(u3) {
+            s = 1,
+            f = 2,
+            d = 3,
+            _,
+        };
+        pub const AbiExtension = enum(u3) { base = 0, _ };
+    };
+};
+
+pub const sparc = struct {
+    pub const EFlags = packed struct(Word) {
+        mm: MemoryModel,
+        _reserved1: u6 = 0,
+        ext: Extensions,
+        _reserved2: u8 = 0,
+
+        pub const MemoryModel = enum(u2) {
+            /// Total Store Ordering
+            tso = 0,
+            /// Partial Store Ordering
+            pso = 1,
+            /// Relaxed Memory Ordering
+            rmo = 2,
+        };
+
+        pub const Extensions = packed struct(u16) {
+            /// Uses SPARC v8 ABI (w/ 32-bit pointers) on SPARC v9. Also known as v8+.
+            @"32plus": bool,
+            /// Uses Sun UltraSPARC extensions.
+            sun_us1: bool,
+            /// Uses HaL R1 extensions.
+            hal_r1: bool,
+            /// Uses Sun UltraSPARC III extensions.
+            sun_us3: bool,
+            _reserved: u11 = 0,
+            /// Uses little endian data (SPARC v9+).
+            le_data: bool,
+        };
+    };
 };

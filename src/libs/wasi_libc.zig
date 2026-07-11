@@ -12,14 +12,14 @@ pub const CrtFile = enum {
     libc_a,
 };
 
-pub fn execModelCrtFile(wasi_exec_model: std.builtin.WasiExecModel) CrtFile {
+pub fn execModelCrtFile(wasi_exec_model: std.lang.WasiExecModel) CrtFile {
     return switch (wasi_exec_model) {
         .reactor => CrtFile.crt1_reactor_o,
         .command => CrtFile.crt1_command_o,
     };
 }
 
-pub fn execModelCrtFileFullName(wasi_exec_model: std.builtin.WasiExecModel) []const u8 {
+pub fn execModelCrtFileFullName(wasi_exec_model: std.lang.WasiExecModel) []const u8 {
     return switch (execModelCrtFile(wasi_exec_model)) {
         .crt1_reactor_o => "crt1-reactor.o",
         .crt1_command_o => "crt1-command.o",
@@ -719,17 +719,12 @@ const libc_top_half_src_files = [_][]const u8{
     "musl/src/math/llroundf.c",
     "musl/src/math/llroundl.c",
     "musl/src/math/log10l.c",
-    "musl/src/math/log1p.c",
-    "musl/src/math/log1pf.c",
     "musl/src/math/log1pl.c",
     "musl/src/math/log2l.c",
     "musl/src/math/logb.c",
     "musl/src/math/logbf.c",
     "musl/src/math/logbl.c",
     "musl/src/math/logl.c",
-    "musl/src/math/lround.c",
-    "musl/src/math/lroundf.c",
-    "musl/src/math/lroundl.c",
     "musl/src/math/__math_divzero.c",
     "musl/src/math/__math_divzerof.c",
     "musl/src/math/__math_invalid.c",

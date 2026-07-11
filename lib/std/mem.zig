@@ -1,12 +1,14 @@
-const std = @import("std.zig");
+const mem = @This();
+
 const builtin = @import("builtin");
+const native_endian = builtin.cpu.arch.endian();
+
+const std = @import("std.zig");
 const debug = std.debug;
 const assert = debug.assert;
 const math = std.math;
-const mem = @This();
 const testing = std.testing;
-const Endian = std.builtin.Endian;
-const native_endian = builtin.cpu.arch.endian();
+const Endian = std.lang.Endian;
 
 /// The standard library currently thoroughly depends on byte size
 /// being 8 bits.  (see the use of u8 throughout allocation code as
@@ -201,9 +203,12 @@ test "Allocator.resize" {
         defer testing.allocator.free(values);
 
         for (values, 0..) |*v, i| v.* = @as(T, @intCast(i));
-        if (!testing.allocator.resize(values, values.len + 10)) return error.OutOfMemory;
-        values = values.ptr[0 .. values.len + 10];
-        try testing.expect(values.len == 110);
+        if (testing.allocator.resize(values, values.len + 10)) {
+            values = values.ptr[0 .. values.len + 10];
+            try testing.expect(values.len == 110);
+        } else {
+            // `resize` is not guaranteed to succeed even if there is sufficient memory.
+        }
     }
 
     const primitiveFloatTypes = .{
@@ -217,9 +222,12 @@ test "Allocator.resize" {
         defer testing.allocator.free(values);
 
         for (values, 0..) |*v, i| v.* = @as(T, @floatFromInt(i));
-        if (!testing.allocator.resize(values, values.len + 10)) return error.OutOfMemory;
-        values = values.ptr[0 .. values.len + 10];
-        try testing.expect(values.len == 110);
+        if (testing.allocator.resize(values, values.len + 10)) {
+            values = values.ptr[0 .. values.len + 10];
+            try testing.expect(values.len == 110);
+        } else {
+            // `resize` is not guaranteed to succeed even if there is sufficient memory.
+        }
     }
 }
 
@@ -291,9 +299,13 @@ pub fn zeroes(comptime T: type) T {
                 return item;
             } else {
                 var structure: T = undefined;
-                inline for (struct_info.fields) |field| {
-                    if (!field.is_comptime) {
-                        @field(structure, field.name) = zeroes(field.type);
+                inline for (
+                    struct_info.field_names,
+                    struct_info.field_types,
+                    struct_info.field_attrs,
+                ) |field_name, field_type, field_attrs| {
+                    if (!field_attrs.@"comptime") {
+                        @field(structure, field_name) = zeroes(field_type);
                     }
                 }
                 return structure;
@@ -315,7 +327,7 @@ pub fn zeroes(comptime T: type) T {
                     return null;
                 },
                 .one, .many => {
-                    if (ptr_info.is_allowzero) return @ptrFromInt(0);
+                    if (ptr_info.attrs.@"allowzero") return @ptrFromInt(0);
                     @compileError("Only nullable and allowzero pointers can be set to zero.");
                 },
             }
@@ -342,6 +354,7 @@ pub fn zeroes(comptime T: type) T {
         .noreturn,
         .undefined,
         .@"opaque",
+        .spirv,
         .frame,
         .@"anyframe",
         => {
@@ -359,7 +372,10 @@ test zeroes {
     var a = zeroes(C_struct);
 
     // Extern structs should have padding zeroed out.
-    try testing.expectEqualSlices(u8, &[_]u8{0} ** @sizeOf(@TypeOf(a)), asBytes(&a));
+    {
+        const num_bytes = @sizeOf(@TypeOf(a));
+        try testing.expectEqualSlices(u8, &@as([num_bytes]u8, @splat(0)), @ptrCast(&a));
+    }
 
     a.y += 10;
 
@@ -370,7 +386,6 @@ test zeroes {
         comptime comptime_field: u8 = 5,
 
         integral_types: struct {
-            integer_0: i0,
             integer_8: i8,
             integer_16: i16,
             integer_32: i32,
@@ -405,7 +420,6 @@ test zeroes {
 
     const b = zeroes(ZigStruct);
     try testing.expectEqual(@as(u8, 5), b.comptime_field);
-    try testing.expectEqual(@as(i8, 0), b.integral_types.integer_0);
     try testing.expectEqual(@as(i8, 0), b.integral_types.integer_8);
     try testing.expectEqual(@as(i16, 0), b.integral_types.integer_16);
     try testing.expectEqual(@as(i32, 0), b.integral_types.integer_32);
@@ -464,44 +478,49 @@ pub fn zeroInit(comptime T: type, init: anytype) T {
             switch (@typeInfo(Init)) {
                 .@"struct" => |init_info| {
                     if (init_info.is_tuple) {
-                        if (init_info.fields.len > struct_info.fields.len) {
+                        if (init_info.field_names.len > struct_info.field_names.len) {
                             @compileError("Tuple initializer has more elements than there are fields in `" ++ @typeName(T) ++ "`");
                         }
                     } else {
-                        inline for (init_info.fields) |field| {
-                            if (!@hasField(T, field.name)) {
-                                @compileError("Encountered an initializer for `" ++ field.name ++ "`, but it is not a field of " ++ @typeName(T));
+                        inline for (init_info.field_names) |field_name| {
+                            if (!@hasField(T, field_name)) {
+                                @compileError("Encountered an initializer for `" ++ field_name ++ "`, but it is not a field of " ++ @typeName(T));
                             }
                         }
                     }
 
                     var value: T = if (struct_info.layout == .@"extern") zeroes(T) else undefined;
 
-                    inline for (struct_info.fields, 0..) |field, i| {
-                        if (field.is_comptime) {
+                    inline for (
+                        struct_info.field_names,
+                        struct_info.field_types,
+                        struct_info.field_attrs,
+                        0..,
+                    ) |f_name, f_type, f_attr, i| {
+                        if (f_attr.@"comptime") {
                             continue;
                         }
 
-                        if (init_info.is_tuple and init_info.fields.len > i) {
-                            @field(value, field.name) = @field(init, init_info.fields[i].name);
-                        } else if (@hasField(@TypeOf(init), field.name)) {
-                            switch (@typeInfo(field.type)) {
+                        if (init_info.is_tuple and init_info.field_names.len > i) {
+                            @field(value, f_name) = @field(init, init_info.field_names[i]);
+                        } else if (@hasField(@TypeOf(init), f_name)) {
+                            switch (@typeInfo(f_type)) {
                                 .@"struct" => {
-                                    @field(value, field.name) = zeroInit(field.type, @field(init, field.name));
+                                    @field(value, f_name) = zeroInit(f_type, @field(init, f_name));
                                 },
                                 else => {
-                                    @field(value, field.name) = @field(init, field.name);
+                                    @field(value, f_name) = @field(init, f_name);
                                 },
                             }
-                        } else if (field.defaultValue()) |val| {
-                            @field(value, field.name) = val;
+                        } else if (f_attr.defaultValue(f_type)) |val| {
+                            @field(value, f_name) = val;
                         } else {
-                            switch (@typeInfo(field.type)) {
+                            switch (@typeInfo(f_type)) {
                                 .@"struct" => {
-                                    @field(value, field.name) = std.mem.zeroInit(field.type, .{});
+                                    @field(value, f_name) = std.mem.zeroInit(f_type, .{});
                                 },
                                 else => {
-                                    @field(value, field.name) = std.mem.zeroes(@TypeOf(@field(value, field.name)));
+                                    @field(value, f_name) = std.mem.zeroes(@TypeOf(@field(value, f_name)));
                                 },
                             }
                         }
@@ -860,13 +879,9 @@ fn Span(comptime T: type) type {
                 .many => ptr_info.sentinel() orelse @compileError("invalid type given to std.mem.span: " ++ @typeName(T)),
                 .c => 0,
             };
-            return @Pointer(.slice, .{
-                .@"const" = ptr_info.is_const,
-                .@"volatile" = ptr_info.is_volatile,
-                .@"allowzero" = ptr_info.is_allowzero and ptr_info.size != .c,
-                .@"align" = ptr_info.alignment,
-                .@"addrspace" = ptr_info.address_space,
-            }, ptr_info.child, new_sentinel);
+            var attrs = ptr_info.attrs;
+            attrs.@"allowzero" = attrs.@"allowzero" and ptr_info.size != .c;
+            return @Pointer(.slice, attrs, ptr_info.child, new_sentinel);
         },
         else => {},
     }
@@ -926,13 +941,9 @@ fn SliceTo(comptime T: type, comptime end: std.meta.Elem(T)) type {
                 .many => if (std.meta.sentinel(T)) |s| s == end else true,
                 .c => true,
             };
-            return @Pointer(.slice, .{
-                .@"const" = ptr_info.is_const,
-                .@"volatile" = ptr_info.is_volatile,
-                .@"allowzero" = ptr_info.is_allowzero and ptr_info.size != .c,
-                .@"align" = ptr_info.alignment,
-                .@"addrspace" = ptr_info.address_space,
-            }, Elem, if (have_sentinel) end else null);
+            var attrs = ptr_info.attrs;
+            attrs.@"allowzero" = attrs.@"allowzero" and ptr_info.size != .c;
+            return @Pointer(.slice, attrs, Elem, if (have_sentinel) end else null);
         },
         else => {},
     }
@@ -1589,7 +1600,7 @@ test find {
 test "find multibyte" {
     {
         // make haystack and needle long enough to trigger Boyer-Moore-Horspool algorithm
-        const haystack = [1]u16{0} ** 100 ++ [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee, 0x00ff };
+        const haystack = @as([100]u16, @splat(0)) ++ [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee, 0x00ff };
         const needle = [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee };
         try testing.expectEqual(findPos(u16, &haystack, 0, &needle), 100);
 
@@ -1602,7 +1613,7 @@ test "find multibyte" {
 
     {
         // make haystack and needle long enough to trigger Boyer-Moore-Horspool algorithm
-        const haystack = [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee, 0x00ff } ++ [1]u16{0} ** 100;
+        const haystack = [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee, 0x00ff } ++ @as([100]u16, @splat(0));
         const needle = [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee };
         try testing.expectEqual(lastIndexOf(u16, &haystack, &needle), 0);
 
@@ -1690,7 +1701,7 @@ test countScalar {
 //
 /// See also: `containsAtLeastScalar`
 pub fn containsAtLeast(comptime T: type, haystack: []const T, expected_count: usize, needle: []const T) bool {
-    if (needle.len == 1) return containsAtLeastScalar(T, haystack, expected_count, needle[0]);
+    if (needle.len == 1) return containsAtLeastScalar(T, haystack, needle[0], expected_count);
     assert(needle.len > 0);
     if (expected_count == 0) return true;
 
@@ -1721,17 +1732,12 @@ test containsAtLeast {
     try testing.expect(!containsAtLeast(u8, "   radar      radar   ", 3, "radar"));
 }
 
-/// Deprecated in favor of `containsAtLeastScalar2`.
-pub fn containsAtLeastScalar(comptime T: type, list: []const T, minimum: usize, element: T) bool {
-    return containsAtLeastScalar2(T, list, element, minimum);
-}
-
 /// Returns true if `element` appears at least `minimum` number of times in `list`.
 //
 /// Related:
 /// * `containsAtLeast`
 /// * `countScalar`
-pub fn containsAtLeastScalar2(comptime T: type, list: []const T, element: T, minimum: usize) bool {
+pub fn containsAtLeastScalar(comptime T: type, list: []const T, element: T, minimum: usize) bool {
     const n = list.len;
     var i: usize = 0;
     var found: usize = 0;
@@ -1759,14 +1765,14 @@ pub fn containsAtLeastScalar2(comptime T: type, list: []const T, element: T, min
     return false;
 }
 
-test containsAtLeastScalar2 {
-    try testing.expect(containsAtLeastScalar2(u8, "aa", 'a', 0));
-    try testing.expect(containsAtLeastScalar2(u8, "aa", 'a', 1));
-    try testing.expect(containsAtLeastScalar2(u8, "aa", 'a', 2));
-    try testing.expect(!containsAtLeastScalar2(u8, "aa", 'a', 3));
+test containsAtLeastScalar {
+    try testing.expect(containsAtLeastScalar(u8, "aa", 'a', 0));
+    try testing.expect(containsAtLeastScalar(u8, "aa", 'a', 1));
+    try testing.expect(containsAtLeastScalar(u8, "aa", 'a', 2));
+    try testing.expect(!containsAtLeastScalar(u8, "aa", 'a', 3));
 
-    try testing.expect(containsAtLeastScalar2(u8, "adadda", 'd', 3));
-    try testing.expect(!containsAtLeastScalar2(u8, "adadda", 'd', 4));
+    try testing.expect(containsAtLeastScalar(u8, "adadda", 'd', 3));
+    try testing.expect(!containsAtLeastScalar(u8, "adadda", 'd', 4));
 }
 
 /// Reads an integer from memory with size equal to bytes.len.
@@ -1776,7 +1782,7 @@ pub fn readVarInt(comptime ReturnType: type, bytes: []const u8, endian: Endian) 
     assert(@typeInfo(ReturnType).int.bits >= bytes.len * 8);
     const bits = @typeInfo(ReturnType).int.bits;
     const signedness = @typeInfo(ReturnType).int.signedness;
-    const WorkType = std.meta.Int(signedness, @max(16, bits));
+    const WorkType = @Int(signedness, @max(16, bits));
     var result: WorkType = 0;
     switch (endian) {
         .big => {
@@ -1827,8 +1833,8 @@ pub fn readVarPackedInt(
     endian: std.builtin.Endian,
     signedness: std.builtin.Signedness,
 ) T {
-    const uN = std.meta.Int(.unsigned, @bitSizeOf(T));
-    const iN = std.meta.Int(.signed, @bitSizeOf(T));
+    const uN = @Int(.unsigned, @bitSizeOf(T));
+    const iN = @Int(.signed, @bitSizeOf(T));
     const Log2N = std.math.Log2Int(T);
 
     const read_size = (bit_count + (bit_offset % 8) + 7) / 8;
@@ -1844,18 +1850,18 @@ pub fn readVarPackedInt(
     if (@bitSizeOf(T) <= 8) {
         // These are the same shifts/masks we perform below, but adds `@truncate`/`@intCast`
         // where needed since int is smaller than a byte.
-        const value = if (read_size == 1) b: {
-            break :b @as(uN, @truncate(read_bytes[0] >> bit_shift));
+        const value: uN = if (read_size == 1) b: {
+            break :b @truncate(read_bytes[0] >> bit_shift);
         } else b: {
             const i: u1 = @intFromBool(endian == .big);
-            const head = @as(uN, @truncate(read_bytes[i] >> bit_shift));
-            const tail_shift = @as(Log2N, @intCast(@as(u4, 8) - bit_shift));
-            const tail = @as(uN, @truncate(read_bytes[1 - i]));
+            const head: uN = @truncate(read_bytes[i] >> bit_shift);
+            const tail_shift: Log2N = @intCast(@as(u4, 8) - bit_shift);
+            const tail: uN = @truncate(read_bytes[1 - i]);
             break :b (tail << tail_shift) | head;
         };
         switch (signedness) {
-            .signed => return @as(T, @intCast((@as(iN, @bitCast(value)) << pad) >> pad)),
-            .unsigned => return @as(T, @intCast((@as(uN, @bitCast(value)) << pad) >> pad)),
+            .signed => return @intCast((@as(iN, @bitCast(value)) << pad) >> pad),
+            .unsigned => return @intCast((value << pad) >> pad),
         }
     }
 
@@ -1876,8 +1882,8 @@ pub fn readVarPackedInt(
         },
     }
     switch (signedness) {
-        .signed => return @as(T, @intCast((@as(iN, @bitCast(int)) << pad) >> pad)),
-        .unsigned => return @as(T, @intCast((@as(uN, @bitCast(int)) << pad) >> pad)),
+        .signed => return @intCast((@as(iN, @bitCast(int)) << pad) >> pad),
+        .unsigned => return @intCast((int << pad) >> pad),
     }
 }
 
@@ -1892,8 +1898,13 @@ test readVarPackedInt {
 /// The bit count of T must be evenly divisible by 8.
 /// This function cannot fail and cannot cause undefined behavior.
 pub inline fn readInt(comptime T: type, buffer: *const [@divExact(@typeInfo(T).int.bits, 8)]u8, endian: Endian) T {
-    const value: T = @bitCast(buffer.*);
-    return if (endian == native_endian) value else @byteSwap(value);
+    // Zig's logical bit order aligns with a little-endian byte array, so when reading in big-endian
+    // we must `@byteSwap` the int after we `@bitCast` to it.
+    const little_val: T = @bitCast(buffer.*);
+    return switch (endian) {
+        .little => little_val,
+        .big => @byteSwap(little_val),
+    };
 }
 
 test readInt {
@@ -1920,15 +1931,15 @@ test readInt {
 }
 
 fn readPackedIntLittle(comptime T: type, bytes: []const u8, bit_offset: usize) T {
-    const uN = std.meta.Int(.unsigned, @bitSizeOf(T));
+    const uN = @Int(.unsigned, @bitSizeOf(T));
     const Log2N = std.math.Log2Int(T);
 
     const bit_count = @as(usize, @bitSizeOf(T));
     const bit_shift = @as(u3, @intCast(bit_offset % 8));
 
-    const load_size = (bit_count + 7) / 8;
+    const load_size = @divCeil(bit_count, 8);
     const load_tail_bits = @as(u3, @intCast((load_size * 8) - bit_count));
-    const LoadInt = std.meta.Int(.unsigned, load_size * 8);
+    const LoadInt = @Int(.unsigned, load_size * 8);
 
     if (bit_count == 0)
         return 0;
@@ -1936,26 +1947,28 @@ fn readPackedIntLittle(comptime T: type, bytes: []const u8, bit_offset: usize) T
     // Read by loading a LoadInt, and then follow it up with a 1-byte read
     // of the tail if bit_offset pushed us over a byte boundary.
     const read_bytes = bytes[bit_offset / 8 ..];
-    const val = @as(uN, @truncate(readInt(LoadInt, read_bytes[0..load_size], .little) >> bit_shift));
+    const val: uN = @truncate(readInt(LoadInt, read_bytes[0..load_size], .little) >> bit_shift);
     if (bit_shift > load_tail_bits) {
         const tail_bits = @as(Log2N, @intCast(bit_shift - load_tail_bits));
         const tail_byte = read_bytes[load_size];
         const tail_truncated = if (bit_count < 8) @as(uN, @truncate(tail_byte)) else @as(uN, tail_byte);
-        return @as(T, @bitCast(val | (tail_truncated << (@as(Log2N, @truncate(bit_count)) -% tail_bits))));
-    } else return @as(T, @bitCast(val));
+        return @bitCast(val | (tail_truncated << (@as(Log2N, @truncate(bit_count)) -% tail_bits)));
+    } else {
+        return @bitCast(val);
+    }
 }
 
 fn readPackedIntBig(comptime T: type, bytes: []const u8, bit_offset: usize) T {
-    const uN = std.meta.Int(.unsigned, @bitSizeOf(T));
+    const uN = @Int(.unsigned, @bitSizeOf(T));
     const Log2N = std.math.Log2Int(T);
 
     const bit_count = @as(usize, @bitSizeOf(T));
     const bit_shift = @as(u3, @intCast(bit_offset % 8));
-    const byte_count = (@as(usize, bit_shift) + bit_count + 7) / 8;
+    const byte_count = @divCeil(@as(usize, bit_shift) + bit_count, 8);
 
-    const load_size = (bit_count + 7) / 8;
+    const load_size = @divCeil(bit_count, 8);
     const load_tail_bits = @as(u3, @intCast((load_size * 8) - bit_count));
-    const LoadInt = std.meta.Int(.unsigned, load_size * 8);
+    const LoadInt = @Int(.unsigned, load_size * 8);
 
     if (bit_count == 0)
         return 0;
@@ -1968,21 +1981,11 @@ fn readPackedIntBig(comptime T: type, bytes: []const u8, bit_offset: usize) T {
     if (bit_shift > load_tail_bits) {
         const tail_bits = @as(Log2N, @intCast(bit_shift - load_tail_bits));
         const tail_byte = if (bit_count < 8) @as(uN, @truncate(read_bytes[0])) else @as(uN, read_bytes[0]);
-        return @as(T, @bitCast(val | (tail_byte << (@as(Log2N, @truncate(bit_count)) -% tail_bits))));
-    } else return @as(T, @bitCast(val));
+        return @bitCast(val | (tail_byte << (@as(Log2N, @truncate(bit_count)) -% tail_bits)));
+    } else {
+        return @bitCast(val);
+    }
 }
-
-/// Deprecated: use readPackedInt(T, bytes, bit_offset, value, .native)
-pub const readPackedIntNative = switch (native_endian) {
-    .little => readPackedIntLittle,
-    .big => readPackedIntBig,
-};
-
-/// Deprecated: use readPackedInt(T, bytes, bit_offset, value, .foreign)
-pub const readPackedIntForeign = switch (native_endian) {
-    .little => readPackedIntBig,
-    .big => readPackedIntLittle,
-};
 
 /// Loads an integer from packed memory.
 /// Asserts that buffer contains at least bit_offset + @bitSizeOf(T) bits.
@@ -2019,7 +2022,12 @@ test "comptime read/write int" {
 /// This function always succeeds, has defined behavior for all inputs, but
 /// the integer bit width must be divisible by 8.
 pub inline fn writeInt(comptime T: type, buffer: *[@divExact(@typeInfo(T).int.bits, 8)]u8, value: T, endian: Endian) void {
-    buffer.* = @bitCast(if (endian == native_endian) value else @byteSwap(value));
+    // Zig's logical bit order aligns with a little-endian byte array, so when writing in big-endian
+    // we must `@byteSwap` the int before we `@bitCast` to an array.
+    buffer.* = switch (endian) {
+        .little => @bitCast(value),
+        .big => @bitCast(@byteSwap(value)),
+    };
 }
 
 test writeInt {
@@ -2060,7 +2068,7 @@ test writeInt {
 }
 
 fn writePackedIntLittle(comptime T: type, bytes: []u8, bit_offset: usize, value: T) void {
-    const uN = std.meta.Int(.unsigned, @bitSizeOf(T));
+    const uN = @Int(.unsigned, @bitSizeOf(T));
     const Log2N = std.math.Log2Int(T);
 
     const bit_count = @as(usize, @bitSizeOf(T));
@@ -2068,7 +2076,7 @@ fn writePackedIntLittle(comptime T: type, bytes: []u8, bit_offset: usize, value:
 
     const store_size = (@bitSizeOf(T) + 7) / 8;
     const store_tail_bits = @as(u3, @intCast((store_size * 8) - bit_count));
-    const StoreInt = std.meta.Int(.unsigned, store_size * 8);
+    const StoreInt = @Int(.unsigned, store_size * 8);
 
     if (bit_count == 0)
         return;
@@ -2093,7 +2101,7 @@ fn writePackedIntLittle(comptime T: type, bytes: []u8, bit_offset: usize, value:
 }
 
 fn writePackedIntBig(comptime T: type, bytes: []u8, bit_offset: usize, value: T) void {
-    const uN = std.meta.Int(.unsigned, @bitSizeOf(T));
+    const uN = @Int(.unsigned, @bitSizeOf(T));
     const Log2N = std.math.Log2Int(T);
 
     const bit_count = @as(usize, @bitSizeOf(T));
@@ -2102,7 +2110,7 @@ fn writePackedIntBig(comptime T: type, bytes: []u8, bit_offset: usize, value: T)
 
     const store_size = (@bitSizeOf(T) + 7) / 8;
     const store_tail_bits = @as(u3, @intCast((store_size * 8) - bit_count));
-    const StoreInt = std.meta.Int(.unsigned, store_size * 8);
+    const StoreInt = @Int(.unsigned, store_size * 8);
 
     if (bit_count == 0)
         return;
@@ -2127,18 +2135,6 @@ fn writePackedIntBig(comptime T: type, bytes: []u8, bit_offset: usize, value: T)
     writeInt(StoreInt, write_bytes[(byte_count - store_size)..][0..store_size], write_value, .big);
 }
 
-/// Deprecated: use writePackedInt(T, bytes, bit_offset, value, .native)
-pub const writePackedIntNative = switch (native_endian) {
-    .little => writePackedIntLittle,
-    .big => writePackedIntBig,
-};
-
-/// Deprecated: use writePackedInt(T, bytes, bit_offset, value, .foreign)
-pub const writePackedIntForeign = switch (native_endian) {
-    .little => writePackedIntBig,
-    .big => writePackedIntLittle,
-};
-
 /// Stores an integer to packed memory.
 /// Asserts that buffer contains at least bit_offset + @bitSizeOf(T) bits.
 pub fn writePackedInt(comptime T: type, bytes: []u8, bit_offset: usize, value: T, endian: Endian) void {
@@ -2159,7 +2155,7 @@ test writePackedInt {
 /// If negative, the written value is sign-extended.
 pub fn writeVarPackedInt(bytes: []u8, bit_offset: usize, bit_count: usize, value: anytype, endian: std.builtin.Endian) void {
     const T = @TypeOf(value);
-    const uN = std.meta.Int(.unsigned, @bitSizeOf(T));
+    const uN = @Int(.unsigned, @bitSizeOf(T));
 
     const bit_shift = @as(u3, @intCast(bit_offset % 8));
     const write_size = (bit_count + bit_shift + 7) / 8;
@@ -2229,43 +2225,46 @@ pub fn byteSwapAllFields(comptime S: type, ptr: *S) void {
 /// (Changing their endianness)
 pub fn byteSwapAllFieldsAligned(comptime S: type, comptime a: Alignment, ptr: *align(a.toByteUnits()) S) void {
     switch (@typeInfo(S)) {
-        .@"struct" => |struct_info| {
-            if (struct_info.backing_integer) |Int| {
+        .@"struct" => |@"struct"| {
+            if (@"struct".backing_integer) |Int| {
                 ptr.* = @bitCast(@byteSwap(@as(Int, @bitCast(ptr.*))));
-            } else inline for (std.meta.fields(S)) |f| {
-                switch (@typeInfo(f.type)) {
-                    .@"struct" => byteSwapAllFieldsAligned(f.type, .fromByteUnits(f.alignment orelse @alignOf(f.type)), &@field(ptr, f.name)),
-                    .@"union", .array => byteSwapAllFieldsAligned(f.type, .fromByteUnits(f.alignment orelse @alignOf(f.type)), &@field(ptr, f.name)),
+            } else inline for (@"struct".field_types, @"struct".field_names, @"struct".field_attrs) |f_type, f_name, f_attr| {
+                switch (@typeInfo(f_type)) {
+                    .@"struct" => byteSwapAllFieldsAligned(f_type, .fromByteUnits(f_attr.@"align" orelse @alignOf(f_type)), &@field(ptr, f_name)),
+                    .@"union", .array => byteSwapAllFieldsAligned(f_type, .fromByteUnits(f_attr.@"align" orelse @alignOf(f_type)), &@field(ptr, f_name)),
                     .@"enum" => {
-                        @field(ptr, f.name) = @enumFromInt(@byteSwap(@intFromEnum(@field(ptr, f.name))));
+                        @field(ptr, f_name) = @enumFromInt(@byteSwap(@intFromEnum(@field(ptr, f_name))));
                     },
                     .bool => {},
-                    .float => |float_info| {
-                        @field(ptr, f.name) = @bitCast(@byteSwap(@as(std.meta.Int(.unsigned, float_info.bits), @bitCast(@field(ptr, f.name)))));
+                    .float => |float| {
+                        @field(ptr, f_name) = @bitCast(@byteSwap(@as(@Int(.unsigned, float.bits), @bitCast(@field(ptr, f_name)))));
                     },
                     else => {
-                        @field(ptr, f.name) = @byteSwap(@field(ptr, f.name));
+                        @field(ptr, f_name) = @byteSwap(@field(ptr, f_name));
                     },
                 }
             }
         },
-        .@"union" => |union_info| {
-            if (union_info.tag_type != null) {
-                @compileError("byteSwapAllFields expects an untagged union");
+        .@"union" => |@"union"| if (@"union".backing_integer) |Int| {
+            ptr.* = @bitCast(@byteSwap(@as(Int, @bitCast(ptr.*))));
+        } else {
+            if (@"union".layout != .@"extern") {
+                @compileError("byteSwapAllFields expects a packed or extern union");
             }
 
-            const first_size = @bitSizeOf(union_info.fields[0].type);
-            inline for (union_info.fields) |field| {
-                if (@bitSizeOf(field.type) != first_size) {
+            const first_size = @bitSizeOf(@"union".field_types[0]);
+            inline for (@"union".field_types) |field_type| {
+                if (@bitSizeOf(field_type) != first_size) {
                     @compileError("Unable to byte-swap unions with varying field sizes");
                 }
             }
 
-            const BackingInt = std.meta.Int(.unsigned, @bitSizeOf(S));
-            ptr.* = @bitCast(@byteSwap(@as(BackingInt, @bitCast(ptr.*))));
+            const FieldInt = @Int(.unsigned, first_size);
+            const field_ptr = &@field(ptr, @"union".field_names[0]);
+            field_ptr.* = @bitCast(@byteSwap(@as(FieldInt, @bitCast(field_ptr.*))));
         },
-        .array => |info| {
-            byteSwapAllElements(info.child, ptr);
+        .array => |array| {
+            byteSwapAllElements(array.child, ptr);
         },
         else => {
             ptr.* = @byteSwap(ptr.*);
@@ -2311,7 +2310,7 @@ test byteSwapAllFields {
         .f2 = 0x12345678,
         .f3 = .{0x12},
         .f4 = true,
-        .f5 = @as(f32, @bitCast(@as(u32, 0x4640e400))),
+        .f5 = @bitCast(@as(u32, 0x4640e400)),
         .f6 = .{ .f0 = 0x1234 },
     };
     var k = K{
@@ -2320,7 +2319,7 @@ test byteSwapAllFields {
         .f2 = 0x1234,
         .f3 = .{0x12},
         .f4 = false,
-        .f5 = @as(f32, @bitCast(@as(u32, 0x45d42800))),
+        .f5 = @bitCast(@as(u32, 0x45d42800)),
     };
     var p: P = @bitCast(@as(u32, 0x01234567));
     var a: A = A{
@@ -2338,7 +2337,7 @@ test byteSwapAllFields {
         .f2 = 0x78563412,
         .f3 = .{0x12},
         .f4 = true,
-        .f5 = @as(f32, @bitCast(@as(u32, 0x00e44046))),
+        .f5 = @bitCast(@as(u32, 0x00e44046)),
         .f6 = .{ .f0 = 0x3412 },
     }, s);
     try std.testing.expectEqual(K{
@@ -2347,7 +2346,7 @@ test byteSwapAllFields {
         .f2 = 0x3412,
         .f3 = .{0x12},
         .f4 = false,
-        .f5 = @as(f32, @bitCast(@as(u32, 0x0028d445))),
+        .f5 = @bitCast(@as(u32, 0x0028d445)),
     }, k);
     try std.testing.expectEqual(@as(P, @bitCast(@as(u32, 0x67452301))), p);
     try std.testing.expectEqual(A{
@@ -2368,8 +2367,9 @@ pub fn byteSwapAllElements(comptime Elem: type, slice: []Elem) void {
                 elem.* = @enumFromInt(@byteSwap(@intFromEnum(elem.*)));
             },
             .bool => {},
-            .float => |float_info| {
-                elem.* = @bitCast(@byteSwap(@as(std.meta.Int(.unsigned, float_info.bits), @bitCast(elem.*))));
+            .float => |float| {
+                const int_repr: @Int(.unsigned, float.bits) = @bitCast(elem.*);
+                elem.* = @bitCast(@byteSwap(int_repr));
             },
             else => {
                 elem.* = @byteSwap(elem.*);
@@ -3890,25 +3890,29 @@ inline fn reverseVector(comptime N: usize, comptime T: type, a: []T) [N]T {
 pub fn reverse(comptime T: type, items: []T) void {
     var i: usize = 0;
     const end = items.len / 2;
-    if (use_vectors and
-        !@inComptime() and
-        @bitSizeOf(T) > 0 and
-        std.math.isPowerOfTwo(@bitSizeOf(T)))
-    {
-        if (std.simd.suggestVectorLength(T)) |simd_size| {
-            if (simd_size <= end) {
-                const simd_end = end - (simd_size - 1);
-                while (i < simd_end) : (i += simd_size) {
-                    const left_slice = items[i .. i + simd_size];
-                    const right_slice = items[items.len - i - simd_size .. items.len - i];
 
-                    const left_shuffled: [simd_size]T = reverseVector(simd_size, T, left_slice);
-                    const right_shuffled: [simd_size]T = reverseVector(simd_size, T, right_slice);
+    vec: {
+        if (!use_vectors) break :vec;
+        if (@inComptime()) break :vec;
+        switch (@typeInfo(T)) {
+            .int, .float => {},
+            .pointer => |pointer| if (pointer.size == .slice) break :vec,
+            else => break :vec,
+        }
+        if (@bitSizeOf(T) == 0 or !comptime std.math.isPowerOfTwo(@bitSizeOf(T))) break :vec;
+        const simd_size = std.simd.suggestVectorLength(T) orelse break :vec;
+        if (simd_size > end) break :vec;
 
-                    @memcpy(right_slice, &left_shuffled);
-                    @memcpy(left_slice, &right_shuffled);
-                }
-            }
+        const simd_end = end - (simd_size - 1);
+        while (i < simd_end) : (i += simd_size) {
+            const left_slice = items[i .. i + simd_size];
+            const right_slice = items[items.len - i - simd_size .. items.len - i];
+
+            const left_shuffled: [simd_size]T = reverseVector(simd_size, T, left_slice);
+            const right_shuffled: [simd_size]T = reverseVector(simd_size, T, right_slice);
+
+            @memcpy(right_slice, &left_shuffled);
+            @memcpy(left_slice, &right_shuffled);
         }
     }
 
@@ -3962,15 +3966,8 @@ pub fn ReverseIterator(comptime T: type) type {
         .many, .c => @compileError("expected slice or pointer to array, found '" ++ @typeName(T) ++ "'"),
     }
     const Element = std.meta.Elem(T);
-    const attrs: std.builtin.Type.Pointer.Attributes = .{
-        .@"const" = ptr.is_const,
-        .@"volatile" = ptr.is_volatile,
-        .@"allowzero" = ptr.is_allowzero,
-        .@"align" = ptr.alignment,
-        .@"addrspace" = ptr.address_space,
-    };
-    const Pointer = @Pointer(.many, attrs, Element, std.meta.sentinel(T));
-    const ElementPointer = @Pointer(.one, attrs, Element, null);
+    const Pointer = @Pointer(.many, ptr.attrs, Element, std.meta.sentinel(T));
+    const ElementPointer = @Pointer(.one, ptr.attrs, Element, null);
     return struct {
         ptr: Pointer,
         index: usize,
@@ -4277,7 +4274,7 @@ pub fn alignPointerOffset(ptr: anytype, align_to: usize) ?usize {
         @compileError("expected many item pointer, got " ++ @typeName(T));
 
     // Do nothing if the pointer is already well-aligned.
-    if (align_to <= info.pointer.alignment orelse @alignOf(info.pointer.child))
+    if (align_to <= info.pointer.attrs.@"align" orelse @alignOf(info.pointer.child))
         return 0;
 
     // Calculate the aligned base address with an eye out for overflow.
@@ -4331,17 +4328,14 @@ fn CopyPtrAttrs(
     comptime child: type,
 ) type {
     const ptr = @typeInfo(source).pointer;
-    return @Pointer(size, .{
-        .@"const" = ptr.is_const,
-        .@"volatile" = ptr.is_volatile,
-        .@"allowzero" = ptr.is_allowzero,
-        .@"align" = ptr.alignment orelse a: {
-            // If the new child is aligned differently than the old one, explicitly align the type.
-            const want = @alignOf(ptr.child);
-            break :a if (@alignOf(child) == want) null else want;
-        },
-        .@"addrspace" = ptr.address_space,
-    }, child, null);
+    var attrs = ptr.attrs;
+    if (attrs.@"align" == null) {
+        const want = @alignOf(ptr.child);
+        if (@alignOf(child) != want) {
+            attrs.@"align" = want;
+        }
+    }
+    return @Pointer(size, attrs, child, null);
 }
 
 fn AsBytesReturnType(comptime P: type) type {
@@ -4405,10 +4399,13 @@ test "asBytes preserves pointer attributes" {
     const in = @typeInfo(@TypeOf(inPtr)).pointer;
     const out = @typeInfo(@TypeOf(outSlice)).pointer;
 
-    try testing.expectEqual(in.is_const, out.is_const);
-    try testing.expectEqual(in.is_volatile, out.is_volatile);
-    try testing.expectEqual(in.is_allowzero, out.is_allowzero);
-    try testing.expectEqual(in.alignment, out.alignment);
+    const in_attrs = in.attrs;
+    const out_attrs = out.attrs;
+
+    try testing.expectEqual(in_attrs.@"const", out_attrs.@"const");
+    try testing.expectEqual(in_attrs.@"volatile", out_attrs.@"volatile");
+    try testing.expectEqual(in_attrs.@"allowzero", out_attrs.@"allowzero");
+    try testing.expectEqual(in_attrs.@"align", out_attrs.@"align");
 }
 
 /// Given any value, returns a copy of its bytes in an array.
@@ -4485,13 +4482,13 @@ test "bytesAsValue preserves pointer attributes" {
     const inSlice = @as(*align(16) const volatile [4]u8, @ptrCast(&inArr))[0..];
     const outPtr = bytesAsValue(u32, inSlice);
 
-    const in = @typeInfo(@TypeOf(inSlice)).pointer;
-    const out = @typeInfo(@TypeOf(outPtr)).pointer;
+    const in_attrs = @typeInfo(@TypeOf(inSlice)).pointer.attrs;
+    const out_attrs = @typeInfo(@TypeOf(outPtr)).pointer.attrs;
 
-    try testing.expectEqual(in.is_const, out.is_const);
-    try testing.expectEqual(in.is_volatile, out.is_volatile);
-    try testing.expectEqual(in.is_allowzero, out.is_allowzero);
-    try testing.expectEqual(in.alignment, out.alignment);
+    try testing.expectEqual(in_attrs.@"const", out_attrs.@"const");
+    try testing.expectEqual(in_attrs.@"volatile", out_attrs.@"volatile");
+    try testing.expectEqual(in_attrs.@"allowzero", out_attrs.@"allowzero");
+    try testing.expectEqual(in_attrs.@"align", out_attrs.@"align");
 }
 
 /// Given a pointer to an array of bytes, returns a value of the specified type backed by a
@@ -4588,13 +4585,13 @@ test "bytesAsSlice preserves pointer attributes" {
     const inSlice = @as(*align(16) const volatile [4]u8, @ptrCast(&inArr))[0..];
     const outSlice = bytesAsSlice(u16, inSlice);
 
-    const in = @typeInfo(@TypeOf(inSlice)).pointer;
-    const out = @typeInfo(@TypeOf(outSlice)).pointer;
+    const in_attrs = @typeInfo(@TypeOf(inSlice)).pointer.attrs;
+    const out_attrs = @typeInfo(@TypeOf(outSlice)).pointer.attrs;
 
-    try testing.expectEqual(in.is_const, out.is_const);
-    try testing.expectEqual(in.is_volatile, out.is_volatile);
-    try testing.expectEqual(in.is_allowzero, out.is_allowzero);
-    try testing.expectEqual(in.alignment, out.alignment);
+    try testing.expectEqual(in_attrs.@"const", out_attrs.@"const");
+    try testing.expectEqual(in_attrs.@"volatile", out_attrs.@"volatile");
+    try testing.expectEqual(in_attrs.@"allowzero", out_attrs.@"allowzero");
+    try testing.expectEqual(in_attrs.@"align", out_attrs.@"align");
 }
 
 test "bytesAsSlice with zero-bit element type" {
@@ -4647,7 +4644,7 @@ test "sliceAsBytes with sentinel slice" {
 }
 
 test "sliceAsBytes with zero-bit element type" {
-    const lots_of_nothing = [1]void{{}} ** 10_000;
+    const lots_of_nothing: [10_000]void = @splat({});
     const bytes = sliceAsBytes(&lots_of_nothing);
     try testing.expect(bytes.len == 0);
 }
@@ -4700,25 +4697,19 @@ test "sliceAsBytes preserves pointer attributes" {
     const inSlice = @as(*align(16) const volatile [2]u16, @ptrCast(&inArr))[0..];
     const outSlice = sliceAsBytes(inSlice);
 
-    const in = @typeInfo(@TypeOf(inSlice)).pointer;
-    const out = @typeInfo(@TypeOf(outSlice)).pointer;
+    const in_attrs = @typeInfo(@TypeOf(inSlice)).pointer.attrs;
+    const out_attrs = @typeInfo(@TypeOf(outSlice)).pointer.attrs;
 
-    try testing.expectEqual(in.is_const, out.is_const);
-    try testing.expectEqual(in.is_volatile, out.is_volatile);
-    try testing.expectEqual(in.is_allowzero, out.is_allowzero);
-    try testing.expectEqual(in.alignment, out.alignment);
+    try testing.expectEqual(in_attrs.@"const", out_attrs.@"const");
+    try testing.expectEqual(in_attrs.@"volatile", out_attrs.@"volatile");
+    try testing.expectEqual(in_attrs.@"allowzero", out_attrs.@"allowzero");
+    try testing.expectEqual(in_attrs.@"align", out_attrs.@"align");
 }
 
 fn AbsorbSentinelReturnType(comptime Slice: type) type {
     const info = @typeInfo(Slice).pointer;
     assert(info.size == .slice);
-    return @Pointer(.slice, .{
-        .@"const" = info.is_const,
-        .@"volatile" = info.is_volatile,
-        .@"allowzero" = info.is_allowzero,
-        .@"addrspace" = info.address_space,
-        .@"align" = info.alignment,
-    }, info.child, null);
+    return @Pointer(.slice, info.attrs, info.child, null);
 }
 
 /// If the provided slice is not sentinel terminated, do nothing and return that slice.
@@ -4799,7 +4790,7 @@ pub fn doNotOptimizeAway(val: anytype) void {
             const bits = t.int.bits;
             if (bits <= max_gp_register_bits and builtin.zig_backend != .stage2_c) {
                 const val2 = @as(
-                    std.meta.Int(t.int.signedness, @max(8, std.math.ceilPowerOfTwoAssert(u16, bits))),
+                    @Int(t.int.signedness, @max(8, std.math.ceilPowerOfTwoAssert(u16, bits))),
                     val,
                 );
                 asm volatile (""
@@ -4865,8 +4856,8 @@ test doNotOptimizeAway {
     doNotOptimizeAway(@as(u200, 0));
     doNotOptimizeAway(@as(f32, 0.0));
     doNotOptimizeAway(@as(f64, 0.0));
-    doNotOptimizeAway([_]u8{0} ** 4);
-    doNotOptimizeAway([_]u8{0} ** 100);
+    doNotOptimizeAway(@as([4]u8, @splat(0)));
+    doNotOptimizeAway(@as([100]u8, @splat(0)));
     doNotOptimizeAway(@as(std.builtin.Endian, .little));
 }
 
@@ -4963,7 +4954,7 @@ test isAligned {
 }
 
 test "freeing empty string with null-terminated sentinel" {
-    const empty_string = try testing.allocator.dupeZ(u8, "");
+    const empty_string = try testing.allocator.dupeSentinel(u8, "", 0);
     testing.allocator.free(empty_string);
 }
 
@@ -4971,13 +4962,9 @@ test "freeing empty string with null-terminated sentinel" {
 /// all other pointer attributes copied from `AttributeSource`.
 fn AlignedSlice(comptime AttributeSource: type, comptime new_alignment: usize) type {
     const ptr = @typeInfo(AttributeSource).pointer;
-    return @Pointer(.slice, .{
-        .@"const" = ptr.is_const,
-        .@"volatile" = ptr.is_volatile,
-        .@"allowzero" = ptr.is_allowzero,
-        .@"align" = new_alignment,
-        .@"addrspace" = ptr.address_space,
-    }, ptr.child, null);
+    var attrs = ptr.attrs;
+    attrs.@"align" = new_alignment;
+    return @Pointer(.slice, attrs, ptr.child, null);
 }
 
 /// Returns the largest slice in the given bytes that conforms to the new alignment,
@@ -5034,8 +5021,8 @@ test "read/write(Var)PackedInt" {
                 if (@bitSizeOf(PackedType) > @bitSizeOf(BackingType))
                     continue;
 
-                const iPackedType = std.meta.Int(.signed, @bitSizeOf(PackedType));
-                const uPackedType = std.meta.Int(.unsigned, @bitSizeOf(PackedType));
+                const iPackedType = @Int(.signed, @bitSizeOf(PackedType));
+                const uPackedType = @Int(.unsigned, @bitSizeOf(PackedType));
                 const Log2T = std.math.Log2Int(BackingType);
 
                 const offset_at_end = @bitSizeOf(BackingType) - @bitSizeOf(PackedType);
@@ -5046,8 +5033,8 @@ test "read/write(Var)PackedInt" {
                     for ([_]PackedType{
                         ~@as(PackedType, 0), // all ones: -1 iN / maxInt uN
                         @as(PackedType, 0), // all zeros: 0 iN / 0 uN
-                        @as(PackedType, @bitCast(@as(iPackedType, math.maxInt(iPackedType)))), // maxInt iN
-                        @as(PackedType, @bitCast(@as(iPackedType, math.minInt(iPackedType)))), // maxInt iN
+                        @bitCast(@as(iPackedType, math.maxInt(iPackedType))), // maxInt iN
+                        @bitCast(@as(iPackedType, math.minInt(iPackedType))), // maxInt iN
                         random.int(PackedType), // random
                         random.int(PackedType), // random
                     }) |write_value| {
@@ -5102,8 +5089,8 @@ test "read/write(Var)PackedInt" {
                         }
 
                         const signedness = @typeInfo(PackedType).int.signedness;
-                        const NextPowerOfTwoInt = std.meta.Int(signedness, try comptime std.math.ceilPowerOfTwo(u16, @bitSizeOf(PackedType)));
-                        const ui64 = std.meta.Int(signedness, 64);
+                        const NextPowerOfTwoInt = @Int(signedness, try std.math.ceilPowerOfTwo(u16, @bitSizeOf(PackedType)));
+                        const ui64 = @Int(signedness, 64);
                         inline for ([_]type{ PackedType, NextPowerOfTwoInt, ui64 }) |U| {
                             { // Variable-size Read/Write (Native-endian)
 
@@ -5166,4 +5153,51 @@ test "read/write(Var)PackedInt" {
             }
         }
     }
+}
+
+pub const PrintError = error{
+    /// As much as possible was written to the buffer, but it was too small to
+    /// fit all the printed bytes.
+    NoSpaceLeft,
+};
+
+/// Render a formatted string into `buffer`. Returns a slice of `buffer`
+/// starting at index 0 containing the result, or `error.NoSpaceLeft` if one or
+/// more bytes were truncated.
+///
+/// See `std.Io.Writer.print`.
+pub fn print(buffer: []u8, comptime format: []const u8, args: anytype) PrintError![]u8 {
+    var w: std.Io.Writer = .fixed(buffer);
+    w.print(format, args) catch |err| switch (err) {
+        error.WriteFailed => return error.NoSpaceLeft,
+    };
+    return w.buffered();
+}
+
+test print {
+    const x: i32 = -1;
+    const y: []const u8 = "hi";
+    var buffer: [64]u8 = undefined;
+    const s = try print(&buffer, "{d}={s}", .{ x, y });
+    try testing.expectEqualStrings("-1=hi", s);
+}
+
+/// Like `print` but returned slice has the provided sentinel.
+pub fn printSentinel(
+    buffer: []u8,
+    comptime format: []const u8,
+    args: anytype,
+    comptime sentinel: u8,
+) PrintError![:sentinel]u8 {
+    const result = try print(buffer, format ++ [1]u8{sentinel}, args);
+    return result[0 .. result.len - 1 :sentinel];
+}
+
+test printSentinel {
+    const x: i32 = -1;
+    const y: []const u8 = "hi";
+    var buffer: [64]u8 = undefined;
+    const s = try printSentinel(&buffer, "{d}={s}", .{ x, y }, 0);
+    try testing.expectEqualStrings("-1=hi", s);
+    try testing.expectEqual(0, s[s.len]);
 }

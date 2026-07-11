@@ -267,29 +267,24 @@ pub fn deinit(self: *ZigObject, allocator: Allocator) void {
 pub fn flush(self: *ZigObject, elf_file: *Elf, tid: Zcu.PerThread.Id) !void {
     // Handle any lazy symbols that were emitted by incremental compilation.
     if (self.lazy_syms.getPtr(.anyerror_type)) |metadata| {
-        const pt: Zcu.PerThread = .activate(elf_file.base.comp.zcu.?, tid);
-        defer pt.deactivate();
+        const active = elf_file.base.comp.zcu.?.activate(tid);
+        defer active.deactivate();
+        const pt = active.pt;
 
         // Most lazy symbols can be updated on first use, but
         // anyerror needs to wait for everything to be flushed.
-        if (metadata.text_state != .unused) self.updateLazySymbol(
+        if (metadata.text_state != .unused) try self.updateLazySymbol(
             elf_file,
             pt,
             .{ .kind = .code, .ty = .anyerror_type },
             metadata.text_symbol_index,
-        ) catch |err| switch (err) {
-            error.CodegenFail => return error.LinkFailure,
-            else => |e| return e,
-        };
-        if (metadata.rodata_state != .unused) self.updateLazySymbol(
+        );
+        if (metadata.rodata_state != .unused) try self.updateLazySymbol(
             elf_file,
             pt,
             .{ .kind = .const_data, .ty = .anyerror_type },
             metadata.rodata_symbol_index,
-        ) catch |err| switch (err) {
-            error.CodegenFail => return error.LinkFailure,
-            else => |e| return e,
-        };
+        );
     }
     for (self.lazy_syms.values()) |*metadata| {
         if (metadata.text_state != .unused) metadata.text_state = .flushed;
@@ -297,20 +292,22 @@ pub fn flush(self: *ZigObject, elf_file: *Elf, tid: Zcu.PerThread.Id) !void {
     }
 
     if (build_options.enable_logging) {
-        const pt: Zcu.PerThread = .activate(elf_file.base.comp.zcu.?, tid);
-        defer pt.deactivate();
+        const active = elf_file.base.comp.zcu.?.activate(tid);
+        defer active.deactivate();
         for (self.navs.keys(), self.navs.values()) |nav_index, meta| {
-            checkNavAllocated(pt, nav_index, meta);
+            checkNavAllocated(active.pt, nav_index, meta);
         }
         for (self.uavs.keys(), self.uavs.values()) |uav_index, meta| {
-            checkUavAllocated(pt, uav_index, meta);
+            checkUavAllocated(active.pt, uav_index, meta);
         }
     }
 
     if (self.dwarf) |*dwarf| {
-        const pt: Zcu.PerThread = .activate(elf_file.base.comp.zcu.?, tid);
-        defer pt.deactivate();
-        try dwarf.flush(pt);
+        {
+            const active = elf_file.base.comp.zcu.?.activate(tid);
+            defer active.deactivate();
+            try dwarf.flush(active.pt);
+        }
 
         const gpa = elf_file.base.comp.gpa;
         const cpu_arch = elf_file.getTarget().cpu.arch;
@@ -461,14 +458,14 @@ pub fn flush(self: *ZigObject, elf_file: *Elf, tid: Zcu.PerThread.Id) !void {
                         }, self);
                     }
                     for (entry.external_relocs.items) |reloc| {
-                        const target_sym = self.symbol(reloc.target_sym);
+                        const target_sym = self.symbol(@intFromEnum(reloc.target_sym));
                         const r_offset = entry_off + reloc.source_off;
                         const r_addend: i64 = @intCast(reloc.target_off);
                         const r_type = relocation.dwarf.externalRelocType(target_sym.*, sect_index, dwarf.address_size, cpu_arch);
                         atom_ptr.addRelocAssumeCapacity(.{
                             .r_offset = r_offset,
                             .r_addend = r_addend,
-                            .r_info = (@as(u64, @intCast(reloc.target_sym)) << 32) | r_type,
+                            .r_info = (@as(u64, @intCast(@intFromEnum(reloc.target_sym))) << 32) | r_type,
                         }, self);
                     }
                 }
@@ -941,7 +938,7 @@ pub fn getNavVAddr(
     switch (reloc_info.parent) {
         .none => unreachable,
         .atom_index => |atom_index| {
-            const parent_atom = self.symbol(atom_index).atom(elf_file).?;
+            const parent_atom = self.symbol(@intFromEnum(atom_index)).atom(elf_file).?;
             const r_type = relocation.encode(.abs, elf_file.getTarget().cpu.arch);
             try parent_atom.addReloc(elf_file.base.comp.gpa, .{
                 .r_offset = reloc_info.offset,
@@ -952,7 +949,7 @@ pub fn getNavVAddr(
         .debug_output => |debug_output| switch (debug_output) {
             .dwarf => |wip_nav| try wip_nav.infoExternalReloc(.{
                 .source_off = @intCast(reloc_info.offset),
-                .target_sym = this_sym_index,
+                .target_sym = @enumFromInt(this_sym_index),
                 .target_off = reloc_info.addend,
             }),
             .none => unreachable,
@@ -973,7 +970,7 @@ pub fn getUavVAddr(
     switch (reloc_info.parent) {
         .none => unreachable,
         .atom_index => |atom_index| {
-            const parent_atom = self.symbol(atom_index).atom(elf_file).?;
+            const parent_atom = self.symbol(@intFromEnum(atom_index)).atom(elf_file).?;
             const r_type = relocation.encode(.abs, elf_file.getTarget().cpu.arch);
             try parent_atom.addReloc(elf_file.base.comp.gpa, .{
                 .r_offset = reloc_info.offset,
@@ -984,7 +981,7 @@ pub fn getUavVAddr(
         .debug_output => |debug_output| switch (debug_output) {
             .dwarf => |wip_nav| try wip_nav.infoExternalReloc(.{
                 .source_off = @intCast(reloc_info.offset),
-                .target_sym = sym_index,
+                .target_sym = @enumFromInt(sym_index),
                 .target_off = reloc_info.addend,
             }),
             .none => unreachable,
@@ -999,8 +996,7 @@ pub fn lowerUav(
     pt: Zcu.PerThread,
     uav: InternPool.Index,
     explicit_alignment: InternPool.Alignment,
-    src_loc: Zcu.LazySrcLoc,
-) !codegen.SymbolResult {
+) !link.File.SymbolId {
     const zcu = pt.zcu;
     const gpa = zcu.gpa;
     const val = Value.fromInterned(uav);
@@ -1013,7 +1009,7 @@ pub fn lowerUav(
         const sym = self.symbol(metadata.symbol_index);
         const existing_alignment = sym.atom(elf_file).?.alignment;
         if (uav_alignment.order(existing_alignment).compare(.lte))
-            return .{ .sym_index = metadata.symbol_index };
+            return @enumFromInt(metadata.symbol_index);
     }
 
     const osec = if (self.data_relro_index) |sym_index|
@@ -1033,28 +1029,25 @@ pub fn lowerUav(
     const name = std.fmt.bufPrint(&name_buf, "__anon_{d}", .{
         @intFromEnum(uav),
     }) catch unreachable;
-    const res = self.lowerConst(
+    const sym_index = self.lowerConst(
         elf_file,
         pt,
         name,
         val,
         uav_alignment,
         osec,
-        src_loc,
     ) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
-        else => |e| return .{ .fail = try Zcu.ErrorMsg.create(
-            gpa,
-            src_loc,
-            "unable to lower constant value: {s}",
-            .{@errorName(e)},
-        ) },
+        else => |e| return elf_file.base.comp.link_diags.fail(
+            "failed to lower constant value: {t}",
+            .{e},
+        ),
     };
-    switch (res) {
-        .sym_index => |sym_index| try self.uavs.put(gpa, uav, .{ .symbol_index = sym_index, .allocated = true }),
-        .fail => {},
-    }
-    return res;
+    try self.uavs.put(gpa, uav, .{
+        .symbol_index = @intFromEnum(sym_index),
+        .allocated = true,
+    });
+    return sym_index;
 }
 
 pub fn getOrCreateMetadataForLazySymbol(
@@ -1237,6 +1230,10 @@ fn getNavShdrIndex(
             self.debug_rnglists_index = section_index;
         } else if (std.mem.startsWith(u8, section_name, ".debug")) {
             elf_file.sections.items(.shdr)[osec].sh_flags = 0;
+        } else if (std.mem.eql(u8, section_name, ".preinit_array") or std.mem.startsWith(u8, section_name, ".preinit_array.")) {
+            const shdr = &elf_file.sections.items(.shdr)[osec];
+            shdr.sh_type = elf.SHT_PREINIT_ARRAY;
+            shdr.sh_flags = elf.SHF_ALLOC | elf.SHF_WRITE;
         } else if (std.mem.eql(u8, section_name, ".init_array") or std.mem.startsWith(u8, section_name, ".init_array.")) {
             const shdr = &elf_file.sections.items(.shdr)[osec];
             shdr.sh_type = elf.SHT_INIT_ARRAY;
@@ -1363,7 +1360,7 @@ fn updateNavCode(
     shdr_index: u32,
     code: []const u8,
     stt_bits: u8,
-) link.File.UpdateNavError!void {
+) link.Error!void {
     const zcu = pt.zcu;
     const gpa = zcu.gpa;
     const comp = elf_file.base.comp;
@@ -1379,7 +1376,7 @@ fn updateNavCode(
         .none => switch (mod.optimize_mode) {
             .Debug, .ReleaseSafe, .ReleaseFast => target_util.defaultFunctionAlignment(target),
             .ReleaseSmall => target_util.minFunctionAlignment(target),
-        },
+        }.maxStrict(Type.fromInterned(nav.resolved.?.type).abiAlignment(zcu)),
         else => |a| a.maxStrict(target_util.minFunctionAlignment(target)),
     };
 
@@ -1466,7 +1463,7 @@ fn updateTlv(
     sym_index: Symbol.Index,
     shndx: u32,
     code: []const u8,
-) link.File.UpdateNavError!void {
+) link.Error!void {
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
     const gpa = zcu.gpa;
@@ -1524,7 +1521,7 @@ pub fn updateFunc(
     pt: Zcu.PerThread,
     func_index: InternPool.Index,
     mir: *const codegen.AnyMir,
-) link.File.UpdateNavError!void {
+) link.Error!void {
     const tracy = trace(@src());
     defer tracy.end();
 
@@ -1541,15 +1538,18 @@ pub fn updateFunc(
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
 
-    var debug_wip_nav = if (self.dwarf) |*dwarf| try dwarf.initWipNav(pt, func.owner_nav, sym_index) else null;
+    var debug_wip_nav = if (self.dwarf) |*dwarf| try dwarf.initWipNav(
+        pt,
+        func.owner_nav,
+        @enumFromInt(sym_index),
+    ) else null;
     defer if (debug_wip_nav) |*wip_nav| wip_nav.deinit();
 
     codegen.emitFunction(
         &elf_file.base,
         pt,
-        zcu.navSrcLoc(func.owner_nav),
         func_index,
-        sym_index,
+        @enumFromInt(sym_index),
         mir,
         &aw.writer,
         if (debug_wip_nav) |*dn| .{ .dwarf = dn } else .none,
@@ -1634,7 +1634,7 @@ pub fn updateNav(
     elf_file: *Elf,
     pt: Zcu.PerThread,
     nav_index: InternPool.Nav.Index,
-) link.File.UpdateNavError!void {
+) link.Error!void {
     const tracy = trace(@src());
     defer tracy.end();
 
@@ -1656,10 +1656,10 @@ pub fn updateNav(
                 self.symbol(sym_index).flags.is_tls = true;
             }
             if (self.dwarf) |*dwarf| {
-                var debug_wip_nav = try dwarf.initWipNav(pt, nav_index, sym_index);
+                var debug_wip_nav = try dwarf.initWipNav(pt, nav_index, @enumFromInt(sym_index));
                 defer debug_wip_nav.deinit();
                 dwarf.finishWipNav(pt, nav_index, &debug_wip_nav) catch |err| switch (err) {
-                    error.OutOfMemory, error.Overflow => |e| return e,
+                    error.OutOfMemory, error.Canceled, error.AlreadyReported => |e| return e,
                     else => |e| return elf_file.base.cgFail(nav_index, "failed to finish dwarf nav: {s}", .{@errorName(e)}),
                 };
             }
@@ -1674,16 +1674,15 @@ pub fn updateNav(
         var aw: std.Io.Writer.Allocating = .init(zcu.gpa);
         defer aw.deinit();
 
-        var debug_wip_nav = if (self.dwarf) |*dwarf| try dwarf.initWipNav(pt, nav_index, sym_index) else null;
+        var debug_wip_nav = if (self.dwarf) |*dwarf| try dwarf.initWipNav(pt, nav_index, @enumFromInt(sym_index)) else null;
         defer if (debug_wip_nav) |*wip_nav| wip_nav.deinit();
 
         codegen.generateSymbol(
             &elf_file.base,
             pt,
-            zcu.navSrcLoc(nav_index),
             .fromInterned(nav.resolved.?.value),
             &aw.writer,
-            .{ .atom_index = sym_index },
+            .{ .atom_index = @enumFromInt(sym_index) },
         ) catch |err| switch (err) {
             error.WriteFailed => return error.OutOfMemory,
             else => |e| return e,
@@ -1702,7 +1701,7 @@ pub fn updateNav(
             try self.updateNavCode(elf_file, pt, nav_index, sym_index, shndx, code, elf.STT_OBJECT);
 
         if (debug_wip_nav) |*wip_nav| self.dwarf.?.finishWipNav(pt, nav_index, wip_nav) catch |err| switch (err) {
-            error.OutOfMemory, error.Overflow => |e| return e,
+            error.OutOfMemory, error.Canceled, error.AlreadyReported => |e| return e,
             else => |e| return elf_file.base.cgFail(nav_index, "failed to finish dwarf nav: {s}", .{@errorName(e)}),
         };
     } else if (self.dwarf) |*dwarf| try dwarf.updateComptimeNav(pt, nav_index);
@@ -1748,12 +1747,11 @@ fn updateLazySymbol(
     codegen.generateLazySymbol(
         &elf_file.base,
         pt,
-        Type.fromInterned(sym.ty).srcLocOrNull(zcu) orelse .unneeded,
         sym,
         &required_alignment,
         &aw.writer,
         .none,
-        .{ .atom_index = symbol_index },
+        .{ .atom_index = @enumFromInt(symbol_index) },
     ) catch |err| switch (err) {
         error.WriteFailed => return error.OutOfMemory,
         else => |e| return e,
@@ -1816,8 +1814,7 @@ fn lowerConst(
     val: Value,
     required_alignment: InternPool.Alignment,
     output_section_index: u32,
-    src_loc: Zcu.LazySrcLoc,
-) !codegen.SymbolResult {
+) !link.File.SymbolId {
     const gpa = pt.zcu.gpa;
 
     var aw: std.Io.Writer.Allocating = .init(gpa);
@@ -1829,10 +1826,9 @@ fn lowerConst(
     codegen.generateSymbol(
         &elf_file.base,
         pt,
-        src_loc,
         val,
         &aw.writer,
-        .{ .atom_index = sym_index },
+        .{ .atom_index = @enumFromInt(sym_index) },
     ) catch |err| switch (err) {
         error.WriteFailed => return error.OutOfMemory,
         else => |e| return e,
@@ -1854,7 +1850,7 @@ fn lowerConst(
 
     try elf_file.pwriteAll(code, atom_ptr.offset(elf_file));
 
-    return .{ .sym_index = sym_index };
+    return @enumFromInt(sym_index);
 }
 
 pub fn updateExports(
@@ -1863,7 +1859,7 @@ pub fn updateExports(
     pt: Zcu.PerThread,
     exported: Zcu.Exported,
     export_indices: []const Zcu.Export.Index,
-) link.File.UpdateExportsError!void {
+) link.Error!void {
     const tracy = trace(@src());
     defer tracy.end();
 
@@ -1875,18 +1871,7 @@ pub fn updateExports(
             break :blk self.navs.getPtr(nav).?;
         },
         .uav => |uav| self.uavs.getPtr(uav) orelse blk: {
-            const first_exp = export_indices[0].ptr(zcu);
-            const res = try self.lowerUav(elf_file, pt, uav, .none, first_exp.src);
-            switch (res) {
-                .sym_index => {},
-                .fail => |em| {
-                    // TODO maybe it's enough to return an error here and let Zcu.processExportsInner
-                    // handle the error?
-                    try zcu.failed_exports.ensureUnusedCapacity(zcu.gpa, 1);
-                    zcu.failed_exports.putAssumeCapacityNoClobber(export_indices[0], em);
-                    return;
-                },
-            }
+            _ = try self.lowerUav(elf_file, pt, uav, .none);
             break :blk self.uavs.getPtr(uav).?;
         },
     };
@@ -1951,12 +1936,12 @@ pub fn updateExports(
     }
 }
 
-pub fn updateLineNumber(self: *ZigObject, pt: Zcu.PerThread, ti_id: InternPool.TrackedInst.Index) !void {
+pub fn updateLineNumber(self: *ZigObject, pt: Zcu.PerThread, ti_id: InternPool.TrackedInst.Index) link.Error!void {
     if (self.dwarf) |*dwarf| {
         const comp = dwarf.bin_file.comp;
         const diags = &comp.link_diags;
         dwarf.updateLineNumber(pt.zcu, ti_id) catch |err| switch (err) {
-            error.Overflow, error.OutOfMemory => |e| return e,
+            error.OutOfMemory, error.Canceled, error.AlreadyReported => |e| return e,
             else => |e| return diags.fail("failed to update dwarf line numbers: {s}", .{@errorName(e)}),
         };
     }
@@ -2203,17 +2188,17 @@ pub fn atom(self: *ZigObject, atom_index: Atom.Index) ?*Atom {
 }
 
 fn addAtomExtra(self: *ZigObject, allocator: Allocator, extra: Atom.Extra) !u32 {
-    const fields = @typeInfo(Atom.Extra).@"struct".fields;
-    try self.atoms_extra.ensureUnusedCapacity(allocator, fields.len);
+    const field_count = @typeInfo(Atom.Extra).@"struct".field_names.len;
+    try self.atoms_extra.ensureUnusedCapacity(allocator, field_count);
     return self.addAtomExtraAssumeCapacity(extra);
 }
 
 fn addAtomExtraAssumeCapacity(self: *ZigObject, extra: Atom.Extra) u32 {
     const index = @as(u32, @intCast(self.atoms_extra.items.len));
-    const fields = @typeInfo(Atom.Extra).@"struct".fields;
-    inline for (fields) |field| {
-        self.atoms_extra.appendAssumeCapacity(switch (field.type) {
-            u32 => @field(extra, field.name),
+    const info = @typeInfo(Atom.Extra).@"struct";
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        self.atoms_extra.appendAssumeCapacity(switch (field_type) {
+            u32 => @field(extra, field_name),
             else => @compileError("bad field type"),
         });
     }
@@ -2221,11 +2206,11 @@ fn addAtomExtraAssumeCapacity(self: *ZigObject, extra: Atom.Extra) u32 {
 }
 
 pub fn atomExtra(self: ZigObject, index: u32) Atom.Extra {
-    const fields = @typeInfo(Atom.Extra).@"struct".fields;
+    const info = @typeInfo(Atom.Extra).@"struct";
     var i: usize = index;
     var result: Atom.Extra = undefined;
-    inline for (fields) |field| {
-        @field(result, field.name) = switch (field.type) {
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        @field(result, field_name) = switch (field_type) {
             u32 => self.atoms_extra.items[i],
             else => @compileError("bad field type"),
         };
@@ -2236,10 +2221,10 @@ pub fn atomExtra(self: ZigObject, index: u32) Atom.Extra {
 
 pub fn setAtomExtra(self: *ZigObject, index: u32, extra: Atom.Extra) void {
     assert(index > 0);
-    const fields = @typeInfo(Atom.Extra).@"struct".fields;
-    inline for (fields, 0..) |field, i| {
-        self.atoms_extra.items[index + i] = switch (field.type) {
-            u32 => @field(extra, field.name),
+    const info = @typeInfo(Atom.Extra).@"struct";
+    inline for (info.field_names, info.field_types, 0..) |field_name, field_type, i| {
+        self.atoms_extra.items[index + i] = switch (field_type) {
+            u32 => @field(extra, field_name),
             else => @compileError("bad field type"),
         };
     }
@@ -2275,17 +2260,17 @@ fn addSymbolAssumeCapacity(self: *ZigObject) Symbol.Index {
 }
 
 pub fn addSymbolExtra(self: *ZigObject, allocator: Allocator, extra: Symbol.Extra) !u32 {
-    const fields = @typeInfo(Symbol.Extra).@"struct".fields;
-    try self.symbols_extra.ensureUnusedCapacity(allocator, fields.len);
+    const field_count = @typeInfo(Symbol.Extra).@"struct".field_names.len;
+    try self.symbols_extra.ensureUnusedCapacity(allocator, field_count);
     return self.addSymbolExtraAssumeCapacity(extra);
 }
 
 pub fn addSymbolExtraAssumeCapacity(self: *ZigObject, extra: Symbol.Extra) u32 {
     const index = @as(u32, @intCast(self.symbols_extra.items.len));
-    const fields = @typeInfo(Symbol.Extra).@"struct".fields;
-    inline for (fields) |field| {
-        self.symbols_extra.appendAssumeCapacity(switch (field.type) {
-            u32 => @field(extra, field.name),
+    const info = @typeInfo(Symbol.Extra).@"struct";
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        self.symbols_extra.appendAssumeCapacity(switch (field_type) {
+            u32 => @field(extra, field_name),
             else => @compileError("bad field type"),
         });
     }
@@ -2293,11 +2278,11 @@ pub fn addSymbolExtraAssumeCapacity(self: *ZigObject, extra: Symbol.Extra) u32 {
 }
 
 pub fn symbolExtra(self: *ZigObject, index: u32) Symbol.Extra {
-    const fields = @typeInfo(Symbol.Extra).@"struct".fields;
+    const info = @typeInfo(Symbol.Extra).@"struct";
     var i: usize = index;
     var result: Symbol.Extra = undefined;
-    inline for (fields) |field| {
-        @field(result, field.name) = switch (field.type) {
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        @field(result, field_name) = switch (field_type) {
             u32 => self.symbols_extra.items[i],
             else => @compileError("bad field type"),
         };
@@ -2307,10 +2292,10 @@ pub fn symbolExtra(self: *ZigObject, index: u32) Symbol.Extra {
 }
 
 pub fn setSymbolExtra(self: *ZigObject, index: u32, extra: Symbol.Extra) void {
-    const fields = @typeInfo(Symbol.Extra).@"struct".fields;
-    inline for (fields, 0..) |field, i| {
-        self.symbols_extra.items[index + i] = switch (field.type) {
-            u32 => @field(extra, field.name),
+    const info = @typeInfo(Symbol.Extra).@"struct";
+    inline for (info.field_names, info.field_types, 0..) |field_name, field_type, i| {
+        self.symbols_extra.items[index + i] = switch (field_type) {
+            u32 => @field(extra, field_name),
             else => @compileError("bad field type"),
         };
     }
@@ -2423,10 +2408,10 @@ const TlsVariable = struct {
 };
 
 const AtomList = std.ArrayList(Atom.Index);
-const NavTable = std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, AvMetadata);
-const UavTable = std.AutoArrayHashMapUnmanaged(InternPool.Index, AvMetadata);
-const LazySymbolTable = std.AutoArrayHashMapUnmanaged(InternPool.Index, LazySymbolMetadata);
-const TlsTable = std.AutoArrayHashMapUnmanaged(Atom.Index, void);
+const NavTable = std.array_hash_map.Auto(InternPool.Nav.Index, AvMetadata);
+const UavTable = std.array_hash_map.Auto(InternPool.Index, AvMetadata);
+const LazySymbolTable = std.array_hash_map.Auto(InternPool.Index, LazySymbolMetadata);
+const TlsTable = std.array_hash_map.Auto(Atom.Index, void);
 
 const x86_64 = struct {
     fn writeTrampolineCode(source_addr: i64, target_addr: i64, buf: *[max_trampoline_len]u8) ![]u8 {

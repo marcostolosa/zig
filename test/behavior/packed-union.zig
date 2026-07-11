@@ -201,6 +201,8 @@ test "packed union with explicit backing integer" {
 }
 
 test "packed union equality" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const Foo = packed union {
         a: u4,
         b: i4,
@@ -218,4 +220,10 @@ test "packed union equality" {
 
     try S.doTest(x, y);
     comptime try S.doTest(x, y);
+}
+
+test "initialize packed union field to undefined at comptime" {
+    const U = packed union(u8) { x: u8 };
+    const val: U = .{ .x = undefined };
+    _ = val;
 }

@@ -695,6 +695,9 @@ const PosixThreadImpl = struct {
             .linux => {
                 return LinuxThreadImpl.getCpuCount();
             },
+            .emscripten => {
+                return @as(usize, @intCast(std.os.emscripten.emscripten_num_logical_cores()));
+            },
             .openbsd => {
                 var count: c_int = undefined;
                 var count_size: usize = @sizeOf(c_int);
@@ -1168,7 +1171,7 @@ const LinuxThreadImpl = struct {
                       [len] "{ecx}" (self.mapped.len),
                 ),
                 .x86_64 => asm volatile (switch (target.abi) {
-                        .gnux32, .muslx32 =>
+                        .gnux32, .muslx32, .x32 =>
                         \\  movl $0x4000000b, %%eax # SYS_munmap
                         \\  syscall
                         \\  movl $0x4000003c, %%eax # SYS_exit
@@ -1214,8 +1217,18 @@ const LinuxThreadImpl = struct {
                     \\ ldi $16, 0
                     \\ callsys
                     :
-                    : [ptr] "{r16}" (@intFromPtr(self.mapped.ptr)),
-                      [len] "{r17}" (self.mapped.len),
+                    : [ptr] "{$16}" (@intFromPtr(self.mapped.ptr)),
+                      [len] "{$17}" (self.mapped.len),
+                ),
+                .arc, .arceb => asm volatile (
+                    \\ mov r8, 215 # SYS_munmap
+                    \\ trap_s 0
+                    \\ mov r8, 93 # SYS_exit
+                    \\ mov r0, 0
+                    \\ trap_s 0
+                    :
+                    : [ptr] "{r0}" (@intFromPtr(self.mapped.ptr)),
+                      [len] "{r1}" (self.mapped.len),
                 ),
                 .hexagon => asm volatile (
                     \\  r6 = #215 // SYS_munmap
@@ -1251,7 +1264,7 @@ const LinuxThreadImpl = struct {
                     \\ ori r12, r0, 91 # SYS_munmap
                     \\ brki r14, 0x8
                     \\ ori r12, r0, 1 # SYS_exit
-                    \\ or r5, r0, r0
+                    \\ ori r5, r0, 0
                     \\ brki r14, 0x8
                     :
                     : [ptr] "{r5}" (@intFromPtr(self.mapped.ptr)),
@@ -1273,7 +1286,7 @@ const LinuxThreadImpl = struct {
                       [len] "{$5}" (self.mapped.len),
                 ),
                 .mips64, .mips64el => asm volatile (switch (target.abi) {
-                        .gnuabin32, .muslabin32 =>
+                        .gnuabin32, .muslabin32, .abin32 =>
                         \\ li $v0, 6011 # SYS_munmap
                         \\ syscall
                         \\ li $v0, 6058 # SYS_exit
@@ -1363,7 +1376,7 @@ const LinuxThreadImpl = struct {
                     \\  mov %%g1, %%o0 // ptr
                     \\  mov %%g2, %%o1 // len
                     \\  mov 73, %%g1 // SYS_munmap
-                    \\  t 0x3 # ST_FLUSH_WINDOWS
+                    \\  t 0x3 // ST_FLUSH_WINDOWS
                     \\  t 0x10
                     \\  mov 1, %%g1 // SYS_exit
                     \\  mov 0, %%o0
@@ -1407,6 +1420,26 @@ const LinuxThreadImpl = struct {
                     :
                     : [ptr] "{r4}" (@intFromPtr(self.mapped.ptr)),
                       [len] "{r5}" (self.mapped.len),
+                    : .{ .memory = true }),
+                .csky => asm volatile (
+                    \\ movi r7, 215 # SYS_munmap
+                    \\ trap 0
+                    \\ movi r7, 93 # SYS_exit
+                    \\ movi r0, 0
+                    \\ trap 0
+                    :
+                    : [ptr] "{r0}" (@intFromPtr(self.mapped.ptr)),
+                      [len] "{r1}" (self.mapped.len),
+                    : .{ .memory = true }),
+                .xtensa, .xtensaeb => asm volatile (
+                    \\ movi a2, 81 // SYS_munmap
+                    \\ syscall
+                    \\ movi a6, 0
+                    \\ movi a2, 118 // SYS_exit
+                    \\ syscall
+                    :
+                    : [ptr] "{a6}" (@intFromPtr(self.mapped.ptr)),
+                      [len] "{a3}" (self.mapped.len),
                     : .{ .memory = true }),
                 else => |cpu_arch| @compileError("Unsupported linux arch: " ++ @tagName(cpu_arch)),
             }
@@ -1574,9 +1607,9 @@ const LinuxThreadImpl = struct {
 };
 
 fn testThreadName(io: Io, thread: *Thread) !void {
-    const testCases = &[_][]const u8{
+    const testCases: []const []const u8 = &.{
         "mythread",
-        "b" ** max_name_len,
+        &@as([max_name_len]u8, @splat('b')),
     };
 
     inline for (testCases) |tc| {

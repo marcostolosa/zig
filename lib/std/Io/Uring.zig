@@ -917,7 +917,7 @@ pub fn deinit(ev: *Evented) void {
     const idle_stack_end_offset = std.mem.alignForward(
         usize,
         ev.threads.allocated.len * @sizeOf(Thread) + idle_stack_size,
-        std.heap.page_size_max,
+        std.heap.pageSize(),
     );
     for (ev.threads.allocated[1..active_threads]) |*thread| thread.thread.join();
     for (ev.threads.allocated[0..active_threads]) |*thread| thread.deinit(ev.backing_allocator);
@@ -2739,6 +2739,7 @@ fn dirOpenDir(
             error.FileBusy => return errnoBug(.TXTBSY),
             error.PathAlreadyExists => return errnoBug(.EXIST), // Not creating.
             error.OperationUnsupported => return errnoBug(.OPNOTSUPP), // No TMPFILE, no locks.
+            error.ReadOnlyFileSystem => return errnoBug(.ROFS), // Not creating.
             else => |e| return e,
         },
     };
@@ -2812,7 +2813,7 @@ fn dirCreateFile(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
-    flags: File.CreateFlags,
+    flags: Dir.CreateFileOptions,
 ) File.OpenError!File {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
 
@@ -2996,7 +2997,7 @@ fn dirOpenFile(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
-    flags: File.OpenFlags,
+    flags: Dir.OpenFileOptions,
 ) File.OpenError!File {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
 
@@ -3164,6 +3165,7 @@ fn dirRealPathFile(
     }, 0) catch |err| switch (err) {
         error.WouldBlock => return errnoBug(.AGAIN),
         error.OperationUnsupported => return errnoBug(.OPNOTSUPP), // Not asking for locks.
+        error.ReadOnlyFileSystem => return errnoBug(.ROFS), // Not creating.
         else => |e| return e,
     };
     defer ev.closeAsync(fd);
@@ -4104,7 +4106,7 @@ fn fileMemoryMapWrite(userdata: ?*anyopaque, mm: *File.MemoryMap) File.WritePosi
 
 fn processExecutableOpen(
     userdata: ?*anyopaque,
-    flags: File.OpenFlags,
+    flags: Dir.OpenFileOptions,
 ) process.OpenExecutableError!File {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
     return dirOpenFile(ev, .{ .handle = linux.AT.FDCWD }, "/proc/self/exe", flags);
@@ -4226,7 +4228,7 @@ fn processReplace(userdata: ?*anyopaque, options: process.ReplaceOptions) proces
     const arena = arena_allocator.allocator();
 
     const argv_buf = try arena.allocSentinel(?[*:0]const u8, options.argv.len, null);
-    for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeZ(u8, arg)).ptr;
+    for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeSentinel(u8, arg, 0)).ptr;
 
     const env_block = env_block: {
         const prog_fd: i32 = -1;
@@ -4369,7 +4371,7 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
     // Therefore, we do all the allocation for the execve() before the fork().
     // This means we must do the null-termination of argv and env vars here.
     const argv_buf = try arena.allocSentinel(?[*:0]const u8, options.argv.len, null);
-    for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeZ(u8, arg)).ptr;
+    for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeSentinel(u8, arg, 0)).ptr;
 
     const env_block = env_block: {
         const prog_fd: i32 = if (prog_pipe[1] == -1) -1 else prog_fileno;
@@ -5181,7 +5183,7 @@ fn netWriteFileUnavailable(
     _ = header;
     _ = file_reader;
     _ = limit;
-    return error.NetworkDown;
+    return error.Unimplemented;
 }
 
 fn netClose(userdata: ?*anyopaque, handles: []const net.Socket.Handle) void {
@@ -5982,9 +5984,9 @@ fn socket(
     };
     errdefer ev.closeAsync(socket_fd);
 
-    if (options.ip6_only) {
+    if (options.ip6_only) |ip6_only| {
         if (linux.IPV6 == void) return error.OptionUnsupported;
-        try ev.setsockopt(cancel_region, socket_fd, linux.IPPROTO.IPV6, linux.IPV6.V6ONLY, 0);
+        try ev.setsockopt(cancel_region, socket_fd, linux.IPPROTO.IPV6, linux.IPV6.V6ONLY, @intFromBool(ip6_only));
     }
 
     return socket_fd;

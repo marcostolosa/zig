@@ -165,25 +165,6 @@ pub const TerminalMode = union(enum) {
     };
 };
 
-pub const Options = struct {
-    /// User-provided buffer with static lifetime.
-    ///
-    /// Used to store the entire write buffer sent to the terminal. Progress output will be truncated if it
-    /// cannot fit into this buffer which will look bad but not cause any malfunctions.
-    ///
-    /// Must be at least 200 bytes.
-    draw_buffer: []u8 = &default_draw_buffer,
-    /// How many nanoseconds between writing updates to the terminal.
-    refresh_rate_ns: Io.Duration = .fromMilliseconds(80),
-    /// How many nanoseconds to keep the output hidden
-    initial_delay_ns: Io.Duration = .fromMilliseconds(200),
-    /// If provided, causes the progress item to have a denominator.
-    /// 0 means unknown.
-    estimated_total_items: usize = 0,
-    root_name: []const u8 = "",
-    disable_printing: bool = false,
-};
-
 /// Represents one unit of progress. Each node can have children nodes, or
 /// one can use integers with `update`.
 pub const Node = struct {
@@ -578,6 +559,25 @@ pub const ParentFileError = error{
     UnrecognizedFormat,
 };
 
+pub const Options = struct {
+    /// User-provided buffer with static lifetime.
+    ///
+    /// Used to store the entire write buffer sent to the terminal. Progress output will be truncated if it
+    /// cannot fit into this buffer which will look bad but not cause any malfunctions.
+    ///
+    /// Must be at least 200 bytes.
+    draw_buffer: []u8 = &default_draw_buffer,
+    /// How many nanoseconds between writing updates to the terminal.
+    refresh_rate_ns: Io.Duration = .fromMilliseconds(80),
+    /// How many nanoseconds to keep the output hidden
+    initial_delay_ns: Io.Duration = .fromMilliseconds(200),
+    /// If provided, causes the progress item to have a denominator.
+    /// 0 means unknown.
+    estimated_total_items: usize = 0,
+    root_name: []const u8 = "",
+    disable_printing: bool = false,
+};
+
 /// Initializes a global Progress instance.
 ///
 /// Asserts there is only one global Progress instance.
@@ -867,8 +867,8 @@ const TreeSymbol = enum {
 
     fn maxByteLen(symbol: TreeSymbol) usize {
         var max: usize = 0;
-        inline for (@typeInfo(Encoding).@"enum".fields) |field| {
-            const len = symbol.bytes(@field(Encoding, field.name)).len;
+        inline for (@typeInfo(Encoding).@"enum".field_names) |field_name| {
+            const len = symbol.bytes(@field(Encoding, field_name)).len;
             max = @max(max, len);
         }
         return max;

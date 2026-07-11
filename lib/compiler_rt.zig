@@ -404,10 +404,6 @@ pub const want_ppc_abi = builtin.cpu.arch.isPowerPC();
 
 pub const want_float_exceptions = !builtin.cpu.arch.isWasm();
 
-// Libcalls that involve u128 on Windows x86-64 are expected by LLVM to use the
-// calling convention of @Vector(2, u64), rather than what's standard.
-pub const want_windows_v2u64_abi = builtin.os.tag == .windows and builtin.cpu.arch == .x86_64 and !ofmt_c;
-
 /// This governs whether to use these symbol names for f16/f32 conversions
 /// rather than the standard names:
 /// * __gnu_f2h_ieee
@@ -445,7 +441,8 @@ pub const gnu_f16_abi = switch (builtin.cpu.arch) {
     else => !builtin.os.tag.isDarwin(),
 };
 
-pub const want_sparc_abi = builtin.cpu.arch.isSPARC();
+pub const want_sparc64_abi = builtin.cpu.arch == .sparc64;
+pub const want_sparc32_abi = builtin.cpu.arch == .sparc;
 
 pub fn F16T(comptime OtherType: type) type {
     return switch (builtin.cpu.arch) {
@@ -574,8 +571,8 @@ pub fn wideMultiply(comptime Z: type, a: Z, b: Z, hi: *Z, lo: *Z) void {
     }
 }
 
-pub fn normalize(comptime T: type, significand: *std.meta.Int(.unsigned, @typeInfo(T).float.bits)) i32 {
-    const Z = std.meta.Int(.unsigned, @typeInfo(T).float.bits);
+pub fn normalize(comptime T: type, significand: *@Int(.unsigned, @typeInfo(T).float.bits)) i32 {
+    const Z = @Int(.unsigned, @typeInfo(T).float.bits);
     const integerBit = @as(Z, 1) << std.math.floatFractionalBits(T);
 
     const shift = @clz(significand.*) - @clz(integerBit);
@@ -625,8 +622,8 @@ fn __aeabi_fneg(a: f32) callconv(.{ .arm_aapcs = .{} }) f32 {
 pub fn HalveInt(comptime T: type, comptime signed_half: bool) type {
     return extern union {
         pub const bits = @divExact(@typeInfo(T).int.bits, 2);
-        pub const HalfTU = std.meta.Int(.unsigned, bits);
-        pub const HalfTS = std.meta.Int(.signed, bits);
+        pub const HalfTU = @Int(.unsigned, bits);
+        pub const HalfTS = @Int(.signed, bits);
         pub const HalfT = if (signed_half) HalfTS else HalfTU;
 
         all: T,

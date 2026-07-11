@@ -9,8 +9,10 @@ const wideMultiply = compiler_rt.wideMultiply;
 comptime {
     if (compiler_rt.want_ppc_abi) {
         symbol(&__divtf3, "__divkf3");
-    } else if (compiler_rt.want_sparc_abi) {
+    } else if (compiler_rt.want_sparc64_abi) {
         symbol(&_Qp_div, "_Qp_div");
+    } else if (compiler_rt.want_sparc32_abi) {
+        symbol(&__divtf3, "_Q_div");
     }
     symbol(&__divtf3, "__divtf3");
 }
@@ -24,7 +26,7 @@ fn _Qp_div(c: *f128, a: *const f128, b: *const f128) callconv(.c) void {
 }
 
 inline fn div(a: f128, b: f128) f128 {
-    const Z = std.meta.Int(.unsigned, 128);
+    const Z = @Int(.unsigned, 128);
 
     const significandBits = std.math.floatMantissaBits(f128);
     const exponentBits = std.math.floatExponentBits(f128);

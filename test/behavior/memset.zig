@@ -109,7 +109,7 @@ test "memset with large array element, runtime known" {
 
     const A = [128]u64;
     var buf: [5]A = undefined;
-    var runtime_known_element = [_]u64{0} ** 128;
+    var runtime_known_element: A = @splat(0);
     _ = &runtime_known_element;
     @memset(&buf, runtime_known_element);
     for (buf[0]) |elem| try expect(elem == 0);
@@ -127,7 +127,7 @@ test "memset with large array element, comptime known" {
 
     const A = [128]u64;
     var buf: [5]A = undefined;
-    const comptime_known_element = [_]u64{0} ** 128;
+    const comptime_known_element: A = @splat(0);
     @memset(&buf, comptime_known_element);
     for (buf[0]) |elem| try expect(elem == 0);
     for (buf[1]) |elem| try expect(elem == 0);
@@ -179,6 +179,8 @@ test "@memset with zero-length array" {
 }
 
 test "@memset a global array" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const S = struct {
         var buf: [1]u32 = .{123};
     };
@@ -190,6 +192,8 @@ test "@memset a global array" {
 }
 
 test "@memset array of booleans" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const S = struct {
         var x: bool = false;
         var y: [1]bool = undefined;

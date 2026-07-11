@@ -4,7 +4,7 @@ const assert = std.debug.assert;
 
 const target_util = @import("../target.zig");
 const Compilation = @import("../Compilation.zig");
-const Module = @import("../Package/Module.zig");
+const Module = @import("../Module.zig");
 const build_options = @import("build_options");
 const trace = @import("../tracy.zig").trace;
 
@@ -29,7 +29,7 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
     const io = comp.io;
     const output_mode = .Lib;
     const target = &comp.root_mod.resolved_target.result;
-    const unwind_tables: std.builtin.UnwindTables =
+    const unwind_tables: std.lang.UnwindTables =
         if (target.cpu.arch == .x86 and target.os.tag == .windows) .none else .async;
     const config = Compilation.Config.resolve(.{
         .output_mode = output_mode,
@@ -179,7 +179,7 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
     };
 
     const crt_file = try sub_compilation.toCrtFile();
-    try comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
+    try comp.queuePrelinkTaskMode(crt_file.full_object_path, false, &config);
     assert(comp.libunwind_static_lib == null);
     comp.libunwind_static_lib = crt_file;
 }

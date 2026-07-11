@@ -10,9 +10,9 @@ const Oom = error{OutOfMemory};
 
 pub const Decl = @import("Decl.zig");
 
-pub var files: std.StringArrayHashMapUnmanaged(File) = .empty;
+pub var files: std.array_hash_map.String(File) = .empty;
 pub var decls: std.ArrayList(Decl) = .empty;
-pub var modules: std.StringArrayHashMapUnmanaged(File.Index) = .empty;
+pub var modules: std.array_hash_map.String(File.Index) = .empty;
 
 file: File.Index,
 
@@ -42,17 +42,17 @@ pub const Category = union(enum(u8)) {
 pub const File = struct {
     ast: Ast,
     /// Maps identifiers to the declarations they point to.
-    ident_decls: std.AutoArrayHashMapUnmanaged(Ast.TokenIndex, Ast.Node.Index) = .empty,
+    ident_decls: std.array_hash_map.Auto(Ast.TokenIndex, Ast.Node.Index) = .empty,
     /// Maps field access identifiers to the containing field access node.
-    token_parents: std.AutoArrayHashMapUnmanaged(Ast.TokenIndex, Ast.Node.Index) = .empty,
+    token_parents: std.array_hash_map.Auto(Ast.TokenIndex, Ast.Node.Index) = .empty,
     /// Maps declarations to their global index.
-    node_decls: std.AutoArrayHashMapUnmanaged(Ast.Node.Index, Decl.Index) = .empty,
+    node_decls: std.array_hash_map.Auto(Ast.Node.Index, Decl.Index) = .empty,
     /// Maps function declarations to doctests.
-    doctests: std.AutoArrayHashMapUnmanaged(Ast.Node.Index, Ast.Node.Index) = .empty,
+    doctests: std.array_hash_map.Auto(Ast.Node.Index, Ast.Node.Index) = .empty,
     /// root node => its namespace scope
     /// struct/union/enum/opaque decl node => its namespace scope
     /// local var decl node => its local variable scope
-    scopes: std.AutoArrayHashMapUnmanaged(Ast.Node.Index, *Scope) = .empty,
+    scopes: std.array_hash_map.Auto(Ast.Node.Index, *Scope) = .empty,
 
     pub fn lookup_token(file: *File, token: Ast.TokenIndex) Decl.Index {
         const decl_node = file.ident_decls.get(token) orelse return .none;
@@ -428,7 +428,7 @@ fn parse(file_name: []const u8, source: []u8) Oom!Ast {
         break :s source[0 .. source.len - 1 :0];
     };
 
-    var ast = try Ast.parse(gpa, adjusted_source, .zig);
+    var ast = try Ast.parse(gpa, adjusted_source, .{});
     if (ast.errors.len > 0) {
         defer ast.deinit(gpa);
 
@@ -446,7 +446,7 @@ fn parse(file_name: []const u8, source: []u8) Oom!Ast {
                 file_name, err_loc.line + 1, err_loc.column + 1, rendered_err.written(),
             });
         }
-        return Ast.parse(gpa, "", .zig);
+        return Ast.parse(gpa, "", .{});
     }
     return ast;
 }
@@ -465,8 +465,8 @@ pub const Scope = struct {
     const Namespace = struct {
         base: Scope = .{ .tag = .namespace },
         parent: *Scope,
-        names: std.StringArrayHashMapUnmanaged(Ast.Node.Index) = .empty,
-        doctests: std.StringArrayHashMapUnmanaged(Ast.Node.Index) = .empty,
+        names: std.array_hash_map.String(Ast.Node.Index) = .empty,
+        doctests: std.array_hash_map.String(Ast.Node.Index) = .empty,
         decl_index: Decl.Index,
     };
 
@@ -709,7 +709,6 @@ fn expr(w: *Walk, scope: *Scope, parent_decl: Decl.Index, node: Ast.Node.Index) 
         .less_or_equal,
         .array_cat,
 
-        .array_mult,
         .error_union,
         .merge_error_sets,
         .bool_and,
@@ -1014,8 +1013,7 @@ fn block(
 
             .grouped_expression => try expr(w, scope, parent_decl, ast.nodeData(node).node_and_token[0]),
 
-            .@"defer" => try expr(w, scope, parent_decl, ast.nodeData(node).node),
-            .@"errdefer" => try expr(w, scope, parent_decl, ast.nodeData(node).opt_token_and_node[1]),
+            .@"defer", .@"errdefer" => try expr(w, scope, parent_decl, ast.nodeData(node).node),
 
             else => try expr(w, scope, parent_decl, node),
         }
@@ -1087,7 +1085,7 @@ pub fn isPrimitiveNonType(name: []const u8) bool {
 //
 //    // example test command:
 //    // zig test --dep input.zig -Mroot=src/Walk.zig -Minput.zig=/home/andy/dev/zig/lib/std/fs/File/zig
-//    var ast = try Ast.parse(gpa, @embedFile("input.zig"), .zig);
+//    var ast = try Ast.parse(gpa, @embedFile("input.zig"), .{});
 //    defer ast.deinit(gpa);
 //
 //    var w: Walk = .{

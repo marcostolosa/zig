@@ -39,10 +39,10 @@ fn logOverride(
     fw.interface.flush() catch panic("failed to write to fuzzer log: {t}", .{fw.err.?});
 }
 
-var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+var safe_allocator: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
 const gpa = switch (builtin.mode) {
-    .Debug => debug_allocator.allocator(),
-    .ReleaseFast, .ReleaseSmall, .ReleaseSafe => std.heap.smp_allocator,
+    .Debug, .ReleaseSafe => safe_allocator.allocator(),
+    .ReleaseFast, .ReleaseSmall => std.heap.smp_allocator,
 };
 
 // Seperate from `exec` to allow initialization before `exec` is.
@@ -52,7 +52,7 @@ var fuzzer: Fuzzer = undefined;
 var current_test_name: ?[]const u8 = null;
 
 fn bitsetUsizes(elems: usize) usize {
-    return math.divCeil(usize, elems, @bitSizeOf(usize)) catch unreachable;
+    return @divCeil(elems, @bitSizeOf(usize));
 }
 
 const Executable = struct {
@@ -340,7 +340,7 @@ const Fuzzer = struct {
             quality_buf: []Input.Best,
             input_buf: []Input.Best.Map,
         },
-        seen_uids: std.ArrayHashMapUnmanaged(Uid, struct {
+        seen_uids: std.array_hash_map.Custom(Uid, struct {
             slices: union {
                 ints: std.ArrayList([]u64),
                 bytes: std.ArrayList(Input.Data.Bytes),
@@ -505,7 +505,7 @@ const Fuzzer = struct {
                 }
             };
 
-            pub const UidSlices = std.ArrayHashMapUnmanaged(Uid, struct {
+            pub const UidSlices = std.array_hash_map.Custom(Uid, struct {
                 base: u32,
                 len: u32,
             }, Uid.hashmap_ctx, false);
@@ -584,7 +584,7 @@ const Fuzzer = struct {
         };
 
         pub const Builder = struct {
-            uid_slices: std.ArrayHashMapUnmanaged(Uid, union {
+            uid_slices: std.array_hash_map.Custom(Uid, union {
                 ints: std.MultiArrayList(struct {
                     value: u64,
                     order_i: u32,

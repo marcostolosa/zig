@@ -19,6 +19,23 @@ bytes: []const u8,
 
 pub const max_len = 255;
 
+pub const FromUriError = error{UriMissingHost} || ValidateError;
+
+/// Returned `HostName.bytes` may point into `buffer` or `uri.host`.
+pub fn fromUri(uri: std.Uri, buffer: *[HostName.max_len]u8) FromUriError!HostName {
+    const component = uri.host orelse return error.UriMissingHost;
+    const bytes = component.toRaw(buffer) catch |err| switch (err) {
+        error.NoSpaceLeft => return error.NameTooLong,
+    };
+
+    if (uri.isSchemeUnixSocket()) {
+        try validateUnixSocket(bytes);
+    } else {
+        try validate(bytes);
+    }
+    return .{ .bytes = bytes };
+}
+
 pub const ValidateError = error{
     NameTooLong,
     InvalidHostName,
@@ -28,11 +45,11 @@ pub const ValidateError = error{
 pub fn validate(bytes: []const u8) ValidateError!void {
     if (bytes.len == 0) return error.InvalidHostName;
 
-    // Ignore trailing dot (FQDN). It doesn't count toward our length.
-    const end = if (bytes[bytes.len - 1] == '.') bytes.len - 1 else bytes.len;
-
     // The accepted maximum length of a hostname, including labels and dots.
-    if (end > max_len) return error.NameTooLong;
+    if (bytes.len > max_len) return error.NameTooLong;
+
+    // Ignore trailing dot (FQDN).
+    const end = if (bytes[bytes.len - 1] == '.') bytes.len - 1 else bytes.len;
 
     // Hostnames are divided into dot-separated "labels", which:
     //
@@ -64,6 +81,11 @@ pub fn validate(bytes: []const u8) ValidateError!void {
     if (!std.ascii.isAlphanumeric(bytes[end - 1])) return error.InvalidHostName;
 }
 
+fn validateUnixSocket(bytes: []const u8) ValidateError!void {
+    if (bytes.len == 0) return error.InvalidHostName;
+    if (bytes.len > std.Io.net.UnixAddress.max_len) return error.NameTooLong;
+}
+
 test validate {
     // Valid hostnames
     try validate("example");
@@ -76,9 +98,13 @@ test validate {
     try validate("a-b.com");
     try validate("a.b.c.d.e.f.g");
     try validate("127.0.0.1"); // Also a valid hostname
-    try validate("a" ** 63 ++ ".com"); // Label exactly 63 chars (valid)
-    try validate("a." ** 127 ++ "a"); // Total length 255 (valid)
-    try validate("a." ** 127 ++ "a."); // Total length 255 + trailing dot (valid)
+
+    const many_a: [63]u8 = @splat('a');
+    try validate(&many_a ++ ".com"); // Label exactly 63 chars (valid)
+
+    const many_a_dot_buf: [127][2]u8 = @splat(.{ 'a', '.' });
+    const many_a_dot: []const u8 = @ptrCast(&many_a_dot_buf);
+    try validate(many_a_dot ++ "a"); // Total length 255 (valid)
 
     // Invalid hostnames
     try std.testing.expectError(error.InvalidHostName, validate(""));
@@ -92,9 +118,18 @@ test validate {
     try std.testing.expectError(error.InvalidHostName, validate("host_name.com"));
     try std.testing.expectError(error.InvalidHostName, validate("."));
     try std.testing.expectError(error.InvalidHostName, validate(".."));
-    try std.testing.expectError(error.InvalidHostName, validate("a" ** 64 ++ ".com")); // Label length 64 (too long)
-    try std.testing.expectError(error.NameTooLong, validate("a." ** 127 ++ "ab")); // Total length 256 (too long)
-    try std.testing.expectError(error.NameTooLong, validate("a." ** 127 ++ "ab.")); // Total length 256 + trailing dot (too long)
+    try std.testing.expectError(error.InvalidHostName, validate(&many_a ++ "a.com")); // Label length 64 (too long)
+    try std.testing.expectError(error.NameTooLong, validate(many_a_dot ++ "a.")); // Total length 255 + trailing dot (too long)
+    try std.testing.expectError(error.NameTooLong, validate(many_a_dot ++ "ab")); // Total length 256 (too long)
+}
+
+test validateUnixSocket {
+    try validateUnixSocket("test.sock");
+
+    try std.testing.expectError(error.InvalidHostName, validateUnixSocket(""));
+
+    const path_too_long: [std.Io.net.UnixAddress.max_len]u8 = @splat('a');
+    try std.testing.expectError(error.NameTooLong, validateUnixSocket(path_too_long ++ ".sock"));
 }
 
 pub fn init(bytes: []const u8) ValidateError!HostName {

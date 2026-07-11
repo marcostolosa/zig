@@ -139,10 +139,14 @@ pub fn deinit(tree: *Ast, gpa: Allocator) void {
 }
 
 pub const Mode = enum { zig, zon };
+pub const ParseOptions = struct {
+    recover: bool = true,
+    mode: Mode = .zig,
+};
 
 /// Result should be freed with tree.deinit() when there are
 /// no more references to any of the tokens or nodes.
-pub fn parse(gpa: Allocator, source: [:0]const u8, mode: Mode) Allocator.Error!Ast {
+pub fn parse(gpa: Allocator, source: [:0]const u8, options: ParseOptions) Allocator.Error!Ast {
     var tokens = Ast.TokenList{};
     defer tokens.deinit(gpa);
 
@@ -162,14 +166,14 @@ pub fn parse(gpa: Allocator, source: [:0]const u8, mode: Mode) Allocator.Error!A
 
     var tokens_slice = tokens.toOwnedSlice();
     errdefer tokens_slice.deinit(gpa);
-    return parseTokens(gpa, source, tokens_slice, mode);
+    return parseTokens(gpa, source, tokens_slice, options);
 }
 
 pub fn parseTokens(
     gpa: Allocator,
     source: [:0]const u8,
     tokens: Ast.TokenList.Slice,
-    mode: Mode,
+    options: ParseOptions,
 ) Allocator.Error!Ast {
     var parser: Parse = .{
         .source = source,
@@ -180,6 +184,7 @@ pub fn parseTokens(
         .extra_data = .empty,
         .scratch = .empty,
         .tok_i = 0,
+        .recover = options.recover,
     };
     defer parser.errors.deinit(gpa);
     defer parser.nodes.deinit(gpa);
@@ -191,7 +196,7 @@ pub fn parseTokens(
     const estimated_node_count = (tokens.len + 2) / 2;
     try parser.nodes.ensureTotalCapacity(gpa, estimated_node_count);
 
-    switch (mode) {
+    switch (options.mode) {
         .zig => try parser.parseRoot(),
         .zon => try parser.parseZon(),
     }
@@ -202,7 +207,7 @@ pub fn parseTokens(
     // TODO experiment with compacting the MultiArrayList slices here
     return .{
         .source = source,
-        .mode = mode,
+        .mode = options.mode,
         .tokens = tokens,
         .nodes = parser.nodes.toOwnedSlice(),
         .extra_data = parser.extra_data.toOwnedSliceAssert(),
@@ -298,17 +303,17 @@ pub fn extraDataSliceWithLen(tree: Ast, start: ExtraIndex, len: u32, comptime T:
 }
 
 pub fn extraData(tree: Ast, index: ExtraIndex, comptime T: type) T {
-    const fields = std.meta.fields(T);
+    const info = @typeInfo(T).@"struct";
     var result: T = undefined;
-    inline for (fields, 0..) |field, i| {
-        @field(result, field.name) = switch (field.type) {
+    inline for (info.field_names, info.field_types, 0..) |field_name, field_type, i| {
+        @field(result, field_name) = switch (field_type) {
             Node.Index,
             Node.OptionalIndex,
             OptionalTokenIndex,
             ExtraIndex,
             => @enumFromInt(tree.extra_data[@intFromEnum(index) + i]),
             TokenIndex => tree.extra_data[@intFromEnum(index) + i],
-            else => @compileError("unexpected field type: " ++ @typeName(field.type)),
+            else => @compileError("unexpected field type: " ++ @typeName(field_type)),
         };
     }
     return result;
@@ -331,11 +336,6 @@ pub fn rootDecls(tree: Ast) []const Node.Index {
 
 pub fn renderError(tree: Ast, parse_error: Error, w: *Writer) Writer.Error!void {
     switch (parse_error.tag) {
-        .asterisk_after_ptr_deref => {
-            // Note that the token will point at the `.*` but ideally the source
-            // location would point to the `*` after the `.*`.
-            return w.writeAll("'.*' cannot be followed by '*'; are you missing a space?");
-        },
         .chained_comparison_operators => {
             return w.writeAll("comparison operators cannot be chained");
         },
@@ -470,15 +470,6 @@ pub fn renderError(tree: Ast, parse_error: Error, w: *Writer) Writer.Error!void 
         .extra_align_qualifier => {
             return w.writeAll("extra align qualifier");
         },
-        .extra_allowzero_qualifier => {
-            return w.writeAll("extra allowzero qualifier");
-        },
-        .extra_const_qualifier => {
-            return w.writeAll("extra const qualifier");
-        },
-        .extra_volatile_qualifier => {
-            return w.writeAll("extra volatile qualifier");
-        },
         .ptr_mod_on_array_child_type => {
             return w.print("pointer modifier '{s}' not allowed on array child type", .{
                 tree.tokenTag(parse_error.token).symbol(),
@@ -563,12 +554,6 @@ pub fn renderError(tree: Ast, parse_error: Error, w: *Writer) Writer.Error!void 
         },
         .var_const_decl => {
             return w.writeAll("use 'var' or 'const' to declare variable");
-        },
-        .extra_for_capture => {
-            return w.writeAll("extra capture in for loop");
-        },
-        .for_input_not_captured => {
-            return w.writeAll("for input is not captured");
         },
 
         .invalid_byte => {
@@ -687,7 +672,6 @@ pub fn firstToken(tree: Ast, node: Node.Index) TokenIndex {
         .mul,
         .div,
         .mod,
-        .array_mult,
         .mul_wrap,
         .mul_sat,
         .add,
@@ -924,7 +908,6 @@ pub fn lastToken(tree: Ast, node: Node.Index) TokenIndex {
         .mul,
         .div,
         .mod,
-        .array_mult,
         .mul_wrap,
         .mul_sat,
         .add,
@@ -952,8 +935,8 @@ pub fn lastToken(tree: Ast, node: Node.Index) TokenIndex {
         .switch_range,
         => n = tree.nodeData(n).node_and_node[1],
 
-        .test_decl, .@"errdefer" => n = tree.nodeData(n).opt_token_and_node[1],
-        .@"defer" => n = tree.nodeData(n).node,
+        .test_decl => n = tree.nodeData(n).opt_token_and_node[1],
+        .@"defer", .@"errdefer" => n = tree.nodeData(n).node,
         .anyframe_type => n = tree.nodeData(n).token_and_node[1],
 
         .switch_case_one,
@@ -2110,10 +2093,8 @@ fn fullFnProtoComponents(tree: Ast, info: full.FnProto.Components) full.FnProto 
 }
 
 fn fullPtrTypeComponents(tree: Ast, info: full.PtrType.Components) full.PtrType {
-    const size: std.builtin.Type.Pointer.Size = switch (tree.tokenTag(info.main_token)) {
-        .asterisk,
-        .asterisk_asterisk,
-        => .one,
+    const size: std.lang.Type.Pointer.Size = switch (tree.tokenTag(info.main_token)) {
+        .asterisk => .one,
         .l_bracket => switch (tree.tokenTag(info.main_token + 1)) {
             .asterisk => if (tree.tokenTag(info.main_token + 2) == .identifier) .c else .many,
             else => .slice,
@@ -2125,6 +2106,7 @@ fn fullPtrTypeComponents(tree: Ast, info: full.PtrType.Components) full.PtrType 
         .allowzero_token = null,
         .const_token = null,
         .volatile_token = null,
+        .duplicate_token = null,
         .ast = info,
     };
     // We need to be careful that we don't iterate over any sub-expressions
@@ -2140,9 +2122,24 @@ fn fullPtrTypeComponents(tree: Ast, info: full.PtrType.Components) full.PtrType 
     const end = tree.firstToken(info.child_type);
     while (i < end) : (i += 1) {
         switch (tree.tokenTag(i)) {
-            .keyword_allowzero => result.allowzero_token = i,
-            .keyword_const => result.const_token = i,
-            .keyword_volatile => result.volatile_token = i,
+            .keyword_allowzero => {
+                if (result.allowzero_token != null) {
+                    result.duplicate_token = i;
+                }
+                result.allowzero_token = i;
+            },
+            .keyword_const => {
+                if (result.const_token != null) {
+                    result.duplicate_token = i;
+                }
+                result.const_token = i;
+            },
+            .keyword_volatile => {
+                if (result.volatile_token != null) {
+                    result.duplicate_token = i;
+                }
+                result.volatile_token = i;
+            },
             .keyword_align => {
                 if (info.bit_range_end.unwrap()) |bit_range_end| {
                     assert(info.bit_range_start != .none);
@@ -2735,10 +2732,11 @@ pub const full = struct {
     };
 
     pub const PtrType = struct {
-        size: std.builtin.Type.Pointer.Size,
+        size: std.lang.Type.Pointer.Size,
         allowzero_token: ?TokenIndex,
         const_token: ?TokenIndex,
         volatile_token: ?TokenIndex,
+        duplicate_token: ?TokenIndex,
         ast: Components,
 
         pub const Components = struct {
@@ -2842,7 +2840,6 @@ pub const Error = struct {
     } = .{ .none = {} },
 
     pub const Tag = enum {
-        asterisk_after_ptr_deref,
         chained_comparison_operators,
         decl_between_fields,
         expected_block,
@@ -2873,9 +2870,6 @@ pub const Error = struct {
         extern_fn_body,
         extra_addrspace_qualifier,
         extra_align_qualifier,
-        extra_allowzero_qualifier,
-        extra_const_qualifier,
-        extra_volatile_qualifier,
         ptr_mod_on_array_child_type,
         invalid_bit_range,
         same_line_doc_comment,
@@ -2899,8 +2893,6 @@ pub const Error = struct {
         expected_var_const,
         wrong_equal_var_decl,
         var_const_decl,
-        extra_for_capture,
-        for_input_not_captured,
 
         zig_style_container,
         previous_field,
@@ -3059,11 +3051,8 @@ pub const Node = struct {
         /// a `assign_destructure` node or a parsing error occured.
         aligned_var_decl,
         /// `errdefer expr`,
-        /// `errdefer |payload| expr`.
         ///
-        /// The `data` field is a `.opt_token_and_node`:
-        ///   1. a `OptionalTokenIndex` to the payload identifier, if any.
-        ///   2. a `Node.Index` to the deferred expression.
+        /// The `data` field is a `.node` to the deferred expression.
         ///
         /// The `main_token` field is the `errdefer` token.
         @"errdefer",
@@ -3071,7 +3060,7 @@ pub const Node = struct {
         ///
         /// The `data` field is a `.node` to the deferred expression.
         ///
-        /// The `main_token` field is the `defer`.
+        /// The `main_token` field is the `defer` token.
         @"defer",
         /// `lhs catch rhs`,
         /// `lhs catch |err| rhs`.
@@ -3181,8 +3170,6 @@ pub const Node = struct {
         div,
         /// `lhs % rhs`. The `main_token` field is the `%` token.
         mod,
-        /// `lhs ** rhs`. The `main_token` field is the `**` token.
-        array_mult,
         /// `lhs *% rhs`. The `main_token` field is the `*%` token.
         mul_wrap,
         /// `lhs *| rhs`. The `main_token` field is the `*|` token.
@@ -3253,8 +3240,6 @@ pub const Node = struct {
         ///
         /// The `main_token` is the asterisk if a single item pointer or the
         /// lbracket if a slice, many-item pointer, or C-pointer.
-        /// The `main_token` might be a ** token, which is shared with a
-        /// parent/child pointer type and may require special handling.
         ptr_type_aligned,
         /// `[*:lhs]rhs`,
         /// `*rhs`,
@@ -3266,8 +3251,6 @@ pub const Node = struct {
         ///
         /// The `main_token` is the asterisk if a single item pointer or the
         /// lbracket if a slice, many-item pointer, or C-pointer.
-        /// The `main_token` might be a ** token, which is shared with a
-        /// parent/child pointer type and may require special handling.
         ptr_type_sentinel,
         /// The `data` field is a `.extra_and_node`:
         ///   1. a `ExtraIndex` to `PtrType`.
@@ -3275,8 +3258,6 @@ pub const Node = struct {
         ///
         /// The `main_token` is the asterisk if a single item pointer or the
         /// lbracket if a slice, many-item pointer, or C-pointer.
-        /// The `main_token` might be a ** token, which is shared with a
-        /// parent/child pointer type and may require special handling.
         ptr_type,
         /// The `data` field is a `.extra_and_node`:
         ///   1. a `ExtraIndex` to `PtrTypeBitRange`.
@@ -3284,8 +3265,6 @@ pub const Node = struct {
         ///
         /// The `main_token` is the asterisk if a single item pointer or the
         /// lbracket if a slice, many-item pointer, or C-pointer.
-        /// The `main_token` might be a ** token, which is shared with a
-        /// parent/child pointer type and may require special handling.
         ptr_type_bit_range,
         /// `lhs[rhs..]`
         ///

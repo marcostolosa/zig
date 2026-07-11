@@ -280,7 +280,7 @@ test "implicit cast fn call result to optional in field result" {
 test "void parameters" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
 
-    try voidFun(1, void{}, 2, {});
+    try voidFun(1, {}, 2, {});
 }
 fn voidFun(a: i32, b: void, c: i32, d: void) !void {
     _ = d;
@@ -400,11 +400,12 @@ test "function with inferred error set but returning no error" {
     };
 
     const return_ty = @typeInfo(@TypeOf(S.foo)).@"fn".return_type.?;
-    try expectEqual(0, @typeInfo(@typeInfo(return_ty).error_union.error_set).error_set.?.len);
+    try expectEqual(0, @typeInfo(@typeInfo(return_ty).error_union.error_set).error_set.error_names.?.len);
 }
 
 test "import passed byref to function in return type" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const S = struct {
         fn get() @import("std").ArrayList(i32) {
@@ -440,6 +441,7 @@ test "implicit cast function to function ptr" {
 test "method call with optional and error union first param" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const S = struct {
         x: i32 = 1234,
@@ -744,6 +746,8 @@ test "coerce generic function making generic parameter concrete" {
 }
 
 test "return undefined pointer from function, directly and by expired local" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const S = struct {
         var global: i32 = 1;
 

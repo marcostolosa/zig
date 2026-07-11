@@ -17,6 +17,7 @@ const print = @import("Air/print.zig");
 
 pub const Legalize = @import("Air/Legalize.zig");
 pub const Liveness = @import("Air/Liveness.zig");
+pub const Verify = @import("Air/Verify.zig");
 
 instructions: std.MultiArrayList(Inst).Slice,
 /// The meaning of this data is determined by `Inst.Tag` value.
@@ -142,6 +143,13 @@ pub const Inst = struct {
         div_floor,
         /// Same as `div_floor` with optimized float mode.
         div_floor_optimized,
+        /// Ceiling integer or float division. For integers, wrapping is illegal behavior.
+        /// Both operands are guaranteed to be the same type, and the result type
+        /// is the same as both operands.
+        /// Uses the `bin_op` field.
+        div_ceil,
+        /// Same as `div_ceil` with optimized float mode.
+        div_ceil_optimized,
         /// Integer or float division.
         /// If a remainder would be produced, illegal behavior occurs.
         /// For integers, overflow is illegal behavior.
@@ -276,10 +284,50 @@ pub const Inst = struct {
         /// Boolean or binary NOT.
         /// Uses the `ty_op` field.
         not,
-        /// Reinterpret the bits of a value as a different type.  This is like `@bitCast` but
-        /// also supports enums and pointers.
+        /// Implements `@bitCast`.
+        ///
         /// Uses the `ty_op` field.
-        bitcast,
+        bit_cast,
+        /// Cast a pointer to a different pointer type. The result type is a slice iff the operand
+        /// type is a slice (the length of the slice does not change). All other pointer attributes
+        /// except for the address space may change.
+        ///
+        /// Supports vectors of pointers.
+        ///
+        /// Uses the `ty_op` field.
+        ptr_cast,
+        /// Cast an integer to a pointer (not a slice). Operand type is always `usize`.
+        ///
+        /// Supports vectors of integers.
+        ///
+        /// Uses the `ty_op` field.
+        ptr_from_int,
+        /// Cast a pointer (not a slice) to an integer. Result type is always `usize`.
+        ///
+        /// Supports vectors of pointers.
+        ///
+        /// Uses the `ty_op` field.
+        int_from_ptr,
+        /// Cast an error set `E1` to a different error set `E2`, or cast an error union `E1!T` to
+        /// an error union `E2!T` with the same payload type but a different error set type.
+        ///
+        /// Uses the `ty_op` field.
+        error_cast,
+        /// Cast an integer to an error set type. The integer operand type is unsigned and has bit
+        /// width equal to `zcu.errorSetBits()`.
+        ///
+        /// Uses the `ty_op` field.
+        error_from_int,
+        /// Cast an error set to an integer type. The integer destination type is unsigned and has
+        /// bit width equal to `zcu.errorSetBits()`.
+        ///
+        /// Uses the `ty_op` field.
+        int_from_error,
+        /// Cast an enum value to a tagged union, whose tag type is that enum, and which has no
+        /// payload bits (i.e. all payloads are equivalent to `void`).
+        ///
+        /// Uses the `ty_op` field.
+        union_from_enum,
         /// A block runs its body which always ends with a `noreturn` instruction,
         /// so the only way to proceed to the code after the `block` is to encounter a `br`
         /// that targets this `block`.  If the `block` type is `noreturn`,
@@ -589,13 +637,13 @@ pub const Inst = struct {
         /// the integer tag type of the enum.
         /// See `trunc` for integer truncation.
         /// Uses the `ty_op` field.
-        intcast,
-        /// Like `intcast`, but includes two safety checks:
+        int_cast,
+        /// Like `int_cast`, but includes two safety checks:
         /// * triggers a safety panic if the cast truncates bits
         /// * triggers a safety panic if the destination type is an exhaustive enum
         ///   and the operand is not a valid value of this type; i.e. equivalent to
         ///   a safety check based on `.is_named_enum_value`
-        intcast_safe,
+        int_cast_safe,
         /// Truncate higher bits from an integer, resulting in an integer type with the same
         /// sign but an equal or smaller number of bits.
         /// Uses the `ty_op` field.
@@ -647,8 +695,7 @@ pub const Inst = struct {
         struct_field_ptr_index_3,
         /// Given a byval struct or union and a field index, returns the field byval.
         /// Uses the `ty_pl` field, payload is `StructField`.
-        /// TODO rename to `agg_field_val`
-        struct_field_val,
+        agg_field_val,
         /// Given a pointer to a tagged union, set its tag to the provided value.
         /// Result type is always void.
         /// Uses the `bin_op` field. LHS is union pointer, RHS is new tag value.
@@ -918,6 +965,11 @@ pub const Inst = struct {
         /// Uses the `ty` field.
         c_va_start,
 
+        /// Implements `.len` field for `@SpirvType(.{ .runtime_array = T })`.
+        /// Result type is always `u32`.
+        /// Uses the `ty_pl` field, payload is `StructField`.
+        spirv_runtime_array_len,
+
         /// Implements @workItemId builtin.
         /// Result type is always `u32`
         /// Uses the `pl_op` field, payload is the dimension to get the work item id for.
@@ -950,7 +1002,7 @@ pub const Inst = struct {
         /// here is runtime-known, which is usually not allowed for vectors. `Legalize` may emit
         /// this instruction when scalarizing vector operations.
         ///
-        /// Uses the `bin_op` field. `lhs` is the vector pointer. `rhs` is the element index. Result
+        /// Uses the `bin_op` field. `lhs` is the vector value. `rhs` is the element index. Result
         /// type is the vector element type.
         legalize_vec_elem_val,
 
@@ -1032,7 +1084,6 @@ pub const Inst = struct {
     /// The ref `none` is an exception: it has the tag bit set but refers to the InternPool.
     pub const Ref = enum(u32) {
         u0_type = @intFromEnum(InternPool.Index.u0_type),
-        i0_type = @intFromEnum(InternPool.Index.i0_type),
         u1_type = @intFromEnum(InternPool.Index.u1_type),
         u8_type = @intFromEnum(InternPool.Index.u8_type),
         i8_type = @intFromEnum(InternPool.Index.i8_type),
@@ -1261,17 +1312,17 @@ pub const Inst = struct {
         },
         atomic_load: struct {
             ptr: Ref,
-            order: std.builtin.AtomicOrder,
+            order: std.lang.AtomicOrder,
         },
         prefetch: struct {
             ptr: Ref,
-            rw: std.builtin.PrefetchOptions.Rw,
+            rw: std.lang.PrefetchOptions.Rw,
             locality: u2,
-            cache: std.builtin.PrefetchOptions.Cache,
+            cache: std.lang.PrefetchOptions.Cache,
         },
         reduce: struct {
             operand: Ref,
-            operation: std.builtin.ReduceOp,
+            operation: std.lang.ReduceOp,
         },
         ty_nav: struct {
             ty: InternPool.Index,
@@ -1333,8 +1384,8 @@ pub const CondBr = struct {
     else_body_len: u32,
     branch_hints: BranchHints,
     pub const BranchHints = packed struct(u32) {
-        true: std.builtin.BranchHint = .none,
-        false: std.builtin.BranchHint = .none,
+        true: std.lang.BranchHint = .none,
+        false: std.lang.BranchHint = .none,
         then_cov: CoveragePoint = .none,
         else_cov: CoveragePoint = .none,
         _: u24 = 0,
@@ -1466,7 +1517,7 @@ pub const ShuffleTwoMask = enum(u32) {
 /// Trailing:
 /// 0. `Inst.Ref` for every outputs_len
 /// 1. `Inst.Ref` for every inputs_len
-/// 2. A number of u32 elements follow according to the equation `(source_len + 3) / 4`.
+/// 2. A number of u32 elements follow according to the equation `@divCeil(source_len, 4)`.
 ///    Memory starting at this position is reinterpreted as the source bytes.
 /// 3. for every outputs_len
 ///    - constraint: memory at this position is reinterpreted as a null
@@ -1482,7 +1533,7 @@ pub const Asm = struct {
     /// Length of the assembly source in bytes.
     source_len: u32,
     inputs_len: u32,
-    /// A comptime `std.builtin.assembly.Clobbers` value for the target architecture.
+    /// A comptime `std.lang.assembly.Clobbers` value for the target architecture.
     clobbers: InternPool.Index,
     flags: Flags,
 
@@ -1500,11 +1551,11 @@ pub const Cmpxchg = struct {
     /// 0b00000000000000000000000000XXX000 - failure_order
     flags: u32,
 
-    pub fn successOrder(self: Cmpxchg) std.builtin.AtomicOrder {
+    pub fn successOrder(self: Cmpxchg) std.lang.AtomicOrder {
         return @enumFromInt(@as(u3, @truncate(self.flags)));
     }
 
-    pub fn failureOrder(self: Cmpxchg) std.builtin.AtomicOrder {
+    pub fn failureOrder(self: Cmpxchg) std.lang.AtomicOrder {
         return @enumFromInt(@as(u3, @intCast(self.flags >> 3)));
     }
 };
@@ -1515,11 +1566,11 @@ pub const AtomicRmw = struct {
     /// 0b0000000000000000000000000XXXX000 - op
     flags: u32,
 
-    pub fn ordering(self: AtomicRmw) std.builtin.AtomicOrder {
+    pub fn ordering(self: AtomicRmw) std.lang.AtomicOrder {
         return @enumFromInt(@as(u3, @truncate(self.flags)));
     }
 
-    pub fn op(self: AtomicRmw) std.builtin.AtomicRmwOp {
+    pub fn op(self: AtomicRmw) std.lang.AtomicRmwOp {
         return @enumFromInt(@as(u4, @intCast(self.flags >> 3)));
     }
 };
@@ -1561,6 +1612,7 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         .div_float,
         .div_trunc,
         .div_floor,
+        .div_ceil,
         .div_exact,
         .rem,
         .mod,
@@ -1580,6 +1632,7 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         .div_float_optimized,
         .div_trunc_optimized,
         .div_floor_optimized,
+        .div_ceil_optimized,
         .div_exact_optimized,
         .rem_optimized,
         .mod_optimized,
@@ -1639,7 +1692,7 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         .block,
         .dbg_inline_block,
         .struct_field_ptr,
-        .struct_field_val,
+        .agg_field_val,
         .slice_elem_ptr,
         .ptr_elem_ptr,
         .cmpxchg_weak,
@@ -1663,12 +1716,19 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         => return datas[@intFromEnum(inst)].ty_pl.ty.toType(),
 
         .not,
-        .bitcast,
+        .bit_cast,
+        .ptr_cast,
+        .ptr_from_int,
+        .int_from_ptr,
+        .error_cast,
+        .error_from_int,
+        .int_from_error,
+        .union_from_enum,
         .load,
         .fpext,
         .fptrunc,
-        .intcast,
-        .intcast_safe,
+        .int_cast,
+        .int_cast_safe,
         .trunc,
         .optional_payload,
         .optional_payload_ptr,
@@ -1794,6 +1854,7 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         .work_item_id,
         .work_group_size,
         .work_group_id,
+        .spirv_runtime_array_len,
         => return .u32,
 
         .legalize_compiler_rt_call => return datas[@intFromEnum(inst)].legalize_compiler_rt_call.func.returnType(),
@@ -1806,15 +1867,15 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
 /// Returns the requested data, as well as the new index which is at the start of the
 /// trailers for the object.
 pub fn extraData(air: Air, comptime T: type, index: usize) struct { data: T, end: usize } {
-    const fields = std.meta.fields(T);
+    const info = @typeInfo(T).@"struct";
     var i: usize = index;
     var result: T = undefined;
-    inline for (fields) |field| {
-        @field(result, field.name) = switch (field.type) {
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        @field(result, field_name) = switch (field_type) {
             u32 => air.extra.items[i],
             InternPool.Index, Inst.Ref => @enumFromInt(air.extra.items[i]),
             i32, CondBr.BranchHints, Asm.Flags => @bitCast(air.extra.items[i]),
-            else => @compileError("bad field type: " ++ @typeName(field.type)),
+            else => @compileError("bad field type: " ++ @typeName(field_type)),
         };
         i += 1;
     }
@@ -1908,7 +1969,7 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .add_safe,
         .sub_safe,
         .mul_safe,
-        .intcast_safe,
+        .int_cast_safe,
         .int_from_float_safe,
         .int_from_float_optimized_safe,
         .legalize_vec_store_elem,
@@ -1933,6 +1994,8 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .div_trunc_optimized,
         .div_floor,
         .div_floor_optimized,
+        .div_ceil,
+        .div_ceil_optimized,
         .div_exact,
         .div_exact_optimized,
         .rem,
@@ -1960,7 +2023,14 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .shl_sat,
         .xor,
         .not,
-        .bitcast,
+        .bit_cast,
+        .ptr_cast,
+        .ptr_from_int,
+        .int_from_ptr,
+        .error_cast,
+        .error_from_int,
+        .int_from_error,
+        .union_from_enum,
         .ret_addr,
         .frame_addr,
         .clz,
@@ -2004,7 +2074,7 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .is_non_err,
         .fptrunc,
         .fpext,
-        .intcast,
+        .int_cast,
         .trunc,
         .optional_payload,
         .optional_payload_ptr,
@@ -2019,7 +2089,7 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .struct_field_ptr_index_1,
         .struct_field_ptr_index_2,
         .struct_field_ptr_index_3,
-        .struct_field_val,
+        .agg_field_val,
         .get_union_tag,
         .slice,
         .slice_len,
@@ -2057,6 +2127,7 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .work_group_size,
         .work_group_id,
         .legalize_vec_elem_val,
+        .spirv_runtime_array_len,
         => false,
 
         .is_non_null_ptr, .is_null_ptr, .is_non_err_ptr, .is_err_ptr => air.typeOf(data.un_op, ip).isVolatilePtrIp(ip),
@@ -2078,14 +2149,14 @@ pub const UnwrappedSwitch = struct {
     cases_start: u32,
 
     /// Asserts that `case_idx < us.cases_len`.
-    pub fn getHint(us: UnwrappedSwitch, case_idx: u32) std.builtin.BranchHint {
+    pub fn getHint(us: UnwrappedSwitch, case_idx: u32) std.lang.BranchHint {
         assert(case_idx < us.cases_len);
         return us.getHintInner(case_idx);
     }
-    pub fn getElseHint(us: UnwrappedSwitch) std.builtin.BranchHint {
+    pub fn getElseHint(us: UnwrappedSwitch) std.lang.BranchHint {
         return us.getHintInner(us.cases_len);
     }
-    fn getHintInner(us: UnwrappedSwitch, idx: u32) std.builtin.BranchHint {
+    fn getHintInner(us: UnwrappedSwitch, idx: u32) std.lang.BranchHint {
         const bag = us.air.extra.items[us.branch_hints_start..][idx / 10];
         const bits: u3 = @truncate(bag >> @intCast(3 * (idx % 10)));
         return @enumFromInt(bits);
@@ -2154,7 +2225,7 @@ pub fn unwrapSwitch(air: *const Air, switch_inst: Inst.Index) UnwrappedSwitch {
     }
     const pl_op = inst.data.pl_op;
     const extra = air.extraData(SwitchBr, pl_op.payload);
-    const hint_bag_count = std.math.divCeil(usize, extra.data.cases_len + 1, 10) catch unreachable;
+    const hint_bag_count = @divCeil(extra.data.cases_len + 1, 10);
     return .{
         .air = air,
         .operand = pl_op.operand,
@@ -2323,7 +2394,7 @@ pub const UnwrappedAsm = struct {
             const name = std.mem.sliceTo(constraint_name[constraint.len + 1 ..], 0);
             // This equation accounts for the fact that even if we have exactly 4 bytes
             // for the string, we still use the next u32 for the null terminator.
-            const next_offset = std.math.divCeil(usize, constraint.len + 1 + name.len + 1, @sizeOf(u32)) catch unreachable;
+            const next_offset = @divCeil(constraint.len + 1 + name.len + 1, @sizeOf(u32));
             self.constraint_names = self.constraint_names[next_offset..];
 
             return .{
@@ -2631,7 +2702,7 @@ pub const CompilerRtFunc = enum(u32) {
         };
     }
 
-    pub fn @"callconv"(f: CompilerRtFunc, target: *const std.Target) std.builtin.CallingConvention {
+    pub fn @"callconv"(f: CompilerRtFunc, target: *const std.Target) std.lang.CallingConvention {
         const use_gnu_f16_abi = switch (target.cpu.arch) {
             .wasm32,
             .wasm64,

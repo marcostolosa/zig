@@ -417,7 +417,8 @@ pub fn writableSliceGreedyPreserve(w: *Writer, preserve: usize, minimum_len: usi
     return w.buffer[w.end..];
 }
 
-/// Asserts the provided buffer has total capacity enough for `len`.
+/// Asserts the provided buffer has total capacity enough for `len`
+/// and `preserve` combined.
 ///
 /// Advances the buffer end position by `len`.
 ///
@@ -620,14 +621,14 @@ pub fn print(w: *Writer, comptime fmt: []const u8, args: anytype) Error!void {
         @compileError("expected tuple or struct argument, found " ++ @typeName(ArgsType));
     }
 
-    const fields_info = args_type_info.@"struct".fields;
+    const field_names = args_type_info.@"struct".field_names;
     const max_format_args = @typeInfo(std.fmt.ArgSetType).int.bits;
-    if (fields_info.len > max_format_args) {
+    if (field_names.len > max_format_args) {
         @compileError("32 arguments max are supported per format call");
     }
 
     @setEvalBranchQuota(@as(comptime_int, fmt.len) * 1000); // NOTE: We're upcasting as 16-bit usize overflows.
-    comptime var arg_state: std.fmt.ArgState = .{ .args_len = fields_info.len };
+    comptime var arg_state: std.fmt.ArgState = .{ .args_len = field_names.len };
     comptime var i = 0;
     comptime var literal: []const u8 = "";
     inline while (true) {
@@ -728,7 +729,7 @@ pub fn print(w: *Writer, comptime fmt: []const u8, args: anytype) Error!void {
                 .width = width,
                 .precision = precision,
             },
-            @field(args, fields_info[arg_to_print].name),
+            @field(args, field_names[arg_to_print]),
             std.options.fmt_max_depth,
         );
     }
@@ -755,8 +756,14 @@ pub fn writeByte(w: *Writer, byte: u8) Error!void {
     }
 }
 
-/// When draining the buffer, ensures that at least `preserve` bytes
-/// remain buffered.
+/// On success, at least `preserve` bytes will remain buffered if there are
+/// enough buffered bytes to do so.
+/// The amount buffered by the writer after the call will only be less than
+/// `preserve` if `w.end + 1` is less than `preserve` before the call.
+/// The intentionally preserved bytes will include up to `preserve -| 1` bytes from
+/// the previously buffered bytes, plus the newly written byte.
+///
+/// Asserts buffer capacity is at least `preserve`.
 pub fn writeBytePreserve(w: *Writer, preserve: usize, byte: u8) Error!void {
     if (w.buffer.len - w.end != 0) {
         @branchHint(.likely);
@@ -764,7 +771,7 @@ pub fn writeBytePreserve(w: *Writer, preserve: usize, byte: u8) Error!void {
         w.end += 1;
         return;
     }
-    try w.vtable.rebase(w, preserve, 1);
+    try w.vtable.rebase(w, preserve -| 1, 1);
     w.buffer[w.end] = byte;
     w.end += 1;
 }
@@ -781,9 +788,22 @@ test splatByteAll {
     defer aw.deinit();
 
     try aw.writer.splatByteAll('7', 45);
-    try testing.expectEqualStrings("7" ** 45, aw.writer.buffered());
+    try testing.expectEqualStrings(&@as([45]u8, @splat('7')), aw.writer.buffered());
 }
 
+/// Writes the same byte many times, performing the underlying write call as
+/// many times as necessary.
+///
+/// On success, at least `preserve` bytes will remain buffered if there are
+/// enough buffered bytes to do so.
+/// The amount buffered by the writer after the call will only be less than
+/// `preserve` if `w.end + n` is less than `preserve` before the call.
+/// The intentionally preserved bytes will include up to `preserve -| n` bytes from
+/// the previously buffered bytes, plus `@min(n, preserve_len)` of the newly
+/// written bytes.
+///
+/// Asserts buffer capacity is at least `preserve`.
+/// `n` can be greater than the buffer capacity.
 pub fn splatBytePreserve(w: *Writer, preserve: usize, byte: u8, n: usize) Error!void {
     const new_end = w.end + n;
     if (new_end <= w.buffer.len) {
@@ -802,12 +822,14 @@ pub fn splatBytePreserve(w: *Writer, preserve: usize, byte: u8, n: usize) Error!
             return;
         }
     }
-    // All the next bytes received must be preserved.
-    if (preserve < w.end) {
-        @memmove(w.buffer[0..preserve], w.buffer[w.end - preserve ..][0..preserve]);
-        w.end = preserve;
-    }
-    while (remaining > 0) remaining -= try w.splatByte(byte, remaining);
+    // Ensure the contract of `rebase` is upheld.
+    assert(w.end + remaining > w.buffer.len);
+    // Offset the amount preserved by the amount we have left to splat
+    // since the remaining splat is always going to be part of that
+    // preservation.
+    try w.vtable.rebase(w, preserve -| remaining, remaining);
+    @memset(w.buffer[w.end..][0..remaining], byte);
+    w.end += remaining;
 }
 
 /// Writes the same byte many times, allowing short writes.
@@ -1170,6 +1192,14 @@ pub fn printValue(
                 },
                 else => invalidFmtError(fmt, value),
             },
+            'q' => switch (@typeInfo(T)) {
+                .pointer => |info| switch (info.size) {
+                    .one, .slice => return printStringEscaped(w, value),
+                    .many, .c => return printStringEscaped(w, std.mem.span(value)),
+                },
+                .array => return printStringEscaped(w, &value),
+                else => invalidFmtError(fmt, value),
+            },
             'B' => switch (@typeInfo(T)) {
                 .int, .comptime_int => return w.printByteSize(value, .decimal, options),
                 .@"struct" => return value.formatByteSize(w, .decimal),
@@ -1280,7 +1310,7 @@ pub fn printValue(
         .@"enum" => |info| {
             if (!is_any and fmt.len != 0) invalidFmtError(fmt, value);
             optionsForbidden(options);
-            if (info.is_exhaustive) {
+            if (info.mode == .exhaustive) {
                 return printEnumExhaustive(w, value);
             } else {
                 return printEnumNonexhaustive(w, value);
@@ -1299,9 +1329,9 @@ pub fn printValue(
                 try w.writeAll(".{ .");
                 try w.writeAll(@tagName(@as(UnionTagType, value)));
                 try w.writeAll(" = ");
-                inline for (info.fields) |u_field| {
-                    if (value == @field(UnionTagType, u_field.name)) {
-                        try w.printValue(ANY, options, @field(value, u_field.name), max_depth - 1);
+                inline for (info.field_names) |u_field_name| {
+                    if (value == @field(UnionTagType, u_field_name)) {
+                        try w.printValue(ANY, options, @field(value, u_field_name), max_depth - 1);
                     }
                 }
                 try w.writeAll(" }");
@@ -1310,14 +1340,14 @@ pub fn printValue(
                     return w.writeAll(".{ ... }");
                 },
                 .@"extern", .@"packed" => {
-                    if (info.fields.len == 0) return w.writeAll(".{}");
+                    if (info.field_names.len == 0) return w.writeAll(".{}");
                     try w.writeAll(".{ ");
-                    inline for (info.fields, 1..) |field, i| {
+                    inline for (info.field_names, 1..) |field_name, i| {
                         try w.writeByte('.');
-                        try w.writeAll(field.name);
+                        try w.writeAll(field_name);
                         try w.writeAll(" = ");
-                        try w.printValue(ANY, options, @field(value, field.name), max_depth - 1);
-                        try w.writeAll(if (i < info.fields.len) ", " else " }");
+                        try w.printValue(ANY, options, @field(value, field_name), max_depth - 1);
+                        try w.writeAll(if (i < info.field_names.len) ", " else " }");
                     }
                 },
             }
@@ -1334,13 +1364,13 @@ pub fn printValue(
                     return;
                 }
                 try w.writeAll(".{");
-                inline for (info.fields, 0..) |f, i| {
+                inline for (info.field_names, 0..) |f_name, i| {
                     if (i == 0) {
                         try w.writeAll(" ");
                     } else {
                         try w.writeAll(", ");
                     }
-                    try w.printValue(ANY, options, @field(value, f.name), max_depth - 1);
+                    try w.printValue(ANY, options, @field(value, f_name), max_depth - 1);
                 }
                 try w.writeAll(" }");
                 return;
@@ -1350,15 +1380,15 @@ pub fn printValue(
                 return;
             }
             try w.writeAll(".{");
-            inline for (info.fields, 0..) |f, i| {
+            inline for (info.field_names, 0..) |f_name, i| {
                 if (i == 0) {
                     try w.writeAll(" .");
                 } else {
                     try w.writeAll(", .");
                 }
-                try w.writeAll(f.name);
+                try w.writeAll(f_name);
                 try w.writeAll(" = ");
-                try w.printValue(ANY, options, @field(value, f.name), max_depth - 1);
+                try w.printValue(ANY, options, @field(value, f_name), max_depth - 1);
             }
             try w.writeAll(" }");
         },
@@ -1446,6 +1476,14 @@ fn printEnumNonexhaustive(w: *Writer, value: anytype) Error!void {
     try w.writeByte(')');
 }
 
+/// Prints a double quote, then escapes a string according to Zig string
+/// literal rules, then a double quote.
+pub fn printStringEscaped(w: *Writer, bytes: []const u8) Error!void {
+    try w.writeByte('"');
+    try std.zig.stringEscape(bytes, w);
+    try w.writeByte('"');
+}
+
 pub fn printVector(
     w: *Writer,
     comptime fmt: []const u8,
@@ -1517,7 +1555,7 @@ pub fn printIntAny(
     // The type must have the same size as `base` or be wider in order for the
     // division to work
     const min_int_bits = comptime @max(value_info.bits, 8);
-    const MinInt = std.meta.Int(.unsigned, min_int_bits);
+    const MinInt = @Int(.unsigned, min_int_bits);
 
     const abs_value = @abs(value);
     // The worst case in terms of space needed is base 2, plus 1 for the sign
@@ -1637,7 +1675,7 @@ pub fn printFloatHex(w: *Writer, value: anytype, case: std.fmt.Case, opt_precisi
     });
 
     const T = @TypeOf(v);
-    const TU = std.meta.Int(.unsigned, @bitSizeOf(T));
+    const TU = @Int(.unsigned, @bitSizeOf(T));
 
     const mantissa_bits = std.math.floatMantissaBits(T);
     const fractional_bits = std.math.floatFractionalBits(T);
@@ -1924,7 +1962,6 @@ test "serialize signed LEB128" {
     try testLeb128Encoding(i128, std.math.minInt(i128), "\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x7E");
 
     // Specific cases
-    try testLeb128Encoding(i0, 0, "\x00");
     try testLeb128Encoding(i8, 0, "\x00");
 
     try testLeb128Encoding(i2, -1, "\x7F");
@@ -2099,6 +2136,11 @@ test "printFloat with comptime_float" {
     try w.printFloat(@as(comptime_float, 1.0), std.fmt.Options.toNumber(.{}, .scientific, .lower));
     try testing.expectEqualStrings(w.buffered(), "1e0");
     try testing.expectFmt("1", "{}", .{1.0});
+}
+
+test "{q} format string" {
+    const data: []const u8 = "i\tlike\"cheese\x00\x05cheese";
+    try testing.expectFmt("hello \"i\\tlike\\\"cheese\\x00\\x05cheese\" world", "hello {q} world", .{data});
 }
 
 fn testPrintIntCase(expected: []const u8, value: anytype, base: u8, case: std.fmt.Case, options: std.fmt.Options) !void {
@@ -2482,15 +2524,14 @@ pub fn Hashing(comptime Hasher: type) type {
 
         fn drain(w: *Writer, data: []const []const u8, splat: usize) Error!usize {
             const this: *@This() = @alignCast(@fieldParentPtr("writer", w));
-            const hasher = &this.hasher;
-            hasher.update(w.buffered());
+            this.hasher.update(w.buffered());
             w.end = 0;
             var n: usize = 0;
             for (data[0 .. data.len - 1]) |slice| {
-                hasher.update(slice);
+                this.hasher.update(slice);
                 n += slice.len;
             }
-            for (0..splat) |_| hasher.update(data[data.len - 1]);
+            for (0..splat) |_| this.hasher.update(data[data.len - 1]);
             return n + splat * data[data.len - 1].len;
         }
     };
@@ -2731,10 +2772,14 @@ pub const Allocating = struct {
         if (limit == .nothing) return 0;
         const a: *Allocating = @fieldParentPtr("writer", w);
         const pos = file_reader.logicalPos();
-        const additional = if (file_reader.getSize()) |size| size - pos else |_| std.atomic.cache_line;
+        const additional, const exact = if (file_reader.getSize()) |size|
+            .{ size - pos, true }
+        else |_|
+            .{ std.atomic.cache_line, false };
         if (additional == 0) return error.EndOfStream;
         a.ensureUnusedCapacity(limit.minInt64(additional)) catch return error.WriteFailed;
-        const dest = limit.slice(a.writer.buffer[a.writer.end..]);
+        const buffer = a.writer.buffer[a.writer.end..];
+        const dest = if (exact) buffer[0..limit.minInt64(additional)] else limit.slice(buffer);
         const n = try file_reader.interface.readSliceShort(dest);
         if (n == 0) return error.EndOfStream;
         a.writer.end += n;
@@ -2887,4 +2932,47 @@ test "writableSlice with fixed writer" {
     var w: std.Io.Writer = .fixed(&buf);
     try w.writeByte(1);
     try std.testing.expectError(error.WriteFailed, w.writableSlice(2));
+}
+
+test splatBytePreserve {
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 5, .splat_len = 5 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 9, .preserve = 5, .splat_len = 2 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 5, .splat_len = 6 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .splat_len = 6 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 5, .splat_len = 10 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .splat_len = 10 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .splat_len = 11 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .splat_len = 80 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .splat_len = 85 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .splat_len = 6 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .splat_len = 11 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .splat_len = 80 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .splat_len = 85 });
+}
+
+fn testSplatBytePreserve(options: struct { buf_len: u4, fill_len: u4, preserve: u4, splat_len: u8 }) !void {
+    assert(options.fill_len <= options.buf_len);
+    assert(options.preserve <= options.buf_len);
+
+    const fill_buf = "abcdefghijklmno";
+    const fill = fill_buf[0..options.fill_len];
+    var expected_out_buf: [256]u8 = @splat('X');
+    @memcpy(expected_out_buf[0..options.fill_len], fill);
+    const expected_out = expected_out_buf[0 .. options.fill_len + options.splat_len];
+    const expected_preserved = expected_out[expected_out.len -| options.preserve..];
+
+    var out_buf: [256]u8 = undefined;
+    var fw: Writer = .fixed(&out_buf);
+    var indirect_buffer: [16]u8 = undefined;
+    var twi: std.testing.WriterIndirect = .init(&fw, indirect_buffer[0..options.buf_len]);
+    const w = &twi.interface;
+
+    try w.writeAll(fill);
+    try w.splatBytePreserve(options.preserve, 'X', options.splat_len);
+
+    try std.testing.expectEqualStrings(expected_preserved, w.buffer[w.end -| options.preserve..w.end]);
+
+    try w.flush();
+
+    try std.testing.expectEqualStrings(expected_out, fw.buffer[0..fw.end]);
 }

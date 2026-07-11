@@ -22,6 +22,7 @@ const targets = [_]std.Target.Query{
     .{ .cpu_arch = .aarch64, .os_tag = .openbsd, .abi = .none },
     .{ .cpu_arch = .aarch64, .os_tag = .rtems, .abi = .none },
     .{ .cpu_arch = .aarch64, .os_tag = .serenity, .abi = .none },
+    .{ .cpu_arch = .aarch64, .os_tag = .@"switch", .abi = .none },
     .{ .cpu_arch = .aarch64, .os_tag = .tvos, .abi = .none },
     .{ .cpu_arch = .aarch64, .os_tag = .tvos, .abi = .simulator },
     .{ .cpu_arch = .aarch64, .os_tag = .uefi, .abi = .none },
@@ -53,7 +54,6 @@ const targets = [_]std.Target.Query{
     .{ .cpu_arch = .arm, .os_tag = .freestanding, .abi = .eabi },
     .{ .cpu_arch = .arm, .os_tag = .freestanding, .abi = .eabihf },
     .{ .cpu_arch = .arm, .os_tag = .fuchsia, .abi = .eabihf },
-    .{ .cpu_arch = .arm, .os_tag = .haiku, .abi = .eabi },
     .{ .cpu_arch = .arm, .os_tag = .haiku, .abi = .eabihf },
     .{ .cpu_arch = .arm, .os_tag = .linux, .abi = .androideabi },
     .{ .cpu_arch = .arm, .os_tag = .linux, .abi = .eabi },
@@ -126,7 +126,6 @@ const targets = [_]std.Target.Query{
     // .{ .cpu_arch = .loongarch64, .os_tag = .uefi, .abi = .none },
 
     .{ .cpu_arch = .m68k, .os_tag = .freestanding, .abi = .none },
-    .{ .cpu_arch = .m68k, .os_tag = .haiku, .abi = .none },
     .{ .cpu_arch = .m68k, .os_tag = .linux, .abi = .gnu },
     .{ .cpu_arch = .m68k, .os_tag = .linux, .abi = .musl },
     .{ .cpu_arch = .m68k, .os_tag = .linux, .abi = .none },
@@ -156,11 +155,13 @@ const targets = [_]std.Target.Query{
     .{ .cpu_arch = .mipsel, .os_tag = .linux, .abi = .musleabihf },
     .{ .cpu_arch = .mipsel, .os_tag = .netbsd, .abi = .eabi },
     .{ .cpu_arch = .mipsel, .os_tag = .netbsd, .abi = .eabihf },
+    // .{ .cpu_arch = .mipsel, .os_tag = .psx, .abi = .eabi },
     .{ .cpu_arch = .mipsel, .os_tag = .psp, .abi = .eabihf },
     .{ .cpu_arch = .mipsel, .os_tag = .rtems, .abi = .eabi },
     .{ .cpu_arch = .mipsel, .os_tag = .rtems, .abi = .eabihf },
 
     .{ .cpu_arch = .mips64, .os_tag = .freestanding, .abi = .none },
+    .{ .cpu_arch = .mips64, .os_tag = .linux, .abi = .abin32 },
     .{ .cpu_arch = .mips64, .os_tag = .linux, .abi = .gnuabi64 },
     .{ .cpu_arch = .mips64, .os_tag = .linux, .abi = .gnuabin32 },
     .{ .cpu_arch = .mips64, .os_tag = .linux, .abi = .muslabi64 },
@@ -169,6 +170,7 @@ const targets = [_]std.Target.Query{
     .{ .cpu_arch = .mips64, .os_tag = .openbsd, .abi = .none },
 
     .{ .cpu_arch = .mips64el, .os_tag = .freestanding, .abi = .none },
+    .{ .cpu_arch = .mips64el, .os_tag = .linux, .abi = .abin32 },
     .{ .cpu_arch = .mips64el, .os_tag = .linux, .abi = .gnuabi64 },
     .{ .cpu_arch = .mips64el, .os_tag = .linux, .abi = .gnuabin32 },
     .{ .cpu_arch = .mips64el, .os_tag = .linux, .abi = .muslabi64 },
@@ -186,19 +188,15 @@ const targets = [_]std.Target.Query{
 
     .{ .cpu_arch = .powerpc, .os_tag = .freestanding, .abi = .eabi },
     .{ .cpu_arch = .powerpc, .os_tag = .freestanding, .abi = .eabihf },
-    .{ .cpu_arch = .powerpc, .os_tag = .haiku, .abi = .eabi },
-    .{ .cpu_arch = .powerpc, .os_tag = .haiku, .abi = .eabihf },
     .{ .cpu_arch = .powerpc, .os_tag = .linux, .abi = .eabi },
     .{ .cpu_arch = .powerpc, .os_tag = .linux, .abi = .eabihf },
-    .{ .cpu_arch = .powerpc, .os_tag = .linux, .abi = .gnueabi },
-    .{ .cpu_arch = .powerpc, .os_tag = .linux, .abi = .gnueabihf },
     .{ .cpu_arch = .powerpc, .os_tag = .linux, .abi = .musleabi },
     .{ .cpu_arch = .powerpc, .os_tag = .linux, .abi = .musleabihf },
-    .{ .cpu_arch = .powerpc, .os_tag = .netbsd, .abi = .eabi },
     .{ .cpu_arch = .powerpc, .os_tag = .netbsd, .abi = .eabihf },
     .{ .cpu_arch = .powerpc, .os_tag = .openbsd, .abi = .eabihf },
     .{ .cpu_arch = .powerpc, .os_tag = .rtems, .abi = .eabi },
     .{ .cpu_arch = .powerpc, .os_tag = .rtems, .abi = .eabihf },
+    .{ .cpu_arch = .powerpc, .os_tag = .wiiu, .abi = .eabihf },
 
     .{ .cpu_arch = .powerpcle, .os_tag = .freestanding, .abi = .eabi },
     .{ .cpu_arch = .powerpcle, .os_tag = .freestanding, .abi = .eabihf },
@@ -221,6 +219,7 @@ const targets = [_]std.Target.Query{
     .{ .cpu_arch = .riscv32, .os_tag = .linux, .abi = .gnu },
     .{ .cpu_arch = .riscv32, .os_tag = .linux, .abi = .musl },
     .{ .cpu_arch = .riscv32, .os_tag = .linux, .abi = .none },
+    .{ .cpu_arch = .riscv32, .os_tag = .netbsd, .abi = .none },
     .{ .cpu_arch = .riscv32, .os_tag = .rtems, .abi = .none },
     // .{ .cpu_arch = .riscv32, .os_tag = .uefi, .abi = .none },
 
@@ -235,6 +234,7 @@ const targets = [_]std.Target.Query{
     .{ .cpu_arch = .riscv64, .os_tag = .linux, .abi = .gnu },
     .{ .cpu_arch = .riscv64, .os_tag = .linux, .abi = .musl },
     .{ .cpu_arch = .riscv64, .os_tag = .linux, .abi = .none },
+    .{ .cpu_arch = .riscv64, .os_tag = .netbsd, .abi = .none },
     .{ .cpu_arch = .riscv64, .os_tag = .openbsd, .abi = .none },
     .{ .cpu_arch = .riscv64, .os_tag = .rtems, .abi = .none },
     .{ .cpu_arch = .riscv64, .os_tag = .serenity, .abi = .none },
@@ -254,7 +254,6 @@ const targets = [_]std.Target.Query{
     .{ .cpu_arch = .sparc, .os_tag = .rtems, .abi = .none },
 
     .{ .cpu_arch = .sparc64, .os_tag = .freestanding, .abi = .none },
-    .{ .cpu_arch = .sparc64, .os_tag = .haiku, .abi = .none },
     .{ .cpu_arch = .sparc64, .os_tag = .linux, .abi = .gnu },
     .{ .cpu_arch = .sparc64, .os_tag = .linux, .abi = .none },
     .{ .cpu_arch = .sparc64, .os_tag = .netbsd, .abi = .none },
@@ -336,6 +335,7 @@ const targets = [_]std.Target.Query{
     .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .muslx32 },
     .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .none },
     .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .ohos },
+    .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .x32 },
     .{ .cpu_arch = .x86_64, .os_tag = .maccatalyst, .abi = .none },
     .{ .cpu_arch = .x86_64, .os_tag = .macos, .abi = .none },
     .{ .cpu_arch = .x86_64, .os_tag = .netbsd, .abi = .none },
@@ -351,7 +351,9 @@ const targets = [_]std.Target.Query{
 
     .{ .cpu_arch = .xcore, .os_tag = .freestanding, .abi = .none },
 
+    .{ .cpu_arch = .xtensa, .os_tag = .freestanding, .abi = .call0 },
     .{ .cpu_arch = .xtensa, .os_tag = .freestanding, .abi = .none },
+    .{ .cpu_arch = .xtensa, .os_tag = .linux, .abi = .call0 },
     .{ .cpu_arch = .xtensa, .os_tag = .linux, .abi = .none },
 };
 

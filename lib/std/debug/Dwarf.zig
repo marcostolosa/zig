@@ -134,7 +134,7 @@ pub const CompileUnit = struct {
         files: []FileEntry,
         version: u16,
 
-        pub const LineTable = std.AutoArrayHashMapUnmanaged(u64, LineEntry);
+        pub const LineTable = std.array_hash_map.Auto(u64, LineEntry);
 
         pub const LineEntry = struct {
             line: u32,
@@ -1346,7 +1346,7 @@ const FileEntry = struct {
     dir_index: u32 = 0,
     mtime: u64 = 0,
     size: u64 = 0,
-    md5: [16]u8 = [1]u8{0} ** 16,
+    md5: [16]u8 = @splat(0),
 };
 
 const LineNumberProgram = struct {
@@ -1436,6 +1436,7 @@ pub fn compactUnwindToDwarfRegNumber(unwind_reg_number: u3) !u16 {
 pub fn ipRegNum(arch: std.Target.Cpu.Arch) ?u16 {
     return switch (arch) {
         .aarch64, .aarch64_be => 32,
+        .alpha => 64,
         .arc, .arceb => 160,
         .arm, .armeb, .thumb, .thumbeb => 15,
         .csky => 64,
@@ -1444,6 +1445,7 @@ pub fn ipRegNum(arch: std.Target.Cpu.Arch) ?u16 {
         .lanai => 2,
         .loongarch32, .loongarch64 => 64,
         .m68k => 26,
+        .m88k => 64,
         .mips, .mipsel, .mips64, .mips64el => 66,
         .or1k => 35,
         .powerpc, .powerpcle, .powerpc64, .powerpc64le => 67,
@@ -1460,6 +1462,7 @@ pub fn ipRegNum(arch: std.Target.Cpu.Arch) ?u16 {
 pub fn fpRegNum(arch: std.Target.Cpu.Arch) u16 {
     return switch (arch) {
         .aarch64, .aarch64_be => 29,
+        .alpha => 15,
         .arc, .arceb => 27,
         .arm, .armeb, .thumb, .thumbeb => 11,
         .csky => 14,
@@ -1468,6 +1471,7 @@ pub fn fpRegNum(arch: std.Target.Cpu.Arch) u16 {
         .lanai => 5,
         .loongarch32, .loongarch64 => 22,
         .m68k => 14,
+        .m88k => 30,
         .mips, .mipsel, .mips64, .mips64el => 30,
         .or1k => 2,
         .powerpc, .powerpcle, .powerpc64, .powerpc64le => 1,
@@ -1484,6 +1488,7 @@ pub fn fpRegNum(arch: std.Target.Cpu.Arch) u16 {
 pub fn spRegNum(arch: std.Target.Cpu.Arch) u16 {
     return switch (arch) {
         .aarch64, .aarch64_be => 31,
+        .alpha => 30,
         .arc, .arceb => 28,
         .arm, .armeb, .thumb, .thumbeb => 13,
         .csky => 14,
@@ -1492,6 +1497,7 @@ pub fn spRegNum(arch: std.Target.Cpu.Arch) u16 {
         .lanai => 4,
         .loongarch32, .loongarch64 => 3,
         .m68k => 15,
+        .m88k => 31,
         .mips, .mipsel, .mips64, .mips64el => 29,
         .or1k => 1,
         .powerpc, .powerpcle, .powerpc64, .powerpc64le => 1,

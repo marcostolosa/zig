@@ -60,6 +60,7 @@ test {
     _ = @import("behavior/nan.zig");
     _ = @import("behavior/null.zig");
     _ = @import("behavior/optional.zig");
+    _ = @import("behavior/overlapping_assign.zig");
     _ = @import("behavior/packed-struct.zig");
     _ = @import("behavior/packed_struct_explicit_backing_int.zig");
     _ = @import("behavior/packed-union.zig");
@@ -77,6 +78,7 @@ test {
     _ = @import("behavior/sizeof_and_typeof.zig");
     _ = @import("behavior/slice.zig");
     _ = @import("behavior/slice_sentinel_comptime.zig");
+    _ = @import("behavior/splat.zig");
     _ = @import("behavior/src.zig");
     _ = @import("behavior/string_literals.zig");
     _ = @import("behavior/struct.zig");
@@ -110,6 +112,10 @@ test {
 
     if (builtin.cpu.arch == .wasm32) {
         _ = @import("behavior/wasm.zig");
+    }
+
+    if (builtin.zig_backend == .stage2_spirv) {
+        _ = @import("behavior/spirv.zig");
     }
 
     if (builtin.zig_backend != .stage2_spirv and builtin.os.tag != .wasi) {

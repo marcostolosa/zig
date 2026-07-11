@@ -375,8 +375,8 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                         const auth_tag = record_decoder.array(P.AEAD.tag_length).*;
                         const nonce = nonce: {
                             const V = @Vector(P.AEAD.nonce_length, u8);
-                            const pad = [1]u8{0} ** (P.AEAD.nonce_length - 8);
-                            const operand: V = pad ++ @as([8]u8, @bitCast(big(read_seq)));
+                            const pad: [P.AEAD.nonce_length - 8]u8 = @splat(0);
+                            const operand: V = pad ++ @as([8]u8, @bitCast(@byteSwap(read_seq)));
                             break :nonce @as(V, pv.server_handshake_iv) ^ operand;
                         };
                         P.AEAD.decrypt(cleartext, ciphertext, auth_tag, record_header, nonce, pv.server_handshake_key) catch
@@ -415,8 +415,8 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                             comptime std.math.shl(u64, std.math.maxInt(u64), 8 * P.record_iv_length);
                         const nonce: [P.AEAD.nonce_length]u8 = nonce: {
                             const V = @Vector(P.AEAD.nonce_length, u8);
-                            const pad = [1]u8{0} ** (P.AEAD.nonce_length - 8);
-                            const operand: V = pad ++ @as([8]u8, @bitCast(big(masked_read_seq)));
+                            const pad: [P.AEAD.nonce_length - 8]u8 = @splat(0);
+                            const operand: V = pad ++ @as([8]u8, @bitCast(@byteSwap(masked_read_seq)));
                             break :nonce @as(V, pv.app_cipher.server_write_IV ++ record_iv) ^ operand;
                         };
                         const ciphertext = record_decoder.slice(message_len);
@@ -539,7 +539,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                         const p = &@field(handshake_cipher, @tagName(tag.with()));
                                         const P = @TypeOf(p.*).A;
                                         const hello_hash = p.transcript_hash.peek();
-                                        const zeroes = [1]u8{0} ** P.Hash.digest_length;
+                                        const zeroes: [P.Hash.digest_length]u8 = @splat(0);
                                         const early_secret = P.Hkdf.extract(&[1]u8{0}, &zeroes);
                                         const empty_hash = tls.emptyHash(P.Hash);
                                         p.version = .{ .tls_1_3 = undefined };
@@ -791,8 +791,8 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                 const pv = &p.version.tls_1_2;
                                 const nonce: [P.AEAD.nonce_length]u8 = nonce: {
                                     const V = @Vector(P.AEAD.nonce_length, u8);
-                                    const pad = [1]u8{0} ** (P.AEAD.nonce_length - 8);
-                                    const operand: V = pad ++ @as([8]u8, @bitCast(big(write_seq)));
+                                    const pad: [P.AEAD.nonce_length - 8]u8 = @splat(0);
+                                    const operand: V = pad ++ @as([8]u8, @bitCast(@byteSwap(write_seq)));
                                     break :nonce @as(V, pv.app_cipher.client_write_IV ++ pv.app_cipher.client_salt) ^ operand;
                                 };
                                 var client_verify_msg = .{@intFromEnum(tls.ContentType.handshake)} ++
@@ -832,8 +832,9 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                         }
                         switch (handshake_cipher) {
                             inline else => |*p| {
+                                const pad: [64]u8 = @splat(' ');
                                 try main_cert_pub_key.verifySignature(&hsd, &.{
-                                    " " ** 64 ++ "TLS 1.3, server CertificateVerify\x00",
+                                    pad ++ "TLS 1.3, server CertificateVerify\x00",
                                     &p.transcript_hash.peek(),
                                 });
                                 p.transcript_hash.update(wrapped_handshake);
@@ -1066,7 +1067,7 @@ fn prepareCiphertextRecord(
                     ciphertext_end += auth_tag.len;
                     const nonce = nonce: {
                         const V = @Vector(P.AEAD.nonce_length, u8);
-                        const pad = [1]u8{0} ** (P.AEAD.nonce_length - 8);
+                        const pad: [P.AEAD.nonce_length - 8]u8 = @splat(0);
                         const operand: V = pad ++ mem.toBytes(big(c.write_seq));
                         break :nonce @as(V, pv.client_iv) ^ operand;
                     };
@@ -1103,8 +1104,8 @@ fn prepareCiphertextRecord(
                     ciphertext_end += P.record_iv_length;
                     const nonce: [P.AEAD.nonce_length]u8 = nonce: {
                         const V = @Vector(P.AEAD.nonce_length, u8);
-                        const pad = [1]u8{0} ** (P.AEAD.nonce_length - 8);
-                        const operand: V = pad ++ @as([8]u8, @bitCast(big(c.write_seq)));
+                        const pad: [P.AEAD.nonce_length - 8]u8 = @splat(0);
+                        const operand: V = pad ++ @as([8]u8, @bitCast(@byteSwap(c.write_seq)));
                         break :nonce @as(V, pv.client_write_IV ++ pv.client_salt) ^ operand;
                     };
                     record_iv.* = nonce[P.fixed_iv_length..].*;
@@ -1185,7 +1186,7 @@ fn readIndirect(c: *Client) Reader.Error!usize {
                 const auth_tag = (input.takeArray(P.AEAD.tag_length) catch unreachable).*; // already peeked
                 const nonce = nonce: {
                     const V = @Vector(P.AEAD.nonce_length, u8);
-                    const pad = [1]u8{0} ** (P.AEAD.nonce_length - 8);
+                    const pad: [P.AEAD.nonce_length - 8]u8 = @splat(0);
                     const operand: V = pad ++ mem.toBytes(big(c.read_seq));
                     break :nonce @as(V, pv.server_iv) ^ operand;
                 };
@@ -1201,6 +1202,7 @@ fn readIndirect(c: *Client) Reader.Error!usize {
             .tls_1_2 => {
                 const pv = &p.tls_1_2;
                 const P = @TypeOf(p.*);
+                if (record_len < P.record_iv_length + P.mac_length) return failRead(c, error.TlsRecordOverflow);
                 const message_len: u16 = record_len - P.record_iv_length - P.mac_length;
                 const ad_header = input.take(tls.record_header_len) catch unreachable; // already peeked
                 const ad = mem.toBytes(big(c.read_seq)) ++
@@ -1211,8 +1213,8 @@ fn readIndirect(c: *Client) Reader.Error!usize {
                     comptime std.math.shl(u64, std.math.maxInt(u64), 8 * P.record_iv_length);
                 const nonce: [P.AEAD.nonce_length]u8 = nonce: {
                     const V = @Vector(P.AEAD.nonce_length, u8);
-                    const pad = [1]u8{0} ** (P.AEAD.nonce_length - 8);
-                    const operand: V = pad ++ @as([8]u8, @bitCast(big(masked_read_seq)));
+                    const pad: [P.AEAD.nonce_length - 8]u8 = @splat(0);
+                    const operand: V = pad ++ @as([8]u8, @bitCast(@byteSwap(masked_read_seq)));
                     break :nonce @as(V, pv.server_write_IV ++ record_iv) ^ operand;
                 };
                 const ciphertext = input.take(message_len) catch unreachable; // already peeked
@@ -1337,11 +1339,11 @@ fn failRead(c: *Client, err: ReadError) error{ReadFailed} {
 }
 
 fn logSecrets(w: *Writer, context: anytype, secrets: anytype) void {
-    inline for (@typeInfo(@TypeOf(secrets)).@"struct".fields) |field| w.print("{s}" ++
-        (if (@hasField(@TypeOf(context), "counter")) "_{d}" else "") ++ " {x} {x}\n", .{field.name} ++
+    inline for (@typeInfo(@TypeOf(secrets)).@"struct".field_names) |field_name| w.print("{s}" ++
+        (if (@hasField(@TypeOf(context), "counter")) "_{d}" else "") ++ " {x} {x}\n", .{field_name} ++
         (if (@hasField(@TypeOf(context), "counter")) .{context.counter} else .{}) ++ .{
         context.client_random,
-        @field(secrets, field.name),
+        @field(secrets, field_name),
     }) catch {};
 }
 
@@ -1673,7 +1675,7 @@ else
         .ECDHE_RSA_WITH_AES_256_GCM_SHA384,
     });
 
-fn testReadError(input_buf: []const u8, cipher: tls.ApplicationCipher) ReadError {
+fn testReadError(input_buf: []const u8, tls_version: tls.ProtocolVersion, cipher: tls.ApplicationCipher) ReadError {
     var input_reader: Reader = .fixed(input_buf);
     var read_buf: [tls.max_ciphertext_record_len]u8 = undefined;
     var c: Client = .{
@@ -1686,7 +1688,7 @@ fn testReadError(input_buf: []const u8, cipher: tls.ApplicationCipher) ReadError
         },
         .output = undefined,
         .writer = undefined,
-        .tls_version = .tls_1_3,
+        .tls_version = tls_version,
         .read_seq = 0,
         .write_seq = 0,
         .received_close_notify = false,
@@ -1714,6 +1716,7 @@ test "empty inner plaintext" {
 
     try std.testing.expectEqual(error.TlsDecodeError, testReadError(
         &record_header ++ ciphertext ++ tag,
+        .tls_1_3,
         .{ .CHACHA20_POLY1305_SHA256 = .{ .tls_1_3 = .{
             .server_key = key,
             .server_iv = iv,
@@ -1733,6 +1736,7 @@ test "record shorter than tag" {
 
     try std.testing.expectEqual(error.TlsRecordOverflow, testReadError(
         &wire,
+        .tls_1_3,
         .{ .CHACHA20_POLY1305_SHA256 = .{ .tls_1_3 = .{
             .server_key = undefined,
             .server_iv = undefined,
@@ -1741,5 +1745,17 @@ test "record shorter than tag" {
             .client_key = undefined,
             .client_iv = undefined,
         } } },
+    ));
+}
+
+test "TLS 1.2 record shorter than IV plus tag" {
+    const P = tls.ApplicationCipherT(crypto.aead.aes_gcm.Aes128Gcm, crypto.hash.sha2.Sha256, 8);
+    const record_len: u16 = P.record_iv_length + P.mac_length - 1;
+    const header = [_]u8{ 0x17, 0x03, 0x03 } ++ mem.toBytes(big(record_len));
+
+    try std.testing.expectEqual(error.TlsRecordOverflow, testReadError(
+        &(header ++ @as([record_len]u8, @splat(0))),
+        .tls_1_2,
+        .{ .AES_128_GCM_SHA256 = .{ .tls_1_2 = mem.zeroes(P.Tls_1_2) } },
     ));
 }

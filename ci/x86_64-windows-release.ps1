@@ -2,7 +2,6 @@ $TARGET = "x86_64-windows-gnu"
 $MCPU = "baseline"
 $PREFIX_PATH = "$($Env:USERPROFILE)\deps\zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
 $ZIG = "$PREFIX_PATH\bin\zig.exe"
-$ZIG_LIB_DIR = "$(Get-Location)\lib"
 $ZSF_MAX_RSS = if ($Env:ZSF_MAX_RSS) { $Env:ZSF_MAX_RSS } else { 0 }
 
 function CheckLastExitCode {
@@ -42,10 +41,12 @@ CheckLastExitCode
 ninja install
 CheckLastExitCode
 
+# Must be done after zig cc is finished.
+$Env:ZIG_LIB_DIR="$(Get-Location)\..\lib"
+
 Write-Output "Main test suite..."
 stage3-release\bin\zig.exe build test docs `
   --maxrss $ZSF_MAX_RSS `
-  --zig-lib-dir "$ZIG_LIB_DIR" `
   --search-prefix "$PREFIX_PATH" `
   -Dstatic-llvm `
   -Dskip-non-native `
@@ -60,10 +61,6 @@ CheckLastExitCode
 # CheckLastExitCode
 # stage3-release\bin\zig.exe build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=Debug
 # CheckLastExitCode
-
-# Ensure that reduce compiles
-stage3-release\bin\zig.exe build reduce -h
-CheckLastExitCode
 
 # Ensure that stage3 and stage4 are byte-for-byte identical.
 Write-Output "Build and compare stage4..."
@@ -86,7 +83,6 @@ CheckLastExitCode
 
 Write-Output "Build x86_64-windows-msvc behavior tests using the C backend..."
 stage3-release\bin\zig.exe build-obj `
-  --zig-lib-dir "$ZIG_LIB_DIR" `
   -ofmt=c `
   -OReleaseSmall `
   --name compiler_rt `
@@ -97,7 +93,6 @@ stage3-release\bin\zig.exe build-obj `
 CheckLastExitCode
 
 stage3-release\bin\zig.exe test `
-  --zig-lib-dir "$ZIG_LIB_DIR" `
   -ofmt=c `
   -femit-bin="behavior-x86_64-windows-msvc.c" `
   --test-no-exec `

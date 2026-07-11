@@ -31,31 +31,6 @@ test "truncate.u0.var" {
     try expect(z == 0);
 }
 
-test "truncate i0 to larger integer allowed and has comptime-known result" {
-    var x: i0 = 0;
-    _ = &x;
-    const y: i8 = @truncate(x);
-    comptime assert(y == 0);
-}
-
-test "truncate.i0.literal" {
-    const z: i0 = @truncate(0);
-    try expect(z == 0);
-}
-
-test "truncate.i0.const" {
-    const c0: isize = 0;
-    const z: i0 = @truncate(c0);
-    try expect(z == 0);
-}
-
-test "truncate.i0.var" {
-    var d: i8 = 2;
-    _ = &d;
-    const z: i0 = @truncate(d);
-    try expect(z == 0);
-}
-
 test "truncate on comptime integer" {
     const x: u16 = @truncate(9999);
     try expect(x == 9999);
@@ -75,6 +50,7 @@ fn testTruncate(comptime S: type, a: S, comptime D: type, expected: D) !void {
 test "@truncate > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testTruncate(u140, 0, u128, 0);
     try testTruncate(u140, maxInt(u140), u128, maxInt(u128));

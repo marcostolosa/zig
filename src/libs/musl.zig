@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const mem = std.mem;
 const path = std.fs.path;
 const assert = std.debug.assert;
-const Module = @import("../Package/Module.zig");
+const Module = @import("../Module.zig");
 
 const Compilation = @import("../Compilation.zig");
 const build_options = @import("build_options");
@@ -43,7 +43,6 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 },
             };
             return comp.build_crt_file("crt1", .Obj, .@"musl crt1.o", prog_node, &files, .{
-                .omit_frame_pointer = true,
                 .no_builtin = true,
             });
         },
@@ -61,7 +60,6 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 },
             };
             return comp.build_crt_file("rcrt1", .Obj, .@"musl rcrt1.o", prog_node, &files, .{
-                .omit_frame_pointer = true,
                 .pic = true,
                 .no_builtin = true,
             });
@@ -80,7 +78,6 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 },
             };
             return comp.build_crt_file("Scrt1", .Obj, .@"musl Scrt1.o", prog_node, &files, .{
-                .omit_frame_pointer = true,
                 .pic = true,
                 .no_builtin = true,
             });
@@ -166,14 +163,13 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 };
             }
             return comp.build_crt_file("c", .Lib, .@"musl libc.a", prog_node, c_source_files.items, .{
-                .omit_frame_pointer = true,
                 .no_builtin = true,
             });
         },
         .libc_so => {
             const optimize_mode = comp.compilerRtOptMode();
             const strip = comp.compilerRtStrip();
-            const output_mode: std.builtin.OutputMode = .Lib;
+            const output_mode: std.lang.OutputMode = .Lib;
             const config = try Compilation.Config.resolve(.{
                 .output_mode = output_mode,
                 .link_mode = .dynamic,
@@ -279,7 +275,7 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
             errdefer comp.gpa.free(basename);
 
             const crt_file = try sub_compilation.toCrtFile();
-            try comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
+            try comp.queuePrelinkTaskMode(crt_file.full_object_path, false, &config);
             {
                 comp.mutex.lockUncancelable(io);
                 defer comp.mutex.unlock(io);
@@ -290,7 +286,7 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
     }
 }
 
-pub fn needsCrt0(output_mode: std.builtin.OutputMode, link_mode: std.builtin.LinkMode, pie: bool) ?CrtFile {
+pub fn needsCrt0(output_mode: std.lang.OutputMode, link_mode: std.lang.LinkMode, pie: bool) ?CrtFile {
     return switch (output_mode) {
         .Obj, .Lib => null,
         .Exe => switch (link_mode) {
@@ -784,8 +780,6 @@ const src_files = [_][]const u8{
     "musl/src/math/aarch64/llrintf.c",
     "musl/src/math/aarch64/llround.c",
     "musl/src/math/aarch64/llroundf.c",
-    "musl/src/math/aarch64/lround.c",
-    "musl/src/math/aarch64/lroundf.c",
     "musl/src/math/aarch64/nearbyint.c",
     "musl/src/math/aarch64/nearbyintf.c",
     "musl/src/math/acosh.c",
@@ -845,9 +839,7 @@ const src_files = [_][]const u8{
     "musl/src/math/i386/llrintf.c",
     "musl/src/math/i386/llrintl.c",
     "musl/src/math/i386/log10l.s",
-    "musl/src/math/i386/log1pf.s",
     "musl/src/math/i386/log1pl.s",
-    "musl/src/math/i386/log1p.s",
     "musl/src/math/i386/log2l.s",
     "musl/src/math/i386/logl.s",
     "musl/src/math/i386/remainder.c",
@@ -887,17 +879,12 @@ const src_files = [_][]const u8{
     "musl/src/math/llroundf.c",
     "musl/src/math/llroundl.c",
     "musl/src/math/log10l.c",
-    "musl/src/math/log1p.c",
-    "musl/src/math/log1pf.c",
     "musl/src/math/log1pl.c",
     "musl/src/math/log2l.c",
     "musl/src/math/logb.c",
     "musl/src/math/logbf.c",
     "musl/src/math/logbl.c",
     "musl/src/math/logl.c",
-    "musl/src/math/lround.c",
-    "musl/src/math/lroundf.c",
-    "musl/src/math/lroundl.c",
     "musl/src/math/__math_divzero.c",
     "musl/src/math/__math_divzerof.c",
     "musl/src/math/__math_invalid.c",
@@ -923,8 +910,6 @@ const src_files = [_][]const u8{
     "musl/src/math/pow_data.c",
     "musl/src/math/powerpc64/fma.c",
     "musl/src/math/powerpc64/fmaf.c",
-    "musl/src/math/powerpc64/lround.c",
-    "musl/src/math/powerpc64/lroundf.c",
     "musl/src/math/powerpc/fma.c",
     "musl/src/math/powerpc/fmaf.c",
     "musl/src/math/powf.c",

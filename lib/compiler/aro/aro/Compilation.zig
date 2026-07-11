@@ -78,12 +78,12 @@ pub const Environment = struct {
     pub fn loadAll(environ_map: *const std.process.Environ.Map) Environment {
         var env: Environment = .{};
 
-        inline for (@typeInfo(@TypeOf(env)).@"struct".fields) |field| {
-            std.debug.assert(@field(env, field.name) == null);
+        inline for (@typeInfo(@TypeOf(env)).@"struct".field_names) |field_name| {
+            std.debug.assert(@field(env, field_name) == null);
 
-            var env_var_buf: [field.name.len]u8 = undefined;
-            const env_var_name = std.ascii.upperString(&env_var_buf, field.name);
-            @field(env, field.name) = environ_map.get(env_var_name);
+            var env_var_buf: [field_name.len]u8 = undefined;
+            const env_var_name = std.ascii.upperString(&env_var_buf, field_name);
+            @field(env, field_name) = environ_map.get(env_var_name);
         }
         return env;
     }
@@ -140,7 +140,7 @@ io: Io,
 cwd: std.Io.Dir,
 diagnostics: *Diagnostics,
 
-sources: std.StringArrayHashMapUnmanaged(Source) = .empty,
+sources: std.array_hash_map.String(Source) = .empty,
 source_aliases: std.ArrayList(Source) = .empty,
 /// Allocated into `gpa`, but keys are externally managed.
 search_path: std.ArrayList(Include) = .empty,
@@ -159,7 +159,7 @@ builtins: Builtins = .{},
 string_interner: StringInterner = .{},
 interner: Interner = .{},
 type_store: TypeStore = .{},
-pragma_handlers: std.StringArrayHashMapUnmanaged(*Pragma) = .empty,
+pragma_handlers: std.array_hash_map.String(*Pragma) = .empty,
 /// If this is not null, the directory containing the specified Source will be searched for includes
 /// Used by MS extensions which allow searching for includes relative to the directory of the main source file.
 ms_cwd_source_id: ?Source.Id = null,

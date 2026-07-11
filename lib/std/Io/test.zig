@@ -232,6 +232,8 @@ fn count(a: usize, b: usize, result: *usize) void {
 }
 
 test "Group.cancel" {
+    if (builtin.cpu.arch.isSPARC() and builtin.os.tag == .linux) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/35347
+
     const global = struct {
         fn sleep(io: Io, result: *usize) Io.Cancelable!void {
             defer result.* = 1;
@@ -324,6 +326,8 @@ test "Group materializes error.Cancel" {
 }
 
 test "Group task receives cancelation unknowingly" {
+    if (builtin.cpu.arch.isSPARC() and builtin.os.tag == .linux) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/35347
+
     const S = struct {
         io: Io,
         err: ?Io.Cancelable!void,
@@ -628,6 +632,7 @@ test "randomSecure" {
 
 test "memory mapping" {
     if (builtin.cpu.arch == .hexagon) return error.SkipZigTest; // mmap returned EINVAL
+    if (builtin.cpu.arch.isSPARC()) return error.SkipZigTest; // mmap returned EINVAL
     if (builtin.os.tag == .wasi and builtin.link_libc) {
         // https://github.com/ziglang/zig/issues/20747 (open fd does not have write permission)
         return error.SkipZigTest;

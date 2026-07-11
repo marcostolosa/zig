@@ -198,7 +198,7 @@ pub fn State(comptime endian: std.builtin.Endian) type {
         ///
         /// Note: Clears complete words that contain the specified byte range
         pub fn clear(self: *Self, from: usize, to: usize) void {
-            @memset(self.st[from / 8 .. (to + 7) / 8], 0);
+            @memset(self.st[from / 8 .. @divCeil(to, 8)], 0);
         }
 
         /// Clear the entire state, disabling compiler optimizations.
@@ -980,8 +980,6 @@ test "Ascon-CXOF128 with customization" {
 }
 
 test "Ascon-AEAD128 round trip with various data sizes" {
-    if (builtin.cpu.has(.riscv, .v) and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
-
     const key = [_]u8{ 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10 };
     const nonce = [_]u8{ 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
 

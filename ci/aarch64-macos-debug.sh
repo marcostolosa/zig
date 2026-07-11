@@ -43,12 +43,20 @@ cmake .. \
 
 ninja install
 
+# Must be done after zig cc is finished.
+export ZIG_LIB_DIR="$PWD/../lib"
+
 stage3-debug/bin/zig build test docs \
   --maxrss ${ZSF_MAX_RSS:-0} \
-  --zig-lib-dir "$PWD/../lib" \
   -Denable-macos-sdk \
   -Dstatic-llvm \
-  -Dskip-non-native \
+  -Dskip-spirv \
+  -Dskip-wasm \
+  -Dskip-linux \
+  -Dskip-freebsd \
+  -Dskip-netbsd \
+  -Dskip-openbsd \
+  -Dskip-windows \
   --search-prefix "$PREFIX" \
   --test-timeout 2m
 

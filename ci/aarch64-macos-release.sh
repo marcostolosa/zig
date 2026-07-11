@@ -43,20 +43,25 @@ cmake .. \
 
 ninja install
 
+# Must be done after zig cc is finished.
+export ZIG_LIB_DIR="$PWD/../lib"
+
 stage3-release/bin/zig build test docs \
-  --zig-lib-dir "$PWD/../lib" \
   -Denable-macos-sdk \
   -Dstatic-llvm \
-  -Dskip-non-native \
+  -Dskip-spirv \
+  -Dskip-wasm \
+  -Dskip-linux \
+  -Dskip-freebsd \
+  -Dskip-netbsd \
+  -Dskip-openbsd \
+  -Dskip-windows \
   --search-prefix "$PREFIX" \
   --test-timeout 2m
 
 # Ensure that the fuzzer at least compiles.
 stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=ReleaseSafe
 stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=Debug
-
-# Ensure that reduce compiles
-stage3-release/bin/zig reduce -h
 
 # Ensure that stage3 and stage4 are byte-for-byte identical.
 stage3-release/bin/zig build \
@@ -70,7 +75,6 @@ stage3-release/bin/zig build \
   -Duse-zig-libcxx \
   -Dversion-string="$(stage3-release/bin/zig version)"
 
-# diff returns an error code if the files differ.
 echo "If the following command fails, it means nondeterminism has been"
 echo "introduced, making stage3 and stage4 no longer byte-for-byte identical."
 diff stage3-release/bin/zig stage4-release/bin/zig

@@ -361,7 +361,7 @@ pub const featureSetHasAll = CpuFeature.FeatureSetFns(Feature).featureSetHasAll;
 
 pub const all_features = blk: {
     @setEvalBranchQuota(2000);
-    const len = @typeInfo(Feature).@"enum".fields.len;
+    const len = @typeInfo(Feature).@"enum".field_names.len;
     std.debug.assert(len <= CpuFeature.Set.needed_bit_count);
     var result: [len]CpuFeature = undefined;
     result[@intFromEnum(Feature.@"32bit")] = .{
@@ -2675,7 +2675,7 @@ pub const all_features = blk: {
     const ti = @typeInfo(Feature);
     for (&result, 0..) |*elem, i| {
         elem.index = i;
-        elem.name = ti.@"enum".fields[i].name;
+        elem.name = ti.@"enum".field_names[i];
     }
     break :blk result;
 };
@@ -3368,6 +3368,103 @@ pub const cpu = struct {
             .zvfh,
             .zvkt,
             .zvl1024b,
+        }),
+    };
+    pub const spacemit_a100: CpuModel = .{
+        .name = "spacemit_a100",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"64bit",
+            .a,
+            .b,
+            .c,
+            .dlen_factor_2,
+            .i,
+            .m,
+            .optimized_nf2_segment_load_store,
+            .optimized_nf3_segment_load_store,
+            .optimized_nf4_segment_load_store,
+            .smepmp,
+            .smnpm,
+            .smstateen,
+            .ssccptr,
+            .sscofpmf,
+            .sscounterenw,
+            .ssnpm,
+            .sspm,
+            .sstc,
+            .sstvala,
+            .sstvecd,
+            .ssu64xl,
+            .supm,
+            .svade,
+            .svbare,
+            .svinval,
+            .svnapot,
+            .svpbmt,
+            .unaligned_scalar_mem,
+            .v,
+            .vxrm_pipeline_flush,
+            .za64rs,
+            .zawrs,
+            .zbc,
+            .zbkc,
+            .zcb,
+            .zcmop,
+            .zfa,
+            .zfh,
+            .zic64b,
+            .zicbom,
+            .zicbop,
+            .zicboz,
+            .ziccamoa,
+            .ziccif,
+            .zicclsm,
+            .ziccrse,
+            .zicntr,
+            .zicond,
+            .zifencei,
+            .zihintntl,
+            .zihintpause,
+            .zihpm,
+            .zimop,
+            .zkt,
+            .zvbb,
+            .zvfbfwma,
+            .zvfh,
+            .zvkng,
+            .zvknha,
+            .zvksc,
+            .zvksg,
+            .zvl1024b,
+        }),
+    };
+    pub const spacemit_x100: CpuModel = .{
+        .name = "spacemit_x100",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .dlen_factor_2,
+            .optimized_nf2_segment_load_store,
+            .optimized_nf3_segment_load_store,
+            .optimized_nf4_segment_load_store,
+            .rva23s64,
+            .smepmp,
+            .smnpm,
+            .smstateen,
+            .sspm,
+            .unaligned_scalar_mem,
+            .vxrm_pipeline_flush,
+            .xsmtvdot,
+            .zbc,
+            .zbkc,
+            .zfh,
+            .zvfbfwma,
+            .zvfh,
+            .zvkng,
+            .zvknha,
+            .zvksc,
+            .zvksg,
+            .zvl256b,
         }),
     };
     pub const spacemit_x60: CpuModel = .{

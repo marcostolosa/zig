@@ -54,6 +54,8 @@ pub const Feature = enum {
     scalarize_div_trunc_optimized,
     scalarize_div_floor,
     scalarize_div_floor_optimized,
+    scalarize_div_ceil,
+    scalarize_div_ceil_optimized,
     scalarize_div_exact,
     scalarize_div_exact_optimized,
     scalarize_rem,
@@ -75,13 +77,9 @@ pub const Feature = enum {
     scalarize_shl_sat,
     scalarize_xor,
     scalarize_not,
-    /// Scalarize `bitcast` from or to an array or vector type to `bitcast`s of the elements.
-    /// This does not apply if `@bitSizeOf(Elem) == 8 * @sizeOf(Elem)`.
-    /// When this feature is enabled, all remaining `bitcast`s can be lowered using the old bitcast
-    /// semantics (reinterpret memory) instead of the new bitcast semantics (copy logical bits) and
-    /// the behavior will be equivalent. However, the behavior of `@bitSize` on arrays must be
-    /// changed in `Type.zig` before enabling this feature to conform to the new bitcast semantics.
-    scalarize_bitcast,
+    scalarize_ptr_cast,
+    scalarize_ptr_from_int,
+    scalarize_int_from_ptr,
     scalarize_clz,
     scalarize_ctz,
     scalarize_popcount,
@@ -107,8 +105,8 @@ pub const Feature = enum {
     scalarize_cmp_vector_optimized,
     scalarize_fptrunc,
     scalarize_fpext,
-    scalarize_intcast,
-    scalarize_intcast_safe,
+    scalarize_int_cast,
+    scalarize_int_cast_safe,
     scalarize_trunc,
     scalarize_int_from_float,
     scalarize_int_from_float_optimized,
@@ -122,16 +120,45 @@ pub const Feature = enum {
     scalarize_select,
     scalarize_mul_add,
 
+    // Below are several different features for scalarizing `bit_cast` in different scenarios. It is
+    // valid to enable any combination of these features.
+
+    /// Scalarize `bit_cast` where the operand or result type is an array.
+    scalarize_bit_cast_array,
+    /// Scalarize `bit_cast` where either:
+    ///
+    /// * operand type is `@Vector(n, A), but result type is not `@Vector(n, B)`; or
+    /// * result type is `@Vector(n, A), but operand type is not `@Vector(n, B)`
+    ///
+    /// This effectively scalarizes any `bit_cast` to/from a vector, *unless* the operation can be
+    /// performed by bitcasting each vector element and returning a vector of the results.
+    ///
+    /// If this feature is enabled, the following AIR instruction tags may be emitted:
+    /// * `.legalize_vec_elem_val`
+    /// * `.legalize_vec_store_elem`
+    scalarize_bit_cast_vector_non_elementwise,
+    /// Scalarize `bit_cast` where the operand or result type is an array or vector whose element
+    /// type `E` has `@bitSizeOf(E) != 8 * @sizeOf(E)`. These are the cases where the backend may
+    /// need to sign- or zero-extend multiple elements to populate "padding" bits.
+    ///
+    /// Enabling this feature requires changing the behavior of `@bitSize` on arrays in `Type.zig`
+    /// to conform to the new bitcast semantics.
+    ///
+    /// If this feature is enabled, the following AIR instruction tags may be emitted:
+    /// * `.legalize_vec_elem_val`
+    /// * `.legalize_vec_store_elem`
+    scalarize_bit_cast_padded_elems,
+
     /// Legalize (shift lhs, (splat rhs)) -> (shift lhs, rhs)
     unsplat_shift_rhs,
     /// Legalize reduce of a one element vector to a bitcast.
-    reduce_one_elem_to_bitcast,
+    reduce_one_elem_to_bit_cast,
     /// Legalize splat to a one element vector to a bitcast.
-    splat_one_elem_to_bitcast,
+    splat_one_elem_to_bit_cast,
 
-    /// Replace `intcast_safe` with an explicit safety check which `call`s the panic function on failure.
-    /// Not compatible with `scalarize_intcast_safe`.
-    expand_intcast_safe,
+    /// Replace `int_cast_safe` with an explicit safety check which `call`s the panic function on failure.
+    /// Not compatible with `scalarize_int_cast_safe`.
+    expand_int_cast_safe,
     /// Replace `int_from_float_safe` with an explicit safety check which `call`s the panic function on failure.
     /// Not compatible with `scalarize_int_from_float_safe`.
     expand_int_from_float_safe,
@@ -148,6 +175,15 @@ pub const Feature = enum {
     /// Not compatible with `scalarize_mul_safe`.
     expand_mul_safe,
 
+    /// Replace `div_ceil` with truncating division followed by a remainder based adjustment for integers,
+    /// or division followed by ceil for floats.
+    /// Not compatible with `scalarize_div_ceil`.
+    expand_div_ceil,
+    /// Replace `div_ceil_optimized` with truncating division followed by a remainder based adjustment for integers,
+    /// or division followed by ceil for floats.
+    /// Not compatible with `scalarize_div_ceil_optimized`.
+    expand_div_ceil_optimized,
+
     /// Replace `load` from a packed pointer with a non-packed `load`, `shr`, `truncate`.
     /// Currently assumes little endian and a specific integer layout where the lsb of every integer is the lsb of the
     /// first byte of memory until bit pointers know their backing type.
@@ -156,9 +192,9 @@ pub const Feature = enum {
     /// Currently assumes little endian and a specific integer layout where the lsb of every integer is the lsb of the
     /// first byte of memory until bit pointers know their backing type.
     expand_packed_store,
-    /// Replace `struct_field_val` of a packed field with a `bitcast` to integer, `shr`, `trunc`, and `bitcast` to field type.
-    expand_packed_struct_field_val,
-    /// Replace `aggregate_init` of a packed struct with a sequence of `shl_exact`, `bitcast`, `intcast`, and `bit_or`.
+    /// Replace `agg_field_val` of a packed field with a `bit_cast` to integer, `shr`, `trunc`, and `bit_cast` to field type.
+    expand_packed_agg_field_val,
+    /// Replace `aggregate_init` of a packed struct with a sequence of `shl_exact`, `bit_cast`, `int_cast`, and `bit_or`.
     expand_packed_aggregate_init,
 
     /// Replace all arithmetic operations on 16-bit floating-point types with calls to soft-float
@@ -206,6 +242,8 @@ pub const Feature = enum {
             .div_trunc_optimized => .scalarize_div_trunc_optimized,
             .div_floor => .scalarize_div_floor,
             .div_floor_optimized => .scalarize_div_floor_optimized,
+            .div_ceil => .scalarize_div_ceil,
+            .div_ceil_optimized => .scalarize_div_ceil_optimized,
             .div_exact => .scalarize_div_exact,
             .div_exact_optimized => .scalarize_div_exact_optimized,
             .rem => .scalarize_rem,
@@ -227,7 +265,6 @@ pub const Feature = enum {
             .shl_sat => .scalarize_shl_sat,
             .xor => .scalarize_xor,
             .not => .scalarize_not,
-            .bitcast => .scalarize_bitcast,
             .clz => .scalarize_clz,
             .ctz => .scalarize_ctz,
             .popcount => .scalarize_popcount,
@@ -253,8 +290,11 @@ pub const Feature = enum {
             .cmp_vector_optimized => .scalarize_cmp_vector_optimized,
             .fptrunc => .scalarize_fptrunc,
             .fpext => .scalarize_fpext,
-            .intcast => .scalarize_intcast,
-            .intcast_safe => .scalarize_intcast_safe,
+            .int_cast => .scalarize_int_cast,
+            .int_cast_safe => .scalarize_int_cast_safe,
+            .ptr_cast => .scalarize_ptr_cast,
+            .ptr_from_int => .scalarize_ptr_from_int,
+            .int_from_ptr => .scalarize_int_from_ptr,
             .trunc => .scalarize_trunc,
             .int_from_float => .scalarize_int_from_float,
             .int_from_float_optimized => .scalarize_int_from_float_optimized,
@@ -355,7 +395,7 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
                 switch (l.wantScalarizeOrSoftFloat(air_tag, l.typeOf(bin_op.lhs))) {
                     .none => {},
                     .scalarize => continue :inst l.replaceInst(inst, .block, try l.scalarizeBlockPayload(inst, .bin_op)),
-                    .soft_float => continue :inst l.replaceInst(inst, .block, try l.softFloatDivTruncFloorBlockPayload(
+                    .soft_float => continue :inst l.replaceInst(inst, .block, try l.softFloatDivTruncFloorCeilBlockPayload(
                         inst,
                         bin_op.lhs,
                         bin_op.rhs,
@@ -474,7 +514,10 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             .popcount,
             .byte_swap,
             .bit_reverse,
-            .intcast,
+            .int_cast,
+            .ptr_cast,
+            .ptr_from_int,
+            .int_from_ptr,
             .trunc,
             => |air_tag| if (l.features.has(comptime .scalarize(air_tag))) {
                 const ty_op = l.air_instructions.items(.data)[@intFromEnum(inst)].ty_op;
@@ -548,18 +591,46 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
                     },
                 }
             },
-            .bitcast => if (l.features.has(.scalarize_bitcast)) {
+            .bit_cast => if (l.features.hasAny(&.{
+                .scalarize_bit_cast_array,
+                .scalarize_bit_cast_vector_non_elementwise,
+                .scalarize_bit_cast_padded_elems,
+            })) {
                 if (try l.scalarizeBitcastBlockPayload(inst)) |payload| {
                     continue :inst l.replaceInst(inst, .block, payload);
                 }
             },
-            .intcast_safe => if (l.features.has(.expand_intcast_safe)) {
-                assert(!l.features.has(.scalarize_intcast_safe)); // it doesn't make sense to do both
+            .int_cast_safe => if (l.features.has(.expand_int_cast_safe)) {
+                assert(!l.features.has(.scalarize_int_cast_safe)); // it doesn't make sense to do both
                 continue :inst l.replaceInst(inst, .block, try l.safeIntcastBlockPayload(inst));
-            } else if (l.features.has(.scalarize_intcast_safe)) {
+            } else if (l.features.has(.scalarize_int_cast_safe)) {
                 const ty_op = l.air_instructions.items(.data)[@intFromEnum(inst)].ty_op;
                 if (ty_op.ty.toType().isVector(zcu)) {
                     continue :inst l.replaceInst(inst, .block, try l.scalarizeBlockPayload(inst, .ty_op));
+                }
+            },
+            inline .div_ceil, .div_ceil_optimized => |air_tag| {
+                const expand_feature: Feature = switch (air_tag) {
+                    .div_ceil => .expand_div_ceil,
+                    .div_ceil_optimized => .expand_div_ceil_optimized,
+                    else => unreachable,
+                };
+
+                if (l.features.has(expand_feature)) {
+                    assert(!l.features.has(.scalarize(air_tag))); // it doesn't make sense to do both
+                    continue :inst l.replaceInst(inst, .block, try l.divCeilBlockPayload(inst, air_tag));
+                } else {
+                    const bin_op = l.air_instructions.items(.data)[@intFromEnum(inst)].bin_op;
+                    switch (l.wantScalarizeOrSoftFloat(air_tag, l.typeOf(bin_op.lhs))) {
+                        .none => {},
+                        .scalarize => continue :inst l.replaceInst(inst, .block, try l.scalarizeBlockPayload(inst, .bin_op)),
+                        .soft_float => continue :inst l.replaceInst(inst, .block, try l.softFloatDivTruncFloorCeilBlockPayload(
+                            inst,
+                            bin_op.lhs,
+                            bin_op.rhs,
+                            air_tag,
+                        )),
+                    }
                 }
             },
             inline .int_from_float_safe,
@@ -675,7 +746,7 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             .switch_br, .loop_switch_br => {
                 const pl_op = l.air_instructions.items(.data)[@intFromEnum(inst)].pl_op;
                 const extra = l.extraData(Air.SwitchBr, pl_op.payload);
-                const hint_bag_count = std.math.divCeil(usize, extra.data.cases_len + 1, 10) catch unreachable;
+                const hint_bag_count = @divCeil(extra.data.cases_len + 1, 10);
                 var extra_index = extra.end + hint_bag_count;
                 for (0..extra.data.cases_len) |_| {
                     const case_extra = l.extraData(Air.SwitchBr.Case, extra_index);
@@ -747,7 +818,7 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             .struct_field_ptr_index_2,
             .struct_field_ptr_index_3,
             => {},
-            .struct_field_val => if (l.features.has(.expand_packed_struct_field_val)) {
+            .agg_field_val => if (l.features.has(.expand_packed_agg_field_val)) {
                 const ty_pl = l.air_instructions.items(.data)[@intFromEnum(inst)].ty_pl;
                 const extra = l.extraData(Air.StructField, ty_pl.payload).data;
                 switch (l.typeOf(extra.struct_operand).containerLayout(zcu)) {
@@ -772,10 +843,10 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             inline .reduce, .reduce_optimized => |air_tag| {
                 const reduce = l.air_instructions.items(.data)[@intFromEnum(inst)].reduce;
                 const vector_ty = l.typeOf(reduce.operand);
-                if (l.features.has(.reduce_one_elem_to_bitcast)) {
+                if (l.features.has(.reduce_one_elem_to_bit_cast)) {
                     switch (vector_ty.vectorLen(zcu)) {
                         0 => unreachable,
-                        1 => continue :inst l.replaceInst(inst, .bitcast, .{ .ty_op = .{
+                        1 => continue :inst l.replaceInst(inst, .bit_cast, .{ .ty_op = .{
                             .ty = .fromType(vector_ty.childType(zcu)),
                             .operand = reduce.operand,
                         } }),
@@ -792,11 +863,11 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
                     .soft_float => unreachable, // the operand is not a scalar
                 }
             },
-            .splat => if (l.features.has(.splat_one_elem_to_bitcast)) {
+            .splat => if (l.features.has(.splat_one_elem_to_bit_cast)) {
                 const ty_op = l.air_instructions.items(.data)[@intFromEnum(inst)].ty_op;
                 switch (ty_op.ty.toType().vectorLen(zcu)) {
                     0 => unreachable,
-                    1 => continue :inst l.replaceInst(inst, .bitcast, .{ .ty_op = .{
+                    1 => continue :inst l.replaceInst(inst, .bit_cast, .{ .ty_op = .{
                         .ty = ty_op.ty,
                         .operand = ty_op.operand,
                     } }),
@@ -853,14 +924,24 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
                     .@"union" => unreachable,
                     .@"struct" => switch (agg_ty.containerLayout(zcu)) {
                         .auto, .@"extern" => {},
-                        .@"packed" => switch (agg_ty.structFieldCount(zcu)) {
-                            0 => unreachable,
-                            // An `aggregate_init` of a packed struct with 1 field is just a fancy bitcast.
-                            1 => continue :inst l.replaceInst(inst, .bitcast, .{ .ty_op = .{
-                                .ty = .fromType(agg_ty),
-                                .operand = @enumFromInt(l.air_extra.items[ty_pl.payload]),
-                            } }),
-                            else => continue :inst l.replaceInst(inst, .block, try l.packedAggregateInitBlockPayload(inst)),
+                        .@"packed" => {
+                            // If any field accounts for the full bit size of the struct, this init
+                            // is just equivalent to a bitcast of that field. This usually means the
+                            // field count is 1, but not always, as there could be zero-bit fields.
+                            const struct_bits = agg_ty.bitSize(zcu);
+                            for (0..agg_ty.structFieldCount(zcu)) |field_index| {
+                                const field_bits = agg_ty.fieldType(field_index, zcu).bitSize(zcu);
+                                if (field_bits == struct_bits) {
+                                    // Just bitcast this field.
+                                    continue :inst l.replaceInst(inst, .bit_cast, .{ .ty_op = .{
+                                        .ty = .fromType(agg_ty),
+                                        .operand = @enumFromInt(l.air_extra.items[ty_pl.payload + field_index]),
+                                    } });
+                                }
+                            }
+                            // Otherwise, we will need to use a sequence of bitcasts and shifts to
+                            // combine multiple values' bits.
+                            continue :inst l.replaceInst(inst, .block, try l.packedAggregateInitBlockPayload(inst));
                         },
                     },
                 }
@@ -898,6 +979,11 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             .legalize_vec_elem_val,
             .legalize_vec_store_elem,
             .legalize_compiler_rt_call,
+            .spirv_runtime_array_len,
+            .error_cast,
+            .error_from_int,
+            .int_from_error,
+            .union_from_enum,
             => {},
         }
     }
@@ -920,7 +1006,7 @@ fn scalarizeBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index, form: Scalariz
 
     if (result_is_array) {
         // This is only allowed when legalizing an elementwise bitcast.
-        assert(orig.tag == .bitcast);
+        assert(orig.tag == .bit_cast);
         assert(form == .ty_op);
     }
 
@@ -1412,35 +1498,94 @@ fn scalarizeBitcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!?
     const ty_op = l.air_instructions.items(.data)[@intFromEnum(orig_inst)].ty_op;
 
     const dest_ty = ty_op.ty.toType();
-    const dest_legal = switch (dest_ty.zigTypeTag(zcu)) {
-        else => true,
-        .array, .vector => legal: {
-            if (dest_ty.arrayLen(zcu) == 1) break :legal true;
-            const dest_elem_ty = dest_ty.childType(zcu);
-            break :legal dest_elem_ty.bitSize(zcu) == 8 * dest_elem_ty.abiSize(zcu);
-        },
-    };
-
     const operand_ty = l.typeOf(ty_op.operand);
-    const operand_legal = switch (operand_ty.zigTypeTag(zcu)) {
-        else => true,
-        .array, .vector => legal: {
-            if (operand_ty.arrayLen(zcu) == 1) break :legal true;
-            const operand_elem_ty = operand_ty.childType(zcu);
-            break :legal operand_elem_ty.bitSize(zcu) == 8 * operand_elem_ty.abiSize(zcu);
-        },
+
+    // We exit this block only if the scalarization is actually necessary. Otherwise we will return
+    // `null` from within the block.
+    const operand_to_int_ok: bool, const int_to_dest_ok: bool = int_ok: {
+        const operand_tag = operand_ty.zigTypeTag(zcu);
+        const dest_tag = dest_ty.zigTypeTag(zcu);
+
+        if (operand_tag != .array and
+            operand_tag != .vector and
+            dest_tag != .array and
+            dest_tag != .vector)
+        {
+            return null;
+        }
+
+        // We track the validity of 3 different bitcast operations:
+        // * operand -> dest
+        // * operand -> uint
+        // * uint -> dest
+        // If operand->dest turns out to be valid, we don't need to scalarize. Otherwise, knowing
+        // the validity of the other operations helps us lower the scalarization efficiently.
+        var operand_to_dest: bool = true;
+        var operand_to_int: bool = true;
+        var int_to_dest: bool = true;
+
+        if (l.features.has(.scalarize_bit_cast_array)) {
+            if (operand_tag == .array) {
+                operand_to_dest = false;
+                operand_to_int = false;
+            }
+            if (dest_tag == .array) {
+                operand_to_dest = false;
+                int_to_dest = false;
+            }
+        }
+
+        if (l.features.has(.scalarize_bit_cast_vector_non_elementwise)) {
+            if (operand_tag == .vector) operand_to_int = false;
+            if (dest_tag == .vector) int_to_dest = false;
+
+            if (operand_tag == .vector or dest_tag == .vector) {
+                if (operand_tag != .vector or
+                    dest_tag != .vector or
+                    operand_ty.vectorLen(zcu) != dest_ty.vectorLen(zcu))
+                {
+                    operand_to_dest = false;
+                }
+            }
+        }
+
+        if (l.features.has(.scalarize_bit_cast_padded_elems)) {
+            if (operand_tag == .array or operand_tag == .vector) {
+                const elem_ty = operand_ty.childType(zcu);
+                if (elem_ty.bitSize(zcu) != 8 * elem_ty.abiSize(zcu)) {
+                    operand_to_int = false;
+                    operand_to_dest = false;
+                }
+            }
+            if (dest_tag == .array or dest_tag == .vector) {
+                const elem_ty = dest_ty.childType(zcu);
+                if (elem_ty.bitSize(zcu) != 8 * elem_ty.abiSize(zcu)) {
+                    int_to_dest = false;
+                    operand_to_dest = false;
+                }
+            }
+        }
+
+        if (operand_to_dest) {
+            return null; // no scalarization needed!
+        }
+
+        // We need a scalarization, but before breaking from the block, check if we can do it
+        // elementwise---if we can, that's preferable to the generic lowering.
+        if ((operand_tag == .array or operand_tag == .vector) and
+            (dest_tag == .array or dest_tag == .vector) and
+            operand_ty.arrayLenIncludingSentinel(zcu) == dest_ty.arrayLenIncludingSentinel(zcu))
+        {
+            // Operand and result types are both arrays/vectors whose element types have the same
+            // bit size, so we can do an elementwise bitcast.
+            return try l.scalarizeBlockPayload(orig_inst, .ty_op);
+        }
+
+        break :int_ok .{ operand_to_int, int_to_dest };
     };
 
-    if (dest_legal and operand_legal) return null;
-
-    if (!operand_legal and !dest_legal and operand_ty.arrayLen(zcu) == dest_ty.arrayLen(zcu)) {
-        // from_ty and to_ty are both arrays or vectors of types with the same bit size,
-        // so we can do an elementwise bitcast.
-        return try l.scalarizeBlockPayload(orig_inst, .ty_op);
-    }
-
-    // Fallback path. Our strategy is to use an unsigned integer type as an intermediate
-    // "bag of bits" representation which can be manipulated by bitwise operations.
+    // Generic scalarization implementation. Our strategy is to use an unsigned integer type as an
+    // intermediate "bag of bits" representation which can be manipulated by bitwise operations.
 
     const num_bits: u16 = @intCast(dest_ty.bitSize(zcu));
     assert(operand_ty.bitSize(zcu) == num_bits);
@@ -1454,9 +1599,15 @@ fn scalarizeBitcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!?
     // First, convert `operand_ty` to `uint_ty` (`uN`).
 
     const uint_val: Air.Inst.Ref = uint_val: {
-        if (operand_legal) {
+        if (operand_to_int_ok) {
             _ = main_block.stealCapacity(19);
             break :uint_val main_block.addBitCast(l, uint_ty, ty_op.operand);
+        }
+
+        if (operand_ty.arrayLenIncludingSentinel(zcu) == 1) {
+            _ = main_block.stealCapacity(18);
+            const elem = main_block.addBinOp(l, .array_elem_val, ty_op.operand, .zero_usize).toRef();
+            break :uint_val main_block.addBitCast(l, uint_ty, elem);
         }
 
         // %1 = block({
@@ -1467,8 +1618,8 @@ fn scalarizeBitcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!?
         //   %6 = loop({
         //     %7 = load(%2)
         //     %8 = array_elem_val(orig_operand, %7)
-        //     %9 = bitcast(uE, %8)
-        //     %10 = intcast(uN, %9)
+        //     %9 = bit_cast(uE, %8)
+        //     %10 = int_cast(uN, %9)
         //     %11 = load(%3)
         //     %12 = shl_exact(%11, <uS, E>)
         //     %13 = bit_or(%12, %10)
@@ -1518,7 +1669,7 @@ fn scalarizeBitcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!?
             index_val,
         ).toRef();
         const elem_uint = loop.block.addBitCast(l, elem_uint_ty, raw_elem);
-        const elem_extended = loop.block.addTyOp(l, .intcast, uint_ty, elem_uint).toRef();
+        const elem_extended = loop.block.addTyOp(l, .int_cast, uint_ty, elem_uint).toRef();
         const old_result = loop.block.addTyOp(l, .load, uint_ty, result_ptr).toRef();
         const shifted_result = loop.block.addBinOp(l, .shl_exact, old_result, .fromValue(elem_bits_val)).toRef();
         const new_result = loop.block.addBinOp(l, .bit_or, shifted_result, elem_extended).toRef();
@@ -1549,9 +1700,22 @@ fn scalarizeBitcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!?
 
     // Now convert `uint_ty` (`uN`) to `dest_ty`.
 
-    if (dest_legal) {
+    if (int_to_dest_ok) {
         _ = main_block.stealCapacity(17);
         const result = main_block.addBitCast(l, dest_ty, uint_val);
+        main_block.addBr(l, orig_inst, result);
+    } else if (dest_ty.arrayLenIncludingSentinel(zcu) == 1) {
+        _ = main_block.stealCapacity(16);
+        const elem = main_block.addBitCast(l, dest_ty.childType(zcu), uint_val);
+        const aggregate_init_payload_start = l.air_extra.items.len;
+        try l.air_extra.append(zcu.gpa, @intFromEnum(elem));
+        const result = main_block.add(l, .{
+            .tag = .aggregate_init,
+            .data = .{ .ty_pl = .{
+                .ty = .fromType(dest_ty),
+                .payload = @intCast(aggregate_init_payload_start),
+            } },
+        }).toRef();
         main_block.addBr(l, orig_inst, result);
     } else {
         // %1 = alloc(*usize)
@@ -1560,10 +1724,10 @@ fn scalarizeBitcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!?
         // %4 = loop({
         //   %5 = load(%1)
         //   %6 = mul(%5, <usize, E>)
-        //   %7 = intcast(uS, %6)
+        //   %7 = int_cast(uS, %6)
         //   %8 = shr(uint_val, %7)
         //   %9 = trunc(uE, %8)
-        //   %10 = bitcast(Result, %9)
+        //   %10 = bit_cast(Result, %9)
         //   %11 = legalize_vec_store_elem(%2, %5, %10)
         //   %12 = cmp_eq(%5, <usize, vec_len>)
         //   %13 = cond_br(%12, {
@@ -1592,7 +1756,7 @@ fn scalarizeBitcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!?
 
         const index_val = loop.block.addTyOp(l, .load, .usize, index_ptr).toRef();
         const bit_offset = loop.block.addBinOp(l, .mul, index_val, .fromValue(try pt.intValue(.usize, elem_bits))).toRef();
-        const casted_bit_offset = loop.block.addTyOp(l, .intcast, shift_ty, bit_offset).toRef();
+        const casted_bit_offset = loop.block.addTyOp(l, .int_cast, shift_ty, bit_offset).toRef();
         const shifted_uint = loop.block.addBinOp(l, .shr, uint_val, casted_bit_offset).toRef();
         const elem_uint = loop.block.addTyOp(l, .trunc, elem_uint_ty, shifted_uint).toRef();
         const elem_val = loop.block.addBitCast(l, elem_ty, elem_uint);
@@ -1681,8 +1845,8 @@ fn scalarizeOverflowBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!
     //     %9 = legalize_vec_elem_val(orig_lhs, %8)
     //     %10 = legalize_vec_elem_val(orig_rhs, %8)
     //     %11 = ???_with_overflow(struct { Int, u1 }, %9, %10)
-    //     %12 = struct_field_val(%11, 0)
-    //     %13 = struct_field_val(%11, 1)
+    //     %12 = agg_field_val(%11, 0)
+    //     %13 = agg_field_val(%11, 1)
     //     %14 = legalize_vec_store_elem(%4, %8, %12)
     //     %15 = legalize_vec_store_elem(%4, %8, %13)
     //     %16 = cmp_eq(%8, <usize, N-1>)
@@ -1734,7 +1898,7 @@ fn scalarizeOverflowBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!
         } },
     }).toRef();
     const int_elem = loop.block.add(l, .{
-        .tag = .struct_field_val,
+        .tag = .agg_field_val,
         .data = .{ .ty_pl = .{
             .ty = .fromType(scalar_int_ty),
             .payload = try l.addExtra(Air.StructField, .{
@@ -1744,7 +1908,7 @@ fn scalarizeOverflowBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!
         } },
     }).toRef();
     const overflow_elem = loop.block.add(l, .{
-        .tag = .struct_field_val,
+        .tag = .agg_field_val,
         .data = .{ .ty_pl = .{
             .ty = .u1_type,
             .payload = try l.addExtra(Air.StructField, .{
@@ -1970,7 +2134,7 @@ fn safeIntcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.In
     //     %5 = call(@panic.invalidEnumValue, [])
     //     %6 = unreach()
     //   }, {
-    //     %7 = intcast(@res_ty, %y)
+    //     %7 = int_cast(@res_ty, %y)
     //     %8 = is_named_enum_value(%7)
     //     %9 = cond_br(%8, {
     //       %10 = br(%x, %7)
@@ -1992,7 +2156,7 @@ fn safeIntcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.In
     //     %6 = call(@panic.invalidEnumValue, [])
     //     %7 = unreach()
     //   }, {
-    //     %8 = intcast(@res_ty, %y)
+    //     %8 = int_cast(@res_ty, %y)
     //     %9 = br(%x, %8)
     //   })
     // })
@@ -2045,9 +2209,9 @@ fn safeIntcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.In
         cur_block = &condbr.else_block;
     }
 
-    // Now we know we're in-range, we can intcast:
+    // Now we know we're in-range, we can int_cast:
     const cast_inst = cur_block.add(l, .{
-        .tag = .intcast,
+        .tag = .int_cast,
         .data = .{ .ty_op = .{
             .ty = Air.internedToRef(dest_ty.toIntern()),
             .operand = operand_ref,
@@ -2216,14 +2380,14 @@ fn safeArithmeticBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index, overflow_
     // The worst-case scenario is a vector operand:
     //
     // %1 = add_with_overflow(%x, %y)
-    // %2 = struct_field_val(%1, .@"1")
+    // %2 = agg_field_val(%1, .@"1")
     // %3 = reduce(%2, .@"or")
-    // %4 = bitcast(%3, @bool_type)
+    // %4 = bit_cast(%3, @bool_type)
     // %5 = cond_br(%4, {
     //   %6 = call(@panic.integerOverflow, [])
     //   %7 = unreach()
     // }, {
-    //   %8 = struct_field_val(%1, .@"0")
+    //   %8 = agg_field_val(%1, .@"0")
     //   %9 = br(%z, %8)
     // })
     var inst_buf: [9]Air.Inst.Index = undefined;
@@ -2242,7 +2406,7 @@ fn safeArithmeticBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index, overflow_
         } },
     });
     const overflow_bits_inst = main_block.add(l, .{
-        .tag = .struct_field_val,
+        .tag = .agg_field_val,
         .data = .{ .ty_pl = .{
             .ty = Air.internedToRef(overflow_bits_ty.toIntern()),
             .payload = try l.addExtra(Air.StructField, .{
@@ -2266,7 +2430,7 @@ fn safeArithmeticBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index, overflow_
     condbr.else_block = .init(condbr.then_block.stealRemainingCapacity());
 
     const result_inst = condbr.else_block.add(l, .{
-        .tag = .struct_field_val,
+        .tag = .agg_field_val,
         .data = .{ .ty_pl = .{
             .ty = Air.internedToRef(operand_ty.toIntern()),
             .payload = try l.addExtra(Air.StructField, .{
@@ -2290,6 +2454,159 @@ fn safeArithmeticBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index, overflow_
         .ty = Air.internedToRef(operand_ty.toIntern()),
         .payload = try l.addBlockBody(main_block.body()),
     } };
+}
+
+fn divCeilBlockPayload(
+    l: *Legalize,
+    orig_inst: Air.Inst.Index,
+    air_tag: Air.Inst.Tag,
+) Error!Air.Inst.Data {
+    const pt = l.pt;
+    const zcu = pt.zcu;
+    const gpa = zcu.gpa;
+
+    const bin_op = l.air_instructions.items(.data)[@intFromEnum(orig_inst)].bin_op;
+    const operand_ty = l.typeOf(bin_op.lhs);
+    assert(l.typeOf(bin_op.rhs).toIntern() == operand_ty.toIntern());
+
+    const scalar_ty = operand_ty.scalarType(zcu);
+    const is_vector = operand_ty.zigTypeTag(zcu) == .vector;
+
+    switch (scalar_ty.zigTypeTag(zcu)) {
+        .float => {
+            // %result = ceil(lhs / rhs)
+
+            var inst_buf: [3]Air.Inst.Index = undefined;
+            try l.air_instructions.ensureUnusedCapacity(gpa, inst_buf.len);
+
+            var main_block: Block = .init(&inst_buf);
+
+            const div_tag: Air.Inst.Tag = switch (air_tag) {
+                .div_ceil => .div_float,
+                .div_ceil_optimized => .div_float_optimized,
+                else => unreachable,
+            };
+
+            const div_inst = main_block.add(l, .{
+                .tag = div_tag,
+                .data = .{ .bin_op = bin_op },
+            });
+
+            const ceil_inst = main_block.add(l, .{
+                .tag = .ceil,
+                .data = .{ .un_op = div_inst.toRef() },
+            });
+
+            main_block.addBr(l, orig_inst, ceil_inst.toRef());
+
+            _ = main_block.stealRemainingCapacity();
+            return .{ .ty_pl = .{
+                .ty = .fromType(operand_ty),
+                .payload = try l.addBlockBody(main_block.body()),
+            } };
+        },
+
+        .int => {
+            // Integer div_ceil:
+            //
+            // q = div_trunc(lhs, rhs)
+            // r = rem(lhs, rhs)
+            //
+            // unsigned:
+            //   q + int(r != 0)
+            //
+            // signed:
+            //   q + int(r != 0 and same_sign(lhs, rhs))
+            //
+            // same_sign is `(lhs ^ rhs) >= 0`.
+
+            var inst_buf: [10]Air.Inst.Index = undefined;
+            try l.air_instructions.ensureUnusedCapacity(gpa, inst_buf.len);
+
+            var main_block: Block = .init(&inst_buf);
+
+            const q_inst = main_block.add(l, .{
+                .tag = .div_trunc,
+                .data = .{ .bin_op = bin_op },
+            });
+
+            const r_inst = main_block.add(l, .{
+                .tag = .rem,
+                .data = .{ .bin_op = bin_op },
+            });
+
+            const zero_ref: Air.Inst.Ref = if (is_vector) zero: {
+                const zero_scalar = try pt.intValue(scalar_ty, 0);
+                const zero_vec = try pt.aggregateSplatValue(operand_ty, zero_scalar);
+                break :zero Air.internedToRef(zero_vec.toIntern());
+            } else Air.internedToRef((try pt.intValue(operand_ty, 0)).toIntern());
+
+            const r_nonzero_inst = try main_block.addCmp(
+                l,
+                .neq,
+                r_inst.toRef(),
+                zero_ref,
+                .{ .vector = is_vector },
+            );
+
+            const int_info = scalar_ty.intInfo(zcu);
+
+            const need_adjust_inst: Air.Inst.Index = if (int_info.signedness == .unsigned) r_nonzero_inst else inst: {
+                const sign_xor_inst = main_block.add(l, .{
+                    .tag = .xor,
+                    .data = .{ .bin_op = .{
+                        .lhs = bin_op.lhs,
+                        .rhs = bin_op.rhs,
+                    } },
+                });
+
+                const signs_same_inst = try main_block.addCmp(
+                    l,
+                    .gte,
+                    sign_xor_inst.toRef(),
+                    zero_ref,
+                    .{ .vector = is_vector },
+                );
+
+                break :inst main_block.add(l, .{
+                    .tag = .bit_and,
+                    .data = .{ .bin_op = .{
+                        .lhs = r_nonzero_inst.toRef(),
+                        .rhs = signs_same_inst.toRef(),
+                    } },
+                });
+            };
+
+            const adjust_u1_ty = if (is_vector)
+                try pt.vectorType(.{
+                    .len = operand_ty.vectorLen(zcu),
+                    .child = Type.u1.toIntern(),
+                })
+            else
+                Type.u1;
+
+            const adjust_u1_ref = main_block.addBitCast(l, adjust_u1_ty, need_adjust_inst.toRef());
+            const adjust_inst = main_block.addTyOp(l, .int_cast, operand_ty, adjust_u1_ref);
+
+            const result_inst = main_block.add(l, .{
+                .tag = .add,
+                .data = .{ .bin_op = .{
+                    .lhs = q_inst.toRef(),
+                    .rhs = adjust_inst.toRef(),
+                } },
+            });
+
+            main_block.addBr(l, orig_inst, result_inst.toRef());
+
+            _ = main_block.stealRemainingCapacity();
+            return .{ .ty_pl = .{
+                .ty = .fromType(operand_ty),
+                .payload = try l.addBlockBody(main_block.body()),
+            } };
+        },
+
+        else => unreachable,
+    }
 }
 
 fn packedLoadBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Inst.Data {
@@ -2324,7 +2641,7 @@ fn packedLoadBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Ins
                                 .tag = .load,
                                 .data = .{ .ty_op = .{
                                     .ty = Air.internedToRef(load_ty.toIntern()),
-                                    .operand = res_block.addBitCast(l, load_ptr_ty: {
+                                    .operand = res_block.addPtrCast(l, load_ptr_ty: {
                                         var load_ptr_info = ptr_info;
                                         load_ptr_info.child = load_ty.toIntern();
                                         load_ptr_info.flags.vector_index = .none;
@@ -2367,23 +2684,17 @@ fn packedStoreBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.In
 
     var res_block: Block = .init(&inst_buf);
     {
-        const backing_ptr_inst = res_block.add(l, .{
-            .tag = .bitcast,
-            .data = .{ .ty_op = .{
-                .ty = Air.internedToRef((load_store_ptr_ty: {
-                    var load_ptr_info = ptr_info;
-                    load_ptr_info.child = load_store_ty.toIntern();
-                    load_ptr_info.flags.vector_index = .none;
-                    load_ptr_info.packed_offset = .{ .host_size = 0, .bit_offset = 0 };
-                    break :load_store_ptr_ty try pt.ptrType(load_ptr_info);
-                }).toIntern()),
-                .operand = orig_bin_op.lhs,
-            } },
-        });
+        const backing_ptr = res_block.addPtrCast(l, load_store_ptr_ty: {
+            var load_ptr_info = ptr_info;
+            load_ptr_info.child = load_store_ty.toIntern();
+            load_ptr_info.flags.vector_index = .none;
+            load_ptr_info.packed_offset = .{ .host_size = 0, .bit_offset = 0 };
+            break :load_store_ptr_ty try pt.ptrType(load_ptr_info);
+        }, orig_bin_op.lhs);
         _ = res_block.add(l, .{
             .tag = .store,
             .data = .{ .bin_op = .{
-                .lhs = backing_ptr_inst.toRef(),
+                .lhs = backing_ptr,
                 .rhs = res_block.add(l, .{
                     .tag = .bit_or,
                     .data = .{ .bin_op = .{
@@ -2394,7 +2705,7 @@ fn packedStoreBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.In
                                     .tag = .load,
                                     .data = .{ .ty_op = .{
                                         .ty = Air.internedToRef(load_store_ty.toIntern()),
-                                        .operand = backing_ptr_inst.toRef(),
+                                        .operand = backing_ptr,
                                     } },
                                 }).toRef(),
                                 .rhs = Air.internedToRef((keep_mask: {
@@ -2423,7 +2734,7 @@ fn packedStoreBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.In
                             .tag = .shl_exact,
                             .data = .{ .bin_op = .{
                                 .lhs = res_block.add(l, .{
-                                    .tag = .intcast,
+                                    .tag = .int_cast,
                                     .data = .{ .ty_op = .{
                                         .ty = Air.internedToRef(load_store_ty.toIntern()),
                                         .operand = res_block.addBitCast(l, operand_int_ty, orig_bin_op.rhs),
@@ -2513,13 +2824,15 @@ fn packedAggregateInitBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Erro
     while (field_idx > 0) {
         field_idx -= 1;
         const field_ty = agg_ty.fieldType(field_idx, zcu);
-        const field_uint_ty = try pt.intType(.unsigned, @intCast(field_ty.bitSize(zcu)));
-        const field_bit_size_ref: Air.Inst.Ref = .fromValue(try pt.intValue(shift_ty, field_ty.bitSize(zcu)));
+        const field_bits: u16 = @intCast(field_ty.bitSize(zcu));
+        assert(field_bits < num_bits);
+        const field_uint_ty = try pt.intType(.unsigned, field_bits);
+        const field_bit_size_ref: Air.Inst.Ref = .fromValue(try pt.intValue(shift_ty, field_bits));
         const field_val: Air.Inst.Ref = @enumFromInt(l.air_extra.items[orig_ty_pl.payload + field_idx]);
 
         const shifted = main_block.addBinOp(l, .shl_exact, cur_uint, field_bit_size_ref).toRef();
         const field_as_uint = main_block.addBitCast(l, field_uint_ty, field_val);
-        const field_extended = main_block.addTyOp(l, .intcast, uint_ty, field_as_uint).toRef();
+        const field_extended = main_block.addTyOp(l, .int_cast, uint_ty, field_as_uint).toRef();
         cur_uint = main_block.addBinOp(l, .bit_or, shifted, field_extended).toRef();
     }
 
@@ -2623,7 +2936,7 @@ const Block = struct {
             .data = .{ .legalize_compiler_rt_call = .{
                 .func = func,
                 .payload = payload: {
-                    const extra_len = @typeInfo(Air.Call).@"struct".fields.len + args.len;
+                    const extra_len = @typeInfo(Air.Call).@"struct".field_names.len + args.len;
                     try l.air_extra.ensureUnusedCapacity(l.pt.zcu.gpa, extra_len);
                     const index = l.addExtra(Air.Call, .{ .args_len = @intCast(args.len) }) catch unreachable;
                     l.air_extra.appendSliceAssumeCapacity(@ptrCast(args));
@@ -2644,7 +2957,7 @@ const Block = struct {
             });
             return;
         }
-        const panic_fn_val = zcu.builtin_decl_values.get(panic_id.toBuiltin());
+        const panic_fn_val = zcu.std_lang_decl_values.get(panic_id.toStdLangDecl());
         _ = b.add(l, .{
             .tag = .call,
             .data = .{ .pl_op = .{
@@ -2708,18 +3021,51 @@ const Block = struct {
         });
     }
 
-    /// Adds a `bitcast` instruction to `b`. This is a thin wrapper that omits the instruction for
+    /// Adds a `bit_cast` instruction to `b`. This is a thin wrapper that omits the instruction for
     /// no-op casts.
     fn addBitCast(
         b: *Block,
         l: *Legalize,
-        ty: Type,
+        result_ty: Type,
         operand: Air.Inst.Ref,
     ) Air.Inst.Ref {
-        if (ty.toIntern() != l.typeOf(operand).toIntern()) return b.add(l, .{
-            .tag = .bitcast,
+        const zcu = l.pt.zcu;
+        const operand_ty = l.typeOf(operand);
+        assert(!operand_ty.isPtrAtRuntime(zcu));
+        assert(!operand_ty.isSliceAtRuntime(zcu));
+        assert(!result_ty.isPtrAtRuntime(zcu));
+        assert(!result_ty.isSliceAtRuntime(zcu));
+        if (result_ty.toIntern() != operand_ty.toIntern()) return b.add(l, .{
+            .tag = .bit_cast,
             .data = .{ .ty_op = .{
-                .ty = Air.internedToRef(ty.toIntern()),
+                .ty = .fromType(result_ty),
+                .operand = operand,
+            } },
+        }).toRef();
+        _ = b.stealCapacity(1);
+        return operand;
+    }
+
+    /// Adds a `ptr_cast` instruction to `b`. This is a thin wrapper that omits the instruction for
+    /// no-op casts.
+    fn addPtrCast(
+        b: *Block,
+        l: *Legalize,
+        result_ty: Type,
+        operand: Air.Inst.Ref,
+    ) Air.Inst.Ref {
+        const zcu = l.pt.zcu;
+        const operand_ty = l.typeOf(operand);
+        if (operand_ty.isSliceAtRuntime(zcu)) {
+            assert(result_ty.isSliceAtRuntime(zcu));
+        } else {
+            assert(operand_ty.isPtrAtRuntime(zcu));
+            assert(result_ty.isPtrAtRuntime(zcu));
+        }
+        if (result_ty.toIntern() != operand_ty.toIntern()) return b.add(l, .{
+            .tag = .ptr_cast,
+            .data = .{ .ty_op = .{
+                .ty = .fromType(result_ty),
                 .operand = operand,
             } },
         }).toRef();
@@ -2901,12 +3247,12 @@ fn addInstAssumeCapacity(l: *Legalize, inst: Air.Inst) Air.Inst.Index {
 }
 
 fn addExtra(l: *Legalize, comptime Extra: type, extra: Extra) Error!u32 {
-    const extra_fields = @typeInfo(Extra).@"struct".fields;
-    try l.air_extra.ensureUnusedCapacity(l.pt.zcu.gpa, extra_fields.len);
-    defer inline for (extra_fields) |field| l.air_extra.appendAssumeCapacity(switch (field.type) {
-        u32 => @field(extra, field.name),
-        Air.Inst.Ref => @intFromEnum(@field(extra, field.name)),
-        else => @compileError(@typeName(field.type)),
+    const extra_info = @typeInfo(Extra).@"struct";
+    try l.air_extra.ensureUnusedCapacity(l.pt.zcu.gpa, extra_info.field_names.len);
+    defer inline for (extra_info.field_names, extra_info.field_types) |field_name, field_type| l.air_extra.appendAssumeCapacity(switch (field_type) {
+        u32 => @field(extra, field_name),
+        Air.Inst.Ref => @intFromEnum(@field(extra, field_name)),
+        else => @compileError(@typeName(field_type)),
     });
     return @intCast(l.air_extra.items.len);
 }
@@ -2942,7 +3288,7 @@ fn compilerRtCall(
     const func_ret_ty = func.returnType();
 
     if (func_ret_ty.toIntern() == result_ty.toIntern()) {
-        try l.air_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.Call).@"struct".fields.len + args.len);
+        try l.air_extra.ensureUnusedCapacity(gpa, @typeInfo(Air.Call).@"struct".field_names.len + args.len);
         const payload = l.addExtra(Air.Call, .{ .args_len = @intCast(args.len) }) catch unreachable;
         l.air_extra.appendSliceAssumeCapacity(@ptrCast(args));
         return l.replaceInst(orig_inst, .legalize_compiler_rt_call, .{ .legalize_compiler_rt_call = .{
@@ -3060,7 +3406,7 @@ fn softFloatFromInt(l: *Legalize, orig_inst: Air.Inst.Index) Error!union(enum) {
         var main_block: Block = .init(&inst_buf);
         try l.air_instructions.ensureUnusedCapacity(zcu.gpa, inst_buf.len);
 
-        const extended_val = main_block.addTyOp(l, .intcast, extended_ty, ty_op.operand).toRef();
+        const extended_val = main_block.addTyOp(l, .int_cast, extended_ty, ty_op.operand).toRef();
         const call_inst = try main_block.addCompilerRtCall(l, func, &.{extended_val});
         const casted_result = main_block.addBitCast(l, dest_ty, call_inst.toRef());
         main_block.addBr(l, orig_inst, casted_result);
@@ -3087,7 +3433,7 @@ fn softFloatFromInt(l: *Legalize, orig_inst: Air.Inst.Index) Error!union(enum) {
     try l.air_instructions.ensureUnusedCapacity(zcu.gpa, inst_buf.len);
 
     const extended_val: Air.Inst.Ref = if (extended_ty.toIntern() != src_ty.toIntern()) ext: {
-        break :ext main_block.addTyOp(l, .intcast, extended_ty, ty_op.operand).toRef();
+        break :ext main_block.addTyOp(l, .int_cast, extended_ty, ty_op.operand).toRef();
     } else ext: {
         _ = main_block.stealCapacity(1);
         break :ext ty_op.operand;
@@ -3152,7 +3498,7 @@ fn softIntFromFloat(l: *Legalize, orig_inst: Air.Inst.Index) Error!union(enum) {
         try l.air_instructions.ensureUnusedCapacity(zcu.gpa, inst_buf.len);
 
         const call_inst = try main_block.addCompilerRtCall(l, func, &.{ty_op.operand});
-        const casted_val = main_block.addTyOp(l, .intcast, dest_ty, call_inst.toRef()).toRef();
+        const casted_val = main_block.addTyOp(l, .int_cast, dest_ty, call_inst.toRef()).toRef();
         main_block.addBr(l, orig_inst, casted_val);
 
         return .{ .block_payload = .{ .ty_pl = .{
@@ -3176,7 +3522,7 @@ fn softIntFromFloat(l: *Legalize, orig_inst: Air.Inst.Index) Error!union(enum) {
     const bits_val = try pt.intValue(.usize, dest_info.bits);
     _ = try main_block.addCompilerRtCall(l, func, &.{ extended_ptr, .fromValue(bits_val), ty_op.operand });
     const extended_val = main_block.addTyOp(l, .load, extended_ty, extended_ptr).toRef();
-    const result_val = main_block.addTyOp(l, .intcast, dest_ty, extended_val).toRef();
+    const result_val = main_block.addTyOp(l, .int_cast, dest_ty, extended_val).toRef();
     main_block.addBr(l, orig_inst, result_val);
 
     return .{ .block_payload = .{ .ty_pl = .{
@@ -3270,7 +3616,7 @@ fn softFloatNegBlockPayload(
     } };
 }
 
-fn softFloatDivTruncFloorBlockPayload(
+fn softFloatDivTruncFloorCeilBlockPayload(
     l: *Legalize,
     orig_inst: Air.Inst.Index,
     lhs: Air.Inst.Ref,
@@ -3285,6 +3631,7 @@ fn softFloatDivTruncFloorBlockPayload(
     const floor_tag: Air.Inst.Tag = switch (air_tag) {
         .div_trunc, .div_trunc_optimized => .trunc_float,
         .div_floor, .div_floor_optimized => .floor,
+        .div_ceil, .div_ceil_optimized => .ceil,
         else => unreachable,
     };
 

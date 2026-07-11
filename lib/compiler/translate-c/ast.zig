@@ -242,7 +242,7 @@ pub const Node = extern union {
 
         /// array_type{}
         empty_array,
-        /// [1]type{val} ** count
+        /// @as([count]type, @splat(val))
         array_filler,
 
         /// comptime { if (!(lhs)) @compileError(rhs); }
@@ -925,18 +925,18 @@ const Context = struct {
     }
 
     fn addExtra(c: *Context, extra: anytype) Allocator.Error!std.zig.Ast.ExtraIndex {
-        const fields = std.meta.fields(@TypeOf(extra));
-        try c.extra_data.ensureUnusedCapacity(c.gpa, fields.len);
+        const info = @typeInfo(@TypeOf(extra)).@"struct";
+        try c.extra_data.ensureUnusedCapacity(c.gpa, info.field_names.len);
         const result: std.zig.Ast.ExtraIndex = @enumFromInt(c.extra_data.items.len);
-        inline for (fields) |field| {
-            const data: u32 = switch (field.type) {
+        inline for (info.field_names, info.field_types) |field_name, field_type| {
+            const data: u32 = switch (field_type) {
                 NodeIndex,
                 std.zig.Ast.Node.OptionalIndex,
                 std.zig.Ast.OptionalTokenIndex,
                 std.zig.Ast.ExtraIndex,
-                => @intFromEnum(@field(extra, field.name)),
+                => @intFromEnum(@field(extra, field_name)),
                 TokenIndex,
-                => @field(extra, field.name),
+                => @field(extra, field_name),
                 else => @compileError("unexpected field type"),
             };
             c.extra_data.appendAssumeCapacity(data);
@@ -1976,28 +1976,18 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
         .array_filler => {
             const payload = node.castTag(.array_filler).?.data;
 
-            const type_expr = try renderArrayType(c, 1, payload.type);
-            const l_brace = try c.addToken(.l_brace, "{");
-            const val = try renderNode(c, payload.filler);
-            _ = try c.addToken(.r_brace, "}");
+            const as_tok = try c.addToken(.builtin, "@as");
+            _ = try c.addToken(.l_paren, "(");
+            const type_node = try renderArrayType(c, payload.count, payload.type);
+            _ = try c.addToken(.comma, ",");
+            const splat_node = try renderBuiltinCall(c, "@splat", &.{payload.filler});
+            _ = try c.addToken(.r_paren, ")");
 
-            const init = try c.addNode(.{
-                .tag = .array_init_one,
-                .main_token = l_brace,
-                .data = .{ .node_and_node = .{
-                    type_expr, val,
-                } },
-            });
             return c.addNode(.{
-                .tag = .array_cat,
-                .main_token = try c.addToken(.asterisk_asterisk, "**"),
-                .data = .{ .node_and_node = .{
-                    init,
-                    try c.addNode(.{
-                        .tag = .number_literal,
-                        .main_token = try c.addTokenFmt(.number_literal, "{d}", .{payload.count}),
-                        .data = undefined,
-                    }),
+                .tag = .builtin_call_two,
+                .main_token = as_tok,
+                .data = .{ .opt_node_and_opt_node = .{
+                    .fromOptional(type_node), .fromOptional(splat_node),
                 } },
             });
         },

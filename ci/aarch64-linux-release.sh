@@ -42,6 +42,9 @@ unset CXX
 
 ninja install
 
+# Must be done after zig cc is finished.
+export ZIG_LIB_DIR="$PWD/../lib"
+
 # No -fqemu and -fwasmtime here as they're covered by the x86_64-linux scripts.
 stage3-release/bin/zig build test docs \
   --maxrss ${ZSF_MAX_RSS:-0} \
@@ -49,7 +52,6 @@ stage3-release/bin/zig build test docs \
   -Dskip-non-native \
   -Dtarget=native-native-musl \
   --search-prefix "$PREFIX" \
-  --zig-lib-dir "$PWD/../lib" \
   -Denable-superhtml \
   --test-timeout 3m
 
@@ -64,7 +66,6 @@ stage3-release/bin/zig build \
   -Duse-zig-libcxx \
   -Dversion-string="$(stage3-release/bin/zig version)"
 
-# diff returns an error code if the files differ.
 echo "If the following command fails, it means nondeterminism has been"
 echo "introduced, making stage3 and stage4 no longer byte-for-byte identical."
 diff stage3-release/bin/zig stage4-release/bin/zig

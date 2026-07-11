@@ -824,8 +824,8 @@ pub const Request = struct {
     /// Externally-owned; must outlive the Request.
     privileged_headers: []const http.Header,
 
-    pub const default_accept_encoding: [@typeInfo(http.ContentEncoding).@"enum".fields.len]bool = b: {
-        var result: [@typeInfo(http.ContentEncoding).@"enum".fields.len]bool = @splat(false);
+    pub const default_accept_encoding: [@typeInfo(http.ContentEncoding).@"enum".field_names.len]bool = b: {
+        var result: [@typeInfo(http.ContentEncoding).@"enum".field_names.len]bool = @splat(false);
         result[@intFromEnum(http.ContentEncoding.gzip)] = true;
         result[@intFromEnum(http.ContentEncoding.deflate)] = true;
         result[@intFromEnum(http.ContentEncoding.identity)] = true;
@@ -1230,7 +1230,11 @@ pub const Request = struct {
         const old_connection = r.connection.?;
         const old_host = old_connection.host();
         var new_host_name_buffer: [HostName.max_len]u8 = undefined;
-        const new_host = try new_uri.getHost(&new_host_name_buffer);
+        const new_host = HostName.fromUri(new_uri, &new_host_name_buffer) catch |err| switch (err) {
+            error.UriMissingHost => return error.HttpRedirectLocationInvalid,
+            error.InvalidHostName => return error.HttpRedirectLocationInvalid,
+            error.NameTooLong => return error.HttpRedirectLocationOversize,
+        };
         const keep_privileged_headers =
             std.ascii.eqlIgnoreCase(r.uri.scheme, new_uri.scheme) and
             old_host.sameParentDomain(new_host);
@@ -1261,7 +1265,7 @@ pub const Request = struct {
             return error.RedirectRequiresResend;
         }
 
-        const new_connection = if (mem.endsWith(u8, new_uri.scheme, "+unix"))
+        const new_connection = if (new_uri.isSchemeUnixSocket())
             try r.client.connectUnix(new_host)
         else
             try r.client.connect(new_host, uriPort(new_uri, protocol), protocol);
@@ -1354,7 +1358,8 @@ fn createProxyFromEnvVar(
 
     const uri = Uri.parse(content) catch try Uri.parseAfterScheme("http", content);
     const protocol = Protocol.fromUri(uri) orelse return null;
-    const raw_host = try uri.getHostAlloc(arena);
+    var host_buf: [HostName.max_len]u8 = undefined;
+    const raw_host = try HostName.fromUri(uri, &host_buf);
 
     const authorization: ?[]const u8 = if (uri.user != null or uri.password != null) a: {
         const authorization = try arena.alloc(u8, basic_authorization.valueLengthFromUri(uri));
@@ -1365,7 +1370,7 @@ fn createProxyFromEnvVar(
     const proxy = try arena.create(Proxy);
     proxy.* = .{
         .protocol = protocol,
-        .host = raw_host,
+        .host = .{ .bytes = try arena.dupe(u8, raw_host.bytes) },
         .authorization = authorization,
         .port = uriPort(uri, protocol),
         .supports_connect = true,
@@ -1620,6 +1625,7 @@ pub fn connect(
 pub const RequestError = ConnectTcpError || ConnectUnixError || error{
     UnsupportedUriScheme,
     UriMissingHost,
+    InvalidHostName,
     CertificateBundleLoadFailure,
 };
 
@@ -1719,7 +1725,10 @@ pub fn request(
 
     const connection = options.connection orelse c: {
         var host_name_buffer: [HostName.max_len]u8 = undefined;
-        const host_name = try uri.getHost(&host_name_buffer);
+        const host_name = HostName.fromUri(uri, &host_name_buffer) catch |err| switch (err) {
+            error.UriMissingHost => |e| return e,
+            error.NameTooLong, error.InvalidHostName => return error.InvalidHostName,
+        };
         if (mem.endsWith(u8, uri.scheme, "+unix")) {
             break :c try client.connectUnix(host_name);
         } else {

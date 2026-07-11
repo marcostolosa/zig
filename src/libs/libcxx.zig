@@ -6,7 +6,7 @@ const target_util = @import("../target.zig");
 const Compilation = @import("../Compilation.zig");
 const build_options = @import("build_options");
 const trace = @import("../tracy.zig").trace;
-const Module = @import("../Package/Module.zig");
+const Module = @import("../Module.zig");
 
 const libcxxabi_files = [_][]const u8{
     "src/cxa_aux_runtime.cpp",
@@ -295,7 +295,7 @@ pub fn buildLibCxx(comp: *Compilation, prog_node: std.Progress.Node) BuildError!
     assert(comp.libcxx_static_lib == null);
     const crt_file = try sub_compilation.toCrtFile();
     comp.libcxx_static_lib = crt_file;
-    try comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
+    try comp.queuePrelinkTaskMode(crt_file.full_object_path, false, &config);
 }
 
 pub fn buildLibCxxAbi(comp: *Compilation, prog_node: std.Progress.Node) BuildError!void {
@@ -324,8 +324,8 @@ pub fn buildLibCxxAbi(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
     const strip = comp.compilerRtStrip();
     // See the `-fno-exceptions` logic for WASI.
     // The old 32-bit x86 variant of SEH doesn't use tables.
-    const unwind_tables: std.builtin.UnwindTables =
-        if (target.os.tag == .wasi or (target.cpu.arch == .x86 and target.os.tag == .windows)) .none else .async;
+    const unwind_tables: std.lang.UnwindTables =
+        if (target.cpu.arch == .x86 and target.os.tag == .windows) .none else .async;
 
     const config = Compilation.Config.resolve(.{
         .output_mode = output_mode,
@@ -492,7 +492,7 @@ pub fn buildLibCxxAbi(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
     assert(comp.libcxxabi_static_lib == null);
     const crt_file = try sub_compilation.toCrtFile();
     comp.libcxxabi_static_lib = crt_file;
-    try comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
+    try comp.queuePrelinkTaskMode(crt_file.full_object_path, false, &config);
 }
 
 pub fn addCxxArgs(

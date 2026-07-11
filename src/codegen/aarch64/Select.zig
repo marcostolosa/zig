@@ -4,12 +4,12 @@ air: Air,
 nav_index: InternPool.Nav.Index,
 
 // Blocks
-def_order: std.AutoArrayHashMapUnmanaged(Air.Inst.Index, void),
-blocks: std.AutoArrayHashMapUnmanaged(Air.Inst.Index, Block),
-loops: std.AutoArrayHashMapUnmanaged(Air.Inst.Index, Loop),
+def_order: std.array_hash_map.Auto(Air.Inst.Index, void),
+blocks: std.array_hash_map.Auto(Air.Inst.Index, Block),
+loops: std.array_hash_map.Auto(Air.Inst.Index, Loop),
 active_loops: std.ArrayList(Loop.Index),
 loop_live: struct {
-    set: std.AutoArrayHashMapUnmanaged(struct { Loop.Index, Air.Inst.Index }, void),
+    set: std.array_hash_map.Auto(struct { Loop.Index, Air.Inst.Index }, void),
     list: std.ArrayList(Air.Inst.Index),
 },
 dom_start: u32,
@@ -175,6 +175,8 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         .div_trunc_optimized,
         .div_floor,
         .div_floor_optimized,
+        .div_ceil,
+        .div_ceil_optimized,
         .div_exact,
         .div_exact_optimized,
         .rem,
@@ -255,6 +257,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         .work_item_id,
         .work_group_size,
         .work_group_id,
+        .spirv_runtime_array_len,
         => unreachable,
         .ret_ptr => {
             const ty = air_data[@intFromEnum(air_inst_index)].ty;
@@ -291,8 +294,8 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         .load,
         .fptrunc,
         .fpext,
-        .intcast,
-        .intcast_safe,
+        .int_cast,
+        .int_cast_safe,
         .trunc,
         .optional_payload,
         .optional_payload_ptr,
@@ -333,7 +336,15 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
             air_inst_index = air_body[air_body_index];
             continue :air_tag air_tags[@intFromEnum(air_inst_index)];
         },
-        .bitcast => {
+        .bit_cast,
+        .ptr_cast,
+        .ptr_from_int,
+        .int_from_ptr,
+        .error_cast,
+        .error_from_int,
+        .int_from_error,
+        .union_from_enum,
+        => {
             const ty_op = air_data[@intFromEnum(air_inst_index)].ty_op;
             maybe_noop: {
                 if (ty_op.ty.toInterned().? != isel.air.typeOf(ty_op.operand, ip).toIntern()) break :maybe_noop;
@@ -394,11 +405,11 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
                 .live_registers = undefined,
                 .repeat_list = undefined,
             });
-            try isel.dom.appendNTimes(gpa, 0, std.math.divCeil(usize, isel.dom_len, @bitSizeOf(DomInt)) catch unreachable);
+            try isel.dom.appendNTimes(gpa, 0, @divCeil(isel.dom_len, @bitSizeOf(DomInt)));
             try isel.analyze(air_body_block.body);
             for (
                 isel.dom.items[initial_dom_start..].ptr,
-                isel.dom.items[isel.dom_start..][0 .. std.math.divCeil(usize, initial_dom_len, @bitSizeOf(DomInt)) catch unreachable],
+                isel.dom.items[isel.dom_start..][0..@divCeil(initial_dom_len, @bitSizeOf(DomInt))],
             ) |*initial_dom, loop_dom| initial_dom.* |= loop_dom;
             isel.dom_start = initial_dom_start;
             isel.dom_len = initial_dom_len;
@@ -580,7 +591,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
                 .live_registers = undefined,
                 .repeat_list = undefined,
             });
-            try isel.dom.appendNTimes(gpa, 0, std.math.divCeil(usize, isel.dom_len, @bitSizeOf(DomInt)) catch unreachable);
+            try isel.dom.appendNTimes(gpa, 0, @divCeil(isel.dom_len, @bitSizeOf(DomInt)));
 
             var cases_it = switch_br.iterateCases();
             while (cases_it.next()) |case| try isel.analyze(case.body);
@@ -588,7 +599,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             for (
                 isel.dom.items[initial_dom_start..].ptr,
-                isel.dom.items[isel.dom_start..][0 .. std.math.divCeil(usize, initial_dom_len, @bitSizeOf(DomInt)) catch unreachable],
+                isel.dom.items[isel.dom_start..][0..@divCeil(initial_dom_len, @bitSizeOf(DomInt))],
             ) |*initial_dom, loop_dom| initial_dom.* |= loop_dom;
             isel.dom_start = initial_dom_start;
             isel.dom_len = initial_dom_len;
@@ -658,7 +669,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
             air_inst_index = air_body[air_body_index];
             continue :air_tag air_tags[@intFromEnum(air_inst_index)];
         },
-        .struct_field_ptr, .struct_field_val => {
+        .struct_field_ptr, .agg_field_val => {
             const ty_pl = air_data[@intFromEnum(air_inst_index)].ty_pl;
             const extra = isel.air.extraData(Air.StructField, ty_pl.payload).data;
 
@@ -883,7 +894,7 @@ pub fn finishAnalysis(isel: *Select) !void {
     }
 }
 
-pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory, CodegenFail }!void {
+pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory, AlreadyReported }!void {
     const zcu = isel.pt.zcu;
     const ip = &zcu.intern_pool;
     const gpa = zcu.gpa;
@@ -2887,7 +2898,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
 
                 const bin_op = air.data(air.inst_index).bin_op;
                 const ty = isel.air.typeOf(bin_op.lhs, ip);
-                const int_info: std.builtin.Type.Int = if (ty.toIntern() == .bool_type)
+                const int_info: std.lang.Type.Int = if (ty.toIntern() == .bool_type)
                     .{ .signedness = .unsigned, .bits = 1 }
                 else if (ty.isAbiInt(zcu))
                     ty.intInfo(zcu)
@@ -3144,7 +3155,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
 
                 const ty_op = air.data(air.inst_index).ty_op;
                 const ty = ty_op.ty.toType();
-                const int_info: std.builtin.Type.Int = int_info: {
+                const int_info: std.lang.Type.Int = int_info: {
                     if (ty_op.ty == .bool_type) break :int_info .{ .signedness = .unsigned, .bits = 1 };
                     if (!ty.isAbiInt(zcu)) return isel.fail("bad {t} {f}", .{ air_tag, isel.fmtType(ty) });
                     break :int_info ty.intInfo(zcu);
@@ -3189,7 +3200,15 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
             }
             if (air.next()) |next_air_tag| continue :air_tag next_air_tag;
         },
-        .bitcast => |air_tag| {
+        .bit_cast,
+        .ptr_cast,
+        .ptr_from_int,
+        .int_from_ptr,
+        .error_cast,
+        .error_from_int,
+        .int_from_error,
+        .union_from_enum,
+        => |air_tag| {
             if (isel.live_values.fetchRemove(air.inst_index)) |dst_vi| unused: {
                 defer dst_vi.value.deref(isel);
                 const ty_op = air.data(air.inst_index).ty_op;
@@ -3199,7 +3218,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                 const src_tag = src_ty.zigTypeTag(zcu);
                 if (dst_ty.isAbiInt(zcu) and (src_tag == .bool or src_ty.isAbiInt(zcu))) {
                     const dst_int_info = dst_ty.intInfo(zcu);
-                    const src_int_info: std.builtin.Type.Int = if (src_tag == .bool) .{ .signedness = undefined, .bits = 1 } else src_ty.intInfo(zcu);
+                    const src_int_info: std.lang.Type.Int = if (src_tag == .bool) .{ .signedness = undefined, .bits = 1 } else src_ty.intInfo(zcu);
                     assert(dst_int_info.bits == src_int_info.bits);
                     if (dst_tag != .@"struct" and src_tag != .@"struct" and src_tag != .bool and dst_int_info.signedness == src_int_info.signedness) {
                         try dst_vi.value.move(isel, ty_op.operand);
@@ -4345,7 +4364,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                         try isel.emit(.ldr(neg_zero_ra.q(), .{
                             .literal = @intCast((isel.instructions.items.len + 1 + isel.literals.items.len) << 2),
                         }));
-                        try isel.emitLiteral(&(.{0} ** 15 ++ .{0x80}));
+                        try isel.emitLiteral(&(@as([15]u8, @splat(0)) ++ .{0x80}));
                         try src_mat.finish(isel);
                     },
                 }
@@ -4425,7 +4444,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                         try isel.emit(.ldr(neg_zero_ra.q(), .{
                             .literal = @intCast((isel.instructions.items.len + 1 + isel.literals.items.len) << 2),
                         }));
-                        try isel.emitLiteral(&(.{0} ** 15 ++ .{0x80}));
+                        try isel.emitLiteral(&(@as([15]u8, @splat(0)) ++ .{0x80}));
                         try src_mat.finish(isel);
                     },
                 }
@@ -4517,7 +4536,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
         .switch_br => {
             const switch_br = isel.air.unwrapSwitch(air.inst_index);
             const cond_ty = isel.air.typeOf(switch_br.operand, ip);
-            const cond_int_info: std.builtin.Type.Int = if (cond_ty.toIntern() == .bool_type)
+            const cond_int_info: std.lang.Type.Int = if (cond_ty.toIntern() == .bool_type)
                 .{ .signedness = .unsigned, .bits = 1 }
             else if (cond_ty.isAbiInt(zcu))
                 cond_ty.intInfo(zcu)
@@ -5220,7 +5239,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
             }
             if (air.next()) |next_air_tag| continue :air_tag next_air_tag;
         },
-        .intcast => |air_tag| {
+        .int_cast => |air_tag| {
             if (isel.live_values.fetchRemove(air.inst_index)) |dst_vi| unused: {
                 defer dst_vi.value.deref(isel);
 
@@ -5311,7 +5330,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
             }
             if (air.next()) |next_air_tag| continue :air_tag next_air_tag;
         },
-        .intcast_safe => |air_tag| {
+        .int_cast_safe => |air_tag| {
             if (isel.live_values.fetchRemove(air.inst_index)) |dst_vi| unused: {
                 defer dst_vi.value.deref(isel);
 
@@ -5806,7 +5825,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
             }
             if (air.next()) |next_air_tag| continue :air_tag next_air_tag;
         },
-        .struct_field_val => {
+        .agg_field_val => {
             if (isel.live_values.fetchRemove(air.inst_index)) |field_vi| unused: {
                 defer field_vi.value.deref(isel);
 
@@ -7491,7 +7510,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
             }
             if (air.next()) |next_air_tag| continue :air_tag next_air_tag;
         },
-        .work_item_id, .work_group_size, .work_group_id => unreachable,
+        .work_item_id, .work_group_size, .work_group_id, .spirv_runtime_array_len => unreachable,
     }
     assert(air.body_index == 0);
 }
@@ -7575,7 +7594,7 @@ pub fn layout(
     is_sysv_var_args: bool,
     saved_gra_len: u7,
     saved_vra_len: u7,
-    mod: *const Package.Module,
+    mod: *const Module,
 ) !usize {
     const zcu = isel.pt.zcu;
     const ip = &zcu.intern_pool;
@@ -7981,7 +8000,7 @@ fn emit(isel: *Select, instruction: codegen.aarch64.encoding.Instruction) !void 
 fn emitPanic(isel: *Select, panic_id: Zcu.SimplePanicId) !void {
     const zcu = isel.pt.zcu;
     try isel.nav_relocs.append(zcu.gpa, .{
-        .nav = switch (zcu.intern_pool.indexToKey(zcu.builtin_decl_values.get(panic_id.toBuiltin()))) {
+        .nav = switch (zcu.intern_pool.indexToKey(zcu.std_lang_decl_values.get(panic_id.toStdLangDecl()))) {
             else => unreachable,
             inline .@"extern", .func => |func| func.owner_nav,
         },
@@ -8001,7 +8020,7 @@ fn emitLiteral(isel: *Select, bytes: []const u8) !void {
     }
 }
 
-fn fail(isel: *Select, comptime format: []const u8, args: anytype) error{ OutOfMemory, CodegenFail } {
+fn fail(isel: *Select, comptime format: []const u8, args: anytype) error{ OutOfMemory, AlreadyReported } {
     @branchHint(.cold);
     return isel.pt.zcu.codegenFail(isel.nav_index, format, args);
 }
@@ -8229,7 +8248,7 @@ fn elemPtr(
 fn clzLimb(
     isel: *Select,
     res_ra: Register.Alias,
-    src_int_info: std.builtin.Type.Int,
+    src_int_info: std.lang.Type.Int,
     src_ra: Register.Alias,
 ) !void {
     switch (src_int_info.bits) {
@@ -8274,7 +8293,7 @@ fn clzLimb(
 fn ctzLimb(
     isel: *Select,
     res_ra: Register.Alias,
-    src_int_info: std.builtin.Type.Int,
+    src_int_info: std.lang.Type.Int,
     src_ra: Register.Alias,
 ) !void {
     switch (src_int_info.bits) {
@@ -8319,7 +8338,7 @@ fn cmp(
     var lhs_vi = orig_lhs_vi;
     var rhs_vi = orig_rhs_vi;
     if (!ty.isRuntimeFloat()) {
-        const int_info: std.builtin.Type.Int = if (ty.toIntern() == .bool_type)
+        const int_info: std.lang.Type.Int = if (ty.toIntern() == .bool_type)
             .{ .signedness = .unsigned, .bits = 1 }
         else if (ty.isAbiInt(isel.pt.zcu))
             ty.intInfo(isel.pt.zcu)
@@ -8523,7 +8542,7 @@ fn loadReg(
     isel: *Select,
     ra: Register.Alias,
     size: u64,
-    signedness: std.builtin.Signedness,
+    signedness: std.lang.Signedness,
     base_ra: Register.Alias,
     offset: i65,
 ) !void {
@@ -8891,14 +8910,8 @@ pub const Value = struct {
 
         pub const Tag = @typeInfo(Parent).@"union".tag_type.?;
         pub const Payload = Payload: {
-            const fields = @typeInfo(Parent).@"union".fields;
-            var types: [fields.len]type = undefined;
-            var names: [fields.len][]const u8 = undefined;
-            for (fields, &types, &names) |f, *ty, *name| {
-                ty.* = f.type;
-                name.* = f.name;
-            }
-            break :Payload @Union(.auto, null, &names, &types, &@splat(.{}));
+            const info = @typeInfo(Parent).@"union";
+            break :Payload @Union(.auto, null, info.field_names, info.field_types[0..], &@splat(.{}));
         };
     };
 
@@ -8908,7 +8921,7 @@ pub const Value = struct {
         },
         small: struct {
             size: u5,
-            signedness: std.builtin.Signedness,
+            signedness: std.lang.Signedness,
             is_vector: bool,
             hint: Register.Alias,
             register: Register.Alias,
@@ -8916,14 +8929,8 @@ pub const Value = struct {
 
         pub const Tag = @typeInfo(Location).@"union".tag_type.?;
         pub const Payload = Payload: {
-            const fields = @typeInfo(Location).@"union".fields;
-            var types: [fields.len]type = undefined;
-            var names: [fields.len][]const u8 = undefined;
-            for (fields, &types, &names) |f, *ty, *name| {
-                ty.* = f.type;
-                name.* = f.name;
-            }
-            break :Payload @Union(.auto, null, &names, &types, &@splat(.{}));
+            const info = @typeInfo(Location).@"union";
+            break :Payload @Union(.auto, null, info.field_names, info.field_types[0..], &@splat(.{}));
         };
     };
 
@@ -9037,13 +9044,13 @@ pub const Value = struct {
             };
         }
 
-        fn setSignedness(vi: Value.Index, isel: *Select, new_signedness: std.builtin.Signedness) void {
+        fn setSignedness(vi: Value.Index, isel: *Select, new_signedness: std.lang.Signedness) void {
             const value = vi.get(isel);
             assert(value.location_payload.small.size <= 2);
             value.location_payload.small.signedness = new_signedness;
         }
 
-        pub fn signedness(vi: Value.Index, isel: *Select) std.builtin.Signedness {
+        pub fn signedness(vi: Value.Index, isel: *Select) std.lang.Signedness {
             const value = vi.get(isel);
             return switch (value.flags.location_tag) {
                 .large => .unsigned,
@@ -9505,7 +9512,7 @@ pub const Value = struct {
             offset: u64 = 0,
             @"volatile": bool = false,
             split: bool = true,
-            wrap: ?std.builtin.Type.Int = null,
+            wrap: ?std.lang.Type.Int = null,
             expected_live_registers: *const LiveRegisters = &.initFill(.free),
         };
 
@@ -9717,7 +9724,7 @@ pub const Value = struct {
             root_ty: ZigType,
             opts: struct {
                 root_vi: Value.Index = .free,
-                wrap: ?std.builtin.Type.Int = null,
+                wrap: ?std.lang.Type.Int = null,
                 expected_live_registers: *const LiveRegisters = &.initFill(.free),
             },
         ) !?void {
@@ -10189,7 +10196,7 @@ pub const Value = struct {
                         0 => unreachable,
                         1...64 => unreachable,
                         65...256 => |bits| if (offset == 0 and size == ty_size) {
-                            const parts_len = std.math.divCeil(u16, bits, 64) catch unreachable;
+                            const parts_len = @divCeil(bits, 64);
                             vi.setParts(isel, @intCast(parts_len));
                             for (0..parts_len) |part_index| _ = vi.addPart(isel, 8 * part_index, 8);
                         },
@@ -10233,7 +10240,7 @@ pub const Value = struct {
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
                         const array_len = array_type.lenIncludingSentinel();
                         if (array_len > Value.max_parts and
-                            (std.math.divCeil(u64, size, @as(u64, 1) << min_part_log2_stride) catch unreachable) > Value.max_parts)
+                            (@divCeil(size, @as(u64, 1) << min_part_log2_stride)) > Value.max_parts)
                             return isel.fail("Value.FieldPartIterator.next({f})", .{isel.fmtType(ty)});
                         const alignment = vi.alignment(isel);
                         const Part = struct { offset: u64, size: u64 };
@@ -10283,13 +10290,13 @@ pub const Value = struct {
                     .anyframe_type => unreachable,
                     .error_union_type => |error_union_type| {
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
-                        if ((std.math.divCeil(u64, size, @as(u64, 1) << min_part_log2_stride) catch unreachable) > Value.max_parts)
+                        if ((@divCeil(size, @as(u64, 1) << min_part_log2_stride)) > Value.max_parts)
                             return isel.fail("Value.FieldPartIterator.next({f})", .{isel.fmtType(ty)});
                         const alignment = vi.alignment(isel);
                         const payload_ty: ZigType = .fromInterned(error_union_type.payload_type);
                         const error_set_offset = codegen.errUnionErrorOffset(payload_ty, zcu);
                         const payload_offset = codegen.errUnionPayloadOffset(payload_ty, zcu);
-                        const Part = struct { offset: u64, size: u64, signedness: ?std.builtin.Signedness, is_vector: bool };
+                        const Part = struct { offset: u64, size: u64, signedness: ?std.lang.Signedness, is_vector: bool };
                         var parts: [2]Part = undefined;
                         var parts_len: Value.PartsLen = 0;
                         var field_end: u64 = 0;
@@ -10390,10 +10397,10 @@ pub const Value = struct {
                         }
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
                         if (loaded_struct.field_types.len > Value.max_parts and
-                            (std.math.divCeil(u64, size, @as(u64, 1) << min_part_log2_stride) catch unreachable) > Value.max_parts)
+                            (@divCeil(size, @as(u64, 1) << min_part_log2_stride)) > Value.max_parts)
                             return isel.fail("Value.FieldPartIterator.next({f})", .{isel.fmtType(ty)});
                         const alignment = vi.alignment(isel);
-                        const Part = struct { offset: u64, size: u64, signedness: ?std.builtin.Signedness, is_vector: bool };
+                        const Part = struct { offset: u64, size: u64, signedness: ?std.lang.Signedness, is_vector: bool };
                         var parts: [Value.max_parts]Part = undefined;
                         var parts_len: Value.PartsLen = 0;
                         var field_end: u64 = 0;
@@ -10451,7 +10458,7 @@ pub const Value = struct {
                     .tuple_type => |tuple_type| {
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
                         if (tuple_type.types.len > Value.max_parts and
-                            (std.math.divCeil(u64, size, @as(u64, 1) << min_part_log2_stride) catch unreachable) > Value.max_parts)
+                            (@divCeil(size, @as(u64, 1) << min_part_log2_stride)) > Value.max_parts)
                             return isel.fail("Value.FieldPartIterator.next({f})", .{isel.fmtType(ty)});
                         const alignment = vi.alignment(isel);
                         const Part = struct { offset: u64, size: u64, is_vector: bool };
@@ -10506,13 +10513,13 @@ pub const Value = struct {
                             } },
                         }
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
-                        if ((std.math.divCeil(u64, size, @as(u64, 1) << min_part_log2_stride) catch unreachable) > Value.max_parts)
+                        if ((@divCeil(size, @as(u64, 1) << min_part_log2_stride)) > Value.max_parts)
                             return isel.fail("Value.FieldPartIterator.next({f})", .{isel.fmtType(ty)});
                         const union_layout = ZigType.getUnionLayout(loaded_union, zcu);
                         const alignment = vi.alignment(isel);
                         const tag_offset = union_layout.tagOffset();
                         const payload_offset = union_layout.payloadOffset();
-                        const Part = struct { offset: u64, size: u64, signedness: ?std.builtin.Signedness };
+                        const Part = struct { offset: u64, size: u64, signedness: ?std.lang.Signedness };
                         var parts: [2]Part = undefined;
                         var parts_len: Value.PartsLen = 0;
                         var field_end: u64 = 0;
@@ -10607,7 +10614,7 @@ pub const Value = struct {
         vi: Value.Index,
         ra: Register.Alias,
 
-        fn finish(mat: Value.Materialize, isel: *Select) error{ OutOfMemory, CodegenFail }!void {
+        fn finish(mat: Value.Materialize, isel: *Select) error{ OutOfMemory, AlreadyReported }!void {
             const live_vi = isel.live_registers.getPtr(mat.ra);
             assert(live_vi.* == .allocating);
             var vi = mat.vi;
@@ -11222,19 +11229,21 @@ fn initValueAdvanced(
     };
     return @enumFromInt(isel.values.items.len);
 }
-pub fn dumpValues(isel: *Select, which: enum { only_referenced, all }) void {
+const WhichValues = enum { only_referenced, all };
+pub fn dumpValues(isel: *Select, which: WhichValues) void {
+    dumpValuesInner(isel, which) catch |err| @panic(@errorName(err));
+}
+fn dumpValuesInner(isel: *Select, which: WhichValues) !void {
     const zcu = isel.pt.zcu;
     const gpa = zcu.gpa;
     const ip = &zcu.intern_pool;
     const nav = ip.getNav(isel.nav_index);
 
-    errdefer |err| @panic(@errorName(err));
-
     const locked_stderr = std.debug.lockStderr(&.{});
     defer std.debug.unlockStderr();
     const stderr = &locked_stderr.file_writer.interface;
 
-    var reverse_live_values: std.AutoArrayHashMapUnmanaged(Value.Index, std.ArrayList(Air.Inst.Index)) = .empty;
+    var reverse_live_values: std.array_hash_map.Auto(Value.Index, std.ArrayList(Air.Inst.Index)) = .empty;
     defer {
         for (reverse_live_values.values()) |*list| list.deinit(gpa);
         reverse_live_values.deinit(gpa);
@@ -11255,7 +11264,7 @@ pub fn dumpValues(isel: *Select, which: enum { only_referenced, all }) void {
     var reverse_live_registers: std.AutoHashMapUnmanaged(Value.Index, Register.Alias) = .empty;
     defer reverse_live_registers.deinit(gpa);
     {
-        try reverse_live_registers.ensureTotalCapacity(gpa, @typeInfo(Register.Alias).@"enum".fields.len);
+        try reverse_live_registers.ensureTotalCapacity(gpa, @typeInfo(Register.Alias).@"enum".field_names.len);
         var live_reg_it = isel.live_registers.iterator();
         while (live_reg_it.next()) |live_reg_entry| switch (live_reg_entry.value.*) {
             _ => reverse_live_registers.putAssumeCapacityNoClobber(live_reg_entry.value.*, live_reg_entry.key),
@@ -11263,7 +11272,7 @@ pub fn dumpValues(isel: *Select, which: enum { only_referenced, all }) void {
         };
     }
 
-    var roots: std.AutoArrayHashMapUnmanaged(Value.Index, u32) = .empty;
+    var roots: std.array_hash_map.Auto(Value.Index, u32) = .empty;
     defer roots.deinit(gpa);
     {
         try roots.ensureTotalCapacity(gpa, isel.values.items.len);
@@ -11364,7 +11373,7 @@ fn writeToMemory(isel: *Select, constant: Constant, buffer: []u8) error{OutOfMem
     if (try isel.writeKeyToMemory(ip.indexToKey(constant.toIntern()), buffer)) return true;
     constant.writeToMemory(zcu, buffer) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
-        error.ReinterpretDeclRef, error.Unimplemented, error.IllDefinedMemoryLayout => return false,
+        error.ReinterpretDeclRef, error.IllDefinedMemoryLayout => return false,
     };
     return true;
 }
@@ -11646,7 +11655,7 @@ fn use(isel: *Select, air_ref: Air.Inst.Ref) !Value.Index {
     return vi;
 }
 
-fn fill(isel: *Select, dst_ra: Register.Alias) error{ OutOfMemory, CodegenFail }!bool {
+fn fill(isel: *Select, dst_ra: Register.Alias) error{ OutOfMemory, AlreadyReported }!bool {
     switch (dst_ra) {
         else => {},
         Register.Alias.fp, .zr, .sp, .pc, .fpcr, .fpsr, .ffr => return false,
@@ -11679,7 +11688,7 @@ fn fill(isel: *Select, dst_ra: Register.Alias) error{ OutOfMemory, CodegenFail }
     return true;
 }
 
-fn fillMemory(isel: *Select, dst_ra: Register.Alias) error{ OutOfMemory, CodegenFail }!bool {
+fn fillMemory(isel: *Select, dst_ra: Register.Alias) error{ OutOfMemory, AlreadyReported }!bool {
     const dst_live_vi = isel.live_registers.getPtr(dst_ra);
     const dst_vi = switch (dst_live_vi.*) {
         _ => |dst_vi| dst_vi,
@@ -12506,7 +12515,7 @@ const assert = std.debug.assert;
 const codegen = @import("../../codegen.zig");
 const Constant = @import("../../Value.zig");
 const InternPool = @import("../../InternPool.zig");
-const Package = @import("../../Package.zig");
+const Module = @import("../../Module.zig");
 const Register = codegen.aarch64.encoding.Register;
 const Select = @This();
 const std = @import("std");

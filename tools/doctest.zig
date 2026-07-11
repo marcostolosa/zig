@@ -311,7 +311,9 @@ fn printOutput(
                     .arch_os_abi = triple,
                 });
                 const target = try std.zig.system.resolveTargetQuery(io, target_query);
-                switch (getExternalExecutor(io, &host, &target, .{
+                switch (getExternalExecutor(io, &target, .{
+                    .host_cpu_arch = host.cpu.arch,
+                    .host_os_tag = host.os.tag,
                     .link_libc = code.link_libc,
                 })) {
                     .native => {},
@@ -526,7 +528,10 @@ fn printOutput(
         .lib => {
             const bin_basename = try std.zig.binNameAlloc(arena, .{
                 .root_name = code_name,
-                .target = &builtin.target,
+                .cpu_arch = builtin.target.cpu.arch,
+                .os_tag = builtin.target.os.tag,
+                .ofmt = builtin.target.ofmt,
+                .abi = builtin.target.abi,
                 .output_mode = .Lib,
             });
 
@@ -607,7 +612,7 @@ fn printSourceBlock(arena: Allocator, out: *Writer, source_bytes: []const u8, na
 
 fn tokenizeAndPrint(arena: Allocator, out: *Writer, raw_src: []const u8) !void {
     const src_non_terminated = mem.trim(u8, raw_src, " \r\n");
-    const src = try arena.dupeZ(u8, src_non_terminated);
+    const src = try arena.dupeSentinel(u8, src_non_terminated, 0);
 
     try out.writeAll("<code>");
     var tokenizer = std.zig.Tokenizer.init(src);
@@ -800,7 +805,6 @@ fn tokenizeAndPrint(arena: Allocator, out: *Writer, raw_src: []const u8) !void {
             .minus_pipe_equal,
             .asterisk,
             .asterisk_equal,
-            .asterisk_asterisk,
             .asterisk_percent,
             .asterisk_percent_equal,
             .asterisk_pipe,
@@ -826,7 +830,7 @@ fn tokenizeAndPrint(arena: Allocator, out: *Writer, raw_src: []const u8) !void {
             .tilde,
             => try writeEscaped(out, src[token.loc.start..token.loc.end]),
 
-            .invalid, .invalid_periodasterisks => fatal("syntax error", .{}),
+            .invalid => fatal("syntax error", .{}),
         }
         index = token.loc.end;
     }

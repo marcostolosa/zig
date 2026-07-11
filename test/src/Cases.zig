@@ -316,20 +316,19 @@ pub fn addCompile(
 /// Each file should include a test manifest as a contiguous block of comments at
 /// the end of the file. The first line should be the test type, followed by a set of
 /// key-value config values, followed by a blank line, then the expected output.
-pub fn addFromDir(ctx: *Cases, dir: Io.Dir, b: *std.Build) void {
+pub fn addFromDir(ctx: *Cases, dir: Io.Dir, path_from_root: []const u8, b: *std.Build) void {
     var current_file: []const u8 = "none";
-    ctx.addFromDirInner(dir, &current_file, b) catch |err| {
-        std.debug.panicExtra(
-            @returnAddress(),
-            "test harness failed to process file '{s}': {s}\n",
-            .{ current_file, @errorName(err) },
-        );
+    ctx.addFromDirInner(dir, path_from_root, &current_file, b) catch |err| {
+        std.debug.panicExtra(@returnAddress(), "test harness failed to process file {q}: {t}\n", .{
+            current_file, err,
+        });
     };
 }
 
 fn addFromDirInner(
     ctx: *Cases,
     iterable_dir: Io.Dir,
+    path_from_root: []const u8,
     /// This is kept up to date with the currently being processed file so
     /// that if any errors occur the caller knows it happened during this file.
     current_file: *[]const u8,
@@ -340,11 +339,19 @@ fn addFromDirInner(
     var filenames: ArrayList([]const u8) = .empty;
 
     while (try it.next(io)) |entry| {
-        if (entry.kind != .file) continue;
-
         // Ignore stuff such as .swp files
         if (!knownFileExtension(entry.basename)) continue;
-        try filenames.append(ctx.arena, try ctx.arena.dupe(u8, entry.path));
+
+        switch (entry.kind) {
+            .file => {
+                b.dependOnFileContents(b.path(b.pathJoin(&.{ path_from_root, entry.path })));
+                try filenames.append(ctx.arena, try ctx.arena.dupe(u8, entry.path));
+            },
+            .directory => {
+                b.dependOnDirectory(b.path(b.pathJoin(&.{ path_from_root, entry.path })));
+            },
+            else => continue,
+        }
     }
 
     for (filenames.items) |filename| {
@@ -357,7 +364,15 @@ fn addFromDirInner(
         var manifest = try TestManifest.parse(ctx.arena, src);
 
         const backends = try manifest.getConfigForKeyAlloc(ctx.arena, "backend", Backend);
-        const targets = try manifest.getConfigForKeyAlloc(ctx.arena, "target", std.Target.Query);
+        const target_strs = try manifest.getConfigForKeyAlloc(ctx.arena, "target", []const u8);
+        const cpu_features_str = manifest.config_map.get("cpu_features") orelse "";
+        const targets = try ctx.arena.alloc(std.Target.Query, target_strs.len);
+        for (targets, target_strs) |*query, target_str| {
+            query.* = try std.Target.Query.parse(.{
+                .arch_os_abi = target_str,
+                .cpu_features = if (cpu_features_str.len == 0) null else cpu_features_str,
+            });
+        }
         const is_test = try manifest.getConfigForKeyAssertSingle("is_test", bool);
         const link_libc = try manifest.getConfigForKeyAssertSingle("link_libc", bool);
         const output_mode = try manifest.getConfigForKeyAssertSingle("output_mode", std.builtin.OutputMode);
@@ -470,8 +485,9 @@ pub fn lowerToBuildSteps(
     options: CaseTestOptions,
 ) void {
     const io = self.io;
+    const graph = b.graph;
+    const arena = graph.arena;
     const host = b.resolveTargetQuery(.{});
-    const cases_dir_path = b.build_root.join(b.allocator, &.{ "test", "cases" }) catch @panic("OOM");
 
     for (self.cases.items) |case| {
         for (options.test_filters) |test_filter| {
@@ -480,7 +496,7 @@ pub fn lowerToBuildSteps(
 
         if (case.case.? == .Error and options.skip_compile_errors) continue;
 
-        if (options.skip_non_native and !case.target.query.isNative())
+        if (options.skip_non_native and !@import("../tests.zig").isNative(&case.target, &b.graph.host.result))
             continue;
 
         if (options.skip_spirv and case.target.query.cpu_arch != null and case.target.query.cpu_arch.?.isSpirV()) continue;
@@ -504,7 +520,7 @@ pub fn lowerToBuildSteps(
         );
         if (options.skip_llvm and would_use_llvm) continue;
 
-        const triple_txt = case.target.query.zigTriple(b.allocator) catch @panic("OOM");
+        const triple_txt = case.target.query.zigTriple(arena) catch @panic("OOM");
 
         if (options.test_target_filters.len > 0) {
             for (options.test_target_filters) |filter| {
@@ -516,7 +532,7 @@ pub fn lowerToBuildSteps(
             continue;
 
         const writefiles = b.addWriteFiles();
-        var file_sources = std.StringHashMap(std.Build.LazyPath).init(b.allocator);
+        var file_sources = std.StringHashMap(std.Build.LazyPath).init(arena);
         defer file_sources.deinit();
         const first_file = case.files.items[0];
         const root_source_file = writefiles.add(first_file.path, first_file.src);
@@ -526,12 +542,15 @@ pub fn lowerToBuildSteps(
         }
 
         for (case.imports) |import_rel| {
-            const import_abs = std.fs.path.join(b.allocator, &.{
-                cases_dir_path,
-                case.import_path orelse @panic("import_path not set"),
-                import_rel,
-            }) catch @panic("OOM");
-            _ = writefiles.addCopyFile(.{ .cwd_relative = import_abs }, import_rel);
+            _ = writefiles.addCopyFile(.{ .src_path = .{
+                .owner = b,
+                .sub_path = b.pathJoin(&.{
+                    "test",
+                    "cases",
+                    case.import_path orelse @panic("import_path not set"),
+                    import_rel,
+                }),
+            } }, import_rel);
         }
 
         const mod = b.createModule(.{
@@ -605,7 +624,11 @@ pub fn lowerToBuildSteps(
             },
             .Execution => |expected_stdout| no_exec: {
                 const run = if (case.target.result.ofmt == .c) run_step: {
-                    if (getExternalExecutor(io, &host.result, &case.target.result, .{ .link_libc = true }) != .native) {
+                    if (getExternalExecutor(io, &case.target.result, .{
+                        .host_cpu_arch = host.result.cpu.arch,
+                        .host_os_tag = host.result.os.tag,
+                        .link_libc = true,
+                    }) != .native) {
                         // We wouldn't be able to run the compiled C code.
                         break :no_exec;
                     }
@@ -699,6 +722,8 @@ const TestManifestConfigDefaults = struct {
             return "null";
         } else if (std.mem.eql(u8, key, "imports")) {
             return "";
+        } else if (std.mem.eql(u8, key, "cpu_features")) {
+            return "";
         } else unreachable;
     }
 };
@@ -731,6 +756,7 @@ const TestManifest = struct {
         .{ "is_test", {} },
         .{ "output_mode", {} },
         .{ "target", {} },
+        .{ "cpu_features", {} },
         .{ "c_frontend", {} },
         .{ "link_libc", {} },
         .{ "backend", {} },

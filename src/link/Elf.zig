@@ -2,7 +2,7 @@ pub const Atom = @import("Elf/Atom.zig");
 
 base: link.File,
 zig_object: ?*ZigObject,
-rpath_table: std.StringArrayHashMapUnmanaged(void),
+rpath_table: std.array_hash_map.String(void),
 image_base: u64,
 z_nodelete: bool,
 z_notext: bool,
@@ -30,7 +30,7 @@ file_handles: std.ArrayList(File.Handle) = .empty,
 zig_object_index: ?File.Index = null,
 linker_defined_index: ?File.Index = null,
 objects: std.ArrayList(File.Index) = .empty,
-shared_objects: std.StringArrayHashMapUnmanaged(File.Index) = .empty,
+shared_objects: std.array_hash_map.String(File.Index) = .empty,
 
 /// List of all output sections and their associated metadata.
 sections: std.MultiArrayList(Section) = .{},
@@ -249,7 +249,7 @@ pub fn createEmpty(
     const is_dyn_lib = output_mode == .Lib and link_mode == .dynamic;
     const default_sym_version: elf.Versym = if (is_dyn_lib or comp.config.rdynamic) .GLOBAL else .LOCAL;
 
-    var rpath_table: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var rpath_table: std.array_hash_map.String(void) = .empty;
     try rpath_table.entries.resize(arena, options.rpath_list.len);
     @memcpy(rpath_table.entries.items(.key), options.rpath_list);
     try rpath_table.reIndex(arena);
@@ -260,10 +260,6 @@ pub fn createEmpty(
             .tag = .elf,
             .comp = comp,
             .emit = emit,
-            .zcu_object_basename = if (use_llvm)
-                try std.fmt.allocPrint(arena, "{s}_zcu.o", .{fs.path.stem(emit.sub_path)})
-            else
-                null,
             .gc_sections = options.gc_sections orelse (optimize_mode != .Debug and output_mode != .Obj),
             .print_gc_sections = options.print_gc_sections,
             .stack_size = options.stack_size orelse 16777216,
@@ -286,7 +282,7 @@ pub fn createEmpty(
 
         .image_base = b: {
             if (is_dyn_lib) break :b 0;
-            if (output_mode == .Exe and comp.config.pie) break :b 0;
+            if (output_mode == .Exe and (comp.config.pie or target.os.tag == .haiku)) break :b 0;
             break :b options.image_base orelse switch (ptr_width) {
                 .p32 => 0x10000,
                 .p64 => 0x1000000,
@@ -476,9 +472,8 @@ pub fn lowerUav(
     pt: Zcu.PerThread,
     uav: InternPool.Index,
     explicit_alignment: InternPool.Alignment,
-    src_loc: Zcu.LazySrcLoc,
-) !codegen.SymbolResult {
-    return self.zigObjectPtr().?.lowerUav(self, pt, uav, explicit_alignment, src_loc);
+) !link.File.SymbolId {
+    return self.zigObjectPtr().?.lowerUav(self, pt, uav, explicit_alignment);
 }
 
 pub fn getUavVAddr(self: *Elf, uav: InternPool.Index, reloc_info: link.File.RelocInfo) !u64 {
@@ -743,7 +738,7 @@ pub fn loadInput(self: *Elf, input: link.Input) !void {
     }
 }
 
-pub fn flush(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Progress.Node) link.File.FlushError!void {
+pub fn flush(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Progress.Node) link.Error!void {
     const tracy = trace(@src());
     defer tracy.end();
 
@@ -757,23 +752,19 @@ pub fn flush(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std
     defer sub_prog_node.end();
 
     return flushInner(self, arena, tid) catch |err| switch (err) {
-        error.OutOfMemory, error.LinkFailure => |e| return e,
+        error.OutOfMemory, error.AlreadyReported => |e| return e,
         else => |e| return diags.fail("ELF flush failed: {t}", .{e}),
     };
 }
 
 fn flushInner(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id) !void {
+    _ = arena;
+
     const comp = self.base.comp;
     const gpa = comp.gpa;
     const diags = &comp.link_diags;
 
-    const zcu_obj_path: ?Path = if (self.base.zcu_object_basename) |raw| p: {
-        break :p try comp.resolveEmitPathFlush(arena, .temp, raw);
-    } else null;
-
     if (self.zigObjectPtr()) |zig_object| try zig_object.flush(self, tid);
-
-    if (zcu_obj_path) |path| openParseObjectReportingFailure(self, path);
 
     switch (comp.config.output_mode) {
         .Obj => return relocatable.flushObject(self, comp),
@@ -784,7 +775,7 @@ fn flushInner(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id) !void {
         .Exe => {},
     }
 
-    if (diags.hasErrors()) return error.LinkFailure;
+    if (diags.hasErrors()) return error.AlreadyReported;
 
     // If we haven't already, create a linker-generated input file comprising of
     // linker-defined synthetic symbols only such as `_DYNAMIC`, etc.
@@ -816,7 +807,7 @@ fn flushInner(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id) !void {
     }
 
     self.checkDuplicates() catch |err| switch (err) {
-        error.HasDuplicates => return error.LinkFailure,
+        error.HasDuplicates => return error.AlreadyReported,
         else => |e| return e,
     };
 
@@ -903,7 +894,7 @@ fn flushInner(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id) !void {
                 error.RelocFailure, error.RelaxFailure => has_reloc_errors = true,
                 error.UnsupportedCpuArch => {
                     try self.reportUnsupportedCpuArch();
-                    return error.LinkFailure;
+                    return error.AlreadyReported;
                 },
                 else => |e| return e,
             };
@@ -912,7 +903,7 @@ fn flushInner(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id) !void {
 
         try self.reportUndefinedSymbols(&undefs);
 
-        if (has_reloc_errors) return error.LinkFailure;
+        if (has_reloc_errors) return error.AlreadyReported;
     }
 
     try self.writePhdrTable();
@@ -921,10 +912,10 @@ fn flushInner(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id) !void {
     try self.writeMergeSections();
 
     self.writeSyntheticSections() catch |err| switch (err) {
-        error.RelocFailure => return error.LinkFailure,
+        error.RelocFailure => return error.AlreadyReported,
         error.UnsupportedCpuArch => {
             try self.reportUnsupportedCpuArch();
-            return error.LinkFailure;
+            return error.AlreadyReported;
         },
         else => |e| return e,
     };
@@ -938,7 +929,7 @@ fn flushInner(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id) !void {
         try self.writeElfHeader();
     }
 
-    if (diags.hasErrors()) return error.LinkFailure;
+    if (diags.hasErrors()) return error.AlreadyReported;
 }
 
 fn dumpArgvInit(self: *Elf, arena: Allocator) !void {
@@ -1047,27 +1038,6 @@ fn dumpArgvInit(self: *Elf, arena: Allocator) !void {
     }
 }
 
-pub fn openParseObjectReportingFailure(self: *Elf, path: Path) void {
-    const comp = self.base.comp;
-    const io = comp.io;
-    const diags = &comp.link_diags;
-    const obj = link.openObject(io, path, false, false) catch |err| {
-        switch (diags.failParse(path, "failed to open object: {t}", .{err})) {
-            error.LinkFailure => return,
-        }
-    };
-    self.parseObjectReportingFailure(obj);
-}
-
-fn parseObjectReportingFailure(self: *Elf, obj: link.Input.Object) void {
-    const comp = self.base.comp;
-    const diags = &comp.link_diags;
-    self.parseObject(obj) catch |err| switch (err) {
-        error.LinkFailure => return, // already reported
-        else => |e| diags.addParseError(obj.path, "failed to parse object: {t}", .{e}),
-    };
-}
-
 fn parseObject(self: *Elf, obj: link.Input.Object) !void {
     const tracy = trace(@src());
     defer tracy.end();
@@ -1142,7 +1112,7 @@ fn parseDso(
     io: Io,
     diags: *Diags,
     dso: link.Input.Dso,
-    shared_objects: *std.StringArrayHashMapUnmanaged(File.Index),
+    shared_objects: *std.array_hash_map.String(File.Index),
     files: *std.MultiArrayList(File.Entry),
     target: *const std.Target,
 ) !void {
@@ -1194,7 +1164,7 @@ fn parseDso(
     // TODO: save this work for later
     const nsyms = parsed.symbols.len;
     try so.symbols.ensureTotalCapacityPrecise(gpa, nsyms);
-    try so.symbols_extra.ensureTotalCapacityPrecise(gpa, nsyms * @typeInfo(Symbol.Extra).@"struct".fields.len);
+    try so.symbols_extra.ensureTotalCapacityPrecise(gpa, nsyms * @typeInfo(Symbol.Extra).@"struct".field_names.len);
     try so.symbols_resolver.ensureTotalCapacityPrecise(gpa, nsyms);
     so.symbols_resolver.appendNTimesAssumeCapacity(0, nsyms);
 
@@ -1343,7 +1313,7 @@ fn scanRelocs(self: *Elf) !void {
             error.RelaxFailure => unreachable,
             error.UnsupportedCpuArch => {
                 try self.reportUnsupportedCpuArch();
-                return error.LinkFailure;
+                return error.AlreadyReported;
             },
             error.RelocFailure => has_reloc_errors = true,
             else => |e| return e,
@@ -1354,7 +1324,7 @@ fn scanRelocs(self: *Elf) !void {
             error.RelaxFailure => unreachable,
             error.UnsupportedCpuArch => {
                 try self.reportUnsupportedCpuArch();
-                return error.LinkFailure;
+                return error.AlreadyReported;
             },
             error.RelocFailure => has_reloc_errors = true,
             else => |e| return e,
@@ -1363,7 +1333,7 @@ fn scanRelocs(self: *Elf) !void {
 
     try self.reportUndefinedSymbols(&undefs);
 
-    if (has_reloc_errors) return error.LinkFailure;
+    if (has_reloc_errors) return error.AlreadyReported;
 
     if (self.zigObjectPtr()) |zo| {
         try zo.asFile().createSymbolIndirection(self);
@@ -1392,9 +1362,9 @@ pub fn initOutputSection(self: *Elf, args: struct {
         if (self.base.isRelocatable()) break :blk args.name;
         if (args.flags & elf.SHF_MERGE != 0) break :blk args.name;
         const name_prefixes: []const [:0]const u8 = &.{
-            ".text",       ".data.rel.ro", ".data", ".rodata", ".bss.rel.ro",       ".bss",
-            ".init_array", ".fini_array",  ".tbss", ".tdata",  ".gcc_except_table", ".ctors",
-            ".dtors",      ".gnu.warning",
+            ".text",          ".data.rel.ro", ".data",        ".rodata", ".bss.rel.ro", ".bss",
+            ".preinit_array", ".init_array",  ".fini_array",  ".tbss",   ".tdata",      ".gcc_except_table",
+            ".ctors",         ".dtors",       ".gnu.warning",
         };
         inline for (name_prefixes) |prefix| {
             if (mem.eql(u8, args.name, prefix) or mem.startsWith(u8, args.name, prefix ++ ".")) {
@@ -1409,6 +1379,8 @@ pub fn initOutputSection(self: *Elf, args: struct {
         switch (args.type) {
             elf.SHT_NULL => unreachable,
             elf.SHT_PROGBITS => {
+                if (mem.eql(u8, args.name, ".preinit_array") or mem.startsWith(u8, args.name, ".preinit_array."))
+                    break :tt elf.SHT_PREINIT_ARRAY;
                 if (mem.eql(u8, args.name, ".init_array") or mem.startsWith(u8, args.name, ".init_array."))
                     break :tt elf.SHT_INIT_ARRAY;
                 if (mem.eql(u8, args.name, ".fini_array") or mem.startsWith(u8, args.name, ".fini_array."))
@@ -1688,10 +1660,7 @@ pub fn updateFunc(
     pt: Zcu.PerThread,
     func_index: InternPool.Index,
     mir: *const codegen.AnyMir,
-) link.File.UpdateNavError!void {
-    if (build_options.skip_non_native and builtin.object_format != .elf) {
-        @panic("Attempted to compile for object format that was disabled by build configuration");
-    }
+) link.Error!void {
     return self.zigObjectPtr().?.updateFunc(self, pt, func_index, mir);
 }
 
@@ -1699,10 +1668,7 @@ pub fn updateNav(
     self: *Elf,
     pt: Zcu.PerThread,
     nav: InternPool.Nav.Index,
-) link.File.UpdateNavError!void {
-    if (build_options.skip_non_native and builtin.object_format != .elf) {
-        @panic("Attempted to compile for object format that was disabled by build configuration");
-    }
+) link.Error!void {
     return self.zigObjectPtr().?.updateNav(self, pt, nav);
 }
 
@@ -1711,10 +1677,7 @@ pub fn updateContainerType(
     pt: Zcu.PerThread,
     ty: InternPool.Index,
     success: bool,
-) link.File.UpdateContainerTypeError!void {
-    if (build_options.skip_non_native and builtin.object_format != .elf) {
-        @panic("Attempted to compile for object format that was disabled by build configuration");
-    }
+) link.Error!void {
     return self.zigObjectPtr().?.updateContainerType(pt, ty, success) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
     };
@@ -1725,14 +1688,11 @@ pub fn updateExports(
     pt: Zcu.PerThread,
     exported: Zcu.Exported,
     export_indices: []const Zcu.Export.Index,
-) link.File.UpdateExportsError!void {
-    if (build_options.skip_non_native and builtin.object_format != .elf) {
-        @panic("Attempted to compile for object format that was disabled by build configuration");
-    }
+) link.Error!void {
     return self.zigObjectPtr().?.updateExports(self, pt, exported, export_indices);
 }
 
-pub fn updateLineNumber(self: *Elf, pt: Zcu.PerThread, ti_id: InternPool.TrackedInst.Index) !void {
+pub fn updateLineNumber(self: *Elf, pt: Zcu.PerThread, ti_id: InternPool.TrackedInst.Index) link.Error!void {
     return self.zigObjectPtr().?.updateLineNumber(pt, ti_id);
 }
 
@@ -1794,12 +1754,12 @@ pub fn resolveMergeSections(self: *Elf) !void {
         if (!object.alive) continue;
         if (!object.dirty) continue;
         object.initInputMergeSections(self) catch |err| switch (err) {
-            error.LinkFailure => has_errors = true,
+            error.AlreadyReported => has_errors = true,
             else => |e| return e,
         };
     }
 
-    if (has_errors) return error.LinkFailure;
+    if (has_errors) return error.AlreadyReported;
 
     for (self.objects.items) |index| {
         const object = self.file(index).?.object;
@@ -1813,12 +1773,12 @@ pub fn resolveMergeSections(self: *Elf) !void {
         if (!object.alive) continue;
         if (!object.dirty) continue;
         object.resolveMergeSubsections(self) catch |err| switch (err) {
-            error.LinkFailure => has_errors = true,
+            error.AlreadyReported => has_errors = true,
             else => |e| return e,
         };
     }
 
-    if (has_errors) return error.LinkFailure;
+    if (has_errors) return error.AlreadyReported;
 }
 
 pub fn finalizeMergeSections(self: *Elf) !void {
@@ -2352,9 +2312,9 @@ fn sortPhdrs(
         phdr.* = slice[entry.phndx];
     }
 
-    inline for (@typeInfo(ProgramHeaderIndexes).@"struct".fields) |field| {
-        if (@field(special_indexes, field.name).int()) |special_index| {
-            @field(special_indexes, field.name) = @enumFromInt(backlinks[special_index]);
+    inline for (@typeInfo(ProgramHeaderIndexes).@"struct".field_names) |field_name| {
+        if (@field(special_indexes, field_name).int()) |special_index| {
+            @field(special_indexes, field_name) = @enumFromInt(backlinks[special_index]);
         }
     }
 
@@ -2472,9 +2432,9 @@ pub fn sortShdrs(
         }
     }
 
-    inline for (@typeInfo(SectionIndexes).@"struct".fields) |field| {
-        if (@field(section_indexes, field.name)) |special_index| {
-            @field(section_indexes, field.name) = backlinks[special_index];
+    inline for (@typeInfo(SectionIndexes).@"struct".field_names) |field_name| {
+        if (@field(section_indexes, field_name)) |special_index| {
+            @field(section_indexes, field_name) = backlinks[special_index];
         }
     }
 
@@ -3008,7 +2968,7 @@ fn writeAtoms(self: *Elf) !void {
         atom_list.write(&buffer, &undefs, self) catch |err| switch (err) {
             error.UnsupportedCpuArch => {
                 try self.reportUnsupportedCpuArch();
-                return error.LinkFailure;
+                return error.AlreadyReported;
             },
             error.RelocFailure, error.RelaxFailure => has_reloc_errors = true,
             else => |e| return e,
@@ -3016,7 +2976,7 @@ fn writeAtoms(self: *Elf) !void {
     }
 
     try self.reportUndefinedSymbols(&undefs);
-    if (has_reloc_errors) return error.LinkFailure;
+    if (has_reloc_errors) return error.AlreadyReported;
 
     if (self.requiresThunks()) {
         for (self.thunks.items) |th| {
@@ -3848,9 +3808,9 @@ pub fn failFile(
     file_index: File.Index,
     comptime format: []const u8,
     args: anytype,
-) error{ OutOfMemory, LinkFailure } {
+) error{ OutOfMemory, AlreadyReported } {
     try addFileError(self, file_index, format, args);
-    return error.LinkFailure;
+    return error.AlreadyReported;
 }
 
 const FormatShdr = struct {
@@ -3941,7 +3901,7 @@ fn formatPhdr(ctx: FormatPhdr, writer: *std.Io.Writer) std.Io.Writer.Error!void 
     const write = phdr.p_flags & elf.PF_W != 0;
     const read = phdr.p_flags & elf.PF_R != 0;
     const exec = phdr.p_flags & elf.PF_X != 0;
-    var flags: [3]u8 = [_]u8{'_'} ** 3;
+    var flags: [3]u8 = @splat('_');
     if (exec) flags[0] = 'X';
     if (write) flags[1] = 'W';
     if (read) flags[2] = 'R';
@@ -4193,7 +4153,7 @@ pub const Ref = struct {
 pub const SymbolResolver = struct {
     keys: std.ArrayList(Key) = .empty,
     values: std.ArrayList(Ref) = .empty,
-    table: std.AutoArrayHashMapUnmanaged(void, void) = .empty,
+    table: std.array_hash_map.Auto(void, void) = .empty,
 
     const Result = struct {
         found_existing: bool,
@@ -4419,7 +4379,7 @@ pub fn stringTableLookup(strtab: []const u8, off: u32) [:0]const u8 {
     return slice[0..mem.indexOfScalar(u8, slice, 0).? :0];
 }
 
-pub fn pwriteAll(elf_file: *Elf, bytes: []const u8, offset: u64) error{LinkFailure}!void {
+pub fn pwriteAll(elf_file: *Elf, bytes: []const u8, offset: u64) error{AlreadyReported}!void {
     const comp = elf_file.base.comp;
     const io = comp.io;
     const diags = &comp.link_diags;
@@ -4427,7 +4387,7 @@ pub fn pwriteAll(elf_file: *Elf, bytes: []const u8, offset: u64) error{LinkFailu
         return diags.fail("failed to write: {t}", .{err});
 }
 
-pub fn setLength(elf_file: *Elf, length: u64) error{LinkFailure}!void {
+pub fn setLength(elf_file: *Elf, length: u64) error{AlreadyReported}!void {
     const comp = elf_file.base.comp;
     const io = comp.i;
     const diags = &comp.link_diags;
@@ -4436,7 +4396,7 @@ pub fn setLength(elf_file: *Elf, length: u64) error{LinkFailure}!void {
     };
 }
 
-pub fn cast(elf_file: *Elf, comptime T: type, x: anytype) error{LinkFailure}!T {
+pub fn cast(elf_file: *Elf, comptime T: type, x: anytype) error{AlreadyReported}!T {
     return std.math.cast(T, x) orelse {
         const comp = elf_file.base.comp;
         const diags = &comp.link_diags;

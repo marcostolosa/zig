@@ -383,7 +383,6 @@ fn not(comptime T: type, a: T) T {
 
 test "binary not" {
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try expect(not(u0, 0) == 0);
     try expect(not(u1, 0) == 1);
@@ -401,7 +400,6 @@ test "binary not" {
     try expect(not(u64, 0x0123_4567_89AB_CDEF) == 0xFEDC_BA98_7654_3210);
     try expect(not(u64, 0xFEDC_BA98_7654_3210) == 0x0123_4567_89AB_CDEF);
 
-    try expect(not(i0, 0) == 0);
     try expect(not(i1, 0) == -1);
     try expect(not(i1, -1) == 0);
     try expect(not(i5, -2) == 1);
@@ -425,7 +423,6 @@ test "binary not" {
 test "binary not big int <= 128 bits" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     try expect(not(u65, 1) == 0x1_FFFFFFFF_FFFFFFFE);
@@ -459,8 +456,6 @@ test "division" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     try testIntDivision();
     try comptime testIntDivision();
 
@@ -492,6 +487,36 @@ fn testIntDivision() !void {
     try expect(divFloor(i16, -5, 3) == -2);
     try expect(divFloor(i64, -0x80000000, -2) == 0x40000000);
     try expect(divFloor(i64, -0x40000001, 0x40000000) == -2);
+
+    try expect(divCeil(i32, 5, 3) == 2);
+    try expect(divCeil(i32, -5, 3) == -1);
+    try expect(divCeil(i32, -0x80000000, -2) == 0x40000000);
+    try expect(divCeil(i32, 0, -0x80000000) == 0);
+    try expect(divCeil(i32, -0x40000001, 0x40000000) == -1);
+    try expect(divCeil(i32, -0x80000000, 1) == -0x80000000);
+    try expect(divCeil(i32, 10, 12) == 1);
+    try expect(divCeil(i32, -14, 12) == -1);
+    try expect(divCeil(i32, -2, 12) == 0);
+
+    try expect(divCeil(u32, 5, 3) == 2);
+    try expect(divCeil(u32, 16, 4) == 4);
+    try expect(divCeil(u32, 0, 100) == 0);
+    try expect(divCeil(u32, maxInt(u32) - 1, 100) == 42949673);
+
+    try expect(divCeil(i64, 5, 3) == 2);
+    try expect(divCeil(i64, -5, 3) == -1);
+    try expect(divCeil(i64, -0x80000000, -2) == 0x40000000);
+    try expect(divCeil(i64, 0, -0x80000000) == 0);
+    try expect(divCeil(i64, -0x40000001, 0x40000000) == -1);
+    try expect(divCeil(i64, -0x80000000, 1) == -0x80000000);
+    try expect(divCeil(i64, 10, 12) == 1);
+    try expect(divCeil(i64, -14, 12) == -1);
+    try expect(divCeil(i64, -2, 12) == 0);
+
+    try expect(divCeil(u64, 5, 3) == 2);
+    try expect(divCeil(u64, 16, 4) == 4);
+    try expect(divCeil(u64, 0, 100) == 0);
+    try expect(divCeil(u64, maxInt(u64) - 1, 10000) == 1844674407370956);
 
     try expect(divTrunc(i32, 5, 3) == 1);
     try expect(divTrunc(i32, -5, 3) == -1);
@@ -537,6 +562,24 @@ fn testIntDivision() !void {
             1194735857077236777412821811143690633098347576 / 508740759824825164163191790951174292733114988 == 2,
         );
         try expect(
+            @divFloor(-1194735857077236777412821811143690633098347576, 508740759824825164163191790951174292733114988) == -3,
+        );
+        try expect(
+            @divFloor(1194735857077236777412821811143690633098347576, -508740759824825164163191790951174292733114988) == -3,
+        );
+        try expect(
+            @divFloor(-1194735857077236777412821811143690633098347576, -508740759824825164163191790951174292733114988) == 2,
+        );
+        try expect(
+            @divCeil(-1194735857077236777412821811143690633098347576, 508740759824825164163191790951174292733114988) == -2,
+        );
+        try expect(
+            @divCeil(1194735857077236777412821811143690633098347576, -508740759824825164163191790951174292733114988) == -2,
+        );
+        try expect(
+            @divCeil(-1194735857077236777412821811143690633098347576, -508740759824825164163191790951174292733114988) == 3,
+        );
+        try expect(
             @divTrunc(-1194735857077236777412821811143690633098347576, 508740759824825164163191790951174292733114988) == -2,
         );
         try expect(
@@ -563,6 +606,13 @@ fn testFloatDivision() !void {
     try expect(divFloor(f32, 1053.0, -41.0) == -26.0);
     try expect(divFloor(f16, -43.0, 12.0) == -4.0);
     try expect(divFloor(f64, -90.0, -9.0) == 10.0);
+
+    try expect(divCeil(f32, 5.0, 3.0) == 2.0);
+    try expect(divCeil(f32, -5.0, 3.0) == -1.0);
+    try expect(divCeil(f32, 56.0, 9.0) == 7.0);
+    try expect(divCeil(f32, 1053.0, -41.0) == -25.0);
+    try expect(divCeil(f16, -43.0, 12.0) == -3.0);
+    try expect(divCeil(f64, -90.0, -9.0) == 10.0);
 
     try expect(divTrunc(f32, 5.0, 3.0) == 1.0);
     try expect(divTrunc(f32, -5.0, 3.0) == -1.0);
@@ -612,6 +662,8 @@ fn testDivisionFP16() !void {
 
     try expect(divFloor(f16, 5.0, 3.0) == 1.0);
     try expect(divFloor(f16, -5.0, 3.0) == -2.0);
+    try expect(divCeil(f16, 5.0, 3.0) == 2.0);
+    try expect(divCeil(f16, -5.0, 3.0) == -1.0);
     try expect(divTrunc(f16, 5.0, 3.0) == 1.0);
     try expect(divTrunc(f16, -5.0, 3.0) == -1.0);
     try expect(divTrunc(f16, 9.0, -10.0) == 0.0);
@@ -626,6 +678,9 @@ fn divExact(comptime T: type, a: T, b: T) T {
 }
 fn divFloor(comptime T: type, a: T, b: T) T {
     return @divFloor(a, b);
+}
+fn divCeil(comptime T: type, a: T, b: T) T {
+    return @divCeil(a, b);
 }
 fn divTrunc(comptime T: type, a: T, b: T) T {
     return @divTrunc(a, b);
@@ -660,8 +715,6 @@ fn testSignedWrappingEval(x: i32) !void {
 }
 
 test "signed negation wrapping" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     try testSignedNegationWrappingEval(minInt(i16));
     try comptime testSignedNegationWrappingEval(minInt(i16));
 }
@@ -764,7 +817,6 @@ fn should_not_be_zero(x: f128) !void {
 test "umax wrapped squaring" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     {
         var x: u4 = maxInt(u4);
@@ -821,7 +873,6 @@ test "umax wrapped squaring" {
 test "128-bit multiplication" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c and builtin.cpu.arch.isArm()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
@@ -874,7 +925,6 @@ test "@addWithOverflow <= 128 bits" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
 
     try testAddWithOverflow(u65, 4, 105, 109, 0);
     try testAddWithOverflow(u65, 1000, 100, 1100, 0);
@@ -1001,7 +1051,6 @@ test "extensive @mulWithOverflow" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testMulWithOverflow(u5, 3, 10, 30, 0);
     try testMulWithOverflow(u5, 3, 11, 1, 1);
@@ -1115,6 +1164,7 @@ test "@mulWithOverflow bitsize 128 bits" {
 test "@mulWithOverflow > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testMulWithOverflow(u140, 0, maxInt(u140), 0, 0);
     try testMulWithOverflow(u140, 1, maxInt(u140), maxInt(u140), 0);
@@ -1207,7 +1257,6 @@ test "@subWithOverflow <= 128 bits" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
 
     try testSubWithOverflow(u65, 4, 105, maxInt(u65) - 100, 1);
     try testSubWithOverflow(u65, 1000, 100, 900, 0);
@@ -1341,6 +1390,7 @@ test "@shlWithOverflow > 64 bits" {
 test "@shlWithOverflow > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testShlWithOverflow(u140, 1 << 100, 20, 1 << 120, 0);
     try testShlWithOverflow(u140, 1 << 100, 40, 0, 1);
@@ -1544,6 +1594,7 @@ fn testClz(comptime T: type, a: T, expected: u16) !void {
 test "@clz > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testClz(u140, 0, 140);
     try testClz(u140, 1 << 139, 0);
@@ -1573,6 +1624,7 @@ fn testCtz(comptime T: type, a: T, expected: u16) !void {
 test "@ctz > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testCtz(u140, 0, 140);
     try testCtz(u140, 1 << 139, 139);
@@ -1602,6 +1654,7 @@ fn testPopCount(comptime T: type, a: T, expected: u16) !void {
 test "@popCount > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testPopCount(u140, 0, 0);
     try testPopCount(u140, maxInt(u140), 140);
@@ -1631,6 +1684,7 @@ fn testBitReverse(comptime T: type, a: T, expected: T) !void {
 test "@bitReverse > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testBitReverse(u140, 1 << 139, 1);
     try testBitReverse(u140, 1 << 70, 1 << 69);
@@ -1660,6 +1714,7 @@ fn testByteSwap(comptime T: type, a: T, expected: T) !void {
 test "@byteSwap > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testByteSwap(u144, 1 << 136, 1);
     try testByteSwap(u144, 1, 1 << 136);
@@ -1689,6 +1744,7 @@ fn testMax(comptime T: type, a: T, b: T, expected: T) !void {
 test "@max > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testMax(u140, 0, maxInt(u140), maxInt(u140));
     try testMax(u140, 1 << 139, 1 << 138, 1 << 139);
@@ -1718,6 +1774,7 @@ fn testMin(comptime T: type, a: T, b: T, expected: T) !void {
 test "@min > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testMin(u140, 0, maxInt(u140), 0);
     try testMin(u140, 1 << 139, 1 << 138, 1 << 138);
@@ -1771,6 +1828,7 @@ fn testRem(comptime T: type, numerator: T, denominator: T, expected: T) !void {
 test "@rem > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testRem(u140, 0, maxInt(u140), 0);
     try testRem(u140, maxInt(u140), maxInt(u140), 0);
@@ -1798,6 +1856,7 @@ fn testMod(comptime T: type, numerator: T, denominator: T, expected: T) !void {
 test "@mod > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testMod(u140, 0, maxInt(u140), 0);
     try testMod(u140, maxInt(u140), maxInt(u140), 0);
@@ -1825,6 +1884,7 @@ fn testDivFloor(comptime T: type, numerator: T, denominator: T, expected: T) !vo
 test "@divFloor > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testDivFloor(u140, 0, maxInt(u140), 0);
     try testDivFloor(u140, maxInt(u140), maxInt(u140), 1);
@@ -1846,6 +1906,35 @@ test "@divFloor > 128 bits" {
     try testDivFloor(i200, maxInt(i200), 2, (1 << 198) - 1);
 }
 
+fn testDivCeil(comptime T: type, numerator: T, denominator: T, expected: T) !void {
+    try expect(@divCeil(numerator, denominator) == expected);
+}
+
+test "@divCeil > 128 bits" {
+    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
+    try testDivCeil(u140, 0, maxInt(u140), 0);
+    try testDivCeil(u140, maxInt(u140), maxInt(u140), 1);
+    try testDivCeil(u140, maxInt(u140), 2, maxInt(u140) / 2 + 1);
+    try testDivCeil(u140, (1 << 139) + 5, 1 << 70, (1 << 69) + 1);
+    try testDivCeil(u140, (1 << 100) + (1 << 50) + 7, 1 << 50, (1 << 50) + 2);
+    try testDivCeil(u200, 123, 1 << 100, 1);
+    try testDivCeil(u200, 1 << 120, 1 << 60, 1 << 60);
+    try testDivCeil(u200, maxInt(u200), 1 << 100, 1 << 100);
+
+    try testDivCeil(i140, 0, maxInt(i140), 0);
+    try testDivCeil(i140, maxInt(i140), maxInt(i140), 1);
+    try testDivCeil(i140, -((1 << 100) + 1), 1 << 50, -(1 << 50));
+    try testDivCeil(i140, (1 << 100) + 1, -(1 << 50), -(1 << 50));
+    try testDivCeil(i140, -((1 << 100) + 1), -(1 << 50), (1 << 50) + 1);
+    try testDivCeil(i200, -3, 2, -1);
+    try testDivCeil(i200, minInt(i200), 1, minInt(i200));
+    try testDivCeil(i200, minInt(i200), -2, 1 << 198);
+    try testDivCeil(i200, maxInt(i200), 2, 1 << 198);
+}
+
 fn testDivTrunc(comptime T: type, numerator: T, denominator: T, expected: T) !void {
     try expect(@divTrunc(numerator, denominator) == expected);
 }
@@ -1853,6 +1942,7 @@ fn testDivTrunc(comptime T: type, numerator: T, denominator: T, expected: T) !vo
 test "@divTrunc > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testDivTrunc(u140, 0, maxInt(u140), 0);
     try testDivTrunc(u140, maxInt(u140), maxInt(u140), 1);
@@ -1875,8 +1965,6 @@ test "@divTrunc > 128 bits" {
 }
 
 test "overflow arithmetic with u0 values" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     {
         var a: u0 = 0;
         _ = &a;
@@ -2360,7 +2448,7 @@ test "signed zeros are represented properly" {
         }
 
         fn testOne(comptime T: type) !void {
-            const ST = std.meta.Int(.unsigned, @typeInfo(T).float.bits);
+            const ST = @Int(.unsigned, @typeInfo(T).float.bits);
             var as_fp_val = -@as(T, 0.0);
             _ = &as_fp_val;
             const as_uint_val: ST = @bitCast(as_fp_val);
@@ -2515,7 +2603,6 @@ test "partially-runtime integer vector division would be illegal if vector eleme
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch == .hexagon) return error.SkipZigTest;
 
     var lhs: @Vector(2, i8) = .{ -128, 5 };
@@ -2543,7 +2630,6 @@ test "float vector division of comptime zero by runtime nan is nan" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const ct_zero: @Vector(1, f32) = .{0};
     var rt_nan: @Vector(1, f32) = .{math.nan(f32)};
@@ -2560,7 +2646,6 @@ test "float vector multiplication of comptime zero by runtime nan is nan" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const ct_zero: @Vector(1, f32) = .{0};
     var rt_nan: @Vector(1, f32) = .{math.nan(f32)};
@@ -2575,7 +2660,6 @@ test "comptime float vector division of zero by nan is nan" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const ct_zero: @Vector(1, f32) = .{0};
     const ct_nan: @Vector(1, f32) = .{math.nan(f32)};
@@ -2589,7 +2673,6 @@ test "comptime float vector multiplication of zero by nan is nan" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const ct_zero: @Vector(1, f32) = .{0};
     const ct_nan: @Vector(1, f32) = .{math.nan(f32)};
@@ -2599,6 +2682,8 @@ test "comptime float vector multiplication of zero by nan is nan" {
 }
 
 test "i96 operations" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     // This is coverage for some stuff used by std.Io timestamps, to catch
     // issues earlier than bootstrapping.
     const Op_i96 = union(enum) {

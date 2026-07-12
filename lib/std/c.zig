@@ -11134,7 +11134,10 @@ pub const ioctl = switch (native_os) {
 
 pub extern "c" fn bzero(s: *anyopaque, n: usize) void;
 
-pub extern "c" fn memccpy(noalias dst: *anyopaque, noalias src: *const anyopaque, value: c_int, len: usize) ?*anyopaque;
+pub const memccpy = switch (builtin.abi) {
+    .msvc => private._memccpy,
+    else => private.memccpy,
+};
 
 pub const swab = switch (builtin.abi) {
     .msvc => private._swab,
@@ -11571,6 +11574,9 @@ const private = struct {
     pub extern "c" fn _strdup(s: [*:0]const c_char) ?[*:0]c_char;
     pub extern "c" fn wcsdup(s: [*:0]const wchar_t) ?[*:0]wchar_t;
     pub extern "c" fn _wcsdup(s: [*:0]const wchar_t) ?[*:0]wchar_t;
+
+    pub extern "c" fn memccpy(noalias dst: *anyopaque, noalias src: *const anyopaque, value: c_int, len: usize) ?*anyopaque;
+    pub extern "c" fn _memccpy(noalias dst: *anyopaque, noalias src: *const anyopaque, value: c_int, len: usize) ?*anyopaque;
 
     pub extern "c" fn swab(noalias from: *const anyopaque, noalias to: *anyopaque, n: isize) void;
     pub extern "c" fn _swab(noalias from: *const anyopaque, noalias to: *anyopaque, n: isize) void;

@@ -4780,7 +4780,6 @@ pub fn alignForwardLog2(addr: usize, log2_alignment: u8) usize {
 pub fn doNotOptimizeAway(val: anytype) void {
     if (@inComptime()) return;
 
-    const max_gp_register_bits = @bitSizeOf(c_long);
     const t = @typeInfo(@TypeOf(val));
     switch (t) {
         .void, .null, .comptime_int, .comptime_float => return,
@@ -4788,7 +4787,16 @@ pub fn doNotOptimizeAway(val: anytype) void {
         .bool => doNotOptimizeAway(@intFromBool(val)),
         .int => {
             const bits = t.int.bits;
-            if (bits <= max_gp_register_bits and builtin.zig_backend != .stage2_c) {
+
+            // SPIR-V targets do not have registers per se, they have values
+            // tied to IDs that can be passed to valid instructions. Some
+            // SPIR-V targets do not define c_long, so we just allow any sized
+            // integer on these targets
+            const val_fits_in_gp_register = builtin.target.cpu.arch.isSpirV() or fits: {
+                const max_gp_register_bits = @bitSizeOf(c_long);
+                break :fits bits <= max_gp_register_bits;
+            };
+            if (val_fits_in_gp_register and builtin.zig_backend != .stage2_c) {
                 const val2 = @as(
                     @Int(t.int.signedness, @max(8, std.math.ceilPowerOfTwoAssert(u16, bits))),
                     val,

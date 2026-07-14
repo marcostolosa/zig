@@ -411,30 +411,30 @@ test PageAllocator {
         // TODO: Once address hints are implemented for Windows (see TODO at top of file),
         // this test can be simplified by passing an explicit misaligned hint to force
         // the fallback path, eliminating the need for noise allocations.
-
+        
         // Deterministically force execution into the placeholder fallback path.
         // Windows places allocations consecutively in 64KB granularity units.
         // By interleaving 64KB noise allocations between 256KB test allocations,
         // we guarantee that at least one test allocation per pair will fail the
         // 256KB alignment check and exercise the fallback logic.
-        const win_large_align = std.mem.Alignment.fromByteUnits(256 * 1024);
         const noise_size = 64 * 1024;
-
+        const align_size = 256 * 1024;
+        
         var test_slices: [2][]u8 = undefined;
         var noise_slices: [2][]u8 = undefined;
-
+        
         for (0..2) |i| {
             noise_slices[i] = try allocator.alloc(u8, noise_size);
-            test_slices[i] = try allocator.alignedAlloc(u8, win_large_align, 40);
-            try testing.expect(std.mem.isAligned(@intFromPtr(test_slices[i].ptr), 256 * 1024));
+            test_slices[i] = try allocator.alignedAlloc(u8, .fromByteUnits(align_size), 40);
+            try testing.expect(std.mem.isAligned(@intFromPtr(test_slices[i].ptr), align_size));
         }
-
+        
         for (0..2) |i| {
             allocator.free(test_slices[i]);
             allocator.free(noise_slices[i]);
         }
     }
-    
+
     {
         var buf = try allocator.alloc(u8, pageSize() + 1);
         defer allocator.free(buf);

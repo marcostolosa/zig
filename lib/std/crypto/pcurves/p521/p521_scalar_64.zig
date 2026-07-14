@@ -6238,7 +6238,7 @@ pub fn toBytes(out1: *[66]u8, arg1: [9]u64) void {
 pub fn fromBytes(out1: *[9]u64, arg1: [66]u8) void {
     @setRuntimeSafety(mode == .Debug);
 
-    const x1 = (@as(u64, @truncate(@as(u1, (arg1[65])))) << 8);
+    const x1 = (@as(u64, @as(u1, @truncate((arg1[65])))) << 8);
     const x2 = (arg1[64]);
     const x3 = (@as(u64, (arg1[63])) << 56);
     const x4 = (@as(u64, (arg1[62])) << 48);

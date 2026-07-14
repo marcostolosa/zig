@@ -47,62 +47,54 @@ pub fn map(n: usize, alignment: Alignment) ?[*]u8 {
     const alignment_bytes = alignment.toByteUnits();
 
     if (native_os == .windows) {
-        var base_addr: ?*anyopaque = null;
-        var region_size: windows.SIZE_T = n;
-
         const current_process = windows.GetCurrentProcess();
-        var status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &region_size, .{ .COMMIT = true, .RESERVE = true }, .{ .READWRITE = true });
+        var base_addr: ?*anyopaque = null;
+        var region_size: windows.SIZE_T = undefined;
 
-        if (status == .SUCCESS and mem.isAligned(@intFromPtr(base_addr), alignment_bytes)) {
-            return @ptrCast(base_addr);
-        }
-
-        if (status == .SUCCESS) {
-            region_size = 0;
-            _ = ntdll.NtFreeVirtualMemory(current_process, @ptrCast(&base_addr), &region_size, .{ .RELEASE = true });
-        }
-
+        const allocation_granularity = 64 * 1024;
         const page_aligned_len = mem.alignForward(usize, n, page_size);
-        const max_drop_len = alignment_bytes -| page_size;
+
+        // For common small alignments, a plain reserve+commit is sufficient.
+        if (alignment_bytes <= allocation_granularity) {
+            base_addr = null;
+            region_size = page_aligned_len;
+            const fast_status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &region_size, .{ .COMMIT = true, .RESERVE = true }, .{ .READWRITE = true });
+            if (fast_status == .SUCCESS) {
+                return @ptrCast(base_addr);
+            }
+            return null;
+        }
+
+        const max_drop_len = alignment_bytes - allocation_granularity;
+        if (page_aligned_len > maxInt(usize) - max_drop_len) return null;
         const overalloc_len = page_aligned_len + max_drop_len;
 
+        // Reserve a larger scratch mapping, pick an aligned address within it,
+        // release the scratch mapping, then reserve+commit at the aligned address.
         base_addr = null;
         region_size = overalloc_len;
+        const scratch_status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &region_size, .{ .RESERVE = true }, .{ .NOACCESS = true });
+        if (scratch_status != .SUCCESS) return null;
 
-        status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &region_size, .{ .RESERVE = true, .RESERVE_PLACEHOLDER = true }, .{ .NOACCESS = true });
+        const scratch_addr = @intFromPtr(base_addr);
+        const aligned_addr = mem.alignForward(usize, scratch_addr, alignment_bytes);
 
-        if (status != .SUCCESS) return null;
+        // The aligned block is guaranteed to fit within the scratch mapping because:
+        // 1. scratch_addr is a multiple of 64KB (Windows guarantee).
+        // 2. The max distance to the next `alignment_bytes` boundary is `alignment_bytes - 64kiB`.
+        // 3. overalloc_len = page_aligned_len + (alignment_bytes - 64kiB).
 
-        const placeholder_addr = @intFromPtr(base_addr);
-        const aligned_addr = mem.alignForward(usize, placeholder_addr, alignment_bytes);
-        const prefix_size = aligned_addr - placeholder_addr;
-
-        if (prefix_size > 0) {
-            var prefix_base = base_addr;
-            var prefix_size_param: windows.SIZE_T = prefix_size;
-            _ = ntdll.NtFreeVirtualMemory(current_process, @ptrCast(&prefix_base), &prefix_size_param, .{ .RELEASE = true, .PRESERVE_PLACEHOLDER = true });
-        }
-
-        const suffix_start = aligned_addr + page_aligned_len;
-        const suffix_size = (placeholder_addr + overalloc_len) - suffix_start;
-        if (suffix_size > 0) {
-            var suffix_base = @as(?*anyopaque, @ptrFromInt(suffix_start));
-            var suffix_size_param: windows.SIZE_T = suffix_size;
-            _ = ntdll.NtFreeVirtualMemory(current_process, @ptrCast(&suffix_base), &suffix_size_param, .{ .RELEASE = true, .PRESERVE_PLACEHOLDER = true });
-        }
+        var release_base = base_addr;
+        var release_size: windows.SIZE_T = 0;
+        _ = ntdll.NtFreeVirtualMemory(current_process, @ptrCast(&release_base), &release_size, .{ .RELEASE = true });
 
         base_addr = @ptrFromInt(aligned_addr);
         region_size = page_aligned_len;
+        const final_status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &region_size, .{ .COMMIT = true, .RESERVE = true }, .{ .READWRITE = true });
 
-        status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &region_size, .{ .COMMIT = true }, .{ .READWRITE = true });
-
-        if (status == .SUCCESS) {
+        if (final_status == .SUCCESS) {
             return @ptrCast(base_addr);
         }
-
-        base_addr = @as(?*anyopaque, @ptrFromInt(aligned_addr));
-        region_size = page_aligned_len;
-        _ = ntdll.NtFreeVirtualMemory(current_process, @ptrCast(&base_addr), &region_size, .{ .RELEASE = true });
 
         return null;
     }

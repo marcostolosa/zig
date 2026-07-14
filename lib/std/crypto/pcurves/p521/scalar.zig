@@ -11,7 +11,7 @@ const NonCanonicalError = std.crypto.errors.NonCanonicalError;
 const NotSquareError = std.crypto.errors.NotSquareError;
 
 /// Number of bytes required to encode a scalar.
-pub const encoded_length = 65;
+pub const encoded_length = 66;
 
 /// A compressed scalar, in canonical form.
 pub const CompressedScalar = [encoded_length]u8;

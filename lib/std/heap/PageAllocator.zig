@@ -48,27 +48,28 @@ pub fn map(n: usize, alignment: Alignment) ?[*]u8 {
 
     if (native_os == .windows) {
         var base_addr: ?*anyopaque = null;
-        var size: windows.SIZE_T = n;
+        var region_size: windows.SIZE_T = n;
 
         const current_process = windows.GetCurrentProcess();
-        var status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &size, .{ .COMMIT = true, .RESERVE = true }, .{ .READWRITE = true });
+        var status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &region_size, .{ .COMMIT = true, .RESERVE = true }, .{ .READWRITE = true });
 
         if (status == .SUCCESS and mem.isAligned(@intFromPtr(base_addr), alignment_bytes)) {
             return @ptrCast(base_addr);
         }
 
         if (status == .SUCCESS) {
-            var region_size: windows.SIZE_T = 0;
+            region_size = 0;
             _ = ntdll.NtFreeVirtualMemory(current_process, @ptrCast(&base_addr), &region_size, .{ .RELEASE = true });
         }
 
-        const overalloc_len = n + alignment_bytes - page_size;
         const page_aligned_len = mem.alignForward(usize, n, page_size);
+        const max_drop_len = alignment_bytes -| page_size;
+        const overalloc_len = page_aligned_len + max_drop_len;
 
         base_addr = null;
-        size = overalloc_len;
+        region_size = overalloc_len;
 
-        status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &size, .{ .RESERVE = true, .RESERVE_PLACEHOLDER = true }, .{ .NOACCESS = true });
+        status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &region_size, .{ .RESERVE = true, .RESERVE_PLACEHOLDER = true }, .{ .NOACCESS = true });
 
         if (status != .SUCCESS) return null;
 
@@ -91,17 +92,17 @@ pub fn map(n: usize, alignment: Alignment) ?[*]u8 {
         }
 
         base_addr = @ptrFromInt(aligned_addr);
-        size = page_aligned_len;
+        region_size = page_aligned_len;
 
-        status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &size, .{ .COMMIT = true }, .{ .READWRITE = true });
+        status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &region_size, .{ .COMMIT = true }, .{ .READWRITE = true });
 
         if (status == .SUCCESS) {
             return @ptrCast(base_addr);
         }
 
         base_addr = @as(?*anyopaque, @ptrFromInt(aligned_addr));
-        size = page_aligned_len;
-        _ = ntdll.NtFreeVirtualMemory(current_process, @ptrCast(&base_addr), &size, .{ .RELEASE = true });
+        region_size = page_aligned_len;
+        _ = ntdll.NtFreeVirtualMemory(current_process, @ptrCast(&base_addr), &region_size, .{ .RELEASE = true });
 
         return null;
     }

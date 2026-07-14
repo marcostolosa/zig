@@ -127,6 +127,7 @@ pub const ecc = struct {
     pub const Edwards25519 = @import("crypto/25519/edwards25519.zig").Edwards25519;
     pub const P256 = @import("crypto/pcurves/p256.zig").P256;
     pub const P384 = @import("crypto/pcurves/p384.zig").P384;
+    pub const P521 = @import("crypto/pcurves/p521.zig").P521;
     pub const Ristretto255 = @import("crypto/25519/ristretto255.zig").Ristretto255;
     pub const Secp256k1 = @import("crypto/pcurves/secp256k1.zig").Secp256k1;
 };
@@ -314,6 +315,7 @@ test {
     _ = ecc.Edwards25519;
     _ = ecc.P256;
     _ = ecc.P384;
+    _ = ecc.P521;
     _ = ecc.Ristretto255;
     _ = ecc.Secp256k1;
 

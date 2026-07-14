@@ -413,10 +413,10 @@ test PageAllocator {
         // the fallback path, eliminating the need for noise allocations.
         
         // Deterministically force execution into the placeholder fallback path.
-        // Windows places allocations consecutively in 64KB granularity units.
-        // By interleaving 64KB noise allocations between 256KB test allocations,
+        // Windows places allocations consecutively in 64kiB granularity units.
+        // By interleaving 64kiB noise allocations between 256kiB test allocations,
         // we guarantee that at least one test allocation per pair will fail the
-        // 256KB alignment check and exercise the fallback logic.
+        // 256kiB alignment check and exercise the fallback logic.
         const noise_size = 64 * 1024;
         const align_size = 256 * 1024;
         

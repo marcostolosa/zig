@@ -75,7 +75,7 @@ pub fn bytes(r: Random, buf: []u8) void {
 
 pub fn array(r: Random, comptime E: type, comptime N: usize) [N]E {
     var result: [N]E = undefined;
-    bytes(r, &result);
+    bytes(r, @ptrCast(&result));
     return result;
 }
 

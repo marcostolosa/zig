@@ -304,14 +304,18 @@ fn addCCArgs(
             "cloudlibc",
             "src",
         }),
-
-        "-isystem",
-        try comp.dirs.zig_lib.join(arena, &.{ "libc", "include", triple }),
-        "-isystem",
-        try comp.dirs.zig_lib.join(arena, &.{ "libc", "include", "generic-musl" }),
-
-        "-DBULK_MEMORY_THRESHOLD=32",
     });
+
+    try Compilation.appendClangInternalSystemInclude(
+        args,
+        try comp.dirs.zig_lib.join(arena, &.{ "libc", "include", triple }),
+    );
+    try Compilation.appendClangInternalSystemInclude(
+        args,
+        try comp.dirs.zig_lib.join(arena, &.{ "libc", "include", "generic-musl" }),
+    );
+
+    try args.append("-DBULK_MEMORY_THRESHOLD=32");
 
     if (options.no_strict_aliasing) {
         try args.appendSlice(&[_][]const u8{"-fno-strict-aliasing"});

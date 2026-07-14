@@ -6260,13 +6260,11 @@ fn addCommonCCArgs(
             }
 
             if (comp.config.link_libcpp) {
-                try argv.append("-isystem");
-                try argv.append(try fs.path.join(arena, &[_][]const u8{
+                try appendDefaultSystemInclude(c_frontend, argv, try fs.path.join(arena, &[_][]const u8{
                     comp.dirs.zig_lib.path.?, "libcxx", "include",
                 }));
 
-                try argv.append("-isystem");
-                try argv.append(try fs.path.join(arena, &[_][]const u8{
+                try appendDefaultSystemInclude(c_frontend, argv, try fs.path.join(arena, &[_][]const u8{
                     comp.dirs.zig_lib.path.?, "libcxxabi", "include",
                 }));
 
@@ -6276,26 +6274,24 @@ fn addCommonCCArgs(
             // According to Rich Felker libc headers are supposed to go before C language headers.
             // However as noted by @dimenus, appending libc headers before compiler headers breaks
             // intrinsics and other compiler specific items.
-            try argv.append("-isystem");
-            try argv.append(try fs.path.join(arena, &.{ comp.dirs.zig_lib.path.?, "include" }));
+            try appendDefaultSystemInclude(
+                c_frontend,
+                argv,
+                try fs.path.join(arena, &.{ comp.dirs.zig_lib.path.?, "include" }),
+            );
 
-            try argv.ensureUnusedCapacity(comp.libc_include_dir_list.len * 2);
             for (comp.libc_include_dir_list) |include_dir| {
-                try argv.append("-isystem");
-                try argv.append(include_dir);
+                try appendDefaultSystemInclude(c_frontend, argv, include_dir);
             }
 
             if (mod.resolved_target.is_native_os and mod.resolved_target.is_native_abi) {
-                try argv.ensureUnusedCapacity(comp.native_system_include_paths.len * 2);
                 for (comp.native_system_include_paths) |include_path| {
-                    argv.appendAssumeCapacity("-isystem");
-                    argv.appendAssumeCapacity(include_path);
+                    try appendDefaultSystemInclude(c_frontend, argv, include_path);
                 }
             }
 
             if (comp.config.link_libunwind) {
-                try argv.append("-isystem");
-                try argv.append(try fs.path.join(arena, &[_][]const u8{
+                try appendDefaultSystemInclude(c_frontend, argv, try fs.path.join(arena, &[_][]const u8{
                     comp.dirs.zig_lib.path.?, "libunwind", "include",
                 }));
             }
@@ -6697,6 +6693,30 @@ pub fn addCCArgs(
 
     try argv.appendSlice(comp.global_cc_argv);
     try argv.appendSlice(mod.cc_argv);
+}
+
+/// Clang keeps driver-provided system directories in a search group after
+/// directories explicitly supplied with `-isystem`. Zig invokes Clang with
+/// `-nostdinc` and provides its own defaults, so preserve that distinction
+/// instead of presenting both groups to Clang as ordinary `-isystem` paths.
+fn appendDefaultSystemInclude(
+    c_frontend: Config.CFrontend,
+    argv: *std.array_list.Managed([]const u8),
+    path: []const u8,
+) !void {
+    switch (c_frontend) {
+        .clang => try appendClangInternalSystemInclude(argv, path),
+        .aro => try argv.appendSlice(&.{ "-isystem", path }),
+    }
+}
+
+/// Add an include directory to Clang's driver-provided system search group,
+/// after directories supplied by the user with `-isystem`.
+pub fn appendClangInternalSystemInclude(
+    argv: *std.array_list.Managed([]const u8),
+    path: []const u8,
+) !void {
+    try argv.appendSlice(&.{ "-Xclang", "-internal-isystem", "-Xclang", path });
 }
 
 fn failCObj(

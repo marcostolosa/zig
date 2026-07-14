@@ -167,10 +167,12 @@ fn addCcArgs(
         "-w", // Disable all warnings.
         "-std=gnu11",
         "-D__USE_MINGW_ANSI_STDIO=0",
-
-        "-isystem",
-        try comp.dirs.zig_lib.join(arena, &.{ "libc", "include", "any-windows-any" }),
     });
+
+    try Compilation.appendClangInternalSystemInclude(
+        args,
+        try comp.dirs.zig_lib.join(arena, &.{ "libc", "include", "any-windows-any" }),
+    );
 }
 
 fn addCrtCcArgs(

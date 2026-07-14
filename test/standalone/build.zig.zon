@@ -132,6 +132,9 @@
         .c_embed_path = .{
             .path = "c_embed_path",
         },
+        .cc_isystem_order = .{
+            .path = "cc_isystem_order",
+        },
         .issue_12706 = .{
             .path = "issue_12706",
         },

@@ -91,17 +91,21 @@ pub fn Field(comptime params: FieldParams) type {
         /// Element as an integer.
         pub const IntRepr = @Int(.unsigned, params.field_bits);
 
+        /// An integer as wide as the encoded representation. `field_bits` is not
+        /// necessarily a multiple of 8 (P-521), which `readInt`/`writeInt` require.
+        const EncodedRepr = @Int(.unsigned, encoded_length * 8);
+
         /// Create a field element from an integer.
         pub fn fromInt(comptime x: IntRepr) NonCanonicalError!Fe {
             var s: [encoded_length]u8 = undefined;
-            mem.writeInt(IntRepr, &s, x, .little);
+            mem.writeInt(EncodedRepr, &s, x, .little);
             return fromBytes(s, .little);
         }
 
         /// Return the field element as an integer.
         pub fn toInt(fe: Fe) IntRepr {
             const s = fe.toBytes(.little);
-            return mem.readInt(IntRepr, &s, .little);
+            return @intCast(mem.readInt(EncodedRepr, &s, .little));
         }
 
         /// Return true if the field element is zero.

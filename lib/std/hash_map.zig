@@ -413,28 +413,22 @@ pub fn HashMap(
 
         /// If there is an `Entry` with a matching key, it is deleted from
         /// the hash map, and this function returns true.  Otherwise this
-        /// function returns false.
-        ///
-        /// TODO: answer the question in these doc comments, does this
-        /// increase the unused capacity by one?
+        /// function returns false. If the entry is deleted, the unused
+        /// capacity is increased by one.
         pub fn remove(self: *Self, key: K) bool {
             return self.unmanaged.removeContext(key, self.ctx);
         }
 
-        /// TODO: answer the question in these doc comments, does this
-        /// increase the unused capacity by one?
         pub fn removeAdapted(self: *Self, key: anytype, ctx: anytype) bool {
             return self.unmanaged.removeAdapted(key, ctx);
         }
 
         /// Delete the entry with key pointed to by key_ptr from the hash map.
         /// key_ptr is assumed to be a valid pointer to a key that is present
-        /// in the hash map.
-        ///
-        /// TODO: answer the question in these doc comments, does this
-        /// increase the unused capacity by one?
+        /// in the hash map. If the entry is deleted, the unused capacity is
+        /// increased by one.
         pub fn removeByPtr(self: *Self, key_ptr: *K) void {
-            self.unmanaged.removeByPtr(key_ptr);
+            self.unmanaged.removeByPtrContext(key_ptr, self.ctx);
         }
 
         /// Creates a copy of this map, using the same allocator
@@ -473,21 +467,6 @@ pub fn HashMap(
             self.unmanaged = .empty;
             return result;
         }
-
-        /// Rehash the map, in-place.
-        ///
-        /// Over time, due to the current tombstone-based implementation, a
-        /// HashMap could become fragmented due to the buildup of tombstone
-        /// entries that causes a performance degradation due to excessive
-        /// probing. The kind of pattern that might cause this is a long-lived
-        /// HashMap with repeated inserts and deletes.
-        ///
-        /// After this function is called, there will be no tombstones in
-        /// the HashMap, each of the entries is rehashed and any existing
-        /// key/value pointers into the HashMap are invalidated.
-        pub fn rehash(self: *Self) void {
-            self.unmanaged.rehash(self.ctx);
-        }
     };
 }
 
@@ -499,7 +478,6 @@ pub fn HashMap(
 /// The struct itself is only 16 bytes for a small footprint. This comes at
 /// the price of handling size with u32, which should be reasonable enough
 /// for almost all uses.
-/// Deletions are achieved with tombstones.
 ///
 /// Default initialization of this struct is deprecated; use `.empty` instead.
 pub const HashMapUnmanaged = Custom;
@@ -570,9 +548,7 @@ fn Custom(
             capacity: Size,
         };
 
-        /// Metadata for a slot. It can be in three states: empty, used or
-        /// tombstone. Tombstones indicate that an entry was previously used,
-        /// they are a simple way to handle removal.
+        /// Metadata for a slot. It can be in two states: free or used.
         /// To this state, we add 7 bits from the slot's key hash. These are
         /// used as a fast way to disambiguate between entries without
         /// having to use the equality function. If two fingerprints are
@@ -587,25 +563,11 @@ fn Custom(
         const Metadata = packed struct {
             const FingerPrint = u7;
 
-            const free: FingerPrint = 0;
-            const tombstone: FingerPrint = 1;
-
-            fingerprint: FingerPrint = free,
+            fingerprint: FingerPrint = 0,
             used: u1 = 0,
-
-            const slot_free: u8 = @bitCast(Metadata{ .fingerprint = free });
-            const slot_tombstone: u8 = @bitCast(Metadata{ .fingerprint = tombstone });
 
             pub fn isUsed(self: Metadata) bool {
                 return self.used == 1;
-            }
-
-            pub fn isTombstone(self: Metadata) bool {
-                return @as(u8, @bitCast(self)) == slot_tombstone;
-            }
-
-            pub fn isFree(self: Metadata) bool {
-                return @as(u8, @bitCast(self)) == slot_free;
             }
 
             pub fn takeFingerprint(hash: Hash) FingerPrint {
@@ -617,11 +579,6 @@ fn Custom(
             pub fn fill(self: *Metadata, fp: FingerPrint) void {
                 self.used = 1;
                 self.fingerprint = fp;
-            }
-
-            pub fn remove(self: *Metadata) void {
-                self.used = 0;
-                self.fingerprint = tombstone;
             }
         };
 
@@ -945,17 +902,11 @@ fn Custom(
         }
         pub fn fetchRemoveAdapted(self: *Self, key: anytype, ctx: anytype) ?KV {
             if (self.getIndex(key, ctx)) |idx| {
-                const old_key = &self.keys()[idx];
-                const old_val = &self.values()[idx];
                 const result = KV{
-                    .key = old_key.*,
-                    .value = old_val.*,
+                    .key = self.keys()[idx],
+                    .value = self.values()[idx],
                 };
-                self.metadata.?[idx].remove();
-                old_key.* = undefined;
-                old_val.* = undefined;
-                self.size -= 1;
-                self.available += 1;
+                self.removeByIndex(idx, ctx);
                 return result;
             }
 
@@ -977,13 +928,11 @@ fn Custom(
 
             const mask = self.capacity() - 1;
             const fingerprint = Metadata.takeFingerprint(hash);
-            // Don't loop indefinitely when there are no empty slots.
-            var limit = self.capacity();
             var idx = @as(usize, @truncate(hash & mask));
 
             var metadata = self.metadata.? + idx;
-            while (!metadata[0].isFree() and limit != 0) {
-                if (metadata[0].isUsed() and metadata[0].fingerprint == fingerprint) {
+            while (metadata[0].isUsed()) {
+                if (metadata[0].fingerprint == fingerprint) {
                     const test_key = &self.keys()[idx];
 
                     if (ctx.eql(key, test_key.*)) {
@@ -991,7 +940,6 @@ fn Custom(
                     }
                 }
 
-                limit -= 1;
                 idx = (idx + 1) & mask;
                 metadata = self.metadata.? + idx;
             }
@@ -1148,13 +1096,14 @@ fn Custom(
 
             const mask = self.capacity() - 1;
             const fingerprint = Metadata.takeFingerprint(hash);
-            var limit = self.capacity();
             var idx = @as(usize, @truncate(hash & mask));
 
-            var first_tombstone_idx: usize = self.capacity(); // invalid index
+            // Backward-shift deletion so inserted clusters are contiguous:
+            // probe to the first free slot and insert there. Inside
+            // the loop every slot is used (no tombstones).
             var metadata = self.metadata.? + idx;
-            while (!metadata[0].isFree() and limit != 0) {
-                if (metadata[0].isUsed() and metadata[0].fingerprint == fingerprint) {
+            while (metadata[0].isUsed()) {
+                if (metadata[0].fingerprint == fingerprint) {
                     const test_key = &self.keys()[idx];
                     // If you get a compile error on this line, it means that your generic eql
                     // function is invalid for these parameters.
@@ -1166,21 +1115,12 @@ fn Custom(
                             .found_existing = true,
                         };
                     }
-                } else if (first_tombstone_idx == self.capacity() and metadata[0].isTombstone()) {
-                    first_tombstone_idx = idx;
                 }
 
-                limit -= 1;
                 idx = (idx + 1) & mask;
                 metadata = self.metadata.? + idx;
             }
 
-            if (first_tombstone_idx < self.capacity()) {
-                // Cheap try to lower probing lengths after deletions. Recycle a tombstone.
-                idx = first_tombstone_idx;
-                metadata = self.metadata.? + idx;
-            }
-            // We're using a slot previously free or a tombstone.
             self.available -= 1;
 
             metadata[0].fill(fingerprint);
@@ -1224,37 +1164,54 @@ fn Custom(
             return self.getIndex(key, ctx) != null;
         }
 
-        fn removeByIndex(self: *Self, idx: usize) void {
-            self.metadata.?[idx].remove();
-            self.keys()[idx] = undefined;
-            self.values()[idx] = undefined;
+        fn removeByIndex(self: *Self, idx: usize, ctx: anytype) void {
+            // Backward-shift deletion: no tombstones. Slide any following
+            // entries that probed past `idx` back into the hole, then free
+            // the final hole. Probe chains stay as short as if the deleted
+            // key had never been inserted.
+            const mask = self.capacity() - 1;
+            const md = self.metadata.?;
+            const ks = self.keys();
+            const vs = self.values();
+            var hole = idx;
+            var j = (idx + 1) & mask;
+            while (md[j].isUsed()) {
+                const h: usize = @truncate(ctx.hash(ks[j]) & mask);
+                // Move entry j back to the hole iff its home is at/behind the
+                // hole in probe order (so it stays reachable from its home).
+                if (((j -% h) & mask) >= ((j -% hole) & mask)) {
+                    md[hole] = md[j];
+                    ks[hole] = ks[j];
+                    vs[hole] = vs[j];
+                    hole = j;
+                }
+                j = (j + 1) & mask;
+            }
+            md[hole].used = 0;
+            md[hole].fingerprint = 0;
+            ks[hole] = undefined;
+            vs[hole] = undefined;
             self.size -= 1;
             self.available += 1;
         }
 
         /// If there is an `Entry` with a matching key, it is deleted from
         /// the hash map, and this function returns true.  Otherwise this
-        /// function returns false.
-        ///
-        /// TODO: answer the question in these doc comments, does this
-        /// increase the unused capacity by one?
+        /// function returns false. If deleted, the unused capacity is
+        /// increased by one.
         pub fn remove(self: *Self, key: K) bool {
             if (@sizeOf(Context) != 0)
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call removeContext instead.");
             return self.removeContext(key, undefined);
         }
 
-        /// TODO: answer the question in these doc comments, does this
-        /// increase the unused capacity by one?
         pub fn removeContext(self: *Self, key: K, ctx: Context) bool {
             return self.removeAdapted(key, ctx);
         }
 
-        /// TODO: answer the question in these doc comments, does this
-        /// increase the unused capacity by one?
         pub fn removeAdapted(self: *Self, key: anytype, ctx: anytype) bool {
             if (self.getIndex(key, ctx)) |idx| {
-                self.removeByIndex(idx);
+                self.removeByIndex(idx, ctx);
                 return true;
             }
 
@@ -1263,11 +1220,15 @@ fn Custom(
 
         /// Delete the entry with key pointed to by key_ptr from the hash map.
         /// key_ptr is assumed to be a valid pointer to a key that is present
-        /// in the hash map.
-        ///
-        /// TODO: answer the question in these doc comments, does this
-        /// increase the unused capacity by one?
+        /// in the hash map. If the entry is deleted, the unused capacity is
+        /// increased by one.
         pub fn removeByPtr(self: *Self, key_ptr: *K) void {
+            if (@sizeOf(Context) != 0)
+                @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call removeByPtrContext instead.");
+            self.removeByPtrContext(key_ptr, undefined);
+        }
+
+        pub fn removeByPtrContext(self: *Self, key_ptr: *K, ctx: Context) void {
             // if @sizeOf(K) == 0 then there is at most one item in the hash
             // map, which is assumed to exist as key_ptr must be valid.  This
             // item must be at index 0.
@@ -1276,7 +1237,7 @@ fn Custom(
             else
                 0;
 
-            self.removeByIndex(idx);
+            self.removeByIndex(idx, ctx);
         }
 
         fn initMetadatas(self: *Self) void {
@@ -1334,95 +1295,6 @@ fn Custom(
             const result = self.*;
             self.* = .empty;
             return result;
-        }
-
-        /// Rehash the map, in-place.
-        ///
-        /// Over time, due to the current tombstone-based implementation, a
-        /// HashMap could become fragmented due to the buildup of tombstone
-        /// entries that causes a performance degradation due to excessive
-        /// probing. The kind of pattern that might cause this is a long-lived
-        /// HashMap with repeated inserts and deletes.
-        ///
-        /// After this function is called, there will be no tombstones in
-        /// the HashMap, each of the entries is rehashed and any existing
-        /// key/value pointers into the HashMap are invalidated.
-        pub fn rehash(self: *Self, ctx: anytype) void {
-            const mask = self.capacity() - 1;
-
-            var metadata = self.metadata.?;
-            var keys_ptr = self.keys();
-            var values_ptr = self.values();
-            var curr: Size = 0;
-
-            // While we are re-hashing every slot, we will use the
-            // fingerprint to mark used buckets as being used and either free
-            // (needing to be rehashed) or tombstone (already rehashed).
-
-            while (curr < self.capacity()) : (curr += 1) {
-                metadata[curr].fingerprint = Metadata.free;
-            }
-
-            // Now iterate over all the buckets, rehashing them
-
-            curr = 0;
-            while (curr < self.capacity()) {
-                if (!metadata[curr].isUsed()) {
-                    assert(metadata[curr].isFree());
-                    curr += 1;
-                    continue;
-                }
-
-                const hash = ctx.hash(keys_ptr[curr]);
-                const fingerprint = Metadata.takeFingerprint(hash);
-                var idx = @as(usize, @truncate(hash & mask));
-
-                // For each bucket, rehash to an index:
-                // 1) before the cursor, probed into a free slot, or
-                // 2) equal to the cursor, no need to move, or
-                // 3) ahead of the cursor, probing over already rehashed
-
-                while ((idx < curr and metadata[idx].isUsed()) or
-                    (idx > curr and metadata[idx].fingerprint == Metadata.tombstone))
-                {
-                    idx = (idx + 1) & mask;
-                }
-
-                if (idx < curr) {
-                    assert(metadata[idx].isFree());
-                    metadata[idx].fill(fingerprint);
-                    keys_ptr[idx] = keys_ptr[curr];
-                    values_ptr[idx] = values_ptr[curr];
-
-                    metadata[curr].used = 0;
-                    assert(metadata[curr].isFree());
-                    keys_ptr[curr] = undefined;
-                    values_ptr[curr] = undefined;
-
-                    curr += 1;
-                } else if (idx == curr) {
-                    metadata[idx].fingerprint = fingerprint;
-                    curr += 1;
-                } else {
-                    assert(metadata[idx].fingerprint != Metadata.tombstone);
-                    metadata[idx].fingerprint = Metadata.tombstone;
-                    if (metadata[idx].isUsed()) {
-                        std.mem.swap(K, &keys_ptr[curr], &keys_ptr[idx]);
-                        std.mem.swap(V, &values_ptr[curr], &values_ptr[idx]);
-                    } else {
-                        metadata[idx].used = 1;
-                        keys_ptr[idx] = keys_ptr[curr];
-                        values_ptr[idx] = values_ptr[curr];
-
-                        metadata[curr].fingerprint = Metadata.free;
-                        metadata[curr].used = 0;
-                        keys_ptr[curr] = undefined;
-                        values_ptr[curr] = undefined;
-
-                        curr += 1;
-                    }
-                }
-            }
         }
 
         fn grow(self: *Self, allocator: Allocator, new_capacity: Size, ctx: Context) Allocator.Error!void {
@@ -1581,18 +1453,6 @@ test "ensureTotalCapacity" {
     }
     // shouldn't resize from putAssumeCapacity
     try testing.expect(initial_capacity == map.capacity());
-}
-
-test "ensureUnusedCapacity with tombstones" {
-    var map = AutoHashMap(i32, i32).init(std.testing.allocator);
-    defer map.deinit();
-
-    var i: i32 = 0;
-    while (i < 100) : (i += 1) {
-        try map.ensureUnusedCapacity(1);
-        map.putAssumeCapacity(i, i);
-        _ = map.remove(i);
-    }
 }
 
 test "clearRetainingCapacity" {
@@ -2073,6 +1933,14 @@ test "ensureUnusedCapacity" {
     // Repeated ensureUnusedCapacity() calls with no insertions between
     // should not change the capacity.
     try testing.expectEqual(capacity, map.capacity());
+
+    var i: u64 = 0;
+    while (i < 100) : (i += 1) {
+        try map.ensureUnusedCapacity(1);
+        map.putAssumeCapacity(i, i);
+        const removed = map.remove(i);
+        try testing.expect(removed);
+    }
 }
 
 test "removeByPtr" {
@@ -2146,35 +2014,6 @@ test "repeat fetchRemove" {
 test "getOrPut allocation failure" {
     var map: std.StringHashMapUnmanaged(void) = .empty;
     try testing.expectError(error.OutOfMemory, map.getOrPut(std.testing.failing_allocator, "hello"));
-}
-
-test "rehash" {
-    var map = AutoHashMap(usize, usize).init(std.testing.allocator);
-    defer map.deinit();
-
-    var prng = std.Random.DefaultPrng.init(0);
-    const random = prng.random();
-
-    const count = 4 * random.intRangeLessThan(u32, 100_000, 500_000);
-
-    for (0..count) |i| {
-        try map.put(i, i);
-        if (i % 3 == 0) {
-            try expectEqual(map.remove(i), true);
-        }
-    }
-
-    map.rehash();
-
-    try expectEqual(map.count(), count * 2 / 3);
-
-    for (0..count) |i| {
-        if (i % 3 == 0) {
-            try expectEqual(map.get(i), null);
-        } else {
-            try expectEqual(map.get(i).?, i);
-        }
-    }
 }
 
 test "removeByPtr, key is array" {

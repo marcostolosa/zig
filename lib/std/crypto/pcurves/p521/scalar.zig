@@ -210,7 +210,7 @@ const ScalarDouble = struct {
         debug.assert(bits > 0 and bits <= Fe.saturated_bits * 2 and bits <= 1024);
         var fe = expanded.x1;
         if (bits >= 512) {
-            const st1 = Fe.fromInt(1 << 511) catch unreachable;
+            const st1 = Fe.fromInt(1 << 512) catch unreachable;
             fe = fe.add(expanded.x2.mul(st1));
         }
         return Scalar{ .fe = fe };

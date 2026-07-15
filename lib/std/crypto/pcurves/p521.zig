@@ -360,7 +360,7 @@ pub const P521 = struct {
 
     fn pcMul16(pc: *const [16]P521, s: [66]u8, comptime vartime: bool) IdentityElementError!P521 {
         var q = P521.identityElement;
-        var pos: usize = 520;
+        var pos: usize = 524;
         while (true) : (pos -= 4) {
             const slot = @as(u4, @truncate((s[pos >> 3] >> @as(u3, @truncate(pos)))));
             if (vartime) {

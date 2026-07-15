@@ -5317,12 +5317,18 @@ fn airCmp(cg: *CodeGen, inst: Air.Inst.Index, op: std.math.CompareOperator) Inne
 }
 
 fn intCmp(cg: *CodeGen, ty: IntType, op: std.math.CompareOperator, lhs: WValue, rhs: WValue) InnerError!WValue {
+    var lhs_cmp = lhs;
+    var rhs_cmp = rhs;
+    if (ty.bits != 32 and ty.bits != 64 and ty.bits != 128) {
+        lhs_cmp = try cg.intWrap(ty, lhs);
+        rhs_cmp = try cg.intWrap(ty, rhs);
+    }
     switch (ty.bits) {
         0 => unreachable,
         1...32 => {
             // lhs or rhs could be stack pointers
-            try cg.lowerToStack(lhs);
-            try cg.lowerToStack(rhs);
+            try cg.lowerToStack(lhs_cmp);
+            try cg.lowerToStack(rhs_cmp);
             const opcode: Mir.Inst.Tag = switch (op) {
                 .eq => .i32_eq,
                 .neq => .i32_ne,
@@ -5336,8 +5342,8 @@ fn intCmp(cg: *CodeGen, ty: IntType, op: std.math.CompareOperator, lhs: WValue, 
         },
         33...64 => {
             // lhs or rhs could be stack pointers
-            try cg.lowerToStack(lhs);
-            try cg.lowerToStack(rhs);
+            try cg.lowerToStack(lhs_cmp);
+            try cg.lowerToStack(rhs_cmp);
             const opcode: Mir.Inst.Tag = switch (op) {
                 .eq => .i64_eq,
                 .neq => .i64_ne,
@@ -5350,16 +5356,16 @@ fn intCmp(cg: *CodeGen, ty: IntType, op: std.math.CompareOperator, lhs: WValue, 
             return .stack;
         },
         65...128 => {
-            var lhs_msb = try (try cg.load(lhs, Type.u64, 8)).toLocal(cg, Type.u64);
+            var lhs_msb = try (try cg.load(lhs_cmp, Type.u64, 8)).toLocal(cg, Type.u64);
             defer lhs_msb.free(cg);
-            var rhs_msb = try (try cg.load(rhs, Type.u64, 8)).toLocal(cg, Type.u64);
+            var rhs_msb = try (try cg.load(rhs_cmp, Type.u64, 8)).toLocal(cg, Type.u64);
             defer rhs_msb.free(cg);
 
             switch (op) {
                 .eq, .neq => {
                     const xor_high = try cg.intXor(.u64, lhs_msb, rhs_msb);
-                    const lhs_lsb = try cg.load(lhs, Type.u64, 0);
-                    const rhs_lsb = try cg.load(rhs, Type.u64, 0);
+                    const lhs_lsb = try cg.load(lhs_cmp, Type.u64, 0);
+                    const rhs_lsb = try cg.load(rhs_cmp, Type.u64, 0);
                     const xor_low = try cg.intXor(.u64, lhs_lsb, rhs_lsb);
                     const or_result = try cg.intOr(.u64, xor_high, xor_low);
 
@@ -5372,8 +5378,8 @@ fn intCmp(cg: *CodeGen, ty: IntType, op: std.math.CompareOperator, lhs: WValue, 
                 else => {
                     const word_int_ty: IntType = if (ty.is_signed) .i64 else .u64;
 
-                    const lhs_lsb = try cg.load(lhs, Type.u64, 0);
-                    const rhs_lsb = try cg.load(rhs, Type.u64, 0);
+                    const lhs_lsb = try cg.load(lhs_cmp, Type.u64, 0);
+                    const rhs_lsb = try cg.load(rhs_cmp, Type.u64, 0);
 
                     // leave values on stack for 'select'
                     _ = try cg.intCmp(.u64, op, lhs_lsb, rhs_lsb);
@@ -5386,8 +5392,8 @@ fn intCmp(cg: *CodeGen, ty: IntType, op: std.math.CompareOperator, lhs: WValue, 
             return .stack;
         },
         else => {
-            try cg.lowerToStack(lhs);
-            try cg.lowerToStack(rhs);
+            try cg.lowerToStack(lhs_cmp);
+            try cg.lowerToStack(rhs_cmp);
             try cg.addImm32(@intFromBool(ty.is_signed));
             try cg.addImm32(ty.bits);
             try cg.addCallIntrinsic(.__cmp_limb64);

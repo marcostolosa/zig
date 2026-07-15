@@ -325,7 +325,7 @@ pub fn Field(comptime params: FieldParams) type {
                 return x108.sqn(108).mul(x108).sqn(7).mul(t1111111).sqn(23).mul(x22).sqn(6).mul(t11).sqn(2);
             } else if (field_order == 6864797660130609714981900799081393217269435300143305409394463459185543183397656052122559640661454554977296311391480858037121987999716643812574028291115057151) {
                 // p = 2^521-1, so (p+1)/4 = 2^519 and the square root is just 519 squarings.
-                return x2.sqn(520);
+                return x2.sqn(519);
             } else {
                 return x2.pow(@Int(.unsigned, field_bits), (field_order + 1) / 4);
             }

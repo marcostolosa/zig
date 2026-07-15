@@ -1463,6 +1463,10 @@ pub const Server = struct {
     pub fn accept(s: *Server, io: Io) AcceptError!Stream {
         return .{ .socket = try io.vtable.netAccept(io.userdata, s.socket.handle, s.options) };
     }
+
+    pub fn shutdown(s: *const Server, io: Io, how: ShutdownHow) ShutdownError!void {
+        return io.vtable.netShutdown(io.userdata, s.socket.handle, how);
+    }
 };
 
 test "parsing IPv6 addresses" {

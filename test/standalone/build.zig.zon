@@ -66,6 +66,9 @@
         .@"extern" = .{
             .path = "extern",
         },
+        .fetch = .{
+            .path = "fetch",
+        },
         .dep_diamond = .{
             .path = "dep_diamond",
         },

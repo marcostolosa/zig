@@ -1058,6 +1058,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                     .hash_tok = .none,
                     .name_tok = 0,
                     .lazy_status = .eager,
+                    .no_unpack = null,
                     .remote_package_root = phantom_package_root,
                     .parent_package_root = phantom_package_root,
                     .parent_manifest_ast = null,
@@ -1442,6 +1443,10 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
         yes: ?[]const u8,
         exact: ?[]const u8,
     } = .no;
+    var opt_no_unpack: ?union(enum) {
+        url_basename,
+        with_path: []const u8,
+    } = null;
 
     var arg_i: usize = 0;
     while (nextArg(args, &arg_i)) |arg| {
@@ -1467,6 +1472,12 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
                 save = .{ .exact = null };
             } else if (mem.cutPrefix(u8, arg, "--save-exact=")) |rest| {
                 save = .{ .exact = rest };
+            } else if (mem.eql(u8, arg, "--no-unpack")) {
+                opt_no_unpack = .url_basename;
+            } else if (mem.cutPrefix(u8, arg, "--no-unpack=")) |path| {
+                if (Package.Manifest.getNoUnpackProblem(path)) |problem|
+                    fatal("--no-unpack path {s}", .{problem});
+                opt_no_unpack = .{ .with_path = path };
             } else {
                 fatal("unrecognized parameter: {q}", .{arg});
             }
@@ -1478,6 +1489,10 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
     }
 
     const path_or_url = opt_path_or_url orelse fatal("missing url or path parameter", .{});
+    const no_unpack = if (opt_no_unpack) |n| switch (n) {
+        .url_basename => std.fs.path.basename(path_or_url),
+        .with_path => |path| path,
+    } else null;
 
     var http_client: std.http.Client = .{ .allocator = gpa, .io = io };
     defer http_client.deinit();
@@ -1537,6 +1552,7 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
         .hash_tok = .none,
         .name_tok = 0,
         .lazy_status = .eager,
+        .no_unpack = no_unpack,
         .remote_package_root = undefined,
         .parent_package_root = undefined,
         .parent_manifest_ast = null,
@@ -1642,15 +1658,29 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
         }
     }
 
-    const new_node_init = try arena.print(
-        \\.{{
-        \\            .url = "{f}",
-        \\            .hash = "{f}",
-        \\        }}
-    , .{
-        std.zig.fmtString(saved_path_or_url),
-        std.zig.fmtString(package_hash_slice),
-    });
+    const new_node_init = blk: {
+        var aw: Io.Writer.Allocating = .init(arena);
+
+        aw.writer.print(
+            \\.{{
+            \\            .url = {q},
+            \\            .hash = {q},
+            \\
+        , .{
+            saved_path_or_url,
+            package_hash_slice,
+        }) catch return error.OutOfMemory;
+
+        if (no_unpack) |path| {
+            aw.writer.print(
+                \\            .no_unpack = {q},
+                \\
+            , .{path}) catch return error.OutOfMemory;
+        }
+        aw.writer.writeAll("        }") catch return error.OutOfMemory;
+
+        break :blk try aw.toOwnedSlice();
+    };
 
     const new_node_text = try arena.print(".{f} = {s},\n", .{
         std.zig.fmtIdPU(name), new_node_init,
@@ -1739,6 +1769,7 @@ const usage_fetch =
     \\  --save=[name]                 Add the fetched package to build.zig.zon as name
     \\  --save-exact                  Add the fetched package to build.zig.zon, storing the URL verbatim
     \\  --save-exact=[name]           Add the fetched package to build.zig.zon as name, storing the URL verbatim
+    \\  --no-unpack[=path]            Don't unpack the package, save to path if given
     \\
 ;
 

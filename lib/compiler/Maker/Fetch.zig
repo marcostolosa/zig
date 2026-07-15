@@ -62,6 +62,7 @@ parent_specified_paths_tok: std.zig.Ast.OptionalTokenIndex,
 parent_specified_version: std.SemanticVersion,
 parent_specified_version_tok: std.zig.Ast.OptionalTokenIndex,
 lazy_status: LazyStatus,
+no_unpack: ?[]const u8,
 /// Same as `parent_packge_root` except it is unchanged when recursing into
 /// relative file paths (as opposed to URL).
 remote_package_root: Path,
@@ -581,14 +582,14 @@ pub fn run(f: *Fetch) RunError!void {
         .path_or_url => |path_or_url| {
             if (Io.Dir.cwd().openDir(io, path_or_url, .{ .iterate = true })) |dir| {
                 var resource: Resource = .{ .dir = dir };
-                return f.runResource(path_or_url, &resource, null, false);
+                return f.runResource(path_or_url, &resource, null, false, f.no_unpack);
             } else |dir_err| {
                 var server_header_buffer: [init_resource_buffer_size]u8 = undefined;
 
                 const file_err = if (dir_err == error.NotDir) e: {
                     if (Io.Dir.cwd().openFile(io, path_or_url, .{})) |file| {
                         var resource: Resource = .{ .file = file.reader(io, &server_header_buffer) };
-                        return f.runResource(path_or_url, &resource, null, false);
+                        return f.runResource(path_or_url, &resource, null, false, f.no_unpack);
                     } else |err| break :e err;
                 } else dir_err;
 
@@ -600,7 +601,7 @@ pub fn run(f: *Fetch) RunError!void {
                 };
                 var resource: Resource = undefined;
                 try f.initResource(uri, &resource, &server_header_buffer);
-                return f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, null, false);
+                return f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, null, false, f.no_unpack);
             }
         },
     };
@@ -661,7 +662,7 @@ pub fn run(f: *Fetch) RunError!void {
         if (cached_tarball_path.root_dir.handle.openFile(io, cached_tarball_path.sub_path, .{})) |file| {
             log.debug("found global cached tarball {f}", .{cached_tarball_path});
             var resource: Resource = .{ .file = file.reader(io, &resource_buffer) };
-            return f.runResource(cached_tarball_sub_path, &resource, remote.hash, true);
+            return f.runResource(cached_tarball_sub_path, &resource, remote.hash, true, null);
         } else |err| switch (err) {
             error.FileNotFound => log.debug("FileNotFound: {f}", .{cached_tarball_path}),
             error.Canceled => |e| return e,
@@ -698,7 +699,7 @@ pub fn run(f: *Fetch) RunError!void {
     );
     var resource: Resource = undefined;
     try f.initResource(uri, &resource, &resource_buffer);
-    return f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, remote.hash, false);
+    return f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, remote.hash, false, f.no_unpack);
 }
 
 pub fn deinit(f: *Fetch) void {
@@ -713,6 +714,7 @@ fn runResource(
     resource: *Resource,
     remote_hash: ?Package.Hash,
     disable_recompress: bool,
+    no_unpack: ?[]const u8,
 ) RunError!void {
     const job_queue = f.job_queue;
     assert(!job_queue.read_only);
@@ -757,7 +759,7 @@ fn runResource(
         defer tmp_directory.handle.close(io);
 
         // Fetch and unpack a resource into a temporary directory.
-        var unpack_result = try unpackResource(f, resource, uri_path, tmp_directory);
+        var unpack_result = try unpackResource(f, resource, uri_path, tmp_directory, no_unpack);
 
         const pkg_path: Path = .{ .root_dir = tmp_directory, .sub_path = unpack_result.root_dir };
 
@@ -1040,6 +1042,7 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
                     .needed => if (dep.lazy) .available else .eager,
                     .all => .eager,
                 },
+                .no_unpack = dep.no_unpack,
                 .parent_package_root = f.package_root,
                 .remote_package_root = f.remote_package_root,
                 .parent_manifest_ast = &f.manifest_ast,
@@ -1368,8 +1371,53 @@ fn unpackResource(
     resource: *Resource,
     uri_path: []const u8,
     tmp_directory: Directory,
+    no_unpack: ?[]const u8,
 ) RunError!UnpackResult {
+    const io = f.job_queue.io;
     const eb = &f.error_bundle;
+
+    if (no_unpack) |sub_path| {
+        if (std.fs.path.dirname(sub_path)) |sub_dir| {
+            tmp_directory.handle.createDirPath(io, sub_dir) catch |e| return f.fail(
+                f.location_tok,
+                try eb.printString(
+                    "failed to create temporary path '{f}{s}' with {t}",
+                    .{ tmp_directory, sub_dir, e },
+                ),
+            );
+        }
+        var out_file = tmp_directory.handle.createFile(
+            io,
+            sub_path,
+            .{},
+        ) catch |err| return f.fail(f.location_tok, try eb.printString(
+            "failed to create temporary file: {t}",
+            .{err},
+        ));
+        defer out_file.close(io);
+
+        var buf: [4096]u8 = undefined;
+        var out_file_writer = out_file.writer(io, &buf);
+
+        _ = resource.reader().streamRemaining(&out_file_writer.interface) catch |err| return f.fail(f.location_tok, try eb.printString("streaming failed: {t}", .{
+            switch (err) {
+                error.ReadFailed => switch (resource.*) {
+                    .file => |file_reader| file_reader.err.?,
+                    .http_request => |http_request| http_request.response.bodyErr().?,
+                    .git => |g| g.fetch_stream.err.?,
+                    .dir => unreachable,
+                },
+                error.WriteFailed => out_file_writer.err.?,
+            },
+        }));
+
+        out_file_writer.flush() catch |err| return f.fail(f.location_tok, try eb.printString(
+            "flush failed: {t}",
+            .{err},
+        ));
+        return .{};
+    }
+
     const file_type = switch (resource.*) {
         .file => FileType.fromPath(uri_path) orelse
             return f.fail(f.location_tok, try eb.printString("unknown file type: '{s}'", .{uri_path})),

@@ -29,6 +29,7 @@ pub const Dependency = struct {
     paths_tok: Ast.OptionalTokenIndex,
     version: std.SemanticVersion,
     version_tok: Ast.OptionalTokenIndex,
+    no_unpack: ?[]const u8,
 
     pub const Location = union(enum) {
         url: []const u8,
@@ -135,6 +136,16 @@ pub fn copyErrorsIntoBundle(
             }),
         });
     }
+}
+
+pub fn getNoUnpackProblem(no_unpack: []const u8) ?[]const u8 {
+    if (std.mem.indexOfScalar(u8, no_unpack, '\\') != null) return "may not contain backslashes";
+    var it = std.fs.path.ComponentIterator(.posix, u8).init(no_unpack);
+    if (it.peekNext() == null) return "is not a valid path";
+    while (it.next()) |entry| {
+        if (std.mem.eql(u8, entry.name, "..")) return "may not contain '..' components";
+    }
+    return null;
 }
 
 const Parse = struct {
@@ -293,6 +304,7 @@ const Parse = struct {
             .paths_tok = .none,
             .version = undefined,
             .version_tok = .none,
+            .no_unpack = null,
         };
         var has_location = false;
 
@@ -352,6 +364,19 @@ const Parse = struct {
                     else => |e| return e,
                     error.ParseFailure => {},
                 }
+            } else if (mem.eql(u8, field_name, "no_unpack")) {
+                if (dep.no_unpack != null) return fail(p, ast.nodeMainToken(field_init), "dependency should specify only one 'no_unpack' field", .{});
+
+                dep.no_unpack = parseString(p, field_init) catch |err| switch (err) {
+                    error.ParseFailure => continue,
+                    else => |e| return e,
+                };
+                if (getNoUnpackProblem(dep.no_unpack.?)) |problem| return fail(
+                    p,
+                    ast.nodeMainToken(field_init),
+                    "no_unpack value {s}",
+                    .{problem},
+                );
             } else {
                 // Ignore unknown fields so that we can add fields in future zig
                 // versions without breaking older zig versions.

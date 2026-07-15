@@ -182,7 +182,8 @@ const ScalarDouble = struct {
     x2: Fe,
 
     fn fromBytes(comptime bits: usize, s_: [bits / 8]u8, endian: std.builtin.Endian) ScalarDouble {
-        debug.assert(bits > 0 and bits <= 1024 and bits >= Fe.saturated_bits and bits <= Fe.saturated_bits * 2);
+        // An input may be narrower than the field: 2^512 < L.
+        debug.assert(bits > 0 and bits <= 1024 and bits <= Fe.saturated_bits * 2);
 
         var s = s_;
         if (endian == .big) {

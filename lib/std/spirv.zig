@@ -112,3 +112,245 @@ pub fn specConst(T: type, comptime default_value: T, comptime spec_id: u32) T {
         else => @compileError("unsupported spec constant type"),
     }
 }
+
+/// The standard trigonometric cosine of `val` radians.
+/// This uses the cosine function from the GLSL 450 extension.
+pub fn glslCos(
+    val: anytype,
+) @TypeOf(val) {
+    const Result = @TypeOf(val);
+    switch (@typeInfo(Result)) {
+        .float => |float| {
+            if (float.bits != 16 and float.bits != 32)
+                @compileError("Can not take the cosine of " ++ @typeName(Result));
+        },
+        .vector => |vector| {
+            switch (@typeInfo(vector.child)) {
+                .float => |float| {
+                    if (float.bits != 16 and float.bits != 32)
+                        @compileError("Can not take the cosine of " ++ @typeName(Result));
+                },
+                else => @compileError("Can not take the cosine of " ++ @typeName(Result)),
+            }
+        },
+        else => @compileError("Can not take the cosine of " ++ @typeName(Result)),
+    }
+    return asm volatile (
+        \\%glsl_ext       = OpExtInstImport "GLSL.std.450"
+        \\%ret            = OpExtInst %Result %glsl_ext 14 %val
+        : [ret] "" (-> Result),
+        : [val] "" (val),
+          [Result] "t" (Result),
+    );
+}
+
+/// The standard trigonometric sine of `val` radians.
+/// This uses the cosine function from the GLSL 450 extension.
+pub fn glslSin(
+    val: anytype,
+) @TypeOf(val) {
+    const Result = @TypeOf(val);
+    switch (@typeInfo(Result)) {
+        .float => |float| {
+            if (float.bits != 16 and float.bits != 32)
+                @compileError("Can not take the sine of " ++ @typeName(Result));
+        },
+        .vector => |vector| {
+            switch (@typeInfo(vector.child)) {
+                .float => |float| {
+                    if (float.bits != 16 and float.bits != 32)
+                        @compileError("Can not take the sine of " ++ @typeName(Result));
+                },
+                else => @compileError("Can not take the sine of " ++ @typeName(Result)),
+            }
+        },
+        else => @compileError("Can not take the sine of " ++ @typeName(Result)),
+    }
+    return asm volatile (
+        \\%glsl_ext       = OpExtInstImport "GLSL.std.450"
+        \\%ret            = OpExtInst %Result %glsl_ext 13 %val
+        : [ret] "" (-> Result),
+        : [val] "" (val),
+          [Result] "t" (Result),
+    );
+}
+
+/// The standard trigonometric tangent of `val` radians.
+/// This uses the cosine function from the GLSL 450 extension.
+pub fn glslTan(
+    val: anytype,
+) @TypeOf(val) {
+    const Result = @TypeOf(val);
+    switch (@typeInfo(Result)) {
+        .float => |float| {
+            if (float.bits != 16 and float.bits != 32)
+                @compileError("Can not take the tangent of " ++ @typeName(Result));
+        },
+        .vector => |vector| {
+            switch (@typeInfo(vector.child)) {
+                .float => |float| {
+                    if (float.bits != 16 and float.bits != 32)
+                        @compileError("Can not take the tangent of " ++ @typeName(Result));
+                },
+                else => @compileError("Can not take the tangent of " ++ @typeName(Result)),
+            }
+        },
+        else => @compileError("Can not take the tangent of " ++ @typeName(Result)),
+    }
+    return asm volatile (
+        \\%glsl_ext       = OpExtInstImport "GLSL.std.450"
+        \\%ret            = OpExtInst %Result %glsl_ext 15 %val
+        : [ret] "" (-> Result),
+        : [val] "" (val),
+          [Result] "t" (Result),
+    );
+}
+
+/// Get the type that specifies a coordinate for a SPIR-V image or sampled image.
+/// The `Element` type usually depends on the context.
+/// The result is either a scalar or a vector `Element` where each dimension is in order (and followed by the array index if the image type is arrayed).
+pub fn ImageCoordinate(
+    comptime Image: type,
+    comptime Element: type,
+) type {
+    const image_info = switch (@typeInfo(Image)) {
+        .spirv => |spirv| switch (spirv) {
+            .sampled_image => |sampled_image| @typeInfo(sampled_image).spirv.image,
+            .image => |image| image,
+            else => @compileError("Expected SPIR-V image or sampled image type, found '" ++ @typeName(Image) ++ "'"),
+        },
+        else => @compileError("Expected SPIR-V image or sampled image type, found '" ++ @typeName(Image) ++ "'"),
+    };
+    const array_coordinate_addition = if (image_info.arrayed) 1 else 0;
+    const dim = switch (image_info.dim) {
+        .@"1d" => 1 + array_coordinate_addition,
+        .@"2d" => 2 + array_coordinate_addition,
+        .@"3d", .cube => 3 + array_coordinate_addition,
+    };
+    if (dim == 1) return Element else return @Vector(dim, Element);
+}
+
+/// The type of the components that result from sampling or reading from the given SPIR-V image or sampled image type.
+pub fn ImageSampledType(
+    comptime Image: type,
+) type {
+    const image_info = switch (@typeInfo(Image)) {
+        .spirv => |spirv| switch (spirv) {
+            .sampled_image => |sampled_image| @typeInfo(sampled_image).spirv.image,
+            .image => |image| image,
+            else => @compileError("Expected SPIR-V image or sampled image type, found '" ++ @typeName(Image) ++ "'"),
+        },
+        else => @compileError("Expected SPIR-V image or sampled image type, found '" ++ @typeName(Image) ++ "'"),
+    };
+    return switch (image_info.usage) {
+        .unknown => |unknown| unknown,
+        .sampled => |sampled| sampled,
+        .storage => |storage| storage,
+    };
+}
+
+/// The type of `sampled_image` must be a pointer to a SPIR-V sampled image.
+pub fn imageSampleImplicitLod(
+    sampled_image: anytype,
+    coordinate: ImageCoordinate(std.meta.Child(@TypeOf(sampled_image)), f32),
+) @Vector(4, ImageSampledType(std.meta.Child(@TypeOf(sampled_image)))) {
+    const SampledImage = switch (@typeInfo(@TypeOf(sampled_image))) {
+        .pointer => |pointer| pointer.child,
+        else => @compileError("Expected a pointer to SPIR-V sampled image type, found '" ++ @typeName(@TypeOf(sampled_image)) ++ "'"),
+    };
+    const Result = @Vector(4, ImageSampledType(SampledImage));
+
+    const image_info = switch (@typeInfo(SampledImage)) {
+        .spirv => |spirv| switch (spirv) {
+            .sampled_image => |sampled_image_info| @typeInfo(sampled_image_info).spirv.image,
+            else => @compileError("Expected SPIR-V sampled image type, found '" ++ @typeName(SampledImage) ++ "'"),
+        },
+        else => @compileError("Expected SPIR-V sampled image type, found '" ++ @typeName(SampledImage) ++ "'"),
+    };
+
+    if (image_info.multisampled)
+        @compileError("Can not implicitly sample a sampled image that was multisampled");
+
+    // TOOD: If buffer dim is added, throw a compile error if the dimension is a buffer.
+
+    return asm volatile (
+        \\%loaded_sampler = OpLoad %SampledImage %sampled_image
+        \\%ret            = OpImageSampleImplicitLod %Result %loaded_sampler %coordinate
+        : [ret] "" (-> Result),
+        : [SampledImage] "t" (SampledImage),
+          [sampled_image] "" (sampled_image),
+          [Result] "t" (Result),
+          [coordinate] "" (coordinate),
+    );
+}
+
+/// Query the dimensions of `image`, with no level of detail.
+pub fn imageQuerySize(
+    image: anytype,
+) ImageCoordinate(std.meta.Child(@TypeOf(image)), u32) {
+    const Image = switch (@typeInfo(@TypeOf(image))) {
+        .pointer => |pointer| pointer.child,
+        else => @compileError("Expected a pointer to SPIR-V image type, found '" ++ @typeName(@TypeOf(image)) ++ "'"),
+    };
+
+    const image_info = switch (@typeInfo(Image)) {
+        .spirv => |spirv| switch (spirv) {
+            .image => |info| info,
+            else => @compileError("Expected SPIR-V image type, found '" ++ @typeName(Image) ++ "'"),
+        },
+        else => @compileError("Expected SPIR-V image type, found '" ++ @typeName(Image) ++ "'"),
+    };
+
+    // TODO: Remove this check if dimension is not 1d, 2d, 3d, or cube (in case buffer is added).
+    if (!image_info.multisampled and image_info.usage != .unknown and image_info.usage != .storage)
+        @compileError("SPIR-V image must be either be multisampled or have an unknown or storage usage");
+
+    const Result = ImageCoordinate(std.meta.Child(@TypeOf(image)), u32);
+
+    return asm volatile (
+        \\%loaded_image   = OpLoad %Image %image
+        \\%ret            = OpImageQuerySize %Result %loaded_image
+        : [ret] "" (-> Result),
+        : [Image] "t" (Image),
+          [image] "" (image),
+          [Result] "t" (Result),
+    );
+}
+
+/// Write a texel to an image without a sampler.
+/// The type of `image` must be a pointer to a SPIR-V image.
+pub fn imageWriteUint(
+    image: anytype,
+    coordinate: ImageCoordinate(std.meta.Child(@TypeOf(image)), u32),
+    texel: @Vector(4, ImageSampledType(std.meta.Child(@TypeOf(image)))),
+) void {
+    const Image = switch (@typeInfo(@TypeOf(image))) {
+        .pointer => |pointer| pointer.child,
+        else => @compileError("Expected a pointer to SPIR-V image type, found '" ++ @typeName(@TypeOf(image)) ++ "'"),
+    };
+
+    const image_info = switch (@typeInfo(Image)) {
+        .spirv => |spirv| switch (spirv) {
+            .image => |info| info,
+            else => @compileError("Expected SPIR-V image type, found '" ++ @typeName(Image) ++ "'"),
+        },
+        else => @compileError("Expected SPIR-V image type, found '" ++ @typeName(Image) ++ "'"),
+    };
+
+    switch (image_info.usage) {
+        .unknown, .storage => {},
+        else => @compileError("SPIR-V image must have unknown or storage usage"),
+    }
+
+    // TODO: If SubpassData dim is added, throw a compiler error if the image is arrayed and has the SubpassData dim.
+
+    return asm volatile (
+        \\%loaded_image   = OpLoad %Image %image
+        \\                  OpImageWrite %loaded_image %coordinate %texel
+        :
+        : [Image] "t" (Image),
+          [image] "" (image),
+          [coordinate] "" (coordinate),
+          [texel] "" (texel),
+    );
+}

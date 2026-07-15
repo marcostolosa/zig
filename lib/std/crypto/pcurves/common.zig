@@ -272,6 +272,20 @@ pub fn Field(comptime params: FieldParams) type {
                 const x126 = x63.sqn(63).mul(x63);
                 const ls = x126.sqn(126).mul(x126).sqn(3).mul(t111).sqn(33).mul(x32).sqn(95).mul(x31);
                 return ls.equivalent(Fe.one);
+            } else if (field_order == 6864797660130609714981900799081393217269435300143305409394463459185543183397656052122559640661454554977296311391480858037121987999716643812574028291115057151) {
+                // p = 2^521-1, so the Legendre symbol is x2^(2^520-1).
+                // t<k> = x2^(2^k-1), reached by t<2k> = t<k>^(2^k)*t<k>.
+                const t2 = x2.sq().mul(x2);
+                const t4 = t2.sqn(2).mul(t2);
+                const t8 = t4.sqn(4).mul(t4);
+                const t16 = t8.sqn(8).mul(t8);
+                const t32 = t16.sqn(16).mul(t16);
+                const t64 = t32.sqn(32).mul(t32);
+                const t128 = t64.sqn(64).mul(t64);
+                const t256 = t128.sqn(128).mul(t128);
+                const t512 = t256.sqn(256).mul(t256);
+                const ls = t512.sqn(8).mul(t8);
+                return ls.equivalent(Fe.one);
             } else {
                 const ls = x2.pow(@Int(.unsigned, field_bits), (field_order - 1) / 2); // Legendre symbol
                 return ls.equivalent(Fe.one);
@@ -309,6 +323,9 @@ pub fn Field(comptime params: FieldParams) type {
                 const x54 = x27.sqn(27).mul(x27);
                 const x108 = x54.sqn(54).mul(x54);
                 return x108.sqn(108).mul(x108).sqn(7).mul(t1111111).sqn(23).mul(x22).sqn(6).mul(t11).sqn(2);
+            } else if (field_order == 6864797660130609714981900799081393217269435300143305409394463459185543183397656052122559640661454554977296311391480858037121987999716643812574028291115057151) {
+                // p = 2^521-1, so (p+1)/4 = 2^519 and the square root is just 519 squarings.
+                return x2.sqn(520);
             } else {
                 return x2.pow(@Int(.unsigned, field_bits), (field_order + 1) / 4);
             }

@@ -141,7 +141,7 @@ pub const Scalar = struct {
 
     /// Compute x^n (mod L)
     pub fn pow(a: Scalar, comptime T: type, comptime n: T) Scalar {
-        return Scalar{ .fe = a.fe.pow(n) };
+        return Scalar{ .fe = a.fe.pow(T, n) };
     }
 
     /// Compute -x (mod L)

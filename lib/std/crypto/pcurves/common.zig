@@ -274,17 +274,16 @@ pub fn Field(comptime params: FieldParams) type {
                 return ls.equivalent(Fe.one);
             } else if (field_order == 6864797660130609714981900799081393217269435300143305409394463459185543183397656052122559640661454554977296311391480858037121987999716643812574028291115057151) {
                 // p = 2^521-1, so the Legendre symbol is x2^(2^520-1).
-                // t<k> = x2^(2^k-1), reached by t<2k> = t<k>^(2^k)*t<k>.
-                const t2 = x2.sq().mul(x2);
-                const t4 = t2.sqn(2).mul(t2);
-                const t8 = t4.sqn(4).mul(t4);
-                const t16 = t8.sqn(8).mul(t8);
-                const t32 = t16.sqn(16).mul(t16);
-                const t64 = t32.sqn(32).mul(t32);
-                const t128 = t64.sqn(64).mul(t64);
-                const t256 = t128.sqn(128).mul(t128);
-                const t512 = t256.sqn(256).mul(t256);
-                const ls = t512.sqn(8).mul(t8);
+                const t11 = x2.mul(x2.sq());
+                const t1111 = t11.mul(t11.sqn(2));
+                const t11111111 = t1111.mul(t1111.sqn(4));
+                const x16 = t11111111.sqn(8).mul(t11111111);
+                const x32 = x16.sqn(16).mul(x16);
+                const x64 = x32.sqn(32).mul(x32);
+                const x128 = x64.sqn(64).mul(x64);
+                const x256 = x128.sqn(128).mul(x128);
+                const x512 = x256.sqn(256).mul(x256);
+                const ls = x512.sqn(8).mul(t11111111);
                 return ls.equivalent(Fe.one);
             } else {
                 const ls = x2.pow(@Int(.unsigned, field_bits), (field_order - 1) / 2); // Legendre symbol

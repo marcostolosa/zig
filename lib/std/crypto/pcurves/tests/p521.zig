@@ -148,9 +148,7 @@ test "p521 scalar inverse" {
     try testing.expect(inverse2.equivalent(scalar));
 }
 
-// Note: like P-256, the order of P-521 is 1 (mod 4), so `scalar.Scalar.sqrt` has
-// no implementation to select and is a compile error. `Fe.sqrt` is unaffected:
-// the field order is 3 (mod 4). Point decompression only needs the latter.
+// The group order is 1 (mod 4), so Scalar.sqrt is unavailable, as with P-256.
 test "p521 field element square root" {
     const io = testing.io;
     const p = P521.random(io).affineCoordinates();

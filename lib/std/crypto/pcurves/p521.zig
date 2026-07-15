@@ -325,7 +325,7 @@ pub const P521 = struct {
             e[i * 2 + 0] = @as(i8, @as(u4, @truncate(x)));
             e[i * 2 + 1] = @as(i8, @as(u4, @truncate(x >> 4)));
         }
-        // Now, e[0..132] is between 0 and 15, e[131] is 0 as scalars are < 2^521
+        // Now, e[0..132] is between 0 and 15
         var carry: i8 = 0;
         for (e[0..132]) |*x| {
             x.* += carry;

@@ -706,8 +706,7 @@ pub const Ip6Address = struct {
                 .port = port,
                 .interface = i: {
                     const text = p.interface_name orelse break :i .none;
-                    const name: Interface.Name = try .fromSlice(text);
-                    break :i try name.resolve(io);
+                    break :i try Interface.resolve(text, io);
                 },
             },
             else => return error.ParseFailed,
@@ -1044,6 +1043,18 @@ pub const Interface = struct {
 
     pub fn isNone(i: Interface) bool {
         return i.index == 0;
+    }
+
+    pub fn resolve(value: []const u8, io: Io) !Interface {
+        const n: Interface.Name = try .fromSlice(value);
+
+        return n.resolve(io) catch |err| {
+            if (std.fmt.parseUnsigned(u32, value, 10)) |idx| {
+                return .{ .index = idx };
+            } else |_| {
+                return err;
+            }
+        };
     }
 };
 

@@ -596,9 +596,18 @@ pub fn operateTimeout(io: Io, operation: Operation, timeout: Timeout) OperateTim
     var storage: [1]Operation.Storage = undefined;
     var batch: Batch = .init(&storage);
     batch.addAt(0, operation);
-    try batch.awaitConcurrent(io, timeout);
-    const completion = batch.next().?;
+    const await_result = batch.awaitConcurrent(io, timeout);
+    batch.cancel(io);
+    const completion = batch.next() orelse {
+        await_result catch |err| return err;
+        unreachable;
+    };
     assert(completion.index == 0);
+    await_result catch |err| switch (err) {
+        error.Canceled => io.recancel(),
+        error.ConcurrencyUnavailable => unreachable,
+        error.Timeout => {},
+    };
     return completion.result;
 }
 

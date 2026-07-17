@@ -431,10 +431,6 @@ pub fn defaultCompilerRtOptimizeMode(target: *const std.Target) std.lang.Optimiz
 }
 
 pub fn canBuildLibCompilerRt(target: *const std.Target) enum { no, yes, llvm_only } {
-    switch (target.os.tag) {
-        .plan9 => return .no,
-        else => {},
-    }
     switch (target.cpu.arch) {
         .spirv32, .spirv64 => return .no,
         .spork8 => return .no,

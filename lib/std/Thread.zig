@@ -1746,6 +1746,7 @@ pub fn maybeAttachSignalStack() void {
     switch (builtin.target.os.tag) {
         // TODO: Windows vectored exception handlers always run on the main stack, but we could use
         // some target-specific inline assembly to swap the stack pointer.
+        .plan9 => return,
         .windows => return,
         .wasi => return,
         else => {},

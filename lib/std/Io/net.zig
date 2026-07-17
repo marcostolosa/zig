@@ -926,7 +926,8 @@ pub const IncomingMessage = struct {
     data: []u8,
     /// Supplied by caller before calling receive functions; mutated by receive
     /// functions.
-    control: []u8,
+    /// The slice pointer must be aligned to `cmsghdr` struct
+    control: []align(@alignOf(std.c.cmsghdr)) u8,
     /// Populated by receive functions.
     flags: Flags,
 
@@ -963,7 +964,8 @@ pub const OutgoingMessage = struct {
     /// Initialized with how many bytes of `data_ptr` to send. After sending
     /// succeeds, replaced with how many bytes were actually sent.
     data_len: usize,
-    control: []const u8 = &.{},
+    /// The slice pointer must be aligned to `cmsghdr` struct.
+    control: []align(@alignOf(std.c.cmsghdr)) const u8 = &.{},
 };
 
 pub const SendFlags = packed struct(u8) {

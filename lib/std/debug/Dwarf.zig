@@ -384,21 +384,30 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
 
         const unit_header = try readUnitHeader(&fr, endian);
         if (unit_header.unit_length == 0) return;
-        const next_offset = unit_header.header_length + unit_header.unit_length;
+        const next_offset = std.math.add(u64, unit_header.header_length, unit_header.unit_length) catch return bad();
+        const next_unit_pos = std.math.add(u64, this_unit_offset, next_offset) catch return bad();
+        if (next_unit_pos > fr.buffer.len) return bad();
 
         const version = try fr.takeInt(u16, endian);
         if (version < 2 or version > 5) return bad();
 
         var address_size: u8 = undefined;
         var debug_abbrev_offset: u64 = undefined;
+        var supported_unit = true;
         if (version >= 5) {
             const unit_type = try fr.takeByte();
-            if (unit_type != DW.UT.compile) return bad();
+            supported_unit = unit_type == DW.UT.compile;
             address_size = try fr.takeByte();
             debug_abbrev_offset = try readFormatSizedInt(&fr, unit_header.format, endian);
         } else {
             debug_abbrev_offset = try readFormatSizedInt(&fr, unit_header.format, endian);
             address_size = try fr.takeByte();
+        }
+        if (fr.seek > next_unit_pos) return bad();
+        if (!supported_unit) {
+            // Skip unsupported unit types without invalidating supported compile units.
+            this_unit_offset = next_unit_pos;
+            continue;
         }
 
         const abbrev_table = try di.getAbbrevTable(gpa, debug_abbrev_offset);
@@ -420,8 +429,6 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
         defer gpa.free(attrs_buf);
         var attrs_bufs: [3][]Die.Attr = undefined;
         for (&attrs_bufs, 0..) |*buf, index| buf.* = attrs_buf[index * max_attrs ..][0..max_attrs];
-
-        const next_unit_pos = this_unit_offset + next_offset;
 
         var compile_unit: CompileUnit = .{
             .version = version,
@@ -477,11 +484,13 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
 
                                 // Follow the DIE it points to and repeat
                                 const ref_offset = try this_die_obj.getAttrRef(AT.abstract_origin, this_unit_offset, next_offset);
+                                // Cross-unit references require the target unit's abbreviation table.
+                                if (ref_offset < this_unit_offset or ref_offset >= next_unit_pos) break :x null;
                                 fr.seek = @intCast(ref_offset);
                                 this_die_obj = (try parseDie(
                                     &fr,
                                     attrs_bufs[2],
-                                    abbrev_table, // wrong abbrev table for different cu
+                                    abbrev_table,
                                     unit_header.format,
                                     endian,
                                     address_size,
@@ -492,11 +501,13 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
 
                                 // Follow the DIE it points to and repeat
                                 const ref_offset = try this_die_obj.getAttrRef(AT.specification, this_unit_offset, next_offset);
+                                // Cross-unit references require the target unit's abbreviation table.
+                                if (ref_offset < this_unit_offset or ref_offset >= next_unit_pos) break :x null;
                                 fr.seek = @intCast(ref_offset);
                                 this_die_obj = (try parseDie(
                                     &fr,
                                     attrs_bufs[2],
-                                    abbrev_table, // wrong abbrev table for different cu
+                                    abbrev_table,
                                     unit_header.format,
                                     endian,
                                     address_size,
@@ -563,7 +574,7 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
             }
         }
 
-        this_unit_offset += next_offset;
+        this_unit_offset = next_unit_pos;
     }
 }
 
@@ -579,21 +590,30 @@ fn scanAllCompileUnits(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!voi
 
         const unit_header = try readUnitHeader(&fr, endian);
         if (unit_header.unit_length == 0) return;
-        const next_offset = unit_header.header_length + unit_header.unit_length;
+        const next_offset = std.math.add(u64, unit_header.header_length, unit_header.unit_length) catch return bad();
+        const next_unit_pos = std.math.add(u64, this_unit_offset, next_offset) catch return bad();
+        if (next_unit_pos > fr.buffer.len) return bad();
 
         const version = try fr.takeInt(u16, endian);
         if (version < 2 or version > 5) return bad();
 
         var address_size: u8 = undefined;
         var debug_abbrev_offset: u64 = undefined;
+        var supported_unit = true;
         if (version >= 5) {
             const unit_type = try fr.takeByte();
-            if (unit_type != UT.compile) return bad();
+            supported_unit = unit_type == UT.compile;
             address_size = try fr.takeByte();
             debug_abbrev_offset = try readFormatSizedInt(&fr, unit_header.format, endian);
         } else {
             debug_abbrev_offset = try readFormatSizedInt(&fr, unit_header.format, endian);
             address_size = try fr.takeByte();
+        }
+        if (fr.seek > next_unit_pos) return bad();
+        if (!supported_unit) {
+            // Skip unsupported unit types without invalidating supported compile units.
+            this_unit_offset = next_unit_pos;
+            continue;
         }
 
         const abbrev_table = try di.getAbbrevTable(gpa, debug_abbrev_offset);
@@ -654,7 +674,7 @@ fn scanAllCompileUnits(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!voi
 
         try di.compile_unit_list.append(gpa, compile_unit);
 
-        this_unit_offset += next_offset;
+        this_unit_offset = next_unit_pos;
     }
 }
 

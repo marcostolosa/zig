@@ -155,6 +155,7 @@ pub const InitError = error{
     CertificateHostMismatch,
     CertificatePublicKeyInvalid,
     CertificateExpired,
+    CertificateIssuerNotCA,
     CertificateFieldHasWrongDataType,
     CertificateIssuerMismatch,
     CertificateNotYetValid,

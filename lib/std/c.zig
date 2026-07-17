@@ -9858,7 +9858,6 @@ pub const EV = switch (native_os) {
         pub const EOF = 0x8000;
         /// error, event data contains errno (return value)
         pub const ERROR = 0x4000;
-
     },
     .openbsd => struct {
         pub const ADD = 0x0001;

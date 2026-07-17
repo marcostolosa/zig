@@ -365,6 +365,12 @@ pub fn write(self: *Stringify, v: anytype) Error!void {
             return self.write(@as(std.math.IntFittingRange(v, v), v));
         },
         .float, .comptime_float => {
+            if (T == f16 or T == f32) {
+                try self.valueStart();
+                try self.writer.print("{}", .{v});
+                self.valueDone();
+                return;
+            }
             if (@as(f64, @floatCast(v)) == v) {
                 try self.valueStart();
                 try self.writer.print("{}", .{@as(f64, @floatCast(v))});
@@ -807,8 +813,12 @@ test "stringify basic types" {
     try testStringify("42", @as(u8, 42), .{});
     try testStringify("42", @as(u128, 42), .{});
     try testStringify("9999999999999999", 9999999999999999, .{});
+    try testStringify("42", @as(f16, 42), .{});
+    try testStringify("0.3", @as(f16, 0.3), .{});
     try testStringify("42", @as(f32, 42), .{});
+    try testStringify("0.3", @as(f32, 0.3), .{});
     try testStringify("42", @as(f64, 42), .{});
+    try testStringify("0.3", @as(f64, 0.3), .{});
     try testStringify("\"ItBroke\"", @as(anyerror, error.ItBroke), .{});
     try testStringify("\"ItBroke\"", error.ItBroke, .{});
 }

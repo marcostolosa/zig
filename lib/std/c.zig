@@ -9822,6 +9822,7 @@ pub const EV = switch (native_os) {
         pub const EOF = 0x8000;
     },
     .freebsd => struct {
+        // https://cgit.freebsd.org/src/tree/sys/sys/event.h
         /// add event to kq (implies enable)
         pub const ADD = 0x0001;
         /// delete event from kq
@@ -9830,12 +9831,14 @@ pub const EV = switch (native_os) {
         pub const ENABLE = 0x0004;
         /// disable event (not reported)
         pub const DISABLE = 0x0008;
+        /// enable _ONESHOT and force trigger
+        pub const FORCEONESHOT = 0x0100;
+        /// do not update the udata field
+        pub const KEEPUDATA = 0x0200;
         /// only report one occurrence
         pub const ONESHOT = 0x0010;
         /// clear event state after reporting
         pub const CLEAR = 0x0020;
-        /// error, event data contains errno
-        pub const ERROR = 0x4000;
         /// force immediate event output
         /// ... with or without ERROR
         /// ... use KEVENT_FLAG_ERROR_EVENTS
@@ -9843,6 +9846,19 @@ pub const EV = switch (native_os) {
         pub const RECEIPT = 0x0040;
         /// disable event after reporting
         pub const DISPATCH = 0x0080;
+        /// reserved by system
+        pub const SYSFLAGS = 0xF000;
+        /// note should be dropped
+        pub const DROP = 0x1000;
+        /// filter-specific flag 1
+        pub const FLAG1 = 0x2000;
+        /// filter-specific flag 2
+        pub const FLAG2 = 0x4000;
+        /// EOF detected (return value)
+        pub const EOF = 0x8000;
+        /// error, event data contains errno (return value)
+        pub const ERROR = 0x4000;
+
     },
     .openbsd => struct {
         pub const ADD = 0x0001;
@@ -9966,6 +9982,7 @@ pub const EVFILT = switch (native_os) {
         pub const EMPTY = 9;
     },
     .freebsd => struct {
+        // https://cgit.freebsd.org/src/tree/sys/sys/event.h
         pub const READ = -1;
         pub const WRITE = -2;
         /// attached to aio requests
@@ -9982,12 +9999,18 @@ pub const EVFILT = switch (native_os) {
         pub const PROCDESC = -8;
         /// Filesystem events
         pub const FS = -9;
+        /// attached to lio requests
         pub const LIO = -10;
         /// User events
         pub const USER = -11;
         /// Sendfile events
         pub const SENDFILE = -12;
+        /// empty send socket buf
         pub const EMPTY = -13;
+        /// attached to struct prison
+        pub const JAIL = -14;
+        /// attached to jail descriptors
+        pub const JAILDESC = -15;
     },
     .openbsd => struct {
         pub const READ = -1;

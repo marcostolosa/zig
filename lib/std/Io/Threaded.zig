@@ -3989,7 +3989,14 @@ fn fileStatPosix(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     const syscall: Syscall = try .start();
     while (true) {
         var stat = std.mem.zeroes(posix.Stat);
-        switch (posix.errno(fstat_sym(file.handle, &stat))) {
+
+        // fstat doesn't accept AT_FDCWD on some POSIX systems. Use fstatat with "." instead.
+        const rc = if (file.handle == posix.AT.FDCWD)
+            fstatat_sym(posix.AT.FDCWD, ".", &stat, 0)
+        else
+            fstat_sym(file.handle, &stat);
+
+        switch (posix.errno(rc)) {
             .SUCCESS => {
                 syscall.finish();
                 return statFromPosix(&stat);
@@ -8743,9 +8750,15 @@ fn dirSetOwnerPosix(userdata: ?*anyopaque, dir: Dir, owner: ?File.Uid, group: ?F
 
 fn posixFchown(fd: posix.fd_t, uid: posix.uid_t, gid: posix.gid_t) File.SetOwnerError!void {
     comptime assert(have_fchown);
+
     const syscall: Syscall = try .start();
     while (true) {
-        switch (posix.errno(posix.system.fchown(fd, uid, gid))) {
+        const rc = if (fd == posix.AT.FDCWD)
+            posix.system.fchownat(posix.AT.FDCWD, ".", uid, gid, 0)
+        else
+            posix.system.fchown(fd, uid, gid);
+
+        switch (posix.errno(rc)) {
             .SUCCESS => return syscall.finish(),
             .INTR => {
                 try syscall.checkCancel();
@@ -9269,9 +9282,17 @@ fn fileSetPermissions(userdata: ?*anyopaque, file: File, permissions: File.Permi
 
 fn setPermissionsPosix(fd: posix.fd_t, mode: posix.mode_t) File.SetPermissionsError!void {
     comptime assert(have_fchmod);
+
     const syscall: Syscall = try .start();
     while (true) {
-        switch (posix.errno(posix.system.fchmod(fd, mode))) {
+        const rc = if (fd != posix.AT.FDCWD)
+            posix.system.fchmod(fd, mode)
+        else if (have_fchmodat_flags or builtin.link_libc)
+            posix.system.fchmodat(posix.AT.FDCWD, ".", mode, 0)
+        else
+            posix.system.fchmodat(posix.AT.FDCWD, ".", mode);
+
+        switch (posix.errno(rc)) {
             .SUCCESS => return syscall.finish(),
             .INTR => {
                 try syscall.checkCancel();

@@ -91,6 +91,8 @@ random_fd: CachedFd,
 csprng_mutex: Io.Mutex,
 csprng: Csprng,
 
+op_getsockname_supported: bool = true,
+
 const Thread = struct {
     required_align: void align(4),
     thread: std.Thread,
@@ -4980,7 +4982,7 @@ fn netListenIp(
     var addr_len = addressToPosix(address, &storage);
     try ev.bind(&maybe_sync.cancel_region, socket_fd, &storage.any, addr_len);
     try ev.listen(&maybe_sync.cancel_region, socket_fd, options.kernel_backlog);
-    try ev.getsockname(try maybe_sync.enterSync(ev), socket_fd, &storage.any, &addr_len);
+    try ev.getsockname(&maybe_sync, socket_fd, &storage.any, &addr_len);
     return .{ .handle = socket_fd, .address = addressFromPosix(&storage) };
 }
 
@@ -5056,7 +5058,7 @@ fn netBindIp(
     var addr_len = addressToPosix(address, &storage);
     try ev.bind(&maybe_sync.cancel_region, socket_fd, &storage.any, addr_len);
     if (options.allow_broadcast) try ev.setsockopt(&maybe_sync.cancel_region, socket_fd, linux.SOL.SOCKET, linux.SO.BROADCAST, 1);
-    try ev.getsockname(try maybe_sync.enterSync(ev), socket_fd, &storage.any, &addr_len);
+    try ev.getsockname(&maybe_sync, socket_fd, &storage.any, &addr_len);
     return .{ .handle = socket_fd, .address = addressFromPosix(&storage) };
 }
 
@@ -5077,7 +5079,7 @@ fn netConnectIp(
     var addr_len = addressToPosix(address, &storage);
     const timeout, const timeout_flags = timeoutToLinux(options.timeout);
     try ev.connect(&maybe_sync.cancel_region, socket_fd, &storage.any, addr_len, timeout, timeout_flags);
-    try ev.getsockname(try maybe_sync.enterSync(ev), socket_fd, &storage.any, &addr_len);
+    try ev.getsockname(&maybe_sync, socket_fd, &storage.any, &addr_len);
     return .{ .handle = socket_fd, .address = addressFromPosix(&storage) };
 }
 
@@ -5744,19 +5746,72 @@ fn flock(
     }
 }
 
+// io_uring supports getsockname since kernel 6.19, on older kernels this
+// fallbacks to sync syscall after first async try.
 fn getsockname(
     ev: *Evented,
-    sync: *CancelRegion.Sync,
+    maybe_sync: *CancelRegion.Sync.Maybe,
     socket_fd: fd_t,
     addr: *linux.sockaddr,
     addr_len: *linux.socklen_t,
 ) !void {
-    _ = ev;
+    if (ev.op_getsockname_supported) {
+        if (ev.getsocknameAsync(&maybe_sync.cancel_region, socket_fd, addr, addr_len)) |_|
+            // Async success
+            return
+        else |err| switch (err) {
+            // We are on kernel older than 6.19 fallback to sync
+            error.OperationUnsupported => ev.op_getsockname_supported = false,
+            else => |e| return e,
+        }
+    }
+
+    const sync = try maybe_sync.enterSync(ev);
     while (true) {
         try sync.cancel_region.await(.nothing);
         switch (linux.errno(linux.getsockname(socket_fd, addr, addr_len))) {
             .SUCCESS => return,
             .INTR => {},
+            .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+            .FAULT => |err| return errnoBug(err),
+            .INVAL => |err| return errnoBug(err), // invalid parameters
+            .NOTSOCK => |err| return errnoBug(err), // always a race condition
+            .NOBUFS => return error.SystemResources,
+            else => |err| return unexpectedErrno(err),
+        }
+    }
+}
+
+fn getsocknameAsync(
+    ev: *Evented,
+    cancel_region: *CancelRegion,
+    socket_fd: fd_t,
+    addr: *linux.sockaddr,
+    addr_len: *linux.socklen_t,
+) !void {
+    while (true) {
+        const thread = try cancel_region.awaitIoUring();
+        thread.enqueue().* = .{
+            .opcode = .URING_CMD,
+            .flags = 0,
+            .ioprio = 0,
+            .fd = socket_fd,
+            .off = @intFromEnum(linux.IO_URING_SOCKET_OP.GETSOCKNAME),
+            .addr = @intFromPtr(addr),
+            .len = 0,
+            .rw_flags = 0,
+            .user_data = @intFromPtr(cancel_region.fiber),
+            .buf_index = 0,
+            .personality = 0,
+            .splice_fd_in = 0, // optlen: 0 - local, 1 - peer
+            .addr3 = @intFromPtr(addr_len),
+            .resv = 0,
+        };
+        ev.yield(null, .nothing);
+        switch (cancel_region.errno()) {
+            .SUCCESS => return,
+            .INTR, .CANCELED => {},
+            .OPNOTSUPP => return error.OperationUnsupported,
             .BADF => |err| return errnoBug(err), // File descriptor used after closed.
             .FAULT => |err| return errnoBug(err),
             .INVAL => |err| return errnoBug(err), // invalid parameters

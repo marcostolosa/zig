@@ -7769,6 +7769,8 @@ pub const IO_URING_SOCKET_OP = enum(u32) {
     SIOCOUTQ = 1,
     GETSOCKOPT = 2,
     SETSOCKOPT = 3,
+    TX_TIMESTAMP = 4,
+    GETSOCKNAME = 5,
 };
 
 pub const io_uring_buf = extern struct {

@@ -97,7 +97,7 @@ pub fn specConst(T: type, comptime default_value: T, comptime spec_id: u32) T {
         },
         .int, .float => return asm (
             \\%ret = OpSpecConstant %ty $default_value
-            \\OpDecorate %ret SpecId $spec_id"
+            \\       OpDecorate %ret SpecId $spec_id"
             : [ret] "" (-> T),
             : [ty] "t" (T),
               [default_value] "c" (default_value),
@@ -110,15 +110,12 @@ pub fn specConst(T: type, comptime default_value: T, comptime spec_id: u32) T {
               [default_value] "c" (default_value),
               [spec_id] "c" (spec_id),
         ),
-        else => @compileError("unsupported spec constant type"),
+        else => @compileError("Invalid spec-constant type"),
     }
 }
 
 /// Get the type that specifies a coordinate for a SPIR-V image or sampled image.
-fn ImageCoordinate(
-    comptime Image: type,
-    comptime Element: type,
-) type {
+fn ImageCoordinate(Image: type, Element: type) type {
     const image_info = switch (@typeInfo(Image)) {
         .spirv => |spirv| switch (spirv) {
             .sampled_image => |sampled_image| @typeInfo(sampled_image).spirv.image,
@@ -127,17 +124,16 @@ fn ImageCoordinate(
         },
         else => @compileError("Expected SPIR-V image or sampled image type, found '" ++ @typeName(Image) ++ "'"),
     };
-    const array_coordinate_addition = if (image_info.arrayed) 1 else 0;
     const dim = switch (image_info.dim) {
-        .@"1d" => 1 + array_coordinate_addition,
-        .@"2d" => 2 + array_coordinate_addition,
-        .@"3d", .cube => 3 + array_coordinate_addition,
+        .@"1d" => 1 + @as(u8, @intFromBool(image_info.arrayed)),
+        .@"2d" => 2 + @as(u8, @intFromBool(image_info.arrayed)),
+        .@"3d", .cube => 3 + @as(u8, @intFromBool(image_info.arrayed)),
     };
     if (dim == 1) return Element else return @Vector(dim, Element);
 }
 
 /// The type of the components that result from sampling or reading from the given SPIR-V image or sampled image type.
-fn ImageSampledType(comptime Image: type) type {
+fn ImageSampledType(Image: type) type {
     const image_info = switch (@typeInfo(Image)) {
         .spirv => |spirv| switch (spirv) {
             .sampled_image => |sampled_image| @typeInfo(sampled_image).spirv.image,
@@ -210,8 +206,8 @@ pub fn imageQuerySize(
     const Result = ImageCoordinate(std.meta.Child(@TypeOf(image)), u32);
 
     return asm volatile (
-        \\%loaded_image   = OpLoad %Image %image
-        \\%ret            = OpImageQuerySize %Result %loaded_image
+        \\%loaded_image = OpLoad %Image %image
+        \\%ret          = OpImageQuerySize %Result %loaded_image
         : [ret] "" (-> Result),
         : [Image] "t" (Image),
           [image] "" (image),
@@ -219,29 +215,22 @@ pub fn imageQuerySize(
     );
 }
 
-/// Type of coordinate for an underlying image write operation.
-const ImageWriteCoordinateScalar = enum {
-    u32,
-    i32,
-    f32,
-
-    pub fn Type(self: ImageWriteCoordinateScalar) type {
-        return switch (self) {
-            .u32 => u32,
-            .i32 => i32,
-            .f32 => if (builtin.target.os.tag == .opencl) f32 else @compileError("Floating point image coordinates only supported by OpenCL"),
-        };
-    }
-};
-
 /// Write a texel to an image without a sampler.
 /// The type of `image` must be a pointer to a SPIR-V image.
 pub fn imageWrite(
     image: anytype,
-    comptime coordinate_scalar: ImageWriteCoordinateScalar,
-    coordinate: ImageCoordinate(std.meta.Child(@TypeOf(image)), coordinate_scalar.Type()),
+    T: type,
+    coordinate: ImageCoordinate(std.meta.Child(@TypeOf(image)), T),
     texel: @Vector(4, ImageSampledType(std.meta.Child(@TypeOf(image)))),
 ) void {
+    switch (T) {
+        u32, i32 => {},
+        f32 => if (builtin.target.os.tag != .opencl) {
+            @compileError("Floating point image coordinates only supported by OpenCL");
+        },
+        else => @compileError("Expected one of u32, i32 and f32 types. Found '" ++ @typeName(T) ++ "'"),
+    }
+
     const Image = switch (@typeInfo(@TypeOf(image))) {
         .pointer => |pointer| pointer.child,
         else => @compileError("Expected a pointer to SPIR-V image type, found '" ++ @typeName(@TypeOf(image)) ++ "'"),
@@ -263,8 +252,8 @@ pub fn imageWrite(
     // TODO: If SubpassData dim is added, throw a compiler error if the image is arrayed and has the SubpassData dim.
 
     return asm volatile (
-        \\%loaded_image   = OpLoad %Image %image
-        \\                  OpImageWrite %loaded_image %coordinate %texel
+        \\%loaded_image = OpLoad %Image %image
+        \\                OpImageWrite %loaded_image %coordinate %texel
         :
         : [Image] "t" (Image),
           [image] "" (image),

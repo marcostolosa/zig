@@ -25640,7 +25640,6 @@ pub fn explainWhyTypeIsNotExtern(
 
         .@"opaque",
         .bool,
-        .float,
         .@"anyframe",
         => unreachable, // these *are* allowed
 
@@ -25649,6 +25648,7 @@ pub fn explainWhyTypeIsNotExtern(
             try sema.errNote(src_loc, msg, "SPIR-V runtime arrays must be the last field of an extern struct", .{});
         },
 
+        .float => try sema.errNote(src_loc, msg, "'{f}' is not extern compatible on this target", .{ty.fmt(pt)}),
         .pointer => if (ty.isSlice(zcu)) {
             try sema.errNote(src_loc, msg, "slices have no guaranteed in-memory representation", .{});
         } else {

@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std.zig");
 
 pub const position_in = @extern(*addrspace(.input) @Vector(4, f32), .{ .name = "position" });
@@ -113,103 +114,8 @@ pub fn specConst(T: type, comptime default_value: T, comptime spec_id: u32) T {
     }
 }
 
-/// The standard trigonometric cosine of `val` radians.
-/// This uses the cosine function from the GLSL 450 extension.
-pub fn glslCos(
-    val: anytype,
-) @TypeOf(val) {
-    const Result = @TypeOf(val);
-    switch (@typeInfo(Result)) {
-        .float => |float| {
-            if (float.bits != 16 and float.bits != 32)
-                @compileError("Can not take the cosine of " ++ @typeName(Result));
-        },
-        .vector => |vector| {
-            switch (@typeInfo(vector.child)) {
-                .float => |float| {
-                    if (float.bits != 16 and float.bits != 32)
-                        @compileError("Can not take the cosine of " ++ @typeName(Result));
-                },
-                else => @compileError("Can not take the cosine of " ++ @typeName(Result)),
-            }
-        },
-        else => @compileError("Can not take the cosine of " ++ @typeName(Result)),
-    }
-    return asm volatile (
-        \\%glsl_ext       = OpExtInstImport "GLSL.std.450"
-        \\%ret            = OpExtInst %Result %glsl_ext 14 %val
-        : [ret] "" (-> Result),
-        : [val] "" (val),
-          [Result] "t" (Result),
-    );
-}
-
-/// The standard trigonometric sine of `val` radians.
-/// This uses the cosine function from the GLSL 450 extension.
-pub fn glslSin(
-    val: anytype,
-) @TypeOf(val) {
-    const Result = @TypeOf(val);
-    switch (@typeInfo(Result)) {
-        .float => |float| {
-            if (float.bits != 16 and float.bits != 32)
-                @compileError("Can not take the sine of " ++ @typeName(Result));
-        },
-        .vector => |vector| {
-            switch (@typeInfo(vector.child)) {
-                .float => |float| {
-                    if (float.bits != 16 and float.bits != 32)
-                        @compileError("Can not take the sine of " ++ @typeName(Result));
-                },
-                else => @compileError("Can not take the sine of " ++ @typeName(Result)),
-            }
-        },
-        else => @compileError("Can not take the sine of " ++ @typeName(Result)),
-    }
-    return asm volatile (
-        \\%glsl_ext       = OpExtInstImport "GLSL.std.450"
-        \\%ret            = OpExtInst %Result %glsl_ext 13 %val
-        : [ret] "" (-> Result),
-        : [val] "" (val),
-          [Result] "t" (Result),
-    );
-}
-
-/// The standard trigonometric tangent of `val` radians.
-/// This uses the cosine function from the GLSL 450 extension.
-pub fn glslTan(
-    val: anytype,
-) @TypeOf(val) {
-    const Result = @TypeOf(val);
-    switch (@typeInfo(Result)) {
-        .float => |float| {
-            if (float.bits != 16 and float.bits != 32)
-                @compileError("Can not take the tangent of " ++ @typeName(Result));
-        },
-        .vector => |vector| {
-            switch (@typeInfo(vector.child)) {
-                .float => |float| {
-                    if (float.bits != 16 and float.bits != 32)
-                        @compileError("Can not take the tangent of " ++ @typeName(Result));
-                },
-                else => @compileError("Can not take the tangent of " ++ @typeName(Result)),
-            }
-        },
-        else => @compileError("Can not take the tangent of " ++ @typeName(Result)),
-    }
-    return asm volatile (
-        \\%glsl_ext       = OpExtInstImport "GLSL.std.450"
-        \\%ret            = OpExtInst %Result %glsl_ext 15 %val
-        : [ret] "" (-> Result),
-        : [val] "" (val),
-          [Result] "t" (Result),
-    );
-}
-
 /// Get the type that specifies a coordinate for a SPIR-V image or sampled image.
-/// The `Element` type usually depends on the context.
-/// The result is either a scalar or a vector `Element` where each dimension is in order (and followed by the array index if the image type is arrayed).
-pub fn ImageCoordinate(
+fn ImageCoordinate(
     comptime Image: type,
     comptime Element: type,
 ) type {
@@ -231,9 +137,7 @@ pub fn ImageCoordinate(
 }
 
 /// The type of the components that result from sampling or reading from the given SPIR-V image or sampled image type.
-pub fn ImageSampledType(
-    comptime Image: type,
-) type {
+fn ImageSampledType(comptime Image: type) type {
     const image_info = switch (@typeInfo(Image)) {
         .spirv => |spirv| switch (spirv) {
             .sampled_image => |sampled_image| @typeInfo(sampled_image).spirv.image,
@@ -243,9 +147,7 @@ pub fn ImageSampledType(
         else => @compileError("Expected SPIR-V image or sampled image type, found '" ++ @typeName(Image) ++ "'"),
     };
     return switch (image_info.usage) {
-        .unknown => |unknown| unknown,
-        .sampled => |sampled| sampled,
-        .storage => |storage| storage,
+        inline else => |usage| usage,
     };
 }
 
@@ -317,11 +219,27 @@ pub fn imageQuerySize(
     );
 }
 
+/// Type of coordinate for an underlying image write operation.
+const ImageWriteCoordinateScalar = enum {
+    u32,
+    i32,
+    f32,
+
+    pub fn Type(self: ImageWriteCoordinateScalar) type {
+        return switch (self) {
+            .u32 => u32,
+            .i32 => i32,
+            .f32 => if (builtin.target.os.tag == .opencl) f32 else @compileError("Floating point image coordinates only supported by OpenCL"),
+        };
+    }
+};
+
 /// Write a texel to an image without a sampler.
 /// The type of `image` must be a pointer to a SPIR-V image.
-pub fn imageWriteUint(
+pub fn imageWrite(
     image: anytype,
-    coordinate: ImageCoordinate(std.meta.Child(@TypeOf(image)), u32),
+    comptime coordinate_scalar: ImageWriteCoordinateScalar,
+    coordinate: ImageCoordinate(std.meta.Child(@TypeOf(image)), coordinate_scalar.Type()),
     texel: @Vector(4, ImageSampledType(std.meta.Child(@TypeOf(image)))),
 ) void {
     const Image = switch (@typeInfo(@TypeOf(image))) {

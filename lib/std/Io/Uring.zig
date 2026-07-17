@@ -780,7 +780,7 @@ pub fn io(ev: *Evented) Io {
             .netSocketCreatePair = netSocketCreatePairUnavailable,
             .netSend = netSend,
             .netWrite = netWrite,
-            .netWriteFile = netWriteFileUnavailable,
+            .netWriteFile = netWriteFile,
             .netClose = netClose,
             .netShutdown = netShutdown,
             .netInterfaceNameResolve = netInterfaceNameResolveUnavailable,
@@ -4324,17 +4324,17 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
     // turns out, we `dup2` everything anyway, so there's no need!
     const pipe_flags: linux.O = .{ .CLOEXEC = true };
 
-    const stdin_pipe = if (options.stdin == .pipe) try pipe2(pipe_flags) else undefined;
+    const stdin_pipe = if (options.stdin == .pipe) try pipe2Sync(pipe_flags) else undefined;
     errdefer if (options.stdin == .pipe) {
         ev.destroyPipe(stdin_pipe);
     };
 
-    const stdout_pipe = if (options.stdout == .pipe) try pipe2(pipe_flags) else undefined;
+    const stdout_pipe = if (options.stdout == .pipe) try pipe2Sync(pipe_flags) else undefined;
     errdefer if (options.stdout == .pipe) {
         ev.destroyPipe(stdout_pipe);
     };
 
-    const stderr_pipe = if (options.stderr == .pipe) try pipe2(pipe_flags) else undefined;
+    const stderr_pipe = if (options.stderr == .pipe) try pipe2Sync(pipe_flags) else undefined;
     errdefer if (options.stderr == .pipe) {
         ev.destroyPipe(stderr_pipe);
     };
@@ -4347,7 +4347,7 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
 
     const prog_pipe: [2]fd_t = if (options.progress_node.index != .none) pipe: {
         // We use CLOEXEC for the same reason as in `pipe_flags`.
-        const pipe = try pipe2(.{ .NONBLOCK = true, .CLOEXEC = true });
+        const pipe = try pipe2Sync(.{ .NONBLOCK = true, .CLOEXEC = true });
         _ = linux.fcntl(pipe[0], linux.F.SETPIPE_SZ, @as(u32, std.Progress.max_packet_len * 2));
         break :pipe pipe;
     } else .{ -1, -1 };
@@ -4381,7 +4381,7 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
 
     // This pipe communicates to the parent errors in the child between `fork` and `execvpe`.
     // It is closed by the child (via CLOEXEC) without writing if `execvpe` succeeds.
-    const err_pipe: [2]fd_t = try pipe2(.{ .CLOEXEC = true });
+    const err_pipe: [2]fd_t = try pipe2Sync(.{ .CLOEXEC = true });
     errdefer ev.destroyPipe(err_pipe);
 
     try ev.scanEnviron(); // for PATH
@@ -4453,7 +4453,7 @@ pub const PipeError = error{
     SystemFdQuotaExceeded,
     ProcessFdQuotaExceeded,
 } || Io.UnexpectedError;
-pub fn pipe2(flags: linux.O) PipeError![2]fd_t {
+pub fn pipe2Sync(flags: linux.O) PipeError![2]fd_t {
     var fds: [2]fd_t = undefined;
     switch (linux.errno(linux.pipe2(&fds, flags))) {
         .SUCCESS => return fds,
@@ -5315,7 +5315,7 @@ fn netWrite(
     return ev.sendmsg(&cancel_region, handle, &msg, linux.MSG.NOSIGNAL, net.Stream.Writer.Error);
 }
 
-fn netWriteFileUnavailable(
+fn netWriteFile(
     userdata: ?*anyopaque,
     socket_handle: net.Socket.Handle,
     header: []const u8,
@@ -5323,12 +5323,29 @@ fn netWriteFileUnavailable(
     limit: Io.Limit,
 ) net.Stream.Writer.WriteFileError!usize {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = socket_handle;
-    _ = header;
-    _ = file_reader;
-    _ = limit;
-    return error.Unimplemented;
+    var cancel_region: CancelRegion = .init();
+    defer cancel_region.deinit();
+
+    var n: usize = 0;
+    if (header.len > 0) {
+        n += try ev.send(&cancel_region, socket_handle, header, 0);
+        if (n < header.len) return n;
+    }
+
+    const file_size = file_reader.size orelse
+        (ev.stat(&cancel_region, file_reader.file.handle) catch return error.Unexpected).size;
+    ev.sendfile(
+        &cancel_region,
+        file_reader.file.handle,
+        file_reader.pos,
+        socket_handle,
+        limit.minInt(file_size - file_reader.pos),
+        &n,
+    ) catch |err| {
+        if (n > 0) return n;
+        return err;
+    };
+    return n;
 }
 
 fn netClose(userdata: ?*anyopaque, handles: []const net.Socket.Handle) void {
@@ -6401,6 +6418,41 @@ fn writeSync(sync: *CancelRegion.Sync, fd: fd_t, buffer: []const u8) File.Writer
     }
 }
 
+fn send(
+    ev: *Evented,
+    cancel_region: *CancelRegion,
+    socket_fd: net.Socket.Handle,
+    buffer: []const u8,
+    flags: u32,
+) net.Stream.Writer.Error!usize {
+    while (true) {
+        const thread = try cancel_region.awaitIoUring();
+        thread.enqueue().* = .{
+            .opcode = .SEND,
+            .flags = 0,
+            .ioprio = 0,
+            .fd = socket_fd,
+            .off = 0,
+            .addr = @intFromPtr(buffer.ptr),
+            .len = @intCast(buffer.len),
+            .rw_flags = flags,
+            .user_data = @intFromPtr(cancel_region.fiber),
+            .buf_index = 0,
+            .personality = 0,
+            .splice_fd_in = 0,
+            .addr3 = 0,
+            .resv = 0,
+        };
+        ev.yield(null, .nothing);
+        const completion = cancel_region.completion();
+        switch (completion.errno()) {
+            .SUCCESS => return @as(u32, @bitCast(completion.result)),
+            .INTR, .CANCELED => {},
+            else => |errno| return errnoToError(net.Stream.Writer.Error, errno),
+        }
+    }
+}
+
 fn sendmsg(
     ev: *Evented,
     cancel_region: *CancelRegion,
@@ -6432,54 +6484,158 @@ fn sendmsg(
         switch (completion.errno()) {
             .SUCCESS => return @as(u32, @bitCast(completion.result)),
             .INTR, .CANCELED => {},
-            else => |errno| return switch (ErrorSet) {
-                net.Stream.Writer.Error => switch (errno) {
-                    .AFNOSUPPORT => error.AddressFamilyUnsupported,
-                    .ALREADY => error.FastOpenAlreadyInProgress,
-                    .CONNRESET => error.ConnectionResetByPeer,
-                    .HOSTUNREACH => error.HostUnreachable,
-                    .NETDOWN => error.NetworkDown,
-                    .NETUNREACH => error.NetworkUnreachable,
-                    .NOBUFS => error.SystemResources,
-                    .NOMEM => error.SystemResources,
-                    .NOTCONN => error.SocketUnconnected,
-                    .PIPE => error.SocketUnconnected,
-                    .ACCES => |err| errnoBug(err),
-                    .AGAIN => |err| errnoBug(err),
-                    .BADF => |err| errnoBug(err), // File descriptor used after closed.
-                    .DESTADDRREQ => |err| errnoBug(err), // The socket is not connection-mode, and no peer address is set.
-                    .FAULT => |err| errnoBug(err), // An invalid user space address was specified for an argument.
-                    .INVAL => |err| errnoBug(err), // Invalid argument passed.
-                    .ISCONN => |err| errnoBug(err), // connection-mode socket was connected already but a recipient was specified
-                    .MSGSIZE => |err| errnoBug(err),
-                    .NOTSOCK => |err| errnoBug(err), // The file descriptor sockfd does not refer to a socket.
-                    .OPNOTSUPP => |err| errnoBug(err), // Some bit in the flags argument is inappropriate for the socket type.
-                    else => |err| unexpectedErrno(err),
-                },
-                net.Socket.SendError => switch (errno) {
-                    .ACCES => error.AccessDenied,
-                    .AFNOSUPPORT => error.AddressFamilyUnsupported,
-                    .ALREADY => error.FastOpenAlreadyInProgress,
-                    .CONNRESET => error.ConnectionResetByPeer,
-                    .HOSTUNREACH => error.HostUnreachable,
-                    .MSGSIZE => error.MessageOversize,
-                    .NETDOWN => error.NetworkDown,
-                    .NETUNREACH => error.NetworkUnreachable,
-                    .NOBUFS => error.SystemResources,
-                    .NOMEM => error.SystemResources,
-                    .NOTCONN => error.SocketUnconnected,
-                    .PIPE => error.SocketUnconnected,
-                    .BADF => |err| errnoBug(err), // File descriptor used after closed.
-                    .DESTADDRREQ => |err| errnoBug(err),
-                    .FAULT => |err| errnoBug(err),
-                    .INVAL => |err| errnoBug(err),
-                    .ISCONN => |err| errnoBug(err),
-                    .NOTSOCK => |err| errnoBug(err),
-                    .OPNOTSUPP => |err| errnoBug(err),
-                    else => |err| unexpectedErrno(err),
-                },
-                else => comptime unreachable,
-            },
+            else => |errno| return errnoToError(ErrorSet, errno),
+        }
+    }
+}
+
+fn errnoToError(comptime ErrorSet: type, errno: linux.E) ErrorSet {
+    return switch (ErrorSet) {
+        net.Stream.Writer.Error => switch (errno) {
+            .AFNOSUPPORT => error.AddressFamilyUnsupported,
+            .ALREADY => error.FastOpenAlreadyInProgress,
+            .CONNRESET => error.ConnectionResetByPeer,
+            .HOSTUNREACH => error.HostUnreachable,
+            .NETDOWN => error.NetworkDown,
+            .NETUNREACH => error.NetworkUnreachable,
+            .NOBUFS => error.SystemResources,
+            .NOMEM => error.SystemResources,
+            .NOTCONN => error.SocketUnconnected,
+            .PIPE => error.SocketUnconnected,
+            .ACCES => |err| errnoBug(err),
+            .AGAIN => |err| errnoBug(err),
+            .BADF => |err| errnoBug(err), // File descriptor used after closed.
+            .DESTADDRREQ => |err| errnoBug(err), // The socket is not connection-mode, and no peer address is set.
+            .FAULT => |err| errnoBug(err), // An invalid user space address was specified for an argument.
+            .INVAL => |err| errnoBug(err), // Invalid argument passed.
+            .ISCONN => |err| errnoBug(err), // connection-mode socket was connected already but a recipient was specified
+            .MSGSIZE => |err| errnoBug(err),
+            .NOTSOCK => |err| errnoBug(err), // The file descriptor sockfd does not refer to a socket.
+            .OPNOTSUPP => |err| errnoBug(err), // Some bit in the flags argument is inappropriate for the socket type.
+            else => |err| unexpectedErrno(err),
+        },
+        net.Socket.SendError => switch (errno) {
+            .ACCES => error.AccessDenied,
+            .AFNOSUPPORT => error.AddressFamilyUnsupported,
+            .ALREADY => error.FastOpenAlreadyInProgress,
+            .CONNRESET => error.ConnectionResetByPeer,
+            .HOSTUNREACH => error.HostUnreachable,
+            .MSGSIZE => error.MessageOversize,
+            .NETDOWN => error.NetworkDown,
+            .NETUNREACH => error.NetworkUnreachable,
+            .NOBUFS => error.SystemResources,
+            .NOMEM => error.SystemResources,
+            .NOTCONN => error.SocketUnconnected,
+            .PIPE => error.SocketUnconnected,
+            .BADF => |err| errnoBug(err), // File descriptor used after closed.
+            .DESTADDRREQ => |err| errnoBug(err),
+            .FAULT => |err| errnoBug(err),
+            .INVAL => |err| errnoBug(err),
+            .ISCONN => |err| errnoBug(err),
+            .NOTSOCK => |err| errnoBug(err),
+            .OPNOTSUPP => |err| errnoBug(err),
+            else => |err| unexpectedErrno(err),
+        },
+        else => comptime unreachable,
+    };
+}
+
+pub const PipeAsyncError = PipeError || Io.Cancelable;
+fn pipe2(ev: *Evented, cancel_region: *CancelRegion, flags: linux.O) PipeAsyncError![2]fd_t {
+    var fds: [2]fd_t = undefined;
+    while (true) {
+        const thread = try cancel_region.awaitIoUring();
+        const OP_PIPE = 62;
+        thread.enqueue().* = .{
+            .opcode = @enumFromInt(OP_PIPE),
+            .flags = 0,
+            .ioprio = 0,
+            .fd = 0,
+            .off = 0,
+            .addr = @intFromPtr(&fds),
+            .len = 0,
+            .rw_flags = @bitCast(flags),
+            .user_data = @intFromPtr(cancel_region.fiber),
+            .buf_index = 0,
+            .personality = 0,
+            .splice_fd_in = 0,
+            .addr3 = 0,
+            .resv = 0,
+        };
+        ev.yield(null, .nothing);
+        const completion = cancel_region.completion();
+        switch (completion.errno()) {
+            .SUCCESS => return fds,
+            .INTR, .CANCELED => {},
+            .INVAL, .NOPKG, .FAULT => |err| return errnoBug(err), // Invalid flags
+            .NFILE => return error.SystemFdQuotaExceeded,
+            .MFILE => return error.ProcessFdQuotaExceeded,
+            else => |err| return unexpectedErrno(err),
+        }
+    }
+}
+
+fn sendfile(
+    ev: *Evented,
+    cancel_region: *CancelRegion,
+    fd_in: linux.fd_t,
+    off_in: u64,
+    fd_out: linux.fd_t,
+    count: usize,
+    sent: *usize,
+) error{ SystemResources, Unexpected, Canceled }!void {
+    const pipe = ev.pipe2(cancel_region, .{ .NONBLOCK = true }) catch |err| switch (err) {
+        error.ProcessFdQuotaExceeded, error.SystemFdQuotaExceeded => return error.SystemResources,
+        else => |e| return e,
+    };
+    defer ev.destroyPipe(pipe);
+
+    var buffered: usize = 0;
+    var offset: usize = off_in;
+    var remaining: usize = count;
+    const no_offset: u64 = @bitCast(@as(i64, -1));
+    while (remaining > 0) {
+        if (buffered == 0) {
+            // file to pipe
+            const n = try ev.splice(cancel_region, fd_in, offset, pipe[1], no_offset, remaining);
+            buffered += n;
+            offset += n;
+        }
+        // pipe to socket
+        const m = try ev.splice(cancel_region, pipe[0], no_offset, fd_out, no_offset, buffered);
+        buffered -= m;
+        sent.* += m;
+        remaining -= m;
+    }
+}
+
+fn splice(
+    ev: *Evented,
+    cancel_region: *CancelRegion,
+    fd_in: fd_t,
+    off_in: u64,
+    fd_out: fd_t,
+    off_out: u64,
+    len: usize,
+) error{ SystemResources, Unexpected, Canceled }!usize {
+    const splice_f_nonblock = 0x02;
+    while (true) {
+        const thread = try cancel_region.awaitIoUring();
+        var sqe = thread.enqueue();
+        sqe.prep_splice(fd_in, off_in, fd_out, off_out, len);
+        sqe.user_data = @intFromPtr(cancel_region.fiber);
+        sqe.rw_flags |= splice_f_nonblock;
+        ev.yield(null, .nothing);
+        const completion = cancel_region.completion();
+        switch (completion.errno()) {
+            .SUCCESS => return @as(u32, @bitCast(completion.result)),
+            .INTR => {},
+            .NOMEM => return error.SystemResources,
+            .BADF => |err| return errnoBug(err),
+            .INVAL => |err| return errnoBug(err),
+            .SPIPE => |err| return errnoBug(err),
+            .AGAIN => |err| return errnoBug(err),
+            else => |err| return unexpectedErrno(err),
         }
     }
 }

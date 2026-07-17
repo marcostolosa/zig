@@ -706,8 +706,13 @@ pub const Ip6Address = struct {
                 .port = port,
                 .interface = i: {
                     const text = p.interface_name orelse break :i .none;
-                    const name: Interface.Name = try .fromSlice(text);
-                    break :i try name.resolve(io);
+                    if (std.fmt.parseInt(u32, text, 10)) |index| {
+                        break :i .{ .index = index };
+                    } else |err| {
+                        if (err != error.InvalidCharacter) return error.ParseFailed;
+                        const name: Interface.Name = try .fromSlice(text);
+                        break :i try name.resolve(io);
+                    }
                 },
             },
             else => return error.ParseFailed,

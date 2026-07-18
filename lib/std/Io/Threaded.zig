@@ -5053,7 +5053,14 @@ pub fn dirOpenFileWtf16(
             .VALID_FLAGS,
             .OPEN,
             .{
-                .IO = if (flags.follow_symlinks) .SYNCHRONOUS_NONALERT else .ASYNCHRONOUS,
+                // Open synchronously regardless of follow_symlinks: the returned
+                // File has nonblocking = false, so the read path takes the
+                // synchronous branch which asserts the operation never returns
+                // STATUS_PENDING. An asynchronous handle can return STATUS_PENDING,
+                // which would hit `.PENDING => unreachable` on the first read.
+                // OPEN_REPARSE_POINT is orthogonal to synchronous vs asynchronous
+                // I/O, so no-follow opens can be synchronous just like follow opens.
+                .IO = .SYNCHRONOUS_NONALERT,
                 .NON_DIRECTORY_FILE = !allow_directory,
                 .OPEN_REPARSE_POINT = !flags.follow_symlinks,
             },

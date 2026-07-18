@@ -758,6 +758,47 @@ test "readFileAlloc" {
     );
 }
 
+test "openFile no-follow on a plain file then read" {
+    // Regression test: on Windows, openFile with follow_symlinks = false opened
+    // the handle asynchronously (.IO = .ASYNCHRONOUS) but returned a File with
+    // nonblocking = false. The first read then took the synchronous code path,
+    // which asserts the operation never returns STATUS_PENDING, and hit
+    // `.PENDING => unreachable`, aborting the process. Opening a plain
+    // (non-symlink) file no-follow and reading it must return the bytes.
+    const io = testing.io;
+
+    var tmp_dir = tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const contents: []const u8 = "no-follow read should not crash\n";
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "plain_file", .data = contents });
+
+    {
+        const file = try tmp_dir.dir.openFile(io, "plain_file", .{
+            .mode = .read_only,
+            .follow_symlinks = false,
+        });
+        defer file.close(io);
+
+        var buffer: [64]u8 = undefined;
+        const n = try file.readPositional(io, &.{&buffer}, 0);
+        try expectEqualStrings(contents, buffer[0..n]);
+    }
+
+    {
+        // Also exercise the streaming read path, which has the same branch.
+        const file = try tmp_dir.dir.openFile(io, "plain_file", .{
+            .mode = .read_only,
+            .follow_symlinks = false,
+        });
+        defer file.close(io);
+
+        var buffer: [64]u8 = undefined;
+        const n = try file.readStreaming(io, &.{&buffer});
+        try expectEqualStrings(contents, buffer[0..n]);
+    }
+}
+
 test "Dir.statFile" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {

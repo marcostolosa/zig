@@ -138,7 +138,7 @@ that can be passed such as `-Drelease`.
 
 This one has the benefit that LLVM, LLD, and Clang are built in Release mode,
 while your Zig build has the option to be a Debug build. It also works
-completely independently from MSVC so you don't need it to be installed.
+completely independently of MSVC so you don't need it to be installed.
 
 Determine the URL by
 [looking at the CI script](https://codeberg.org/ziglang/zig/src/branch/master/ci/x86_64-windows-debug.ps1#L1-L4).
@@ -258,7 +258,7 @@ that you have **no** trailing slash (`/` or `\`) at the end of the
 Install [CMake](https://cmake.org/), version 3.20.0 or newer.
 
 [Download LLVM, Clang, and LLD sources](https://releases.llvm.org/download.html#22.0.0)
-The downloads from llvm lead to the github release pages, where the source's
+The downloads from llvm lead to the GitHub release pages, where the source's
 will be listed as : `llvm-22.X.X.src.tar.xz`, `clang-22.X.X.src.tar.xz`,
 `lld-22.X.X.src.tar.xz`. Unzip each to their own directory. Ensure no
 directories have spaces in them. For example:
@@ -673,7 +673,7 @@ third-party C compiler written in Zig. Test coverage, bug reports, and official
 implementation live in this repository: [ziglang/translate-c](https://codeberg.org/ziglang/translate-c/)
 
 This package is currently vendored into the Zig source tree. The TranslateC
-build step takes advantage of this to provide the ability to setup C
+build step takes advantage of this to provide the ability to set up C
 translation in one's build.zig script.
 
 Please see the readme of the translate-c project for how to contribute. Once an
@@ -803,4 +803,3 @@ not recommended with the LLDB fork), you will also want this line:
 ```
 type category enable zig.stage2
 ```
-

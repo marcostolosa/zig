@@ -18,7 +18,6 @@ pub fn TrailerFlags(comptime Fields: type) type {
 
         pub const FieldEnum = std.meta.FieldEnum(Fields);
 
-        pub const ActiveFields = std.enums.EnumFieldStruct(FieldEnum, bool, false);
         pub const FieldValues = blk: {
             var field_names: [bit_count][]const u8 = undefined;
             var field_types: [bit_count]type = undefined;
@@ -57,12 +56,10 @@ pub fn TrailerFlags(comptime Fields: type) type {
             self.bits.set(field_index);
         }
 
-        /// `fields` is a boolean struct where each active field is set to `true`
-        pub fn init(fields: ActiveFields) Self {
+        pub fn init(comptime fields: []const FieldEnum) Self {
             var self: Self = .{ .bits = .empty };
-            inline for (@typeInfo(Fields).@"struct".field_names, 0..) |field_name, i| {
-                if (@field(fields, field_name))
-                    self.bits.set(i);
+            inline for (fields) |field| {
+                self.setFlag(field);
             }
             return self;
         }
@@ -130,7 +127,6 @@ pub fn TrailerFlags(comptime Fields: type) type {
         }
     };
 }
-
 test TrailerFlags {
     const Flags = TrailerFlags(struct {
         a: i32,
@@ -139,10 +135,8 @@ test TrailerFlags {
     });
     try testing.expectEqual(u2, meta.Tag(Flags.FieldEnum));
 
-    var flags = Flags.init(.{
-        .b = true,
-        .c = true,
-    });
+    const flags = Flags.init(&.{ .b, .c });
+
     const slice = try testing.allocator.alignedAlloc(u8, .@"8", flags.sizeInBytes());
     defer testing.allocator.free(slice);
 

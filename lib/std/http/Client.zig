@@ -912,7 +912,6 @@ pub const Request = struct {
     /// Sends but does not flush a complete request as only HTTP head, no body.
     pub fn sendBodilessUnflushed(r: *Request) Writer.Error!void {
         assert(r.transfer_encoding == .none);
-        assert(!r.method.requestHasBody());
         try sendHead(r);
     }
 

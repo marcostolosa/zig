@@ -72,6 +72,8 @@ metadata_string_map: std.array_hash_map.Auto(void, void),
 metadata_string_indices: std.ArrayList(u32),
 metadata_string_bytes: std.ArrayList(u8),
 
+wasm_custom_sections: std.ArrayList(Metadata),
+
 pub const expected_args_len = 16;
 pub const expected_attrs_len = 16;
 pub const expected_fields_len = 32;
@@ -8785,6 +8787,8 @@ pub fn init(options: Options) Allocator.Error!Builder {
         .metadata_string_map = .empty,
         .metadata_string_indices = .empty,
         .metadata_string_bytes = .empty,
+
+        .wasm_custom_sections = .empty,
     };
     errdefer self.deinit();
 
@@ -8886,6 +8890,8 @@ pub fn clearAndFree(self: *Builder) void {
     self.metadata_string_map.clearAndFree(self.gpa);
     self.metadata_string_indices.clearAndFree(self.gpa);
     self.metadata_string_bytes.clearAndFree(self.gpa);
+
+    self.wasm_custom_sections.clearAndFree(self.gpa);
 }
 
 pub fn deinit(self: *Builder) void {
@@ -8938,6 +8944,8 @@ pub fn deinit(self: *Builder) void {
     self.metadata_string_map.deinit(gpa);
     self.metadata_string_indices.deinit(gpa);
     self.metadata_string_bytes.deinit(gpa);
+
+    self.wasm_custom_sections.deinit(gpa);
 
     self.* = undefined;
 }
@@ -12239,6 +12247,11 @@ pub fn addNamedMetadata(self: *Builder, name: String, operands: []const Metadata
     self.addNamedMetadataAssumeCapacity(name, operands);
 }
 
+pub fn addWasmCustomSection(self: *Builder, section: Metadata) Allocator.Error!void {
+    try self.wasm_custom_sections.ensureUnusedCapacity(self.gpa, 1);
+    self.addWasmCustomSectionAssumeCapacity(section);
+}
+
 pub fn debugFile(
     self: *Builder,
     filename: ?Metadata.String,
@@ -12713,6 +12726,10 @@ fn addNamedMetadataAssumeCapacity(self: *Builder, name: String, operands: []cons
         .index = extra_index,
         .len = @intCast(operands.len),
     };
+}
+
+fn addWasmCustomSectionAssumeCapacity(self: *Builder, section: Metadata) void {
+    self.wasm_custom_sections.appendAssumeCapacity(section);
 }
 
 fn debugFileAssumeCapacity(
@@ -14613,6 +14630,14 @@ pub fn toBitcode(self: *Builder, allocator: Allocator, producer: Producer) bitco
                         }, metadata_adapter);
                     },
                 }
+            }
+
+            // Write wasm custom sections
+            if (self.wasm_custom_sections.items.len > 0) {
+                try self.addNamedMetadata(
+                    try self.string("wasm.custom_sections"),
+                    self.wasm_custom_sections.items,
+                );
             }
 
             // Write named metadata

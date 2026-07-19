@@ -1,6 +1,6 @@
 .{
     .name = .standalone_test_cases,
-    .fingerprint = 0xc0dbdf9c3b92810b,
+    .fingerprint = 0xc0dbdf9c283bb40e,
     .version = "0.0.0",
     .dependencies = .{
         .simple = .{
@@ -195,6 +195,9 @@
         },
         .run_args = .{
             .path = "run_args",
+        },
+        .wasm_custom_sections = .{
+            .path = "wasm_custom_sections",
         },
     },
     .paths = .{

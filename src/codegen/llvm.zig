@@ -1515,6 +1515,31 @@ pub const Object = struct {
             break :s try o.builder.string(section);
         } else .none;
 
+        if (zcu.getTarget().cpu.arch.isWasm()) if (resolved.@"linksection".toSlice(ip)) |section| {
+            const prefix = ".custom_section.";
+            if (std.mem.startsWith(u8, section, prefix)) {
+                const name = section[prefix.len ..];
+                const val_key = ip.indexToKey(resolved.value);
+
+                switch (val_key) {
+                    .aggregate => |aggregate| switch (aggregate.storage) {
+                        .bytes => |bytes| {
+                            const len = ip.aggregateTypeLen(aggregate.ty);
+                            const slice = bytes.toSlice(len, ip);
+                            try o.builder.addWasmCustomSection(
+                                try o.builder.metadataTuple(&.{
+                                    (try o.builder.metadataString(name)).toMetadata(),
+                                    (try o.builder.metadataString(slice)).toMetadata(),
+                                })
+                            );
+                        },
+                        else => {}
+                    },
+                    else => {}
+                }
+            }
+        };
+
         // Actual function bodies with AIR go through `updateFunc` instead, so the only functions we
         // can see are extern functions or other comptime function body values (e.g. undefined). Of
         // these, only extern functions need to be lowered to LLVM functions.

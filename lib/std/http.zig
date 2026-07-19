@@ -34,19 +34,13 @@ pub const Method = enum {
     /// Returns true if a request of this method is allowed to have a body
     /// Actual behavior from servers may vary and should still be checked
     pub fn requestHasBody(m: Method) bool {
-        return switch (m) {
-            .POST, .PUT, .PATCH => true,
-            .GET, .HEAD, .DELETE, .CONNECT, .OPTIONS, .TRACE => false,
-        };
+        return m != .TRACE;
     }
 
     /// Returns true if a response to this method is allowed to have a body
     /// Actual behavior from clients may vary and should still be checked
     pub fn responseHasBody(m: Method) bool {
-        return switch (m) {
-            .GET, .POST, .PUT, .DELETE, .CONNECT, .OPTIONS, .PATCH => true,
-            .HEAD, .TRACE => false,
-        };
+        return m != .HEAD;
     }
 
     /// An HTTP method is safe if it doesn't alter the state of the server.

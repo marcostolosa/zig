@@ -15,11 +15,11 @@ flags: Flags,
 pub const Flags = struct {
     /// * true:
     ///   - windows: opened with MODE.IO.ASYNCHRONOUS
-    ///   - c: O_NONBLOCK is set
+    ///   - POSIX: O_NONBLOCK is set
     /// * false:
     ///   - windows: opened with SYNCHRONOUS_ALERT or SYNCHRONOUS_NONALERT, or
     ///     not a file.
-    ///   - c: O_NONBLOCK is unset
+    ///   - POSIX: O_NONBLOCK is unset
     nonblocking: bool,
 };
 
@@ -328,7 +328,7 @@ pub fn setOwner(file: File, io: Io, owner: ?Uid, group: ?Gid) SetOwnerError!void
 
 /// Cross-platform representation of permissions on a file.
 ///
-/// On c systems this corresponds to "mode" and on Windows this corresponds to "attributes".
+/// On POSIX systems this corresponds to "mode" and on Windows this corresponds to "attributes".
 pub const Permissions = std.Options.FilePermissions orelse if (is_windows) enum(std.os.windows.DWORD) {
     default_file = 0,
     _,
@@ -356,14 +356,14 @@ pub const Permissions = std.Options.FilePermissions orelse if (is_windows) enum(
             attributes & ~@as(windows.DWORD, windows.FILE_ATTRIBUTE_READONLY)));
     }
 } else if (std.c.mode_t != u0) enum(std.c.mode_t) {
-    /// This is the default mode given to c operating systems for creating
+    /// This is the default mode given to POSIX operating systems for creating
     /// files. `0o666` is "-rw-rw-rw-" which is counter-intuitive at first,
     /// since most people would expect "-rw-r--r--", for example, when using
-    /// the `touch` command, which would correspond to `0o644`. However, c
+    /// the `touch` command, which would correspond to `0o644`. However, POSIX
     /// libc implementations use `0o666` inside `fopen` and then rely on the
     /// process-scoped "umask" setting to adjust this number for file creation.
     default_file = 0o666,
-    /// This is the default mode given to c operating systems for creating
+    /// This is the default mode given to POSIX operating systems for creating
     /// directories. `0o777` is "-rwxrwxrwx" which is counter-intuitive at first,
     /// since most people would expect "-rwxr-xr-x", for example, when using
     /// the `touch` command, which would correspond to `0o755`.

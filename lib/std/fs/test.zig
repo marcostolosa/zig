@@ -966,6 +966,7 @@ test "Dir.rename files" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
             const io = ctx.io;
+
             // Rename on Windows can hit intermittent AccessDenied errors
             // when certain conditions are true about the host system.
             // For now, skip this test when the path type is UNC to avoid them.
@@ -1114,11 +1115,15 @@ test "Dir.rename file <-> dir" {
 }
 
 test "Dir.renamePreserve onto existing" {
-    if (native_os == .windows) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/35359
-
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
             const io = ctx.io;
+
+            // Rename on Windows can hit intermittent AccessDenied errors
+            // when certain conditions are true about the host system.
+            // For now, skip this test when the path type is UNC to avoid them.
+            // See https://codeberg.org/ziglang/zig/issues/35359
+            if (ctx.path_type == .unc) return;
 
             const test_file_path = try ctx.transformPath("test_file");
             const target_file_path = try ctx.transformPath("target_file");
@@ -2131,14 +2136,16 @@ test "walker without fully iterating" {
 }
 
 test "'.' and '..' in Dir functions" {
-    if (native_os == .windows) {
-        // https://codeberg.org/ziglang/zig/issues/31561
-        return error.SkipZigTest;
-    }
-
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
             const io = ctx.io;
+
+            // Rename on Windows can hit intermittent AccessDenied errors
+            // when certain conditions are true about the host system.
+            // For now, skip this test when the path type is UNC to avoid them.
+            // See https://codeberg.org/ziglang/zig/issues/31561
+            if (ctx.path_type == .unc) return;
+
             const subdir_path = try ctx.transformPath("./subdir");
             const file_path = try ctx.transformPath("./subdir/../file");
             const copy_path = try ctx.transformPath("./subdir/../copy");

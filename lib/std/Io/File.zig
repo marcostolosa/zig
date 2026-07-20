@@ -15,15 +15,15 @@ flags: Flags,
 pub const Flags = struct {
     /// * true:
     ///   - windows: opened with MODE.IO.ASYNCHRONOUS
-    ///   - POSIX: O_NONBLOCK is set
+    ///   - c: O_NONBLOCK is set
     /// * false:
     ///   - windows: opened with SYNCHRONOUS_ALERT or SYNCHRONOUS_NONALERT, or
     ///     not a file.
-    ///   - POSIX: O_NONBLOCK is unset
+    ///   - c: O_NONBLOCK is unset
     nonblocking: bool,
 };
 
-pub const Handle = std.posix.fd_t;
+pub const Handle = std.c.fd_t;
 
 pub const Reader = @import("File/Reader.zig");
 pub const Writer = @import("File/Writer.zig");
@@ -34,10 +34,10 @@ pub const MemoryMap = @import("File/MemoryMap.zig");
 /// deadlocking.
 pub const MultiReader = @import("File/MultiReader.zig");
 
-pub const INode = std.posix.ino_t;
-pub const NLink = std.posix.nlink_t;
-pub const Uid = std.posix.uid_t;
-pub const Gid = std.posix.gid_t;
+pub const INode = std.c.ino_t;
+pub const NLink = std.c.nlink_t;
+pub const Uid = std.c.uid_t;
+pub const Gid = std.c.gid_t;
 pub const BlockSize = u32;
 
 pub const Kind = enum {
@@ -95,7 +95,7 @@ pub fn stdout() File {
             .flags = .{ .nonblocking = false },
         },
         else => .{
-            .handle = std.posix.STDOUT_FILENO,
+            .handle = std.c.STDOUT_FILENO,
             .flags = .{ .nonblocking = false },
         },
     };
@@ -108,7 +108,7 @@ pub fn stderr() File {
             .flags = .{ .nonblocking = false },
         },
         else => .{
-            .handle = std.posix.STDERR_FILENO,
+            .handle = std.c.STDERR_FILENO,
             .flags = .{ .nonblocking = false },
         },
     };
@@ -121,7 +121,7 @@ pub fn stdin() File {
             .flags = .{ .nonblocking = false },
         },
         else => .{
-            .handle = std.posix.STDIN_FILENO,
+            .handle = std.c.STDIN_FILENO,
             .flags = .{ .nonblocking = false },
         },
     };
@@ -328,7 +328,7 @@ pub fn setOwner(file: File, io: Io, owner: ?Uid, group: ?Gid) SetOwnerError!void
 
 /// Cross-platform representation of permissions on a file.
 ///
-/// On POSIX systems this corresponds to "mode" and on Windows this corresponds to "attributes".
+/// On c systems this corresponds to "mode" and on Windows this corresponds to "attributes".
 pub const Permissions = std.Options.FilePermissions orelse if (is_windows) enum(std.os.windows.DWORD) {
     default_file = 0,
     _,
@@ -355,15 +355,15 @@ pub const Permissions = std.Options.FilePermissions orelse if (is_windows) enum(
         else
             attributes & ~@as(windows.DWORD, windows.FILE_ATTRIBUTE_READONLY)));
     }
-} else if (std.posix.mode_t != u0) enum(std.posix.mode_t) {
-    /// This is the default mode given to POSIX operating systems for creating
+} else if (std.c.mode_t != u0) enum(std.c.mode_t) {
+    /// This is the default mode given to c operating systems for creating
     /// files. `0o666` is "-rw-rw-rw-" which is counter-intuitive at first,
     /// since most people would expect "-rw-r--r--", for example, when using
-    /// the `touch` command, which would correspond to `0o644`. However, POSIX
+    /// the `touch` command, which would correspond to `0o644`. However, c
     /// libc implementations use `0o666` inside `fopen` and then rely on the
     /// process-scoped "umask" setting to adjust this number for file creation.
     default_file = 0o666,
-    /// This is the default mode given to POSIX operating systems for creating
+    /// This is the default mode given to c operating systems for creating
     /// directories. `0o777` is "-rwxrwxrwx" which is counter-intuitive at first,
     /// since most people would expect "-rwxr-xr-x", for example, when using
     /// the `touch` command, which would correspond to `0o755`.
@@ -374,11 +374,11 @@ pub const Permissions = std.Options.FilePermissions orelse if (is_windows) enum(
 
     pub const executable_file: @This() = .default_dir;
 
-    pub fn toMode(self: @This()) std.posix.mode_t {
+    pub fn toMode(self: @This()) std.c.mode_t {
         return @backingInt(self);
     }
 
-    pub fn fromMode(mode: std.posix.mode_t) @This() {
+    pub fn fromMode(mode: std.c.mode_t) @This() {
         return @fromBackingInt(@intCast(mode));
     }
 
@@ -391,7 +391,7 @@ pub const Permissions = std.Options.FilePermissions orelse if (is_windows) enum(
     /// Enables write permission for all classes.
     pub fn setReadOnly(self: @This(), read_only: bool) @This() {
         const mode = toMode(self);
-        const o222 = @as(std.posix.mode_t, 0o222);
+        const o222 = @as(std.c.mode_t, 0o222);
         return @fromBackingInt(@intCast(if (read_only) mode & ~o222 else mode | o222));
     }
 } else enum(u0) {

@@ -4,6 +4,7 @@ const testing = std.testing;
 const mem = std.mem;
 const assert = std.debug.assert;
 const Type = std.builtin.Type;
+const IntegerBitSet = std.bit_set.Integer;
 
 /// This is useful for saving memory when allocating an object that has many
 /// optional components. The optional objects are allocated sequentially in
@@ -11,10 +12,9 @@ const Type = std.builtin.Type;
 /// and whether it is present based on each corresponding bit.
 pub fn TrailerFlags(comptime Fields: type) type {
     return struct {
-        bits: Int,
+        bits: IntegerBitSet(bit_count),
 
-        pub const Int = @Int(.unsigned, bit_count);
-        pub const bit_count = @typeInfo(Fields).@"struct".field_names.len;
+        const bit_count = @typeInfo(Fields).@"struct".field_names.len;
 
         pub const FieldEnum = std.meta.FieldEnum(Fields);
 
@@ -43,7 +43,7 @@ pub fn TrailerFlags(comptime Fields: type) type {
 
         pub fn has(self: Self, comptime field: FieldEnum) bool {
             const field_index = @backingInt(field);
-            return (self.bits & (1 << field_index)) != 0;
+            return self.bits.isSet(field_index);
         }
 
         pub fn get(self: Self, p: [*]align(@alignOf(Fields)) const u8, comptime field: FieldEnum) ?Field(field) {
@@ -54,15 +54,15 @@ pub fn TrailerFlags(comptime Fields: type) type {
 
         pub fn setFlag(self: *Self, comptime field: FieldEnum) void {
             const field_index = @backingInt(field);
-            self.bits |= 1 << field_index;
+            self.bits.set(field_index);
         }
 
         /// `fields` is a boolean struct where each active field is set to `true`
         pub fn init(fields: ActiveFields) Self {
-            var self: Self = .{ .bits = 0 };
+            var self: Self = .{ .bits = .empty };
             inline for (@typeInfo(Fields).@"struct".field_names, 0..) |field_name, i| {
                 if (@field(fields, field_name))
-                    self.bits |= 1 << i;
+                    self.bits.set(i);
             }
             return self;
         }
@@ -101,7 +101,7 @@ pub fn TrailerFlags(comptime Fields: type) type {
         pub fn offset(self: Self, comptime field: FieldEnum) usize {
             var off: usize = 0;
             inline for (@typeInfo(Fields).@"struct".field_types, 0..) |field_type, i| {
-                const active = (self.bits & (1 << i)) != 0;
+                const active = self.bits.isSet(i);
                 if (i == @backingInt(field)) {
                     assert(active);
                     return mem.alignForward(usize, off, @alignOf(field_type));
@@ -121,7 +121,7 @@ pub fn TrailerFlags(comptime Fields: type) type {
             inline for (@typeInfo(Fields).@"struct".field_types, 0..) |field_type, i| {
                 if (@sizeOf(field_type) == 0)
                     continue;
-                if ((self.bits & (1 << i)) != 0) {
+                if (self.bits.isSet(i)) {
                     off = mem.alignForward(usize, off, @alignOf(field_type));
                     off += @sizeOf(field_type);
                 }

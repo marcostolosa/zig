@@ -1134,9 +1134,19 @@ fn netSendOne(
 ) net.Socket.SendError!void {
     var addr: Io.Threaded.PosixAddress = undefined;
     var iovec: posix.iovec_const = .{ .base = @constCast(message.data_ptr), .len = message.data_len };
+
+    const name: ?*std.c.sockaddr, const namelen: std.c.socklen_t = blk: {
+        if (message.address) |addr| {
+            const namelen = Io.Threaded.addressToPosix(addr, addr_storage);
+            break :blk .{ &addr_storage.any, namelen };
+        } else {
+            break :blk .{ null, 0 };
+        }
+    };
+
     const msg: posix.msghdr_const = .{
-        .name = &addr.any,
-        .namelen = Io.Threaded.addressToPosix(message.address, &addr),
+        .name = name,
+        .namelen = namelen,
         .iov = (&iovec)[0..1],
         .iovlen = 1,
         // OS returns EINVAL if this pointer is invalid even if controllen is zero.

@@ -12966,12 +12966,21 @@ fn netSendManyPosix(
     const clamped_addrs = (&addr_buffer)[0..min_len];
     const clamped_iovecs = (&iovecs_buffer)[0..min_len];
 
-    for (clamped_messages, clamped_msgs, clamped_addrs, clamped_iovecs) |*message, *msg, *addr, *iovec| {
+    for (clamped_messages, clamped_msgs, clamped_addrs, clamped_iovecs) |*message, *msg, *addr_storage, *iovec| {
         iovec.* = .{ .base = @constCast(message.data_ptr), .len = message.data_len };
+        const name: ?*std.c.sockaddr, const namelen: std.c.socklen_t = blk: {
+            if (message.address) |addr| {
+                const namelen = addressToPosix(addr, addr_storage);
+                break :blk .{ &addr_storage.any, namelen };
+            } else {
+                break :blk .{ null, 0 };
+            }
+        };
+
         msg.* = .{
             .hdr = .{
-                .name = &addr.any,
-                .namelen = addressToPosix(message.address, addr),
+                .name = name,
+                .namelen = namelen,
                 .iov = iovec[0..1],
                 .iovlen = 1,
                 .control = @constCast(message.control.ptr),

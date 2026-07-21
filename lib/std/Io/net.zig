@@ -959,7 +959,7 @@ pub const IncomingMessage = struct {
 };
 
 pub const OutgoingMessage = struct {
-    address: *const IpAddress,
+    address: ?*const IpAddress,
     data_ptr: [*]const u8,
     /// Initialized with how many bytes of `data_ptr` to send. After sending
     /// succeeds, replaced with how many bytes were actually sent.

@@ -502,6 +502,7 @@ pub const StdLangDecl = enum {
     @"panic.copyLenMismatch",
     @"panic.memcpyAlias",
     @"panic.noreturnReturned",
+    @"panic.loadUninstantiableType",
 
     VaList,
 
@@ -591,6 +592,7 @@ pub const StdLangDecl = enum {
             .@"panic.copyLenMismatch",
             .@"panic.memcpyAlias",
             .@"panic.noreturnReturned",
+            .@"panic.loadUninstantiableType",
             => .func,
         };
     }
@@ -664,6 +666,7 @@ pub const SimplePanicId = enum {
     copy_len_mismatch,
     memcpy_alias,
     noreturn_returned,
+    load_uninstantiable_type,
 
     pub fn toStdLangDecl(id: SimplePanicId) StdLangDecl {
         return switch (id) {
@@ -687,6 +690,7 @@ pub const SimplePanicId = enum {
             .copy_len_mismatch          => .@"panic.copyLenMismatch",
             .memcpy_alias               => .@"panic.memcpyAlias",
             .noreturn_returned          => .@"panic.noreturnReturned",
+            .load_uninstantiable_type   => .@"panic.loadUninstantiableType",
             // zig fmt: on
         };
     }

@@ -665,7 +665,7 @@ fn lowerZigArgs(
 
     try zig_args.ensureUnusedCapacity(gpa, 1);
     if (graph.debug_compiler_runtime_libs) |mode| switch (mode) {
-        .Debug => zig_args.appendAssumeCapacity("--debug-rt"),
+        .debug => zig_args.appendAssumeCapacity("--debug-rt"),
         else => zig_args.appendAssumeCapacity(try arena.print("--debug-rt={t}", .{mode})),
     };
 
@@ -1264,10 +1264,10 @@ fn appendModuleFlags(
         }
 
         switch (m.flags.optimize) {
-            .debug => zig_args.appendAssumeCapacity("-ODebug"),
-            .safe => zig_args.appendAssumeCapacity("-OReleaseSafe"),
-            .fast => zig_args.appendAssumeCapacity("-OReleaseFast"),
-            .small => zig_args.appendAssumeCapacity("-OReleaseSmall"),
+            .debug => zig_args.appendAssumeCapacity("-Odebug"),
+            .safe => zig_args.appendAssumeCapacity("-Osafe"),
+            .fast => zig_args.appendAssumeCapacity("-Ofast"),
+            .small => zig_args.appendAssumeCapacity("-Osmall"),
             .default => {},
         }
 

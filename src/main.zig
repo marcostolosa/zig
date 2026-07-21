@@ -805,7 +805,7 @@ const usage_build_generic =
     \\  --debug-compile-errors       Crash with helpful diagnostics at the first compile error
     \\  --debug-link-snapshot        Enable dumping of the linker's state in JSON format
     \\  --debug-rt[=mode]            Build compiler runtime libraries with [mode] optimization
-    \\                               (Debug if [=mode] is omitted)
+    \\                               (debug if [=mode] is omitted)
     \\  --debug-incremental          Enable incremental compilation debug features
     \\
 ;

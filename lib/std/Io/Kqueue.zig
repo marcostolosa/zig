@@ -1136,9 +1136,9 @@ fn netSendOne(
     var iovec: posix.iovec_const = .{ .base = @constCast(message.data_ptr), .len = message.data_len };
 
     const name: ?*std.c.sockaddr, const namelen: std.c.socklen_t = blk: {
-        if (message.address) |addr| {
-            const namelen = Io.Threaded.addressToPosix(addr, addr_storage);
-            break :blk .{ &addr_storage.any, namelen };
+        if (message.address) |ip_addr| {
+            const namelen = Io.Threaded.addressToPosix(ip_addr, &addr);
+            break :blk .{ &addr.any, namelen };
         } else {
             break :blk .{ null, 0 };
         }

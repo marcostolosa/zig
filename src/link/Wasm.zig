@@ -4348,7 +4348,7 @@ pub fn internString(wasm: *Wasm, bytes: []const u8) Allocator.Error!String {
 // TODO implement instead by appending to string_bytes
 pub fn internStringFmt(wasm: *Wasm, comptime format: []const u8, args: anytype) Allocator.Error!String {
     var buffer: [32]u8 = undefined;
-    const slice = std.fmt.bufPrint(&buffer, format, args) catch unreachable;
+    const slice = std.mem.print(&buffer, format, args) catch unreachable;
     return internString(wasm, slice);
 }
 

@@ -3858,7 +3858,29 @@ fn fileLength(userdata: ?*anyopaque, file: File) File.LengthError!u64 {
             }
         }
     } else if (is_windows) {
-        // TODO call NtQueryInformationFile and ask for only the size instead of "all"
+        var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+        var info: windows.FILE.STANDARD_INFORMATION = undefined;
+        const syscall: Syscall = try .start();
+        while (true) switch (windows.ntdll.NtQueryInformationFile(
+            file.handle,
+            &io_status_block,
+            &info,
+            @sizeOf(windows.FILE.STANDARD_INFORMATION),
+            .Standard,
+        )) {
+            .SUCCESS => break syscall.finish(),
+            // Buffer overflow here indicates that there is more information available than was able to be stored in the buffer
+            // size provided. This is treated as success because the type of variable-length information that this would be relevant for
+            // (name, volume name, etc) we don't care about.
+            .INVALID_PARAMETER => |err| return syscall.ntstatusBug(err),
+            .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+            .CANCELLED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            else => |s| return syscall.unexpectedNtstatus(s),
+        };
+        return @intCast(info.EndOfFile);
     }
 
     const stat = try fileStat(t, file);

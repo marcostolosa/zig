@@ -2484,6 +2484,7 @@ fn dirCreateFile(
         .CREAT = true,
         .TRUNC = flags.truncate,
         .EXCL = flags.exclusive,
+        .NOFOLLOW = !flags.follow_symlinks,
         .CLOEXEC = true,
     };
 

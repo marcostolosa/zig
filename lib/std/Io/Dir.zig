@@ -624,6 +624,11 @@ pub const CreateFileOptions = struct {
     /// `error.WouldBlock` will be returned. Otherwise, the file will wait until the file
     /// is available to proceed.
     lock_nonblocking: bool = false,
+    /// Defaults to false. When false, behavior on POSIX and WASI is to fail
+    /// with `error.SymLinkLoop` if the target path is a symbolic link.
+    /// On Windows, a reparse point file will be opened directly if encountered.
+    /// If set to true, symlinks are followed, potentially opening an unintended file.
+    follow_symlinks: bool = false,
     permissions: Permissions = .default_file,
     /// If supported by the operating system, attempted path resolution that
     /// would escape the directory instead returns `error.AccessDenied`. If

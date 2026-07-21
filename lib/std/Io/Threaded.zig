@@ -4256,6 +4256,7 @@ fn dirCreateFilePosix(
         .CREAT = true,
         .TRUNC = options.truncate,
         .EXCL = options.exclusive,
+        .NOFOLLOW = !options.follow_symlinks,
     };
     if (@hasField(posix.O, "LARGEFILE")) flags.LARGEFILE = true;
     if (@hasField(posix.O, "CLOEXEC")) flags.CLOEXEC = true;
@@ -4457,6 +4458,7 @@ fn dirCreateFileWindows(
         .{
             .NON_DIRECTORY_FILE = true,
             .IO = .SYNCHRONOUS_NONALERT,
+            .OPEN_REPARSE_POINT = !flags.follow_symlinks,
         },
         null,
         0,
@@ -4568,7 +4570,9 @@ fn dirCreateFileWasi(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     const wasi = std.os.wasi;
-    const lookup_flags: wasi.lookupflags_t = .{};
+    const lookup_flags: wasi.lookupflags_t = .{
+        .SYMLINK_FOLLOW = flags.follow_symlinks,
+    };
     const oflags: wasi.oflags_t = .{
         .CREAT = true,
         .TRUNC = flags.truncate,
@@ -5187,7 +5191,9 @@ fn dirOpenFileWasi(
         base.FD_FILESTAT_SET_SIZE = true;
         base.POLL_FD_READWRITE = true;
     }
-    const lookup_flags: wasi.lookupflags_t = .{};
+    const lookup_flags: wasi.lookupflags_t = .{
+        .SYMLINK_FOLLOW = flags.follow_symlinks,
+    };
     const oflags: wasi.oflags_t = .{};
     const inheriting: wasi.rights_t = .{};
     const fdflags: wasi.fdflags_t = .{};

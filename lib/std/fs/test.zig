@@ -1883,6 +1883,50 @@ test "open file with exclusive nonblocking lock twice (absolute paths)" {
     try expectError(error.WouldBlock, file2);
 }
 
+test "create file follow_symlinks" {
+    const io = testing.io;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Setup
+    {
+        var dir = try tmp.dir.createDirPathOpen(io, "dir", .{});
+        defer dir.close(io);
+        try setupSymlink(io, tmp.dir, "dir", "symdir", .{ .is_directory = true });
+        try setupSymlink(io, dir, "foo", "symfoo", .{});
+    }
+
+    const expected_error = switch (builtin.os.tag) {
+        .freebsd => error.Unexpected, // EMLINK
+        .netbsd => error.Unexpected, // EFTYPE
+        else => error.SymLinkLoop,
+    };
+
+    if (builtin.os.tag != .windows) {
+        // Create a file with the same name as symlink, expect failure
+        try testing.expectError(
+            expected_error,
+            tmp.dir.createFile(io, "dir/symfoo", .{ .follow_symlinks = false }),
+        );
+    } else {
+        // Windows departs from POSIX behavior, expect success
+        _ = try tmp.dir.createFile(io, "dir/symfoo", .{ .follow_symlinks = false });
+    }
+
+    // Create a file with unique name, expect success
+    {
+        var file = try tmp.dir.createFile(io, "symdir/bar", .{ .follow_symlinks = false });
+        defer file.close(io);
+    }
+
+    // Create a file with the same name as symlink, but follow symlinks, expect success
+    {
+        var file = try tmp.dir.createFile(io, "dir/symfoo", .{ .follow_symlinks = true });
+        defer file.close(io);
+    }
+}
+
 test "read from locked file" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {

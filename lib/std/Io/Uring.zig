@@ -2827,6 +2827,7 @@ fn dirCreateFile(
         .CREAT = true,
         .TRUNC = flags.truncate,
         .EXCL = flags.exclusive,
+        .NOFOLLOW = !flags.follow_symlinks,
         .CLOEXEC = true,
     }, flags.permissions.toMode()) catch |err| switch (err) {
         error.OperationUnsupported => return error.Unexpected, // TMPFILE unset.

@@ -7773,7 +7773,7 @@ pub fn compilerRtOptMode(comp: Compilation) std.lang.Optimize {
     }
     const target = &comp.root_mod.resolved_target.result;
     switch (comp.root_mod.optimize_mode) {
-        .debug, .safe => return target_util.defaultCompilerRtOptimizeMode(target),
+        .debug, .safe => return target_util.defaultCompilerRtOptimize(target),
         .fast => return .fast,
         .small => return .small,
     }

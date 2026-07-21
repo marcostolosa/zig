@@ -1,4 +1,4 @@
-//! An allocator that is designed for ReleaseFast optimization mode, with
+//! An allocator that is designed for -Ofast optimization mode, with
 //! multi-threading enabled.
 //!
 //! This allocator is a singleton; it uses global state and only one should be

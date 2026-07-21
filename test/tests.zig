@@ -1,8 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const assert = std.debug.assert;
 const mem = std.mem;
-const OptimizeMode = std.builtin.Optimize;
+const Optimize = std.builtin.Optimize;
 const Step = std.Build.Step;
 
 // Cases
@@ -2250,7 +2249,7 @@ const link_targets = blk: {
 
 pub fn addStandaloneTests(
     b: *std.Build,
-    optimize_modes: []const OptimizeMode,
+    optimize_modes: []const Optimize,
     skip_non_native: bool,
     enable_macos_sdk: bool,
     enable_ios_sdk: bool,
@@ -2262,10 +2261,10 @@ pub fn addStandaloneTests(
         .enable_ios_sdk = enable_ios_sdk,
         .enable_macos_sdk = enable_macos_sdk,
         .enable_symlinks_windows = enable_symlinks_windows,
-        .simple_skip_debug = mem.findScalar(OptimizeMode, optimize_modes, .debug) == null,
-        .simple_skip_release_safe = mem.findScalar(OptimizeMode, optimize_modes, .safe) == null,
-        .simple_skip_release_fast = mem.findScalar(OptimizeMode, optimize_modes, .fast) == null,
-        .simple_skip_release_small = mem.findScalar(OptimizeMode, optimize_modes, .small) == null,
+        .simple_skip_debug = mem.findScalar(Optimize, optimize_modes, .debug) == null,
+        .simple_skip_safe = mem.findScalar(Optimize, optimize_modes, .safe) == null,
+        .simple_skip_fast = mem.findScalar(Optimize, optimize_modes, .fast) == null,
+        .simple_skip_small = mem.findScalar(Optimize, optimize_modes, .small) == null,
         .skip_non_native = skip_non_native,
     });
     const test_cases_dep_step = test_cases_dep.builder.default_step;
@@ -2541,7 +2540,7 @@ pub const ModuleTestOptions = struct {
     root_src: []const u8,
     name: []const u8,
     desc: []const u8,
-    optimize_modes: []const OptimizeMode,
+    optimize_modes: []const Optimize,
     include_paths: []const []const u8,
     test_only: ?TestOnly,
     skip_single_threaded: bool,
@@ -2565,7 +2564,7 @@ pub const ModuleTestOptions = struct {
     pub const TestOnly = union(enum) {
         default,
         legalize,
-        fuzz: OptimizeMode,
+        fuzz: Optimize,
     };
 };
 
@@ -2575,7 +2574,7 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
     const only_legalize: bool = if (options.test_only) |test_only| only_legalize: {
         const test_target: ModuleTestTarget = switch (test_only) {
             .default => .{
-                .link_libc = if (std.mem.eql(u8, options.name, "libc")) true else null,
+                .link_libc = if (mem.eql(u8, options.name, "libc")) true else null,
             },
             .legalize => break :only_legalize true,
             .fuzz => |optimize| .{
@@ -2593,7 +2592,7 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
     for_targets: for (module_test_targets) |test_target| {
         if (test_target.skip_modules.len > 0) {
             for (test_target.skip_modules) |skip_mod| {
-                if (std.mem.eql(u8, options.name, skip_mod)) continue :for_targets;
+                if (mem.eql(u8, options.name, skip_mod)) continue :for_targets;
             }
         }
 
@@ -2610,7 +2609,7 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
             continue; // https://codeberg.org/ziglang/zig/issues/36766
         }
 
-        if (std.mem.eql(u8, options.name, "libc")) {
+        if (mem.eql(u8, options.name, "libc")) {
             // The libc API tests obviously need to link libc. So for test
             // target entries where we wouldn't link libc by default, skip the
             // libc API tests.
@@ -2635,7 +2634,7 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
 
         if (options.test_target_filters.len > 0) {
             for (options.test_target_filters) |filter| {
-                if (std.mem.find(u8, triple_txt, filter) != null) break;
+                if (mem.find(u8, triple_txt, filter) != null) break;
             } else continue;
         }
 
@@ -2870,11 +2869,11 @@ fn addOneModuleTest(
     }
 }
 
-pub fn wouldUseLlvm(use_llvm: ?bool, query: std.Target.Query, optimize_mode: OptimizeMode) bool {
+pub fn wouldUseLlvm(use_llvm: ?bool, query: std.Target.Query, optimize: Optimize) bool {
     if (comptime builtin.cpu.arch.endian() == .big) return true; // https://github.com/ziglang/zig/issues/25961
     if (use_llvm) |x| return x;
     if (query.ofmt == .c) return false;
-    switch (optimize_mode) {
+    switch (optimize) {
         .debug => {},
         else => return true,
     }
@@ -2906,7 +2905,7 @@ pub fn wouldUseLlvm(use_llvm: ?bool, query: std.Target.Query, optimize_mode: Opt
 
 const CAbiTestOptions = struct {
     test_target_filters: []const []const u8,
-    optimize_modes: []const OptimizeMode,
+    optimize_modes: []const Optimize,
     skip_non_native: bool,
     skip_wasm: bool,
     skip_freebsd: bool,
@@ -2942,7 +2941,7 @@ pub fn addCAbiTests(b: *std.Build, options: CAbiTestOptions) *Step {
 
         if (options.test_target_filters.len > 0) {
             for (options.test_target_filters) |filter| {
-                if (std.mem.find(u8, triple_txt, filter) != null) break;
+                if (mem.find(u8, triple_txt, filter) != null) break;
             } else continue;
         }
 
@@ -3007,7 +3006,7 @@ pub fn addCAbiTests(b: *std.Build, options: CAbiTestOptions) *Step {
 const LinkTestOptions = struct {
     test_target_filters: []const []const u8,
     test_filters: []const []const u8,
-    optimize_modes: []const OptimizeMode,
+    optimize_modes: []const Optimize,
     skip_non_native: bool,
     skip_freebsd: bool,
     skip_netbsd: bool,
@@ -3047,7 +3046,7 @@ pub fn addLinkTests(b: *std.Build, options: LinkTestOptions) *Step {
 
         if (options.test_target_filters.len > 0) {
             for (options.test_target_filters) |filter| {
-                if (std.mem.find(u8, triple_txt, filter) != null) break;
+                if (mem.find(u8, triple_txt, filter) != null) break;
             } else continue;
         }
 
@@ -3138,14 +3137,14 @@ pub fn addRunnerTests(
         switch (@"test".kind) {
             else => continue,
             .file => {
-                if (std.mem.eql(u8, @"test".name, "matrix.zon")) continue;
+                if (mem.eql(u8, @"test".name, "matrix.zon")) continue;
                 if (isEditorFileName(@"test".name)) continue;
             },
             .directory => {},
         }
 
         for (options.test_filters) |filter| {
-            if (std.mem.find(u8, @"test".name, filter) != null) break;
+            if (mem.find(u8, @"test".name, filter) != null) break;
         } else if (options.test_filters.len > 0) continue;
 
         const run = b.addRunArtifact(runner);
@@ -3210,7 +3209,7 @@ pub fn addRunnerTests(
                     break :skip true;
 
                 for (options.test_target_filters) |filter| {
-                    if (std.mem.find(u8, target_str, filter) != null) break;
+                    if (mem.find(u8, target_str, filter) != null) break;
                 } else if (options.test_target_filters.len > 0) break :skip true;
 
                 break :skip false;
@@ -3234,8 +3233,8 @@ pub fn addRunnerTests(
 }
 
 fn isEditorFileName(name: []const u8) bool {
-    return (std.mem.startsWith(u8, name, "#") and std.mem.endsWith(u8, name, "#")) or
-        std.mem.endsWith(u8, name, "~") or std.mem.endsWith(u8, name, ".swp");
+    return (mem.startsWith(u8, name, "#") and mem.endsWith(u8, name, "#")) or
+        mem.endsWith(u8, name, "~") or mem.endsWith(u8, name, ".swp");
 }
 
 const libc_test_nsz_targets: []const std.Target.Query = &.{

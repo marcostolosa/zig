@@ -112,11 +112,11 @@ pub fn build(b: *std.Build) !void {
     const no_matrix = b.option(bool, "no-matrix", "Limit test matrix to exactly one target configuration") orelse false;
     const legalize_only = b.option(bool, "legalize-only", "Limit test matrix to target configurations where all legalizations are enabled") orelse false;
     const fuzz_only = b.option(bool, "fuzz-only", "Limit test matrix to one target suitable for fuzzing") orelse false;
-    const skip_debug = b.option(bool, "skip-debug", "Main test suite skips debug builds") orelse false;
+    const skip_debug = b.option(bool, "skip-debug", "Main test suite skips debug mode builds") orelse false;
     const skip_release = b.option(bool, "skip-release", "Main test suite skips release builds") orelse no_matrix;
-    const skip_release_small = b.option(bool, "skip-release-small", "Main test suite skips release-small builds") orelse skip_release;
-    const skip_release_fast = b.option(bool, "skip-release-fast", "Main test suite skips release-fast builds") orelse skip_release;
-    const skip_release_safe = b.option(bool, "skip-release-safe", "Main test suite skips release-safe builds") orelse skip_release;
+    const skip_small = b.option(bool, "skip-small", "Main test suite skips small mode builds") orelse skip_release;
+    const skip_fast = b.option(bool, "skip-fast", "Main test suite skips fast mode builds") orelse skip_release;
+    const skip_safe = b.option(bool, "skip-safe", "Main test suite skips safe mode builds") orelse skip_release;
     const skip_non_native = b.option(bool, "skip-non-native", "Main test suite skips non-native builds") orelse no_matrix;
     const skip_libc = b.option(bool, "skip-libc", "Main test suite skips tests that link libc") orelse false;
     const skip_single_threaded = b.option(bool, "skip-single-threaded", "Main test suite skips tests that are single-threaded") orelse false;
@@ -418,7 +418,7 @@ pub fn build(b: *std.Build) !void {
     if (tracy) |tracy_dir| {
         const tracy_mod = b.createModule(.{
             .target = target,
-            // Always build Tracy in ReleaseFast so that it doesn't make -Odebug compiler builds unusable.
+            // Always build Tracy in -Ofast mode so that it doesn't make -Odebug compiler builds unusable.
             .optimize = .fast,
             .root_source_file = null,
             .link_libc = true,
@@ -452,15 +452,15 @@ pub fn build(b: *std.Build) !void {
         chosen_opt_modes_buf[chosen_mode_index] = .debug;
         chosen_mode_index += 1;
     }
-    if (!skip_release_safe) {
+    if (!skip_safe) {
         chosen_opt_modes_buf[chosen_mode_index] = .safe;
         chosen_mode_index += 1;
     }
-    if (!skip_release_fast) {
+    if (!skip_fast) {
         chosen_opt_modes_buf[chosen_mode_index] = .fast;
         chosen_mode_index += 1;
     }
-    if (!skip_release_small) {
+    if (!skip_small) {
         chosen_opt_modes_buf[chosen_mode_index] = .small;
         chosen_mode_index += 1;
     }

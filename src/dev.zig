@@ -1,7 +1,7 @@
 pub const Env = enum {
     /// zig1 features
     /// - `-ofmt=c` only
-    /// - `-OReleaseFast` or `-OReleaseSmall` only
+    /// - `-Ofast` or `-Osmall` only
     /// - no `@setRuntimeSafety(true)`
     bootstrap,
 

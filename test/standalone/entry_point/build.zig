@@ -14,7 +14,7 @@ pub fn build(b: *std.Build) !void {
         // really just trying to make sure that the compiler *frontend* respects `-fentry` and
         // includes it in the cache manifest, just test for a target where it works.
         .target = target,
-        .optimize = .fast, // non-Debug build for reproducible output
+        .optimize = .fast, // non-debug build for reproducible output
         .root_source_file = b.path("main.zig"),
     });
 

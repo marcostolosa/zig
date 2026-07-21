@@ -1,5 +1,5 @@
 //! Based on wrapping a stateless Zig Allocator implementation, appropriate for:
-//! - ReleaseFast and ReleaseSmall optimization modes, with multi-threading
+//! - `fast` and `small` optimization modes, with multi-threading
 //!   enabled.
 //! - WebAssembly or Linux in single-threaded release modes.
 //!

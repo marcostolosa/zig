@@ -1,4 +1,4 @@
-//! An allocator that is intended to be used in Debug mode.
+//! An allocator that is intended to be used in -Odebug mode.
 //!
 //! ## Features
 //!

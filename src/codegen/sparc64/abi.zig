@@ -14,10 +14,10 @@ pub const stack_bias = 2047;
 // The ABI also requires to reserve space in the stack for the first six
 // outgoing arguments, even though they are usually passed in registers.
 // TODO Don't allocate the argument space in leaf functions
-// TODO Save an RO copy of outgoing arguments in reserved area when building in Debug
-// TODO Should we also save it in ReleaseSafe? Solaris and OpenBSD binaries seem to ship
+// TODO Save an RO copy of outgoing arguments in reserved area when building in debug mode
+// TODO Should we also save it in -Osafe mode? Solaris and OpenBSD binaries seem to ship
 //      with argument copying enabled and it doesn't seem to give them big slowdowns so
-//      I guess it would be okay to do in ReleaseSafe?
+//      I guess it would be okay to do in -Osafe mode?
 pub const stack_reserved_area = 128 + 48;
 
 // There are no callee-preserved registers since the windowing

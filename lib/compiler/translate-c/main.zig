@@ -1,9 +1,8 @@
 const std = @import("std");
-const assert = std.debug.assert;
 const mem = std.mem;
-const Allocator = std.mem.Allocator;
+const Allocator = mem.Allocator;
 const process = std.process;
-const fatal = std.process.fatal;
+const fatal = process.fatal;
 const Io = std.Io;
 const PkgConfig = std.zig.PkgConfig;
 
@@ -21,7 +20,7 @@ pub fn main(init: process.Init) !void {
     const args = try init.minimal.args.toSlice(arena);
 
     var zig_integration = false;
-    if (args.len > 1 and std.mem.eql(u8, args[1], "--zig-integration")) {
+    if (args.len > 1 and mem.eql(u8, args[1], "--zig-integration")) {
         zig_integration = true;
     }
 
@@ -74,7 +73,7 @@ pub fn main(init: process.Init) !void {
     return process.cleanExit(io);
 }
 
-fn serveErrorBundle(arena: std.mem.Allocator, io: Io, diagnostics: *const aro.Diagnostics) !void {
+fn serveErrorBundle(arena: mem.Allocator, io: Io, diagnostics: *const aro.Diagnostics) !void {
     const error_bundle = try compiler_util.aroDiagnosticsToErrorBundle(
         diagnostics,
         arena,
@@ -142,7 +141,7 @@ fn translate(
     var system_libs: std.ArrayList(SystemLib) = .empty;
     var any_want_pkg_conf = false;
     var any_force_pkg_conf = false;
-    var optimize_mode: std.lang.OptimizeMode = .Debug;
+    var optimize_mode: std.lang.Optimize = .debug;
     var opt_zig_lib_path: ?[]const u8 = null;
 
     var aro_args: std.ArrayList([]const u8) = try .initCapacity(arena, args.len);
@@ -203,7 +202,7 @@ fn translate(
             aro_args.appendAssumeCapacity("-o");
             aro_args.appendAssumeCapacity(rest);
         } else if (mem.cutPrefix(u8, arg, "-O=")) |rest| {
-            optimize_mode = std.meta.stringToEnum(std.lang.OptimizeMode, rest) orelse
+            optimize_mode = std.meta.stringToEnum(std.lang.Optimize, rest) orelse
                 fatal("bad optimize mode: {s}", .{rest});
         } else if (mem.eql(u8, arg, "-lc")) {
             link_libc = true;
@@ -242,18 +241,18 @@ fn translate(
     try aro_args.append(arena, "-nostdlibinc");
 
     switch (optimize_mode) {
-        .Debug => {
+        .debug => {
             try aro_args.append(arena, "-O0");
         },
-        .ReleaseSafe => {
+        .safe => {
             try aro_args.append(arena, "-O2");
             try aro_args.append(arena, "-D_FORTIFY_SOURCE=2");
         },
-        .ReleaseFast => {
+        .fast => {
             try aro_args.append(arena, "-O2");
             try aro_args.append(arena, "-DNDEBUG");
         },
-        .ReleaseSmall => {
+        .small => {
             try aro_args.append(arena, "-Os");
             try aro_args.append(arena, "-DNDEBUG");
         },
@@ -433,7 +432,7 @@ fn translate(
 
         var discard_buf: [256]u8 = undefined;
         var discarding: Io.Writer.Discarding = .init(&discard_buf);
-        assert(!try d.parseArgs(&discarding.writer, &macro_buf, aro_args.items));
+        std.debug.assert(!try d.parseArgs(&discarding.writer, &macro_buf, aro_args.items));
         if (macro_buf.items.len > std.math.maxInt(u32)) {
             return d.fatal("user provided macro source exceeded max size", .{});
         }
@@ -524,7 +523,7 @@ fn translate(
     defer if (close_out_file) out_file.close(io);
 
     if (d.output_name) |path| blk: {
-        if (std.mem.eql(u8, path, "-")) break :blk;
+        if (mem.eql(u8, path, "-")) break :blk;
         if (std.fs.path.dirname(path)) |dirname| {
             Io.Dir.cwd().createDirPath(io, dirname) catch |err|
                 return d.fatal("failed to create path to '{s}': {s}", .{ path, aro.Driver.errorDescription(err) });

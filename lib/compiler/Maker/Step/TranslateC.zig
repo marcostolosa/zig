@@ -1,10 +1,6 @@
 const TranslateC = @This();
 
 const std = @import("std");
-const Io = std.Io;
-const Configuration = std.Build.Configuration;
-const assert = std.debug.assert;
-const OptimizeMode = std.lang.Optimize;
 
 const Step = @import("../Step.zig");
 const Maker = @import("../../Maker.zig");
@@ -12,7 +8,7 @@ const PkgConfig = @import("../PkgConfig.zig");
 
 pub fn make(
     translate_c: *TranslateC,
-    step_index: Configuration.Step.Index,
+    step_index: std.Build.Configuration.Step.Index,
     maker: *Maker,
     progress_node: std.Progress.Node,
 ) Step.ExtendedMakeError!void {
@@ -47,7 +43,7 @@ pub fn make(
         }
     }
 
-    const opt: ?OptimizeMode = switch (conf_tc.flags.optimize) {
+    const opt: ?std.lang.Optimize = switch (conf_tc.flags.optimize) {
         .debug, .default => null, // Skip since it's the default
         .safe => .safe,
         .fast => .fast,
@@ -64,7 +60,7 @@ pub fn make(
 
     var prev_search_strategy: std.Build.Module.SystemLib.SearchStrategy = .paths_first;
     var prev_preferred_link_mode: std.builtin.LinkMode = .dynamic;
-    var seen_system_libs: std.array_hash_map.Auto(Configuration.String, []const []const u8) = .empty;
+    var seen_system_libs: std.array_hash_map.Auto(std.Build.Configuration.String, []const []const u8) = .empty;
 
     for (conf_tc.system_libs.slice) |system_lib_index| {
         const system_lib = system_lib_index.get(conf);
@@ -125,7 +121,7 @@ pub fn make(
                     error.PackageNotFound,
                     => {
                         // pkg-config failed, so fall back to linking the library by name directly.
-                        assert(!force);
+                        std.debug.assert(!force);
                         break :pc;
                     },
                     else => |e| return e,
@@ -149,7 +145,7 @@ pub fn make(
     };
     const o_hex_digest = opt_cache_digest.toHex().?;
 
-    const stem = Io.Dir.path.stem(Io.Dir.path.basename(c_source_path));
+    const stem = std.Io.Dir.path.stem(std.Io.Dir.path.basename(c_source_path));
     const out_basename = try arena.print("{s}.zig", .{stem});
 
     _ = try maker.setGeneratedPath(conf_tc.output_file, .local_cache, &.{ "o", &o_hex_digest, out_basename });

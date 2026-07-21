@@ -68,7 +68,7 @@ CheckLastExitCode
 Write-Output "Build x86_64-windows-msvc behavior tests using the C backend..."
 stage3-debug\bin\zig.exe build-obj `
   -ofmt=c `
-  -OReleaseSmall `
+  -Osmall `
   --name compiler_rt `
   -femit-bin="compiler_rt-x86_64-windows-msvc.c" `
   -target x86_64-windows-msvc `

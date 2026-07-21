@@ -375,7 +375,7 @@ fn rotrVector(x: BlamkaVector, comptime n: comptime_int) BlamkaVector {
     return (x >> @splat(n)) | (x << @splat(64 - n));
 }
 
-// The `inline` is load-bearing: without it ReleaseSmall keeps this out of line
+// The `inline` is load-bearing: without it in -Osmall keeps this out of line
 // and shuffles the four vectors through memory across every call, costing
 // roughly 9% on  Apple Silicon.
 inline fn blamkaRound(a: *BlamkaVector, b: *BlamkaVector, c: *BlamkaVector, d: *BlamkaVector) void {

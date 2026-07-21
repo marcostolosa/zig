@@ -83,8 +83,8 @@ pub const can_unwind: bool = switch (builtin.cpu.arch) {
     // > general purpose register for which such an unwind attempt for a stack trace would fail.
     //
     // Regardless, it's easy to effectively confirm this hypothesis just by compiling some code with
-    // `-fomit-frame-pointer -OReleaseFast` and observing that `RtlCaptureStackBackTrace` returns an
-    // empty trace when it's called in such an application. Note that without `-OReleaseFast` or
+    // `-fomit-frame-pointer -Ofast` and observing that `RtlCaptureStackBackTrace` returns an
+    // empty trace when it's called in such an application. Note that without `-Ofast` or
     // similar, LLVM seems reluctant to ever clobber ebp, so you'll get a trace returned which just
     // contains all of the kernel32/ntdll frames but none of your own. Don't be deceived---this is
     // just coincidental!

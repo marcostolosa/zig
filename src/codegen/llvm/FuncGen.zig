@@ -5139,7 +5139,7 @@ fn airStore(fg: *FuncGen, inst: Air.Inst.Index, safety: bool) Allocator.Error!Bu
         // extra information to LLVM, and LLVM will optimize it out. Safety makes the difference
         // between using 0xaa or actual undefined for the fill byte.
         //
-        // However, for Debug builds specifically, we avoid emitting the memset because LLVM
+        // However, for -Odebug builds specifically, we avoid emitting the memset because LLVM
         // will neither use the information nor get rid of the memset, thus leaving an
         // unexpected call in the user's code. This is problematic if the code in question is
         // not ready to correctly make calls yet, such as in our early PIE startup code, or in

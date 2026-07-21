@@ -437,7 +437,12 @@ pub fn hasDebugInfo(target: *const std.Target) bool {
     };
 }
 
+// Deprecated; to be removed after 0.18.0
 pub fn defaultCompilerRtOptimizeMode(target: *const std.Target) std.lang.Optimize {
+    return defaultCompilerRtOptimize(target);
+}
+
+pub fn defaultCompilerRtOptimize(target: *const std.Target) std.lang.Optimize {
     if (target.cpu.arch.isWasm() and target.os.tag == .freestanding) {
         return .small;
     } else {

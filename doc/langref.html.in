@@ -808,7 +808,7 @@
       value. Using this value would be a bug. The value will be unused, or overwritten before being used."
       </p>
       <p>
-      In {#link|debug#} and {#link|safe#} mode, Zig writes {#syntax#}0xaa{#endsyntax#} bytes to undefined memory. This is to catch
+      In {#link|debug#} and {#link|safe#} modes, Zig writes {#syntax#}0xaa{#endsyntax#} bytes to undefined memory. This is to catch
       bugs early, and to help detect use of undefined memory in a debugger. However, this behavior is only an
       implementation feature, not a language semantic, so it is not guaranteed to be observable to code.
       </p>
@@ -2938,11 +2938,11 @@ and or{#endsyntax#}</pre>
       {#header_close#}
       {#header_open|unreachable#}
       <p>
-      In {#link|debug#} and {#link|safe#} mode
+      In {#link|debug#} and {#link|safe#} modes
       {#syntax#}unreachable{#endsyntax#} emits a call to {#syntax#}panic{#endsyntax#} with the message <code>reached unreachable code</code>.
       </p>
       <p>
-      In {#link|fast#} and {#link|small#} mode, the optimizer uses the assumption that {#syntax#}unreachable{#endsyntax#} code
+      In {#link|fast#} and {#link|small#} modes, the optimizer uses the assumption that {#syntax#}unreachable{#endsyntax#} code
       will never be hit to perform optimizations.
       </p>
       {#header_open|Basics#}
@@ -3178,7 +3178,7 @@ and or{#endsyntax#}</pre>
       Here we know for sure that "1234" will parse successfully. So we put the
       {#syntax#}unreachable{#endsyntax#} value on the right hand side.
       {#syntax#}unreachable{#endsyntax#} invokes safety-checked {#link|Illegal Behavior#}, so
-      in {#link|debug#} and {#link|safe#}, triggers a safety panic by default. So, while
+      in {#link|debug#} and {#link|safe#} modes, triggers a safety panic by default. So, while
       we're debugging the application, if there <em>was</em> a surprise error here, the application
       would crash appropriately.
       </p>
@@ -3353,7 +3353,7 @@ fn createFoo(param: i32) !Foo {
       to increase their development pace.
       </p>
       <p>
-      Error Return Traces are enabled by default in {#link|debug#} builds and disabled by default in {#link|fast#}, {#link|safe#} and {#link|small#} builds.
+      Error Return Traces are enabled by default in {#link|debug#} mode and disabled by default in {#link|fast#}, {#link|safe#} and {#link|small#} modes.
       </p>
       <p>
       There are a few ways to activate this error return tracing feature:
@@ -6206,7 +6206,7 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       </p>
       <p>
       Most Illegal Behavior is safety-checked. However, to facilitate optimizations, safety checks are disabled by default
-      in the {#link|fast#} and {#link|small#} optimization modes. Safety checks can also be enabled or disabled
+      in {#link|fast#} and {#link|small#} modes. Safety checks can also be enabled or disabled
       on a per-block basis, overriding the default for the current optimization mode, using {#link|@setRuntimeSafety#}. When
       safety checks are disabled, Safety-Checked Illegal Behavior behaves like Unchecked Illegal Behavior; that is, any behavior
       may result from invoking it.
@@ -7887,8 +7887,8 @@ fn readU32Be() u32 {}
             {#syntax#}unreachable{#endsyntax#} can be used to assert that control flow will never happen upon a particular location.
             Depending on the build mode, {#syntax#}unreachable{#endsyntax#} may emit a panic.
             <ul>
-              <li>Emits a panic in {#link|debug#} and {#link|safe#} mode, or when using <kbd>zig test</kbd>.</li>
-              <li>Does not emit a panic in {#link|fast#} and {#link|small#} mode.</li>
+              <li>Emits a panic in {#link|debug#} and {#link|safe#} modes, or when using <kbd>zig test</kbd>.</li>
+              <li>Does not emit a panic in {#link|fast#} and {#link|small#} modes.</li>
               <li>See also {#link|unreachable#}</li>
             </ul>
           </td>

@@ -212,7 +212,7 @@ pub fn resolve(options: Options) ResolveError!Config {
     };
 
     const root_optimize_mode = options.root_optimize_mode orelse
-        @as(std.lang.OptimizeMode, if (options.any_fuzz) .safe else .debug);
+        @as(std.lang.Optimize, if (options.any_fuzz) .safe else .debug);
 
     // Make a decision on whether to use Clang or Aro for translate-c and compiling C files.
     const c_frontend: CFrontend = b: {

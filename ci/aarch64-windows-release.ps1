@@ -55,7 +55,7 @@ stage3-release\bin\zig.exe build install test docs `
   -Dversion-string="$(stage3-release\bin\zig.exe version)" `
   -Dtarget="$TARGET" `
   -Dcpu="$MCPU" `
-  -Doptimize=ReleaseFast `
+  -Doptimize=fast `
   -Dstrip `
   -Duse-zig-libcxx `
   -Denable-llvm `
@@ -66,9 +66,9 @@ CheckLastExitCode
 
 # Ensure that the fuzzer at least compiles.
 # https://codeberg.org/ziglang/zig/issues/31893
-# stage3-release\bin\zig.exe build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=ReleaseSafe
+# stage3-release\bin\zig.exe build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=safe
 # CheckLastExitCode
-# stage3-release\bin\zig.exe build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=Debug
+# stage3-release\bin\zig.exe build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=debug
 # CheckLastExitCode
 
 # Ensure that stage3 and stage4 are byte-for-byte identical.

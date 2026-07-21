@@ -199,7 +199,7 @@ $DEVKIT\bin\zig.exe build --zig-lib=lib -p stage3 --search-prefix $DEVKIT -Dstat
 Replace `$DEVKIT` with the path to the folder that you unzipped after
 downloading it from the link above.
 
-Append `-Doptimize=ReleaseSafe` for a Release build.
+Append `-Doptimize=safe` for a Release build.
 
 **If you get an error building at this step**, it is most likely that the Zig
 installation inside the dev kit is too old, and the dev kit needs to be

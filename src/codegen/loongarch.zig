@@ -52,7 +52,7 @@ pub fn generate(
     var isel: Select = .{
         .pt = pt,
         .target = &mod.resolved_target.result,
-        .opt_mode = mod.optimize_mode,
+        .optimize = mod.optimize_mode,
         .air = air.*,
         .nav_index = zcu.funcInfo(func_index).owner_nav,
     };

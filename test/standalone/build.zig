@@ -10,17 +10,17 @@ pub fn build(b: *std.Build) void {
     const enable_symlinks_windows = b.option(bool, "enable_symlinks_windows", "Run tests requiring presence of symlinks on Windows") orelse false;
     const omit_symlinks = builtin.os.tag == .windows and !enable_symlinks_windows;
 
-    const simple_skip_debug = b.option(bool, "simple_skip_debug", "Simple tests skip debug builds") orelse false;
-    const simple_skip_release_safe = b.option(bool, "simple_skip_release_safe", "Simple tests skip release-safe builds") orelse false;
-    const simple_skip_release_fast = b.option(bool, "simple_skip_release_fast", "Simple tests skip release-fast builds") orelse false;
-    const simple_skip_release_small = b.option(bool, "simple_skip_release_small", "Simple tests skip release-small builds") orelse false;
+    const simple_skip_debug = b.option(bool, "simple_skip_debug", "Simple tests skip debug mode builds") orelse false;
+    const simple_skip_safe = b.option(bool, "simple_skip_safe", "Simple tests skip safe mode builds") orelse false;
+    const simple_skip_fast = b.option(bool, "simple_skip_fast", "Simple tests skip fast mode builds") orelse false;
+    const simple_skip_small = b.option(bool, "simple_skip_small", "Simple tests skip small mode builds") orelse false;
     const skip_non_native = b.option(bool, "skip_non_native", "Skip non-native targets") orelse false;
 
     const simple_dep = b.dependency("simple", .{
         .skip_debug = simple_skip_debug,
-        .skip_release_safe = simple_skip_release_safe,
-        .skip_release_fast = simple_skip_release_fast,
-        .skip_release_small = simple_skip_release_small,
+        .skip_safe = simple_skip_safe,
+        .skip_fast = simple_skip_fast,
+        .skip_small = simple_skip_small,
     });
     const simple_dep_step = simple_dep.builder.default_step;
     simple_dep_step.name = "standalone_test_cases.simple";

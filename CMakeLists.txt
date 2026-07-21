@@ -679,7 +679,7 @@ endif()
 
 set(BUILD_ZIG2_ARGS
   "${PROJECT_SOURCE_DIR}/lib"
-  build-exe -ofmt=c -lc -OReleaseSmall
+  build-exe -ofmt=c -lc -Osmall
   --name zig2
   -femit-bin="${ZIG2_C_SOURCE}"
   -target "${ZIG_HOST_TARGET_TRIPLE}"
@@ -698,7 +698,7 @@ add_custom_command(
 
 set(BUILD_COMPILER_RT_ARGS
   "${PROJECT_SOURCE_DIR}/lib"
-  build-obj -ofmt=c -lc -OReleaseSmall
+  build-obj -ofmt=c -lc -Osmall
   --name compiler_rt
   -femit-bin="${ZIG_COMPILER_RT_C_SOURCE}"
   -target "${ZIG_HOST_TARGET_TRIPLE}"
@@ -756,19 +756,19 @@ if(ZIG_EXTRA_BUILD_ARGS)
   list(APPEND ZIG_BUILD_ARGS ${ZIG_EXTRA_BUILD_ARGS})
 endif()
 
-set(ZIG_RELEASE_SAFE OFF CACHE BOOL "Build Zig as ReleaseSafe (with debug assertions on)")
+set(ZIG_RELEASE_SAFE OFF CACHE BOOL "Build Zig as -Osafe (with debug assertions on)")
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-  list(APPEND ZIG_BUILD_ARGS -Doptimize=Debug)
+  list(APPEND ZIG_BUILD_ARGS -Doptimize=debug)
 else()
   if("${CMAKE_BUILD_TYPE}" STREQUAL "MinSizeRel")
-    list(APPEND ZIG_BUILD_ARGS -Doptimize=ReleaseSmall)
+    list(APPEND ZIG_BUILD_ARGS -Doptimize=small)
   else()
     # Release and RelWithDebInfo
     if(ZIG_RELEASE_SAFE)
-      list(APPEND ZIG_BUILD_ARGS -Doptimize=ReleaseSafe)
+      list(APPEND ZIG_BUILD_ARGS -Doptimize=safe)
     else()
-      list(APPEND ZIG_BUILD_ARGS -Doptimize=ReleaseFast)
+      list(APPEND ZIG_BUILD_ARGS -Doptimize=fast)
     endif()
     if(NOT "${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
       list(APPEND ZIG_BUILD_ARGS -Dstrip)

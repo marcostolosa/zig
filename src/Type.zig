@@ -3283,7 +3283,7 @@ pub fn assertHasLayout(ty: Type, zcu: *const Zcu) void {
     if (!std.debug.runtime_safety) {
         // This early exit isn't necessary (`Zcu.assertUpToDate` checks `std.debug.runtime_safety`
         // itself), but LLVM has been observed to fail at optimizing away this safety check, which
-        // has a major performance impact on ReleaseFast compiler builds.
+        // has a major performance impact on -Ofast compiler builds.
         return;
     }
     switch (zcu.intern_pool.indexToKey(ty.toIntern())) {

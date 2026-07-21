@@ -15,7 +15,7 @@ const debug_r21_as_air = false;
 
 pt: Zcu.PerThread,
 target: *const std.Target,
-opt_mode: std.builtin.OptimizeMode,
+optimize: std.lang.Optimize,
 air: Air,
 nav_index: InternPool.Nav.Index,
 
@@ -6435,7 +6435,7 @@ fn moveLoc(
 }
 
 fn moveUndef(isel: *Select, dst_loc: Value.Location, size: u64) !void {
-    if (isel.opt_mode == .fast or isel.opt_mode == .small) return;
+    if (isel.optimize == .fast or isel.optimize == .small) return;
     wip_mir_log.debug("  | # move {f} ({d}B) <- undef", .{ dst_loc, size });
     switch (dst_loc) {
         .register => |dst_ra| {

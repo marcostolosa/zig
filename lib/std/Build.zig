@@ -2804,7 +2804,7 @@ pub fn serializeConfigurationExiting(b: *Build) noreturn {
     };
     file_writer.flush() catch |err| fatal("failed to write configuration output: {t}", .{err});
 
-    // This executable is short-lived and run in Debug mode, so we'd rather
+    // This executable is short-lived and run in -Odebug mode, so we'd rather
     // have `zig build` run faster than catch resource leaks in the user's
     // build.zig script (or, frankly, this configure runner), therefore we call
     // exit directly here rather than cleanExit.

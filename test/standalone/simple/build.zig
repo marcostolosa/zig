@@ -5,10 +5,10 @@ pub fn build(b: *std.Build) void {
     const step = b.step("test", "Run simple standalone test cases");
     b.default_step = step;
 
-    const skip_debug = b.option(bool, "skip_debug", "Skip debug builds") orelse false;
-    const skip_release_safe = b.option(bool, "skip_release_safe", "Skip release-safe builds") orelse false;
-    const skip_release_fast = b.option(bool, "skip_release_fast", "Skip release-fast builds") orelse false;
-    const skip_release_small = b.option(bool, "skip_release_small", "Skip release-small builds") orelse false;
+    const skip_debug = b.option(bool, "skip_debug", "Skip debug mode builds") orelse false;
+    const skip_safe = b.option(bool, "skip_safe", "Skip safe mode builds") orelse false;
+    const skip_fast = b.option(bool, "skip_fast", "Skip fast mode builds") orelse false;
+    const skip_small = b.option(bool, "skip_small", "Skip small mode builds") orelse false;
 
     var optimize_modes_buf: [4]std.builtin.Optimize = undefined;
     var optimize_modes_len: usize = 0;
@@ -16,15 +16,15 @@ pub fn build(b: *std.Build) void {
         optimize_modes_buf[optimize_modes_len] = .debug;
         optimize_modes_len += 1;
     }
-    if (!skip_release_safe) {
+    if (!skip_safe) {
         optimize_modes_buf[optimize_modes_len] = .safe;
         optimize_modes_len += 1;
     }
-    if (!skip_release_fast) {
+    if (!skip_fast) {
         optimize_modes_buf[optimize_modes_len] = .fast;
         optimize_modes_len += 1;
     }
-    if (!skip_release_small) {
+    if (!skip_small) {
         optimize_modes_buf[optimize_modes_len] = .small;
         optimize_modes_len += 1;
     }

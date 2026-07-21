@@ -19,7 +19,7 @@ const optimal_vector_len = std.simd.suggestVectorLength(u64) orelse 1;
 const bytes_per_batch = 256 * 1024;
 
 // Multi-threading threshold: inputs larger than this will use parallel processing.
-// Benchmarked optimal value for ReleaseFast mode.
+// Benchmarked optimal value for -Ofast mode.
 const large_file_threshold: usize = 2 * 1024 * 1024; // 2 MB
 
 // Round constants for Keccak-p[1600,12]

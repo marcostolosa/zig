@@ -1,11 +1,11 @@
 test "@setRuntimeSafety" {
     // The builtin applies to the scope that it is called in. So here, integer overflow
-    // will not be caught in ReleaseFast and ReleaseSmall modes:
+    // will not be caught in -Ofast and -Osmall modes:
     // var x: u8 = 255;
-    // x += 1; // Unchecked Illegal Behavior in ReleaseFast/ReleaseSmall modes.
+    // x += 1; // Unchecked Illegal Behavior in -Ofast abd -Osmall modes.
     {
         // However this block has safety enabled, so safety checks happen here,
-        // even in ReleaseFast and ReleaseSmall modes.
+        // even in -Ofast and -Osmall modes.
         @setRuntimeSafety(true);
         var x: u8 = 255;
         x += 1;
@@ -21,4 +21,4 @@ test "@setRuntimeSafety" {
 }
 
 // test_safety=integer overflow
-// optimize=ReleaseFast
+// optimize=fast

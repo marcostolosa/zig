@@ -172,7 +172,7 @@ pub const Options = struct {
     /// Stack traces can generally be collected and printed when debug info is stripped, but are
     /// often less useful since they usually cannot be mapped to source locations and/or have bad
     /// source locations. The stack tracing logic can also be quite large, which may be undesirable,
-    /// particularly in ReleaseSmall.
+    /// particularly in -Osmall mode.
     ///
     /// If this is `false`, then captured stack traces will always be empty, and attempts to write
     /// stack traces will just print an error to the relevant `Io.Writer` and return.

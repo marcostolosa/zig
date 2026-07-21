@@ -5651,7 +5651,7 @@ fn initTracyPlots(zcu: *const Zcu) void {
 }
 
 /// Marked `inline` to prevent binary bloat from trivial generic instances, and to ensure there is
-/// minimal overhead to this call when Tracy is disabled, even in Debug builds.
+/// minimal overhead to this call when Tracy is disabled, even in -Odebug builds.
 inline fn updateTracyPlot(zcu: *const Zcu, comptime name: [*:0]const u8, val: u64) void {
     if (zcu.comp.skip_linker_dependencies) return;
     tracy.plotInt(name, @intCast(val));

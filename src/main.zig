@@ -1233,7 +1233,7 @@ fn buildOutputType(
                     } else if (mem.eql(u8, arg, "--subsystem")) {
                         subsystem = try parseSubsystem(args_iter.nextOrFatal());
                     } else if (mem.eql(u8, arg, "-O")) {
-                        mod_opts.optimize_mode = parseOptimizeMode(args_iter.nextOrFatal());
+                        mod_opts.optimize_mode = parseOptimize(args_iter.nextOrFatal());
                     } else if (mem.cutPrefix(u8, arg, "-fentry=")) |rest| {
                         entry = .{ .named = rest };
                     } else if (mem.eql(u8, arg, "--force_undefined")) {
@@ -1410,7 +1410,7 @@ fn buildOutputType(
                     } else if (mem.cutPrefix(u8, arg, "-mcpu=")) |rest| {
                         target_mcpu = rest;
                     } else if (mem.cutPrefix(u8, arg, "-O")) |rest| {
-                        mod_opts.optimize_mode = parseOptimizeMode(rest);
+                        mod_opts.optimize_mode = parseOptimize(rest);
                     } else if (mem.eql(u8, arg, "--dynamic-linker")) {
                         dynamic_linker = args_iter.nextOrFatal();
                     } else if (mem.eql(u8, arg, "--no-dynamic-linker")) {
@@ -1463,7 +1463,7 @@ fn buildOutputType(
                     } else if (mem.eql(u8, arg, "--debug-rt")) {
                         debug_compiler_runtime_libs = .debug;
                     } else if (mem.cutPrefix(u8, arg, "--debug-rt=")) |rest| {
-                        debug_compiler_runtime_libs = parseOptimizeMode(rest);
+                        debug_compiler_runtime_libs = parseOptimize(rest);
                     } else if (mem.eql(u8, arg, "--debug-incremental")) {
                         if (build_options.enable_debug_extensions) {
                             debug_incremental = true;
@@ -6097,7 +6097,7 @@ fn parseRcIncludes(arg: []const u8) std.zig.RcIncludes {
         fatal("unsupported rc includes type: {q}", .{arg});
 }
 
-fn parseOptimizeMode(s: []const u8) std.lang.Optimize {
+fn parseOptimize(s: []const u8) std.lang.Optimize {
     return std.lang.Optimize.fromString(s) orelse fatal("unrecognized optimization mode: {q}", .{s});
 }
 

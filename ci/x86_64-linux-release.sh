@@ -61,7 +61,7 @@ stage3-release/bin/zig build install test docs \
   -Dversion-string="$(stage3-release/bin/zig version)" \
   -Dtarget=$TARGET \
   -Dcpu=$MCPU \
-  -Doptimize=ReleaseFast \
+  -Doptimize=fast \
   -Dstrip \
   -Duse-zig-libcxx \
   -Denable-llvm \
@@ -71,8 +71,8 @@ stage3-release/bin/zig build install test docs \
   -Dlibc-test-path="$HOME/deps/libc-test-b95fe84"
 
 # Ensure that the fuzzer at least compiles.
-stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=ReleaseSafe
-stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=Debug
+stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=safe
+stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=debug
 
 # Ensure that stage3 and stage4 are byte-for-byte identical.
 echo "If the following command fails, it means nondeterminism has been"

@@ -13958,12 +13958,7 @@ pub fn toBitcode(self: *Builder, allocator: Allocator, producer: Producer) bitco
                 const global = alias.global.ptrConst(self);
 
                 // LLVM requires the types to match
-                if (global.addr_space != alias.aliasee.typeOf(self).pointerAddrSpace(self)) {
-                    std.debug.panic("Alias and aliasee address spaces don't match: {} vs. {}", .{
-                        global.addr_space,
-                        alias.aliasee.typeOf(self).pointerAddrSpace(self),
-                    });
-                }
+                assert(global.addr_space == alias.aliasee.typeOf(self).pointerAddrSpace(self));
 
                 try module_block.writeAbbrev(ModuleBlock.Alias{
                     .strtab_offset = strtab.offset,

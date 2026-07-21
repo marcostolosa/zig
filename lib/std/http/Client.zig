@@ -731,7 +731,7 @@ pub const Response = struct {
     pub fn reader(response: *Response, transfer_buffer: []u8) *Reader {
         response.head.invalidateStrings();
         const req = response.request;
-        if (!req.method.responseHasBody()) return .ending;
+        if (!req.method.responseAllowBody()) return .ending;
         const head = &response.head;
         return req.reader.bodyReader(transfer_buffer, head.transfer_encoding, head.content_length);
     }
@@ -888,8 +888,8 @@ pub const Request = struct {
             connection.closing = connection.closing or switch (r.reader.state) {
                 .ready => false,
                 .received_head => c: {
-                    if (r.method.requestHasBody()) break :c true;
-                    if (!r.method.responseHasBody()) break :c false;
+                    if (r.method.requestAllowBody()) break :c true;
+                    if (!r.method.responseAllowBody()) break :c false;
                     const reader = r.reader.bodyReader(&.{}, r.response_transfer_encoding, r.response_content_length);
                     _ = reader.discardRemaining() catch |err| switch (err) {
                         error.ReadFailed => break :c true,
@@ -940,7 +940,7 @@ pub const Request = struct {
     /// See also:
     /// * `sendBody`
     pub fn sendBodyUnflushed(r: *Request, buffer: []u8) Writer.Error!http.BodyWriter {
-        assert(r.method.requestHasBody());
+        assert(r.method.requestAllowBody());
         try sendHead(r);
         const http_protocol_output = r.connection.?.writer();
         return switch (r.transfer_encoding) {

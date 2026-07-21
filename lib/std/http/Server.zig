@@ -592,7 +592,7 @@ pub const Request = struct {
         assert(request.server.reader.state == .received_head);
         assert(request.head.expect == null);
         request.head.invalidateStrings();
-        if (!request.head.method.requestHasBody()) return .ending;
+        if (!request.head.method.requestAllowBody()) return .ending;
         return request.server.reader.bodyReader(buffer, request.head.transfer_encoding, request.head.content_length);
     }
 
@@ -627,7 +627,7 @@ pub const Request = struct {
         const r = &request.server.reader;
         if (keep_alive and request.head.keep_alive) switch (r.state) {
             .received_head => {
-                if (request.head.method.requestHasBody()) {
+                if (request.head.method.requestAllowBody()) {
                     assert(request.head.transfer_encoding != .none or request.head.content_length != null);
                     const reader_interface = request.readerExpectContinue(&.{}) catch return false;
                     _ = reader_interface.discardRemaining() catch return false;

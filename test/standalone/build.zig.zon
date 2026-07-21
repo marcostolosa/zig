@@ -1,6 +1,6 @@
 .{
     .name = .standalone_test_cases,
-    .fingerprint = 0xc0dbdf9c283bb40e,
+    .fingerprint = 0xc0dbdf9c91e74b6d,
     .version = "0.0.0",
     .dependencies = .{
         .simple = .{

@@ -1515,10 +1515,17 @@ pub const Object = struct {
             break :s try o.builder.string(section);
         } else .none;
 
-        if (zcu.getTarget().cpu.arch.isWasm()) if (resolved.@"linksection".toSlice(ip)) |section| {
-            const prefix = ".custom_section.";
+        if (resolved.@"linksection".toSlice(ip)) |section| {
+            // When using a leading leading period `.custom_section.`, the custom sections do not appear
+            // in the final wasm binary.
+            // To reproduce:
+            // - Change prefix below to `.custom_section.`
+            // - Change custom sections in `test/standalone/wasm_custom_sections/lib.zig` to also use a leading period.
+            // - Run `zig build test-standalone -Dskip-release`
+            // - Tests will fail
+            const prefix = "custom_section.";
             if (std.mem.startsWith(u8, section, prefix)) {
-                const name = section[prefix.len ..];
+                const name = section[prefix.len..];
                 const val_key = ip.indexToKey(resolved.value);
 
                 switch (val_key) {
@@ -1526,19 +1533,17 @@ pub const Object = struct {
                         .bytes => |bytes| {
                             const len = ip.aggregateTypeLen(aggregate.ty);
                             const slice = bytes.toSlice(len, ip);
-                            try o.builder.addWasmCustomSection(
-                                try o.builder.metadataTuple(&.{
-                                    (try o.builder.metadataString(name)).toMetadata(),
-                                    (try o.builder.metadataString(slice)).toMetadata(),
-                                })
-                            );
+                            try o.builder.addWasmCustomSection(try o.builder.metadataTuple(&.{
+                                (try o.builder.metadataString(name)).toMetadata(),
+                                (try o.builder.metadataString(slice)).toMetadata(),
+                            }));
                         },
-                        else => {}
+                        else => {},
                     },
-                    else => {}
+                    else => {},
                 }
             }
-        };
+        }
 
         // Actual function bodies with AIR go through `updateFunc` instead, so the only functions we
         // can see are extern functions or other comptime function body values (e.g. undefined). Of

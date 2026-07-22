@@ -265,7 +265,7 @@ fn parseTbd(self: *Dylib, macho_file: *MachO) !void {
         self.id = id;
     }
 
-    var umbrella_libs = std.StringHashMap(void).init(gpa);
+    var umbrella_libs = std.StringHashMapManaged(void).init(gpa);
     defer umbrella_libs.deinit();
 
     log.debug("  (install_name '{s}')", .{umbrella_lib.installName()});

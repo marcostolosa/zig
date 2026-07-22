@@ -1761,9 +1761,9 @@ fn removeDuplicateSearchPaths(comp: *Compilation, start: usize, verbose: bool) !
     var bfa_buf: [1024]u8 = undefined;
     var bfa: std.heap.BufferFirstAllocator = .init(&bfa_buf, comp.gpa);
     const allocator = bfa.allocator();
-    var seen_includes: std.StringHashMapUnmanaged(void) = .empty;
+    var seen_includes: std.StringHashMap(void) = .empty;
     defer seen_includes.deinit(allocator);
-    var seen_frameworks: std.StringHashMapUnmanaged(void) = .empty;
+    var seen_frameworks: std.StringHashMap(void) = .empty;
     defer seen_frameworks.deinit(allocator);
 
     var i = start;

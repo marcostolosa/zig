@@ -11,7 +11,7 @@ const OperandKind = g.OperandKind;
 const Enumerant = g.Enumerant;
 const Operand = g.Operand;
 
-const ExtendedStructSet = std.StringHashMap(void);
+const ExtendedStructSet = std.StringHashMapManaged(void);
 
 const allowed_vendors = [_][]const u8{
     "KHR",
@@ -372,7 +372,7 @@ fn renderExtension(
         \\
     );
 
-    var seen_extensions: std.StringHashMapUnmanaged(void) = .empty;
+    var seen_extensions: std.StringHashMap(void) = .empty;
     defer seen_extensions.deinit(arena);
 
     for (kinds) |kind| {

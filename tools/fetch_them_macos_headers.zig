@@ -178,7 +178,7 @@ fn fetchTarget(
     try headers_dir.deleteTree(io, dest_path);
 
     var dest_dir = try headers_dir.createDirPathOpen(io, dest_path, .{});
-    var dirs = std.StringHashMap(Dir).init(arena);
+    var dirs = std.StringHashMapManaged(Dir).init(arena);
     try dirs.putNoClobber(".", dest_dir);
 
     var headers_list_file_reader = headers_list_file.reader(io, &.{});

@@ -1,5 +1,5 @@
 source: [*:0]const u8,
-operands: std.StringHashMapUnmanaged(Operand),
+operands: std.StringHashMap(Operand),
 
 pub const Operand = union(enum) {
     register: aarch64.encoding.Register,

@@ -610,7 +610,7 @@ fn emitPreamble(
     memory_model: *Section,
 ) !void {
     var caps: std.EnumSet(spec.Capability) = .empty;
-    var exts: std.StringHashMapUnmanaged(void) = .empty;
+    var exts: std.StringHashMap(void) = .empty;
     defer exts.deinit(gpa);
 
     switch (target.os.tag) {

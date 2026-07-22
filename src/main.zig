@@ -5892,7 +5892,7 @@ fn parseSubsystem(arg: []const u8) !std.zig.Subsystem {
 /// Silently ignore superfluous search dirs.
 /// Warn when a dir is added to multiple searchlists.
 const ClangSearchSanitizer = struct {
-    map: std.StringHashMapUnmanaged(Membership) = .empty,
+    map: std.StringHashMap(Membership) = .empty,
 
     fn reset(self: *@This()) void {
         self.map.clearRetainingCapacity();

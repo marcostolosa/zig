@@ -532,13 +532,13 @@ pub fn lowerToBuildSteps(
             continue;
 
         const writefiles = b.addWriteFiles();
-        var file_sources = std.StringHashMap(std.Build.LazyPath).init(arena);
-        defer file_sources.deinit();
+        var file_sources = std.StringHashMap(std.Build.LazyPath).empty;
+        defer file_sources.deinit(arena);
         const first_file = case.files.items[0];
         const root_source_file = writefiles.add(first_file.path, first_file.src);
-        file_sources.put(first_file.path, root_source_file) catch @panic("OOM");
+        file_sources.put(arena, first_file.path, root_source_file) catch @panic("OOM");
         for (case.files.items[1..]) |file| {
-            file_sources.put(file.path, writefiles.add(file.path, file.src)) catch @panic("OOM");
+            file_sources.put(arena, file.path, writefiles.add(file.path, file.src)) catch @panic("OOM");
         }
 
         for (case.imports) |import_rel| {
@@ -747,7 +747,7 @@ const TestManifestConfigDefaults = struct {
 /// build test
 const TestManifest = struct {
     type: Type,
-    config_map: std.StringHashMap([]const u8),
+    config_map: std.StringHashMapManaged([]const u8),
     trailing_bytes: []const u8 = "",
 
     const valid_keys = std.StaticStringMap(void).initComptime(.{
@@ -852,7 +852,7 @@ const TestManifest = struct {
 
         var manifest: TestManifest = .{
             .type = tt,
-            .config_map = std.StringHashMap([]const u8).init(arena),
+            .config_map = std.StringHashMapManaged([]const u8).init(arena),
         };
 
         // Any subsequent line until a blank comment line is key=value(s) pair

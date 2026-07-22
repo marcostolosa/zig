@@ -127,9 +127,9 @@ const Contents = struct {
     }
 };
 
-const HashToContents = std.StringHashMap(Contents);
+const HashToContents = std.StringHashMapManaged(Contents);
 const TargetToHash = std.array_hash_map.String([]const u8);
-const PathTable = std.StringHashMap(*TargetToHash);
+const PathTable = std.StringHashMapManaged(*TargetToHash);
 
 const LibCVendor = enum {
     musl,

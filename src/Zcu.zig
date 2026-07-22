@@ -3495,13 +3495,13 @@ pub fn mapOldZirToNew(
         }
 
         // Maps decl name to `declaration` instruction.
-        var named_decls: std.StringHashMapUnmanaged(Zir.Inst.Index) = .empty;
+        var named_decls: std.StringHashMap(Zir.Inst.Index) = .empty;
         defer named_decls.deinit(gpa);
         // Maps test name to `declaration` instruction.
-        var named_tests: std.StringHashMapUnmanaged(Zir.Inst.Index) = .empty;
+        var named_tests: std.StringHashMap(Zir.Inst.Index) = .empty;
         defer named_tests.deinit(gpa);
         // Maps test name to `declaration` instruction.
-        var named_decltests: std.StringHashMapUnmanaged(Zir.Inst.Index) = .empty;
+        var named_decltests: std.StringHashMap(Zir.Inst.Index) = .empty;
         defer named_decltests.deinit(gpa);
         // All unnamed tests, in order, for a best-effort match.
         var unnamed_tests: std.ArrayList(Zir.Inst.Index) = .empty;

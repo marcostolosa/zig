@@ -6179,7 +6179,7 @@ fn airAsm(func: *Func, inst: Air.Inst.Index) !void {
             return name.len > 0;
         }
     };
-    var labels: std.StringHashMapUnmanaged(Label) = .empty;
+    var labels: std.StringHashMap(Label) = .empty;
     defer {
         var label_it = labels.valueIterator();
         while (label_it.next()) |label| label.pending_relocs.deinit(func.gpa);

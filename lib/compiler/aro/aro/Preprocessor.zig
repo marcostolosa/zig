@@ -250,7 +250,7 @@ add_expansion_nl: u32 = 0,
 include_depth: u8 = 0,
 counter: u32 = 0,
 expansion_source_loc: Source.Location = undefined,
-poisoned_identifiers: std.StringHashMapUnmanaged(void) = .empty,
+poisoned_identifiers: std.StringHashMap(void) = .empty,
 /// Map from Source.Id to macro name in the `#ifndef` condition which guards the source, if any
 include_guards: std.AutoHashMapUnmanaged(Source.Id, []const u8) = .empty,
 

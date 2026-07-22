@@ -61,12 +61,14 @@ pub fn AutoContext(comptime K: type) type {
 /// Builtin hashmap for strings as keys.
 /// Key memory is managed by the caller.  Keys and values
 /// will not automatically be freed.
+/// Deprecated; convert to `StringHashMapUnmanaged`.
 pub fn StringHashMap(comptime V: type) type {
     return HashMap([]const u8, V, StringContext, default_max_load_percentage);
 }
 
 /// Key memory is managed by the caller.  Keys and values
 /// will not automatically be freed.
+/// The same allocator must be used throughout its entire lifetime.
 pub fn StringHashMapUnmanaged(comptime V: type) type {
     return HashMapUnmanaged([]const u8, V, StringContext, default_max_load_percentage);
 }
@@ -2144,7 +2146,7 @@ test "repeat fetchRemove" {
 }
 
 test "getOrPut allocation failure" {
-    var map: std.StringHashMapUnmanaged(void) = .empty;
+    var map: std.StringHashMap(void) = .empty;
     try testing.expectError(error.OutOfMemory, map.getOrPut(std.testing.failing_allocator, "hello"));
 }
 

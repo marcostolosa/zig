@@ -966,11 +966,11 @@ fn initSymbolStabs(self: *Object, allocator: Allocator, nlists: anytype, macho_f
     // We need to cache nlists by name so that we can properly resolve local N_GSYM stabs.
     // What happens is `ld -r` will emit an N_GSYM stab for a symbol that may be either an
     // external or private external.
-    var addr_lookup = std.StringHashMap(u64).init(allocator);
-    defer addr_lookup.deinit();
+    var addr_lookup = std.StringHashMapUnmanaged(u64).empty;
+    defer addr_lookup.deinit(allocator);
     for (syms) |sym| {
         if (sym.n_type.bits.type == .sect and (sym.n_type.bits.ext or sym.n_type.bits.pext)) {
-            try addr_lookup.putNoClobber(self.getNStrx(sym.n_strx), sym.n_value);
+            try addr_lookup.putNoClobber(allocator, self.getNStrx(sym.n_strx), sym.n_value);
         }
     }
 

@@ -1024,7 +1024,7 @@ pub fn convertCommonSymbols(self: *Object, elf_file: *Elf) !void {
 pub fn resolveGroups(self: *Object, elf_file: *Elf, table: anytype) !void {
     for (self.groups.items, 0..) |*g, gi| {
         const signature = g.signature(elf_file);
-        const gop = try table.getOrPut(signature);
+        const gop = try table.getOrPut(self.base.comp.gpa, signature);
         if (!gop.found_existing) {
             gop.value_ptr.* = .{ .index = @intCast(gi), .file = self.index };
             continue;

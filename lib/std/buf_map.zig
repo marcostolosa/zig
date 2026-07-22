@@ -1,5 +1,5 @@
 const std = @import("std.zig");
-const StringHashMap = std.StringHashMap;
+const StringHashMap = std.StringHashMapManaged;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const testing = std.testing;

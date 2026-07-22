@@ -6039,9 +6039,9 @@ fn airAsm(func: *Func, inst: Air.Inst.Index) !void {
         });
         args.deinit();
     }
-    var arg_map = std.StringHashMap(u8).init(func.gpa);
-    try arg_map.ensureTotalCapacity(@intCast(outputs.len + inputs.len));
-    defer arg_map.deinit();
+    var arg_map = std.StringHashMap(u8).empty;
+    try arg_map.ensureTotalCapacity(func.gpa, @intCast(outputs.len + inputs.len));
+    defer arg_map.deinit(func.gpa);
 
     var it = unwrapped_asm.iterateOutputs();
     while (it.next()) |output| {

@@ -639,6 +639,13 @@ pub const Object = struct {
         lto: std.zig.LtoMode,
     };
 
+    fn emitAarch64PauthBti(target: *const std.Target) bool {
+        return switch (target.cpu.arch) {
+            .aarch64, .aarch64_be => target.ofmt == .elf,
+            else => false,
+        };
+    }
+
     pub fn emit(o: *Object, pt: Zcu.PerThread, options: EmitOptions) error{ AlreadyReported, OutOfMemory }!void {
         const zcu = o.zcu;
         const comp = zcu.comp;
@@ -688,7 +695,7 @@ pub const Object = struct {
         }
 
         {
-            var module_flags = try std.array_list.Managed(Builder.Metadata).initCapacity(o.gpa, 8);
+            var module_flags = try std.array_list.Managed(Builder.Metadata).initCapacity(o.gpa, 10);
             defer module_flags.deinit();
 
             const behavior_error = try o.builder.metadataConstant(try o.builder.intConst(.i32, 1));
@@ -774,6 +781,19 @@ pub const Object = struct {
             }
 
             const target = &comp.root_mod.resolved_target.result;
+            if (emitAarch64PauthBti(target)) {
+                module_flags.appendAssumeCapacity(try o.builder.metadataTuple(&.{
+                    behavior_min,
+                    (try o.builder.metadataString("branch-target-enforcement")).toMetadata(),
+                    try o.builder.metadataConstant(try o.builder.intConst(.i32, 2)),
+                }));
+                module_flags.appendAssumeCapacity(try o.builder.metadataTuple(&.{
+                    behavior_min,
+                    (try o.builder.metadataString("sign-return-address")).toMetadata(),
+                    try o.builder.metadataConstant(try o.builder.intConst(.i32, 2)),
+                }));
+            }
+
             if (target.os.tag == .windows and (target.cpu.arch == .x86_64 or target.cpu.arch == .x86)) {
                 // Add the "RegCallv4" flag so that any functions using `x86_regcallcc` use regcall
                 // v4, which is essentially a requirement on Windows. See corresponding logic in
@@ -2498,6 +2518,20 @@ pub const Object = struct {
             try attributes.addFnAttr(.{ .string = .{
                 .kind = try o.builder.string("target-features"),
                 .value = try o.builder.string(std.mem.span(s)),
+            } }, &o.builder);
+        }
+        if (emitAarch64PauthBti(target)) {
+            try attributes.addFnAttr(.{ .string = .{
+                .kind = try o.builder.string("branch-target-enforcement"),
+                .value = try o.builder.string(""),
+            } }, &o.builder);
+            try attributes.addFnAttr(.{ .string = .{
+                .kind = try o.builder.string("sign-return-address"),
+                .value = try o.builder.string("non-leaf"),
+            } }, &o.builder);
+            try attributes.addFnAttr(.{ .string = .{
+                .kind = try o.builder.string("sign-return-address-key"),
+                .value = try o.builder.string("a_key"),
             } }, &o.builder);
         }
         if (target.abi.float() == .soft) {

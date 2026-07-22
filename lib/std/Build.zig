@@ -634,7 +634,7 @@ const OrderedUserValue = union(enum) {
         }
     }
 
-    fn mapFromUnordered(allocator: Allocator, unordered: std.StringHashMap(*const UserValue)) std.array_list.Managed(Pair) {
+    fn mapFromUnordered(allocator: Allocator, unordered: std.StringHashMapManaged(*const UserValue)) std.array_list.Managed(Pair) {
         var ordered = std.array_list.Managed(Pair).init(allocator);
         var it = unordered.iterator();
         while (it.next()) |entry| {

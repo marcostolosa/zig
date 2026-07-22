@@ -5508,7 +5508,7 @@ fn connect(
             .addr = @intFromPtr(timespec_ptr),
             .len = 1,
             .rw_flags = timeout_flags,
-            .user_data = @intFromEnum(Completion.Userdata.wakeup),
+            .user_data = @backingInt(Completion.Userdata.wakeup),
             .buf_index = 0,
             .personality = 0,
             .splice_fd_in = 0,
@@ -5796,7 +5796,7 @@ fn getsocknameAsync(
             .flags = 0,
             .ioprio = 0,
             .fd = socket_fd,
-            .off = @intFromEnum(linux.IO_URING_SOCKET_OP.GETSOCKNAME),
+            .off = @backingInt(linux.IO_URING_SOCKET_OP.GETSOCKNAME),
             .addr = @intFromPtr(addr),
             .len = 0,
             .rw_flags = 0,
@@ -6602,7 +6602,7 @@ fn pipe2(ev: *Evented, cancel_region: *CancelRegion, flags: linux.O) PipeAsyncEr
         const thread = try cancel_region.awaitIoUring();
         const OP_PIPE = 62;
         thread.enqueue().* = .{
-            .opcode = @enumFromInt(OP_PIPE),
+            .opcode = @fromBackingInt(@intCast(OP_PIPE)),
             .flags = 0,
             .ioprio = 0,
             .fd = 0,

@@ -588,3 +588,31 @@ test failing {
     const f: Allocator = .failing;
     try std.testing.expectError(error.OutOfMemory, f.alloc(u8, 123));
 }
+
+test "interface has no size limit" {
+    const CountingAllocator = struct {
+        allocated_size: usize = 0,
+
+        pub fn alloc(self: *anyopaque, len: usize, _: Alignment, _: usize) ?[*]u8 {
+            @as(*@This(), @ptrCast(@alignCast(self))).allocated_size += len;
+            return null;
+        }
+    };
+
+    var counter = CountingAllocator{};
+
+    const fake: Allocator = .{
+        .ptr = @ptrCast(&counter),
+        .vtable = &.{
+            .alloc = CountingAllocator.alloc,
+            .resize = unreachableResize,
+            .remap = unreachableRemap,
+            .free = unreachableFree,
+        },
+    };
+
+    const allocation_size = comptime std.math.maxInt(usize);
+
+    try std.testing.expectError(error.OutOfMemory, fake.alloc(u8, allocation_size));
+    try std.testing.expectEqual(counter.allocated_size, allocation_size);
+}

@@ -2,7 +2,7 @@ pub const Atom = @import("Elf/Atom.zig");
 
 base: link.File,
 zig_object: ?*ZigObject,
-rpath_table: std.StringArrayHashMapUnmanaged(void),
+rpath_table: std.array_hash_map.String(void),
 image_base: u64,
 z_nodelete: bool,
 z_notext: bool,
@@ -30,7 +30,7 @@ file_handles: std.ArrayList(File.Handle) = .empty,
 zig_object_index: ?File.Index = null,
 linker_defined_index: ?File.Index = null,
 objects: std.ArrayList(File.Index) = .empty,
-shared_objects: std.StringArrayHashMapUnmanaged(File.Index) = .empty,
+shared_objects: std.array_hash_map.String(File.Index) = .empty,
 
 /// List of all output sections and their associated metadata.
 sections: std.MultiArrayList(Section) = .{},
@@ -135,12 +135,12 @@ const OptionalProgramHeaderIndex = enum(u16) {
 
     fn unwrap(i: OptionalProgramHeaderIndex) ?ProgramHeaderIndex {
         if (i == .none) return null;
-        return @enumFromInt(@intFromEnum(i));
+        return @fromBackingInt(@intCast(@backingInt(i)));
     }
 
     fn int(i: OptionalProgramHeaderIndex) ?u16 {
         if (i == .none) return null;
-        return @intFromEnum(i);
+        return @backingInt(i);
     }
 };
 
@@ -148,13 +148,13 @@ const ProgramHeaderIndex = enum(u16) {
     _,
 
     fn toOptional(i: ProgramHeaderIndex) OptionalProgramHeaderIndex {
-        const result: OptionalProgramHeaderIndex = @enumFromInt(@intFromEnum(i));
+        const result: OptionalProgramHeaderIndex = @fromBackingInt(@intCast(@backingInt(i)));
         assert(result != .none);
         return result;
     }
 
     fn int(i: ProgramHeaderIndex) u16 {
-        return @intFromEnum(i);
+        return @backingInt(i);
     }
 };
 
@@ -249,7 +249,7 @@ pub fn createEmpty(
     const is_dyn_lib = output_mode == .Lib and link_mode == .dynamic;
     const default_sym_version: elf.Versym = if (is_dyn_lib or comp.config.rdynamic) .GLOBAL else .LOCAL;
 
-    var rpath_table: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var rpath_table: std.array_hash_map.String(void) = .empty;
     try rpath_table.entries.resize(arena, options.rpath_list.len);
     @memcpy(rpath_table.entries.items(.key), options.rpath_list);
     try rpath_table.reIndex(arena);
@@ -260,7 +260,7 @@ pub fn createEmpty(
             .tag = .elf,
             .comp = comp,
             .emit = emit,
-            .gc_sections = options.gc_sections orelse (optimize_mode != .Debug and output_mode != .Obj),
+            .gc_sections = options.gc_sections orelse (optimize_mode != .debug and output_mode != .Obj),
             .print_gc_sections = options.print_gc_sections,
             .stack_size = options.stack_size orelse 16777216,
             .allow_shlib_undefined = options.allow_shlib_undefined orelse !is_native_os,
@@ -1112,7 +1112,7 @@ fn parseDso(
     io: Io,
     diags: *Diags,
     dso: link.Input.Dso,
-    shared_objects: *std.StringArrayHashMapUnmanaged(File.Index),
+    shared_objects: *std.array_hash_map.String(File.Index),
     files: *std.MultiArrayList(File.Entry),
     target: *const std.Target,
 ) !void {
@@ -1531,7 +1531,7 @@ pub fn writeElfHeader(self: *Elf) !void {
     hdr_buf[index] = 1; // ELF version
     index += 1;
 
-    hdr_buf[index] = @intFromEnum(@as(elf.OSABI, switch (target.cpu.arch) {
+    hdr_buf[index] = @backingInt(@as(elf.OSABI, switch (target.cpu.arch) {
         .amdgcn => switch (target.os.tag) {
             .amdhsa => .AMDGPU_HSA,
             .amdpal => .AMDGPU_PAL,
@@ -1566,11 +1566,11 @@ pub fn writeElfHeader(self: *Elf) !void {
             .dynamic => .DYN,
         },
     };
-    mem.writeInt(u16, hdr_buf[index..][0..2], @intFromEnum(elf_type), endian);
+    mem.writeInt(u16, hdr_buf[index..][0..2], @backingInt(elf_type), endian);
     index += 2;
 
     const machine = target.toElfMachine();
-    mem.writeInt(u16, hdr_buf[index..][0..2], @intFromEnum(machine), endian);
+    mem.writeInt(u16, hdr_buf[index..][0..2], @backingInt(machine), endian);
     index += 2;
 
     // ELF Version, again
@@ -2314,13 +2314,13 @@ fn sortPhdrs(
 
     inline for (@typeInfo(ProgramHeaderIndexes).@"struct".field_names) |field_name| {
         if (@field(special_indexes, field_name).int()) |special_index| {
-            @field(special_indexes, field_name) = @enumFromInt(backlinks[special_index]);
+            @field(special_indexes, field_name) = @fromBackingInt(@intCast(backlinks[special_index]));
         }
     }
 
     for (section_indexes) |*opt_phndx| {
         if (opt_phndx.int()) |index| {
-            opt_phndx.* = @enumFromInt(backlinks[index]);
+            opt_phndx.* = @fromBackingInt(@intCast(backlinks[index]));
         }
     }
 }
@@ -3398,7 +3398,7 @@ fn getPhdr(self: *Elf, opts: struct {
             if (phndx == index) continue;
         }
         if (phdr.p_type == opts.type and phdr.p_flags == opts.flags)
-            return @enumFromInt(phndx);
+            return @fromBackingInt(@intCast(phndx));
     }
     return .none;
 }
@@ -3413,7 +3413,7 @@ fn addPhdr(self: *Elf, opts: struct {
     memsz: u64 = 0,
 }) error{OutOfMemory}!ProgramHeaderIndex {
     const gpa = self.base.comp.gpa;
-    const index: ProgramHeaderIndex = @enumFromInt(self.phdrs.items.len);
+    const index: ProgramHeaderIndex = @fromBackingInt(@intCast(self.phdrs.items.len));
     try self.phdrs.append(gpa, .{
         .p_type = opts.type,
         .p_flags = opts.flags,
@@ -4153,7 +4153,7 @@ pub const Ref = struct {
 pub const SymbolResolver = struct {
     keys: std.ArrayList(Key) = .empty,
     values: std.ArrayList(Ref) = .empty,
-    table: std.AutoArrayHashMapUnmanaged(void, void) = .empty,
+    table: std.array_hash_map.Auto(void, void) = .empty,
 
     const Result = struct {
         found_existing: bool,
@@ -4345,7 +4345,7 @@ fn createThunks(elf_file: *Elf, atom_list: *AtomList) !void {
             for (atom_ptr.relocs(elf_file)) |rel| {
                 const is_reachable = switch (cpu_arch) {
                     .aarch64, .aarch64_be => r: {
-                        const r_type: elf.R_AARCH64 = @enumFromInt(rel.r_type());
+                        const r_type: elf.R_AARCH64 = @fromBackingInt(@intCast(rel.r_type()));
                         if (r_type != .CALL26 and r_type != .JUMP26) break :r true;
                         const target_ref = file_ptr.resolveSymbol(rel.r_sym(), elf_file);
                         const target = elf_file.symbol(target_ref).?;

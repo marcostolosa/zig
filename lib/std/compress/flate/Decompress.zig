@@ -131,7 +131,7 @@ fn discardDirect(r: *Reader, limit: std.Io.Limit) Reader.Error!usize {
         error.WriteFailed => unreachable,
         error.ReadFailed, error.EndOfStream => |e| return e,
     };
-    assert(n <= @intFromEnum(limit));
+    assert(n <= @backingInt(limit));
     return n;
 }
 
@@ -268,7 +268,7 @@ fn streamFallible(d: *Decompress, w: *Writer, limit: std.Io.Limit) Reader.Stream
 }
 
 fn streamInner(d: *Decompress, w: *Writer, limit: std.Io.Limit) (Error || Reader.StreamError)!usize {
-    var remaining = @intFromEnum(limit);
+    var remaining = @backingInt(limit);
     const in = d.input;
     sw: switch (d.state) {
         .protocol_header => switch (d.container_metadata.container()) {
@@ -316,7 +316,7 @@ fn streamInner(d: *Decompress, w: *Writer, limit: std.Io.Limit) (Error || Reader
         },
         .block_header => {
             d.final_block = (try d.takeIntBits(u1)) != 0;
-            const block_type: BlockType = @enumFromInt(try d.takeIntBits(u2));
+            const block_type: BlockType = @fromBackingInt(@intCast(try d.takeIntBits(u2)));
             switch (block_type) {
                 .stored => {
                     d.alignBitsForward();
@@ -380,7 +380,7 @@ fn streamInner(d: *Decompress, w: *Writer, limit: std.Io.Limit) (Error || Reader
                 d.state = .{ .stored_block = @intCast(remaining_len - n) };
             }
             w.advance(n);
-            return @intFromEnum(limit) - remaining + n;
+            return @backingInt(limit) - remaining + n;
         },
         .fixed_block => while (true) {
             // Consume bytes
@@ -408,7 +408,7 @@ fn streamInner(d: *Decompress, w: *Writer, limit: std.Io.Limit) (Error || Reader
                 try w.writeBytePreserve(flate.history_len, byte);
             } else {
                 d.state = .{ .fixed_block_literal = byte };
-                return @intFromEnum(limit) - remaining;
+                return @backingInt(limit) - remaining;
             }
         },
         .fixed_block_literal => |symbol| {
@@ -426,7 +426,7 @@ fn streamInner(d: *Decompress, w: *Writer, limit: std.Io.Limit) (Error || Reader
                 continue :sw .fixed_block;
             } else {
                 d.state = .{ .fixed_block_match = length };
-                return @intFromEnum(limit) - remaining;
+                return @backingInt(limit) - remaining;
             }
         },
         // In larger archives most blocks are usually dynamic, so
@@ -457,7 +457,7 @@ fn streamInner(d: *Decompress, w: *Writer, limit: std.Io.Limit) (Error || Reader
                 try w.writeBytePreserve(flate.history_len, byte);
             } else {
                 d.state = .{ .dynamic_block_literal = byte };
-                return @intFromEnum(limit) - remaining;
+                return @backingInt(limit) - remaining;
             }
         },
         .dynamic_block_literal => |symbol| {
@@ -476,7 +476,7 @@ fn streamInner(d: *Decompress, w: *Writer, limit: std.Io.Limit) (Error || Reader
                 continue :sw .dynamic_block;
             } else {
                 d.state = .{ .dynamic_block_match = length };
-                return @intFromEnum(limit) - remaining;
+                return @backingInt(limit) - remaining;
             }
         },
         .protocol_footer => {
@@ -492,7 +492,7 @@ fn streamInner(d: *Decompress, w: *Writer, limit: std.Io.Limit) (Error || Reader
                 .raw => {},
             }
             d.state = .end;
-            return @intFromEnum(limit) - remaining;
+            return @backingInt(limit) - remaining;
         },
         .end => return error.EndOfStream,
     }
@@ -578,7 +578,7 @@ fn peekBitsShortEnding(d: *Decompress, n: u4) !u16 {
 }
 
 fn tossBitsShort(d: *Decompress, n: u4) !void {
-    if (d.input.bufferedLen() * 8 + d.consumed_bits < n) return error.EndOfStream;
+    if (d.input.bufferedLen() * 8 - d.consumed_bits < n) return error.EndOfStream;
     d.tossBits(n);
 }
 
@@ -1062,6 +1062,15 @@ test "bug 18966" {
         @embedFile("testdata/fuzz/bug_18966.input"),
         @embedFile("testdata/fuzz/bug_18966.expect"),
     );
+}
+
+test "truncated input ending when reading dynamic length bits" {
+    try testFailure(.raw, &[_]u8{
+        0x15, 0xd5, 0x07, 0x3b, 0x16, 0x0c, 0x03, 0x86,
+        0x61, 0x2b, 0xa3, 0xec, 0xec, 0x15, 0x95, 0x6c,
+        0x92, 0x4d, 0x19, 0x95, 0x4a, 0xb6, 0x22, 0x23,
+        0xc9,
+    }, error.EndOfStream);
 }
 
 test "reading into empty buffer" {

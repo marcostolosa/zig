@@ -316,20 +316,19 @@ pub fn addCompile(
 /// Each file should include a test manifest as a contiguous block of comments at
 /// the end of the file. The first line should be the test type, followed by a set of
 /// key-value config values, followed by a blank line, then the expected output.
-pub fn addFromDir(ctx: *Cases, dir: Io.Dir, b: *std.Build) void {
+pub fn addFromDir(ctx: *Cases, dir: Io.Dir, path_from_root: []const u8, b: *std.Build) void {
     var current_file: []const u8 = "none";
-    ctx.addFromDirInner(dir, &current_file, b) catch |err| {
-        std.debug.panicExtra(
-            @returnAddress(),
-            "test harness failed to process file '{s}': {s}\n",
-            .{ current_file, @errorName(err) },
-        );
+    ctx.addFromDirInner(dir, path_from_root, &current_file, b) catch |err| {
+        std.debug.panicExtra(@returnAddress(), "test harness failed to process file {q}: {t}\n", .{
+            current_file, err,
+        });
     };
 }
 
 fn addFromDirInner(
     ctx: *Cases,
     iterable_dir: Io.Dir,
+    path_from_root: []const u8,
     /// This is kept up to date with the currently being processed file so
     /// that if any errors occur the caller knows it happened during this file.
     current_file: *[]const u8,
@@ -340,11 +339,19 @@ fn addFromDirInner(
     var filenames: ArrayList([]const u8) = .empty;
 
     while (try it.next(io)) |entry| {
-        if (entry.kind != .file) continue;
-
         // Ignore stuff such as .swp files
         if (!knownFileExtension(entry.basename)) continue;
-        try filenames.append(ctx.arena, try ctx.arena.dupe(u8, entry.path));
+
+        switch (entry.kind) {
+            .file => {
+                b.dependOnFileContents(b.path(b.pathJoin(&.{ path_from_root, entry.path })));
+                try filenames.append(ctx.arena, try ctx.arena.dupe(u8, entry.path));
+            },
+            .directory => {
+                b.dependOnDirectory(b.path(b.pathJoin(&.{ path_from_root, entry.path })));
+            },
+            else => continue,
+        }
     }
 
     for (filenames.items) |filename| {
@@ -357,7 +364,15 @@ fn addFromDirInner(
         var manifest = try TestManifest.parse(ctx.arena, src);
 
         const backends = try manifest.getConfigForKeyAlloc(ctx.arena, "backend", Backend);
-        const targets = try manifest.getConfigForKeyAlloc(ctx.arena, "target", std.Target.Query);
+        const target_strs = try manifest.getConfigForKeyAlloc(ctx.arena, "target", []const u8);
+        const cpu_features_str = manifest.config_map.get("cpu_features") orelse "";
+        const targets = try ctx.arena.alloc(std.Target.Query, target_strs.len);
+        for (targets, target_strs) |*query, target_str| {
+            query.* = try std.Target.Query.parse(.{
+                .arch_os_abi = target_str,
+                .cpu_features = if (cpu_features_str.len == 0) null else cpu_features_str,
+            });
+        }
         const is_test = try manifest.getConfigForKeyAssertSingle("is_test", bool);
         const link_libc = try manifest.getConfigForKeyAssertSingle("link_libc", bool);
         const output_mode = try manifest.getConfigForKeyAssertSingle("output_mode", std.builtin.OutputMode);
@@ -707,6 +722,8 @@ const TestManifestConfigDefaults = struct {
             return "null";
         } else if (std.mem.eql(u8, key, "imports")) {
             return "";
+        } else if (std.mem.eql(u8, key, "cpu_features")) {
+            return "";
         } else unreachable;
     }
 };
@@ -739,6 +756,7 @@ const TestManifest = struct {
         .{ "is_test", {} },
         .{ "output_mode", {} },
         .{ "target", {} },
+        .{ "cpu_features", {} },
         .{ "c_frontend", {} },
         .{ "link_libc", {} },
         .{ "backend", {} },

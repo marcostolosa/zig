@@ -13,7 +13,7 @@ const Path = std.Build.Cache.Path;
 
 const build_options = @import("build_options");
 const Zcu = @import("../Zcu.zig");
-const Module = @import("../Package/Module.zig");
+const Module = @import("../Module.zig");
 const InternPool = @import("../InternPool.zig");
 const Alignment = InternPool.Alignment;
 const Compilation = @import("../Compilation.zig");
@@ -44,10 +44,10 @@ type_dependencies: std.ArrayList(link.ConstPool.Index),
 align_dependency_masks: std.ArrayList(u64),
 
 /// All NAVs, regardless of whether they are functions or simple constants, are put in this map.
-navs: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, RenderedDecl),
+navs: std.array_hash_map.Auto(InternPool.Nav.Index, RenderedDecl),
 /// All UAVs which may be referenced are in this map. The UAV alignment is not included in the
 /// rendered C code stored here, because we don't know the alignment a UAV needs until `flush`.
-uavs: std.AutoArrayHashMapUnmanaged(InternPool.Index, RenderedDecl),
+uavs: std.array_hash_map.Auto(InternPool.Index, RenderedDecl),
 /// Contains all types which are needed by some other rendered code. Does not contain any constants
 /// other than types.
 type_pool: link.ConstPool,
@@ -59,10 +59,10 @@ types: std.ArrayList(RenderedType),
 /// The set of big int types required by *any* generated code so far. These are always safe to emit,
 /// so they do not participate in the dependency graph traversal in `flush`. Therefore, redundant
 /// big-int types may be emitted under incremental compilation.
-bigint_types: std.AutoArrayHashMapUnmanaged(codegen.CType.BigInt, void),
+bigint_types: std.array_hash_map.Auto(codegen.CType.BigInt, void),
 
-exported_navs: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, String),
-exported_uavs: std.AutoArrayHashMapUnmanaged(InternPool.Index, String),
+exported_navs: std.array_hash_map.Auto(InternPool.Nav.Index, String),
+exported_uavs: std.array_hash_map.Auto(InternPool.Index, String),
 
 /// A reference into `string_bytes`.
 const String = extern struct {
@@ -133,10 +133,10 @@ const RenderedDecl = struct {
     fwd_decl: String,
     code: String,
     ctype_deps: CTypeDependencies,
-    need_uavs: std.AutoArrayHashMapUnmanaged(InternPool.Index, Alignment),
-    need_tag_name_funcs: std.AutoArrayHashMapUnmanaged(InternPool.Index, void),
-    need_never_tail_funcs: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, void),
-    need_never_inline_funcs: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, void),
+    need_uavs: std.array_hash_map.Auto(InternPool.Index, Alignment),
+    need_tag_name_funcs: std.array_hash_map.Auto(InternPool.Index, void),
+    need_never_tail_funcs: std.array_hash_map.Auto(InternPool.Nav.Index, void),
+    need_never_inline_funcs: std.array_hash_map.Auto(InternPool.Nav.Index, void),
 
     const init: RenderedDecl = .{
         .fwd_decl = .empty,
@@ -211,7 +211,7 @@ pub fn addConst(
     const zcu = pt.zcu;
     const gpa = zcu.comp.gpa;
     assert(zcu.intern_pool.typeOf(val) == .type_type);
-    assert(@intFromEnum(pool_index) == c.types.items.len);
+    assert(@backingInt(pool_index) == c.types.items.len);
 
     const ty: Type = .fromInterned(val);
 
@@ -262,7 +262,7 @@ pub fn addConst(
         _ = try codegen.CType.lower(ty, &deps, arena.allocator(), zcu);
         // This call may add more items to `c.types`.
         const type_deps = try c.addCTypeDependencies(pt, &deps);
-        c.types.items[@intFromEnum(pool_index)].deps = type_deps;
+        c.types.items[@backingInt(pool_index)].deps = type_deps;
     }
 }
 
@@ -279,7 +279,7 @@ pub fn updateConstIncomplete(
     assert(zcu.intern_pool.typeOf(val) == .type_type);
     const ty: Type = .fromInterned(val);
 
-    const rendered: *RenderedType = &c.types.items[@intFromEnum(index)];
+    const rendered: *RenderedType = &c.types.items[@backingInt(index)];
 
     rendered.errunion_definition = .empty;
     rendered.definition_deps = .empty;
@@ -315,7 +315,7 @@ pub fn updateConst(
     assert(zcu.intern_pool.typeOf(val) == .type_type);
     const ty: Type = .fromInterned(val);
 
-    const rendered: *RenderedType = &c.types.items[@intFromEnum(index)];
+    const rendered: *RenderedType = &c.types.items[@backingInt(index)];
 
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
@@ -371,7 +371,7 @@ pub fn updateConst(
     {
         // This call invalidates `rendered`.
         const definition_deps = try c.addCTypeDependencies(pt, &deps);
-        c.types.items[@intFromEnum(index)].definition_deps = definition_deps;
+        c.types.items[@backingInt(index)].definition_deps = definition_deps;
     }
 }
 
@@ -429,7 +429,7 @@ pub fn createEmpty(
             .tag = .c,
             .comp = comp,
             .emit = emit,
-            .gc_sections = options.gc_sections orelse (optimize_mode != .Debug and output_mode != .Obj),
+            .gc_sections = options.gc_sections orelse (optimize_mode != .debug and output_mode != .Obj),
             .print_gc_sections = options.print_gc_sections,
             .stack_size = options.stack_size orelse 16777216,
             .allow_shlib_undefined = options.allow_shlib_undefined orelse false,
@@ -728,8 +728,9 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
     const zcu = c.base.comp.zcu.?;
     const ip = &zcu.intern_pool;
     const target = zcu.getTarget();
-    const pt: Zcu.PerThread = .activate(zcu, tid);
-    defer pt.deactivate();
+    const active = zcu.activate(tid);
+    defer active.deactivate();
+    const pt = active.pt;
 
     // If it's somehow not made it into the pool, we need to generate the type `[:0]const u8` for
     // error names.
@@ -745,7 +746,7 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
     // incremental updates which is invalid C (due to e.g. types changing). Machine code backends
     // don't have this problem because there are, of course, no type checking performed when you
     // *execute* a binary!
-    var need_navs: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, void) = .empty;
+    var need_navs: std.array_hash_map.Auto(InternPool.Nav.Index, void) = .empty;
     defer need_navs.deinit(gpa);
     {
         const unit_references = try zcu.resolveReferences();
@@ -773,23 +774,23 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
     //
     // At the same time, we will discover the set of lazy functions which are referenced.
 
-    var need_uavs: std.AutoArrayHashMapUnmanaged(InternPool.Index, Alignment) = .empty;
+    var need_uavs: std.array_hash_map.Auto(InternPool.Index, Alignment) = .empty;
     defer need_uavs.deinit(gpa);
 
-    var need_types: std.AutoArrayHashMapUnmanaged(link.ConstPool.Index, void) = .empty;
+    var need_types: std.array_hash_map.Auto(link.ConstPool.Index, void) = .empty;
     defer need_types.deinit(gpa);
-    var need_errunion_types: std.AutoArrayHashMapUnmanaged(link.ConstPool.Index, void) = .empty;
+    var need_errunion_types: std.array_hash_map.Auto(link.ConstPool.Index, void) = .empty;
     defer need_errunion_types.deinit(gpa);
-    var need_aligned_types: std.AutoArrayHashMapUnmanaged(link.ConstPool.Index, u64) = .empty;
+    var need_aligned_types: std.array_hash_map.Auto(link.ConstPool.Index, u64) = .empty;
     defer need_aligned_types.deinit(gpa);
 
-    var need_tag_name_funcs: std.AutoArrayHashMapUnmanaged(InternPool.Index, void) = .empty;
+    var need_tag_name_funcs: std.array_hash_map.Auto(InternPool.Index, void) = .empty;
     defer need_tag_name_funcs.deinit(gpa);
 
-    var need_never_tail_funcs: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, void) = .empty;
+    var need_never_tail_funcs: std.array_hash_map.Auto(InternPool.Nav.Index, void) = .empty;
     defer need_never_tail_funcs.deinit(gpa);
 
-    var need_never_inline_funcs: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, void) = .empty;
+    var need_never_inline_funcs: std.array_hash_map.Auto(InternPool.Nav.Index, void) = .empty;
     defer need_never_inline_funcs.deinit(gpa);
 
     // As mentioned above, we need this type for error names.
@@ -857,7 +858,7 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
         while (true) {
             if (index < need_types.count()) {
                 const pool_index = need_types.keys()[index];
-                const rendered = &c.types.items[@intFromEnum(pool_index)];
+                const rendered = &c.types.items[@backingInt(pool_index)];
                 try mergeNeededCTypes(
                     c,
                     &need_types,
@@ -871,7 +872,7 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
 
             if (errunion_index < need_errunion_types.count()) {
                 const payload_pool_index = need_errunion_types.keys()[errunion_index];
-                const rendered = &c.types.items[@intFromEnum(payload_pool_index)];
+                const rendered = &c.types.items[@backingInt(payload_pool_index)];
                 try mergeNeededCTypes(
                     c,
                     &need_types,
@@ -885,7 +886,7 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
 
             if (aligned_index < need_aligned_types.count()) {
                 const pool_index = need_aligned_types.keys()[aligned_index];
-                const rendered = &c.types.items[@intFromEnum(pool_index)];
+                const rendered = &c.types.items[@backingInt(pool_index)];
                 try mergeNeededCTypes(
                     c,
                     &need_types,
@@ -915,7 +916,7 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
             aligned_type_strings,
         ) |pool_index, align_mask, *str_out| {
             const ty: Type = .fromInterned(pool_index.val(&c.type_pool));
-            const has_layout = c.types.items[@intFromEnum(pool_index)].errunion_definition.len > 0;
+            const has_layout = c.types.items[@backingInt(pool_index)].errunion_definition.len > 0;
             for (0..@bitSizeOf(@TypeOf(align_mask))) |bit_index| {
                 switch (@as(u1, @truncate(align_mask >> @intCast(bit_index)))) {
                     0 => continue,
@@ -1283,9 +1284,9 @@ pub fn deleteExport(
 
 fn mergeNeededCTypes(
     c: *C,
-    need_types: *std.AutoArrayHashMapUnmanaged(link.ConstPool.Index, void),
-    need_errunion_types: *std.AutoArrayHashMapUnmanaged(link.ConstPool.Index, void),
-    need_aligned_types: *std.AutoArrayHashMapUnmanaged(link.ConstPool.Index, u64),
+    need_types: *std.array_hash_map.Auto(link.ConstPool.Index, void),
+    need_errunion_types: *std.array_hash_map.Auto(link.ConstPool.Index, void),
+    need_aligned_types: *std.array_hash_map.Auto(link.ConstPool.Index, u64),
     deps: *const CTypeDependencies,
 ) Allocator.Error!void {
     const gpa = c.base.comp.gpa;
@@ -1311,8 +1312,8 @@ fn mergeNeededCTypes(
 
 fn mergeNeededUavs(
     zcu: *const Zcu,
-    global: *std.AutoArrayHashMapUnmanaged(InternPool.Index, Alignment),
-    new: *const std.AutoArrayHashMapUnmanaged(InternPool.Index, Alignment),
+    global: *std.array_hash_map.Auto(InternPool.Index, Alignment),
+    new: *const std.array_hash_map.Auto(InternPool.Index, Alignment),
 ) Allocator.Error!void {
     const gpa = zcu.comp.gpa;
 
@@ -1421,12 +1422,12 @@ const FlushTypes = struct {
     c: *C,
     f: *Flush,
 
-    aligned_types: *const std.AutoArrayHashMapUnmanaged(link.ConstPool.Index, u64),
+    aligned_types: *const std.array_hash_map.Auto(link.ConstPool.Index, u64),
     aligned_type_strings: []const []const u8,
 
-    status: std.AutoArrayHashMapUnmanaged(link.ConstPool.Index, bool),
-    errunion_status: std.AutoArrayHashMapUnmanaged(link.ConstPool.Index, bool),
-    aligned_status: std.AutoArrayHashMapUnmanaged(link.ConstPool.Index, void),
+    status: std.array_hash_map.Auto(link.ConstPool.Index, bool),
+    errunion_status: std.array_hash_map.Auto(link.ConstPool.Index, bool),
+    aligned_status: std.array_hash_map.Auto(link.ConstPool.Index, void),
 
     fn processDeps(ft: *FlushTypes, deps: *const CTypeDependencies) void {
         const resolved = deps.get(ft.c);
@@ -1449,7 +1450,7 @@ const FlushTypes = struct {
         const c = ft.c;
         if (ft.aligned_status.contains(pool_index)) return;
         if (ft.aligned_types.getIndex(pool_index)) |i| {
-            const rendered = &c.types.items[@intFromEnum(pool_index)];
+            const rendered = &c.types.items[@backingInt(pool_index)];
             ft.processDepsAsFwd(&rendered.deps);
             ft.f.appendBufAssumeCapacity(ft.aligned_type_strings[i]);
         }
@@ -1458,7 +1459,7 @@ const FlushTypes = struct {
     fn doTypeFwd(ft: *FlushTypes, pool_index: link.ConstPool.Index) void {
         const c = ft.c;
         if (ft.status.contains(pool_index)) return;
-        const rendered = &c.types.items[@intFromEnum(pool_index)];
+        const rendered = &c.types.items[@backingInt(pool_index)];
         if (rendered.fwd_decl.len > 0) {
             ft.f.appendBufAssumeCapacity(rendered.fwd_decl.get(c));
             ft.status.putAssumeCapacityNoClobber(pool_index, false);
@@ -1476,7 +1477,7 @@ const FlushTypes = struct {
         if (ft.status.get(pool_index)) |completed| {
             if (completed) return;
         }
-        const rendered = &c.types.items[@intFromEnum(pool_index)];
+        const rendered = &c.types.items[@backingInt(pool_index)];
         ft.processDeps(&rendered.definition_deps);
         if (rendered.fwd_decl.len == 0 and ft.status.contains(pool_index)) {
             // `doTypeFwd` already rendered the defintion, we just had to complete the type by
@@ -1494,7 +1495,7 @@ const FlushTypes = struct {
         const c = ft.c;
         const gop = ft.errunion_status.getOrPutAssumeCapacity(pool_index);
         if (gop.found_existing) return;
-        const rendered = &c.types.items[@intFromEnum(pool_index)];
+        const rendered = &c.types.items[@backingInt(pool_index)];
         ft.f.appendBufAssumeCapacity(rendered.errunion_fwd_decl.get(c));
         gop.value_ptr.* = false;
     }
@@ -1503,7 +1504,7 @@ const FlushTypes = struct {
         if (ft.errunion_status.get(pool_index)) |completed| {
             if (completed) return;
         }
-        const rendered = &c.types.items[@intFromEnum(pool_index)];
+        const rendered = &c.types.items[@backingInt(pool_index)];
         ft.processDeps(&rendered.deps);
         if (rendered.errunion_definition.len > 0) {
             ft.f.appendBufAssumeCapacity(rendered.errunion_definition.get(c));

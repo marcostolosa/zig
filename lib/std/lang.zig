@@ -107,13 +107,52 @@ pub const CodeModel = enum(u4) {
     tiny,
 };
 
+/// Deprecated, to be removed after 0.18.0
+pub const OptimizeMode = Optimize;
+
 /// This data structure is used by the Zig language code generation and
 /// therefore must be kept in sync with the compiler implementation.
-pub const OptimizeMode = enum {
-    Debug,
-    ReleaseSafe,
-    ReleaseFast,
-    ReleaseSmall,
+pub const Optimize = enum {
+    /// Safety checks enabled. Optimize for bug detection, accurate debug info,
+    /// and compilation speed (in that order).
+    debug,
+    /// Safety checks enabled. Optimize for runtime performance.
+    safe,
+    /// Safety checks disabled. Optimize for runtime performance.
+    fast,
+    /// Safety checks disabled. Optimize for machine code size, then runtime performance.
+    small,
+
+    /// Deprecated, to be removed after 0.18.0
+    pub const Debug: @This() = .debug;
+    /// Deprecated, to be removed after 0.18.0
+    pub const ReleaseSafe: @This() = .safe;
+    /// Deprecated, to be removed after 0.18.0
+    pub const ReleaseFast: @This() = .fast;
+    /// Deprecated, to be removed after 0.18.0
+    pub const ReleaseSmall: @This() = .small;
+    /// Deprecated, to be removed after 0.18.0
+    pub fn fromString(s: []const u8) ?@This() {
+        return std.StaticStringMap(@This()).initComptime(&.{
+            .{ "Debug", .debug },
+            .{ "ReleaseSafe", .safe },
+            .{ "ReleaseFast", .fast },
+            .{ "ReleaseSmall", .small },
+            .{ "debug", .debug },
+            .{ "safe", .safe },
+            .{ "fast", .fast },
+            .{ "small", .small },
+        }).get(s);
+    }
+
+    /// Returns whether illegal behavior safety checks are enabled based on the
+    /// provided optimization mode.
+    pub fn runtimeSafety(o: @This()) bool {
+        return switch (o) {
+            .debug, .safe => true,
+            .fast, .small => false,
+        };
+    }
 };
 
 /// The calling convention of a function defines how arguments and return values are passed, as well
@@ -140,7 +179,7 @@ pub const CallingConvention = union(enum(u8)) {
     pub const kernel: CallingConvention = switch (builtin.target.cpu.arch) {
         .amdgcn => .amdgcn_kernel,
         .nvptx, .nvptx64 => .nvptx_kernel,
-        .spirv32, .spirv64 => .spirv_kernel,
+        .spirv32, .spirv64 => .{ .spirv_kernel = .{ .x = 1, .y = 1, .z = 1 } },
         else => unreachable,
     };
 
@@ -337,11 +376,13 @@ pub const CallingConvention = union(enum(u8)) {
     nvptx_device,
     nvptx_kernel,
 
-    // Calling conventions for kernels and shaders on the `spirv`, `spirv32`, and `spirv64` architectures.
+    // Calling conventions for kernels and shaders on the `spirv32` and `spirv64` architectures.
     spirv_device,
-    spirv_kernel,
-    spirv_fragment,
     spirv_vertex,
+    spirv_kernel: SpirvKernelOptions,
+    spirv_fragment: SpirvFragmentOptions,
+    spirv_task: SpirvKernelOptions,
+    spirv_mesh: SpirvMeshOptions,
 
     // Calling conventions for the `ez80` architecture.
     ez80_cet,
@@ -473,6 +514,36 @@ pub const CallingConvention = union(enum(u8)) {
         };
     };
 
+    pub const SpirvKernelOptions = struct {
+        x: u32,
+        y: u32,
+        z: u32,
+    };
+
+    pub const SpirvFragmentOptions = struct {
+        pub const DepthAssumption = enum(u2) {
+            none = 0,
+            greater = 1,
+            less = 2,
+            unchanged = 3,
+        };
+
+        pixel_centered_integer: bool = false,
+        depth_assumption: DepthAssumption = .none,
+    };
+
+    pub const SpirvMeshOptions = struct {
+        pub const StageOutput = enum(u2) {
+            output_points = 0,
+            output_lines = 1,
+            output_triangles = 2,
+        };
+
+        stage_output: StageOutput = .output_triangles,
+        max_primitives: u32 = 1,
+        max_vertices: u32 = 3,
+    };
+
     /// Returns the array of `std.Target.Cpu.Arch` to which this `CallingConvention` applies.
     /// Asserts that `cc` is not `.auto`, `.@"async"`, `.naked`, or `.@"inline"`.
     pub fn archs(cc: CallingConvention) []const std.Target.Cpu.Arch {
@@ -535,6 +606,10 @@ pub const AddressSpace = enum(u5) {
 
     /// This address space only addresses the "lookup" ram
     lut,
+
+    // Web Assembly
+    externref,
+    funcref,
 };
 
 /// This data structure is used by the Zig language code generation and
@@ -578,6 +653,7 @@ pub const Type = union(enum) {
     @"anyframe": AnyFrame,
     vector: Vector,
     enum_literal,
+    spirv: Spirv,
 
     /// This data structure is used by the Zig language code generation and
     /// therefore must be kept in sync with the compiler implementation.
@@ -783,6 +859,59 @@ pub const Type = union(enum) {
 
     /// This data structure is used by the Zig language code generation and
     /// therefore must be kept in sync with the compiler implementation.
+    pub const Spirv = union(enum(u2)) {
+        sampler,
+        image: Image,
+        sampled_image: type,
+        runtime_array: type,
+
+        pub const Image = struct {
+            usage: Usage,
+            format: Format,
+            dim: Dimensionality,
+            depth: Depth,
+            access: Access,
+            arrayed: bool,
+            multisampled: bool,
+
+            pub const Usage = union(enum(u2)) {
+                unknown: type,
+                sampled: type,
+                storage: type,
+            };
+
+            pub const Format = enum(u4) {
+                unknown,
+                rgba32f,
+                rgba32i,
+                rgba32u,
+                rgba16f,
+                rgba16i,
+                rgba16u,
+                rgba8unorm,
+                rgba8snorm,
+                rgba8i,
+                rgba8u,
+                r32f,
+                r32i,
+                r32u,
+            };
+
+            pub const Dimensionality = enum(u2) {
+                @"1d",
+                @"2d",
+                @"3d",
+                cube,
+            };
+
+            pub const Depth = enum(u2) { unknown, depth, not_depth };
+
+            pub const Access = enum(u2) { unknown, read_only, write_only, read_write };
+        };
+    };
+
+    /// This data structure is used by the Zig language code generation and
+    /// therefore must be kept in sync with the compiler implementation.
     pub const Opaque = struct {
         decl_names: []const [:0]const u8,
     };
@@ -821,7 +950,7 @@ pub const Endian = enum {
     little,
 
     pub const native = builtin.target.cpu.arch.endian();
-    pub const foreign: Endian = @enumFromInt(1 - @intFromEnum(native));
+    pub const foreign: Endian = @fromBackingInt(@intCast(1 - @backingInt(native)));
 };
 
 /// This data structure is used by the Zig language code generation and
@@ -914,10 +1043,9 @@ pub const VaListArm = extern struct {
 /// This data structure is used by the Zig language code generation and
 /// therefore must be kept in sync with the compiler implementation.
 pub const VaListHexagon = extern struct {
-    __gpr: c_long,
-    __fpr: c_long,
-    __overflow_arg_area: *anyopaque,
-    __reg_save_area: *anyopaque,
+    __current_saved_reg_area_pointer: *anyopaque,
+    __saved_reg_area_end_pointer: *anyopaque,
+    __overflow_area_pointer: *anyopaque,
 };
 
 /// This data structure is used by the Zig language code generation and
@@ -933,9 +1061,10 @@ pub const VaListPowerPc = extern struct {
 /// This data structure is used by the Zig language code generation and
 /// therefore must be kept in sync with the compiler implementation.
 pub const VaListS390x = extern struct {
-    __current_saved_reg_area_pointer: *anyopaque,
-    __saved_reg_area_end_pointer: *anyopaque,
-    __overflow_area_pointer: *anyopaque,
+    __gpr: c_long,
+    __fpr: c_long,
+    __overflow_arg_area: *anyopaque,
+    __reg_save_area: *anyopaque,
 };
 
 /// This data structure is used by the Zig language code generation and
@@ -1083,11 +1212,12 @@ pub const ExternOptions = struct {
 
     pub const Decoration = union(enum) {
         location: u32,
+        flat: u32,
         descriptor: Descriptor,
 
         pub const Descriptor = struct {
-            binding: u32,
             set: u32,
+            binding: u32,
         };
     };
 

@@ -9,7 +9,7 @@ const Writer = std.Io.Writer;
 const dev = @import("../dev.zig");
 const link = @import("../link.zig");
 const Zcu = @import("../Zcu.zig");
-const Module = @import("../Package/Module.zig");
+const Module = @import("../Module.zig");
 const Compilation = @import("../Compilation.zig");
 const Value = @import("../Value.zig");
 const Type = @import("../Type.zig");
@@ -27,7 +27,8 @@ pub fn legalizeFeatures(_: *const std.Target) ?*const Air.Legalize.Features {
     return comptime switch (dev.env.supports(.legalize)) {
         inline false, true => |supports_legalize| &.init(.{
             // we don't currently ask zig1 to use safe optimization modes
-            .expand_intcast_safe = supports_legalize,
+            .expand_bit_cast_safe = supports_legalize,
+            .expand_int_cast_safe = supports_legalize,
             .expand_int_from_float_safe = supports_legalize,
             .expand_int_from_float_optimized_safe = supports_legalize,
             .expand_add_safe = supports_legalize,
@@ -36,8 +37,11 @@ pub fn legalizeFeatures(_: *const std.Target) ?*const Air.Legalize.Features {
 
             .expand_packed_load = true,
             .expand_packed_store = true,
-            .expand_packed_struct_field_val = true,
+            .expand_packed_agg_field_val = true,
             .expand_packed_aggregate_init = true,
+
+            .scalarize_bit_cast_array = true,
+            .scalarize_bit_cast_vector_non_elementwise = true,
         }),
     };
 }
@@ -59,14 +63,14 @@ pub const Mir = struct {
     /// Key is the value of the UAV; value is the UAV's alignment, or
     /// `.none` for natural alignment. The specified alignment is never
     /// less than the natural alignment.
-    need_uavs: std.AutoArrayHashMapUnmanaged(InternPool.Index, Alignment),
+    need_uavs: std.array_hash_map.Auto(InternPool.Index, Alignment),
     ctype_deps: CType.Dependencies,
     /// Key is an enum type for which we need a generated `@tagName` function.
-    need_tag_name_funcs: std.AutoArrayHashMapUnmanaged(InternPool.Index, void),
+    need_tag_name_funcs: std.array_hash_map.Auto(InternPool.Index, void),
     /// Key is a function Nav for which we need a generated `zig_never_tail` wrapper.
-    need_never_tail_funcs: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, void),
+    need_never_tail_funcs: std.array_hash_map.Auto(InternPool.Nav.Index, void),
     /// Key is a function Nav for which we need a generated `zig_never_inline` wrapper.
-    need_never_inline_funcs: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, void),
+    need_never_inline_funcs: std.array_hash_map.Auto(InternPool.Nav.Index, void),
 
     pub fn deinit(mir: *Mir, gpa: Allocator) void {
         gpa.free(mir.fwd_decl);
@@ -164,8 +168,8 @@ const LocalType = struct {
 };
 
 const LocalIndex = u16;
-const LocalsList = std.AutoArrayHashMapUnmanaged(LocalIndex, void);
-const LocalsMap = std.AutoArrayHashMapUnmanaged(LocalType, LocalsList);
+const LocalsList = std.array_hash_map.Auto(LocalIndex, void);
+const LocalsMap = std.array_hash_map.Auto(LocalType, LocalsList);
 
 const ValueRenderLocation = enum {
     initializer,
@@ -328,6 +332,9 @@ fn isReservedIdent(ident: []const u8) bool {
         return true;
     }
 
+    // zig.h
+    if (mem.startsWith(u8, ident, "zig_")) return true;
+
     return reserved_idents.has(ident);
 }
 
@@ -391,11 +398,11 @@ pub const Function = struct {
     code: Writer.Allocating,
     indent_counter: usize,
     /// Key is an enum type for which we need a generated `@tagName` function.
-    need_tag_name_funcs: std.AutoArrayHashMapUnmanaged(InternPool.Index, void),
+    need_tag_name_funcs: std.array_hash_map.Auto(InternPool.Index, void),
     /// Key is a function Nav for which we need a generated `zig_never_tail` wrapper.
-    need_never_tail_funcs: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, void),
+    need_never_tail_funcs: std.array_hash_map.Auto(InternPool.Nav.Index, void),
     /// Key is a function Nav for which we need a generated `zig_never_inline` wrapper.
-    need_never_inline_funcs: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, void),
+    need_never_inline_funcs: std.array_hash_map.Auto(InternPool.Nav.Index, void),
     func_index: InternPool.Index,
     /// All the locals, to be emitted at the top of the function.
     locals: std.ArrayList(LocalType) = .empty,
@@ -407,7 +414,7 @@ pub const Function = struct {
     /// of variable declarations at the top of a function, sorted descending
     /// by type alignment.
     /// The value is whether the alloc needs to be emitted in the header.
-    allocs: std.AutoArrayHashMapUnmanaged(LocalIndex, bool) = .empty,
+    allocs: std.array_hash_map.Auto(LocalIndex, bool) = .empty,
     /// Maps from `loop_switch_br` instructions to the allocated local used
     /// for the switch cond. Dispatches should set this local to the new cond.
     loop_switch_conds: std.AutoHashMapUnmanaged(Air.Inst.Index, LocalIndex) = .empty,
@@ -446,8 +453,8 @@ pub const Function = struct {
 
     fn wantSafety(f: *Function) bool {
         return switch (f.dg.mod.optimize_mode) {
-            .Debug, .ReleaseSafe => true,
-            .ReleaseFast, .ReleaseSmall => false,
+            .debug, .safe => true,
+            .fast, .small => false,
         };
     }
 
@@ -643,7 +650,7 @@ pub const DeclGen = struct {
     /// Key is the value of the UAV; value is the UAV's alignment, or
     /// `.none` for natural alignment. The specified alignment is never
     /// less than the natural alignment.
-    uavs: std.AutoArrayHashMapUnmanaged(InternPool.Index, Alignment),
+    uavs: std.array_hash_map.Auto(InternPool.Index, Alignment),
 
     fn fail(dg: *DeclGen, comptime format: []const u8, args: anytype) Error {
         @branchHint(.cold);
@@ -902,6 +909,7 @@ pub const DeclGen = struct {
             .tuple_type,
             .union_type,
             .opaque_type,
+            .spirv_type,
             .enum_type,
             .func_type,
             .error_set_type,
@@ -1119,7 +1127,7 @@ pub const DeclGen = struct {
                     }
                     try w.writeByte('{');
                     const ai = ty.arrayInfo(zcu);
-                    if (ai.elem_type.eql(.u8, zcu)) {
+                    if (ai.elem_type.eql(.u8)) {
                         var literal: StringLiteral = .init(w, @intCast(ty.arrayLenIncludingSentinel(zcu)));
                         try literal.start();
                         var index: usize = 0;
@@ -1298,8 +1306,8 @@ pub const DeclGen = struct {
         };
 
         const safety_on = switch (dg.mod.optimize_mode) {
-            .Debug, .ReleaseSafe => true,
-            .ReleaseFast, .ReleaseSmall => false,
+            .debug, .safe => true,
+            .fast, .small => false,
         };
 
         switch (ty.toIntern()) {
@@ -1453,7 +1461,7 @@ pub const DeclGen = struct {
                             }
                             return w.writeByte('}');
                         },
-                        .@"packed" => return dg.renderUndefValue(w, ty.bitpackBackingInt(zcu), location),
+                        .@"packed" => return dg.renderUndefValue(w, ty.backingIntType(zcu), location),
                     }
                 },
                 .tuple_type => |tuple_info| {
@@ -1513,7 +1521,7 @@ pub const DeclGen = struct {
                             if (loaded_union.has_runtime_tag) try w.writeByte(' ');
                             if (loaded_union.layout == .auto) try w.writeByte('}');
                         },
-                        .@"packed" => return dg.renderUndefValue(w, ty.bitpackBackingInt(zcu), location),
+                        .@"packed" => return dg.renderUndefValue(w, ty.backingIntType(zcu), location),
                     }
                 },
                 .error_union_type => |error_union| {
@@ -1538,7 +1546,7 @@ pub const DeclGen = struct {
                     }
                     try w.writeByte('{');
                     const ai = ty.arrayInfo(zcu);
-                    if (ai.elem_type.eql(.u8, zcu)) {
+                    if (ai.elem_type.eql(.u8)) {
                         var literal: StringLiteral = .init(w, @intCast(ty.arrayLenIncludingSentinel(zcu)));
                         try literal.start();
                         var index: u64 = 0;
@@ -1565,6 +1573,7 @@ pub const DeclGen = struct {
                 },
                 .anyframe_type,
                 .opaque_type,
+                .spirv_type,
                 .func_type,
                 => unreachable,
 
@@ -1648,10 +1657,10 @@ pub const DeclGen = struct {
         switch (name) {
             .nav => |nav| try renderNavName(w, nav, ip),
             .nav_never_tail => |nav| try w.print("zig_never_tail_{f}__{d}", .{
-                fmtIdentUnsolo(ip.getNav(nav).name.toSlice(ip)), @intFromEnum(nav),
+                fmtIdentUnsolo(ip.getNav(nav).name.toSlice(ip)), @backingInt(nav),
             }),
             .nav_never_inline => |nav| try w.print("zig_never_inline_{f}__{d}", .{
-                fmtIdentUnsolo(ip.getNav(nav).name.toSlice(ip)), @intFromEnum(nav),
+                fmtIdentUnsolo(ip.getNav(nav).name.toSlice(ip)), @backingInt(nav),
             }),
             .@"export" => |@"export"| try w.print("{f}", .{fmtIdentSolo(@"export".extern_name.toSlice(ip))}),
         }
@@ -1975,9 +1984,9 @@ pub const DeclGen = struct {
         }
         switch (CType.classifyInt(ty, zcu)) {
             .void => unreachable, // opv
-            .small => try w.print("{c}{d}", .{
+            .small => |s| try w.print("{c}{d}", .{
                 signAbbrev(ty.intInfo(zcu).signedness),
-                ty.abiSize(zcu) * 8,
+                s.bits(zcu.getTarget()),
             }),
             .big => try w.writeAll("big"),
         }
@@ -2112,7 +2121,7 @@ pub fn genTagNameFn(
     try w.print("static {s} zig_tagName_{f}__{d}({s} tag) {{\n", .{
         slice_const_u8_sentinel_0_type_name,
         fmtIdentUnsolo(loaded_enum.name.toSlice(ip)),
-        @intFromEnum(enum_ty.toIntern()),
+        @backingInt(enum_ty.toIntern()),
         enum_type_name,
     });
     for (loaded_enum.field_names.get(ip), 0..) |field_name, field_index| {
@@ -2627,13 +2636,13 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
         if (f.liveness.isUnused(inst) and !f.air.mustLower(inst, ip))
             continue;
 
-        const result_value = switch (air_tags[@intFromEnum(inst)]) {
+        const result_value = switch (air_tags[@backingInt(inst)]) {
             // zig fmt: off
             .inferred_alloc, .inferred_alloc_comptime => unreachable,
 
-            // No "scalarize" legalizations are enabled, so these instructions never appear.
-            .legalize_vec_elem_val   => unreachable,
-            .legalize_vec_store_elem => unreachable,
+            // Possible because `Air.Legalize.scalarize_bit_cast_vector_non_elementwise` is enabled.
+            .legalize_vec_elem_val   => try airArrayElemVal(f, inst),
+            .legalize_vec_store_elem => try airLegalizeVecStoreElem(f, inst),
             // No soft float legalizations are enabled.
             .legalize_compiler_rt_call => unreachable,
 
@@ -2667,6 +2676,7 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
                     try airBinBuiltinCall(f, inst, "fmod", .none);
             },
             .div_floor => try airBinBuiltinCall(f, inst, "div_floor", .none),
+            .div_ceil  => try airBinBuiltinCall(f, inst, "div_ceil", .none),
             .mod       => try airBinBuiltinCall(f, inst, "mod", .none),
             .abs       => try airUnBuiltinCall(f, inst, air_datas[@intFromEnum(inst)].ty_op.operand, "abs", .none),
 
@@ -2746,8 +2756,15 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
             .alloc            => try airAlloc(f, inst),
             .ret_ptr          => try airRetPtr(f, inst),
             .assembly         => try airAsm(f, inst),
-            .bitcast          => try airBitcast(f, inst),
-            .intcast          => try airIntCast(f, inst),
+            .ptr_cast         => try airPtrCast(f, inst),
+            .ptr_from_int     => try airSimpleCast(f, inst),
+            .int_from_ptr     => try airSimpleCast(f, inst),
+            .error_cast       => try airNopCast(f, inst),
+            .error_from_int   => try airNopCast(f, inst),
+            .int_from_error   => try airNopCast(f, inst),
+            .union_from_enum  => try airUnionFromEnum(f, inst),
+            .bit_cast         => try airBitCast(f, inst),
+            .int_cast         => try airIntCast(f, inst),
             .trunc            => try airTrunc(f, inst),
             .load             => try airLoad(f, inst),
             .store            => try airStore(f, inst, false),
@@ -2808,7 +2825,7 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
 
             .field_parent_ptr => try airFieldParentPtr(f, inst),
 
-            .struct_field_val => try airStructFieldVal(f, inst),
+            .agg_field_val    => try airAggFieldVal(f, inst),
             .slice_ptr        => try airSliceField(f, inst, false, "ptr"),
             .slice_len        => try airSliceField(f, inst, false, "len"),
 
@@ -2841,6 +2858,7 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
             .div_float_optimized,
             .div_trunc_optimized,
             .div_floor_optimized,
+            .div_ceil_optimized,
             .div_exact_optimized,
             .rem_optimized,
             .mod_optimized,
@@ -2859,7 +2877,8 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
             .add_safe,
             .sub_safe,
             .mul_safe,
-            .intcast_safe,
+            .bit_cast_safe,
+            .int_cast_safe,
             .int_from_float_safe,
             .int_from_float_optimized_safe,
             => return f.fail("TODO implement safety_checked_instructions", .{}),
@@ -2877,6 +2896,7 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
             .work_item_id,
             .work_group_size,
             .work_group_id,
+            .spirv_runtime_array_len,
             => unreachable,
 
             // Instructions that are known to always be `noreturn` based on their tag.
@@ -2928,7 +2948,7 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
 }
 
 fn airSliceField(f: *Function, inst: Air.Inst.Index, is_ptr: bool, field_name: []const u8) !CValue {
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const inst_ty = f.typeOfIndex(inst);
     const operand = try f.resolveInst(ty_op.operand);
@@ -2950,7 +2970,7 @@ fn airSliceField(f: *Function, inst: Air.Inst.Index, is_ptr: bool, field_name: [
 fn airPtrElemVal(f: *Function, inst: Air.Inst.Index) !CValue {
     const zcu = f.dg.pt.zcu;
     const inst_ty = f.typeOfIndex(inst);
-    const bin_op = f.air.instructions.items(.data)[@intFromEnum(inst)].bin_op;
+    const bin_op = f.air.instructions.items(.data)[@backingInt(inst)].bin_op;
     assert(inst_ty.hasRuntimeBits(zcu));
 
     const ptr = try f.resolveInst(bin_op.lhs);
@@ -2976,7 +2996,7 @@ fn airPtrElemVal(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airPtrElemPtr(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_pl = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_pl;
+    const ty_pl = f.air.instructions.items(.data)[@backingInt(inst)].ty_pl;
     const bin_op = f.air.extraData(Air.Bin, ty_pl.payload).data;
 
     const inst_ty = f.typeOfIndex(inst);
@@ -3008,7 +3028,7 @@ fn airPtrElemPtr(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airSliceElemVal(f: *Function, inst: Air.Inst.Index) !CValue {
     const zcu = f.dg.pt.zcu;
     const inst_ty = f.typeOfIndex(inst);
-    const bin_op = f.air.instructions.items(.data)[@intFromEnum(inst)].bin_op;
+    const bin_op = f.air.instructions.items(.data)[@backingInt(inst)].bin_op;
     assert(inst_ty.hasRuntimeBits(zcu));
 
     const slice = try f.resolveInst(bin_op.lhs);
@@ -3030,7 +3050,7 @@ fn airSliceElemVal(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airSliceElemPtr(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_pl = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_pl;
+    const ty_pl = f.air.instructions.items(.data)[@backingInt(inst)].ty_pl;
     const bin_op = f.air.extraData(Air.Bin, ty_pl.payload).data;
 
     const inst_ty = f.typeOfIndex(inst);
@@ -3057,7 +3077,7 @@ fn airSliceElemPtr(f: *Function, inst: Air.Inst.Index) !CValue {
 
 fn airArrayElemVal(f: *Function, inst: Air.Inst.Index) !CValue {
     const zcu = f.dg.pt.zcu;
-    const bin_op = f.air.instructions.items(.data)[@intFromEnum(inst)].bin_op;
+    const bin_op = f.air.instructions.items(.data)[@backingInt(inst)].bin_op;
     const inst_ty = f.typeOfIndex(inst);
     assert(inst_ty.hasRuntimeBits(zcu));
 
@@ -3075,6 +3095,28 @@ fn airArrayElemVal(f: *Function, inst: Air.Inst.Index) !CValue {
     try w.writeAll("];");
     try f.newline();
     return local;
+}
+
+fn airLegalizeVecStoreElem(f: *Function, inst: Air.Inst.Index) !CValue {
+    const pl_op = f.air.instructions.items(.data)[@backingInt(inst)].pl_op;
+    const extra = f.air.extraData(Air.Bin, pl_op.payload).data;
+
+    const vec_ptr = try f.resolveInst(pl_op.operand);
+    const index = try f.resolveInst(extra.lhs);
+    const elem = try f.resolveInst(extra.rhs);
+    try reap(f, inst, &.{ pl_op.operand, extra.lhs, extra.rhs });
+
+    const w = &f.code.writer;
+
+    try f.writeCValueDerefMember(w, vec_ptr, .{ .identifier = "array" });
+    try w.writeByte('[');
+    try f.writeCValue(w, index, .other);
+    try w.writeAll("] = ");
+    try f.writeCValue(w, elem, .other);
+    try w.writeByte(';');
+    try f.newline();
+
+    return .none;
 }
 
 fn airAlloc(f: *Function, inst: Air.Inst.Index) !CValue {
@@ -3167,7 +3209,7 @@ fn airArg(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airLoad(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const ptr_ty = f.typeOf(ty_op.operand);
     const ptr_scalar_ty = ptr_ty.scalarType(zcu);
@@ -3184,35 +3226,42 @@ fn airLoad(f: *Function, inst: Air.Inst.Index) !CValue {
 
     try reap(f, inst, &.{ty_op.operand});
 
-    const is_aligned = if (ptr_info.flags.alignment != .none)
-        ptr_info.flags.alignment.order(src_ty.abiAlignment(zcu)).compare(.gte)
-    else
-        true;
+    const is_aligned = switch (ptr_info.flags.alignment) {
+        .none => true,
+        else => |ptr_align| ptr_align.compare(.gte, src_ty.abiAlignment(zcu)),
+    };
 
     const w = &f.code.writer;
     const local = try f.allocLocal(inst, src_ty);
-    const v = try Vectorize.start(f, inst, w, ptr_ty);
 
     if (!is_aligned) {
         try w.writeAll("memcpy(&");
         try f.writeCValue(w, local, .other);
-        try v.elem(f, w);
         try w.writeAll(", (const char *)");
-        try f.writeCValue(w, operand, .other);
-        try v.elem(f, w);
+        switch (ptr_info.flags.vector_index) {
+            .none => try f.writeCValue(w, operand, .other),
+            else => |index| {
+                try w.writeByte('&');
+                try f.writeCValue(w, operand, .other);
+                try w.print("[{d}]", .{@backingInt(index)});
+            },
+        }
         try w.writeAll(", sizeof(");
         try f.renderType(w, src_ty);
         try w.writeAll("))");
     } else {
         try f.writeCValue(w, local, .other);
-        try v.elem(f, w);
         try w.writeAll(" = ");
-        try f.writeCValueDeref(w, operand);
-        try v.elem(f, w);
+        switch (ptr_info.flags.vector_index) {
+            .none => try f.writeCValueDeref(w, operand),
+            else => |index| {
+                try f.writeCValue(w, operand, .other);
+                try w.print("[{d}]", .{@backingInt(index)});
+            },
+        }
     }
     try w.writeByte(';');
     try f.newline();
-    try v.end(f, inst, w);
 
     return local;
 }
@@ -3220,13 +3269,13 @@ fn airLoad(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airRet(f: *Function, inst: Air.Inst.Index, is_ptr: bool) !void {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const un_op = f.air.instructions.items(.data)[@intFromEnum(inst)].un_op;
+    const un_op = f.air.instructions.items(.data)[@backingInt(inst)].un_op;
     const w = &f.code.writer;
     const op_inst = un_op.toIndex();
     const op_ty = f.typeOf(un_op);
     const ret_ty = if (is_ptr) op_ty.childType(zcu) else op_ty;
 
-    if (op_inst != null and f.air.instructions.items(.tag)[@intFromEnum(op_inst.?)] == .call_always_tail) {
+    if (op_inst != null and f.air.instructions.items(.tag)[@backingInt(op_inst.?)] == .call_always_tail) {
         try reap(f, inst, &.{un_op});
         _ = try airCall(f, op_inst.?, .always_tail);
     } else if (ret_ty.hasRuntimeBits(zcu)) {
@@ -3252,7 +3301,7 @@ fn airRet(f: *Function, inst: Air.Inst.Index, is_ptr: bool) !void {
 fn airIntCast(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const operand = try f.resolveInst(ty_op.operand);
     try reap(f, inst, &.{ty_op.operand});
@@ -3283,7 +3332,7 @@ fn airIntCast(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airTrunc(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const operand = try f.resolveInst(ty_op.operand);
     try reap(f, inst, &.{ty_op.operand});
@@ -3370,7 +3419,7 @@ fn airStore(f: *Function, inst: Air.Inst.Index, safety: bool) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
     // *a = b;
-    const bin_op = f.air.instructions.items(.data)[@intFromEnum(inst)].bin_op;
+    const bin_op = f.air.instructions.items(.data)[@backingInt(inst)].bin_op;
 
     const ptr_ty = f.typeOf(bin_op.lhs);
     const ptr_scalar_ty = ptr_ty.scalarType(zcu);
@@ -3425,23 +3474,26 @@ fn airStore(f: *Function, inst: Air.Inst.Index, safety: bool) !CValue {
     if (!is_aligned) {
         // For this memcpy to safely work we need the rhs to have the same
         // underlying type as the lhs (i.e. they must both be arrays of the same underlying type).
-        assert(src_ty.eql(.fromInterned(ptr_info.child), zcu));
+        assert(src_ty.eql(.fromInterned(ptr_info.child)));
 
-        const v = try Vectorize.start(f, inst, w, ptr_ty);
         try w.writeAll("memcpy((char *)");
-        try f.writeCValue(w, ptr_val, .other);
-        try v.elem(f, w);
+        switch (ptr_info.flags.vector_index) {
+            .none => try f.writeCValue(w, ptr_val, .other),
+            else => |index| {
+                try w.writeByte('&');
+                try f.writeCValue(w, ptr_val, .other);
+                try w.print("[{d}]", .{@backingInt(index)});
+            },
+        }
         try w.writeAll(", &");
         switch (src_val) {
             .constant => |val| try f.dg.renderValueAsLvalue(w, val),
             else => try f.writeCValue(w, src_val, .other),
         }
-        try v.elem(f, w);
         try w.writeAll(", sizeof(");
         try f.renderType(w, src_ty);
         try w.writeAll("));");
         try f.newline();
-        try v.end(f, inst, w);
     } else {
         switch (ptr_val) {
             .local_ref => |ptr_local_index| switch (src_val) {
@@ -3451,15 +3503,18 @@ fn airStore(f: *Function, inst: Air.Inst.Index, safety: bool) !CValue {
             },
             else => {},
         }
-        const v = try Vectorize.start(f, inst, w, ptr_ty);
-        try f.writeCValueDeref(w, ptr_val);
-        try v.elem(f, w);
+
+        switch (ptr_info.flags.vector_index) {
+            .none => try f.writeCValueDeref(w, ptr_val),
+            else => |index| {
+                try f.writeCValue(w, ptr_val, .other);
+                try w.print("[{d}]", .{@backingInt(index)});
+            },
+        }
         try w.writeAll(" = ");
         try f.writeCValue(w, src_val, .other);
-        try v.elem(f, w);
         try w.writeByte(';');
         try f.newline();
-        try v.end(f, inst, w);
     }
     return .none;
 }
@@ -3467,7 +3522,7 @@ fn airStore(f: *Function, inst: Air.Inst.Index, safety: bool) !CValue {
 fn airOverflow(f: *Function, inst: Air.Inst.Index, operation: []const u8, info: BuiltinInfo) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_pl = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_pl;
+    const ty_pl = f.air.instructions.items(.data)[@backingInt(inst)].ty_pl;
     const bin_op = f.air.extraData(Air.Bin, ty_pl.payload).data;
 
     const lhs = try f.resolveInst(bin_op.lhs);
@@ -3529,7 +3584,7 @@ fn airOverflow(f: *Function, inst: Air.Inst.Index, operation: []const u8, info: 
 fn airNot(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
     const operand_ty = f.typeOf(ty_op.operand);
     const scalar_ty = operand_ty.scalarType(zcu);
     if (scalar_ty.toIntern() != .bool_type) return try airUnBuiltinCall(f, inst, ty_op.operand, "not", .bits);
@@ -3564,7 +3619,7 @@ fn airBinOp(
 ) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const bin_op = f.air.instructions.items(.data)[@intFromEnum(inst)].bin_op;
+    const bin_op = f.air.instructions.items(.data)[@backingInt(inst)].bin_op;
     const operand_ty = f.typeOf(bin_op.lhs);
     const scalar_ty = operand_ty.scalarType(zcu);
     if ((scalar_ty.isInt(zcu) and scalar_ty.bitSize(zcu) > 64) or scalar_ty.isRuntimeFloat())
@@ -3607,9 +3662,9 @@ fn airCmpOp(
     const lhs_ty = f.typeOf(data.lhs);
     const scalar_ty = lhs_ty.scalarType(zcu);
 
-    const scalar_bits = scalar_ty.bitSize(zcu);
-    if (scalar_ty.isInt(zcu) and scalar_bits > 64)
-        return airCmpBuiltinCall(
+    if (scalar_ty.isInt(zcu)) {
+        const scalar_bits = scalar_ty.bitSize(zcu);
+        if (scalar_bits > 64) return airCmpBuiltinCall(
             f,
             inst,
             data,
@@ -3617,6 +3672,7 @@ fn airCmpOp(
             .cmp,
             if (scalar_bits > 128) .bits else .none,
         );
+    }
     if (scalar_ty.isRuntimeFloat())
         return airCmpBuiltinCall(f, inst, data, operator, .operator, .none);
 
@@ -3659,12 +3715,12 @@ fn airEquality(
 ) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const bin_op = f.air.instructions.items(.data)[@intFromEnum(inst)].bin_op;
+    const bin_op = f.air.instructions.items(.data)[@backingInt(inst)].bin_op;
 
     const operand_ty = f.typeOf(bin_op.lhs);
-    const operand_bits = operand_ty.bitSize(zcu);
-    if (operand_ty.isAbiInt(zcu) and operand_bits > 64)
-        return airCmpBuiltinCall(
+    if (operand_ty.isAbiInt(zcu)) {
+        const operand_bits = operand_ty.bitSize(zcu);
+        if (operand_bits > 64) return airCmpBuiltinCall(
             f,
             inst,
             bin_op,
@@ -3672,6 +3728,7 @@ fn airEquality(
             .cmp,
             if (operand_bits > 128) .bits else .none,
         );
+    }
     if (operand_ty.isRuntimeFloat())
         return airCmpBuiltinCall(f, inst, bin_op, operator, .operator, .none);
 
@@ -3742,7 +3799,7 @@ fn airEquality(
 }
 
 fn airCmpLteErrorsLen(f: *Function, inst: Air.Inst.Index) !CValue {
-    const un_op = f.air.instructions.items(.data)[@intFromEnum(inst)].un_op;
+    const un_op = f.air.instructions.items(.data)[@backingInt(inst)].un_op;
 
     const operand = try f.resolveInst(un_op);
     try reap(f, inst, &.{un_op});
@@ -3752,7 +3809,7 @@ fn airCmpLteErrorsLen(f: *Function, inst: Air.Inst.Index) !CValue {
     try f.writeCValue(w, local, .other);
     try w.writeAll(" = ");
     try f.writeCValue(w, operand, .other);
-    try w.print(" < sizeof({f}) / sizeof(*{0f});", .{fmtIdentSolo("zig_errorName")});
+    try w.writeAll(" < sizeof(zig_errorName) / sizeof(*zig_errorName);");
     try f.newline();
     return local;
 }
@@ -3760,7 +3817,7 @@ fn airCmpLteErrorsLen(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airPtrAddSub(f: *Function, inst: Air.Inst.Index, operator: u8) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_pl = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_pl;
+    const ty_pl = f.air.instructions.items(.data)[@backingInt(inst)].ty_pl;
     const bin_op = f.air.extraData(Air.Bin, ty_pl.payload).data;
 
     const lhs = try f.resolveInst(bin_op.lhs);
@@ -3800,7 +3857,7 @@ fn airPtrAddSub(f: *Function, inst: Air.Inst.Index, operator: u8) !CValue {
 fn airMinMax(f: *Function, inst: Air.Inst.Index, operator: u8, operation: []const u8) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const bin_op = f.air.instructions.items(.data)[@intFromEnum(inst)].bin_op;
+    const bin_op = f.air.instructions.items(.data)[@backingInt(inst)].bin_op;
 
     const inst_ty = f.typeOfIndex(inst);
     const inst_scalar_ty = inst_ty.scalarType(zcu);
@@ -3840,7 +3897,7 @@ fn airMinMax(f: *Function, inst: Air.Inst.Index, operator: u8, operation: []cons
 }
 
 fn airSlice(f: *Function, inst: Air.Inst.Index) !CValue {
-    const ty_pl = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_pl;
+    const ty_pl = f.air.instructions.items(.data)[@backingInt(inst)].ty_pl;
     const bin_op = f.air.extraData(Air.Bin, ty_pl.payload).data;
 
     const ptr = try f.resolveInst(bin_op.lhs);
@@ -3957,13 +4014,13 @@ fn airCall(
                 .never_tail => {
                     try f.need_never_tail_funcs.put(gpa, fn_nav, {});
                     try w.print("zig_never_tail_{f}__{d}", .{
-                        fmtIdentUnsolo(ip.getNav(fn_nav).name.toSlice(ip)), @intFromEnum(fn_nav),
+                        fmtIdentUnsolo(ip.getNav(fn_nav).name.toSlice(ip)), @backingInt(fn_nav),
                     });
                 },
                 .never_inline => {
                     try f.need_never_inline_funcs.put(gpa, fn_nav, {});
                     try w.print("zig_never_inline_{f}__{d}", .{
-                        fmtIdentUnsolo(ip.getNav(fn_nav).name.toSlice(ip)), @intFromEnum(fn_nav),
+                        fmtIdentUnsolo(ip.getNav(fn_nav).name.toSlice(ip)), @backingInt(fn_nav),
                     });
                 },
                 else => unreachable,
@@ -3999,7 +4056,7 @@ fn airCall(
 }
 
 fn airDbgStmt(f: *Function, inst: Air.Inst.Index) !CValue {
-    const dbg_stmt = f.air.instructions.items(.data)[@intFromEnum(inst)].dbg_stmt;
+    const dbg_stmt = f.air.instructions.items(.data)[@backingInt(inst)].dbg_stmt;
     const w = &f.code.writer;
     // TODO re-evaluate whether to emit these or not. If we naively emit
     // these directives, the output file will report bogus line numbers because
@@ -4036,9 +4093,9 @@ fn airDbgInlineBlock(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airDbgVar(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const tag = f.air.instructions.items(.tag)[@intFromEnum(inst)];
-    const pl_op = f.air.instructions.items(.data)[@intFromEnum(inst)].pl_op;
-    const name: Air.NullTerminatedString = @enumFromInt(pl_op.payload);
+    const tag = f.air.instructions.items(.tag)[@backingInt(inst)];
+    const pl_op = f.air.instructions.items(.data)[@backingInt(inst)].pl_op;
+    const name: Air.NullTerminatedString = @fromBackingInt(@intCast(pl_op.payload));
     const operand_is_undef = if (pl_op.operand.toInterned()) |ip_index| Value.fromInterned(ip_index).isUndef(zcu) else false;
     if (!operand_is_undef) _ = try f.resolveInst(pl_op.operand);
 
@@ -4179,7 +4236,7 @@ fn lowerTry(
 }
 
 fn airBr(f: *Function, inst: Air.Inst.Index) !void {
-    const branch = f.air.instructions.items(.data)[@intFromEnum(inst)].br;
+    const branch = f.air.instructions.items(.data)[@backingInt(inst)].br;
     const block = f.blocks.get(branch.block_inst).?;
     const result = block.result;
     const w = &f.code.writer;
@@ -4206,14 +4263,14 @@ fn airBr(f: *Function, inst: Air.Inst.Index) !void {
 }
 
 fn airRepeat(f: *Function, inst: Air.Inst.Index) !void {
-    const repeat = f.air.instructions.items(.data)[@intFromEnum(inst)].repeat;
-    try f.code.writer.print("goto zig_loop_{d};\n", .{@intFromEnum(repeat.loop_inst)});
+    const repeat = f.air.instructions.items(.data)[@backingInt(inst)].repeat;
+    try f.code.writer.print("goto zig_loop_{d};\n", .{@backingInt(repeat.loop_inst)});
 }
 
 fn airSwitchDispatch(f: *Function, inst: Air.Inst.Index) !void {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const br = f.air.instructions.items(.data)[@intFromEnum(inst)].br;
+    const br = f.air.instructions.items(.data)[@backingInt(inst)].br;
     const w = &f.code.writer;
 
     if (br.operand.toInterned()) |cond_ip_index| {
@@ -4237,7 +4294,7 @@ fn airSwitchDispatch(f: *Function, inst: Air.Inst.Index) !void {
                 }
             }
         } else switch_br.cases_len;
-        try w.print("goto zig_switch_{d}_dispatch_{d};\n", .{ @intFromEnum(br.block_inst), target_case_idx });
+        try w.print("goto zig_switch_{d}_dispatch_{d};\n", .{ @backingInt(br.block_inst), target_case_idx });
         return;
     }
 
@@ -4249,128 +4306,243 @@ fn airSwitchDispatch(f: *Function, inst: Air.Inst.Index) !void {
     try f.writeCValue(w, cond, .other);
     try w.writeByte(';');
     try f.newline();
-    try w.print("goto zig_switch_{d}_loop;\n", .{@intFromEnum(br.block_inst)});
+    try w.print("goto zig_switch_{d}_loop;\n", .{@backingInt(br.block_inst)});
 }
 
-fn airBitcast(f: *Function, inst: Air.Inst.Index) !CValue {
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
-    const inst_ty = f.typeOfIndex(inst);
+fn airPtrCast(f: *Function, inst: Air.Inst.Index) Error!CValue {
+    const zcu = f.dg.pt.zcu;
+
+    const dest_ty = f.typeOfIndex(inst);
+    const ptr_ty = switch (dest_ty.zigTypeTag(zcu)) {
+        .optional => dest_ty.childType(zcu),
+        .pointer => dest_ty,
+        else => unreachable,
+    };
+
+    if (!ptr_ty.isSlice(zcu)) {
+        return airSimpleCast(f, inst);
+    }
+
+    // For slice casts we need to assign both fields.
+
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
+    const operand = try f.resolveInst(ty_op.operand);
+
+    const w = &f.code.writer;
+    const dest_local = try f.allocLocal(inst, dest_ty);
+
+    try f.writeCValueMember(w, dest_local, .{ .identifier = "ptr" });
+    try w.writeAll(" = (");
+    try f.renderType(w, ptr_ty.slicePtrFieldType(zcu));
+    try w.writeByte(')');
+    try f.writeCValueMember(w, operand, .{ .identifier = "ptr" });
+    try w.writeByte(';');
+    try f.newline();
+
+    try f.writeCValueMember(w, dest_local, .{ .identifier = "len" });
+    try w.writeAll(" = ");
+    try f.writeCValueMember(w, operand, .{ .identifier = "len" });
+    try w.writeByte(';');
+    try f.newline();
+
+    try reap(f, inst, &.{ty_op.operand});
+    return dest_local;
+}
+
+fn airSimpleCast(f: *Function, inst: Air.Inst.Index) Error!CValue {
+    const zcu = f.dg.pt.zcu;
+
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
+    const dest_ty = f.typeOfIndex(inst);
+    const operand_ty = f.typeOf(ty_op.operand);
+    const operand = try f.resolveInst(ty_op.operand);
+
+    const w = &f.code.writer;
+    const dest_local = try f.allocLocal(inst, dest_ty);
+    const v: Vectorize = try .start(f, inst, w, operand_ty);
+    try f.writeCValue(w, dest_local, .other);
+    try v.elem(f, w);
+    try w.writeAll(" = (");
+    try f.renderType(w, dest_ty.scalarType(zcu));
+    try w.writeByte(')');
+    try f.writeCValue(w, operand, .other);
+    try v.elem(f, w);
+    try w.writeByte(';');
+    try f.newline();
+    try v.end(f, inst, w);
+
+    try reap(f, inst, &.{ty_op.operand});
+    return dest_local;
+}
+
+fn airNopCast(f: *Function, inst: Air.Inst.Index) Error!CValue {
+    const zcu = f.dg.pt.zcu;
+
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
+    const dest_ty = f.typeOfIndex(inst);
+    const operand_ty = f.typeOf(ty_op.operand);
+    const operand = try f.resolveInst(ty_op.operand);
+
+    assert(operand_ty.abiSize(zcu) == dest_ty.abiSize(zcu));
+    assert(operand_ty.isAbiInt(zcu) == dest_ty.isAbiInt(zcu));
+
+    try reap(f, inst, &.{ty_op.operand});
+    return f.moveCValue(inst, dest_ty, operand);
+}
+
+fn airUnionFromEnum(f: *Function, inst: Air.Inst.Index) Error!CValue {
+    const zcu = f.dg.pt.zcu;
+
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
+    const dest_ty = f.typeOfIndex(inst);
+    const operand_ty = f.typeOf(ty_op.operand);
+    const operand = try f.resolveInst(ty_op.operand);
+
+    assert(dest_ty.zigTypeTag(zcu) == .@"union");
+    assert(operand_ty.zigTypeTag(zcu) == .@"enum");
+
+    const w = &f.code.writer;
+    const dest_local = try f.allocLocal(inst, dest_ty);
+    try f.writeCValueMember(w, dest_local, .{ .identifier = "tag" });
+    try w.writeAll(" = ");
+    try f.writeCValue(w, operand, .other);
+    try w.writeByte(';');
+    try f.newline();
+
+    try reap(f, inst, &.{ty_op.operand});
+    return dest_local;
+}
+
+fn airBitCast(f: *Function, inst: Air.Inst.Index) Error!CValue {
+    const pt = f.dg.pt;
+    const zcu = pt.zcu;
+    const w = &f.code.writer;
+
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
+    const dest_ty = f.typeOfIndex(inst);
 
     const operand = try f.resolveInst(ty_op.operand);
     const operand_ty = f.typeOf(ty_op.operand);
 
-    const bitcasted = try bitcast(f, inst_ty, operand, operand_ty);
-    try reap(f, inst, &.{ty_op.operand});
-    return f.moveCValue(inst, inst_ty, bitcasted);
-}
+    const dest_local = try f.allocLocal(inst, dest_ty);
 
-fn bitcast(f: *Function, dest_ty: Type, operand: CValue, operand_ty: Type) !CValue {
-    const pt = f.dg.pt;
-    const zcu = pt.zcu;
-    const target = &f.dg.mod.resolved_target.result;
-    const w = &f.code.writer;
+    // Because we have `scalarize_bit_cast_array` and `scalarize_bit_cast_vector_non_elementwise`
+    // enabled, we usually only see scalars here. The only case in which we may see vectors is when
+    // the operation happens elementwise, which we can handle with `Vectorize`.
+    var v: Vectorize = try .start(f, inst, w, operand_ty);
+    const operand_scalar_ty = operand_ty.scalarType(zcu);
+    const dest_scalar_ty = dest_ty.scalarType(zcu);
 
-    if (operand_ty.isAbiInt(zcu) and dest_ty.isAbiInt(zcu)) {
-        const src_info = dest_ty.intInfo(zcu);
-        const dest_info = operand_ty.intInfo(zcu);
-        if (src_info.signedness == dest_info.signedness and
-            src_info.bits == dest_info.bits) return operand;
-    }
-
-    if (dest_ty.isPtrAtRuntime(zcu) or operand_ty.isPtrAtRuntime(zcu)) {
-        const local = try f.allocLocal(null, dest_ty);
-        try f.writeCValue(w, local, .other);
+    // Some cases are handled with a simple cast:
+    // * float -> float
+    // * bool -> int
+    if ((operand_scalar_ty.isRuntimeFloat() and dest_scalar_ty.isRuntimeFloat()) or
+        (operand_scalar_ty.toIntern() == .bool_type and dest_scalar_ty.isAbiInt(zcu)))
+    {
+        try f.writeCValue(w, dest_local, .other);
+        try v.elem(f, w);
         try w.writeAll(" = (");
-        try f.renderType(w, dest_ty);
+        try f.renderType(w, dest_scalar_ty);
         try w.writeByte(')');
         try f.writeCValue(w, operand, .other);
+        try v.elem(f, w);
         try w.writeByte(';');
         try f.newline();
-        return local;
-    }
-
-    const local = try f.allocLocal(null, dest_ty);
-    // On big-endian targets, copying ABI integers with padding bits is awkward, because the padding bits are at the low bytes of the value.
-    // We need to offset the source or destination pointer appropriately and copy the right number of bytes.
-    if (target.cpu.arch.endian() == .big and dest_ty.isAbiInt(zcu) and !operand_ty.isAbiInt(zcu)) {
-        // e.g. [10]u8 -> u80. We need to offset the destination so that we copy to the least significant bits of the integer.
-        const offset = dest_ty.abiSize(zcu) - operand_ty.abiSize(zcu);
-        try w.writeAll("memcpy((char *)&");
-        try f.writeCValue(w, local, .other);
-        try w.print(" + {d}, &", .{offset});
-        switch (operand) {
-            .constant => |val| try f.dg.renderValueAsLvalue(w, val),
-            else => try f.writeCValue(w, operand, .other),
-        }
-        try w.print(", {d});", .{operand_ty.abiSize(zcu)});
-    } else if (target.cpu.arch.endian() == .big and operand_ty.isAbiInt(zcu) and !dest_ty.isAbiInt(zcu)) {
-        // e.g. u80 -> [10]u8. We need to offset the source so that we copy from the least significant bits of the integer.
-        const offset = operand_ty.abiSize(zcu) - dest_ty.abiSize(zcu);
+    } else if (dest_scalar_ty.toIntern() == .bool_type) {
+        // If the result is a boolean type, just check if the operand is non-zero.
+        assert(operand_scalar_ty.isAbiInt(zcu));
+        try f.writeCValue(w, dest_local, .other);
+        try v.elem(f, w);
+        try w.writeAll(" = ");
+        try f.writeCValue(w, operand, .other);
+        try v.elem(f, w);
+        try w.writeAll(" != 0;");
+        try f.newline();
+    } else if (dest_scalar_ty.isRuntimeFloat()) {
+        // For int->float, just do a memcpy.
+        assert(operand_scalar_ty.isAbiInt(zcu));
         try w.writeAll("memcpy(&");
-        try f.writeCValue(w, local, .other);
-        try w.writeAll(", (const char *)&");
-        switch (operand) {
-            .constant => |val| try f.dg.renderValueAsLvalue(w, val),
-            else => try f.writeCValue(w, operand, .other),
-        }
-        try w.print(" + {d}, {d});", .{ offset, dest_ty.abiSize(zcu) });
-    } else {
-        try w.writeAll("memcpy(&");
-        try f.writeCValue(w, local, .other);
+        try f.writeCValue(w, dest_local, .other);
+        try v.elem(f, w);
         try w.writeAll(", &");
         switch (operand) {
             .constant => |val| try f.dg.renderValueAsLvalue(w, val),
             else => try f.writeCValue(w, operand, .other),
         }
-        try w.print(", {d});", .{@min(dest_ty.abiSize(zcu), operand_ty.abiSize(zcu))});
-    }
+        try v.elem(f, w);
+        try w.print(", {d});", .{@min(operand_scalar_ty.abiSize(zcu), dest_scalar_ty.abiSize(zcu))});
+        try f.newline();
+    } else {
+        // The only remaining possibility is that the result is an integer. We will need to use
+        // `zig_wrap_*` to correct the "padding" bits after we populate the value bits.
+        assert(dest_scalar_ty.isAbiInt(zcu));
+        assert(operand_scalar_ty.isRuntimeFloat() or operand_scalar_ty.isAbiInt(zcu));
 
-    try f.newline();
+        // memcpy the value...
+        try w.writeAll("memcpy(&");
+        try f.writeCValue(w, dest_local, .other);
+        try v.elem(f, w);
+        try w.writeAll(", &");
+        switch (operand) {
+            .constant => |val| try f.dg.renderValueAsLvalue(w, val),
+            else => try f.writeCValue(w, operand, .other),
+        }
+        try v.elem(f, w);
+        try w.print(", {d});", .{@min(operand_scalar_ty.abiSize(zcu), dest_scalar_ty.abiSize(zcu))});
+        try f.newline();
 
-    // Ensure padding bits have the expected value.
-    if (dest_ty.isAbiInt(zcu)) {
-        switch (CType.classifyInt(dest_ty, zcu)) {
+        // ...and ensure padding bits have the correct value.
+        switch (CType.classifyInt(dest_scalar_ty, zcu)) {
             .void => unreachable, // opv
             .small => {
-                try f.writeCValue(w, local, .other);
+                try f.writeCValue(w, dest_local, .other);
+                try v.elem(f, w);
                 try w.writeAll(" = zig_wrap_");
-                try f.dg.renderTypeForBuiltinFnName(w, dest_ty);
+                try f.dg.renderTypeForBuiltinFnName(w, dest_scalar_ty);
                 try w.writeByte('(');
-                try f.writeCValue(w, local, .other);
-                try f.dg.renderBuiltinInfo(w, dest_ty, .bits);
+                try f.writeCValue(w, dest_local, .other);
+                try v.elem(f, w);
+                try f.dg.renderBuiltinInfo(w, dest_scalar_ty, .bits);
                 try w.writeAll(");");
                 try f.newline();
             },
             .big => |big| {
-                const dest_info = dest_ty.intInfo(zcu);
-                const padding_index: u16 = switch (target.cpu.arch.endian()) {
+                const dest_info = dest_scalar_ty.intInfo(zcu);
+                const padding_index: u16 = switch (f.dg.mod.resolved_target.result.cpu.arch.endian()) {
                     .little => big.limbs_len - 1,
                     .big => 0,
                 };
                 const wrap_bits = ((dest_info.bits - 1) % big.limb_size.bits()) + 1;
                 if (big.limb_size != .@"128" or dest_info.signedness == .unsigned) {
-                    try f.writeCValueMember(w, local, .{ .identifier = "limbs" });
-                    try w.print("[{d}] = zig_wrap_{c}{d}(", .{
+                    try f.writeCValue(w, dest_local, .other);
+                    try v.elem(f, w);
+                    try w.print(".limbs[{d}] = zig_wrap_{c}{d}(", .{
                         padding_index,
                         signAbbrev(dest_info.signedness),
                         big.limb_size.bits(),
                     });
-                    try f.writeCValueMember(w, local, .{ .identifier = "limbs" });
-                    try w.print("[{d}], {d});", .{ padding_index, wrap_bits });
+                    try f.writeCValue(w, dest_local, .other);
+                    try v.elem(f, w);
+                    try w.print(".limbs[{d}], {d});", .{ padding_index, wrap_bits });
                 } else {
-                    try f.writeCValueMember(w, local, .{ .identifier = "limbs" });
-                    try w.print("[{d}] = zig_bitCast_u128(zig_wrap_i128(zig_bitCast_i128(", .{
+                    try f.writeCValue(w, dest_local, .other);
+                    try v.elem(f, w);
+                    try w.print(".limbs[{d}] = zig_bitCast_u128(zig_wrap_i128(zig_bitCast_i128(", .{
                         padding_index,
                     });
-                    try f.writeCValueMember(w, local, .{ .identifier = "limbs" });
-                    try w.print("[{d}]), {d}));", .{ padding_index, wrap_bits });
+                    try f.writeCValue(w, dest_local, .other);
+                    try v.elem(f, w);
+                    try w.print(".limbs[{d}]), {d}));", .{ padding_index, wrap_bits });
                     try f.newline();
                 }
             },
         }
     }
 
-    return local;
+    try v.end(f, inst, w);
+
+    try reap(f, inst, &.{ty_op.operand});
+    return dest_local;
 }
 
 fn airTrap(f: *Function) !void {
@@ -4422,7 +4594,7 @@ fn airLoop(f: *Function, inst: Air.Inst.Index) !void {
     // this label. Since we need a label for arbitrary `repeat`
     // anyway, there's actually no need to use a "real" looping
     // construct at all!
-    try w.print("zig_loop_{d}:", .{@intFromEnum(inst)});
+    try w.print("zig_loop_{d}:", .{@backingInt(inst)});
     try f.newline();
     try genBodyInner(f, block.body); // no need to restore state, we're noreturn
 }
@@ -4475,7 +4647,7 @@ fn airSwitchBr(f: *Function, inst: Air.Inst.Index, is_dispatch_loop: bool) !void
     const cond_val = if (is_dispatch_loop) cond: {
         const new_local = try f.allocLocal(inst, cond_ty);
         try f.copyCValue(new_local, init_condition);
-        try w.print("zig_switch_{d}_loop:", .{@intFromEnum(inst)});
+        try w.print("zig_switch_{d}_loop:", .{@backingInt(inst)});
         try f.newline();
         try f.loop_switch_conds.put(gpa, inst, new_local.new_local);
         break :cond new_local;
@@ -4585,7 +4757,7 @@ fn airSwitchBr(f: *Function, inst: Air.Inst.Index, is_dispatch_loop: bool) !void
         f.indent();
         try f.newline();
         if (is_dispatch_loop) {
-            try w.print("zig_switch_{d}_dispatch_{d}:;", .{ @intFromEnum(inst), case.idx });
+            try w.print("zig_switch_{d}_dispatch_{d}:;", .{ @backingInt(inst), case.idx });
             try f.newline();
         }
         try genBodyResolveState(f, inst, liveness.deaths[case.idx], case.body, true);
@@ -4609,7 +4781,7 @@ fn airSwitchBr(f: *Function, inst: Air.Inst.Index, is_dispatch_loop: bool) !void
         try lowerSwitchToConditions(f, inst, cond_val, lowered_cond_ty, switch_br, liveness, is_dispatch_loop, true);
     }
     if (is_dispatch_loop) {
-        try w.print("zig_switch_{d}_dispatch_{d}: ", .{ @intFromEnum(inst), switch_br.cases_len });
+        try w.print("zig_switch_{d}_dispatch_{d}: ", .{ @backingInt(inst), switch_br.cases_len });
     }
     const else_body = it.elseBody();
     if (else_body.len > 0) {
@@ -4666,7 +4838,7 @@ fn lowerSwitchToConditions(
         f.indent();
         try f.newline();
         if (is_dispatch_loop) {
-            try w.print("zig_switch_{d}_dispatch_{d}: ", .{ @intFromEnum(inst), case.idx });
+            try w.print("zig_switch_{d}_dispatch_{d}: ", .{ @backingInt(inst), case.idx });
         }
         try genBodyResolveState(f, inst, liveness.deaths[case.idx], case.body, true);
         try f.outdent();
@@ -4678,7 +4850,7 @@ fn lowerSwitchToConditions(
 
     if (!only_ranges) {
         if (is_dispatch_loop) {
-            try w.print("zig_switch_{d}_dispatch_{d}: ", .{ @intFromEnum(inst), switch_br.cases_len });
+            try w.print("zig_switch_{d}_dispatch_{d}: ", .{ @backingInt(inst), switch_br.cases_len });
         }
         const else_body = it.elseBody();
         if (else_body.len > 0) {
@@ -4784,7 +4956,8 @@ fn airAsm(f: *Function, inst: Air.Inst.Index) !CValue {
         while (it.next()) |output| {
             const constraint = output.constraint;
 
-            if (constraint.len < 2 or constraint[0] != '=' or
+            if (constraint.len < 2 or
+                (constraint[0] != '=' and constraint[0] != '+') or
                 (constraint[1] == '{' and constraint[constraint.len - 1] != '}'))
             {
                 return f.fail("CBE: constraint not supported: '{s}'", .{constraint});
@@ -5037,7 +5210,7 @@ fn airIsNull(
 ) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const un_op = f.air.instructions.items(.data)[@intFromEnum(inst)].un_op;
+    const un_op = f.air.instructions.items(.data)[@backingInt(inst)].un_op;
 
     const w = &f.code.writer;
     const operand = try f.resolveInst(un_op);
@@ -5095,7 +5268,7 @@ fn airIsNull(
 fn airOptionalPayload(f: *Function, inst: Air.Inst.Index, is_ptr: bool) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const inst_ty = f.typeOfIndex(inst);
     const operand_ty = f.typeOf(ty_op.operand);
@@ -5132,7 +5305,7 @@ fn airOptionalPayload(f: *Function, inst: Air.Inst.Index, is_ptr: bool) !CValue 
 fn airOptionalPayloadPtrSet(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
     const w = &f.code.writer;
     const operand = try f.resolveInst(ty_op.operand);
     try reap(f, inst, &.{ty_op.operand});
@@ -5245,7 +5418,7 @@ fn fieldLocation(
 }
 
 fn airStructFieldPtr(f: *Function, inst: Air.Inst.Index) !CValue {
-    const ty_pl = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_pl;
+    const ty_pl = f.air.instructions.items(.data)[@backingInt(inst)].ty_pl;
     const extra = f.air.extraData(Air.StructField, ty_pl.payload).data;
 
     const container_ptr_val = try f.resolveInst(extra.struct_operand);
@@ -5255,7 +5428,7 @@ fn airStructFieldPtr(f: *Function, inst: Air.Inst.Index) !CValue {
 }
 
 fn airStructFieldPtrIndex(f: *Function, inst: Air.Inst.Index, index: u8) !CValue {
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const container_ptr_val = try f.resolveInst(ty_op.operand);
     try reap(f, inst, &.{ty_op.operand});
@@ -5266,7 +5439,7 @@ fn airStructFieldPtrIndex(f: *Function, inst: Air.Inst.Index, index: u8) !CValue
 fn airFieldParentPtr(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_pl = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_pl;
+    const ty_pl = f.air.instructions.items(.data)[@backingInt(inst)].ty_pl;
     const extra = f.air.extraData(Air.FieldParentPtr, ty_pl.payload).data;
 
     const container_ptr_ty = f.typeOfIndex(inst);
@@ -5358,11 +5531,11 @@ fn fieldPtr(
     return local;
 }
 
-fn airStructFieldVal(f: *Function, inst: Air.Inst.Index) !CValue {
+fn airAggFieldVal(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
-    const ty_pl = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_pl;
+    const ty_pl = f.air.instructions.items(.data)[@backingInt(inst)].ty_pl;
     const extra = f.air.extraData(Air.StructField, ty_pl.payload).data;
 
     const inst_ty = f.typeOfIndex(inst);
@@ -5373,7 +5546,7 @@ fn airStructFieldVal(f: *Function, inst: Air.Inst.Index) !CValue {
     const struct_ty = f.typeOf(extra.struct_operand);
     const w = &f.code.writer;
 
-    assert(struct_ty.containerLayout(zcu) != .@"packed"); // `Air.Legalize.Feature.expand_packed_struct_field_val` handles this case
+    assert(struct_ty.containerLayout(zcu) != .@"packed"); // `Air.Legalize.Feature.expand_packed_agg_field_val` handles this case
     const field_name: CValue = switch (ip.indexToKey(struct_ty.toIntern())) {
         .struct_type => .{ .identifier = struct_ty.structFieldName(extra.field_index, zcu).unwrap().?.toSlice(ip) },
         .union_type => name: {
@@ -5400,7 +5573,7 @@ fn airStructFieldVal(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airUnwrapErrUnionErr(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const inst_ty = f.typeOfIndex(inst);
     const operand = try f.resolveInst(ty_op.operand);
@@ -5426,7 +5599,7 @@ fn airUnwrapErrUnionErr(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airUnwrapErrUnionPay(f: *Function, inst: Air.Inst.Index, is_ptr: bool) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const inst_ty = f.typeOfIndex(inst);
     const operand = try f.resolveInst(ty_op.operand);
@@ -5462,7 +5635,7 @@ fn airUnwrapErrUnionPay(f: *Function, inst: Air.Inst.Index, is_ptr: bool) !CValu
 
 fn airWrapOptional(f: *Function, inst: Air.Inst.Index) !CValue {
     const zcu = f.dg.pt.zcu;
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const inst_ty = f.typeOfIndex(inst);
 
@@ -5500,7 +5673,7 @@ fn airWrapOptional(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airWrapErrUnionErr(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const inst_ty = f.typeOfIndex(inst);
     const payload_ty = inst_ty.errorUnionPayload(zcu);
@@ -5530,7 +5703,7 @@ fn airWrapErrUnionErr(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airErrUnionPayloadPtrSet(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const w = &f.code.writer;
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
     const inst_ty = f.typeOfIndex(inst);
     const operand = try f.resolveInst(ty_op.operand);
 
@@ -5573,7 +5746,7 @@ fn airSaveErrReturnTraceIndex(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airWrapErrUnionPay(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const inst_ty = f.typeOfIndex(inst);
     const payload_ty = inst_ty.errorUnionPayload(zcu);
@@ -5601,7 +5774,7 @@ fn airWrapErrUnionPay(f: *Function, inst: Air.Inst.Index) !CValue {
 
 fn airIsErr(f: *Function, inst: Air.Inst.Index, is_ptr: bool, operator: []const u8) !CValue {
     const pt = f.dg.pt;
-    const un_op = f.air.instructions.items(.data)[@intFromEnum(inst)].un_op;
+    const un_op = f.air.instructions.items(.data)[@backingInt(inst)].un_op;
 
     const w = &f.code.writer;
     const operand = try f.resolveInst(un_op);
@@ -5625,7 +5798,7 @@ fn airIsErr(f: *Function, inst: Air.Inst.Index, is_ptr: bool, operator: []const 
 fn airArrayToSlice(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const operand = try f.resolveInst(ty_op.operand);
     try reap(f, inst, &.{ty_op.operand});
@@ -5662,7 +5835,7 @@ fn airArrayToSlice(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airFloatCast(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const inst_ty = f.typeOfIndex(inst);
     const inst_scalar_ty = inst_ty.scalarType(zcu);
@@ -5766,7 +5939,7 @@ fn airBinBuiltinCall(
 ) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const bin_op = f.air.instructions.items(.data)[@intFromEnum(inst)].bin_op;
+    const bin_op = f.air.instructions.items(.data)[@backingInt(inst)].bin_op;
 
     const operand_ty = f.typeOf(bin_op.lhs);
     const is_big = lowersToBigInt(operand_ty, zcu);
@@ -5879,7 +6052,7 @@ fn airCmpBuiltinCall(
 fn airCmpxchg(f: *Function, inst: Air.Inst.Index, flavor: [*:0]const u8) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_pl = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_pl;
+    const ty_pl = f.air.instructions.items(.data)[@backingInt(inst)].ty_pl;
     const extra = f.air.extraData(Air.Cmpxchg, ty_pl.payload).data;
     const inst_ty = f.typeOfIndex(inst);
     const ptr = try f.resolveInst(extra.ptr);
@@ -5978,7 +6151,7 @@ fn airCmpxchg(f: *Function, inst: Air.Inst.Index, flavor: [*:0]const u8) !CValue
 fn airAtomicRmw(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const pl_op = f.air.instructions.items(.data)[@intFromEnum(inst)].pl_op;
+    const pl_op = f.air.instructions.items(.data)[@backingInt(inst)].pl_op;
     const extra = f.air.extraData(Air.AtomicRmw, pl_op.payload).data;
     const inst_ty = f.typeOfIndex(inst);
     const ptr_ty = f.typeOf(pl_op.operand);
@@ -6035,7 +6208,7 @@ fn airAtomicRmw(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airAtomicLoad(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const atomic_load = f.air.instructions.items(.data)[@intFromEnum(inst)].atomic_load;
+    const atomic_load = f.air.instructions.items(.data)[@backingInt(inst)].atomic_load;
     const ptr = try f.resolveInst(atomic_load.ptr);
     try reap(f, inst, &.{atomic_load.ptr});
     const ptr_ty = f.typeOf(atomic_load.ptr);
@@ -6073,7 +6246,7 @@ fn airAtomicLoad(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airAtomicStore(f: *Function, inst: Air.Inst.Index, order: [*:0]const u8) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const bin_op = f.air.instructions.items(.data)[@intFromEnum(inst)].bin_op;
+    const bin_op = f.air.instructions.items(.data)[@backingInt(inst)].bin_op;
     const ptr_ty = f.typeOf(bin_op.lhs);
     const ty = ptr_ty.childType(zcu);
     const ptr = try f.resolveInst(bin_op.lhs);
@@ -6110,7 +6283,7 @@ fn airAtomicStore(f: *Function, inst: Air.Inst.Index, order: [*:0]const u8) !CVa
 fn airMemset(f: *Function, inst: Air.Inst.Index, safety: bool) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const bin_op = f.air.instructions.items(.data)[@intFromEnum(inst)].bin_op;
+    const bin_op = f.air.instructions.items(.data)[@backingInt(inst)].bin_op;
     const dest_ty = f.typeOf(bin_op.lhs);
     const dest_slice = try f.resolveInst(bin_op.lhs);
     const value = try f.resolveInst(bin_op.rhs);
@@ -6145,28 +6318,32 @@ fn airMemset(f: *Function, inst: Air.Inst.Index, safety: bool) !CValue {
         return .none;
     }
 
-    if (elem_abi_size == 1 and !dest_ty.isVolatilePtr(zcu)) {
-        const bitcasted = try bitcast(f, .u8, value, elem_ty);
+    if (elem_abi_size == 1 and elem_ty.isAbiInt(zcu) and !dest_ty.isVolatilePtr(zcu)) {
         try w.writeAll("memset(");
         switch (dest_ty.ptrSize(zcu)) {
             .slice => {
                 try f.writeCValueMember(w, dest_slice, .{ .identifier = "ptr" });
-                try w.writeAll(", ");
-                try f.writeCValue(w, bitcasted, .other);
+                try w.writeAll(", *(const char *)&");
+                switch (value) {
+                    .constant => |v| try f.dg.renderValueAsLvalue(w, v),
+                    else => try f.writeCValue(w, value, .other),
+                }
                 try w.writeAll(", ");
                 try f.writeCValueMember(w, dest_slice, .{ .identifier = "len" });
             },
             .one => {
                 try f.writeCValue(w, dest_slice, .other);
-                try w.writeAll(", ");
-                try f.writeCValue(w, bitcasted, .other);
+                try w.writeAll(", *(const char *)&");
+                switch (value) {
+                    .constant => |v| try f.dg.renderValueAsLvalue(w, v),
+                    else => try f.writeCValue(w, value, .other),
+                }
                 try w.print(", {d}", .{dest_ty.childType(zcu).arrayLen(zcu)});
             },
             .many, .c => unreachable,
         }
         try w.writeAll(");");
         try f.newline();
-        try f.freeCValue(inst, bitcasted);
         try reap(f, inst, &.{ bin_op.lhs, bin_op.rhs });
         return .none;
     }
@@ -6212,7 +6389,7 @@ fn airMemset(f: *Function, inst: Air.Inst.Index, safety: bool) !CValue {
 fn airMemcpy(f: *Function, inst: Air.Inst.Index, function_paren: []const u8) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const bin_op = f.air.instructions.items(.data)[@intFromEnum(inst)].bin_op;
+    const bin_op = f.air.instructions.items(.data)[@backingInt(inst)].bin_op;
     const dest_ptr = try f.resolveInst(bin_op.lhs);
     const src_ptr = try f.resolveInst(bin_op.rhs);
     const dest_ty = f.typeOf(bin_op.lhs);
@@ -6254,7 +6431,7 @@ fn airMemcpy(f: *Function, inst: Air.Inst.Index, function_paren: []const u8) !CV
 fn airSetUnionTag(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const bin_op = f.air.instructions.items(.data)[@intFromEnum(inst)].bin_op;
+    const bin_op = f.air.instructions.items(.data)[@backingInt(inst)].bin_op;
     const union_ptr = try f.resolveInst(bin_op.lhs);
     const new_tag = try f.resolveInst(bin_op.rhs);
     try reap(f, inst, &.{ bin_op.lhs, bin_op.rhs });
@@ -6275,7 +6452,7 @@ fn airSetUnionTag(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airGetUnionTag(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const operand = try f.resolveInst(ty_op.operand);
     try reap(f, inst, &.{ty_op.operand});
@@ -6299,7 +6476,7 @@ fn airTagName(f: *Function, inst: Air.Inst.Index) !CValue {
     const zcu = f.dg.pt.zcu;
     const ip = &zcu.intern_pool;
     const gpa = zcu.comp.gpa;
-    const un_op = f.air.instructions.items(.data)[@intFromEnum(inst)].un_op;
+    const un_op = f.air.instructions.items(.data)[@backingInt(inst)].un_op;
 
     const inst_ty = f.typeOfIndex(inst);
     const enum_ty = f.typeOf(un_op);
@@ -6312,7 +6489,7 @@ fn airTagName(f: *Function, inst: Air.Inst.Index) !CValue {
     try f.need_tag_name_funcs.put(gpa, enum_ty.toIntern(), {});
     try w.print(" = zig_tagName_{f}__{d}(", .{
         fmtIdentUnsolo(enum_ty.containerTypeName(ip).toSlice(ip)),
-        @intFromEnum(enum_ty.toIntern()),
+        @backingInt(enum_ty.toIntern()),
     });
     try f.writeCValue(w, operand, .other);
     try w.writeAll(");");
@@ -6322,7 +6499,7 @@ fn airTagName(f: *Function, inst: Air.Inst.Index) !CValue {
 }
 
 fn airErrorName(f: *Function, inst: Air.Inst.Index) !CValue {
-    const un_op = f.air.instructions.items(.data)[@intFromEnum(inst)].un_op;
+    const un_op = f.air.instructions.items(.data)[@backingInt(inst)].un_op;
 
     const w = &f.code.writer;
     const inst_ty = f.typeOfIndex(inst);
@@ -6339,7 +6516,7 @@ fn airErrorName(f: *Function, inst: Air.Inst.Index) !CValue {
 }
 
 fn airSplat(f: *Function, inst: Air.Inst.Index) !CValue {
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const operand = try f.resolveInst(ty_op.operand);
     try reap(f, inst, &.{ty_op.operand});
@@ -6361,7 +6538,7 @@ fn airSplat(f: *Function, inst: Air.Inst.Index) !CValue {
 }
 
 fn airSelect(f: *Function, inst: Air.Inst.Index) !CValue {
-    const pl_op = f.air.instructions.items(.data)[@intFromEnum(inst)].pl_op;
+    const pl_op = f.air.instructions.items(.data)[@backingInt(inst)].pl_op;
     const extra = f.air.extraData(Air.Bin, pl_op.payload).data;
 
     const pred = try f.resolveInst(pl_op.operand);
@@ -6468,7 +6645,7 @@ fn airShuffleTwo(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airReduce(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const reduce = f.air.instructions.items(.data)[@intFromEnum(inst)].reduce;
+    const reduce = f.air.instructions.items(.data)[@backingInt(inst)].reduce;
 
     const scalar_ty = f.typeOfIndex(inst);
     const operand = try f.resolveInst(reduce.operand);
@@ -6607,7 +6784,7 @@ fn airAggregateInit(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
-    const ty_pl = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_pl;
+    const ty_pl = f.air.instructions.items(.data)[@backingInt(inst)].ty_pl;
     const inst_ty = f.typeOfIndex(inst);
     const len: usize = @intCast(inst_ty.arrayLen(zcu));
     const elements: []const Air.Inst.Ref = @ptrCast(f.air.extra.items[ty_pl.payload..][0..len]);
@@ -6683,7 +6860,7 @@ fn airUnionInit(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
-    const ty_pl = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_pl;
+    const ty_pl = f.air.instructions.items(.data)[@backingInt(inst)].ty_pl;
     const extra = f.air.extraData(Air.UnionInit, ty_pl.payload).data;
     const field_index = extra.field_index;
 
@@ -6727,7 +6904,7 @@ fn airUnionInit(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airPrefetch(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const prefetch = f.air.instructions.items(.data)[@intFromEnum(inst)].prefetch;
+    const prefetch = f.air.instructions.items(.data)[@backingInt(inst)].prefetch;
 
     const ptr_ty = f.typeOf(prefetch.ptr);
     const ptr = try f.resolveInst(prefetch.ptr);
@@ -6741,7 +6918,7 @@ fn airPrefetch(f: *Function, inst: Air.Inst.Index) !CValue {
                 try f.writeCValueMember(w, ptr, .{ .identifier = "ptr" })
             else
                 try f.writeCValue(w, ptr, .other);
-            try w.print(", {d}, {d});", .{ @intFromEnum(prefetch.rw), prefetch.locality });
+            try w.print(", {d}, {d});", .{ @backingInt(prefetch.rw), prefetch.locality });
             try f.newline();
         },
         // The available prefetch intrinsics do not accept a cache argument; only
@@ -6753,7 +6930,7 @@ fn airPrefetch(f: *Function, inst: Air.Inst.Index) !CValue {
 }
 
 fn airWasmMemorySize(f: *Function, inst: Air.Inst.Index) !CValue {
-    const pl_op = f.air.instructions.items(.data)[@intFromEnum(inst)].pl_op;
+    const pl_op = f.air.instructions.items(.data)[@backingInt(inst)].pl_op;
 
     const w = &f.code.writer;
     const inst_ty = f.typeOfIndex(inst);
@@ -6768,7 +6945,7 @@ fn airWasmMemorySize(f: *Function, inst: Air.Inst.Index) !CValue {
 }
 
 fn airWasmMemoryGrow(f: *Function, inst: Air.Inst.Index) !CValue {
-    const pl_op = f.air.instructions.items(.data)[@intFromEnum(inst)].pl_op;
+    const pl_op = f.air.instructions.items(.data)[@backingInt(inst)].pl_op;
 
     const w = &f.code.writer;
     const inst_ty = f.typeOfIndex(inst);
@@ -6788,7 +6965,7 @@ fn airWasmMemoryGrow(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airMulAdd(f: *Function, inst: Air.Inst.Index) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
-    const pl_op = f.air.instructions.items(.data)[@intFromEnum(inst)].pl_op;
+    const pl_op = f.air.instructions.items(.data)[@backingInt(inst)].pl_op;
     const bin_op = f.air.extraData(Air.Bin, pl_op.payload).data;
 
     const mulend1 = try f.resolveInst(bin_op.lhs);
@@ -6823,7 +7000,7 @@ fn airMulAdd(f: *Function, inst: Air.Inst.Index) !CValue {
 }
 
 fn airRuntimeNavPtr(f: *Function, inst: Air.Inst.Index) !CValue {
-    const ty_nav = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_nav;
+    const ty_nav = f.air.instructions.items(.data)[@backingInt(inst)].ty_nav;
     const w = &f.code.writer;
     const local = try f.allocLocal(inst, .fromInterned(ty_nav.ty));
     try f.writeCValue(w, local, .other);
@@ -6855,7 +7032,7 @@ fn airCVaStart(f: *Function, inst: Air.Inst.Index) !CValue {
 }
 
 fn airCVaArg(f: *Function, inst: Air.Inst.Index) !CValue {
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const inst_ty = f.typeOfIndex(inst);
     const va_list = try f.resolveInst(ty_op.operand);
@@ -6874,7 +7051,7 @@ fn airCVaArg(f: *Function, inst: Air.Inst.Index) !CValue {
 }
 
 fn airCVaEnd(f: *Function, inst: Air.Inst.Index) !CValue {
-    const un_op = f.air.instructions.items(.data)[@intFromEnum(inst)].un_op;
+    const un_op = f.air.instructions.items(.data)[@backingInt(inst)].un_op;
 
     const va_list = try f.resolveInst(un_op);
     try reap(f, inst, &.{un_op});
@@ -6888,7 +7065,7 @@ fn airCVaEnd(f: *Function, inst: Air.Inst.Index) !CValue {
 }
 
 fn airCVaCopy(f: *Function, inst: Air.Inst.Index) !CValue {
-    const ty_op = f.air.instructions.items(.data)[@intFromEnum(inst)].ty_op;
+    const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
     const inst_ty = f.typeOfIndex(inst);
     const va_list = try f.resolveInst(ty_op.operand);
@@ -7653,9 +7830,9 @@ fn freeLocal(f: *Function, inst: ?Air.Inst.Index, local_index: LocalIndex, ref_i
     const local = f.locals.items[local_index];
     if (inst) |i| {
         if (ref_inst) |operand| {
-            log.debug("%{d}: freeing t{d} (operand %{d})", .{ @intFromEnum(i), local_index, operand });
+            log.debug("%{d}: freeing t{d} (operand %{d})", .{ @backingInt(i), local_index, operand });
         } else {
-            log.debug("%{d}: freeing t{d}", .{ @intFromEnum(i), local_index });
+            log.debug("%{d}: freeing t{d}", .{ @backingInt(i), local_index });
         }
     } else {
         if (ref_inst) |operand| {
@@ -7738,11 +7915,11 @@ fn renderNavName(w: *Writer, nav_index: InternPool.Nav.Index, ip: *const InternP
         const fqn_slice = ip.getNav(nav_index).fqn.toSlice(ip);
         try w.print("{f}__{d}", .{
             fmtIdentUnsolo(fqn_slice[0..@min(fqn_slice.len, 100)]),
-            @intFromEnum(nav_index),
+            @backingInt(nav_index),
         });
     }
 }
 
 fn renderUavName(w: *Writer, uav: Value) !void {
-    try w.print("__anon_{d}", .{@intFromEnum(uav.toIntern())});
+    try w.print("__anon_{d}", .{@backingInt(uav.toIntern())});
 }

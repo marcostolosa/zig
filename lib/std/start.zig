@@ -70,7 +70,20 @@ comptime {
             // case it's not required to provide an entrypoint such as main.
             if (!@hasDecl(root, start_sym_name) and @hasDecl(root, "main")) @export(&wasm_freestanding_start, .{ .name = start_sym_name });
         } else switch (native_os) {
-            .other, .freestanding, .@"3ds", .psp, .vita => {},
+            .other,
+            .freestanding,
+            .vulkan,
+            .opengl,
+            .opencl,
+
+            .@"3ds",
+            .wiiu,
+            .@"switch",
+
+            .psx,
+            .psp,
+            .vita,
+            => {},
             else => if (!@hasDecl(root, start_sym_name)) @export(&_start, .{ .name = start_sym_name }),
         }
     }
@@ -81,7 +94,7 @@ fn DllMainCRTStartup(
     fdwReason: std.os.windows.DWORD,
     lpReserved: std.os.windows.LPVOID,
 ) callconv(.winapi) std.os.windows.BOOL {
-    if (!builtin.single_threaded and !builtin.link_libc) {
+    if (!builtin.single_threaded) {
         _ = @import("os/windows/tls.zig");
     }
 
@@ -128,14 +141,14 @@ fn EfiMain(handle: uefi.Handle, system_table: *uefi.tables.SystemTable) callconv
             return 0;
         },
         uefi.Status => {
-            return @intFromEnum(root.main());
+            return @backingInt(root.main());
         },
         uefi.Error!void => {
             root.main() catch |err| switch (err) {
                 error.Unexpected => @panic("EfiMain: unexpected error"),
                 else => {
                     const status = uefi.Status.fromError(@errorCast(err));
-                    return @intFromEnum(status);
+                    return @backingInt(status);
                 },
             };
 
@@ -373,7 +386,7 @@ fn _start() callconv(.naked) noreturn {
             \\ jalr $t9
             ,
             .mips64, .mips64el => switch (builtin.abi) {
-                .gnuabin32, .muslabin32 =>
+                .gnuabin32, .muslabin32, .abin32 =>
                 \\ move $fp, $zero
                 \\ bal 1f
                 \\ .gpword .
@@ -729,8 +742,8 @@ fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
 const bad_main_ret = "expected return type of main to be 'void', '!void', 'noreturn', 'u8', or '!u8'";
 
 const use_safe_allocator = !is_wasm and switch (builtin.mode) {
-    .Debug, .ReleaseSafe => true,
-    .ReleaseFast, .ReleaseSmall => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
+    .debug, .safe => true,
+    .fast, .small => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
 };
 var safe_allocator: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
 

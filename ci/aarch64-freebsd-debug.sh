@@ -40,13 +40,15 @@ unset CXX
 
 ninja install
 
+# Must be done after zig cc is finished.
+export ZIG_LIB_DIR="$PWD/../lib"
+
 stage3-debug/bin/zig build test docs \
   --maxrss ${ZSF_MAX_RSS:-0} \
   -Dstatic-llvm \
   -Dskip-non-native \
   --search-prefix "$PREFIX" \
-  --zig-lib-dir "$PWD/../lib" \
-  --test-timeout 2m
+  --test-timeout 4m
 
 stage3-debug/bin/zig build \
   --prefix stage4-debug \

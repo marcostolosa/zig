@@ -43,7 +43,7 @@ const arch_bits = switch (native_arch) {
     .microblaze, .microblazeel => @import("linux/microblaze.zig"),
     .mips, .mipsel => @import("linux/mips.zig"),
     .mips64, .mips64el => switch (builtin.abi) {
-        .gnuabin32, .muslabin32 => @import("linux/mipsn32.zig"),
+        .gnuabin32, .muslabin32, .abin32 => @import("linux/mipsn32.zig"),
         else => @import("linux/mips64.zig"),
     },
     .or1k => @import("linux/or1k.zig"),
@@ -57,7 +57,7 @@ const arch_bits = switch (native_arch) {
     .sparc64 => @import("linux/sparc64.zig"),
     .x86 => @import("linux/x86.zig"),
     .x86_64 => switch (builtin.abi) {
-        .gnux32, .muslx32 => @import("linux/x32.zig"),
+        .gnux32, .muslx32, .x32 => @import("linux/x32.zig"),
         else => @import("linux/x86_64.zig"),
     },
     .xtensa, .xtensaeb => @import("linux/xtensa.zig"),
@@ -80,6 +80,7 @@ pub const restore_rt = syscall_bits.restore_rt;
 pub const socketcall = syscall_bits.socketcall;
 pub const syscall_pipe = syscall_bits.syscall_pipe;
 pub const syscall_fork = syscall_bits.syscall_fork;
+pub const syscall_lseek = syscall_bits.syscall_lseek;
 
 pub fn clone(
     func: *const fn (arg: usize) callconv(.c) u8,
@@ -143,7 +144,7 @@ pub const SYS = switch (native_arch) {
     .microblaze, .microblazeel => syscalls.Microblaze,
     .mips, .mipsel => syscalls.MipsO32,
     .mips64, .mips64el => switch (builtin.abi) {
-        .gnuabin32, .muslabin32 => syscalls.MipsN32,
+        .gnuabin32, .muslabin32, .abin32 => syscalls.MipsN32,
         else => syscalls.MipsN64,
     },
     .or1k => syscalls.OpenRisc,
@@ -157,7 +158,7 @@ pub const SYS = switch (native_arch) {
     .sparc64 => syscalls.Sparc64,
     .x86 => syscalls.X86,
     .x86_64 => switch (builtin.abi) {
-        .gnux32, .muslx32 => syscalls.X32,
+        .gnux32, .muslx32, .x32 => syscalls.X32,
         else => syscalls.X64,
     },
     .xtensa, .xtensaeb => syscalls.Xtensa,
@@ -751,10 +752,10 @@ fn splitValue64(val: i64) [2]u32 {
 }
 
 /// Get the errno from a syscall return value. SUCCESS means no error.
-pub fn errno(r: usize) E {
-    const signed_r: isize = @bitCast(r);
+pub fn errno(r: u64) E {
+    const signed_r: i32 = @bitCast(@as(u32, @truncate(r)));
     const int = if (signed_r > -4096 and signed_r < 0) -signed_r else 0;
-    return @enumFromInt(int);
+    return @fromBackingInt(@intCast(int));
 }
 
 pub fn brk(addr: usize) usize {
@@ -821,7 +822,7 @@ pub fn fork() usize {
     } else if (@hasField(SYS, "fork")) {
         return syscall0(.fork);
     } else {
-        return syscall2(.clone, @intFromEnum(SIG.CHLD), 0);
+        return syscall2(.clone, @backingInt(SIG.CHLD), 0);
     }
 }
 
@@ -944,7 +945,7 @@ pub fn futex2_waitv(
         nr_futexes,
         @as(u32, @bitCast(flags)),
         @intFromPtr(timeout),
-        @intFromEnum(clockid),
+        @backingInt(clockid),
     );
 }
 
@@ -973,7 +974,7 @@ pub fn futex2_wait(
         mask,
         @as(u32, @bitCast(flags)),
         @intFromPtr(timeout),
-        @intFromEnum(clockid),
+        @backingInt(clockid),
     );
 }
 
@@ -1249,7 +1250,7 @@ pub const FSCONFIG_CMD = enum(u32) {
 };
 
 pub fn fsconfig(fd: fd_t, cmd: FSCONFIG_CMD, key: ?[*:0]const u8, value: ?[*:0]const u8, aux: u32) usize {
-    return syscall5(.fsconfig, @as(u32, @bitCast(fd)), @intFromEnum(cmd), @intFromPtr(key), @intFromPtr(value), aux);
+    return syscall5(.fsconfig, @as(u32, @bitCast(fd)), @backingInt(cmd), @intFromPtr(key), @intFromPtr(value), aux);
 }
 
 pub const FSMOUNT = packed struct(u32) {
@@ -1809,7 +1810,7 @@ pub fn fchmodat2(fd: fd_t, path: [*:0]const u8, mode: mode_t, flags: u32) usize 
 }
 
 /// Can only be called on 32 bit systems. For 64 bit see `lseek`.
-pub fn llseek(fd: fd_t, offset: off_t, result: ?*off_t, whence: u32) usize {
+pub fn llseek(fd: fd_t, offset: off_t, result: ?*off_t, whence: u32) u32 {
     // NOTE: The offset parameter splitting is independent from the target
     // endianness.
     return syscall5(
@@ -1823,8 +1824,17 @@ pub fn llseek(fd: fd_t, offset: off_t, result: ?*off_t, whence: u32) usize {
 }
 
 /// Can only be called on 64 bit systems. For 32 bit see `llseek`.
-pub fn lseek(fd: fd_t, offset: off_t, whence: u32) usize {
-    return syscall3(.lseek, @as(u32, @bitCast(fd)), @as(u64, @bitCast(offset)), whence);
+pub fn lseek(fd: fd_t, offset: off_t, whence: u32) u64 {
+    return switch (builtin.abi) {
+        .gnuabin32,
+        .muslabin32,
+        .abin32,
+        .gnux32,
+        .muslx32,
+        .x32,
+        => syscall_lseek(fd, offset, whence),
+        else => syscall3(.lseek, @as(u32, @bitCast(fd)), @as(u64, @bitCast(offset)), whence),
+    };
 }
 
 pub fn exit(status: i32) noreturn {
@@ -1887,9 +1897,9 @@ pub const LINUX_REBOOT = struct {
 pub fn reboot(magic: LINUX_REBOOT.MAGIC1, magic2: LINUX_REBOOT.MAGIC2, cmd: LINUX_REBOOT.CMD, arg: ?*const anyopaque) usize {
     return std.os.linux.syscall4(
         .reboot,
-        @intFromEnum(magic),
-        @intFromEnum(magic2),
-        @intFromEnum(cmd),
+        @backingInt(magic),
+        @backingInt(magic2),
+        @backingInt(cmd),
         @intFromPtr(arg),
     );
 }
@@ -1899,15 +1909,15 @@ pub fn getrandom(buf: [*]u8, count: usize, flags: u32) usize {
 }
 
 pub fn kill(pid: pid_t, sig: SIG) usize {
-    return syscall2(.kill, @as(u32, @bitCast(pid)), @intFromEnum(sig));
+    return syscall2(.kill, @as(u32, @bitCast(pid)), @backingInt(sig));
 }
 
 pub fn tkill(tid: pid_t, sig: SIG) usize {
-    return syscall2(.tkill, @as(u32, @bitCast(tid)), @intFromEnum(sig));
+    return syscall2(.tkill, @as(u32, @bitCast(tid)), @backingInt(sig));
 }
 
 pub fn tgkill(tgid: pid_t, tid: pid_t, sig: SIG) usize {
-    return syscall3(.tgkill, @as(u32, @bitCast(tgid)), @as(u32, @bitCast(tid)), @intFromEnum(sig));
+    return syscall3(.tgkill, @as(u32, @bitCast(tgid)), @as(u32, @bitCast(tid)), @backingInt(sig));
 }
 
 pub fn link(oldpath: [*:0]const u8, newpath: [*:0]const u8) usize {
@@ -1969,7 +1979,7 @@ pub fn wait4(pid: pid_t, status: *i32, flags: u32, usage: ?*rusage) usize {
 pub fn waitid(id_type: P, id: pid_t, infop: *siginfo_t, flags: u32, usage: ?*rusage) usize {
     return syscall5(
         .waitid,
-        @intFromEnum(id_type),
+        @backingInt(id_type),
         @as(u32, @bitCast(id)),
         @intFromPtr(infop),
         flags,
@@ -1998,7 +2008,7 @@ pub const F = struct {
             const SETLKW = 35;
         },
         .mips64, .mips64el => switch (native_abi) {
-            .gnuabin32, .muslabin32 => struct {
+            .gnuabin32, .muslabin32, .abin32 => struct {
                 const GETLK = 33;
                 const SETLK = 34;
                 const SETLKW = 35;
@@ -2136,14 +2146,14 @@ pub fn clock_gettime(clk_id: clockid_t, tp: *timespec) usize {
         if (ptr) |f| {
             const rc = f(clk_id, tp);
             switch (rc) {
-                0, @as(usize, @bitCast(-@as(isize, @intFromEnum(E.INVAL)))) => return rc,
+                0, @as(usize, @bitCast(-@as(isize, @backingInt(E.INVAL)))) => return rc,
                 else => {},
             }
         }
     }
     return syscall2(
         if (@hasField(SYS, "clock_gettime") and native_arch != .hexagon) .clock_gettime else .clock_gettime64,
-        @intFromEnum(clk_id),
+        @backingInt(clk_id),
         @intFromPtr(tp),
     );
 }
@@ -2155,13 +2165,13 @@ fn init_vdso_clock_gettime(clk: clockid_t, ts: *timespec) callconv(.c) usize {
     @atomicStore(?VdsoClockGettime, &vdso_clock_gettime, ptr, .monotonic);
     // Call into the VDSO if available
     if (ptr) |f| return f(clk, ts);
-    return @bitCast(-@as(isize, @intFromEnum(E.NOSYS)));
+    return @bitCast(-@as(isize, @backingInt(E.NOSYS)));
 }
 
 pub fn clock_getres(clk_id: clockid_t, tp: *timespec) usize {
     return syscall2(
         if (@hasField(SYS, "clock_getres") and native_arch != .hexagon) .clock_getres else .clock_getres_time64,
-        @intFromEnum(clk_id),
+        @backingInt(clk_id),
         @intFromPtr(tp),
     );
 }
@@ -2169,7 +2179,7 @@ pub fn clock_getres(clk_id: clockid_t, tp: *timespec) usize {
 pub fn clock_settime(clk_id: clockid_t, tp: *const timespec) usize {
     return syscall2(
         if (@hasField(SYS, "clock_settime") and native_arch != .hexagon) .clock_settime else .clock_settime64,
-        @intFromEnum(clk_id),
+        @backingInt(clk_id),
         @intFromPtr(tp),
     );
 }
@@ -2177,7 +2187,7 @@ pub fn clock_settime(clk_id: clockid_t, tp: *const timespec) usize {
 pub fn clock_nanosleep(clockid: clockid_t, flags: TIMER, request: *const timespec, remain: ?*timespec) usize {
     return syscall4(
         if (@hasField(SYS, "clock_nanosleep") and native_arch != .hexagon) .clock_nanosleep else .clock_nanosleep_time64,
-        @intFromEnum(clockid),
+        @backingInt(clockid),
         @as(u32, @bitCast(flags)),
         @intFromPtr(request),
         @intFromPtr(remain),
@@ -2374,8 +2384,8 @@ pub fn sigprocmask(flags: u32, noalias set: ?*const sigset_t, noalias oldset: ?*
 }
 
 pub fn sigaction(sig: SIG, noalias act: ?*const Sigaction, noalias oact: ?*Sigaction) usize {
-    assert(@intFromEnum(sig) > 0);
-    assert(@intFromEnum(sig) < NSIG);
+    assert(@backingInt(sig) > 0);
+    assert(@backingInt(sig) < NSIG);
     assert(sig != .KILL);
     assert(sig != .STOP);
 
@@ -2408,8 +2418,8 @@ pub fn sigaction(sig: SIG, noalias act: ?*const Sigaction, noalias oact: ?*Sigac
 
     const result = switch (native_arch) {
         // The sparc version of rt_sigaction needs the restorer function to be passed as an argument too.
-        .sparc, .sparc64 => syscall5(.rt_sigaction, @intFromEnum(sig), ksa_arg, oldksa_arg, @intFromPtr(ksa.restorer), mask_size),
-        else => syscall4(.rt_sigaction, @intFromEnum(sig), ksa_arg, oldksa_arg, mask_size),
+        .sparc, .sparc64 => syscall5(.rt_sigaction, @backingInt(sig), ksa_arg, oldksa_arg, @intFromPtr(ksa.restorer), mask_size),
+        else => syscall4(.rt_sigaction, @backingInt(sig), ksa_arg, oldksa_arg, mask_size),
     };
     if (errno(result) != .SUCCESS) return result;
 
@@ -2458,9 +2468,9 @@ pub fn sigfillset() sigset_t {
 }
 
 fn sigset_bit_index(sig: SIG) struct { word: usize, mask: SigsetElement } {
-    assert(@intFromEnum(sig) > 0);
-    assert(@intFromEnum(sig) < NSIG);
-    const bit = @intFromEnum(sig) - 1;
+    assert(@backingInt(sig) > 0);
+    assert(@backingInt(sig) < NSIG);
+    const bit = @backingInt(sig) - 1;
     return .{
         .word = bit / @bitSizeOf(SigsetElement),
         .mask = @as(SigsetElement, 1) << @truncate(bit % @bitSizeOf(SigsetElement)),
@@ -2823,7 +2833,7 @@ pub fn eventfd(count: u32, flags: u32) usize {
 pub fn timerfd_create(clockid: timerfd_clockid_t, flags: TFD) usize {
     return syscall2(
         .timerfd_create,
-        @intFromEnum(clockid),
+        @backingInt(clockid),
         @as(u32, @bitCast(flags)),
     );
 }
@@ -2899,7 +2909,7 @@ pub fn io_uring_enter(fd: fd_t, to_submit: u32, min_complete: u32, flags: u32, s
 }
 
 pub fn io_uring_register(fd: fd_t, opcode: IORING_REGISTER, arg: ?*const anyopaque, nr_args: u32) usize {
-    return syscall4(.io_uring_register, @as(u32, @bitCast(fd)), @intFromEnum(opcode), @intFromPtr(arg), nr_args);
+    return syscall4(.io_uring_register, @as(u32, @bitCast(fd)), @backingInt(opcode), @intFromPtr(arg), nr_args);
 }
 
 pub fn memfd_create(name: [*:0]const u8, flags: u32) usize {
@@ -2915,7 +2925,7 @@ pub fn tcgetattr(fd: fd_t, termios_p: *termios) usize {
 }
 
 pub fn tcsetattr(fd: fd_t, optional_action: TCSA, termios_p: *const termios) usize {
-    return syscall3(.ioctl, @as(u32, @bitCast(fd)), T.CSETS + @intFromEnum(optional_action), @intFromPtr(termios_p));
+    return syscall3(.ioctl, @as(u32, @bitCast(fd)), T.CSETS + @backingInt(optional_action), @intFromPtr(termios_p));
 }
 
 pub fn tcgetpgrp(fd: fd_t, pgrp: *pid_t) usize {
@@ -2951,7 +2961,7 @@ pub fn copy_file_range(fd_in: fd_t, off_in: ?*off_t, fd_out: fd_t, off_out: ?*of
 }
 
 pub fn bpf(cmd: BPF.Cmd, attr: *BPF.Attr, size: u32) usize {
-    return syscall3(.bpf, @intFromEnum(cmd), @intFromPtr(attr), size);
+    return syscall3(.bpf, @backingInt(cmd), @intFromPtr(attr), size);
 }
 
 pub fn sync() void {
@@ -2988,7 +2998,7 @@ pub fn prlimit(pid: pid_t, resource: rlimit_resource, new_limit: ?*const rlimit,
     return syscall4(
         .prlimit64,
         @as(u32, @bitCast(pid)),
-        @as(u32, @bitCast(@as(i32, @intFromEnum(resource)))),
+        @as(u32, @bitCast(@as(i32, @backingInt(resource)))),
         @intFromPtr(new_limit),
         @intFromPtr(old_limit),
     );
@@ -3019,7 +3029,7 @@ pub fn pidfd_send_signal(pidfd: fd_t, sig: SIG, info: ?*siginfo_t, flags: u32) u
     return syscall4(
         .pidfd_send_signal,
         @as(u32, @bitCast(pidfd)),
-        @intFromEnum(sig),
+        @backingInt(sig),
         @intFromPtr(info),
         flags,
     );
@@ -3179,7 +3189,7 @@ pub fn tee(src: fd_t, dest: fd_t, len: usize, flags: u32) usize {
 }
 
 pub const Sysinfo = switch (native_abi) {
-    .gnux32, .muslx32 => extern struct {
+    .gnux32, .muslx32, .x32 => extern struct {
         /// Seconds since boot
         uptime: i64,
         /// 1, 5, and 15 minute load averages
@@ -4336,10 +4346,10 @@ pub const W = struct {
         return @as(u8, @intCast((s & 0xff00) >> 8));
     }
     pub fn TERMSIG(s: u32) SIG {
-        return @enumFromInt(s & 0x7f);
+        return @fromBackingInt(@intCast(s & 0x7f));
     }
     pub fn STOPSIG(s: u32) SIG {
-        return @enumFromInt(EXITSTATUS(s));
+        return @fromBackingInt(@intCast(EXITSTATUS(s)));
     }
     pub fn IFEXITED(s: u32) bool {
         return (s & 0x7f) == 0;
@@ -7248,26 +7258,26 @@ pub const IOSQE_BIT = enum(u8) {
 // io_uring_sqe.flags
 
 /// use fixed fileset
-pub const IOSQE_FIXED_FILE = 1 << @intFromEnum(IOSQE_BIT.FIXED_FILE);
+pub const IOSQE_FIXED_FILE = 1 << @backingInt(IOSQE_BIT.FIXED_FILE);
 
 /// issue after inflight IO
-pub const IOSQE_IO_DRAIN = 1 << @intFromEnum(IOSQE_BIT.IO_DRAIN);
+pub const IOSQE_IO_DRAIN = 1 << @backingInt(IOSQE_BIT.IO_DRAIN);
 
 /// links next sqe
-pub const IOSQE_IO_LINK = 1 << @intFromEnum(IOSQE_BIT.IO_LINK);
+pub const IOSQE_IO_LINK = 1 << @backingInt(IOSQE_BIT.IO_LINK);
 
 /// like LINK, but stronger
-pub const IOSQE_IO_HARDLINK = 1 << @intFromEnum(IOSQE_BIT.IO_HARDLINK);
+pub const IOSQE_IO_HARDLINK = 1 << @backingInt(IOSQE_BIT.IO_HARDLINK);
 
 /// always go async
-pub const IOSQE_ASYNC = 1 << @intFromEnum(IOSQE_BIT.ASYNC);
+pub const IOSQE_ASYNC = 1 << @backingInt(IOSQE_BIT.ASYNC);
 
 /// select buffer from buf_group
-pub const IOSQE_BUFFER_SELECT = 1 << @intFromEnum(IOSQE_BIT.BUFFER_SELECT);
+pub const IOSQE_BUFFER_SELECT = 1 << @backingInt(IOSQE_BIT.BUFFER_SELECT);
 
 /// don't post CQE if request succeeded
 /// Available since Linux 5.17
-pub const IOSQE_CQE_SKIP_SUCCESS = 1 << @intFromEnum(IOSQE_BIT.CQE_SKIP_SUCCESS);
+pub const IOSQE_CQE_SKIP_SUCCESS = 1 << @backingInt(IOSQE_BIT.CQE_SKIP_SUCCESS);
 
 pub const IORING_OP = enum(u8) {
     NOP,
@@ -7427,7 +7437,7 @@ pub const io_uring_cqe = extern struct {
 
     pub fn err(self: io_uring_cqe) E {
         if (self.res > -4096 and self.res < 0) {
-            return @as(E, @enumFromInt(-self.res));
+            return @as(E, @fromBackingInt(@intCast(-self.res)));
         }
         return .SUCCESS;
     }
@@ -7714,8 +7724,8 @@ pub const io_uring_probe = extern struct {
 
     /// Is the operation supported on the running kernel.
     pub fn is_supported(self: @This(), op: IORING_OP) bool {
-        const i = @intFromEnum(op);
-        if (i > @intFromEnum(self.last_op) or i >= self.ops_len)
+        const i = @backingInt(op);
+        if (i > @backingInt(self.last_op) or i >= self.ops_len)
             return false;
         return self.ops[i].is_supported();
     }
@@ -9450,7 +9460,11 @@ pub const UTIME = struct {
 };
 
 // https://github.com/ziglang/zig/issues/4726#issuecomment-2190337877
-pub const timespec = if (native_arch == .hexagon or native_arch == .riscv32) kernel_timespec else extern struct {
+const use_kernel_timespec = native_arch == .hexagon or native_arch == .riscv32 or switch (native_abi) {
+    .gnux32, .muslx32, .x32 => true,
+    else => false,
+};
+pub const timespec = if (use_kernel_timespec) kernel_timespec else extern struct {
     sec: isize,
     nsec: isize,
 };
@@ -10727,7 +10741,7 @@ pub const AUDIT = struct {
         LOONGARCH64 = toAudit(.LOONGARCH, @"64BIT" | LE),
 
         fn toAudit(em: elf.EM, flags: u32) u32 {
-            return @intFromEnum(em) | flags;
+            return @backingInt(em) | flags;
         }
 
         pub const current: AUDIT.ARCH = switch (native_arch) {
@@ -10745,11 +10759,11 @@ pub const AUDIT = struct {
             .mips => .MIPS,
             .mipsel => .MIPSEL,
             .mips64 => switch (native_abi) {
-                .gnuabin32, .muslabin32 => .MIPS64N32,
+                .gnuabin32, .muslabin32, .abin32 => .MIPS64N32,
                 else => .MIPS64,
             },
             .mips64el => switch (native_abi) {
-                .gnuabin32, .muslabin32 => .MIPSEL64N32,
+                .gnuabin32, .muslabin32, .abin32 => .MIPSEL64N32,
                 else => .MIPSEL64,
             },
             .or1k => .OPENRISC,

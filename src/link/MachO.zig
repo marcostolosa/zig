@@ -28,9 +28,9 @@ sections: std.MultiArrayList(Section) = .{},
 resolver: SymbolResolver = .{},
 /// This table will be populated after `scanRelocs` has run.
 /// Key is symbol index.
-undefs: std.AutoArrayHashMapUnmanaged(SymbolResolver.Index, UndefRefs) = .empty,
+undefs: std.array_hash_map.Auto(SymbolResolver.Index, UndefRefs) = .empty,
 undefs_mutex: std.Io.Mutex = .init,
-dupes: std.AutoArrayHashMapUnmanaged(SymbolResolver.Index, std.ArrayList(File.Index)) = .empty,
+dupes: std.array_hash_map.Auto(SymbolResolver.Index, std.ArrayList(File.Index)) = .empty,
 dupes_mutex: std.Io.Mutex = .init,
 
 dyld_info_cmd: macho.dyld_info_command = .{},
@@ -181,7 +181,7 @@ pub fn createEmpty(
             .tag = .macho,
             .comp = comp,
             .emit = emit,
-            .gc_sections = options.gc_sections orelse (optimize_mode != .Debug),
+            .gc_sections = options.gc_sections orelse (optimize_mode != .debug),
             .print_gc_sections = options.print_gc_sections,
             .stack_size = options.stack_size orelse 16777216,
             .allow_shlib_undefined = allow_shlib_undefined,
@@ -377,9 +377,9 @@ pub fn flush(
     // This is a set of object files emitted by clang in a single `build-exe` invocation.
     // For instance, the implicit `a.o` as compiled by `zig build-exe a.c` will end up
     // in this set.
-    try positionals.ensureUnusedCapacity(comp.c_object_table.keys().len);
-    for (comp.c_object_table.keys()) |key| {
-        positionals.appendAssumeCapacity(try link.openObjectInput(io, diags, key.status.success.object_path));
+    try positionals.ensureUnusedCapacity(comp.c_objects.items.len);
+    for (comp.c_objects.items) |c_object| {
+        positionals.appendAssumeCapacity(try link.openObjectInput(io, diags, c_object.status.success.object_path));
     }
 
     if (zcu_obj_path) |path| try positionals.append(try link.openObjectInput(io, diags, path));
@@ -657,8 +657,8 @@ fn dumpArgv(self: *MachO, comp: *Compilation) !void {
             .dso_exact => |dso_exact| try argv.appendSlice(&.{ "-l", dso_exact.name }),
         };
 
-        for (comp.c_object_table.keys()) |key| {
-            try argv.append(try key.status.success.object_path.toString(arena));
+        for (comp.c_objects.items) |c_object| {
+            try argv.append(try c_object.status.success.object_path.toString(arena));
         }
 
         if (zcu_obj_path) |p| {
@@ -749,8 +749,8 @@ fn dumpArgv(self: *MachO, comp: *Compilation) !void {
             .dso_exact => |dso_exact| try argv.appendSlice(&.{ "-l", dso_exact.name }),
         };
 
-        for (comp.c_object_table.keys()) |key| {
-            try argv.append(try key.status.success.object_path.toString(arena));
+        for (comp.c_objects.items) |c_object| {
+            try argv.append(try c_object.status.success.object_path.toString(arena));
         }
 
         if (zcu_obj_path) |p| {
@@ -4102,7 +4102,7 @@ const Section = struct {
 };
 
 pub const LiteralPool = struct {
-    table: std.AutoArrayHashMapUnmanaged(void, void) = .empty,
+    table: std.array_hash_map.Auto(void, void) = .empty,
     keys: std.ArrayList(Key) = .empty,
     values: std.ArrayList(MachO.Ref) = .empty,
     data: std.ArrayList(u8) = .empty,
@@ -4541,7 +4541,7 @@ pub const Ref = struct {
 pub const SymbolResolver = struct {
     keys: std.ArrayList(Key) = .empty,
     values: std.ArrayList(Ref) = .empty,
-    table: std.AutoArrayHashMapUnmanaged(void, void) = .empty,
+    table: std.array_hash_map.Auto(void, void) = .empty,
 
     const Result = struct {
         found_existing: bool,
@@ -4676,7 +4676,7 @@ pub const MachTask = extern struct {
         var out_port: std.c.mach_port_name_t = undefined;
         switch (getKernError(std.c.mach_port_allocate(
             self.port,
-            @intFromEnum(right),
+            @backingInt(right),
             &out_port,
         ))) {
             .SUCCESS => return .{ .port = out_port },
@@ -4694,7 +4694,7 @@ pub const MachTask = extern struct {
             self.port,
             port.port,
             port.port,
-            @intFromEnum(msg),
+            @backingInt(msg),
         ))) {
             .SUCCESS => return,
             .FAILURE => return error.PermissionDenied,
@@ -5119,12 +5119,12 @@ pub fn machTaskForSelf() MachTask {
 }
 
 pub fn getKernError(err: std.c.kern_return_t) KernE {
-    return @as(KernE, @enumFromInt(@as(u32, @truncate(@as(usize, @intCast(err))))));
+    return @as(KernE, @fromBackingInt(@intCast(@as(u32, @truncate(@as(usize, @intCast(err)))))));
 }
 
 pub fn unexpectedKernError(err: KernE) std.posix.UnexpectedError {
     if (std.options.unexpected_error_tracing) {
-        std.debug.print("unexpected error: {d}\n", .{@intFromEnum(err)});
+        std.debug.print("unexpected error: {d}\n", .{@backingInt(err)});
         std.debug.dumpCurrentStackTrace(.{});
     }
     return error.Unexpected;

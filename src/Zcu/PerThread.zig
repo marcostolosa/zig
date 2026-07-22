@@ -23,8 +23,7 @@ const builtin = @import("builtin");
 const dev = @import("../dev.zig");
 const InternPool = @import("../InternPool.zig");
 const AnalUnit = InternPool.AnalUnit;
-const introspect = @import("../introspect.zig");
-const Module = @import("../Package.zig").Module;
+const Module = @import("../Module.zig");
 const Sema = @import("../Sema.zig");
 const target_util = @import("../target.zig");
 const tracy = @import("../tracy.zig");
@@ -74,7 +73,7 @@ pub const Id = if (InternPool.single_threaded) enum {
     pub fn allocate(arena: Allocator, n: usize) Allocator.Error!void {
         assert(available_tids.items.len == 0);
         try available_tids.ensureTotalCapacityPrecise(arena, n - 1);
-        for (1..n) |tid| available_tids.appendAssumeCapacity(@enumFromInt(tid));
+        for (1..n) |tid| available_tids.appendAssumeCapacity(@fromBackingInt(@intCast(tid)));
         switch (build_options.io_mode) {
             .threaded => {
                 // Called from the main thread, so mark ourselves as such.
@@ -124,14 +123,6 @@ pub const Id = if (InternPool.single_threaded) enum {
         tid_cond.signal(io);
     }
 };
-
-pub fn activate(zcu: *Zcu, tid: Id) Zcu.PerThread {
-    zcu.intern_pool.activate();
-    return .{ .zcu = zcu, .tid = tid };
-}
-pub fn deactivate(pt: Zcu.PerThread) void {
-    pt.zcu.intern_pool.deactivate();
-}
 
 /// Called from `Compilation.performAllTheWork`. Performs one incremental update of the ZCU: detects
 /// changes to files, runs AstGen, and then enters the main semantic analysis loop, where we build
@@ -203,7 +194,7 @@ pub fn update(
         // because `workerUpdateEmbedFile` can't invalidate it. The different here is that one
         // `@embedFile` can't trigger analysis of a new `@embedFile`!
         for (0.., zcu.embed_table.keys()) |ef_index_usize, ef| {
-            const ef_index: Zcu.EmbedFile.Index = @enumFromInt(ef_index_usize);
+            const ef_index: Zcu.EmbedFile.Index = @fromBackingInt(@intCast(ef_index_usize));
             astgen_group.async(io, workerUpdateEmbedFile, .{
                 comp, ef_index, ef,
             });
@@ -378,10 +369,10 @@ fn workerUpdateFile(
     const child_prog_node = prog_node.start(std.fs.path.basename(file.path.sub_path), 0);
     defer child_prog_node.end();
 
-    const pt: Zcu.PerThread = .activate(comp.zcu.?, tid);
-    defer pt.deactivate();
-    pt.updateFile(file_index, file) catch |err| {
-        pt.reportRetryableFileError(file_index, "unable to load '{s}': {s}", .{ std.fs.path.basename(file.path.sub_path), @errorName(err) }) catch |oom| switch (oom) {
+    const active = comp.zcu.?.activate(tid);
+    defer active.deactivate();
+    active.pt.updateFile(file_index, file) catch |err| {
+        active.pt.reportRetryableFileError(file_index, "unable to load '{s}': {s}", .{ std.fs.path.basename(file.path.sub_path), @errorName(err) }) catch |oom| switch (oom) {
             error.OutOfMemory => {
                 comp.mutex.lockUncancelable(io);
                 defer comp.mutex.unlock(io);
@@ -399,7 +390,7 @@ fn workerUpdateFile(
     // Discover all imports in the file. Imports of modules we ignore for now since we don't
     // know which module we're in, but imports of file paths might need us to queue up other
     // AstGen jobs.
-    const imports_index = file.zir.?.extra[@intFromEnum(Zir.ExtraIndex.imports)];
+    const imports_index = file.zir.?.extra[@backingInt(Zir.ExtraIndex.imports)];
     if (imports_index != 0) {
         const extra = file.zir.?.extraData(Zir.Inst.Imports, imports_index);
         var import_i: u32 = 0;
@@ -411,7 +402,7 @@ fn workerUpdateFile(
 
             const import_path = file.zir.?.nullTerminatedString(item.data.name);
 
-            if (pt.discoverImport(file.path, import_path)) |res| switch (res) {
+            if (active.pt.discoverImport(file.path, import_path)) |res| switch (res) {
                 .module, .existing_file => {},
                 .new_file => |new| {
                     group.async(io, workerUpdateFile, .{
@@ -443,13 +434,15 @@ fn workerUpdateEmbedFile(comp: *Compilation, ef_index: Zcu.EmbedFile.Index, ef: 
 fn detectEmbedFileUpdate(comp: *Compilation, tid: Zcu.PerThread.Id, ef_index: Zcu.EmbedFile.Index, ef: *Zcu.EmbedFile) !void {
     const io = comp.io;
     const zcu = comp.zcu.?;
-    const pt: Zcu.PerThread = .activate(zcu, tid);
-    defer pt.deactivate();
 
     const old_val = ef.val;
     const old_err = ef.err;
 
-    try pt.updateEmbedFile(ef, null);
+    {
+        const active = zcu.activate(tid);
+        defer active.deactivate();
+        try active.pt.updateEmbedFile(ef, null);
+    }
 
     if (ef.val != .none and ef.val == old_val) return; // success, value unchanged
     if (ef.val == .none and old_val == .none and ef.err == old_err) return; // failure, error unchanged
@@ -458,27 +451,6 @@ fn detectEmbedFileUpdate(comp: *Compilation, tid: Zcu.PerThread.Id, ef_index: Zc
     defer comp.mutex.unlock(io);
 
     try zcu.markDependeeOutdated(.not_marked_po, .{ .embed_file = ef_index });
-}
-
-fn deinitFile(pt: Zcu.PerThread, file_index: Zcu.File.Index) void {
-    const zcu = pt.zcu;
-    const gpa = zcu.gpa;
-    const file = zcu.fileByIndex(file_index);
-    log.debug("deinit File {f}", .{file.path.fmt(zcu.comp)});
-    file.path.deinit(gpa);
-    file.unload(gpa);
-    if (file.prev_zir) |prev_zir| {
-        prev_zir.deinit(gpa);
-        gpa.destroy(prev_zir);
-    }
-    file.* = undefined;
-}
-
-pub fn destroyFile(pt: Zcu.PerThread, file_index: Zcu.File.Index) void {
-    const gpa = pt.zcu.gpa;
-    const file = pt.zcu.fileByIndex(file_index);
-    pt.deinitFile(file_index);
-    gpa.destroy(file);
 }
 
 /// Ensures that `file` has up-to-date ZIR. If not, loads the ZIR cache or runs
@@ -670,7 +642,7 @@ pub fn updateFile(
 
         var timer = comp.startTimer();
         // Any potential AST errors are converted to ZIR errors when we run AstGen/ZonGen.
-        file.tree = try Ast.parse(gpa, source, file.getMode());
+        file.tree = try Ast.parse(gpa, source, .{ .mode = file.getMode() });
         if (timer.finish(io)) |ns_parse| {
             comp.mutex.lockUncancelable(io);
             defer comp.mutex.unlock(io);
@@ -814,7 +786,7 @@ const UpdatedFile = struct {
     inst_map: std.AutoHashMapUnmanaged(Zir.Inst.Index, Zir.Inst.Index),
 };
 
-fn cleanupUpdatedFiles(gpa: Allocator, updated_files: *std.AutoArrayHashMapUnmanaged(Zcu.File.Index, UpdatedFile)) void {
+fn cleanupUpdatedFiles(gpa: Allocator, updated_files: *std.array_hash_map.Auto(Zcu.File.Index, UpdatedFile)) void {
     for (updated_files.values()) |*elem| elem.inst_map.deinit(gpa);
     updated_files.deinit(gpa);
 }
@@ -832,7 +804,7 @@ fn updateZirRefs(pt: Zcu.PerThread) (Io.Cancelable || Allocator.Error)!void {
 
     // We need to visit every updated File for every TrackedInst in InternPool.
     // This only includes Zig files; ZON files are omitted.
-    var updated_files: std.AutoArrayHashMapUnmanaged(Zcu.File.Index, UpdatedFile) = .empty;
+    var updated_files: std.array_hash_map.Auto(Zcu.File.Index, UpdatedFile) = .empty;
     defer cleanupUpdatedFiles(gpa, &updated_files);
 
     for (zcu.import_table.keys()) |file_index| {
@@ -881,7 +853,7 @@ fn updateZirRefs(pt: Zcu.PerThread) (Io.Cancelable || Allocator.Error)!void {
 
             const old_inst = tracked_inst.inst.unwrap() orelse continue; // we can't continue tracking lost insts
             const tracked_inst_index = (InternPool.TrackedInst.Index.Unwrapped{
-                .tid = @enumFromInt(tid),
+                .tid = @fromBackingInt(@intCast(tid)),
                 .index = @intCast(tracked_inst_unwrapped_index),
             }).wrap(ip);
             const new_inst = updated_file.inst_map.get(old_inst) orelse {
@@ -896,8 +868,8 @@ fn updateZirRefs(pt: Zcu.PerThread) (Io.Cancelable || Allocator.Error)!void {
 
             const old_zir = file.prev_zir.?.*;
             const new_zir = file.zir.?;
-            const old_tag = old_zir.instructions.items(.tag)[@intFromEnum(old_inst)];
-            const old_data = old_zir.instructions.items(.data)[@intFromEnum(old_inst)];
+            const old_tag = old_zir.instructions.items(.tag)[@backingInt(old_inst)];
+            const old_data = old_zir.instructions.items(.data)[@backingInt(old_inst)];
 
             switch (old_tag) {
                 .declaration => {
@@ -934,7 +906,7 @@ fn updateZirRefs(pt: Zcu.PerThread) (Io.Cancelable || Allocator.Error)!void {
             if (!has_namespace) continue;
 
             // Value is whether the declaration is `pub`.
-            var old_names: std.AutoArrayHashMapUnmanaged(InternPool.NullTerminatedString, bool) = .empty;
+            var old_names: std.array_hash_map.Auto(InternPool.NullTerminatedString, bool) = .empty;
             defer old_names.deinit(zcu.gpa);
             for (old_zir.typeDecls(old_inst)) |decl_inst| {
                 const old_decl = old_zir.getDeclaration(decl_inst);
@@ -1910,7 +1882,7 @@ fn analyzeNavVal(
     });
 
     if (zir_decl.linkage == .@"export") {
-        const export_src = block.src(.{ .token_offset = @enumFromInt(@intFromBool(zir_decl.is_pub)) });
+        const export_src = block.src(.{ .token_offset = @fromBackingInt(@intCast(@intFromBool(zir_decl.is_pub))) });
         const name_slice = zir.nullTerminatedString(zir_decl.name);
         const name_ip = try ip.getOrPutString(gpa, io, pt.tid, name_slice, .no_embedded_nulls);
         try sema.analyzeExportSelfNav(&block, export_src, name_ip);
@@ -2651,7 +2623,7 @@ fn computeAliveFiles(pt: Zcu.PerThread) Allocator.Error!bool {
         if (file.status != .success) continue; // ZIR not valid if there was a file failure
 
         const zir = file.zir.?;
-        const imports_index = zir.extra[@intFromEnum(Zir.ExtraIndex.imports)];
+        const imports_index = zir.extra[@backingInt(Zir.ExtraIndex.imports)];
         if (imports_index == 0) continue; // this Zig file has no imports
         const extra = zir.extraData(Zir.Inst.Imports, imports_index);
         var extra_index = extra.end;
@@ -2822,7 +2794,7 @@ pub fn updateBuiltinModule(pt: Zcu.PerThread, opts: Builtin) Allocator.Error!voi
     assert(!file.zir.?.hasCompileErrors());
     {
         // Check that it has only one import, which is 'std'.
-        const imports_idx = file.zir.?.extra[@intFromEnum(Zir.ExtraIndex.imports)];
+        const imports_idx = file.zir.?.extra[@backingInt(Zir.ExtraIndex.imports)];
         assert(imports_idx != 0); // there is an import
         const extra = file.zir.?.extraData(Zir.Inst.Imports, imports_idx);
         assert(extra.data.imports_len == 1); // there is exactly one import
@@ -2866,11 +2838,11 @@ pub fn embedFile(
         const gop = try zcu.embed_table.getOrPutAdapted(gpa, path, Zcu.EmbedTableAdapter{});
         if (gop.found_existing) {
             path.deinit(gpa); // we're not using this key
-            return @enumFromInt(gop.index);
+            return @fromBackingInt(@intCast(gop.index));
         }
         errdefer _ = zcu.embed_table.pop();
         gop.key_ptr.* = try pt.newEmbedFile(path);
-        return @enumFromInt(gop.index);
+        return @fromBackingInt(@intCast(gop.index));
     }
 
     const embed_file: *Zcu.EmbedFile, const embed_file_idx: Zcu.EmbedFile.Index = ef: {
@@ -2879,11 +2851,11 @@ pub fn embedFile(
         const gop = try zcu.embed_table.getOrPutAdapted(gpa, path, Zcu.EmbedTableAdapter{});
         if (gop.found_existing) {
             path.deinit(gpa); // we're not using this key
-            break :ef .{ gop.key_ptr.*, @enumFromInt(gop.index) };
+            break :ef .{ gop.key_ptr.*, @fromBackingInt(@intCast(gop.index)) };
         } else {
             errdefer _ = zcu.embed_table.pop();
             gop.key_ptr.* = try pt.newEmbedFile(path);
-            break :ef .{ gop.key_ptr.*, @enumFromInt(gop.index) };
+            break :ef .{ gop.key_ptr.*, @fromBackingInt(@intCast(gop.index)) };
         }
     };
 
@@ -3422,7 +3394,7 @@ fn analyzeFuncBodyInner(
             gop.value_ptr.* = .fromValue(opv);
             continue;
         }
-        const arg_index: Air.Inst.Index = @enumFromInt(sema.air_instructions.len);
+        const arg_index: Air.Inst.Index = @fromBackingInt(@intCast(sema.air_instructions.len));
         gop.value_ptr.* = arg_index.toRef();
         inner_block.instructions.appendAssumeCapacity(arg_index);
         sema.air_instructions.appendAssumeCapacity(.{
@@ -3469,7 +3441,7 @@ fn analyzeFuncBodyInner(
     for (sema.unresolved_inferred_allocs.keys()) |ptr_inst| {
         // The lack of a resolve_inferred_alloc means that this instruction
         // is unused so it just has to be a no-op.
-        sema.air_instructions.set(@intFromEnum(ptr_inst), .{
+        sema.air_instructions.set(@backingInt(ptr_inst), .{
             .tag = .alloc,
             .data = .{ .ty = .ptr_const_comptime_int },
         });
@@ -3494,7 +3466,7 @@ fn analyzeFuncBodyInner(
         .body_len = @intCast(inner_block.instructions.items.len),
     });
     sema.air_extra.appendSliceAssumeCapacity(@ptrCast(inner_block.instructions.items));
-    sema.air_extra.items[@intFromEnum(Air.ExtraIndex.main_block)] = main_block_index;
+    sema.air_extra.items[@backingInt(Air.ExtraIndex.main_block)] = main_block_index;
 
     // Resolving inferred error sets is done *before* setting the function
     // state to success, so that "unable to resolve inferred error set" errors
@@ -3595,8 +3567,8 @@ pub fn processExports(pt: Zcu.PerThread) !void {
     }
 
     // First, construct a mapping of every exported value and Nav to the indices of all its different exports.
-    var nav_exports: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, std.ArrayList(Zcu.Export.Index)) = .empty;
-    var uav_exports: std.AutoArrayHashMapUnmanaged(InternPool.Index, std.ArrayList(Zcu.Export.Index)) = .empty;
+    var nav_exports: std.array_hash_map.Auto(InternPool.Nav.Index, std.ArrayList(Zcu.Export.Index)) = .empty;
+    var uav_exports: std.array_hash_map.Auto(InternPool.Index, std.ArrayList(Zcu.Export.Index)) = .empty;
     defer {
         for (nav_exports.values()) |*exports| {
             exports.deinit(gpa);
@@ -3668,7 +3640,7 @@ pub fn processExports(pt: Zcu.PerThread) !void {
                 },
             };
             if (!found_existing) value_ptr.* = .empty;
-            try value_ptr.append(gpa, @enumFromInt(export_idx));
+            try value_ptr.append(gpa, @fromBackingInt(@intCast(export_idx)));
         }
     }
 
@@ -3692,7 +3664,7 @@ pub fn processExports(pt: Zcu.PerThread) !void {
     }
 }
 
-const SymbolExports = std.AutoArrayHashMapUnmanaged(InternPool.NullTerminatedString, Zcu.Export.Index);
+const SymbolExports = std.array_hash_map.Auto(InternPool.NullTerminatedString, Zcu.Export.Index);
 
 fn processExportsInner(
     pt: Zcu.PerThread,
@@ -3984,7 +3956,7 @@ pub fn getCoerced(pt: Zcu.PerThread, val: Value, new_ty: Type) Allocator.Error!V
 }
 
 pub fn intType(pt: Zcu.PerThread, signedness: std.lang.Signedness, bits: u16) Allocator.Error!Type {
-    return Type.fromInterned(try pt.intern(.{ .int_type = .{
+    return .fromInterned(try pt.intern(.{ .int_type = .{
         .signedness = signedness,
         .bits = bits,
     } }));
@@ -3995,15 +3967,15 @@ pub fn errorIntType(pt: Zcu.PerThread) std.mem.Allocator.Error!Type {
 }
 
 pub fn arrayType(pt: Zcu.PerThread, info: InternPool.Key.ArrayType) Allocator.Error!Type {
-    return Type.fromInterned(try pt.intern(.{ .array_type = info }));
+    return .fromInterned(try pt.intern(.{ .array_type = info }));
 }
 
 pub fn vectorType(pt: Zcu.PerThread, info: InternPool.Key.VectorType) Allocator.Error!Type {
-    return Type.fromInterned(try pt.intern(.{ .vector_type = info }));
+    return .fromInterned(try pt.intern(.{ .vector_type = info }));
 }
 
 pub fn optionalType(pt: Zcu.PerThread, child_type: InternPool.Index) Allocator.Error!Type {
-    return Type.fromInterned(try pt.intern(.{ .opt_type = child_type }));
+    return .fromInterned(try pt.intern(.{ .opt_type = child_type }));
 }
 
 pub fn ptrType(pt: Zcu.PerThread, info: InternPool.Key.PtrType) Allocator.Error!Type {
@@ -4022,10 +3994,10 @@ pub fn ptrType(pt: Zcu.PerThread, info: InternPool.Key.PtrType) Allocator.Error!
                 canon_info.packed_offset.host_size = 0;
             }
         },
-        _ => assert(@intFromEnum(info.flags.vector_index) < info.packed_offset.host_size),
+        _ => assert(@backingInt(info.flags.vector_index) < info.packed_offset.host_size),
     }
 
-    return Type.fromInterned(try pt.intern(.{ .ptr_type = canon_info }));
+    return .fromInterned(try pt.intern(.{ .ptr_type = canon_info }));
 }
 
 pub fn singleMutPtrType(pt: Zcu.PerThread, child_type: Type) Allocator.Error!Type {
@@ -4065,11 +4037,11 @@ pub fn funcType(pt: Zcu.PerThread, key: InternPool.GetFuncTypeKey) Allocator.Err
 /// Use this for `anyframe->T` only.
 /// For `anyframe`, use the `InternPool.Index.anyframe` tag directly.
 pub fn anyframeType(pt: Zcu.PerThread, payload_ty: Type) Allocator.Error!Type {
-    return Type.fromInterned(try pt.intern(.{ .anyframe_type = payload_ty.toIntern() }));
+    return .fromInterned(try pt.intern(.{ .anyframe_type = payload_ty.toIntern() }));
 }
 
 pub fn errorUnionType(pt: Zcu.PerThread, error_set_ty: Type, payload_ty: Type) Allocator.Error!Type {
-    return Type.fromInterned(try pt.intern(.{ .error_union_type = .{
+    return .fromInterned(try pt.intern(.{ .error_union_type = .{
         .error_set_type = error_set_ty.toIntern(),
         .payload_type = payload_ty.toIntern(),
     } }));
@@ -4078,7 +4050,7 @@ pub fn errorUnionType(pt: Zcu.PerThread, error_set_ty: Type, payload_ty: Type) A
 pub fn singleErrorSetType(pt: Zcu.PerThread, name: InternPool.NullTerminatedString) Allocator.Error!Type {
     const names: *const [1]InternPool.NullTerminatedString = &name;
     const comp = pt.zcu.comp;
-    return Type.fromInterned(try pt.zcu.intern_pool.getErrorSetType(comp.gpa, comp.io, pt.tid, names));
+    return .fromInterned(try pt.zcu.intern_pool.getErrorSetType(comp.gpa, comp.io, pt.tid, names));
 }
 
 /// Sorts `names` in place.
@@ -4094,7 +4066,7 @@ pub fn errorSetFromUnsortedNames(
     );
     const comp = pt.zcu.comp;
     const new_ty = try pt.zcu.intern_pool.getErrorSetType(comp.gpa, comp.io, pt.tid, names);
-    return Type.fromInterned(new_ty);
+    return .fromInterned(new_ty);
 }
 
 /// Supports only pointers, not pointer-like optionals.
@@ -4102,7 +4074,7 @@ pub fn ptrIntValue(pt: Zcu.PerThread, ty: Type, x: u64) Allocator.Error!Value {
     const zcu = pt.zcu;
     assert(ty.zigTypeTag(zcu) == .pointer and !ty.isSlice(zcu));
     assert(x != 0 or ty.isAllowzeroPtr(zcu));
-    return Value.fromInterned(try pt.intern(.{ .ptr = .{
+    return .fromInterned(try pt.intern(.{ .ptr = .{
         .ty = ty.toIntern(),
         .base_addr = .int,
         .byte_offset = x,
@@ -4110,14 +4082,11 @@ pub fn ptrIntValue(pt: Zcu.PerThread, ty: Type, x: u64) Allocator.Error!Value {
 }
 
 /// Creates an enum tag value based on the integer tag value.
-pub fn enumValue(pt: Zcu.PerThread, ty: Type, tag_int: InternPool.Index) Allocator.Error!Value {
-    if (std.debug.runtime_safety) {
-        const tag = ty.zigTypeTag(pt.zcu);
-        assert(tag == .@"enum");
-    }
-    return Value.fromInterned(try pt.intern(.{ .enum_tag = .{
+pub fn enumValue(pt: Zcu.PerThread, ty: Type, tag_int: Value) Allocator.Error!Value {
+    if (std.debug.runtime_safety) assert(ty.zigTypeTag(pt.zcu) == .@"enum");
+    return .fromInterned(try pt.intern(.{ .enum_tag = .{
         .ty = ty.toIntern(),
-        .int = tag_int,
+        .int = tag_int.toIntern(),
     } }));
 }
 
@@ -4131,7 +4100,7 @@ pub fn enumValueFieldIndex(pt: Zcu.PerThread, ty: Type, field_index: u32) Alloca
 
     if (enum_type.field_values.len == 0) {
         // Auto-numbered fields.
-        return Value.fromInterned(try pt.intern(.{ .enum_tag = .{
+        return .fromInterned(try pt.intern(.{ .enum_tag = .{
             .ty = ty.toIntern(),
             .int = try pt.intern(.{ .int = .{
                 .ty = enum_type.int_tag_type,
@@ -4290,7 +4259,7 @@ pub fn floatValue(pt: Zcu.PerThread, ty: Type, x: anytype) Allocator.Error!Value
 
 /// Create a value whose type is a `packed struct` or `packed union`, from the backing integer value.
 pub fn bitpackValue(pt: Zcu.PerThread, ty: Type, backing_int_val: Value) Allocator.Error!Value {
-    assert(backing_int_val.typeOf(pt.zcu).toIntern() == ty.bitpackBackingInt(pt.zcu).toIntern());
+    assert(backing_int_val.typeOf(pt.zcu).toIntern() == ty.backingIntType(pt.zcu).toIntern());
     return .fromInterned(try pt.intern(.{ .bitpack = .{
         .ty = ty.toIntern(),
         .backing_int_val = backing_int_val.toIntern(),
@@ -4540,7 +4509,6 @@ pub fn runCodegen(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) Ru
                 comp.config.use_llvm,
             )) {
                 else => unreachable, // assertion failure
-                .stage2_spirv,
                 .stage2_llvm,
                 => {},
             },
@@ -4572,8 +4540,12 @@ fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) e
     tracy_trace.addText(fqn.toSlice(ip));
     tracy_trace.addTextFmt("func_ip_index={d}", .{func_index});
 
+    Air.Verify.run(pt, func_index, air);
+
     if (codegen.legalizeFeatures(pt, nav)) |features| {
         try air.legalize(pt, features);
+        // Verify the AIR again post-legalization.
+        Air.Verify.run(pt, func_index, air);
     }
 
     var liveness: ?Air.Liveness = if (codegen.wantsLiveness(pt, nav))
@@ -4620,18 +4592,6 @@ fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) e
     }
 
     const lf = comp.bin_file orelse return error.NoLinkFile;
-
-    // Just like LLVM, the SPIR-V backend can't multi-threaded due to SPIR-V design limitations.
-    if (lf.cast(.spirv)) |spirv_file| {
-        assert(zcu.pending_codegen_jobs.load(.monotonic) == 2); // only one codegen at a time (but the value is 2 because 1 is the base)
-        spirv_file.updateFunc(pt, func_index, air, &liveness) catch |err| {
-            switch (err) {
-                error.OutOfMemory => comp.link_diags.setAllocFailure(),
-            }
-            return error.AlreadyReported;
-        };
-        return error.BackendDoesNotProduceMir;
-    }
 
     return codegen.generateFunction(lf, pt, func_index, air, &liveness);
 }

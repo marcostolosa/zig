@@ -117,7 +117,7 @@ pub fn StaticStringMapWithEql(
 
                 var sorted_keys: [field_names.len][]const u8 = field_names[0..field_names.len].*;
                 var sorted_vals: [field_names.len]V = undefined;
-                for (&sorted_vals, @typeInfo(V).@"enum".field_values) |*x, i| x.* = @enumFromInt(i);
+                for (&sorted_vals, @typeInfo(V).@"enum".field_values) |*x, i| x.* = @fromBackingInt(@intCast(i));
 
                 for (field_names) |field_name| {
                     self.min_len = @min(self.min_len, field_name.len);
@@ -241,7 +241,10 @@ pub fn StaticStringMapWithEql(
             return self.kvs.values[self.getIndex(str) orelse return null];
         }
 
-        fn getIndex(self: Self, str: []const u8) ?usize {
+        /// Returns the index corresponding to the `str` within the
+        /// generated `kvs`, or `null` if `str` was not found.
+        /// The returned index is unrelated to the input `kvs_list`.
+        pub fn getIndex(self: Self, str: []const u8) ?usize {
             const kvs = self.kvs.*;
             if (kvs.len == 0)
                 return null;
@@ -279,6 +282,14 @@ pub fn StaticStringMapWithEql(
             };
         }
 
+        /// Returns the index within the generated `kvs` corresponding to the
+        /// key-value pair where key is the longest prefix of `str`, or `null`
+        /// if no such key-value pair was found. The returned index is unrelated
+        /// to the input `kvs_list`.
+        ///
+        /// This is effectively an O(N) algorithm which loops from `max_len` to
+        /// `min_len` and calls `getIndex()` to check all keys with the given
+        /// len.
         pub fn getLongestPrefixIndex(self: Self, str: []const u8) ?usize {
             if (self.kvs.len == 0)
                 return null;
@@ -294,11 +305,15 @@ pub fn StaticStringMapWithEql(
             return null;
         }
 
+        /// Returns the slice of keys from the generated `kvs`, which may
+        /// be in a different order than the input `kvs_list`.
         pub fn keys(self: Self) []const []const u8 {
             const kvs = self.kvs.*;
             return kvs.keys[0..kvs.len];
         }
 
+        /// Returns the slice of values from the generated `kvs`, which may
+        /// be in a different order than the input `kvs_list`.
         pub fn values(self: Self) []const V {
             const kvs = self.kvs.*;
             return kvs.values[0..kvs.len];
@@ -502,6 +517,20 @@ test "comptime-only value" {
     try testing.expect(map.get("b").?.foo == 2);
     try testing.expect(map.get("c").?.foo == 3);
     try testing.expect(map.get("d") == null);
+}
+
+test "getIndex" {
+    const slice = [_]TestKV{
+        .{ "longer", .A },
+        .{ "short", .B },
+    };
+    const map = TestMap.initComptime(slice);
+
+    // This index can be different than the index of the "short" KV in `slice`
+    const short_index = map.getIndex("short").?;
+    try testing.expectEqualStrings("short", map.keys()[short_index]);
+    try testing.expectEqual(.B, map.values()[short_index]);
+    try testing.expectEqual(null, map.getIndex("missing"));
 }
 
 test "getLongestPrefix" {

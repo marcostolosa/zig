@@ -526,7 +526,9 @@ test "sendmsg/recvmsg" {
 
     var address_server: linux.sockaddr.in = .{
         .port = 0,
-        .addr = @bitCast([4]u8{ 127, 0, 0, 1 }),
+        .addr = @as(*align(1) const u32, @ptrCast(
+            &@as([4]u8, .{ 127, 0, 0, 1 }),
+        )).*,
     };
 
     const server = try socket(address_server.family, posix.SOCK.DGRAM, 0);
@@ -587,7 +589,7 @@ test "sendmsg/recvmsg" {
     try testing.expectEqual(@as(u32, 2), ring.cq_ready());
 
     const cqe_sendmsg = try ring.copy_cqe();
-    if (cqe_sendmsg.res == -@as(i32, @intFromEnum(linux.E.INVAL))) return error.SkipZigTest;
+    if (cqe_sendmsg.res == -@as(i32, @backingInt(linux.E.INVAL))) return error.SkipZigTest;
     try testing.expectEqual(linux.io_uring_cqe{
         .user_data = 0x11111111,
         .res = buffer_send.len,
@@ -595,7 +597,7 @@ test "sendmsg/recvmsg" {
     }, cqe_sendmsg);
 
     const cqe_recvmsg = try ring.copy_cqe();
-    if (cqe_recvmsg.res == -@as(i32, @intFromEnum(linux.E.INVAL))) return error.SkipZigTest;
+    if (cqe_recvmsg.res == -@as(i32, @backingInt(linux.E.INVAL))) return error.SkipZigTest;
     try testing.expectEqual(linux.io_uring_cqe{
         .user_data = 0x22222222,
         .res = buffer_recv.len,
@@ -629,7 +631,7 @@ test "timeout (after a relative time)" {
 
     try testing.expectEqual(linux.io_uring_cqe{
         .user_data = 0x55555555,
-        .res = -@as(i32, @intFromEnum(linux.E.TIME)),
+        .res = -@as(i32, @backingInt(linux.E.TIME)),
         .flags = 0,
     }, cqe);
 
@@ -714,7 +716,7 @@ test "timeout_remove" {
         if (cqe.user_data == 0x88888888) {
             try testing.expectEqual(linux.io_uring_cqe{
                 .user_data = 0x88888888,
-                .res = -@as(i32, @intFromEnum(linux.E.CANCELED)),
+                .res = -@as(i32, @backingInt(linux.E.CANCELED)),
                 .flags = 0,
             }, cqe);
         } else if (cqe.user_data == 0x99999999) {
@@ -757,16 +759,16 @@ test "accept/connect/recv/link_timeout" {
         const cqe = try ring.copy_cqe();
         switch (cqe.user_data) {
             0xffffffff => {
-                if (cqe.res != -@as(i32, @intFromEnum(linux.E.INTR)) and
-                    cqe.res != -@as(i32, @intFromEnum(linux.E.CANCELED)))
+                if (cqe.res != -@as(i32, @backingInt(linux.E.INTR)) and
+                    cqe.res != -@as(i32, @backingInt(linux.E.CANCELED)))
                 {
                     std.debug.print("Req 0x{x} got {d}\n", .{ cqe.user_data, cqe.res });
                     try testing.expect(false);
                 }
             },
             0x22222222 => {
-                if (cqe.res != -@as(i32, @intFromEnum(linux.E.ALREADY)) and
-                    cqe.res != -@as(i32, @intFromEnum(linux.E.TIME)))
+                if (cqe.res != -@as(i32, @backingInt(linux.E.ALREADY)) and
+                    cqe.res != -@as(i32, @backingInt(linux.E.TIME)))
                 {
                     std.debug.print("Req 0x{x} got {d}\n", .{ cqe.user_data, cqe.res });
                     try testing.expect(false);
@@ -920,7 +922,7 @@ test "accept/connect/recv/cancel" {
 
     try testing.expectEqual(linux.io_uring_cqe{
         .user_data = 0xffffffff,
-        .res = -@as(i32, @intFromEnum(linux.E.CANCELED)),
+        .res = -@as(i32, @backingInt(linux.E.CANCELED)),
         .flags = 0,
     }, cqe_recv);
 
@@ -1028,7 +1030,9 @@ test "shutdown" {
 
     var address: linux.sockaddr.in = .{
         .port = 0,
-        .addr = @bitCast([4]u8{ 127, 0, 0, 1 }),
+        .addr = @as(*align(1) const u32, @ptrCast(
+            &@as([4]u8, .{ 127, 0, 0, 1 }),
+        )).*,
     };
 
     // Socket bound, expect shutdown to work
@@ -1740,7 +1744,9 @@ test "accept multishot" {
 
     var address: linux.sockaddr.in = .{
         .port = 0,
-        .addr = @bitCast([4]u8{ 127, 0, 0, 1 }),
+        .addr = @as(*align(1) const u32, @ptrCast(
+            &@as([4]u8, .{ 127, 0, 0, 1 }),
+        )).*,
     };
     const listener_socket = try createListenerSocket(&address);
     defer _ = linux.close(listener_socket);
@@ -1842,7 +1848,9 @@ test "accept_direct" {
     defer ring.deinit();
     var address: linux.sockaddr.in = .{
         .port = 0,
-        .addr = @bitCast([4]u8{ 127, 0, 0, 1 }),
+        .addr = @as(*align(1) const u32, @ptrCast(
+            &@as([4]u8, .{ 127, 0, 0, 1 }),
+        )).*,
     };
 
     // register direct file descriptors
@@ -1931,7 +1939,9 @@ test "accept_multishot_direct" {
 
     var address: linux.sockaddr.in = .{
         .port = 0,
-        .addr = @bitCast([4]u8{ 127, 0, 0, 1 }),
+        .addr = @as(*align(1) const u32, @ptrCast(
+            &@as([4]u8, .{ 127, 0, 0, 1 }),
+        )).*,
     };
 
     var registered_fds: [2]linux.fd_t = @splat(-1);
@@ -2041,7 +2051,9 @@ test "socket_direct/socket_direct_alloc/close_direct" {
     // use sockets from registered_fds in connect operation
     var address: linux.sockaddr.in = .{
         .port = 0,
-        .addr = @bitCast([4]u8{ 127, 0, 0, 1 }),
+        .addr = @as(*align(1) const u32, @ptrCast(
+            &@as([4]u8, .{ 127, 0, 0, 1 }),
+        )).*,
     };
     const listener_socket = try createListenerSocket(&address);
     defer _ = linux.close(listener_socket);
@@ -2426,7 +2438,9 @@ test "bind/listen/connect" {
 
     var addr: linux.sockaddr.in = .{
         .port = 0,
-        .addr = @bitCast([4]u8{ 127, 0, 0, 1 }),
+        .addr = @as(*align(1) const u32, @ptrCast(
+            &@as([4]u8, .{ 127, 0, 0, 1 }),
+        )).*,
     };
     const proto: u32 = if (addr.family == linux.AF.UNIX) 0 else linux.IPPROTO.TCP;
 
@@ -2614,7 +2628,9 @@ pub fn createSocketTestHarness(ring: *IoUring) !SocketTestHarness {
     // Create a TCP server socket
     var address: linux.sockaddr.in = .{
         .port = 0,
-        .addr = @bitCast([4]u8{ 127, 0, 0, 1 }),
+        .addr = @as(*align(1) const u32, @ptrCast(
+            &@as([4]u8, .{ 127, 0, 0, 1 }),
+        )).*,
     };
     const listener_socket = try createListenerSocket(&address);
     errdefer _ = linux.close(listener_socket);

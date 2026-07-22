@@ -1634,6 +1634,14 @@ fn addModuleTableToCacheHash(
 
 const RtStrat = enum { none, lib, obj, zcu };
 
+fn enableAarch64LlvmPauthBti(target: *const std.Target, use_llvm: bool) bool {
+    if (!use_llvm) return false;
+    return switch (target.cpu.arch) {
+        .aarch64, .aarch64_be => target.ofmt == .elf,
+        else => false,
+    };
+}
+
 pub const CreateDiagnostic = union(enum) {
     export_table_import_table_conflict,
     emit_h_without_zcu,
@@ -6476,6 +6484,7 @@ pub fn addCCArgs(
     mod: *Module,
 ) !void {
     const target = &mod.resolved_target.result;
+    const is_clang = comp.config.c_frontend == .clang;
 
     // As of Clang 16.x, it will by default read extra flags from /etc/clang.
     // I'm sure the person who implemented this means well, but they have a lot
@@ -6719,6 +6728,22 @@ pub fn addCCArgs(
                     argv.appendAssumeCapacity(arg);
                 }
             }
+        },
+        else => {},
+    }
+    // Raw assembly would warn mbranch-protection is unused.
+    // Preprocessed assembly uses it to define branch-protection macros.
+    switch (ext) {
+        .c,
+        .cpp,
+        .m,
+        .mm,
+        .assembly_with_cpp,
+        => if (enableAarch64LlvmPauthBti(target, is_clang)) {
+            // recent -mbranch-protection=standard is bti+pac-ret+gcs.
+            // Until GCS is fully supported request just BTI + PAC return
+            // address signing.
+            try argv.append("-mbranch-protection=bti+pac-ret");
         },
         else => {},
     }

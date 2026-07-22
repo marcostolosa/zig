@@ -1225,7 +1225,7 @@ pub fn resolveSymbols(self: *Elf) !void {
 
     {
         // Dedup groups.
-        var table = std.StringHashMapUnmanaged(Ref).empty;
+        var table = std.StringHashMap(Ref).empty;
         defer table.deinit(self.base.comp.gpa);
 
         for (self.objects.items) |index| {

@@ -2195,3 +2195,32 @@ test "removeByPtr, key is array" {
     try expectEqual(0, map.count());
     try expectEqual(null, map.get(key));
 }
+
+test "interleaved remove and getOrPutAssumeCapacity" {
+    const gpa = testing.allocator;
+
+    var map: AutoHashMapUnmanaged(usize, void) = .empty;
+    defer map.deinit(gpa);
+
+    try map.ensureTotalCapacity(gpa, 11);
+
+    for (0..10) |i| {
+        const result = map.getOrPutAssumeCapacity(i);
+        try testing.expect(!result.found_existing);
+    }
+
+    for (10..20) |i| {
+        const result = map.getOrPutAssumeCapacity(i);
+        try testing.expect(!result.found_existing);
+        try testing.expect(map.remove(i - 10));
+    }
+
+    for (15..20) |i| {
+        const result = map.getOrPutAssumeCapacity(i);
+        try testing.expect(result.found_existing);
+    }
+
+    for (10..20) |i| {
+        try testing.expect(map.remove(i));
+    }
+}

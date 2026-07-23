@@ -5226,7 +5226,7 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       {#header_close#}
 
       {#header_open|@wasmCustomSection#}
-      <pre>{#syntax#}@wasmCustomSection(index: u32, delta: usize) isize{#endsyntax#}</pre>
+      <pre>{#syntax#}@wasmCustomSection(name: []const u8, data: []const u8) void{#endsyntax#}</pre>
       <p>
       Defines a Wasm custom section.
       </p>

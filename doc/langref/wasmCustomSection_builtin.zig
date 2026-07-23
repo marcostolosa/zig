@@ -1,6 +1,10 @@
+const arch = @import("builtin").target.cpu.arch;
+
 comptime {
-    @wasmCustomSection("name", "data");
-    @wasmCustomSection("another-name", &[_]u8{ 1, 2, 3 });
+    if (arch == .wasm32) {
+        @wasmCustomSection("name", "data");
+        @wasmCustomSection("another-name", &[_]u8{ 1, 2, 3 });
+    }
 }
 
 // syntax

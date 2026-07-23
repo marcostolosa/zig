@@ -25023,7 +25023,8 @@ fn zirWasmCustomSection(
 
     const target = sema.pt.zcu.getTarget();
     if (!target.cpu.arch.isWasm()) {
-        return sema.fail(block, name_src, "builtin @wasmCustomSection is available when targeting WebAssembly; targeted CPU architecture is {s}", .{@tagName(target.cpu.arch)});
+        const builtin_src = block.nodeOffset(inst_data.src_node);
+        return sema.fail(block, builtin_src, "builtin @wasmCustomSection is available when targeting WebAssembly; targeted CPU architecture is {s}", .{@tagName(target.cpu.arch)});
     }
 
     try zcu.pushWasmCustomSection(name_slice, data_slice);

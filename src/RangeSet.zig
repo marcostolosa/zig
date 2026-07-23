@@ -1,6 +1,14 @@
 const RangeSet = @This();
 
+// The final set of disjoint ranges, sorted by `Range.first`.
+// It is empty during insertion and filled by `finalize`.
 ranges: std.MultiArrayList(Range),
+// Working set while inserting. Sorted only after `finalize`.
+tree: Tree,
+len: usize,
+// Treap nodes are pointer-linked and must not move once inserted.
+node_blocks: std.ArrayListUnmanaged([]Tree.Node),
+free_nodes: []Tree.Node,
 
 pub const Range = struct {
     first: Value,
@@ -8,15 +16,36 @@ pub const Range = struct {
     src: LazySrcLoc,
 };
 
-pub const empty: RangeSet = .{ .ranges = .empty };
+const Key = struct {
+    range: Range,
+    zcu: *const Zcu, // value comparison needs this
+};
+const Tree = std.Treap(Key, compareKey);
+fn compareKey(a: Key, b: Key) math.Order {
+    return a.range.first.order(b.range.first, a.zcu);
+}
+
+pub const empty: RangeSet = .{
+    .ranges = .empty,
+    .tree = .{},
+    .len = 0,
+    .node_blocks = .empty,
+    .free_nodes = &.{},
+};
 
 pub fn deinit(self: *RangeSet, allocator: Allocator) void {
     self.ranges.deinit(allocator);
+    for (self.node_blocks.items) |block| allocator.free(block);
+    self.node_blocks.deinit(allocator);
     self.* = undefined;
 }
 
 pub fn ensureUnusedCapacity(self: *RangeSet, allocator: Allocator, additional_count: usize) Allocator.Error!void {
-    return self.ranges.ensureUnusedCapacity(allocator, additional_count);
+    if (self.free_nodes.len >= additional_count) return;
+    try self.node_blocks.ensureUnusedCapacity(allocator, 1);
+    const block = try allocator.alloc(Tree.Node, additional_count);
+    self.node_blocks.appendAssumeCapacity(block);
+    self.free_nodes = block;
 }
 
 pub fn addAssumeCapacity(set: *RangeSet, new: Range, ty: Type, zcu: *Zcu) ?LazySrcLoc {
@@ -24,23 +53,52 @@ pub fn addAssumeCapacity(set: *RangeSet, new: Range, ty: Type, zcu: *Zcu) ?LazyS
     assert(new.last.typeOf(zcu).eql(ty));
     assert(new.first.compareScalar(.lte, new.last, ty, zcu));
 
-    const idx = std.sort.lowerBound(Value, set.ranges.items(.last), @as(SearchCtx, .{
-        .val = new.first,
-        .zcu = zcu,
-    }), compare);
-
-    if (idx != set.ranges.len and // `new.first` is *not* greater than all `old.last`
-        new.last.compareScalar(.gte, set.ranges.items(.first)[idx], ty, zcu))
-    {
-        return set.ranges.items(.src)[idx]; // `new` overlaps with existing range.
+    var entry = set.tree.getEntryFor(.{ .range = new, .zcu = zcu });
+    if (entry.node) |existing| {
+        return existing.key.range.src;
     }
-    set.ranges.insertAssumeCapacity(idx, new);
+
+    const node = &set.free_nodes[0];
+    set.free_nodes = set.free_nodes[1..];
+    entry.set(node);
+
+    // Disjoint ranges overlap only with a direct neighbor.
+    if (node.prev()) |prev| {
+        if (prev.key.range.last.compareScalar(.gte, new.first, ty, zcu)) {
+            set.unlink(node);
+            return prev.key.range.src;
+        }
+    }
+    if (node.next()) |next| {
+        if (new.last.compareScalar(.gte, next.key.range.first, ty, zcu)) {
+            set.unlink(node);
+            return next.key.range.src;
+        }
+    }
+
+    set.len += 1;
     return null;
+}
+
+fn unlink(set: *RangeSet, node: *Tree.Node) void {
+    var entry = set.tree.getEntryForExisting(node);
+    entry.set(null);
 }
 
 pub fn add(set: *RangeSet, allocator: Allocator, new: Range, ty: Type, zcu: *Zcu) Allocator.Error!?LazySrcLoc {
     try set.ensureUnusedCapacity(allocator, 1);
     return set.addAssumeCapacity(new, ty, zcu);
+}
+
+/// Flatten `tree` into `ranges` sorted by `Range.first`.
+/// Must run after the last insertion.
+pub fn finalize(set: *RangeSet, allocator: Allocator) Allocator.Error!void {
+    set.ranges.clearRetainingCapacity();
+    try set.ranges.ensureTotalCapacity(allocator, set.len);
+    var it = set.tree.inorderIterator();
+    while (it.next()) |node| {
+        set.ranges.appendAssumeCapacity(node.key.range);
+    }
 }
 
 pub fn spans(
@@ -89,14 +147,6 @@ pub fn spans(
     }
 
     return true;
-}
-
-const SearchCtx = struct {
-    val: Value,
-    zcu: *const Zcu,
-};
-fn compare(ctx: SearchCtx, other: Value) math.Order {
-    return ctx.val.order(other, ctx.zcu);
 }
 
 const SortCtx = struct {

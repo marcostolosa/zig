@@ -11173,6 +11173,9 @@ fn validateSwitchBlock(
         }
     }
 
+    // `spans` reads `ranges`
+    try range_set.finalize(arena);
+
     switch (item_ty.zigTypeTag(zcu)) {
         .int, .comptime_int => {},
         else => if (zir_switch.anyRanges()) {

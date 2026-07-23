@@ -685,6 +685,7 @@ const usage_build_generic =
     \\    lazy                         Don't force all relocations to be processed on load
     \\    relro                        (default) Force all relocations to be read-only after processing
     \\    norelro                      Don't force all relocations to be read-only after processing
+    \\    pac-plt                      Enable pointer authentication in AArch64 PLT entries
     \\    common-page-size=[bytes]     Set the common page size for ELF binaries
     \\    max-page-size=[bytes]        Set the max page size for ELF binaries
     \\  -dynamic                       Force output to be dynamically linked
@@ -961,6 +962,7 @@ fn buildOutputType(
     var linker_z_origin = false;
     var linker_z_now = true;
     var linker_z_relro = true;
+    var linker_z_pac_plt = false;
     var linker_z_common_page_size: ?u64 = null;
     var linker_z_max_page_size: ?u64 = null;
     var linker_tsaware = false;
@@ -1700,6 +1702,8 @@ fn buildOutputType(
                             linker_z_relro = true;
                         } else if (mem.eql(u8, z_arg, "norelro")) {
                             linker_z_relro = false;
+                        } else if (mem.eql(u8, z_arg, "pac-plt")) {
+                            linker_z_pac_plt = true;
                         } else if (prefixedIntArg(z_arg, "common-page-size=")) |int| {
                             linker_z_common_page_size = int;
                         } else if (prefixedIntArg(z_arg, "max-page-size=")) |int| {
@@ -2723,6 +2727,8 @@ fn buildOutputType(
                         linker_z_relro = true;
                     } else if (mem.eql(u8, z_arg, "norelro")) {
                         linker_z_relro = false;
+                    } else if (mem.eql(u8, z_arg, "pac-plt")) {
+                        linker_z_pac_plt = true;
                     } else if (mem.cutPrefix(u8, z_arg, "stack-size=")) |rest| {
                         stack_size = parseStackSize(rest);
                     } else if (prefixedIntArg(z_arg, "common-page-size=")) |int| {
@@ -3638,6 +3644,7 @@ fn buildOutputType(
         .linker_z_origin = linker_z_origin,
         .linker_z_now = linker_z_now,
         .linker_z_relro = linker_z_relro,
+        .linker_z_pac_plt = linker_z_pac_plt,
         .linker_z_common_page_size = linker_z_common_page_size,
         .linker_z_max_page_size = linker_z_max_page_size,
         .linker_tsaware = linker_tsaware,

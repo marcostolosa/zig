@@ -148,6 +148,7 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                                 .force_load_objc = c.force_load_objc,
                                 .discard_local_symbols = c.discard_local_symbols,
                                 .mingw_unicode_entry_point = c.mingw_unicode_entry_point,
+                                .link_z_pac_plt = c.link_z_pac_plt,
                             },
                             .flags2 = .{
                                 .pie = .init(c.pie),

@@ -138,6 +138,9 @@ link_z_relro: bool = true,
 /// Allow relocations to be lazily processed after load.
 link_z_lazy: bool = false,
 
+/// Enable pointer authentication in AArch64 PLT entries.
+link_z_pac_plt: bool = false,
+
 /// Common page size
 link_z_common_page_size: ?u64 = null,
 

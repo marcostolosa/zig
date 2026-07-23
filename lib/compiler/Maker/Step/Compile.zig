@@ -641,6 +641,7 @@ fn lowerZigArgs(
     if (conf_comp.flags.link_z_notext) (try zig_args.addManyAsArray(gpa, 2)).* = .{ "-z", "notext" };
     if (!conf_comp.flags.link_z_relro) (try zig_args.addManyAsArray(gpa, 2)).* = .{ "-z", "norelro" };
     if (conf_comp.flags.link_z_lazy) (try zig_args.addManyAsArray(gpa, 2)).* = .{ "-z", "lazy" };
+    if (conf_comp.flags.link_z_pac_plt) (try zig_args.addManyAsArray(gpa, 2)).* = .{ "-z", "pac-plt" };
     if (conf_comp.link_z_common_page_size.value) |size| (try zig_args.addManyAsArray(gpa, 2)).* = .{
         "-z", try arena.print("common-page-size={d}", .{size}),
     };

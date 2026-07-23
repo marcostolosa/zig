@@ -434,6 +434,7 @@ pub const File = struct {
         z_nocopyreloc: bool,
         z_now: bool,
         z_relro: bool,
+        z_pac_plt: bool,
         z_common_page_size: ?u64,
         z_max_page_size: ?u64,
         tsaware: bool,

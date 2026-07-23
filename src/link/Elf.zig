@@ -199,6 +199,10 @@ pub fn createEmpty(
     const target = &comp.root_mod.resolved_target.result;
     assert(target.ofmt == .elf);
 
+    if (options.z_pac_plt) {
+        return comp.link_diags.fail("the native ELF linker does not support '-z pac-plt'; use LLD instead", .{});
+    }
+
     const use_llvm = comp.config.use_llvm;
     const opt_zcu = comp.zcu;
     const output_mode = comp.config.output_mode;

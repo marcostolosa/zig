@@ -88,6 +88,7 @@ pub const Elf = struct {
     z_nocopyreloc: bool,
     z_now: bool,
     z_relro: bool,
+    z_pac_plt: bool,
     z_common_page_size: ?u64,
     z_max_page_size: ?u64,
     rpath_list: []const []const u8,
@@ -143,6 +144,7 @@ pub const Elf = struct {
             .z_nocopyreloc = options.z_nocopyreloc,
             .z_now = options.z_now,
             .z_relro = options.z_relro,
+            .z_pac_plt = options.z_pac_plt,
             .z_common_page_size = options.z_common_page_size,
             .z_max_page_size = options.z_max_page_size,
             .rpath_list = options.rpath_list,
@@ -999,6 +1001,11 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
             try argv.append("-z");
             try argv.append(try arena.print("max-page-size={d}", .{size}));
         }
+
+        if (is_exe_or_dyn_lib and elf.z_pac_plt) switch (target.cpu.arch) {
+            .aarch64, .aarch64_be => try argv.appendSlice(&.{ "-z", "pac-plt" }),
+            else => {},
+        };
 
         if (getLDMOption(target)) |ldm| {
             try argv.append("-m");

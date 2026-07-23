@@ -1484,6 +1484,7 @@ pub const CreateOptions = struct {
     linker_z_origin: bool = false,
     linker_z_now: bool = true,
     linker_z_relro: bool = true,
+    linker_z_pac_plt: bool = false,
     linker_z_nocopyreloc: bool = false,
     linker_z_common_page_size: ?u64 = null,
     linker_z_max_page_size: ?u64 = null,
@@ -2162,6 +2163,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             .z_nocopyreloc = options.linker_z_nocopyreloc,
             .z_now = options.linker_z_now,
             .z_relro = options.linker_z_relro,
+            .z_pac_plt = options.linker_z_pac_plt,
             .z_common_page_size = options.linker_z_common_page_size,
             .z_max_page_size = options.linker_z_max_page_size,
             .darwin_sdk_layout = libc_dirs.darwin_sdk_layout,
@@ -3412,6 +3414,7 @@ fn addNonIncrementalStuffToCacheManifest(
     man.hash.add(opts.z_nocopyreloc);
     man.hash.add(opts.z_now);
     man.hash.add(opts.z_relro);
+    man.hash.add(opts.z_pac_plt);
     man.hash.add(opts.z_common_page_size orelse 0);
     man.hash.add(opts.z_max_page_size orelse 0);
     man.hash.add(opts.hash_style);

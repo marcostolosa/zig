@@ -961,7 +961,7 @@ pub const Step = extern struct {
             force_load_objc: bool,
             discard_local_symbols: bool,
             mingw_unicode_entry_point: bool,
-            _: u1 = 0,
+            link_z_pac_plt: bool,
         };
 
         pub const Flags2 = packed struct(u32) {

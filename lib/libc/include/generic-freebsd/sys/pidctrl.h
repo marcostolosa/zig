@@ -34,7 +34,7 @@
  *
  * This controller is intended to replace a multitude of threshold based
  * daemon regulation systems.  These systems produce sharp sawtooths of
- * activity which can cause latency spikes and other undesireable bursty
+ * activity which can cause latency spikes and other undesirable bursty
  * behavior.  The PID controller adapts to changing load conditions and
  * adjusts the work done by the daemon to keep a smoother output.
  *
@@ -46,7 +46,7 @@
  * respond to it, else the resource may be exhausted.  More frequent wakeups
  * permit higher setpoints and less underutilized resources.
  *
- * The controller has been optimised for simplicity of math making it quite
+ * The controller has been optimized for simplicity of math making it quite
  * inexpensive to execute.  There is no floating point and so the gains must
  * be the inverse of whole integers.
  *
@@ -103,14 +103,14 @@ void	pidctrl_init_sysctl(struct pidctrl *pc, struct sysctl_oid_list *parent);
 int	pidctrl_classic(struct pidctrl *pc, int input);
 
 /*
- * This controler is intended for consumer type daemons that can only
+ * This controller is intended for consumer type daemons that can only
  * regulate in a positive direction, that is to say, they can not exert
  * positive pressure on the process variable or input.  They can only
  * reduce it by doing work.  As such the integral is bound between [0, bound]
  * and the output is similarly a positive value reflecting the units of
  * work necessary to be completed in the current interval to eliminate error.
  *
- * It is a descrete time controller but can be invoked more than once in a
+ * It is a discrete time controller but can be invoked more than once in a
  * given time interval for ease of client implementation.  This should only
  * be done in overload situations or the controller may not produce a stable
  * output.  Calling it less frequently when there is no work to be done will

@@ -202,7 +202,7 @@ struct tcp_sendfile_track {
  * is unfilled. This may mean that a time is off by a micro-second
  * but this is ok in the grand scheme of things.
  *
- * When switching stacks it is desireable to get as much information
+ * When switching stacks it is desirable to get as much information
  * from the old stack to the new stack as possible. Though not always
  * will the stack be compatible in the types of information. The
  * init() function needs to take care when it begins changing

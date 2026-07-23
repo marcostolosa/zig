@@ -26,6 +26,13 @@
 //! By limiting the thread-local metadata array to the same number as the CPU
 //! count, ensures that as threads are created and destroyed, they cycle
 //! through the full set of freelists.
+//!
+//! `free` usually doesn't push to the per-thread freelists directly, but to a
+//! deferred per-slab freelist. Once in a while these per-slab lists are pushed
+//! to the per-thread ones in their entirety. This ensures that contention
+//! between parallel `free` calls remains relatively low and promotes reuse of
+//! freed slots as the deferred freelists are always eventually pushed back to
+//! the per-thread states they originated from.
 const SmpAllocator = @This();
 
 const builtin = @import("builtin");
@@ -38,70 +45,54 @@ const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 const PageAllocator = std.heap.PageAllocator;
 
-cpu_count: u32,
+cpu_count: std.atomic.Value(u32),
 threads: [max_thread_count]Thread,
 
 var global: SmpAllocator = .{
+    .cpu_count = .init(0),
     .threads = @splat(.{}),
-    .cpu_count = 0,
 };
 threadlocal var thread_index: u32 = 0;
 
 const max_thread_count = 128;
-const slab_len: usize = @max(std.heap.page_size_max, 64 * 1024);
+const min_slab_len: usize = @max(std.heap.page_size_max, 64 * 1024);
 /// Because of storing free list pointers, the minimum size class is 3.
 const min_class = math.log2(@sizeOf(usize));
-const size_class_count = math.log2(slab_len) - min_class;
+const size_class_count = math.log2(min_slab_len) - min_class;
 /// Before mapping a fresh page, `alloc` will rotate this many times.
-const max_alloc_search = 1;
+const max_alloc_search = 4;
+/// If one over this number of a slab's total slots are pending frees,
+/// the next `free` call will reap the pending freelist of that slab.
+const reap_threshold_divisor = 32;
 
 const Thread = struct {
     /// Avoid false sharing.
     _: void align(std.atomic.cache_line) = {},
-
     /// Protects the state in this struct (per-thread state).
     ///
     /// Threads lock this before accessing their own state in order
     /// to support freelist reclamation.
+    /// To make `free` always succeed, the freelists can always be
+    /// pushed to. Popping from them requires holding this lock to
+    /// avoid ABA problems.
     mutex: std.atomic.Mutex = .unlocked,
-
-    /// For each size class, tracks the next address to be returned from
-    /// `alloc` when the freelist is empty.
     next_addrs: [size_class_count]usize = @splat(0),
     /// For each size class, points to the freed pointer.
-    frees: [size_class_count]usize = @splat(0),
+    frees: [size_class_count]std.atomic.Value(usize) = @splat(.init(0)),
+};
 
-    fn lock() *Thread {
-        var index = thread_index;
-        {
-            const t = &global.threads[index];
-            if (t.mutex.tryLock()) {
-                @branchHint(.likely);
-                return t;
-            }
-        }
-        const cpu_count = getCpuCount();
-        assert(cpu_count != 0);
-        while (true) {
-            index = (index + 1) % cpu_count;
-            const t = &global.threads[index];
-            if (t.mutex.tryLock()) {
-                thread_index = index;
-                return t;
-            }
-        }
-    }
-
-    fn unlock(t: *Thread) void {
-        t.mutex.unlock();
-    }
+const Slab = struct {
+    _: void align(std.atomic.cache_line) = {},
+    owner_index: u32,
+    pending_count: std.atomic.Value(u32),
+    pending_frees: std.atomic.Value(usize),
 };
 
 fn getCpuCount() u32 {
-    const cpu_count = @atomicLoad(u32, &global.cpu_count, .unordered);
+    const cpu_count = global.cpu_count.load(.unordered);
     if (cpu_count != 0) return cpu_count;
     const n: u32 = @min(std.Thread.getCpuCount() catch max_thread_count, max_thread_count);
-    return if (@cmpxchgStrong(u32, &global.cpu_count, 0, n, .monotonic, .monotonic)) |other| other else n;
+    return if (global.cpu_count.cmpxchgStrong(0, n, .monotonic, .monotonic)) |other| other else n;
 }
 
 pub const vtable: Allocator.VTable = .{
@@ -125,51 +116,110 @@ fn alloc(context: *anyopaque, len: usize, alignment: Alignment, ra: usize) ?[*]u
     }
 
     const slot_size = slotSize(class);
+    const slab_len = slabLen(slot_size);
     assert(slab_len % slot_size == 0);
-    var search_count: u8 = 0;
 
-    var t = Thread.lock();
+    for (0..1 + max_alloc_search) |search_count| {
+        const t: *Thread = t: {
+            var index = thread_index;
+            if (search_count == 0) {
+                const t = &global.threads[index];
+                if (t.mutex.tryLock()) {
+                    break :t t;
+                }
+            }
+            const cpu_count = getCpuCount();
+            assert(cpu_count != 0);
+            for (0..cpu_count) |_| {
+                index = (index + 1) % cpu_count;
+                const t = &global.threads[index];
+                if (t.mutex.tryLock()) {
+                    thread_index = index;
+                    break :t t;
+                }
+            }
+            continue;
+        };
+        defer t.mutex.unlock();
 
-    outer: while (true) {
-        const top_free_ptr = t.frees[class];
-        if (top_free_ptr != 0) {
-            @branchHint(.likely);
-            defer t.unlock();
+        var top_free_ptr = t.frees[class].load(.acquire);
+        while (top_free_ptr != 0) {
             const node: *usize = @ptrFromInt(top_free_ptr);
-            t.frees[class] = node.*;
-            return @ptrFromInt(top_free_ptr);
+            if (t.frees[class].cmpxchgWeak(
+                @intFromPtr(node),
+                node.*,
+                .acquire,
+                .acquire,
+            )) |new_free_ptr| {
+                top_free_ptr = new_free_ptr;
+            } else {
+                return @ptrFromInt(top_free_ptr);
+            }
         }
 
         const next_addr = t.next_addrs[class];
-        if ((next_addr % slab_len) != 0) {
+        if (next_addr % slab_len != 0) {
             @branchHint(.likely);
-            defer t.unlock();
             t.next_addrs[class] = next_addr + slot_size;
             return @ptrFromInt(next_addr);
         }
+    } else {
+        @branchHint(.unlikely);
 
-        if (search_count >= max_alloc_search) {
-            @branchHint(.likely);
-            defer t.unlock();
-            // slab alignment here ensures the % slab len earlier catches the end of slots.
-            const slab = PageAllocator.map(slab_len, .fromByteUnits(slab_len)) orelse return null;
-            t.next_addrs[class] = @intFromPtr(slab) + slot_size;
-            return slab;
-        }
+        const slab: *Slab = @ptrCast(@alignCast(PageAllocator.map(slab_len, .fromByteUnits(slab_len)) orelse
+            return null));
+        slab.* = .{
+            .owner_index = thread_index,
+            .pending_count = .init(0),
+            .pending_frees = .init(0),
+        };
+        const slots_start = @intFromPtr(slab) + slabHeaderSize(slot_size);
+        assert(slots_start < @intFromPtr(slab) + 2 * slab_len);
 
-        t.unlock();
-        const cpu_count = getCpuCount();
-        assert(cpu_count != 0);
-        var index = thread_index;
-        while (true) {
-            index = (index + 1) % cpu_count;
-            t = &global.threads[index];
+        const t = &global.threads[thread_index];
+        const first_addr: usize, const last_node: *usize = nodes: {
             if (t.mutex.tryLock()) {
-                thread_index = index;
-                search_count += 1;
-                continue :outer;
+                defer t.mutex.unlock();
+
+                const next_addr = t.next_addrs[class];
+                t.next_addrs[class] = slots_start + slot_size;
+
+                if (next_addr % slab_len != 0) {
+                    const first_addr = next_addr;
+                    var last_node: *usize = @ptrFromInt(first_addr);
+                    while ((@intFromPtr(last_node) + slot_size) % slab_len != 0) {
+                        last_node.* = @intFromPtr(last_node) + slot_size;
+                        last_node = @ptrFromInt(last_node.*);
+                    }
+                    break :nodes .{ first_addr, last_node };
+                }
+                break :nodes .{ 0, undefined };
+            } else {
+                @branchHint(.unlikely);
+
+                const first_addr = slots_start + slot_size;
+                var last_node: *usize = @ptrFromInt(first_addr);
+                while (@intFromPtr(last_node) + slot_size != @intFromPtr(slab) + slab_len) {
+                    last_node.* = @intFromPtr(last_node) + slot_size;
+                    last_node = @ptrFromInt(last_node.*);
+                }
+                break :nodes .{ first_addr, last_node };
+            }
+        };
+
+        if (first_addr != 0) {
+            last_node.* = t.frees[class].load(.monotonic);
+            while (t.frees[class].cmpxchgWeak(
+                last_node.*,
+                first_addr,
+                .release,
+                .monotonic,
+            )) |top_free_ptr| {
+                last_node.* = top_free_ptr;
             }
         }
+
+        return @ptrFromInt(slots_start);
     }
 }
 
@@ -206,13 +256,46 @@ fn free(context: *anyopaque, memory: []u8, alignment: Alignment, ra: usize) void
         return PageAllocator.unmap(@alignCast(memory));
     }
 
+    const slot_size = slotSize(class);
+    const slab_len = slabLen(slot_size);
+    assert(slab_len % slot_size == 0);
+
+    const slab: *Slab = @ptrFromInt(mem.alignBackward(usize, @intFromPtr(memory.ptr), slab_len));
     const node: *usize = @ptrCast(@alignCast(memory.ptr));
 
-    const t = Thread.lock();
-    defer t.unlock();
+    const slots_per_slab = @divExact(slab_len - slabHeaderSize(slot_size), slot_size);
+    const reap_threshold: u32 = @intCast(@divCeil(slots_per_slab, reap_threshold_divisor));
+    if (slab.pending_count.fetchAdd(1, .monotonic) == reap_threshold) {
+        @branchHint(.unlikely);
+        assert(slab.pending_count.fetchSub(reap_threshold, .monotonic) >= reap_threshold);
 
-    node.* = t.frees[class];
-    t.frees[class] = @intFromPtr(node);
+        node.* = slab.pending_frees.swap(0, .acquire);
+        const first_addr = @intFromPtr(node);
+
+        var last_node = node;
+        while (last_node.* != 0) last_node = @ptrFromInt(last_node.*);
+
+        const t = &global.threads[slab.owner_index];
+        last_node.* = t.frees[class].load(.monotonic);
+        while (t.frees[class].cmpxchgWeak(
+            last_node.*,
+            first_addr,
+            .release,
+            .monotonic,
+        )) |top_free_ptr| {
+            last_node.* = top_free_ptr;
+        }
+    } else {
+        node.* = slab.pending_frees.load(.monotonic);
+        while (slab.pending_frees.cmpxchgWeak(
+            node.*,
+            @intFromPtr(node),
+            .release,
+            .monotonic,
+        )) |top_pending_ptr| {
+            node.* = top_pending_ptr;
+        }
+    }
 }
 
 fn sizeClassIndex(len: usize, alignment: Alignment) usize {
@@ -221,4 +304,12 @@ fn sizeClassIndex(len: usize, alignment: Alignment) usize {
 
 fn slotSize(class: usize) usize {
     return @as(usize, 1) << @intCast(class + min_class);
+}
+
+fn slabLen(slot_size: usize) usize {
+    return @max(min_slab_len, 64 * slot_size);
+}
+
+fn slabHeaderSize(slot_size: usize) usize {
+    return mem.alignForward(usize, @sizeOf(Slab), slot_size);
 }

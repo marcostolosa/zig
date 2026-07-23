@@ -7595,19 +7595,16 @@ fn appendWasmCustomSections(file: *link.File, zcu: *Zcu, comp: *Compilation) err
     const io = comp.io;
     const diags = &comp.link_diags;
 
-    if (
-        zcu.getTarget().cpu.arch.isWasm()
-        and zcu.wasm_custom_sections.items.len > 0
-    ) {
+    if (zcu.getTarget().cpu.arch.isWasm() and zcu.wasm_custom_sections.items.len > 0) {
         const wasm_file = file.emit.root_dir.handle.openFile(io, file.emit.sub_path, .{ .mode = .read_write }) catch |err|
-            return diags.fail("failed to open wasm file: {t}", .{ err });
+            return diags.fail("failed to open wasm file: {t}", .{err});
         defer wasm_file.close(io);
 
         const file_len = wasm_file.length(io) catch |err|
-            return diags.fail("failed to get wasm file len: {t}", .{ err });
+            return diags.fail("failed to get wasm file len: {t}", .{err});
 
         const custom_sections = zcu.wasm_custom_sections;
         _ = wasm_file.writePositionalAll(io, custom_sections.items, file_len) catch |err|
-            return diags.fail("failed to append custom sections to wasm file: {t}", .{ err });
-    }   
+            return diags.fail("failed to append custom sections to wasm file: {t}", .{err});
+    }
 }

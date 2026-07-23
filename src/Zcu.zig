@@ -5477,7 +5477,7 @@ pub fn acquire(zcu: *Zcu) Active {
     return zcu.activate(.acquire(zcu.comp.io));
 }
 
-pub fn pushWasmCustomSection(zcu: *Zcu, name: []const u8, data: []const u8) error{OutOfMemory}!void  {
+pub fn pushWasmCustomSection(zcu: *Zcu, name: []const u8, data: []const u8) error{OutOfMemory}!void {
     const gpa = zcu.comp.gpa;
 
     const name_len = name.len;

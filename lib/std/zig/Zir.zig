@@ -966,7 +966,7 @@ pub const Inst = struct {
         /// Implements the `@truncate` builtin.
         /// Uses `pl_node` with payload `Bin`. `lhs` is dest type, `rhs` is operand.
         truncate,
-        // Implements the `@wasmCustomSection` builtin.
+        /// Implements the `@wasmCustomSection` builtin.
         /// Uses `pl_node` with payload `Bin`. `lhs` is name, `rhs` is data.
         wasm_custom_section,
 

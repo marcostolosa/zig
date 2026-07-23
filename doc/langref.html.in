@@ -5225,6 +5225,15 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       {#see_also|@wasmMemorySize#}
       {#header_close#}
 
+      {#header_open|@wasmCustomSection#}
+      <pre>{#syntax#}@wasmCustomSection(index: u32, delta: usize) isize{#endsyntax#}</pre>
+      <p>
+      Defines a Wasm custom section.
+      </p>
+      {#code|wasmCustomSection_builtin.zig#}
+
+      {#header_close#}
+
       {#header_open|@mod#}
       <pre>{#syntax#}@mod(numerator: T, denominator: T) T{#endsyntax#}</pre>
       <p>

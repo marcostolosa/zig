@@ -2949,6 +2949,7 @@ fn addEnsureResult(gz: *GenZir, maybe_unused_result: Zir.Inst.Ref, statement: As
             .validate_ptr_array_init,
             .validate_ref_ty,
             .validate_const,
+            .wasm_custom_section,
             => break :b true,
 
             .@"defer" => unreachable,
@@ -9454,6 +9455,15 @@ fn builtinCall(
                 .node = gz.nodeIndexToRelative(node),
                 .lhs = index_arg,
                 .rhs = delta_arg,
+            });
+            return rvalue(gz, ri, result, node);
+        },
+        .wasm_custom_section => {
+            const section_name = try comptimeExpr(gz, scope, .{ .rl = .{ .coerced_ty = .slice_const_u8_type } }, params[0], .custom_section_name);
+            const section_data = try comptimeExpr(gz, scope, .{ .rl = .{ .coerced_ty = .slice_const_u8_type } }, params[1], .custom_section_data);
+            const result = try gz.addPlNode(.wasm_custom_section, node, Zir.Inst.Bin{
+                .lhs = section_name,
+                .rhs = section_data,
             });
             return rvalue(gz, ri, result, node);
         },

@@ -3224,6 +3224,13 @@ fn flush(comp: *Compilation, arena: Allocator) (Io.Cancelable || Allocator.Error
             error.AlreadyReported => return,
             error.OutOfMemory, error.Canceled => |e| return e,
         };
+
+        if (comp.zcu) |zcu| {
+            appendWasmCustomSections(lf, zcu, comp) catch |err| switch (err) {
+                error.AlreadyReported => return,
+                error.OutOfMemory => |e| return e,
+            };
+        }
     }
 }
 
@@ -7573,4 +7580,34 @@ pub fn compilerRtOptMode(comp: Compilation) std.lang.OptimizeMode {
 /// compiler-rt, libcxx, libc, libunwind, etc.
 pub fn compilerRtStrip(comp: Compilation) bool {
     return comp.root_mod.strip;
+}
+
+// The linker erroneously merges wasm custom sections that share a name, despite
+// the WebAssembly specification allowing multiple custom sections to share a name.
+// Say we use `@wasmCustomSection("dupe", "one")` and `@wasmCustomSection("dupe", "two")`
+// to specify two custom sections.
+// If we use LLVM's `wasm.custom_sections` named metadata to define these custom sections,
+// the linker will erroneously combine them into a single `(@custom "dupe" "onetwo")` custom section.
+// If we append the custom sections to the wasm binary ourselves before running the linker,
+// the linker will still combine them into a single custom section.
+// To solve this, we append the custom sections to the wasm binary after the linker runs.
+fn appendWasmCustomSections(file: *link.File, zcu: *Zcu, comp: *Compilation) error{ AlreadyReported, OutOfMemory }!void {
+    const io = comp.io;
+    const diags = &comp.link_diags;
+
+    if (
+        zcu.getTarget().cpu.arch.isWasm()
+        and zcu.wasm_custom_sections.items.len > 0
+    ) {
+        const wasm_file = file.emit.root_dir.handle.openFile(io, file.emit.sub_path, .{ .mode = .read_write }) catch |err|
+            return diags.fail("failed to open wasm file: {t}", .{ err });
+        defer wasm_file.close(io);
+
+        const file_len = wasm_file.length(io) catch |err|
+            return diags.fail("failed to get wasm file len: {t}", .{ err });
+
+        const custom_sections = zcu.wasm_custom_sections;
+        _ = wasm_file.writePositionalAll(io, custom_sections.items, file_len) catch |err|
+            return diags.fail("failed to append custom sections to wasm file: {t}", .{ err });
+    }   
 }

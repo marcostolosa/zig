@@ -886,6 +886,8 @@ pub const SimpleComptimeReason = enum(u32) {
     // Evaluating at comptime because decl/field name must be comptime-known.
     decl_name,
     field_name,
+    custom_section_name,
+    custom_section_data,
     tuple_field_index,
 
     // Evaluating at comptime because it is an attribute of a global declaration.
@@ -968,9 +970,11 @@ pub const SimpleComptimeReason = enum(u32) {
             .packed_struct_backing_int_type => "packed struct backing integer type must be comptime-known",
             .packed_union_backing_int_type  => "packed struct backing integer type must be comptime-known",
 
-            .decl_name         => "declaration name must be comptime-known",
-            .field_name        => "field name must be comptime-known",
-            .tuple_field_index => "tuple field index must be comptime-known",
+            .decl_name              => "declaration name must be comptime-known",
+            .field_name             => "field name must be comptime-known",
+            .custom_section_name    => "custom section name must be comptime-known",
+            .custom_section_data    => "custom section data must be comptime-known",
+            .tuple_field_index       => "tuple field index must be comptime-known",
 
             .container_var_init => "initializer of container-level variable must be comptime-known",
             .@"callconv"        => "calling convention must be comptime-known",

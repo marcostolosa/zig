@@ -69,6 +69,7 @@ pub const Tag = enum {
     min,
     wasm_memory_size,
     wasm_memory_grow,
+    wasm_custom_section,
     mod,
     mul_with_overflow,
     panic,
@@ -655,6 +656,13 @@ pub const list = list: {
             "@wasmMemoryGrow",
             .{
                 .tag = .wasm_memory_grow,
+                .param_count = 2,
+            },
+        },
+        .{
+            "@wasmCustomSection",
+            .{
+                .tag = .wasm_custom_section,
                 .param_count = 2,
             },
         },

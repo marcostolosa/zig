@@ -341,6 +341,11 @@ incremental_debug_state: if (build_options.enable_debug_extensions) IncrementalD
 /// this timer must be temporarily paused and resumed later.
 cur_analysis_timer: ?Compilation.Timer = null,
 
+/// WebAssembly custom sections defined using the `@wasmCustomSection` built-in.
+/// Each section is appended to this list.
+/// Sections contain the bytes `0, LEB128(section_len), LEB128(name_len), name, data`.
+wasm_custom_sections: std.ArrayList(u8) = .empty,
+
 codegen_task_pool: CodegenTaskPool,
 
 generation: u32 = 0,
@@ -2912,6 +2917,8 @@ pub fn deinit(zcu: *Zcu) void {
         zcu.all_type_references.deinit(gpa);
         zcu.free_type_references.deinit(gpa);
 
+        zcu.wasm_custom_sections.deinit(gpa);
+
         if (zcu.resolved_references) |*r| r.deinit(gpa);
 
         if (comp.debugIncremental()) {
@@ -5468,4 +5475,42 @@ pub fn activate(zcu: *Zcu, tid: PerThread.Id) Active {
 }
 pub fn acquire(zcu: *Zcu) Active {
     return zcu.activate(.acquire(zcu.comp.io));
+}
+
+pub fn pushWasmCustomSection(zcu: *Zcu, name: []const u8, data: []const u8) error{OutOfMemory}!void  {
+    const gpa = zcu.comp.gpa;
+
+    const name_len = name.len;
+    const name_len_byte_count = Zcu.numBytesToEncodeLeb128(name_len);
+
+    const section_len = name_len_byte_count + name_len + data.len;
+    const section_len_byte_count = Zcu.numBytesToEncodeLeb128(section_len);
+
+    // 1 byte for custom section id.
+    const byte_count_to_add = 1 + section_len_byte_count + name_len_byte_count + name_len + data.len;
+
+    try zcu.wasm_custom_sections.ensureUnusedCapacity(gpa, byte_count_to_add);
+
+    var w: std.Io.Writer = .fixed(zcu.wasm_custom_sections.unusedCapacitySlice());
+
+    const start_len = zcu.wasm_custom_sections.items.len;
+    const end_len = start_len + byte_count_to_add;
+
+    w.writeByte(0) catch unreachable;
+    w.writeLeb128(section_len) catch unreachable;
+    w.writeLeb128(name_len) catch unreachable;
+    w.writeAll(name) catch unreachable;
+    w.writeAll(data) catch unreachable;
+
+    zcu.wasm_custom_sections.items.len = end_len;
+}
+
+/// Number of bytes required to encode the given number as LEB128.
+fn numBytesToEncodeLeb128(num: usize) usize {
+    var bytes_required: usize = 1;
+    if (num >= 8) {
+        const bits_needed = std.math.log2_int(usize, num);
+        bytes_required = (bits_needed / 7) + 1;
+    }
+    return bytes_required;
 }

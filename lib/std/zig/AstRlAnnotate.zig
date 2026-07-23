@@ -958,6 +958,7 @@ fn builtinCall(astrl: *AstRlAnnotate, block: ?*Block, ri: ResultInfo, node: Ast.
         .has_field,
         .field,
         .FieldType,
+        .wasm_custom_section,
         => {
             _ = try astrl.expr(args[0], block, ResultInfo.type_only);
             _ = try astrl.expr(args[1], block, ResultInfo.type_only);

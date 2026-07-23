@@ -416,6 +416,7 @@ const Writer = struct {
             .elem_val,
             .array_type,
             .coerce_ptr_elem_ty,
+            .wasm_custom_section,
             => try self.writePlNodeBin(stream, inst),
 
             .for_len => try self.writePlNodeMultiOp(stream, inst),

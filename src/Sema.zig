@@ -1376,50 +1376,50 @@ fn analyzeBodyInner(
                 const extended = datas[@backingInt(inst)].extended;
                 break :ext switch (extended.opcode) {
                     // zig fmt: off
-                    .struct_decl        => try sema.zirStructDecl(        block, inst),
-                    .enum_decl          => try sema.zirEnumDecl(          block, inst),
-                    .union_decl         => try sema.zirUnionDecl(         block, inst),
-                    .opaque_decl        => try sema.zirOpaqueDecl(        block, inst),
-                    .tuple_decl         => try sema.zirTupleDecl(         block, extended),
-                    .this               => try sema.zirThis(              block, extended),
-                    .ret_addr           => try sema.zirRetAddr(           block, extended),
-                    .builtin_src        => try sema.zirBuiltinSrc(        block, extended),
-                    .error_return_trace => try sema.zirErrorReturnTrace(  block),
-                    .frame              => try sema.zirFrame(             block, extended),
-                    .frame_address      => try sema.zirFrameAddress(      block, extended),
-                    .alloc              => try sema.zirAllocExtended(     block, extended),
-                    .builtin_extern     => try sema.zirBuiltinExtern(     block, extended),
-                    .@"asm"             => try sema.zirAsm(               block, extended, false),
-                    .asm_expr           => try sema.zirAsm(               block, extended, true),
-                    .typeof_peer        => try sema.zirTypeofPeer(        block, extended, inst),
-                    .round_op           => try sema.zirRoundCast(         block, extended),
-                    .round_op_ty        => try sema.zirRoundOpType(       block, extended),
-                    .compile_log        => try sema.zirCompileLog(        block, extended),
-                    .min_multi          => try sema.zirMinMaxMulti(       block, extended, .min),
-                    .max_multi          => try sema.zirMinMaxMulti(       block, extended, .max),
-                    .add_with_overflow  => try sema.zirOverflowArithmetic(block, extended, extended.opcode),
-                    .sub_with_overflow  => try sema.zirOverflowArithmetic(block, extended, extended.opcode),
-                    .mul_with_overflow  => try sema.zirOverflowArithmetic(block, extended, extended.opcode),
-                    .shl_with_overflow  => try sema.zirOverflowArithmetic(block, extended, extended.opcode),
-                    .wasm_memory_size   => try sema.zirWasmMemorySize(    block, extended),
-                    .wasm_memory_grow   => try sema.zirWasmMemoryGrow(    block, extended),
-                    .prefetch           => try sema.zirPrefetch(          block, extended),
-                    .error_cast         => try sema.zirErrorCast(         block, extended),
-                    .select             => try sema.zirSelect(            block, extended),
-                    .int_from_error     => try sema.zirIntFromError(      block, extended),
-                    .error_from_int     => try sema.zirErrorFromInt(      block, extended),
-                    .cmpxchg            => try sema.zirCmpxchg(           block, extended),
-                    .c_va_arg           => try sema.zirCVaArg(            block, extended),
-                    .c_va_copy          => try sema.zirCVaCopy(           block, extended),
-                    .c_va_end           => try sema.zirCVaEnd(            block, extended),
-                    .c_va_start         => try sema.zirCVaStart(          block, extended),
-                    .ptr_cast_full      => try sema.zirPtrCastFull(       block, extended),
-                    .ptr_cast_no_dest   => try sema.zirPtrCastNoDest(     block, extended),
-                    .work_item_id       => try sema.zirWorkItem(          block, extended, extended.opcode),
-                    .work_group_size    => try sema.zirWorkItem(          block, extended, extended.opcode),
-                    .work_group_id      => try sema.zirWorkItem(          block, extended, extended.opcode),
-                    .in_comptime        => try sema.zirInComptime(        block),
-                    .closure_get        => try sema.zirClosureGet(        block, extended),
+                    .struct_decl         => try sema.zirStructDecl(        block, inst),
+                    .enum_decl           => try sema.zirEnumDecl(          block, inst),
+                    .union_decl          => try sema.zirUnionDecl(         block, inst),
+                    .opaque_decl         => try sema.zirOpaqueDecl(        block, inst),
+                    .tuple_decl          => try sema.zirTupleDecl(         block, extended),
+                    .this                => try sema.zirThis(              block, extended),
+                    .ret_addr            => try sema.zirRetAddr(           block, extended),
+                    .builtin_src         => try sema.zirBuiltinSrc(        block, extended),
+                    .error_return_trace  => try sema.zirErrorReturnTrace(  block),
+                    .frame               => try sema.zirFrame(             block, extended),
+                    .frame_address       => try sema.zirFrameAddress(      block, extended),
+                    .alloc               => try sema.zirAllocExtended(     block, extended),
+                    .builtin_extern      => try sema.zirBuiltinExtern(     block, extended),
+                    .@"asm"              => try sema.zirAsm(               block, extended, false),
+                    .asm_expr            => try sema.zirAsm(               block, extended, true),
+                    .typeof_peer         => try sema.zirTypeofPeer(        block, extended, inst),
+                    .round_op            => try sema.zirRoundCast(         block, extended),
+                    .round_op_ty         => try sema.zirRoundOpType(       block, extended),
+                    .compile_log         => try sema.zirCompileLog(        block, extended),
+                    .min_multi           => try sema.zirMinMaxMulti(       block, extended, .min),
+                    .max_multi           => try sema.zirMinMaxMulti(       block, extended, .max),
+                    .add_with_overflow   => try sema.zirOverflowArithmetic(block, extended, extended.opcode),
+                    .sub_with_overflow   => try sema.zirOverflowArithmetic(block, extended, extended.opcode),
+                    .mul_with_overflow   => try sema.zirOverflowArithmetic(block, extended, extended.opcode),
+                    .shl_with_overflow   => try sema.zirOverflowArithmetic(block, extended, extended.opcode),
+                    .wasm_memory_size    => try sema.zirWasmMemorySize(    block, extended),
+                    .wasm_memory_grow    => try sema.zirWasmMemoryGrow(    block, extended),
+                    .prefetch            => try sema.zirPrefetch(          block, extended),
+                    .error_cast          => try sema.zirErrorCast(         block, extended),
+                    .select              => try sema.zirSelect(            block, extended),
+                    .int_from_error      => try sema.zirIntFromError(      block, extended),
+                    .error_from_int      => try sema.zirErrorFromInt(      block, extended),
+                    .cmpxchg             => try sema.zirCmpxchg(           block, extended),
+                    .c_va_arg            => try sema.zirCVaArg(            block, extended),
+                    .c_va_copy           => try sema.zirCVaCopy(           block, extended),
+                    .c_va_end            => try sema.zirCVaEnd(            block, extended),
+                    .c_va_start          => try sema.zirCVaStart(          block, extended),
+                    .ptr_cast_full       => try sema.zirPtrCastFull(       block, extended),
+                    .ptr_cast_no_dest    => try sema.zirPtrCastNoDest(     block, extended),
+                    .work_item_id        => try sema.zirWorkItem(          block, extended, extended.opcode),
+                    .work_group_size     => try sema.zirWorkItem(          block, extended, extended.opcode),
+                    .work_group_id       => try sema.zirWorkItem(          block, extended, extended.opcode),
+                    .in_comptime         => try sema.zirInComptime(        block),
+                    .closure_get         => try sema.zirClosureGet(        block, extended),
 
                     .reify_slice_arg_ty        => try sema.zirReifySliceArgTy(      block, extended),
                     .reify_enum_value_slice_ty => try sema.zirReifyEnumValueSliceTy(block, extended),
@@ -1584,6 +1584,11 @@ fn analyzeBodyInner(
             },
             .set_runtime_safety => {
                 try sema.zirSetRuntimeSafety(block, inst);
+                i += 1;
+                continue;
+            },
+            .wasm_custom_section => {
+                try sema.zirWasmCustomSection(block, inst);
                 i += 1;
                 continue;
             },
@@ -24994,6 +24999,35 @@ fn zirWasmMemoryGrow(
             .payload = index,
         } },
     });
+}
+
+fn zirWasmCustomSection(
+    sema: *Sema,
+    block: *Block,
+    inst: Zir.Inst.Index,
+) CompileError!void {
+    const pt = sema.pt;
+    const zcu = pt.zcu;
+    const ip = &zcu.intern_pool;
+
+    const inst_data = sema.code.instructions.items(.data)[@backingInt(inst)].pl_node;
+    const name_src = block.builtinCallArgSrc(inst_data.src_node, 0);
+    const data_src = block.builtinCallArgSrc(inst_data.src_node, 1);
+    const extra = sema.code.extraData(Zir.Inst.Bin, inst_data.payload_index).data;
+
+    const name = try sema.resolveConstStringIntern(block, name_src, extra.lhs, .{ .simple = .custom_section_name });
+    const data = try sema.resolveConstStringIntern(block, data_src, extra.rhs, .{ .simple = .custom_section_data });
+
+    const name_slice = name.toSlice(ip)[0.. :0];
+    const data_slice = data.toSlice(ip)[0.. :0];
+
+    const target = sema.pt.zcu.getTarget();
+    if (!target.cpu.arch.isWasm()) {
+        const builtin_src = block.nodeOffset(extra.node);
+        return sema.fail(block, builtin_src, "builtin @wasmCustomSection is available when targeting WebAssembly; targeted CPU architecture is {s}", .{@tagName(target.cpu.arch)});
+    }
+
+    try zcu.pushWasmCustomSection(name_slice, data_slice);
 }
 
 fn resolvePrefetchOptions(

@@ -966,6 +966,9 @@ pub const Inst = struct {
         /// Implements the `@truncate` builtin.
         /// Uses `pl_node` with payload `Bin`. `lhs` is dest type, `rhs` is operand.
         truncate,
+        // Implements the `@wasmCustomSection` builtin.
+        /// Uses `pl_node` with payload `Bin`. `lhs` is name, `rhs` is data.
+        wasm_custom_section,
 
         /// Implements the `@hasDecl` builtin.
         /// Uses the `pl_node` union field. Payload is `Bin`.
@@ -1255,6 +1258,7 @@ pub const Inst = struct {
                 .embed_file,
                 .error_name,
                 .set_runtime_safety,
+                .wasm_custom_section,
                 .sqrt,
                 .sin,
                 .cos,
@@ -1399,6 +1403,7 @@ pub const Inst = struct {
                 .validate_ptr_array_init,
                 .validate_ref_ty,
                 .validate_const,
+                .wasm_custom_section,
                 => true,
 
                 .param,
@@ -1908,6 +1913,7 @@ pub const Inst = struct {
                 .validate_ptr_array_init = .pl_node,
                 .array_init_elem_type = .bin,
                 .array_init_elem_ptr = .pl_node,
+                .wasm_custom_section = .pl_node,
 
                 .extended = .extended,
             });
@@ -4360,6 +4366,7 @@ fn findTrackableInner(
         .save_err_ret_index,
         .restore_err_ret_index_unconditional,
         .restore_err_ret_index_fn_entry,
+        .wasm_custom_section,
         => return,
 
         // Struct initializations need tracking, as they may create anonymous struct types.

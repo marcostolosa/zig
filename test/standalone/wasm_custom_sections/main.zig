@@ -20,13 +20,8 @@ pub fn main(init: std.process.Init) !void {
     std.debug.assert(has_custom_section(&customs, "is-utf8", "abcd"));
     std.debug.assert(has_custom_section(&customs, "non-utf8", &[_]u8{ 255, 254, 253 }));
 
-    // TODO: Currently, the two "dupe-name" `linksection`s in `lib.zig` are getting combined
-    //  into one custom section. We have not yet looked into why.
-    //  When we solve that problem we can uncomment these two lines and
-    //  delete the "twoone" check below.
-    // std.debug.assert(has_custom_section(&customs, "dupe-name", "one"));
-    // std.debug.assert(has_custom_section(&customs, "dupe-name", "two"));
-    std.debug.assert(has_custom_section(&customs, "dupe-name", "twoone"));
+    std.debug.assert(has_custom_section(&customs, "dupe-name", "one"));
+    std.debug.assert(has_custom_section(&customs, "dupe-name", "two"));
 }
 
 const CustomSection = struct {

@@ -3869,9 +3869,6 @@ fn fileLength(userdata: ?*anyopaque, file: File) File.LengthError!u64 {
             .Standard,
         )) {
             .SUCCESS => break syscall.finish(),
-            // Buffer overflow here indicates that there is more information available than was able to be stored in the buffer
-            // size provided. This is treated as success because the type of variable-length information that this would be relevant for
-            // (name, volume name, etc) we don't care about.
             .INVALID_PARAMETER => |err| return syscall.ntstatusBug(err),
             .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
             .CANCELLED => {
@@ -3880,7 +3877,7 @@ fn fileLength(userdata: ?*anyopaque, file: File) File.LengthError!u64 {
             },
             else => |s| return syscall.unexpectedNtstatus(s),
         };
-        return @intCast(info.EndOfFile);
+        return @as(u64, @bitCast(info.EndOfFile));
     }
 
     const stat = try fileStat(t, file);

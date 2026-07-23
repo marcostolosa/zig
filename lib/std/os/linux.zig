@@ -1216,8 +1216,92 @@ pub const MOUNT_ATTR = packed struct(u32) {
     // ATIME: u32, // 0x00000070 This is a mask, not a flag.
 };
 
-pub fn mount_setattr(dirfd: fd_t, path: [*:0]const u8, flags: MOUNT_ATTR) usize {
-    return syscall3(.mount_setattr, @as(u32, @bitCast(dirfd)), @intFromPtr(path), @as(u32, @bitCast(flags)));
+pub const MOUNT_PROPAGATION = enum(u64) {
+    SHARED = MS.SHARED,
+    PRIVATE = MS.PRIVATE,
+    SLAVE = MS.SLAVE,
+    UNBINDABLE = MS.UNBINDABLE,
+};
+
+pub const MOUNT_ATTR_STRUCT = struct {
+    attr_set: u64,
+    attr_clr: u64,
+    propagation: u64,
+    userns_fd: u64,
+
+    pub fn init(set: MOUNT_ATTR, clr: MOUNT_ATTR, propagation: MOUNT_PROPAGATION, userns_fd: fd_t) MOUNT_ATTR_STRUCT {
+        return .{
+            .attr_set = @bitCast(set),
+            .attr_clr = @bitCast(clr),
+            .propagation = @backingInt(propagation),
+            .userns_fd = if (userns_fd >= 0) @intCast(userns_fd) else 0,
+        };
+    }
+};
+
+pub const MOUNT_SETATTR = packed struct(u32) {
+    _gap1: u8 = 0,
+    /// AT_SYMLINK_NOFOLLOW (0x00000100) - Do not dereference symlinks.
+    SYMLINK_NOFOLLOW: bool,
+    _gap2: u2 = 0,
+
+    /// AT_NO_AUTOMOUNT (0x00000800) - Do not automount terminal component.
+    NO_AUTOMOUNT: bool,
+
+    /// AT_EMPTY_PATH (0x00001000) - Allow operate on empty path via dirfd.
+    EMPTY_PATH: bool,
+    _gap3: u2 = 0,
+
+    /// AT_RECURSIVE (0x00008000) - Recursive bind-mount (requires CLONE).
+    RECURSIVE: bool,
+    _: u16 = 0,
+};
+
+pub fn mount_setattr(dirfd: fd_t, path: [*:0]const u8, flags: MOUNT_SETATTR, mount_attr: *const MOUNT_ATTR_STRUCT) usize {
+    return syscall5(.mount_setattr, //
+        @as(u32, @bitCast(dirfd)), //
+        @intFromPtr(path), //
+        @as(u32, @bitCast(flags)), //
+        @intFromPtr(mount_attr), //
+        @sizeOf(MOUNT_ATTR_STRUCT));
+}
+
+pub const OPEN_TREE = packed struct(u32) {
+    /// OPEN_TREE_CLONE (0x00000001) - Clone target tree into a detached mount object.
+    CLONE: bool,
+    _gap1: u7 = 0,
+
+    /// AT_SYMLINK_NOFOLLOW (0x00000100) - Do not dereference symlinks.
+    SYMLINK_NOFOLLOW: bool,
+    _gap2: u2 = 0,
+
+    /// AT_NO_AUTOMOUNT (0x00000800) - Do not automount terminal component.
+    NO_AUTOMOUNT: bool,
+
+    /// AT_EMPTY_PATH (0x00001000) - Allow operate on empty path via dirfd.
+    EMPTY_PATH: bool,
+    _gap3: u2 = 0,
+
+    /// AT_RECURSIVE (0x00008000) - Recursive bind-mount (requires CLONE).
+    RECURSIVE: bool,
+    _gap4: u3 = 0,
+
+    /// OPEN_TREE_CLOEXEC / O_CLOEXEC (02000000 octal = 0x00080000) - Set close-on-exec.
+    CLOEXEC: bool,
+    _: u12 = 0,
+};
+
+pub fn open_tree(dirfd: fd_t, path: [*:0]const u8, flags: OPEN_TREE) usize {
+    return syscall3(.open_tree, @as(u32, @bitCast(dirfd)), @intFromPtr(path), @as(u32, @bitCast(flags)));
+}
+
+pub fn open_tree_attr(dirfd: fd_t, path: [*:0]const u8, flags: OPEN_TREE, mount_attr: ?*const MOUNT_ATTR_STRUCT) usize {
+    return syscall5(.open_tree_attr, //
+        @as(u32, @bitCast(dirfd)), //
+        @intFromPtr(path), //
+        @as(u32, @bitCast(flags)), //
+        @intFromPtr(mount_attr), //
+        @sizeOf(MOUNT_ATTR_STRUCT));
 }
 
 pub const FSOPEN = packed struct(u32) {

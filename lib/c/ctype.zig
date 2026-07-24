@@ -6,6 +6,7 @@ comptime {
     if (builtin.target.isMuslLibC()) {
         // Functions specific to musl.
         symbol(&isalnum, "isalnum");
+        symbol(&iswdigit, "iswdigit");
         symbol(&isalpha, "isalpha");
         symbol(&isblank, "isblank");
         symbol(&iscntrl, "iscntrl");
@@ -21,6 +22,7 @@ comptime {
         symbol(&toupper, "toupper");
 
         symbol(&__isalnum_l, "__isalnum_l");
+        symbol(&__iswdigit_l, "__iswdigit_l");
         symbol(&__isalpha_l, "__isalpha_l");
         symbol(&__isblank_l, "__isblank_l");
         symbol(&__iscntrl_l, "__iscntrl_l");
@@ -36,6 +38,7 @@ comptime {
         symbol(&__toupper_l, "__toupper_l");
 
         symbol(&__isalnum_l, "isalnum_l");
+        symbol(&__iswdigit_l, "iswdigit_l");
         symbol(&__isalpha_l, "isalpha_l");
         symbol(&__isblank_l, "isblank_l");
         symbol(&__iscntrl_l, "iscntrl_l");
@@ -64,6 +67,15 @@ fn isalnum(c: c_int) callconv(.c) c_int {
 fn __isalnum_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
     _ = locale;
     return isalnum(c);
+}
+
+fn iswdigit(wc: i32) c_int {
+    return @intFromBool(wc -% '0' < 10);
+}
+
+fn __iswdigit_l(wc: i32, locale: *anyopaque) callconv(.c) c_int {
+    _ = locale;
+    return iswdigit(wc);
 }
 
 fn isalpha(c: c_int) callconv(.c) c_int {

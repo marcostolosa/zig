@@ -1083,7 +1083,7 @@ pub const Request = struct {
         try w.writeAll("\r\n");
     }
 
-    pub const ReceiveHeadError = http.Reader.HeadError || ConnectError || error{
+    pub const ReceiveHeadError = http.Reader.HeadError || ConnectError || Io.net.Stream.Reader.Error || error{
         /// Server sent headers that did not conform to the HTTP protocol.
         ///
         /// To find out more detailed diagnostics, `http.Reader.head_buffer` can be
@@ -1214,7 +1214,7 @@ pub const Request = struct {
             // the correct state. This causes `new_location` to be invalidated.
             const reader = r.reader.bodyReader(&.{}, head.transfer_encoding, head.content_length);
             _ = reader.discardRemaining() catch |err| switch (err) {
-                error.ReadFailed => return r.reader.body_err.?,
+                error.ReadFailed => return r.reader.body_err orelse r.connection.?.stream_reader.err.?,
             };
         }
         const new_uri = r.uri.resolveInPlace(location.len, aux_buf) catch |err| switch (err) {
@@ -1794,7 +1794,7 @@ pub const FetchResult = struct {
     status: http.Status,
 };
 
-pub const FetchError = Uri.ParseError || RequestError || Request.ReceiveHeadError || error{
+pub const FetchError = Uri.ParseError || RequestError || Request.ReceiveHeadError || Io.net.Stream.Reader.Error || error{
     StreamTooLong,
     /// TODO provide optional diagnostics when this occurs or break into more error codes
     WriteFailed,
@@ -1843,7 +1843,7 @@ pub fn fetch(client: *Client, options: FetchOptions) FetchError!FetchResult {
     const response_writer = options.response_writer orelse {
         const reader = response.reader(&.{});
         _ = reader.discardRemaining() catch |err| switch (err) {
-            error.ReadFailed => return response.bodyErr().?,
+            error.ReadFailed => return response.bodyErr() orelse req.connection.?.stream_reader.err.?,
         };
         return .{ .status = response.head.status };
     };
@@ -1861,7 +1861,7 @@ pub fn fetch(client: *Client, options: FetchOptions) FetchError!FetchResult {
     const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
 
     _ = reader.streamRemaining(response_writer) catch |err| switch (err) {
-        error.ReadFailed => return response.bodyErr().?,
+        error.ReadFailed => return response.bodyErr() orelse req.connection.?.stream_reader.err.?,
         else => |e| return e,
     };
 

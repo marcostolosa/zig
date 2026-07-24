@@ -108,7 +108,7 @@ fn strncmp(a: [*:0]const c_char, b: [*:0]const c_char, max: usize) callconv(.c) 
     };
 }
 
-fn strverscmp(l0: [*:0]const u8, r0: [*:0]const u8) c_int {
+fn strverscmp(l0: [*:0]const u8, r0: [*:0]const u8) callconv(.c) c_int {
     const l = l0;
     const r = r0;
 
@@ -120,26 +120,22 @@ fn strverscmp(l0: [*:0]const u8, r0: [*:0]const u8) c_int {
     // Find maximal matching prefix and track its maximal digit
     // suffix and whether those digits are all zeros.
     while (l[i] == r[i]) : (i += 1) {
-        const ch: c_int = l[i];
+        const ch = l[i];
 
         if (ch == 0)
             return 0;
 
-        if (!std.ascii.isDigit(l[i])) {
+        if (!std.ascii.isDigit(ch)) {
             dp = i + 1;
             z = 1;
-        } else if (l[i] != '0') {
+        } else if (ch != '0') {
             z = 0;
         }
     }
 
-    if (@as(c_uint, l[dp]) -% '1' < 9 and
-        @as(c_uint, r[dp]) -% '1' < 9)
-    {
-
+    if (l[dp] != '0' and r[dp] != '0') {
         // If we're looking at non-degenerate digit sequences starting
         // with nonzero digits, longest digit string is greater.
-
         j = i;
 
         while (std.ascii.isDigit(l[j])) : (j += 1) {
@@ -152,12 +148,10 @@ fn strverscmp(l0: [*:0]const u8, r0: [*:0]const u8) c_int {
     } else if (z != 0 and dp < i and
         (std.ascii.isDigit(l[i]) or std.ascii.isDigit(r[i])))
     {
-
         // Otherwise, if common prefix of digit sequence is
         // all zeros, digits order less than non-digits.
-
-        return @as(c_int, @as(u8, l[i] -% '0')) -
-            @as(c_int, @as(u8, r[i] -% '0'));
+        return @as(c_int, l[i] -% '0') -
+            @as(c_int, r[i] -% '0');
     }
 
     return @as(c_int, l[i]) - @as(c_int, r[i]);

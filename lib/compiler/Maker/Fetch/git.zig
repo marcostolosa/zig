@@ -1269,6 +1269,17 @@ const IndexEntry = struct {
     crc32: u32,
 };
 
+/// Delta object awaiting resolution during `indexPack`, with the base it derives from.
+const PendingDelta = struct {
+    entry: IndexEntry,
+    base: Base,
+
+    const Base = union(enum) {
+        ref: Oid, // names the base by object id
+        ofs: u64, // by the offset in its pack
+    };
+};
+
 /// Writes out a version 2 index for the given packfile, as documented in
 /// [pack-format](https://git-scm.com/docs/pack-format).
 pub fn indexPack(
@@ -1281,27 +1292,14 @@ pub fn indexPack(
 
     var index_entries: std.AutoHashMapUnmanaged(Oid, IndexEntry) = .empty;
     defer index_entries.deinit(allocator);
-    var pending_deltas: std.ArrayList(IndexEntry) = .empty;
+    var pending_deltas: std.ArrayList(PendingDelta) = .empty;
     defer pending_deltas.deinit(allocator);
 
     const pack_checksum = try indexPackFirstPass(allocator, format, pack, &index_entries, &pending_deltas);
 
     var cache: ObjectCache = .{};
     defer cache.deinit(allocator);
-    var remaining_deltas = pending_deltas.items.len;
-    while (remaining_deltas > 0) {
-        var i: usize = remaining_deltas;
-        while (i > 0) {
-            i -= 1;
-            const delta = pending_deltas.items[i];
-            if (try indexPackHashDelta(allocator, format, pack, delta, index_entries, &cache)) |oid| {
-                try index_entries.put(allocator, oid, delta);
-                _ = pending_deltas.swapRemove(i);
-            }
-        }
-        if (pending_deltas.items.len == remaining_deltas) return error.IncompletePack;
-        remaining_deltas = pending_deltas.items.len;
-    }
+    try indexPackResolveDeltas(allocator, format, pack, &index_entries, pending_deltas.items, &cache);
 
     var oids: std.ArrayList(Oid) = .empty;
     defer oids.deinit(allocator);
@@ -1367,6 +1365,95 @@ pub fn indexPack(
     try index_writer.end();
 }
 
+/// Resolves every delta collected by the first pass, recording each resulting
+/// object in `index_entries`. A delta can only be hashed once its base is known,
+/// so rather than repeatedly scanning the unresolved deltas, group them by the
+/// base they wait on and resolve dependents as soon as that base is indexed.
+fn indexPackResolveDeltas(
+    allocator: Allocator,
+    format: Oid.Format,
+    pack: *Io.File.Reader,
+    index_entries: *std.AutoHashMapUnmanaged(Oid, IndexEntry),
+    pending: []const PendingDelta,
+    cache: *ObjectCache,
+) !void {
+    var ref_waiters: std.AutoHashMapUnmanaged(Oid, std.ArrayList(IndexEntry)) = .empty;
+    var ofs_waiters: std.AutoHashMapUnmanaged(u64, std.ArrayList(IndexEntry)) = .empty;
+    defer {
+        var ref_it = ref_waiters.valueIterator();
+        while (ref_it.next()) |list| list.deinit(allocator);
+        ref_waiters.deinit(allocator);
+        var ofs_it = ofs_waiters.valueIterator();
+        while (ofs_it.next()) |list| list.deinit(allocator);
+        ofs_waiters.deinit(allocator);
+    }
+
+    for (pending) |delta| switch (delta.base) {
+        .ref => |oid| try appendWaiter(Oid, &ref_waiters, allocator, oid, delta.entry),
+        .ofs => |offset| try appendWaiter(u64, &ofs_waiters, allocator, offset, delta.entry),
+    };
+
+    // Seed the worklist with the non-delta objects the first pass indexed, then
+    // resolve dependents depth-first as each base becomes available.
+    const Resolved = struct { oid: Oid, offset: u64 };
+    var ready: std.ArrayList(Resolved) = .empty;
+    defer ready.deinit(allocator);
+    var seed = index_entries.iterator();
+    while (seed.next()) |entry| {
+        try ready.append(allocator, .{ .oid = entry.key_ptr.*, .offset = entry.value_ptr.offset });
+    }
+
+    while (ready.pop()) |base| {
+        if (ref_waiters.fetchRemove(base.oid)) |kv| {
+            var list = kv.value;
+            defer list.deinit(allocator);
+            for (list.items) |delta| {
+                const oid = try indexDelta(allocator, format, pack, delta, index_entries, cache);
+                try ready.append(allocator, .{ .oid = oid, .offset = delta.offset });
+            }
+        }
+        if (ofs_waiters.fetchRemove(base.offset)) |kv| {
+            var list = kv.value;
+            defer list.deinit(allocator);
+            for (list.items) |delta| {
+                const oid = try indexDelta(allocator, format, pack, delta, index_entries, cache);
+                try ready.append(allocator, .{ .oid = oid, .offset = delta.offset });
+            }
+        }
+    }
+
+    // Anything still waiting depends on a base that never appeared in the pack.
+    if (ref_waiters.count() != 0 or ofs_waiters.count() != 0) return error.IncompletePack;
+}
+
+fn appendWaiter(
+    comptime Key: type,
+    waiters: *std.AutoHashMapUnmanaged(Key, std.ArrayList(IndexEntry)),
+    allocator: Allocator,
+    key: Key,
+    delta: IndexEntry,
+) !void {
+    const gop = try waiters.getOrPut(allocator, key);
+    if (!gop.found_existing) gop.value_ptr.* = .empty;
+    try gop.value_ptr.append(allocator, delta);
+}
+
+/// Hashes a delta whose base is already indexed and records the resulting
+/// object id in `index_entries`.
+fn indexDelta(
+    allocator: Allocator,
+    format: Oid.Format,
+    pack: *Io.File.Reader,
+    delta: IndexEntry,
+    index_entries: *std.AutoHashMapUnmanaged(Oid, IndexEntry),
+    cache: *ObjectCache,
+) !Oid {
+    const oid = (try indexPackHashDelta(allocator, format, pack, delta, index_entries.*, cache)) orelse
+        return error.IncompletePack;
+    try index_entries.put(allocator, oid, delta);
+    return oid;
+}
+
 /// Performs the first pass over the packfile data for index construction.
 /// This will index all non-delta objects, queue delta objects for further
 /// processing, and return the pack checksum (which is part of the index
@@ -1376,7 +1463,7 @@ fn indexPackFirstPass(
     format: Oid.Format,
     pack: *Io.File.Reader,
     index_entries: *std.AutoHashMapUnmanaged(Oid, IndexEntry),
-    pending_deltas: *std.ArrayList(IndexEntry),
+    pending_deltas: *std.ArrayList(PendingDelta),
 ) !Oid {
     var flate_buffer: [std.compress.flate.max_window_len]u8 = undefined;
     var pack_buffer: [2048]u8 = undefined; // Reasonably large buffer for file system.
@@ -1404,14 +1491,19 @@ fn indexPackFirstPass(
                     .crc32 = 0,
                 });
             },
-            inline .ofs_delta, .ref_delta => |delta| {
+            inline .ofs_delta, .ref_delta => |delta, tag| {
                 var entry_decompress: std.compress.flate.Decompress = .init(&pack_hashed.reader, .zlib, &flate_buffer);
                 const n = try entry_decompress.reader.discardRemaining();
                 if (n != delta.uncompressed_length) return error.InvalidObject;
                 if (!skip_checksums) @compileError("TODO");
+                const base: PendingDelta.Base = switch (tag) {
+                    .ofs_delta => .{ .ofs = std.math.sub(u64, entry_offset, delta.offset) catch return error.InvalidObject },
+                    .ref_delta => .{ .ref = delta.base_object },
+                    else => comptime unreachable,
+                };
                 try pending_deltas.append(allocator, .{
-                    .offset = entry_offset,
-                    .crc32 = 0,
+                    .entry = .{ .offset = entry_offset, .crc32 = 0 },
+                    .base = base,
                 });
             },
         }

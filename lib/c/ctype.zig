@@ -69,7 +69,7 @@ fn __isalnum_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
     return isalnum(c);
 }
 
-fn iswdigit(wc: i32) c_int {
+fn iswdigit(wc: i32) callconv(.c) c_int {
     return @intFromBool(wc -% '0' < 10);
 }
 

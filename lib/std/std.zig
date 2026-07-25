@@ -184,6 +184,10 @@ pub const Options = struct {
     /// stack traces will just print an error to the relevant `Io.Writer` and return.
     allow_stack_tracing: bool = !@import("builtin").strip_debug_info,
 
+    /// Whether `std.debug` stack tracing machinery should attempt to resolve inline callers or only
+    /// consider the leaf callee in a frame.
+    stack_trace_resolve_inline_callers: bool = true,
+
     /// Allows disabling networking in std.Io implementations.
     networking: bool = true,
 

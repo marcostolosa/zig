@@ -800,7 +800,7 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, t: Io.Termin
             // Subtract 1 to get an address *in* the function call for a better source location.
             try printSourceAtAddress(io, &text_arena, di, t, .{
                 .address = ret_addr -| StackIterator.ra_call_offset,
-                .resolve_inline_callers = true,
+                .resolve_inline_callers = std.options.stack_trace_resolve_inline_callers,
             });
             printed_any_frame = true;
         },
@@ -848,7 +848,7 @@ pub fn writeErrorReturnTrace(et: *const std.builtin.StackTrace, t: Io.Terminal) 
 
 /// Write a previously captured stack trace to `writer`, annotated with source locations.
 pub fn writeStackTrace(st: *const StackTrace, t: Io.Terminal) Writer.Error!void {
-    try writeTrace(st.return_addresses, st.skipped, t, true);
+    try writeTrace(st.return_addresses, st.skipped, t, std.options.stack_trace_resolve_inline_callers);
 }
 
 fn writeTrace(

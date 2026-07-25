@@ -54,6 +54,8 @@ pub const has_unix_sockets = switch (native_os) {
 
 pub const default_kernel_backlog = 128;
 
+pub const uses_posix_control = std.posix.cmsghdr != void;
+
 pub const IpAddress = union(enum) {
     ip4: Ip4Address,
     ip6: Ip6Address,
@@ -920,6 +922,8 @@ pub const ReceiveFlags = packed struct(u8) {
     _: u5 = 0,
 };
 
+pub const control_align = if (uses_posix_control) @alignOf(std.posix.cmsghdr) else 1;
+
 pub const IncomingMessage = struct {
     /// Populated by receive functions.
     from: IpAddress,
@@ -927,7 +931,8 @@ pub const IncomingMessage = struct {
     data: []u8,
     /// Supplied by caller before calling receive functions; mutated by receive
     /// functions.
-    control: []u8,
+    /// The slice pointer must be aligned to `cmsghdr` struct in posix systems
+    control: []align(control_align) u8,
     /// Populated by receive functions.
     flags: Flags,
 
@@ -964,7 +969,8 @@ pub const OutgoingMessage = struct {
     /// Initialized with how many bytes of `data_ptr` to send. After sending
     /// succeeds, replaced with how many bytes were actually sent.
     data_len: usize,
-    control: []const u8 = &.{},
+    /// The slice pointer must be aligned to `cmsghdr` struct in posix systems
+    control: []align(control_align) u8 = &.{},
 };
 
 pub const SendFlags = packed struct(u8) {

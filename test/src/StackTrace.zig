@@ -24,6 +24,9 @@ const Config = struct {
     expect: []const u8,
     /// When debug info *is* stripped, stdout is expected to **contain** (not equal!) this string.
     expect_strip: []const u8,
+    /// Whether stack tracing should attempt to resolve inline callers. This is communicated via
+    /// `std.options.stack_trace_resolve_inline_callers`.
+    resolve_inline_callers: bool = false,
 };
 
 pub fn addCase(self: *StackTrace, config: Config) void {
@@ -145,6 +148,7 @@ fn addCaseTarget(
                             !unwind_info.fp,
                             config.expect_panic,
                             if (strip_debug) config.expect_strip else config.expect,
+                            config.resolve_inline_callers,
                         );
                     }
                 }
@@ -167,6 +171,7 @@ fn addCaseInstance(
     omit_frame_pointer: bool,
     expect_panic: bool,
     expect_stderr: []const u8,
+    resolve_inline_callers: bool,
 ) void {
     const b = self.b;
 
@@ -205,7 +210,12 @@ fn addCaseInstance(
     }
 
     const write_files = b.addWriteFiles();
-    const source_zig = write_files.add("source.zig", source);
+    const source_zig_contents = b.fmt(
+        \\{s}
+        \\pub const std_options: @import("std").Options = .{{ .stack_trace_resolve_inline_callers = {} }};
+        \\
+    , .{ source, resolve_inline_callers });
+    const source_zig = write_files.add("source.zig", source_zig_contents);
     const exe = b.addExecutable(.{
         .name = "test",
         .root_module = b.createModule(.{

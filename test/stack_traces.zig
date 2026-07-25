@@ -270,6 +270,7 @@ pub fn addCases(cases: *@import("tests.zig").StackTracesContext, os: std.Target.
         \\???:?:?: [address] in source.main
         \\
         ,
+        .resolve_inline_callers = true,
     });
 
     // Make sure all inline calls are resolved and in the right order!
@@ -335,5 +336,6 @@ pub fn addCases(cases: *@import("tests.zig").StackTracesContext, os: std.Target.
         \\???:?:?: [address] in main
         \\
         ,
+        .resolve_inline_callers = true,
     });
 }

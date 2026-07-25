@@ -31,7 +31,6 @@ pub fn getSymbols(
     resolve_inline_callers: bool,
     symbols: *std.ArrayList(std.debug.Symbol),
 ) Error!void {
-    _ = resolve_inline_callers;
     const gpa = std.debug.getDebugInfoAllocator();
 
     const module = try si.findModule(gpa, io, address);
@@ -60,35 +59,35 @@ pub fn getSymbols(
         });
     };
 
-    const compile_unit = ofile_dwarf.findCompileUnit(native_endian, ofile_vaddr) catch {
+    var extra_symbols_info: std.debug.Dwarf.GetSymbolsExtraInfo = .init;
+    ofile_dwarf.getSymbolsExtra(
+        symbol_allocator,
+        text_arena,
+        native_endian,
+        ofile_vaddr,
+        resolve_inline_callers,
+        symbols,
+        &extra_symbols_info,
+    ) catch |err| switch (err) {
+        error.InvalidDebugInfo, error.MissingDebugInfo, error.UnsupportedDebugInfo => {},
+        else => |e| return e,
+    };
+
+    // TODO: it's unclear if SelfInfo.getSymbols() is allowed to assume that the symbol
+    //       list is empty on entry
+    if (extra_symbols_info.added_symbols_count > 0) {
+        const last = symbols.last().?;
+        if (last.name == null) {
+            last.name = file.lookupSymbolName(vaddr) catch null;
+        }
+    } else {
         // Return at least the symbol name if available.
         return symbols.append(symbol_allocator, .{
             .name = try file.lookupSymbolName(vaddr),
-            .compile_unit_name = null,
+            .compile_unit_name = extra_symbols_info.compile_unit_name,
             .source_location = null,
         });
-    };
-
-    try symbols.append(symbol_allocator, .{
-        .name = ofile_dwarf.getSymbolName(ofile_vaddr) orelse
-            try file.lookupSymbolName(vaddr),
-        .compile_unit_name = compile_unit.die.getAttrString(
-            ofile_dwarf,
-            native_endian,
-            std.dwarf.AT.name,
-            ofile_dwarf.section(.debug_str),
-            compile_unit,
-        ) catch |err| switch (err) {
-            error.MissingDebugInfo, error.InvalidDebugInfo => null,
-        },
-        .source_location = ofile_dwarf.getLineNumberInfo(
-            gpa,
-            text_arena,
-            native_endian,
-            compile_unit,
-            ofile_vaddr,
-        ) catch null,
-    });
+    }
 }
 pub fn getModuleName(si: *SelfInfo, io: Io, address: usize) Error![]const u8 {
     _ = si;

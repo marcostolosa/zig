@@ -120,6 +120,7 @@ pub const CompileUnit = struct {
     die: Die,
     pc_range: ?PcRange,
 
+    debug_abbrev_offset: u64,
     str_offsets_base: usize,
     addr_base: usize,
     rnglists_base: usize,
@@ -320,6 +321,13 @@ const PcRange = struct {
 const Func = struct {
     pc_range: ?PcRange,
     name: ?[]const u8,
+    offset: u64,
+    parent: Parent,
+
+    const Parent = enum(usize) {
+        none = std.math.maxInt(usize),
+        _,
+    };
 };
 
 pub fn section(di: Dwarf, dwarf_section: Section.Id) ?[]const u8 {
@@ -349,22 +357,94 @@ pub fn deinit(di: *Dwarf, gpa: Allocator) void {
 }
 
 pub fn getSymbolName(di: *const Dwarf, address: u64) ?[]const u8 {
-    // Iterate the function list backwards so that we see child DIEs before their parents. This is
-    // important because `DW_TAG_inlined_subroutine` DIEs will have a range which is a sub-range of
-    // their caller, and we want to return the callee's name, not the caller's.
-    var i: usize = di.func_list.items.len;
-    while (i > 0) {
-        i -= 1;
-        const func = &di.func_list.items[i];
-        if (func.pc_range) |range| {
-            if (address >= range.start and address < range.end) {
-                return func.name;
-            }
+    var it: CallStackIterator = .init(di, address);
+    return if (it.next()) |func| func.name else null;
+}
+
+pub fn getFuncCallSourceLocation(
+    di: *Dwarf,
+    func: *const Func,
+    cu: *CompileUnit,
+    gpa: Allocator,
+    text_arena: Allocator,
+    endian: Endian,
+) !?std.debug.SourceLocation {
+    const abbrev_table = try di.getAbbrevTable(.failing, cu.debug_abbrev_offset);
+    var reader: Io.Reader = .fixed(di.section(.debug_info).?);
+    reader.seek = cast(usize, func.offset) orelse return bad();
+
+    const abbrev_code = try reader.takeLeb128(u64);
+    if (abbrev_code == 0) return bad();
+    const table_entry = abbrev_table.get(abbrev_code) orelse return bad();
+    switch (table_entry.tag_id) {
+        DW.TAG.subprogram, DW.TAG.inlined_subroutine, DW.TAG.subroutine, DW.TAG.entry_point => {},
+        else => return bad(),
+    }
+
+    var file_index: u64 = 0;
+    var wip_location: std.debug.SourceLocation = .invalid;
+    for (table_entry.attrs) |attr| {
+        const fv = try parseFormValue(&reader, attr.form_id, cu.format, endian, cu.addr_size_bytes, attr.payload, cu.version);
+        switch (attr.id) {
+            DW.AT.call_file => file_index = try fv.getUInt(u64),
+            DW.AT.call_line => wip_location.line = try fv.getUInt(u64),
+            DW.AT.call_column => wip_location.column = try fv.getUInt(u64),
+            else => {},
         }
     }
 
-    return null;
+    // A file index of 0 is always invalid for AT_call_file, even for DWARFv5
+    if (file_index == 0 or wip_location.line == 0) return null;
+
+    try di.populateSrcLocCache(gpa, endian, cu);
+    const slc = &cu.src_loc_cache.?;
+
+    const actual_file_index = cast(usize, file_index - @intFromBool(slc.version < 5)) orelse return bad();
+    if (actual_file_index >= slc.files.len) return bad();
+    const file_entry = slc.files[actual_file_index];
+    if (file_entry.dir_index >= slc.directories.len) return bad();
+    const dir_name = slc.directories[file_entry.dir_index].path;
+    wip_location.file_name = try std.fs.path.join(text_arena, &.{ dir_name, file_entry.path });
+    return wip_location;
 }
+
+pub const CallStackIterator = struct {
+    next_index: Func.Parent,
+    di: *const Dwarf,
+
+    pub fn init(di: *const Dwarf, address: u64) CallStackIterator {
+        // Iterate the function list backwards so that we see child DIEs before their parents. This is
+        // important because `DW_TAG_inlined_subroutine` DIEs will have a range which is a sub-range of
+        // their caller.
+        var i = di.func_list.items.len;
+        const first_index: Func.Parent = while (i > 0) {
+            i -= 1;
+            const func = &di.func_list.items[i];
+            const range = func.pc_range orelse continue;
+            if (address >= range.start and address < range.end) {
+                break @fromBackingInt(i);
+            }
+        } else .none;
+
+        return .{
+            .next_index = first_index,
+            .di = di,
+        };
+    }
+
+    pub fn next(it: *CallStackIterator) ?*const Func {
+        switch (it.next_index) {
+            .none => return null,
+            else => |parent| {
+                const index = @backingInt(parent);
+                const func = &it.di.func_list.items[index];
+                if (func.parent != .none) assert(@backingInt(func.parent) < index);
+                it.next_index = func.parent;
+                return func;
+            },
+        }
+    }
+};
 
 pub const ScanError = error{
     InvalidDebugInfo,
@@ -379,8 +459,14 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
     var fr: Reader = .fixed(di.section(.debug_info).?);
     var this_unit_offset: u64 = 0;
 
+    const StackElem = struct { func_index: Func.Parent, depth: u32 };
+    var func_stack: std.ArrayList(StackElem) = .empty;
+    defer func_stack.deinit(gpa);
+
     while (this_unit_offset < fr.buffer.len) {
         fr.seek = @intCast(this_unit_offset);
+
+        func_stack.clearRetainingCapacity();
 
         const unit_header = try readUnitHeader(&fr, endian);
         if (unit_header.unit_length == 0) return;
@@ -430,6 +516,7 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
             .die = undefined,
             .pc_range = null,
 
+            .debug_abbrev_offset = debug_abbrev_offset,
             .str_offsets_base = 0,
             .addr_base = 0,
             .rnglists_base = 0,
@@ -438,12 +525,18 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
             .src_loc_cache = null,
         };
 
+        var die_depth: u32 = 0;
         while (true) {
-            fr.seek = std.mem.findNonePos(u8, fr.buffer, fr.seek, &.{
-                zig_padding_abbrev_code, 0,
-            }) orelse fr.buffer.len;
+            // At the top level, we can greedily skip padding and null entries. Otherwise, these
+            // are needed for depth tracking.
+            if (die_depth == 0) {
+                fr.seek = std.mem.findNonePos(u8, fr.buffer, fr.seek, &.{
+                    zig_padding_abbrev_code, 0,
+                }) orelse fr.buffer.len;
+            }
             if (fr.seek >= next_unit_pos) break;
-            var die_obj = (try parseDie(
+            const die_offset = fr.seek;
+            const die_obj = (try parseDie(
                 &fr,
                 attrs_bufs[0],
                 abbrev_table,
@@ -451,7 +544,17 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                 endian,
                 address_size,
                 version,
-            )) orelse continue;
+            )) orelse {
+                // Null DIE indicates end of the sibling chain
+                die_depth -= 1;
+                while (func_stack.last()) |last| {
+                    if (last.depth < die_depth) break;
+                    _ = func_stack.pop();
+                }
+                continue;
+            };
+
+            defer die_depth += @intFromBool(die_obj.has_children);
 
             switch (die_obj.tag_id) {
                 DW.TAG.compile_unit => {
@@ -466,6 +569,12 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                     compile_unit.frame_base = die_obj.getAttr(AT.frame_base);
                 },
                 DW.TAG.subprogram, DW.TAG.inlined_subroutine, DW.TAG.subroutine, DW.TAG.entry_point => {
+                    const parent_function: Func.Parent = if (func_stack.last()) |last| last.func_index else .none;
+                    const current_func_list_len = di.func_list.items.len;
+                    if (parent_function != .none) {
+                        // Sanity check: this invariant prevents endless loops when iterating inlined calls
+                        assert(@backingInt(parent_function) < current_func_list_len);
+                    }
                     const fn_name = x: {
                         var this_die_obj = die_obj;
                         // Prevent endless loops
@@ -526,6 +635,8 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                                     .start = low_pc,
                                     .end = pc_end,
                                 },
+                                .offset = die_offset,
+                                .parent = parent_function,
                             });
 
                             break :blk true;
@@ -551,6 +662,8 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                                     .start = range.start,
                                     .end = range.end,
                                 },
+                                .offset = die_offset,
+                                .parent = parent_function,
                             });
                         }
                     }
@@ -559,6 +672,15 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                         try di.func_list.append(gpa, .{
                             .name = fn_name,
                             .pc_range = null,
+                            .offset = die_offset,
+                            .parent = parent_function,
+                        });
+                    }
+                    // If we added the function to `func_list` and it has children, push it to the func stack.
+                    if (current_func_list_len < di.func_list.items.len and die_obj.has_children) {
+                        try func_stack.append(gpa, .{
+                            .depth = die_depth,
+                            .func_index = @fromBackingInt(current_func_list_len),
                         });
                     }
                 },
@@ -627,6 +749,7 @@ fn scanAllCompileUnits(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!voi
             .addr_size_bytes = address_size,
             .pc_range = null,
             .die = compile_unit_die,
+            .debug_abbrev_offset = debug_abbrev_offset,
             .str_offsets_base = if (compile_unit_die.getAttr(AT.str_offsets_base)) |fv| try fv.getUInt(usize) else 0,
             .addr_base = if (compile_unit_die.getAttr(AT.addr_base)) |fv| try fv.getUInt(usize) else 0,
             .rnglists_base = if (compile_unit_die.getAttr(AT.rnglists_base)) |fv| try fv.getUInt(usize) else 0,
@@ -1566,6 +1689,73 @@ fn getStringGeneric(opt_str: ?[]const u8, offset: u64) ![:0]const u8 {
     return str[casted_offset..last :0];
 }
 
+pub const GetSymbolsExtraInfo = struct {
+    compile_unit_name: ?[]const u8,
+    added_symbols_count: usize,
+
+    pub const init: GetSymbolsExtraInfo = .{
+        .compile_unit_name = null,
+        .added_symbols_count = 0,
+    };
+};
+
+pub fn getSymbolsExtra(
+    di: *Dwarf,
+    symbol_allocator: Allocator,
+    text_arena: Allocator,
+    endian: Endian,
+    address: u64,
+    resolve_inline_callers: bool,
+    symbols: *std.ArrayList(std.debug.Symbol),
+    extra_info: *GetSymbolsExtraInfo,
+) std.debug.SelfInfoError!void {
+    const gpa = std.debug.getDebugInfoAllocator();
+
+    const compile_unit = di.findCompileUnit(endian, address) catch |err| switch (err) {
+        error.EndOfStream => return error.MissingDebugInfo,
+        error.Overflow => return error.InvalidDebugInfo,
+        error.ReadFailed, error.InvalidDebugInfo, error.MissingDebugInfo => |e| return e,
+    };
+
+    const compile_unit_name = compile_unit.die.getAttrString(di, endian, AT.name, di.section(.debug_str), compile_unit) catch |err| switch (err) {
+        error.MissingDebugInfo, error.InvalidDebugInfo => null,
+    };
+    extra_info.compile_unit_name = compile_unit_name;
+
+    const address_source_location = di.getLineNumberInfo(gpa, text_arena, endian, compile_unit, address) catch |err| switch (err) {
+        error.MissingDebugInfo, error.InvalidDebugInfo => null,
+        error.ReadFailed,
+        error.EndOfStream,
+        error.Overflow,
+        error.StreamTooLong,
+        => return error.InvalidDebugInfo,
+        else => |e| return e,
+    };
+
+    var added_symbols_count: usize = 0;
+    defer extra_info.added_symbols_count = added_symbols_count;
+
+    var it: CallStackIterator = .init(di, address);
+    var prev_func: *const Func = undefined;
+    while (it.next()) |func| {
+        defer prev_func = func;
+        // Call stack DIE source locations are used for the next symbol's location because they
+        // point to a *call-site*, not the location within the callee. The line number program is
+        // used for the bottom-most entry's source location.
+        const src_location = if (added_symbols_count == 0)
+            address_source_location
+        else
+            di.getFuncCallSourceLocation(prev_func, compile_unit, gpa, text_arena, endian) catch null;
+        try symbols.append(symbol_allocator, .{
+            .name = func.name,
+            .compile_unit_name = compile_unit_name,
+            .source_location = src_location,
+        });
+        added_symbols_count += 1;
+        if (!resolve_inline_callers) break;
+    }
+}
+
 pub fn getSymbols(
     di: *Dwarf,
     symbol_allocator: Allocator,
@@ -1575,29 +1765,16 @@ pub fn getSymbols(
     resolve_inline_callers: bool,
     symbols: *std.ArrayList(std.debug.Symbol),
 ) std.debug.SelfInfoError!void {
-    _ = resolve_inline_callers;
-    const gpa = std.debug.getDebugInfoAllocator();
-
-    const compile_unit = di.findCompileUnit(endian, address) catch |err| switch (err) {
-        error.EndOfStream => return error.MissingDebugInfo,
-        error.Overflow => return error.InvalidDebugInfo,
-        error.ReadFailed, error.InvalidDebugInfo, error.MissingDebugInfo => |e| return e,
-    };
-    try symbols.append(symbol_allocator, .{
-        .name = di.getSymbolName(address),
-        .compile_unit_name = compile_unit.die.getAttrString(di, endian, std.dwarf.AT.name, di.section(.debug_str), compile_unit) catch |err| switch (err) {
-            error.MissingDebugInfo, error.InvalidDebugInfo => null,
-        },
-        .source_location = di.getLineNumberInfo(gpa, text_arena, endian, compile_unit, address) catch |err| switch (err) {
-            error.MissingDebugInfo, error.InvalidDebugInfo => null,
-            error.ReadFailed,
-            error.EndOfStream,
-            error.Overflow,
-            error.StreamTooLong,
-            => return error.InvalidDebugInfo,
-            else => |e| return e,
-        },
-    });
+    var ignored_extra_info: GetSymbolsExtraInfo = .init;
+    return di.getSymbolsExtra(
+        symbol_allocator,
+        text_arena,
+        endian,
+        address,
+        resolve_inline_callers,
+        symbols,
+        &ignored_extra_info,
+    );
 }
 
 /// DWARF5 7.4: "In the 32-bit DWARF format, all values that represent lengths of DWARF sections and

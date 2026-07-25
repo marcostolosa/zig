@@ -5118,10 +5118,14 @@ fn netReceive(
             .SUCCESS => {
                 const data = remaining_data_buffer[0..@intCast(completion.result)];
                 data_i += data.len;
+                const control_align = @alignOf(std.posix.cmsghdr);
                 message.* = .{
                     .from = addressFromPosix(&storage),
                     .data = data,
-                    .control = if (msg.control) |ptr| @as([*]u8, @ptrCast(ptr))[0..msg.controllen] else message.control,
+                    .control = if (msg.controllen > 0 and msg.control != null)
+                        @as([*]align(control_align) u8, @ptrCast(@alignCast(msg.control.?)))[0..msg.controllen]
+                    else
+                        message.control,
                     .flags = .{
                         .eor = msg.flags & linux.MSG.EOR != 0,
                         .trunc = msg.flags & linux.MSG.TRUNC != 0,

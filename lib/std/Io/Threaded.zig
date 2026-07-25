@@ -13108,10 +13108,14 @@ fn netReceivePosix(
             .SUCCESS => {
                 syscall.finish();
                 const data = data_buffer[0..@intCast(rc)];
+                const control_align = @alignOf(posix.cmsghdr);
                 message.* = .{
                     .from = addressFromPosix(&storage),
                     .data = data,
-                    .control = if (msg.control) |ptr| @as([*]u8, @ptrCast(ptr))[0..msg.controllen] else message.control,
+                    .control = if (msg.controllen > 0 and msg.control != null)
+                        @as([*]align(control_align) u8, @ptrCast(@alignCast(msg.control.?)))[0..msg.controllen]
+                    else
+                        message.control,
                     .flags = .{
                         .eor = (msg.flags & posix.MSG.EOR) != 0,
                         .trunc = (msg.flags & posix.MSG.TRUNC) != 0,

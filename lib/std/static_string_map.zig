@@ -205,6 +205,10 @@ pub fn StaticStringMapWithEql(
             sorted_vals: []V,
         ) void {
             for (kvs_list, 0..) |kv, i| {
+                const expected_size = if (V == void) 1 else 2;
+                const info = @typeInfo(@TypeOf(kv));
+                std.debug.assert(info.@"struct".field_names.len == expected_size);
+
                 sorted_keys[i] = kv.@"0";
                 sorted_vals[i] = if (V == void) {} else kv.@"1";
                 self.min_len = @intCast(@min(self.min_len, kv.@"0".len));

@@ -166,6 +166,11 @@ pub fn Parsed(comptime command: Command) type {
     };
 
     const SubcommandTaggedUnion = blk: {
+        if (command.subcommands.len <= 0) {
+            const E = @Enum(noreturn, .exhaustive, &.{}, &.{});
+            break :blk @Union(.auto, E, &.{}, &.{}, &.{});
+        }
+
         var field_types: [command.subcommands.len]type = undefined;
         var field_names: [command.subcommands.len][]const u8 = undefined;
         inline for (&field_types, &field_names, command.subcommands) |*field_type, *field_name, subcommand| {

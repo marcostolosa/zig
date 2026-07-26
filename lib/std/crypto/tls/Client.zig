@@ -118,6 +118,8 @@ pub const Options = struct {
     /// Current time according to the wall clock / calendar.
     realtime_now: std.Io.Timestamp,
 
+    /// RFC 7301 Application-Layer Protocol Negotiation.
+    alpn: ?Alpn = null,
     /// If non-null, ssl secrets are logged to this stream. Creating such a log file allows
     /// other programs with access to that file to decrypt all traffic over this connection.
     ///
@@ -137,10 +139,23 @@ pub const Options = struct {
     alert: ?*tls.Alert = null,
 
     pub const entropy_len = 240;
+
+    pub const Alpn = struct {
+        /// Opaque protocol identifiers in descending order of preference. The caller is
+        /// responsible for using appropriate IANA-registered or reserved identifiers.
+        /// The outer slice and each identifier are borrowed only during `init`.
+        protocols: []const []const u8,
+        /// On successful return from `init`, set to the index in `protocols`
+        /// corresponding to the protocol selected by the server, or `null` if
+        /// the server does not negotiate ALPN. If non-null, the application must
+        /// use the selected protocol for this connection. The pointer is not captured.
+        selected_protocol: *?usize,
+    };
 };
 
 pub const InitError = error{
     InsufficientEntropy,
+    InvalidAlpnProtocol,
     DiskQuota,
     LockViolation,
     NotOpenForWriting,
@@ -256,8 +271,23 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
         .explicit => server_name_extension.len + host_len,
     };
 
+    const alpn_protocol_list_len = if (options.alpn) |alpn|
+        try alpnProtocolListLen(alpn)
+    else
+        0;
+    const alpn_extension_header =
+        int(u16, @backingInt(tls.ExtensionType.application_layer_protocol_negotiation)) ++
+        int(u16, 2 + alpn_protocol_list_len) ++
+        int(u16, alpn_protocol_list_len);
+    const alpn_extension_len = if (options.alpn) |_|
+        alpn_extension_header.len + alpn_protocol_list_len
+    else
+        0;
+
+    const extensions_len = extensions_payload.len + server_name_extension_len + alpn_extension_len;
+    if (extensions_len > std.math.maxInt(u16)) return error.MessageTooLong;
     const extensions_header =
-        int(u16, @intCast(extensions_payload.len + server_name_extension_len)) ++
+        int(u16, @intCast(extensions_len)) ++
         extensions_payload ++
         server_name_extension;
 
@@ -270,12 +300,15 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
         extensions_header;
 
     const out_handshake = .{@backingInt(tls.HandshakeType.client_hello)} ++
-        int(u24, @intCast(client_hello.len - server_name_extension.len + server_name_extension_len)) ++
+        int(u24, @intCast(client_hello.len - server_name_extension.len + server_name_extension_len + alpn_extension_len)) ++
         client_hello;
 
+    const out_handshake_len = out_handshake.len - server_name_extension.len +
+        server_name_extension_len + alpn_extension_len;
+    if (out_handshake_len > tls.max_ciphertext_inner_record_len) return error.MessageTooLong;
     const cleartext_header_buf = .{@backingInt(tls.ContentType.handshake)} ++
         int(u16, @backingInt(tls.ProtocolVersion.tls_1_0)) ++
-        int(u16, @intCast(out_handshake.len - server_name_extension.len + server_name_extension_len)) ++
+        int(u16, @intCast(out_handshake_len)) ++
         out_handshake;
     const cleartext_header = switch (options.host) {
         .no_verification => cleartext_header_buf[0 .. cleartext_header_buf.len - server_name_extension.len],
@@ -285,10 +318,18 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
     {
         var iovecs: [2][]const u8 = .{ cleartext_header, host };
         try output.writeVecAll(iovecs[0..if (host.len == 0) 1 else 2]);
+        if (options.alpn) |alpn| {
+            try output.writeAll(&alpn_extension_header);
+            for (alpn.protocols) |protocol| {
+                try output.writeByte(@intCast(protocol.len));
+                try output.writeAll(protocol);
+            }
+        }
         try output.flush();
     }
 
     var tls_version: tls.ProtocolVersion = undefined;
+    var selected_alpn: ?usize = null;
     var chain: Certificate.Chain = if (Certificate.Chain != void) .empty;
     defer if (Certificate.Chain != void) chain.deinit();
     // These are used for two purposes:
@@ -490,6 +531,11 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                         try extd.ensure(key_size);
                                         try key_share.exchange(named_group, extd.slice(key_size));
                                     },
+                                    .application_layer_protocol_negotiation => {
+                                        // A ServerHello must not contain duplicate ALPN extensions.
+                                        if (selected_alpn != null) return error.TlsIllegalParameter;
+                                        selected_alpn = try parseAlpnSelection(options.alpn, &extd);
+                                    },
                                     else => {},
                                 }
                             }
@@ -497,7 +543,11 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
 
                         tls_version = @fromBackingInt(@intCast(supported_version orelse legacy_version));
                         switch (tls_version) {
-                            .tls_1_3 => if (!mem.eql(u8, legacy_session_id_echo, &legacy_session_id)) return error.TlsIllegalParameter,
+                            .tls_1_3 => {
+                                if (!mem.eql(u8, legacy_session_id_echo, &legacy_session_id)) return error.TlsIllegalParameter;
+                                // TLS 1.3 forbids ALPN in ServerHello; it must appear in EncryptedExtensions.
+                                if (selected_alpn != null) return error.TlsIllegalParameter;
+                            },
                             .tls_1_2 => if (mem.eql(u8, server_hello_rand[24..31], "DOWNGRD") and
                                 server_hello_rand[31] >> 1 == 0x00) return error.TlsIllegalParameter,
                             else => return error.TlsIllegalParameter,
@@ -519,8 +569,15 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                     .version = undefined,
                                 });
                                 const p = &@field(handshake_cipher, @tagName(tag.with()));
-                                p.transcript_hash.update(cleartext_header[tls.record_header_len..]); // Client Hello part 1
-                                p.transcript_hash.update(host); // Client Hello part 2
+                                p.transcript_hash.update(cleartext_header[tls.record_header_len..]);
+                                p.transcript_hash.update(host);
+                                if (options.alpn) |alpn| {
+                                    p.transcript_hash.update(&alpn_extension_header);
+                                    for (alpn.protocols) |protocol| {
+                                        p.transcript_hash.update(&.{@intCast(protocol.len)});
+                                        p.transcript_hash.update(protocol);
+                                    }
+                                }
                                 p.transcript_hash.update(wrapped_handshake);
                             },
 
@@ -592,10 +649,14 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                             try all_extd.ensure(4);
                             const et = all_extd.decode(tls.ExtensionType);
                             const ext_size = all_extd.decode(u16);
-                            const extd = try all_extd.sub(ext_size);
-                            _ = extd;
+                            var extd = try all_extd.sub(ext_size);
                             switch (et) {
                                 .server_name => {},
+                                .application_layer_protocol_negotiation => {
+                                    // EncryptedExtensions must not contain duplicate ALPN extensions.
+                                    if (selected_alpn != null) return error.TlsIllegalParameter;
+                                    selected_alpn = try parseAlpnSelection(options.alpn, &extd);
+                                },
                                 else => {},
                             }
                         }
@@ -919,6 +980,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                             .client_random = client_hello_rand,
                             .writer = ssl_key_log.writer,
                         };
+                        if (options.alpn) |alpn| alpn.selected_protocol.* = selected_alpn;
                         return .{
                             .input = input,
                             .reader = .{
@@ -1353,6 +1415,43 @@ fn big(x: anytype) @TypeOf(x) {
         .big => x,
         .little => @byteSwap(x),
     };
+}
+
+fn alpnProtocolListLen(alpn: Options.Alpn) error{InvalidAlpnProtocol}!u16 {
+    if (alpn.protocols.len == 0) return error.InvalidAlpnProtocol;
+    var total: usize = 0;
+    for (alpn.protocols) |protocol| {
+        if (protocol.len == 0 or protocol.len > 255) return error.InvalidAlpnProtocol;
+        total = std.math.add(usize, total, 1 + protocol.len) catch
+            return error.InvalidAlpnProtocol;
+    }
+    // The u16-sized extension payload also contains the two-byte ProtocolNameList length.
+    if (total > std.math.maxInt(u16) - 2) return error.InvalidAlpnProtocol;
+    return @intCast(total);
+}
+
+fn parseAlpnSelection(
+    alpn: ?Options.Alpn,
+    extd: *tls.Decoder,
+) error{ TlsDecodeError, TlsIllegalParameter }!usize {
+    const offered = alpn orelse return error.TlsIllegalParameter;
+
+    try extd.ensure(2);
+    const list_len = extd.decode(u16);
+    var list = try extd.sub(list_len);
+    if (!extd.eof()) return error.TlsIllegalParameter;
+
+    try list.ensure(1);
+    const protocol_len = list.decode(u8);
+    if (protocol_len == 0) return error.TlsIllegalParameter;
+    try list.ensure(protocol_len);
+    const selected = list.slice(protocol_len);
+    if (!list.eof()) return error.TlsIllegalParameter;
+
+    for (offered.protocols, 0..) |protocol, index| {
+        if (mem.eql(u8, protocol, selected)) return index;
+    }
+    return error.TlsIllegalParameter;
 }
 
 const KeyShare = struct {

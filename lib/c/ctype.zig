@@ -70,7 +70,7 @@ fn __isalnum_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn iswdigit(wc: i32) callconv(.c) c_int {
-    return @intFromBool(wc -% '0' < 10);
+    return @intFromBool(wc >= '0' and wc -% '0' < 10);
 }
 
 fn __iswdigit_l(wc: i32, locale: *anyopaque) callconv(.c) c_int {

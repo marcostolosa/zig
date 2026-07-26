@@ -662,3 +662,27 @@ test "parse.named.bool.no" {
     const parsed = try cli.parse(git_no_alloc, raw, .{});
     try std.testing.expect(!parsed.kind.args.paginate);
 }
+
+test "parseAlloc.no_args_usage_error" {
+    const raw: []const [:0]const u8 = &.{};
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const parsed = cli.parseAlloc(git, arena.allocator(), raw, .{});
+    try std.testing.expectError(error.Usage, parsed);
+}
+
+test "parse.no_args_usage_error" {
+    const git_no_alloc: cli.Command = .{
+        .name = .git,
+        .help = "A super long help page...\n",
+        .help_short = "A version control system.",
+        .named_args = &.{
+            .init(.paginate, bool, .{ .short = 'p', .default_value = false, .help = "Enable pagination." }),
+            // this is a fictional argument
+            .init(.@"log-level", std.log.Level, .{ .short = 'l', .default_value = .warn, .help = "Set log level.\nOne of debug, warn, error.\n" }),
+        },
+    };
+    const raw: []const [:0]const u8 = &.{};
+    const parsed = cli.parse(git_no_alloc, raw, .{});
+    try std.testing.expectError(error.Usage, parsed);
+}

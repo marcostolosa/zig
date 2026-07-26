@@ -242,13 +242,13 @@ pub const ParseError = error{
 pub fn parse(
     comptime command: Command,
     /// See std.process.Args.toSlice
-    /// Index 0 must be populated.
+    /// Index 0 is skipped (typically the program name). No args is a usage error.
     args: []const [:0]const u8,
     options: ParseOptions,
 ) ParseAllocError!Parsed(command) {
     comptime if (parseRequiresAlloc(command)) @compileError("Parsing requires allocation. See parseAlloc.");
     var iter: Iterator = .init(args);
-    const argv0 = iter.next() orelse unreachable;
+    const argv0 = iter.next() orelse return usageErrorExit(options, "missing first argument (typically program name)", .{});
     const parsed = try parseRecursive(command, null, &iter, options);
     helpExit(command, argv0, parsed, options);
     return parsed;
@@ -264,12 +264,12 @@ pub fn parseAlloc(
     comptime command: Command,
     arena: std.mem.Allocator,
     /// See std.process.Args.toSlice
-    /// Index 0 must be populated.
+    /// Index 0 is skipped (typically the program name). No args is a usage error.
     args: []const [:0]const u8,
     options: ParseOptions,
 ) ParseAllocError!Parsed(command) {
     var iter: Iterator = .init(args);
-    const argv0 = iter.next() orelse unreachable;
+    const argv0 = iter.next() orelse return usageErrorExit(options, "missing first argument (typically program name)", .{});
     const parsed = try parseRecursive(command, arena, &iter, options);
     helpExit(command, argv0, parsed, options);
     return parsed;

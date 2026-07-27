@@ -400,13 +400,6 @@ pub fn resolve(options: Options) ResolveError!Config {
             break :b true;
         }
 
-        // If we have Zig code (i.e. a ZCU) and are compiling with a self-hosted backend, then we
-        // also need to use a self-hosted linker.
-        if (options.have_zcu and !use_llvm) {
-            if (options.use_lld == true) return error.LldIncompatibleWithSelfHostedBackend;
-            break :b false;
-        }
-
         if (options.use_lld) |x| break :b x;
 
         // If the user didn't specify whether to use LLD but did specify to use the new linker,
@@ -420,6 +413,10 @@ pub fn resolve(options: Options) ResolveError!Config {
         // so that the llvm backend defaults to lld and the self-hosted backends do not.
         break :b use_llvm;
     };
+
+    // If we have Zig code (i.e. a ZCU) and are compiling with a self-hosted backend, then we
+    // also need to use a self-hosted linker.
+    if (options.have_zcu and !use_llvm and use_lld) return error.LldIncompatibleWithSelfHostedBackend;
 
     switch (options.output_mode) {
         .Exe => if (options.any_dyn_libs) {

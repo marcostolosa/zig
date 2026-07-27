@@ -1304,7 +1304,9 @@ pub fn indexPack(
             i -= 1;
             const delta = pending_deltas.items[i];
             if (try indexPackHashDelta(allocator, format, pack, delta, index_entries, &cache)) |oid| {
-                try index_entries.put(allocator, oid, delta);
+                const gop = try index_entries.getOrPut(allocator, oid);
+                if (gop.found_existing) return error.DuplicateObject;
+                gop.value_ptr.* = delta;
                 _ = pending_deltas.swapRemove(i);
             }
         }
@@ -1391,9 +1393,9 @@ fn indexPackFirstPass(
 ) !Oid {
     var flate_buffer: [std.compress.flate.max_window_len]u8 = undefined;
     var pack_buffer: [2048]u8 = undefined; // Reasonably large buffer for file system.
-    // The hash covers the pack up to but excluding its trailer, which stores
-    // that same hash. Limiting the source keeps the trailer from being read
-    // into the hashed reader, which hashes on fill rather than on consume.
+    // Excludes the trailer, which stores this same hash, from a reader that
+    // hashes on fill rather than on consume. Must stay unbuffered: bytes held
+    // here would skew `entry_offset`.
     const body_len = try pack.getSize() - Oid.Format.byteLength(format);
     var pack_limited: Io.Reader.Limited = .init(&pack.interface, .limited64(body_len), &.{});
     var pack_hashed = pack_limited.interface.hashed(Oid.Hasher.init(format), &pack_buffer);
@@ -1414,10 +1416,12 @@ fn indexPackFirstPass(
                 const n = try entry_decompress.reader.streamRemaining(oid_hasher_w);
                 if (n != object.uncompressed_length) return error.InvalidObject;
                 const oid = oid_hasher.final();
-                try index_entries.put(allocator, oid, .{
+                const gop = try index_entries.getOrPut(allocator, oid);
+                if (gop.found_existing) return error.DuplicateObject;
+                gop.value_ptr.* = .{
                     .offset = entry_offset,
                     .crc32 = 0,
-                });
+                };
             },
             inline .ofs_delta, .ref_delta => |delta| {
                 var entry_decompress: std.compress.flate.Decompress = .init(&pack_hashed.reader, .zlib, &flate_buffer);

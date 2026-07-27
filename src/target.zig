@@ -926,6 +926,7 @@ pub fn zigBackend(target: *const std.Target, use_llvm: bool) std.lang.CompilerBa
         .wasm32, .wasm64 => .stage2_wasm,
         .x86 => .stage2_x86,
         .x86_64 => .stage2_x86_64,
+        .loongarch64 => .stage2_loongarch64,
         else => .other,
     };
 }

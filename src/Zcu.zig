@@ -4713,6 +4713,10 @@ pub fn callconvSupported(zcu: *Zcu, cc: std.lang.CallingConvention) union(enum) 
             .spirv_task, .spirv_mesh => target.os.tag == .vulkan,
             else => false,
         },
+        .stage2_loongarch64 => switch (cc) {
+            .auto, .naked, .loongarch64_lp64 => true,
+            else => false,
+        },
     };
     if (!backend_ok) return .{ .bad_backend = backend };
     return .ok;

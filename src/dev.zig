@@ -97,6 +97,7 @@ pub const Env = enum {
                 .riscv64_backend,
                 .sparc64_backend,
                 .spirv_backend,
+                .loongarch64_backend,
                 .lld_linker,
                 .coff_linker,
                 .coff2_linker,
@@ -288,6 +289,7 @@ pub const Feature = enum {
     riscv64_backend,
     sparc64_backend,
     spirv_backend,
+    loongarch64_backend,
 
     lld_linker,
     coff_linker,

@@ -4052,7 +4052,7 @@ pub fn getTarget(self: *const Elf) *const std.Target {
 fn requiresThunks(self: Elf) bool {
     return switch (self.getTarget().cpu.arch) {
         .aarch64, .aarch64_be => true,
-        .x86_64, .riscv64, .riscv64be => false,
+        .x86_64, .riscv64, .riscv64be, .loongarch64 => false,
         else => @panic("TODO unimplemented architecture"),
     };
 }

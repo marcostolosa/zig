@@ -1310,6 +1310,9 @@ pub const CompilerBackend = enum(u64) {
     /// The reference implementation self-hosted compiler of Zig, using the
     /// powerpc backend.
     stage2_powerpc = 12,
+    /// The reference implementation self-hosted compiler of Zig, using the
+    /// loongarch backend.
+    stage2_loongarch64 = 13,
 
     _,
 };

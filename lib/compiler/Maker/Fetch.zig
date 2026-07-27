@@ -1600,7 +1600,7 @@ fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git) anyerror!U
         {
             const index_prog_node = f.prog_node.start("Index pack", 0);
             defer index_prog_node.end();
-            try git.indexPack(gpa, object_format, &pack_file_reader, &index_file_writer);
+            try git.indexPack(gpa, object_format, &pack_file_reader, &index_file_writer, .{});
         }
 
         {

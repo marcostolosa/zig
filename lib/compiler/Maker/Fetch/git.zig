@@ -1269,6 +1269,14 @@ const IndexEntry = struct {
     crc32: u32,
 };
 
+pub const IndexPackOptions = struct {
+    /// Whether to compute the per-object CRC32s stored in the index. These are
+    /// redundant for callers which hash the resulting content separately, and
+    /// computing them costs an additional pass over the packfile, but an index
+    /// whose CRC table is left zeroed is rejected by stock git.
+    checksums: bool = false,
+};
+
 /// Writes out a version 2 index for the given packfile, as documented in
 /// [pack-format](https://git-scm.com/docs/pack-format).
 pub fn indexPack(
@@ -1276,6 +1284,7 @@ pub fn indexPack(
     format: Oid.Format,
     pack: *Io.File.Reader,
     index_writer: *Io.File.Writer,
+    options: IndexPackOptions,
 ) !void {
     try pack.seekTo(0);
 
@@ -1302,6 +1311,8 @@ pub fn indexPack(
         if (pending_deltas.items.len == remaining_deltas) return error.IncompletePack;
         remaining_deltas = pending_deltas.items.len;
     }
+
+    if (options.checksums) try computeEntryCrc32s(allocator, format, pack, &index_entries);
 
     var oids: std.ArrayList(Oid) = .empty;
     defer oids.deinit(allocator);
@@ -1380,7 +1391,12 @@ fn indexPackFirstPass(
 ) !Oid {
     var flate_buffer: [std.compress.flate.max_window_len]u8 = undefined;
     var pack_buffer: [2048]u8 = undefined; // Reasonably large buffer for file system.
-    var pack_hashed = pack.interface.hashed(Oid.Hasher.init(format), &pack_buffer);
+    // The hash covers the pack up to but excluding its trailer, which stores
+    // that same hash. Limiting the source keeps the trailer from being read
+    // into the hashed reader, which hashes on fill rather than on consume.
+    const body_len = try pack.getSize() - Oid.Format.byteLength(format);
+    var pack_limited: Io.Reader.Limited = .init(&pack.interface, .limited64(body_len), &.{});
+    var pack_hashed = pack_limited.interface.hashed(Oid.Hasher.init(format), &pack_buffer);
 
     const pack_header = try PackHeader.read(&pack_hashed.reader);
 
@@ -1398,7 +1414,6 @@ fn indexPackFirstPass(
                 const n = try entry_decompress.reader.streamRemaining(oid_hasher_w);
                 if (n != object.uncompressed_length) return error.InvalidObject;
                 const oid = oid_hasher.final();
-                if (!skip_checksums) @compileError("TODO");
                 try index_entries.put(allocator, oid, .{
                     .offset = entry_offset,
                     .crc32 = 0,
@@ -1408,7 +1423,6 @@ fn indexPackFirstPass(
                 var entry_decompress: std.compress.flate.Decompress = .init(&pack_hashed.reader, .zlib, &flate_buffer);
                 const n = try entry_decompress.reader.discardRemaining();
                 if (n != delta.uncompressed_length) return error.InvalidObject;
-                if (!skip_checksums) @compileError("TODO");
                 try pending_deltas.append(allocator, .{
                     .offset = entry_offset,
                     .crc32 = 0,
@@ -1417,8 +1431,53 @@ fn indexPackFirstPass(
         }
     }
 
-    if (!skip_checksums) @compileError("TODO");
     return pack_hashed.hasher.finalResult();
+}
+
+/// Fills in the CRC32 of each entry's compressed representation, which the
+/// index stores but the first pass cannot compute: an entry's extent is only
+/// known once the following entry's offset is, and deltas are not assigned
+/// their object ID until after resolution.
+fn computeEntryCrc32s(
+    allocator: Allocator,
+    format: Oid.Format,
+    pack: *Io.File.Reader,
+    index_entries: *std.AutoHashMapUnmanaged(Oid, IndexEntry),
+) !void {
+    var offsets: std.ArrayList(u64) = .empty;
+    defer offsets.deinit(allocator);
+    try offsets.ensureTotalCapacityPrecise(allocator, index_entries.count());
+    var it = index_entries.valueIterator();
+    while (it.next()) |entry| offsets.appendAssumeCapacity(entry.offset);
+    mem.sortUnstable(u64, offsets.items, {}, std.sort.asc(u64));
+
+    // Entries run back to back, so each ends where the next begins and the
+    // last ends at the pack trailer.
+    var ends: std.AutoHashMapUnmanaged(u64, u64) = .empty;
+    defer ends.deinit(allocator);
+    try ends.ensureTotalCapacity(allocator, @intCast(offsets.items.len));
+    const trailer_start = try pack.getSize() - Oid.Format.byteLength(format);
+    for (offsets.items, 0..) |offset, i| {
+        const end = if (i + 1 < offsets.items.len) offsets.items[i + 1] else trailer_start;
+        if (end <= offset or end > trailer_start) return error.InvalidObject;
+        ends.putAssumeCapacity(offset, end);
+    }
+
+    var buffer: [2048]u8 = undefined;
+    var entries = index_entries.valueIterator();
+    while (entries.next()) |entry| {
+        const end = ends.get(entry.offset).?;
+        try pack.seekTo(entry.offset);
+        var crc: std.hash.Crc32 = .init();
+        var remaining = end - entry.offset;
+        while (remaining > 0) {
+            const n = @min(remaining, buffer.len);
+            try pack.interface.readSliceAll(buffer[0..@intCast(n)]);
+            crc.update(buffer[0..@intCast(n)]);
+            remaining -= n;
+        }
+        entry.crc32 = crc.final();
+    }
 }
 
 /// Attempts to determine the final object ID of the given deltified object.
@@ -1597,21 +1656,19 @@ fn runRepositoryTest(io: Io, comptime format: Oid.Format, head_commit: []const u
     defer index_file.close(io);
     var index_file_buffer: [2000]u8 = undefined;
     var index_file_writer = index_file.writer(io, &index_file_buffer);
-    try indexPack(testing.allocator, format, &pack_file_reader, &index_file_writer);
+    try indexPack(testing.allocator, format, &pack_file_reader, &index_file_writer, .{ .checksums = true });
 
     // Arbitrary size limit on files read while checking the repository contents
     // (all files in the test repo are known to be smaller than this)
     const max_file_size = 8192;
 
-    if (!skip_checksums) {
-        const index_file_data = try git_dir.dir.readFileAlloc(io, "testrepo.idx", testing.allocator, .limited(max_file_size));
-        defer testing.allocator.free(index_file_data);
-        // testrepo.idx is generated by Git. The index created by this file should
-        // match it exactly. Running `git verify-pack -v testrepo.pack` can verify
-        // this.
-        const testrepo_idx = @embedFile("git/testdata/testrepo-" ++ @tagName(format) ++ ".idx");
-        try testing.expectEqualSlices(u8, testrepo_idx, index_file_data);
-    }
+    const index_file_data = try git_dir.dir.readFileAlloc(io, "testrepo.idx", testing.allocator, .limited(max_file_size));
+    defer testing.allocator.free(index_file_data);
+    // testrepo.idx is generated by Git. The index created by this file should
+    // match it exactly. Running `git verify-pack -v testrepo.pack` can verify
+    // this.
+    const testrepo_idx = @embedFile("git/testdata/testrepo-" ++ @tagName(format) ++ ".idx");
+    try testing.expectEqualSlices(u8, testrepo_idx, index_file_data);
 
     var index_file_reader = index_file.reader(io, &index_file_buffer);
     var repository: Repository = undefined;
@@ -1685,18 +1742,60 @@ fn runRepositoryTest(io: Io, comptime format: Oid.Format, head_commit: []const u
     try testing.expectEqualStrings(expected_file_contents, actual_file_contents);
 }
 
-/// Checksum calculation is useful for troubleshooting and debugging, but it's
-/// redundant since the package manager already does content hashing at the
-/// end. Let's save time by not doing that work, but, I left a cookie crumb
-/// trail here if you want to restore the functionality for tinkering purposes.
-const skip_checksums = true;
-
 test "SHA-1 packfile indexing and checkout" {
     try runRepositoryTest(std.testing.io, .sha1, "dd582c0720819ab7130b103635bd7271b9fd4feb");
 }
 
 test "SHA-256 packfile indexing and checkout" {
     try runRepositoryTest(std.testing.io, .sha256, "7f444a92bd4572ee4a28b2c63059924a9ca1829138553ef3e7c41ee159afae7a");
+}
+
+/// Indexing without checksums must differ from a git-generated index only in
+/// the CRC table, which is left zeroed.
+fn runNoChecksumsTest(io: Io, comptime format: Oid.Format) !void {
+    const testrepo_pack = @embedFile("git/testdata/testrepo-" ++ @tagName(format) ++ ".pack");
+    const testrepo_idx = @embedFile("git/testdata/testrepo-" ++ @tagName(format) ++ ".idx");
+
+    var git_dir = testing.tmpDir(.{});
+    defer git_dir.cleanup();
+    var pack_file = try git_dir.dir.createFile(io, "testrepo.pack", .{ .read = true });
+    defer pack_file.close(io);
+    try pack_file.writeStreamingAll(io, testrepo_pack);
+
+    var pack_file_buffer: [2000]u8 = undefined;
+    var pack_file_reader = pack_file.reader(io, &pack_file_buffer);
+
+    var index_file = try git_dir.dir.createFile(io, "testrepo.idx", .{ .read = true });
+    defer index_file.close(io);
+    var index_file_buffer: [2000]u8 = undefined;
+    var index_file_writer = index_file.writer(io, &index_file_buffer);
+    try indexPack(testing.allocator, format, &pack_file_reader, &index_file_writer, .{ .checksums = false });
+
+    const actual = try git_dir.dir.readFileAlloc(io, "testrepo.idx", testing.allocator, .limited(8192));
+    defer testing.allocator.free(actual);
+    try testing.expectEqual(testrepo_idx.len, actual.len);
+
+    // The last fan-out entry counts every object in the pack. Object IDs
+    // follow the header, and the CRC table follows those.
+    const last_fan_out = IndexHeader.size - @sizeOf(u32);
+    const object_count = mem.readInt(u32, testrepo_idx[last_fan_out..][0..4], .big);
+    const crc_start = IndexHeader.size + object_count * format.byteLength();
+    const crc_end = crc_start + object_count * @sizeOf(u32);
+
+    // The trailing hash covers the index itself, so it cannot match once the
+    // CRC table differs.
+    const body_end = testrepo_idx.len - format.byteLength();
+    try testing.expectEqualSlices(u8, testrepo_idx[0..crc_start], actual[0..crc_start]);
+    try testing.expect(mem.allEqual(u8, actual[crc_start..crc_end], 0));
+    try testing.expectEqualSlices(u8, testrepo_idx[crc_end..body_end], actual[crc_end..body_end]);
+}
+
+test "SHA-1 packfile indexing without checksums" {
+    try runNoChecksumsTest(std.testing.io, .sha1);
+}
+
+test "SHA-256 packfile indexing without checksums" {
+    try runNoChecksumsTest(std.testing.io, .sha256);
 }
 
 /// Checks out a commit of a packfile. Intended for experimenting with and
@@ -1733,7 +1832,7 @@ pub fn main() !void {
     defer index_file.close(io);
     var index_file_buffer: [4096]u8 = undefined;
     var index_file_writer = index_file.writer(io, &index_file_buffer);
-    try indexPack(allocator, format, &pack_file_reader, &index_file_writer);
+    try indexPack(allocator, format, &pack_file_reader, &index_file_writer, .{ .checksums = true });
 
     std.debug.print("Starting checkout...\n", .{});
     var index_file_reader = index_file.reader(io, &index_file_buffer);

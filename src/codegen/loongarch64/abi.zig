@@ -122,9 +122,10 @@ pub fn classifyType(ty: Type, zcu: *const Zcu) Class {
             }
             return .indirect;
         },
-        .error_union,
-        .frame,
-        .@"anyframe",
+        .error_union, // TODO
+        .frame, // TODO
+        .@"anyframe", // TODO
+        .@"fn", // TODO
         .noreturn,
         .void,
         .type,
@@ -132,7 +133,6 @@ pub fn classifyType(ty: Type, zcu: *const Zcu) Class {
         .comptime_int,
         .undefined,
         .null,
-        .@"fn",
         .@"opaque",
         .spirv,
         .enum_literal,

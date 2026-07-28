@@ -28,8 +28,7 @@ pub const MCValue = union(enum) {
     immediate: i64,
 };
 
-pub fn legalizeFeatures(target: *const std.Target) ?*const Air.Legalize.Features {
-    _ = target;
+pub fn legalizeFeatures(_: *const std.Target) ?*const Air.Legalize.Features {
     return null;
 }
 
@@ -67,6 +66,11 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) Error!void {
             .arg => try cg.airArg(inst),
             .add, .add_wrap, .add_safe => try cg.airArithOp(inst, .add_d),
             .sub, .sub_wrap, .sub_safe => try cg.airArithOp(inst, .sub_d),
+            .bit_and => try cg.airArithOp(inst, .and_d),
+            .bit_or => try cg.airArithOp(inst, .@"or"),
+            .xor => try cg.airArithOp(inst, .xor_d),
+            .shl, .shl_exact, .shr, .shr_exact => try cg.airShift(inst),
+            .int_cast, .int_cast_safe, .trunc => try cg.airIntCast(inst),
             // Ignore debug instructions during the MVP
             .dbg_stmt, .dbg_var_ptr, .dbg_var_val, .dbg_arg_inline, .dbg_empty_stmt => {},
             else => return cg.fail("TODO: implement AIR tag {s}", .{@tagName(tag)}),
@@ -164,6 +168,39 @@ fn airArithOp(cg: *CodeGen, inst: Air.Inst.Index, tag: Mir.Inst.Tag) Error!void 
     try cg.values.put(cg.gpa, inst, .{ .register = dst_reg });
 }
 
+fn airIntCast(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
+    const ty_op = cg.air.instructions.items(.data)[@backingInt(inst)].ty_op;
+    const operand = cg.resolveInst(ty_op.operand);
+
+    switch (operand) {
+        .register, .immediate => {
+            try cg.values.put(cg.gpa, inst, operand);
+        },
+        .none => return cg.fail("airIntCast: operand not found in values map", .{}),
+    }
+}
+
+fn airShift(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
+    const zcu = cg.pt.zcu;
+    const tag = cg.air.instructions.items(.tag)[@backingInt(inst)];
+    const bin_op = cg.air.instructions.items(.data)[@backingInt(inst)].bin_op;
+
+    const lhs_ty = cg.air.typeOf(bin_op.lhs, &zcu.intern_pool);
+    const is_64bit = lhs_ty.bitSize(zcu) == 64;
+    
+    const mir_tag: Mir.Inst.Tag = switch (tag) {
+        .shl, .shl_exact => if (is_64bit) .sll_d else .sll_w,
+        .shr, .shr_exact => if (lhs_ty.isSignedInt(zcu))
+            (if (is_64bit) .sra_d else .sra_w)
+        else
+            (if (is_64bit) .srl_d else .srl_w),
+        else => unreachable,
+    };
+
+    try cg.airArithOp(inst, mir_tag);
+}
+
+// TODO: Replace naive round-robin register alloc with proper liveness tracking/linear scan
 fn allocReg(cg: *CodeGen) abi.Register {
     const temps = [_]abi.Register{ .t0, .t1, .t2, .t3, .t4, .t5, .t6, .t7, .t8 };
     const reg = temps[cg.next_temp_reg % temps.len];

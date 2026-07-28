@@ -19,12 +19,20 @@ pub const Inst = struct {
         sub_d,
         addi_d,
         @"or",
+        and_d,
+        xor_d,
+        sll_w,
+        srl_w,
+        sra_w,
+        sll_d,
+        srl_d,
+        sra_d,
     };
 
     pub const Data = union(enum) {
         none,
         rrr: struct { rd: abi.Register, rj: abi.Register, rk: abi.Register },
-        rri: struct { rd: abi.Register, rj: abi.Register, imm12: i32 },
+        rri: struct { rd: abi.Register, rj: abi.Register, imm12: i12 },
     };
 };
 
@@ -53,7 +61,15 @@ pub fn emit(
             .add_d => bits.addD(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
             .sub_d => bits.subD(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
             .@"or" => bits.@"or"(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
-            .addi_d => bits.addiD(inst.data.rri.rd, inst.data.rri.rj, @truncate(inst.data.rri.imm12)),
+            .addi_d => bits.addiD(inst.data.rri.rd, inst.data.rri.rj, inst.data.rri.imm12),
+            .and_d => bits.andD(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
+            .xor_d => bits.xorD(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
+            .sll_w => bits.sllW(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
+            .srl_w => bits.srlW(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
+            .sra_w => bits.sraW(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
+            .sll_d => bits.sllD(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
+            .srl_d => bits.srlD(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
+            .sra_d => bits.sraD(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
         };
         try w.writeInt(u32, word, .little);
     }

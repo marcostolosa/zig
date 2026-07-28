@@ -113,3 +113,21 @@ pub fn sraD(rd: abi.Register, rj: abi.Register, rk: abi.Register) Word {
         (@as(u32, rj.id()) << 5) |
         @as(u32, rd.id());
 }
+
+/// LD.D rd, rj, si12 (Load Doubleword)
+pub fn ldD(rd: abi.Register, rj: abi.Register, si12: i12) Word {
+    const imm12: u32 = @as(u12, @bitCast(si12));
+    return (@as(u32, 0x0a3) << 22) |
+        (imm12 << 10) |
+        (@as(u32, rj.id()) << 5) |
+        @as(u32, rd.id());
+}
+
+/// ST.D rd, rj, si12 (Store Doubleword)
+pub fn stD(rd: abi.Register, rj: abi.Register, si12: i12) Word {
+    const imm12: u32 = @as(u12, @bitCast(si12));
+    return (@as(u32, 0x0a7) << 22) |
+        (imm12 << 10) |
+        (@as(u32, rj.id()) << 5) |
+        @as(u32, rd.id());
+}

@@ -27,6 +27,8 @@ pub const Inst = struct {
         sll_d,
         srl_d,
         sra_d,
+        ld_d,
+        st_d,
     };
 
     pub const Data = union(enum) {
@@ -70,6 +72,8 @@ pub fn emit(
             .sll_d => bits.sllD(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
             .srl_d => bits.srlD(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
             .sra_d => bits.sraD(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
+            .ld_d => bits.ldD(inst.data.rri.rd, inst.data.rri.rj, inst.data.rri.imm12),
+            .st_d => bits.stD(inst.data.rri.rd, inst.data.rri.rj, inst.data.rri.imm12),
         };
         try w.writeInt(u32, word, .little);
     }

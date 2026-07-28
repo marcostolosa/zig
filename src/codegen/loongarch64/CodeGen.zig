@@ -5,6 +5,7 @@ const Zcu = @import("../../Zcu.zig");
 const Air = @import("../../Air.zig");
 const link = @import("../../link.zig");
 const Type = @import("../../Type.zig");
+const Value = @import("../../Value.zig");
 const InternPool = @import("../../InternPool.zig");
 const codegen = @import("../../codegen.zig");
 const Mir = @import("Mir.zig");
@@ -21,11 +22,22 @@ mir: Mir,
 values: std.AutoHashMapUnmanaged(Air.Inst.Index, MCValue) = .empty,
 arg_index: u32 = 0,
 next_temp_reg: u32 = 0,
+next_stack_offset: i32 = 0,
+
+const frame_size: i32 = 256;
+const ra_offset: i32 = frame_size - 8; // 248
+const fp_offset: i32 = frame_size - 16; // 240
+
+comptime {
+    std.debug.assert(ra_offset >= std.math.minInt(i12) and ra_offset <= std.math.maxInt(i12));
+    std.debug.assert(fp_offset >= std.math.minInt(i12) and fp_offset <= std.math.maxInt(i12));
+}
 
 pub const MCValue = union(enum) {
     none,
     register: abi.Register,
     immediate: i64,
+    stack_offset: i32,
 };
 
 pub fn legalizeFeatures(_: *const std.Target) ?*const Air.Legalize.Features {
@@ -52,6 +64,7 @@ pub fn generate(
     defer cg.values.deinit(cg.gpa);
     errdefer cg.mir.deinit(cg.gpa);
 
+    try cg.genPrologue();
     try cg.genBody(air.getMainBody());
 
     return cg.mir;
@@ -71,6 +84,9 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) Error!void {
             .xor => try cg.airArithOp(inst, .xor_d),
             .shl, .shl_exact, .shr, .shr_exact => try cg.airShift(inst),
             .int_cast, .int_cast_safe, .trunc => try cg.airIntCast(inst),
+            .alloc => try cg.airAlloc(inst),
+            .store, .store_safe => try cg.airStore(inst),
+            .load => try cg.airLoad(inst),
             // Ignore debug instructions during the MVP
             .dbg_stmt, .dbg_var_ptr, .dbg_var_val, .dbg_arg_inline, .dbg_empty_stmt => {},
             else => return cg.fail("TODO: implement AIR tag {s}", .{@tagName(tag)}),
@@ -102,16 +118,96 @@ fn airRet(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
                 // Load immediate into a0: addi.d a0, $zero, imm
                 try cg.mir.instructions.append(cg.gpa, .{
                     .tag = .addi_d,
-                    .data = .{ .rri = .{ .rd = .a0, .rj = .zero, .imm12 = @intCast(imm) } },
+                    .data = .{ .rri = .{ .rd = .a0, .rj = .zero, .imm12 = try cg.imm12(imm) } },
                 });
             },
             else => return cg.fail("TODO: return value of type {s}", .{@tagName(ret_val)}),
         }
     }
+    // Epilogue, recover $ra and $fp and clear the stack
+    try cg.mir.instructions.append(cg.gpa, .{
+        .tag = .ld_d,
+        .data = .{ .rri = .{ .rd = .ra, .rj = .sp, .imm12 = try cg.imm12(ra_offset) } },
+    });
+    try cg.mir.instructions.append(cg.gpa, .{
+        .tag = .ld_d,
+        .data = .{ .rri = .{ .rd = .fp, .rj = .sp, .imm12 = try cg.imm12(fp_offset) } },
+    });
+    try cg.mir.instructions.append(cg.gpa, .{
+        .tag = .addi_d,
+        .data = .{ .rri = .{ .rd = .sp, .rj = .sp, .imm12 = try cg.imm12(frame_size) } },
+    });
+
     try cg.mir.instructions.append(cg.gpa, .{
         .tag = .ret,
         .data = .{ .none = {} },
     });
+}
+
+fn genPrologue(cg: *CodeGen) Error!void {
+    // Select the stack frame: addi.d $sp, $sp, -frame_size
+    try cg.mir.instructions.append(cg.gpa, .{
+        .tag = .addi_d,
+        .data = .{ .rri = .{ .rd = .sp, .rj = .sp, .imm12 = try cg.imm12(-frame_size) } },
+    });
+    // Save $ra: st.d $ra, $sp, ra_offset
+    try cg.mir.instructions.append(cg.gpa, .{
+        .tag = .st_d,
+        .data = .{ .rri = .{ .rd = .ra, .rj = .sp, .imm12 = try cg.imm12(ra_offset) } },
+    });
+    // Save $fp: st.d $fp, $sp, fp_offset
+    try cg.mir.instructions.append(cg.gpa, .{
+        .tag = .st_d,
+        .data = .{ .rri = .{ .rd = .fp, .rj = .sp, .imm12 = try cg.imm12(fp_offset) } },
+    });
+    // Set up a new $fp: addi.d $fp, $sp, frame_size
+    try cg.mir.instructions.append(cg.gpa, .{
+        .tag = .addi_d,
+        .data = .{ .rri = .{ .rd = .fp, .rj = .sp, .imm12 = try cg.imm12(frame_size) } },
+    });
+}
+
+fn airAlloc(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
+    cg.next_stack_offset += 8; // TODO
+    if (cg.next_stack_offset >= fp_offset) {
+        return cg.fail("Stack frame overflow", .{});
+    }
+    try cg.values.put(cg.gpa, inst, .{ .stack_offset = cg.next_stack_offset });
+}
+
+fn airStore(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
+    const bin_op = cg.air.instructions.items(.data)[@backingInt(inst)].bin_op;
+    const ptr = cg.resolveInst(bin_op.lhs);
+    const val = cg.resolveInst(bin_op.rhs);
+
+    const src_reg = try cg.resolveToReg(val);
+
+    switch (ptr) {
+        .stack_offset => |off| {
+            try cg.mir.instructions.append(cg.gpa, .{
+                .tag = .st_d,
+                .data = .{ .rri = .{ .rd = src_reg, .rj = .sp, .imm12 = try cg.imm12(off) } },
+            });
+        },
+        else => return cg.fail("TODO: airStore ptr", .{}),
+    }
+}
+
+fn airLoad(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
+    const ty_op = cg.air.instructions.items(.data)[@backingInt(inst)].ty_op;
+    const ptr = cg.resolveInst(ty_op.operand);
+
+    switch (ptr) {
+        .stack_offset => |off| {
+            const dst_reg = cg.allocReg();
+            try cg.mir.instructions.append(cg.gpa, .{
+                .tag = .ld_d,
+                .data = .{ .rri = .{ .rd = dst_reg, .rj = .sp, .imm12 = try cg.imm12(off) } },
+            });
+            try cg.values.put(cg.gpa, inst, .{ .register = dst_reg });
+        },
+        else => return cg.fail("TODO: airLoad ptr", .{}),
+    }
 }
 
 fn airArg(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
@@ -133,31 +229,8 @@ fn airArithOp(cg: *CodeGen, inst: Air.Inst.Index, tag: Mir.Inst.Tag) Error!void 
     const lhs = cg.resolveInst(bin_op.lhs);
     const rhs = cg.resolveInst(bin_op.rhs);
 
-    const lhs_reg = switch (lhs) {
-        .register => |r| r,
-        .immediate => |imm| blk: {
-            const reg = cg.allocReg();
-            try cg.mir.instructions.append(cg.gpa, .{
-                .tag = .addi_d,
-                .data = .{ .rri = .{ .rd = reg, .rj = .zero, .imm12 = @intCast(imm) } },
-            });
-            break :blk reg;
-        },
-        else => return cg.fail("TODO: arith op lhs", .{}),
-    };
-
-    const rhs_reg = switch (rhs) {
-        .register => |r| r,
-        .immediate => |imm| blk: {
-            const reg = cg.allocReg();
-            try cg.mir.instructions.append(cg.gpa, .{
-                .tag = .addi_d,
-                .data = .{ .rri = .{ .rd = reg, .rj = .zero, .imm12 = @intCast(imm) } },
-            });
-            break :blk reg;
-        },
-        else => return cg.fail("TODO: arith op rhs", .{}),
-    };
+    const lhs_reg = try cg.resolveToReg(lhs);
+    const rhs_reg = try cg.resolveToReg(rhs);
 
     const dst_reg = cg.allocReg();
     try cg.mir.instructions.append(cg.gpa, .{
@@ -176,6 +249,7 @@ fn airIntCast(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
         .register, .immediate => {
             try cg.values.put(cg.gpa, inst, operand);
         },
+        .stack_offset => unreachable, // int_cast/trunc never operate on pointers
         .none => return cg.fail("airIntCast: operand not found in values map", .{}),
     }
 }
@@ -187,7 +261,7 @@ fn airShift(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
 
     const lhs_ty = cg.air.typeOf(bin_op.lhs, &zcu.intern_pool);
     const is_64bit = lhs_ty.bitSize(zcu) == 64;
-    
+
     const mir_tag: Mir.Inst.Tag = switch (tag) {
         .shl, .shl_exact => if (is_64bit) .sll_d else .sll_w,
         .shr, .shr_exact => if (lhs_ty.isSignedInt(zcu))
@@ -208,10 +282,57 @@ fn allocReg(cg: *CodeGen) abi.Register {
     return reg;
 }
 
+fn imm12(cg: *CodeGen, v: i64) Error!i12 {
+    if (v < std.math.minInt(i12) or v > std.math.maxInt(i12)) {
+        return cg.fail("TODO: immediate {d} out of i12 range, needs register materialization", .{v});
+    }
+    return @intCast(v);
+}
+
+fn resolveToReg(cg: *CodeGen, val: MCValue) Error!abi.Register {
+    return switch (val) {
+        .register => |r| r,
+        .immediate => |imm| blk: {
+            const reg = cg.allocReg();
+            try cg.mir.instructions.append(cg.gpa, .{
+                .tag = .addi_d,
+                .data = .{ .rri = .{ .rd = reg, .rj = .zero, .imm12 = try cg.imm12(imm) } },
+            });
+            break :blk reg;
+        },
+        else => cg.fail("TODO: expected register or immediate", .{}),
+    };
+}
+
 fn resolveInst(cg: *CodeGen, ref: Air.Inst.Ref) MCValue {
+    const zcu = cg.pt.zcu;
+
+    // If this is a link to instruction, look for it in HashMap
     if (ref.toIndex()) |inst_index| {
         return cg.values.get(inst_index) orelse .none;
     }
+
+    // If this is a constant (immediate), extract it from InternPool
+    if (ref.toInterned()) |ip_index| {
+        const val: Value = .fromInterned(ip_index);
+        if (val.isUndef(zcu)) return .none;
+
+        const ty = val.typeOf(zcu);
+        switch (ty.zigTypeTag(zcu)) {
+            .int, .bool, .@"enum", .error_set => {
+                const info = ty.intInfo(zcu);
+                if (info.bits <= 64) {
+                    const imm: i64 = switch (info.signedness) {
+                        .signed => val.toSignedInt(zcu),
+                        .unsigned => @bitCast(val.toUnsignedInt(zcu)),
+                    };
+                    return .{ .immediate = imm };
+                }
+            },
+            else => {},
+        }
+    }
+
     return .none;
 }
 

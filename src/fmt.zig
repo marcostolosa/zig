@@ -282,7 +282,11 @@ fn fmtPathFile(
 ) !void {
     const io = fmt.io;
 
-    const source_file = try dir.openFile(io, sub_path, .{});
+    const gpa = fmt.gpa;
+    const real_path = try dir.realPathFileAlloc(io, sub_path, gpa);
+    defer gpa.free(real_path);
+
+    const source_file = try Io.Dir.openFileAbsolute(io, real_path, .{});
     var file_closed = false;
     errdefer if (!file_closed) source_file.close(io);
 
@@ -295,7 +299,6 @@ fn fmtPathFile(
     var file_reader: Io.File.Reader = source_file.reader(io, &read_buffer);
     file_reader.size = stat.size;
 
-    const gpa = fmt.gpa;
     const source_code = std.zig.readSourceFileToEndAlloc(gpa, &file_reader) catch |err| switch (err) {
         error.ReadFailed => return file_reader.err.?,
         else => |e| return e,
@@ -381,7 +384,7 @@ fn fmtPathFile(
         try fmt.stdout_writer.interface.print("{s}\n", .{file_path});
         fmt.any_error = true;
     } else {
-        var af = try dir.createFileAtomic(io, sub_path, .{ .permissions = stat.permissions, .replace = true });
+        var af = try dir.createFileAtomic(io, real_path, .{ .permissions = stat.permissions, .replace = true });
         defer af.deinit(io);
 
         try af.file.writeStreamingAll(io, fmt.out_buffer.written());

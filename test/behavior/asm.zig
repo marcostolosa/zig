@@ -220,3 +220,21 @@ test "abi register aliases as clobbers (RISC-V)" {
     asm volatile ("" ::: .{ .s0 = true, .fp = true, .s1 = true, .s2 = true, .s3 = true, .s4 = true, .s5 = true, .s6 = true, .s7 = true, .s8 = true, .s9 = true, .s10 = true, .s11 = true });
     asm volatile ("" ::: .{ .fa0 = true, .fa1 = true, .ft0 = true, .fs0 = true });
 }
+
+test "ldmxcsr/stmxcsr indirect input" {
+    if (builtin.cpu.arch != .x86_64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+
+    var bits: u32 = 0;
+    asm volatile ("stmxcsr %[bits]"
+        : [bits] "=m" (bits),
+    );
+
+    asm volatile ("ldmxcsr %[bits]"
+        :
+        : [bits] "m" (bits),
+    );
+}

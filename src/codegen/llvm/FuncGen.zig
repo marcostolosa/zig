@@ -2641,6 +2641,15 @@ fn airAssembly(self: *FuncGen, inst: Air.Inst.Index) TodoError!Builder.Value {
         const arg_llvm_value = try self.resolveInst(input.operand);
         const arg_ty = self.typeOf(input.operand);
         const is_by_ref = isByRef(arg_ty, zcu);
+        const is_indirect_input = if (is_by_ref)
+            constraintAllowsMemory(constraint)
+        else
+            // Input constraint requires the value to be addressable in
+            // memory but not passable in a register. We must store the
+            // value to a temporary alloca and pass the pointer. The
+            // constraint is prepended with '*' to tell LLVM that the
+            // pointer value IS the memory address.
+            !constraintAllowsRegister(constraint);
         if (is_by_ref) {
             if (constraintAllowsMemory(constraint)) {
                 llvm_param_values[llvm_param_i] = arg_llvm_value;
@@ -2665,9 +2674,12 @@ fn airAssembly(self: *FuncGen, inst: Air.Inst.Index) TodoError!Builder.Value {
             }
         }
 
-        try llvm_constraints.ensureUnusedCapacity(gpa, constraint.len + 1);
+        try llvm_constraints.ensureUnusedCapacity(gpa, constraint.len + 2);
         if (total_i != 0) {
             llvm_constraints.appendAssumeCapacity(',');
+        }
+        if (is_indirect_input) {
+            llvm_constraints.appendAssumeCapacity('*');
         }
         for (constraint) |byte| {
             llvm_constraints.appendAssumeCapacity(switch (byte) {
@@ -2684,7 +2696,7 @@ fn airAssembly(self: *FuncGen, inst: Air.Inst.Index) TodoError!Builder.Value {
 
         // In the case of indirect inputs, LLVM requires the callsite to have
         // an elementtype(<ty>) attribute.
-        llvm_param_attrs[llvm_param_i] = if (constraint[0] == '*') blk: {
+        llvm_param_attrs[llvm_param_i] = if (is_indirect_input) blk: {
             if (!is_by_ref) self.maybeMarkAllowZeroAccess(arg_ty.ptrInfo(zcu));
 
             break :blk try o.lowerType(if (is_by_ref) arg_ty else arg_ty.childType(zcu), .as_value);

@@ -12102,9 +12102,11 @@ fn posixBind(
 }
 
 fn posixConnect(
+    t: *Threaded,
     socket_fd: posix.socket_t,
     addr: *const posix.sockaddr,
     addr_len: posix.socklen_t,
+    timeout: Io.Timeout,
 ) !void {
     const syscall: Syscall = try .start();
     while (true) switch (posix.errno(posix.system.connect(socket_fd, addr, addr_len))) {
@@ -12118,7 +12120,18 @@ fn posixConnect(
         },
         .ADDRNOTAVAIL => return syscall.fail(error.AddressUnavailable),
         .AFNOSUPPORT => return syscall.fail(error.AddressFamilyUnsupported),
-        .AGAIN, .INPROGRESS => return syscall.fail(error.WouldBlock),
+        .AGAIN, .INPROGRESS => {
+            var poll_buffer: [1]posix.pollfd = .{.{
+                .fd = socket_fd,
+                .events = posix.POLL.OUT | posix.POLL.ERR,
+                .revents = 0,
+            }};
+            const timeout_ms = if (timeout.toDurationFromNow(t.io())) |d| d.raw.toMilliseconds() else -1;
+            const rc = try pollCancelable(&poll_buffer, @intCast(timeout_ms));
+            if (rc == 0) {
+                return syscall.fail(error.Timeout);
+            } else continue;
+        },
         .ALREADY => return syscall.fail(error.ConnectionPending),
         .CONNREFUSED => return syscall.fail(error.ConnectionRefused),
         .CONNRESET => return syscall.fail(error.ConnectionResetByPeer),
@@ -12137,6 +12150,32 @@ fn posixConnect(
         .PROTOTYPE => |err| return syscall.errnoBug(err),
         else => |err| return syscall.unexpectedErrno(err),
     };
+}
+
+pub fn pollCancelable(fds: []posix.pollfd, timeout: i32) !usize {
+    if (native_os == .windows) {
+        @compileError("use std.Io instead");
+    }
+    const syscall: Syscall = try .start();
+    while (true) {
+        const fds_count = std.math.cast(posix.nfds_t, fds.len) orelse return error.SystemResources;
+        const rc = posix.system.poll(fds.ptr, fds_count, timeout);
+        switch (posix.errno(rc)) {
+            .SUCCESS => {
+                syscall.finish();
+                return @intCast(rc);
+            },
+            .FAULT => unreachable,
+            .INTR => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .INVAL => unreachable,
+            .NOMEM => return syscall.fail(error.SystemResources),
+            else => |err| return syscall.unexpectedErrno(err),
+        }
+    }
+    unreachable;
 }
 
 fn posixConnectUnix(
@@ -12270,15 +12309,13 @@ fn netConnectIpPosix(
     options: IpAddress.ConnectOptions,
 ) IpAddress.ConnectError!net.Socket {
     if (!have_networking) return error.NetworkDown;
-    if (options.timeout != .none) @panic("TODO implement netConnectIpPosix with timeout");
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
     const family = posixAddressFamily(address);
     const socket_fd = try openSocketPosix(family, .{ .mode = options.mode, .protocol = options.protocol });
     errdefer closeFd(socket_fd);
     var storage: PosixAddress = undefined;
     var addr_len = addressToPosix(address, &storage);
-    try posixConnect(socket_fd, &storage.any, addr_len);
+    try posixConnect(t, socket_fd, &storage.any, addr_len, options.timeout);
     try posixGetSockName(socket_fd, &storage.any, &addr_len);
     return .{ .handle = socket_fd, .address = addressFromPosix(&storage) };
 }

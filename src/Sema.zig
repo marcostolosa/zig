@@ -25497,8 +25497,7 @@ fn zirRoundOpType(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstDa
     const dest_base_ty = dest_ty.optEuBaseType(zcu);
     switch (dest_base_ty.scalarType(zcu).zigTypeTag(zcu)) {
         .float, .comptime_float => return .fromType(dest_base_ty),
-        .int => return .generic_poison_type, // The float type that is rounded from is unknown.
-        else => return .comptime_float_type,
+        else => return .generic_poison_type,
     }
 }
 

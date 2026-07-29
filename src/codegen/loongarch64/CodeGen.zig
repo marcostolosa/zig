@@ -14,6 +14,7 @@ const abi = @import("abi.zig");
 pub const Error = codegen.Error;
 
 pt: Zcu.PerThread,
+lf: *link.File,
 gpa: std.mem.Allocator,
 func_index: InternPool.Index,
 air: *const Air,
@@ -35,11 +36,18 @@ comptime {
     std.debug.assert(fp_offset >= std.math.minInt(i12) and fp_offset <= std.math.maxInt(i12));
 }
 
+pub const SymbolOffset = struct {
+    sym_index: link.File.SymbolId,
+    off: i32 = 0,
+};
+
 pub const MCValue = union(enum) {
     none,
     register: abi.Register,
     immediate: i64,
     stack_offset: i32,
+    lea_symbol: SymbolOffset,
+    load_symbol: SymbolOffset,
 };
 
 pub fn legalizeFeatures(_: *const std.Target) ?*const Air.Legalize.Features {
@@ -53,10 +61,9 @@ pub fn generate(
     air: *const Air,
     liveness: *const ?Air.Liveness,
 ) Error!Mir {
-    _ = lf;
-
     var cg: CodeGen = .{
         .pt = pt,
+        .lf = lf,
         .gpa = pt.zcu.gpa,
         .func_index = func_index,
         .air = air,
@@ -129,7 +136,7 @@ fn airRet(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
 
     if (ret_ty.hasRuntimeBits(zcu)) {
         const un_op = cg.air.instructions.items(.data)[@backingInt(inst)].un_op;
-        const ret_val = cg.resolveInst(un_op);
+        const ret_val = try cg.resolveInst(un_op);
 
         switch (ret_val) {
             .register => |reg| {
@@ -141,12 +148,14 @@ fn airRet(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
                     });
                 }
             },
-            .immediate => |imm| {
-                // Load immediate into a0: addi.d a0, $zero, imm
-                try cg.mir.instructions.append(cg.gpa, .{
-                    .tag = .addi_d,
-                    .data = .{ .rri = .{ .rd = .a0, .rj = .zero, .imm12 = try cg.imm12(imm) } },
-                });
+            .immediate, .lea_symbol, .load_symbol => {
+                const ret_reg = try cg.resolveToReg(ret_val);
+                if (ret_reg != .a0) {
+                    try cg.mir.instructions.append(cg.gpa, .{
+                        .tag = .@"or",
+                        .data = .{ .rrr = .{ .rd = .a0, .rj = ret_reg, .rk = .zero } },
+                    });
+                }
             },
             else => return cg.fail("TODO: return value of type {s}", .{@tagName(ret_val)}),
         }
@@ -204,16 +213,25 @@ fn airAlloc(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
 
 fn airStore(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
     const bin_op = cg.air.instructions.items(.data)[@backingInt(inst)].bin_op;
-    const ptr = cg.resolveInst(bin_op.lhs);
-    const val = cg.resolveInst(bin_op.rhs);
+    const ptr = try cg.resolveInst(bin_op.lhs);
+    const val = try cg.resolveInst(bin_op.rhs);
 
     const src_reg = try cg.resolveToReg(val);
 
     switch (ptr) {
         .stack_offset => |off| {
+            // TODO: Choose store instruction based on type size (e.g., st.w for i32)
             try cg.mir.instructions.append(cg.gpa, .{
                 .tag = .st_d,
                 .data = .{ .rri = .{ .rd = src_reg, .rj = .sp, .imm12 = try cg.imm12(off) } },
+            });
+        },
+        .lea_symbol => {
+            const addr_reg = try cg.resolveToReg(ptr);
+            // TODO: Choose store instruction based on type size (e.g., st.w for i32)
+            try cg.mir.instructions.append(cg.gpa, .{
+                .tag = .st_d,
+                .data = .{ .rri = .{ .rd = src_reg, .rj = addr_reg, .imm12 = 0 } },
             });
         },
         else => return cg.fail("TODO: airStore ptr", .{}),
@@ -222,7 +240,7 @@ fn airStore(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
 
 fn airLoad(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
     const ty_op = cg.air.instructions.items(.data)[@backingInt(inst)].ty_op;
-    const ptr = cg.resolveInst(ty_op.operand);
+    const ptr = try cg.resolveInst(ty_op.operand);
 
     switch (ptr) {
         .stack_offset => |off| {
@@ -233,14 +251,17 @@ fn airLoad(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
             });
             try cg.values.put(cg.gpa, inst, .{ .register = dst_reg });
         },
+        .lea_symbol => |sym| {
+            try cg.values.put(cg.gpa, inst, .{ .load_symbol = sym });
+        },
         else => return cg.fail("TODO: airLoad ptr", .{}),
     }
 }
 
 fn airCmp(cg: *CodeGen, inst: Air.Inst.Index, op: std.math.CompareOperator) Error!void {
     const bin_op = cg.air.instructions.items(.data)[@backingInt(inst)].bin_op;
-    const lhs = cg.resolveInst(bin_op.lhs);
-    const rhs = cg.resolveInst(bin_op.rhs);
+    const lhs = try cg.resolveInst(bin_op.lhs);
+    const rhs = try cg.resolveInst(bin_op.rhs);
     const lhs_reg = try cg.resolveToReg(lhs);
     const rhs_reg = try cg.resolveToReg(rhs);
 
@@ -281,7 +302,7 @@ fn airCmp(cg: *CodeGen, inst: Air.Inst.Index, op: std.math.CompareOperator) Erro
 
 fn airCondBr(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
     const cond_br = cg.air.unwrapCondBr(inst);
-    const cond_val = cg.resolveInst(cond_br.condition);
+    const cond_val = try cg.resolveInst(cond_br.condition);
     const cond_reg = try cg.resolveToReg(cond_val);
 
     const beq_inst_idx: u32 = @intCast(cg.mir.instructions.items.len);
@@ -374,8 +395,8 @@ fn airArg(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
 
 fn airArithOp(cg: *CodeGen, inst: Air.Inst.Index, tag: Mir.Inst.Tag) Error!void {
     const bin_op = cg.air.instructions.items(.data)[@backingInt(inst)].bin_op;
-    const lhs = cg.resolveInst(bin_op.lhs);
-    const rhs = cg.resolveInst(bin_op.rhs);
+    const lhs = try cg.resolveInst(bin_op.lhs);
+    const rhs = try cg.resolveInst(bin_op.rhs);
 
     const lhs_reg = try cg.resolveToReg(lhs);
     const rhs_reg = try cg.resolveToReg(rhs);
@@ -391,10 +412,10 @@ fn airArithOp(cg: *CodeGen, inst: Air.Inst.Index, tag: Mir.Inst.Tag) Error!void 
 
 fn airIntCast(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
     const ty_op = cg.air.instructions.items(.data)[@backingInt(inst)].ty_op;
-    const operand = cg.resolveInst(ty_op.operand);
+    const operand = try cg.resolveInst(ty_op.operand);
 
     switch (operand) {
-        .register, .immediate => {
+        .register, .immediate, .lea_symbol, .load_symbol => {
             try cg.values.put(cg.gpa, inst, operand);
         },
         .stack_offset => unreachable, // int_cast/trunc never operate on pointers
@@ -448,12 +469,38 @@ fn resolveToReg(cg: *CodeGen, val: MCValue) Error!abi.Register {
             });
             break :blk reg;
         },
+        .lea_symbol => |sym| blk: {
+            const reg = cg.allocReg();
+            try cg.mir.instructions.append(cg.gpa, .{
+                .tag = .pcalau12i_reloc,
+                .data = .{ .reloc = .{ .rd = reg, .sym_index = sym.sym_index } },
+            });
+            try cg.mir.instructions.append(cg.gpa, .{
+                .tag = .addi_d_reloc,
+                .data = .{ .reloc = .{ .rd = reg, .sym_index = sym.sym_index } },
+            });
+            break :blk reg;
+        },
+        .load_symbol => |sym| blk: {
+            const reg = cg.allocReg();
+            try cg.mir.instructions.append(cg.gpa, .{
+                .tag = .pcalau12i_reloc,
+                .data = .{ .reloc = .{ .rd = reg, .sym_index = sym.sym_index } },
+            });
+            // TODO: Choose load instruction based on type size (e.g., ld.w for i32)
+            try cg.mir.instructions.append(cg.gpa, .{
+                .tag = .ld_d_reloc,
+                .data = .{ .reloc = .{ .rd = reg, .sym_index = sym.sym_index } },
+            });
+            break :blk reg;
+        },
         else => cg.fail("TODO: expected register or immediate", .{}),
     };
 }
 
-fn resolveInst(cg: *CodeGen, ref: Air.Inst.Ref) MCValue {
+fn resolveInst(cg: *CodeGen, ref: Air.Inst.Ref) Error!MCValue {
     const zcu = cg.pt.zcu;
+    const ip = &zcu.intern_pool;
 
     // If this is a link to instruction, look for it in HashMap
     if (ref.toIndex()) |inst_index| {
@@ -467,6 +514,20 @@ fn resolveInst(cg: *CodeGen, ref: Air.Inst.Ref) MCValue {
 
         const ty = val.typeOf(zcu);
         switch (ty.zigTypeTag(zcu)) {
+            .pointer => {
+                const ptr_info = ip.indexToKey(ip_index).ptr;
+                switch (ptr_info.base_addr) {
+                    .nav => |nav| {
+                        const elf_file = cg.lf.cast(.elf) orelse return cg.fail("TODO: non-ELF linker for LoongArch", .{});
+                        const zo = elf_file.zigObjectPtr().?;
+                        const sym = zo.navs.get(nav) orelse return cg.fail("Symbol for nav {} not found", .{nav});
+                        // TODO: handle ptr_info.byte_offset for struct/arrays fields
+                        // Currently defaults to 0, which works for simple vars but breaks for fields
+                        return .{ .lea_symbol = .{ .sym_index = @fromBackingInt(@intCast(sym.symbol_index)) } };
+                    },
+                    else => return cg.fail("TODO: resolve pointer base_addr {s}", .{@tagName(ptr_info.base_addr)}),
+                }
+            },
             .int, .bool, .@"enum", .error_set => {
                 const info = ty.intInfo(zcu);
                 if (info.bits <= 64) {

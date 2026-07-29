@@ -35,6 +35,9 @@ pub const Inst = struct {
         beq,
         bne,
         b,
+        pcalau12i_reloc,
+        ld_d_reloc,
+        addi_d_reloc,
     };
 
     pub const Data = union(enum) {
@@ -43,6 +46,10 @@ pub const Inst = struct {
         rri: struct { rd: abi.Register, rj: abi.Register, imm12: i12 },
         branch: struct { rj: abi.Register, rd: abi.Register, target: u32 }, // target = Inst.Index
         b: struct { target: u32 }, // target = Inst.Index
+        reloc: struct {
+            rd: abi.Register,
+            sym_index: link.File.SymbolId,
+        },
     };
 };
 
@@ -59,13 +66,56 @@ pub fn emit(
     w: *std.Io.Writer,
     debug_output: link.File.DebugInfoOutput,
 ) (link.Error || std.Io.Writer.Error)!void {
-    _ = lf;
-    _ = pt;
     _ = func_index;
-    _ = atom_id;
     _ = debug_output;
 
+    const gpa = pt.zcu.gpa;
+
     for (self.instructions.items, 0..) |inst, i| {
+        switch (inst.tag) {
+            .pcalau12i_reloc => {
+                const reloc_data = inst.data.reloc;
+                const offset: u32 = @intCast(w.end);
+                try w.writeInt(u32, bits.pcalau12i(reloc_data.rd, 0), .little);
+
+                const elf_file = lf.cast(.elf).?;
+                const zo = elf_file.zigObjectPtr().?;
+                const atom_ptr = zo.symbol(@backingInt(atom_id)).atom(elf_file).?;
+                const sym_idx = @backingInt(reloc_data.sym_index);
+
+                const hi_r_type: u32 = @backingInt(std.elf.R_LARCH.PCALA_HI20); // 71
+                try atom_ptr.addReloc(gpa, .{
+                    .r_offset = offset,
+                    .r_info = (@as(u64, sym_idx) << 32) | hi_r_type,
+                    .r_addend = 0,
+                }, zo);
+                continue;
+            },
+            .ld_d_reloc, .addi_d_reloc => {
+                const reloc_data = inst.data.reloc;
+                const offset: u32 = @intCast(w.end);
+                const word_lo: bits.Word = if (inst.tag == .addi_d_reloc)
+                    bits.addiD(reloc_data.rd, reloc_data.rd, 0)
+                else
+                    bits.ldD(reloc_data.rd, reloc_data.rd, 0);
+                try w.writeInt(u32, word_lo, .little);
+
+                const elf_file = lf.cast(.elf).?;
+                const zo = elf_file.zigObjectPtr().?;
+                const atom_ptr = zo.symbol(@backingInt(atom_id)).atom(elf_file).?;
+                const sym_idx = @backingInt(reloc_data.sym_index);
+
+                const lo_r_type: u32 = @backingInt(std.elf.R_LARCH.PCALA_LO12); // 72
+                try atom_ptr.addReloc(gpa, .{
+                    .r_offset = offset,
+                    .r_info = (@as(u64, sym_idx) << 32) | lo_r_type,
+                    .r_addend = 0,
+                }, zo);
+                continue;
+            },
+            else => {},
+        }
+
         const word: bits.Word = switch (inst.tag) {
             .ret => bits.ret(),
             .add_d => bits.addD(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
@@ -97,6 +147,7 @@ pub fn emit(
                 const offset = @as(i64, @intCast(inst.data.b.target)) - @as(i64, @intCast(i));
                 break :blk bits.b(@intCast(offset));
             },
+            .pcalau12i_reloc, .ld_d_reloc, .addi_d_reloc => unreachable, // Processed above via continue
         };
         try w.writeInt(u32, word, .little);
     }

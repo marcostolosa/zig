@@ -3,6 +3,25 @@ const abi = @import("abi.zig");
 
 pub const Word = u32;
 
+/// General format for 2RI16 branch instructions (beq, bne)
+fn branch2RI16(opcode: u32, rj: abi.Register, rd: abi.Register, offs16: i16) Word {
+    const imm: u32 = @bitCast(@as(i32, offs16));
+    const imm16: u32 = imm & 0xffff;
+    return (opcode << 26) |
+        (imm16 << 10) |
+        (@as(u32, rj.id()) << 5) |
+        @as(u32, rd.id());
+}
+
+/// General format for 1RI20 instructions (pcalau12i, lu12i.w, etc)
+fn reg1i20(opcode: u32, rd: abi.Register, si20: i32) Word {
+    const imm: u32 = @bitCast(si20);
+    const imm20: u32 = imm & 0xfffff;
+    return (opcode << 25) |
+        (imm20 << 5) |
+        @as(u32, rd.id());
+}
+
 /// JIRL rd, rj, si16 (Jump and Link Register)
 pub fn jirl(rd: abi.Register, rj: abi.Register, si16: i16) Word {
     const imm: u32 = @bitCast(@as(i32, si16));
@@ -157,16 +176,6 @@ pub fn sltui(rd: abi.Register, rj: abi.Register, si12: i12) Word {
         @as(u32, rd.id());
 }
 
-/// General format for 2RI16 branch instructions (beq, bne)
-fn branch2RI16(opcode: u32, rj: abi.Register, rd: abi.Register, offs16: i16) Word {
-    const imm: u32 = @bitCast(@as(i32, offs16));
-    const imm16: u32 = imm & 0xffff;
-    return (opcode << 26) |
-        (imm16 << 10) |
-        (@as(u32, rj.id()) << 5) |
-        @as(u32, rd.id());
-}
-
 /// BEQ rj, rd, offs16 (Branch if Equal)
 pub fn beq(rj: abi.Register, rd: abi.Register, offs16: i16) Word {
     return branch2RI16(0x16, rj, rd, offs16);
@@ -185,4 +194,9 @@ pub fn b(offs26: i32) Word {
     return (@as(u32, 0x14) << 26) |
         (imm_l << 10) |
         imm_h;
+}
+
+/// PCALAU12I rd, si20 (PC Add Upper Immediate, page-aligned)
+pub fn pcalau12i(rd: abi.Register, si20: i32) Word {
+    return reg1i20(0x0d, rd, si20);
 }

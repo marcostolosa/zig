@@ -101,6 +101,12 @@ test Elem {
     try testing.expect(Elem(?[*]u8) == u8);
 }
 
+pub fn IotaEnum(field_names: []const []const u8) type {
+    if (field_names.len == 0) return enum {};
+    const TagInt = std.math.IntFittingRange(0, field_names.len - 1);
+    return @Enum(TagInt, .exhaustive, field_names, &std.simd.iota(TagInt, field_names.len));
+}
+
 /// Given a type which can have a sentinel e.g. `[:0]u8`, returns the sentinel value,
 /// or `null` if there is not one.
 /// Types which cannot possibly have a sentinel will be a compile error.
@@ -407,10 +413,7 @@ pub fn FieldEnum(comptime T: type) type {
         },
         else => {},
     }
-
-    if (field_names.len == 0) return enum {};
-    const IntTag = std.math.IntFittingRange(0, field_names.len - 1);
-    return @Enum(IntTag, .exhaustive, field_names, &std.simd.iota(IntTag, field_names.len));
+    return IotaEnum(field_names);
 }
 
 fn expectEqualEnum(expected: anytype, actual: @TypeOf(expected)) !void {
@@ -469,10 +472,7 @@ test FieldEnum {
 }
 
 pub fn DeclEnum(comptime T: type) type {
-    const decl_names = declarations(T);
-    if (decl_names.len == 0) return enum {};
-    const IntTag = std.math.IntFittingRange(0, decl_names.len - 1);
-    return @Enum(IntTag, .exhaustive, decl_names, &std.simd.iota(IntTag, decl_names.len));
+    return IotaEnum(declarations(T));
 }
 
 test DeclEnum {

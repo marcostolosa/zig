@@ -29,12 +29,20 @@ pub const Inst = struct {
         sra_d,
         ld_d,
         st_d,
+        slt,
+        sltu,
+        sltui,
+        beq,
+        bne,
+        b,
     };
 
     pub const Data = union(enum) {
         none,
         rrr: struct { rd: abi.Register, rj: abi.Register, rk: abi.Register },
         rri: struct { rd: abi.Register, rj: abi.Register, imm12: i12 },
+        branch: struct { rj: abi.Register, rd: abi.Register, target: u32 }, // target = Inst.Index
+        b: struct { target: u32 }, // target = Inst.Index
     };
 };
 
@@ -57,7 +65,7 @@ pub fn emit(
     _ = atom_id;
     _ = debug_output;
 
-    for (self.instructions.items) |inst| {
+    for (self.instructions.items, 0..) |inst, i| {
         const word: bits.Word = switch (inst.tag) {
             .ret => bits.ret(),
             .add_d => bits.addD(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
@@ -74,6 +82,21 @@ pub fn emit(
             .sra_d => bits.sraD(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
             .ld_d => bits.ldD(inst.data.rri.rd, inst.data.rri.rj, inst.data.rri.imm12),
             .st_d => bits.stD(inst.data.rri.rd, inst.data.rri.rj, inst.data.rri.imm12),
+            .slt => bits.slt(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
+            .sltu => bits.sltu(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
+            .sltui => bits.sltui(inst.data.rri.rd, inst.data.rri.rj, inst.data.rri.imm12),
+            .beq => blk: {
+                const offset = @as(i64, @intCast(inst.data.branch.target)) - @as(i64, @intCast(i));
+                break :blk bits.beq(inst.data.branch.rj, inst.data.branch.rd, @intCast(offset));
+            },
+            .bne => blk: {
+                const offset = @as(i64, @intCast(inst.data.branch.target)) - @as(i64, @intCast(i));
+                break :blk bits.bne(inst.data.branch.rj, inst.data.branch.rd, @intCast(offset));
+            },
+            .b => blk: {
+                const offset = @as(i64, @intCast(inst.data.b.target)) - @as(i64, @intCast(i));
+                break :blk bits.b(@intCast(offset));
+            },
         };
         try w.writeInt(u32, word, .little);
     }

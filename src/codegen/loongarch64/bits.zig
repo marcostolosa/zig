@@ -131,3 +131,58 @@ pub fn stD(rd: abi.Register, rj: abi.Register, si12: i12) Word {
         (@as(u32, rj.id()) << 5) |
         @as(u32, rd.id());
 }
+
+/// SLT rd, rj, rk (Set if Less Than, signed)
+pub fn slt(rd: abi.Register, rj: abi.Register, rk: abi.Register) Word {
+    return (@as(u32, 0x00024) << 15) |
+        (@as(u32, rk.id()) << 10) |
+        (@as(u32, rj.id()) << 5) |
+        @as(u32, rd.id());
+}
+
+/// SLTU rd, rj, rk (Set if Less Than, unsigned)
+pub fn sltu(rd: abi.Register, rj: abi.Register, rk: abi.Register) Word {
+    return (@as(u32, 0x00025) << 15) |
+        (@as(u32, rk.id()) << 10) |
+        (@as(u32, rj.id()) << 5) |
+        @as(u32, rd.id());
+}
+
+/// SLTUI rd, rj, si12 (Set if Less Than Immediate, unsigned)
+pub fn sltui(rd: abi.Register, rj: abi.Register, si12: i12) Word {
+    const imm12: u32 = @as(u12, @bitCast(si12));
+    return (@as(u32, 0x009) << 22) |
+        (imm12 << 10) |
+        (@as(u32, rj.id()) << 5) |
+        @as(u32, rd.id());
+}
+
+/// General format for 2RI16 branch instructions (beq, bne)
+fn branch2RI16(opcode: u32, rj: abi.Register, rd: abi.Register, offs16: i16) Word {
+    const imm: u32 = @bitCast(@as(i32, offs16));
+    const imm16: u32 = imm & 0xffff;
+    return (opcode << 26) |
+        (imm16 << 10) |
+        (@as(u32, rj.id()) << 5) |
+        @as(u32, rd.id());
+}
+
+/// BEQ rj, rd, offs16 (Branch if Equal)
+pub fn beq(rj: abi.Register, rd: abi.Register, offs16: i16) Word {
+    return branch2RI16(0x16, rj, rd, offs16);
+}
+
+/// BNE rj, rd, offs16 (Branch if Not Equal)
+pub fn bne(rj: abi.Register, rd: abi.Register, offs16: i16) Word {
+    return branch2RI16(0x17, rj, rd, offs16);
+}
+
+/// B offs26 (Unconditional Branch)
+pub fn b(offs26: i32) Word {
+    const imm: u32 = @bitCast(offs26);
+    const imm_l: u32 = imm & 0xffff;
+    const imm_h: u32 = (imm >> 16) & 0x3ff;
+    return (@as(u32, 0x14) << 26) |
+        (imm_l << 10) |
+        imm_h;
+}

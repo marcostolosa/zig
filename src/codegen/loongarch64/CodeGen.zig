@@ -20,6 +20,8 @@ air: *const Air,
 liveness: *const ?Air.Liveness,
 mir: Mir,
 values: std.AutoHashMapUnmanaged(Air.Inst.Index, MCValue) = .empty,
+block_fixups: std.AutoHashMapUnmanaged(Air.Inst.Index, std.ArrayListUnmanaged(u32)) = .empty,
+loop_starts: std.AutoHashMapUnmanaged(Air.Inst.Index, u32) = .empty,
 arg_index: u32 = 0,
 next_temp_reg: u32 = 0,
 next_stack_offset: i32 = 0,
@@ -62,6 +64,12 @@ pub fn generate(
         .mir = .{},
     };
     defer cg.values.deinit(cg.gpa);
+    defer {
+        var it = cg.block_fixups.iterator();
+        while (it.next()) |entry| entry.value_ptr.deinit(cg.gpa);
+        cg.block_fixups.deinit(cg.gpa);
+        cg.loop_starts.deinit(cg.gpa);
+    }
     errdefer cg.mir.deinit(cg.gpa);
 
     try cg.genPrologue();
@@ -71,14 +79,20 @@ pub fn generate(
 }
 
 fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) Error!void {
+    const zcu = cg.pt.zcu;
+    const ip = &zcu.intern_pool;
     const air_tags = cg.air.instructions.items(.tag);
+    const liveness = cg.liveness.* orelse unreachable;
+
     for (body) |inst| {
+        if (liveness.isUnused(inst) and !cg.air.mustLower(inst, ip)) continue;
+
         const tag = air_tags[@backingInt(inst)];
         switch (tag) {
             .ret, .ret_safe => try cg.airRet(inst),
             .arg => try cg.airArg(inst),
-            .add, .add_wrap, .add_safe => try cg.airArithOp(inst, .add_d),
-            .sub, .sub_wrap, .sub_safe => try cg.airArithOp(inst, .sub_d),
+            .add, .add_wrap, .add_safe, .add_optimized => try cg.airArithOp(inst, .add_d),
+            .sub, .sub_wrap, .sub_safe, .sub_optimized => try cg.airArithOp(inst, .sub_d),
             .bit_and => try cg.airArithOp(inst, .and_d),
             .bit_or => try cg.airArithOp(inst, .@"or"),
             .xor => try cg.airArithOp(inst, .xor_d),
@@ -87,6 +101,19 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) Error!void {
             .alloc => try cg.airAlloc(inst),
             .store, .store_safe => try cg.airStore(inst),
             .load => try cg.airLoad(inst),
+
+            .cmp_eq, .cmp_eq_optimized => try cg.airCmp(inst, .eq),
+            .cmp_neq, .cmp_neq_optimized => try cg.airCmp(inst, .neq),
+            .cmp_gt, .cmp_gt_optimized => try cg.airCmp(inst, .gt),
+            .cmp_gte, .cmp_gte_optimized => try cg.airCmp(inst, .gte),
+            .cmp_lt, .cmp_lt_optimized => try cg.airCmp(inst, .lt),
+            .cmp_lte, .cmp_lte_optimized => try cg.airCmp(inst, .lte),
+
+            .cond_br => try cg.airCondBr(inst),
+            .block => try cg.airBlock(inst),
+            .br => try cg.airBr(inst),
+            .loop => try cg.airLoop(inst),
+            .repeat => try cg.airRepeat(inst),
             // Ignore debug instructions during the MVP
             .dbg_stmt, .dbg_var_ptr, .dbg_var_val, .dbg_arg_inline, .dbg_empty_stmt => {},
             else => return cg.fail("TODO: implement AIR tag {s}", .{@tagName(tag)}),
@@ -208,6 +235,127 @@ fn airLoad(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
         },
         else => return cg.fail("TODO: airLoad ptr", .{}),
     }
+}
+
+fn airCmp(cg: *CodeGen, inst: Air.Inst.Index, op: std.math.CompareOperator) Error!void {
+    const bin_op = cg.air.instructions.items(.data)[@backingInt(inst)].bin_op;
+    const lhs = cg.resolveInst(bin_op.lhs);
+    const rhs = cg.resolveInst(bin_op.rhs);
+    const lhs_reg = try cg.resolveToReg(lhs);
+    const rhs_reg = try cg.resolveToReg(rhs);
+
+    const lhs_ty = cg.air.typeOf(bin_op.lhs, &cg.pt.zcu.intern_pool);
+    const is_signed = lhs_ty.isSignedInt(cg.pt.zcu);
+    const dst_reg = cg.allocReg();
+
+    switch (op) {
+        .eq => {
+            try cg.mir.instructions.append(cg.gpa, .{ .tag = .xor_d, .data = .{ .rrr = .{ .rd = dst_reg, .rj = lhs_reg, .rk = rhs_reg } } });
+            try cg.mir.instructions.append(cg.gpa, .{ .tag = .sltui, .data = .{ .rri = .{ .rd = dst_reg, .rj = dst_reg, .imm12 = 1 } } });
+        },
+        .neq => {
+            try cg.mir.instructions.append(cg.gpa, .{ .tag = .xor_d, .data = .{ .rrr = .{ .rd = dst_reg, .rj = lhs_reg, .rk = rhs_reg } } });
+            try cg.mir.instructions.append(cg.gpa, .{ .tag = .sltu, .data = .{ .rrr = .{ .rd = dst_reg, .rj = .zero, .rk = dst_reg } } });
+        },
+        .lt => {
+            const mir_tag: Mir.Inst.Tag = if (is_signed) .slt else .sltu;
+            try cg.mir.instructions.append(cg.gpa, .{ .tag = mir_tag, .data = .{ .rrr = .{ .rd = dst_reg, .rj = lhs_reg, .rk = rhs_reg } } });
+        },
+        .lte => {
+            const mir_tag: Mir.Inst.Tag = if (is_signed) .slt else .sltu;
+            try cg.mir.instructions.append(cg.gpa, .{ .tag = mir_tag, .data = .{ .rrr = .{ .rd = dst_reg, .rj = rhs_reg, .rk = lhs_reg } } });
+            try cg.mir.instructions.append(cg.gpa, .{ .tag = .sltui, .data = .{ .rri = .{ .rd = dst_reg, .rj = dst_reg, .imm12 = 1 } } });
+        },
+        .gt => {
+            const mir_tag: Mir.Inst.Tag = if (is_signed) .slt else .sltu;
+            try cg.mir.instructions.append(cg.gpa, .{ .tag = mir_tag, .data = .{ .rrr = .{ .rd = dst_reg, .rj = rhs_reg, .rk = lhs_reg } } });
+        },
+        .gte => {
+            const mir_tag: Mir.Inst.Tag = if (is_signed) .slt else .sltu;
+            try cg.mir.instructions.append(cg.gpa, .{ .tag = mir_tag, .data = .{ .rrr = .{ .rd = dst_reg, .rj = lhs_reg, .rk = rhs_reg } } });
+            try cg.mir.instructions.append(cg.gpa, .{ .tag = .sltui, .data = .{ .rri = .{ .rd = dst_reg, .rj = dst_reg, .imm12 = 1 } } });
+        },
+    }
+    try cg.values.put(cg.gpa, inst, .{ .register = dst_reg });
+}
+
+fn airCondBr(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
+    const cond_br = cg.air.unwrapCondBr(inst);
+    const cond_val = cg.resolveInst(cond_br.condition);
+    const cond_reg = try cg.resolveToReg(cond_val);
+
+    const beq_inst_idx: u32 = @intCast(cg.mir.instructions.items.len);
+    try cg.mir.instructions.append(cg.gpa, .{
+        .tag = .beq,
+        .data = .{ .branch = .{ .rj = cond_reg, .rd = .zero, .target = 0 } },
+    });
+
+    try cg.genBody(cond_br.then_body);
+
+    const jmp_reloc = try cg.jump();
+
+    cg.mir.instructions.items[beq_inst_idx].data.branch.target = @intCast(cg.mir.instructions.items.len);
+
+    try cg.genBody(cond_br.else_body);
+
+    cg.performReloc(jmp_reloc);
+}
+
+fn airBlock(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
+    const block_data = cg.air.unwrapBlock(inst);
+    try cg.genBody(block_data.body);
+
+    if (cg.block_fixups.fetchRemove(inst)) |entry| {
+        var fixups = entry.value;
+        defer fixups.deinit(cg.gpa);
+        for (fixups.items) |idx| {
+            cg.performReloc(idx);
+        }
+    }
+    try cg.values.put(cg.gpa, inst, .none); // block do not return values yet
+}
+
+fn airBr(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
+    const br = cg.air.instructions.items(.data)[@backingInt(inst)].br;
+
+    if (cg.loop_starts.get(br.block_inst)) |loop_start| {
+        // It is a loop, jump backwards to the start
+        try cg.mir.instructions.append(cg.gpa, .{ .tag = .b, .data = .{ .b = .{ .target = loop_start } } });
+    } else {
+        // It is a block, jump forwards to the end (will be patched later)
+        const reloc = try cg.jump();
+        const gop = try cg.block_fixups.getOrPut(cg.gpa, br.block_inst);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        try gop.value_ptr.append(cg.gpa, reloc);
+    }
+}
+
+fn airLoop(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
+    const loop_data = cg.air.unwrapBlock(inst);
+    const loop_start_idx: u32 = @intCast(cg.mir.instructions.items.len);
+
+    try cg.loop_starts.put(cg.gpa, inst, loop_start_idx);
+    try cg.genBody(loop_data.body);
+    _ = cg.loop_starts.remove(inst);
+
+    try cg.mir.instructions.append(cg.gpa, .{ .tag = .b, .data = .{ .b = .{ .target = loop_start_idx } } });
+}
+
+fn airRepeat(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
+    const repeat = cg.air.instructions.items(.data)[@backingInt(inst)].repeat;
+    const loop_start = cg.loop_starts.get(repeat.loop_inst) orelse return cg.fail("airRepeat: loop start not found", .{});
+
+    try cg.mir.instructions.append(cg.gpa, .{ .tag = .b, .data = .{ .b = .{ .target = loop_start } } });
+}
+
+fn jump(cg: *CodeGen) Error!u32 {
+    const idx: u32 = @intCast(cg.mir.instructions.items.len);
+    try cg.mir.instructions.append(cg.gpa, .{ .tag = .b, .data = .{ .b = .{ .target = 0 } } });
+    return idx;
+}
+
+fn performReloc(cg: *CodeGen, reloc: u32) void {
+    cg.mir.instructions.items[reloc].data.b.target = @intCast(cg.mir.instructions.items.len);
 }
 
 fn airArg(cg: *CodeGen, inst: Air.Inst.Index) Error!void {

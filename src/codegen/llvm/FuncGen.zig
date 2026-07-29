@@ -2641,15 +2641,13 @@ fn airAssembly(self: *FuncGen, inst: Air.Inst.Index) TodoError!Builder.Value {
         const arg_llvm_value = try self.resolveInst(input.operand);
         const arg_ty = self.typeOf(input.operand);
         const is_by_ref = isByRef(arg_ty, zcu);
-        const is_indirect_input = if (is_by_ref)
-            constraintAllowsMemory(constraint)
-        else
-            // Input constraint requires the value to be addressable in
-            // memory but not passable in a register. We must store the
-            // value to a temporary alloca and pass the pointer. The
-            // constraint is prepended with '*' to tell LLVM that the
-            // pointer value IS the memory address.
-            !constraintAllowsRegister(constraint);
+        // When a non-by-ref value with a memory-only input constraint is
+        // stored to a new alloca in order to provide a memory address,
+        // the constraint is prepended with '*' to tell LLVM that the
+        // pointer value IS the memory address. Omitting this prefix
+        // causes LLVM to treat the pointer itself as a value to place in
+        // memory, creating an extra level of indirection.
+        const is_indirect_input = !is_by_ref and !constraintAllowsRegister(constraint);
         if (is_by_ref) {
             if (constraintAllowsMemory(constraint)) {
                 llvm_param_values[llvm_param_i] = arg_llvm_value;

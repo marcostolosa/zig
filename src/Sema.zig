@@ -21141,7 +21141,7 @@ fn zirIntFromFloat(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileErro
 
     switch (dest_scalar_ty.zigTypeTag(zcu)) {
         .comptime_int, .int => {},
-        else => return sema.fail(block, src, "@intFromFloat must return integer type, found '{f}'", .{dest_scalar_ty.fmt(pt)}),
+        else => return sema.fail(block, src, "expected integer result type, found '{f}'", .{dest_scalar_ty.fmt(pt)}),
     }
     try sema.checkFloatType(block, operand_src, operand_scalar_ty);
 
@@ -21320,7 +21320,7 @@ fn zirFloatFromInt(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileErro
 
     switch (dest_scalar_ty.zigTypeTag(zcu)) {
         .comptime_float, .float => {},
-        else => return sema.fail(block, src, "@floatFromInt must return float type, found '{f}'", .{dest_scalar_ty.fmt(pt)}),
+        else => return sema.fail(block, src, "expected float result type, found '{f}'", .{dest_scalar_ty.fmt(pt)}),
     }
     _ = try sema.checkIntType(block, operand_src, operand_scalar_ty);
 

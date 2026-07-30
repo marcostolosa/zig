@@ -89,7 +89,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) Error!void {
     const zcu = cg.pt.zcu;
     const ip = &zcu.intern_pool;
     const air_tags = cg.air.instructions.items(.tag);
-    const liveness = cg.liveness.* orelse unreachable;
+    const liveness = cg.liveness.* orelse return cg.fail("liveness analysis is missing", .{});
 
     for (body) |inst| {
         if (liveness.isUnused(inst) and !cg.air.mustLower(inst, ip)) continue;
@@ -494,7 +494,7 @@ fn resolveToReg(cg: *CodeGen, val: MCValue) Error!abi.Register {
             });
             break :blk reg;
         },
-        else => cg.fail("TODO: expected register or immediate", .{}),
+        else => cg.fail("TODO: resolveToReg: unsupported MCValue {s}", .{@tagName(val)}),
     };
 }
 

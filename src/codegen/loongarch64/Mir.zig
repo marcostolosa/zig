@@ -136,14 +136,17 @@ pub fn emit(
             .sltu => bits.sltu(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
             .sltui => bits.sltui(inst.data.rri.rd, inst.data.rri.rj, inst.data.rri.imm12),
             .beq => blk: {
+                // TODO: bounds-check branch offsets
                 const offset = @as(i64, @intCast(inst.data.branch.target)) - @as(i64, @intCast(i));
                 break :blk bits.beq(inst.data.branch.rj, inst.data.branch.rd, @intCast(offset));
             },
             .bne => blk: {
+                // TODO: bounds-check branch offsets
                 const offset = @as(i64, @intCast(inst.data.branch.target)) - @as(i64, @intCast(i));
                 break :blk bits.bne(inst.data.branch.rj, inst.data.branch.rd, @intCast(offset));
             },
             .b => blk: {
+                // TODO: bounds-check branch offsets
                 const offset = @as(i64, @intCast(inst.data.b.target)) - @as(i64, @intCast(i));
                 break :blk bits.b(@intCast(offset));
             },

@@ -385,7 +385,7 @@ fn Kyber(comptime p: Params) type {
             /// Deterministically derive a key pair from a cryptograpically secure secret seed.
             ///
             /// Except in tests, applications should generally call `generate()` instead of this function.
-            pub fn generateDeterministic(seed: [seed_length]u8) !KeyPair {
+            pub fn generateDeterministic(seed: [seed_length]u8) KeyPair {
                 var ret: KeyPair = undefined;
 
                 // Generate inner key
@@ -409,13 +409,8 @@ fn Kyber(comptime p: Params) type {
             /// Generate a new, random key pair.
             pub fn generate(io: std.Io) KeyPair {
                 var random_seed: [seed_length]u8 = undefined;
-                while (true) {
-                    io.random(&random_seed);
-                    return generateDeterministic(random_seed) catch {
-                        @branchHint(.unlikely);
-                        continue;
-                    };
-                }
+                io.random(&random_seed);
+                return generateDeterministic(random_seed);
             }
         };
 
@@ -1638,7 +1633,7 @@ test "Test happy flow" {
     inline for (modes) |mode| {
         for (0..10) |i| {
             seed[0] = @intCast(i);
-            const kp = try mode.KeyPair.generateDeterministic(seed);
+            const kp = mode.KeyPair.generateDeterministic(seed);
             const sk = try mode.SecretKey.fromBytes(&kp.secret_key.toBytes());
             try testing.expectEqual(sk, kp.secret_key);
             const pk = try mode.PublicKey.fromBytes(&kp.public_key.toBytes());
@@ -1688,7 +1683,7 @@ fn testNistKat(mode: type, hash: []const u8) !void {
         g2.fill(kseed[0..32]);
         g2.fill(kseed[32..64]);
         g2.fill(&eseed);
-        const kp = try mode.KeyPair.generateDeterministic(kseed);
+        const kp = mode.KeyPair.generateDeterministic(kseed);
         const e = kp.public_key.encapsDeterministic(&eseed);
         const ss2 = try kp.secret_key.decaps(&e.ciphertext);
         try testing.expectEqual(ss2, e.shared_secret);

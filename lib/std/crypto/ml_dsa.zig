@@ -2022,13 +2022,13 @@ fn MLDSAImpl(comptime p: Params) type {
             pub fn generate(io: std.Io) KeyPair {
                 var seed: [Self.seed_length]u8 = undefined;
                 io.random(&seed);
-                return generateDeterministic(seed) catch unreachable;
+                return generateDeterministic(seed);
             }
 
             /// Generate a key pair deterministically from a seed.
             /// Use for testing or when reproducibility is required.
             /// The seed should be generated using a cryptographically secure random source.
-            pub fn generateDeterministic(seed: [32]u8) !KeyPair {
+            pub fn generateDeterministic(seed: [32]u8) KeyPair {
                 const keys = newKeyFromSeed(&seed);
                 return .{
                     .public_key = keys.pk,
@@ -3210,8 +3210,8 @@ test "KeyPair API - generate and sign" {
 test "KeyPair API - generateDeterministic" {
     // Test deterministic key generation
     const seed: [32]u8 = @splat(42);
-    const kp1 = try MLDSA44.KeyPair.generateDeterministic(seed);
-    const kp2 = try MLDSA44.KeyPair.generateDeterministic(seed);
+    const kp1 = MLDSA44.KeyPair.generateDeterministic(seed);
+    const kp2 = MLDSA44.KeyPair.generateDeterministic(seed);
 
     // Same seed should produce same keys
     const pk1_bytes = kp1.public_key.toBytes();
@@ -3263,7 +3263,7 @@ test "Signature verification failure" {
 
 test "Streaming API - sign and verify" {
     const seed: [32]u8 = @splat(0x55);
-    const kp = try MLDSA44.KeyPair.generateDeterministic(seed);
+    const kp = MLDSA44.KeyPair.generateDeterministic(seed);
 
     const msg = "Test message for streaming API";
 
@@ -3280,7 +3280,7 @@ test "Streaming API - sign and verify" {
 
 test "Streaming API - chunked message" {
     const seed: [32]u8 = @splat(0x66);
-    const kp = try MLDSA44.KeyPair.generateDeterministic(seed);
+    const kp = MLDSA44.KeyPair.generateDeterministic(seed);
 
     // Create a message in chunks
     const chunk1 = "Hello, ";
@@ -3314,7 +3314,7 @@ test "Streaming API - chunked message" {
 
 test "Streaming API - large message" {
     const seed: [32]u8 = @splat(0x77);
-    const kp = try MLDSA44.KeyPair.generateDeterministic(seed);
+    const kp = MLDSA44.KeyPair.generateDeterministic(seed);
 
     // Create a large message (1MB)
     const chunk_size = 4096;
@@ -3345,7 +3345,7 @@ test "Streaming API - all parameter sets" {
     // ML-DSA-44
     {
         const seed: [32]u8 = @splat(0x44);
-        const kp = try MLDSA44.KeyPair.generateDeterministic(seed);
+        const kp = MLDSA44.KeyPair.generateDeterministic(seed);
         var signer = try kp.signer(null);
         signer.update(test_msg);
         const sig = signer.finalize();
@@ -3357,7 +3357,7 @@ test "Streaming API - all parameter sets" {
     // ML-DSA-65
     {
         const seed: [32]u8 = @splat(0x65);
-        const kp = try MLDSA65.KeyPair.generateDeterministic(seed);
+        const kp = MLDSA65.KeyPair.generateDeterministic(seed);
         var signer = try kp.signer(null);
         signer.update(test_msg);
         const sig = signer.finalize();
@@ -3369,7 +3369,7 @@ test "Streaming API - all parameter sets" {
     // ML-DSA-87
     {
         const seed: [32]u8 = @splat(0x87);
-        const kp = try MLDSA87.KeyPair.generateDeterministic(seed);
+        const kp = MLDSA87.KeyPair.generateDeterministic(seed);
         var signer = try kp.signer(null);
         signer.update(test_msg);
         const sig = signer.finalize();

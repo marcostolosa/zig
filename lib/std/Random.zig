@@ -140,7 +140,7 @@ pub fn int(r: Random, comptime T: type) T {
     return @bitCast(unsigned_result);
 }
 
-/// Constant-time implementation off `uintLessThan`.
+/// Constant-time implementation of `uintLessThan`.
 /// The results of this function may be biased.
 pub fn uintLessThanBiased(r: Random, comptime T: type, less_than: T) T {
     comptime assert(@typeInfo(T).int.signedness == .unsigned);
@@ -185,7 +185,7 @@ pub fn uintLessThan(r: Random, comptime T: type, less_than: T) T {
     return @intCast(m >> bits);
 }
 
-/// Constant-time implementation off `uintAtMost`.
+/// Constant-time implementation of `uintAtMost`.
 /// The results of this function may be biased.
 pub fn uintAtMostBiased(r: Random, comptime T: type, at_most: T) T {
     assert(@typeInfo(T).int.signedness == .unsigned);
@@ -208,7 +208,7 @@ pub fn uintAtMost(r: Random, comptime T: type, at_most: T) T {
     return r.uintLessThan(T, at_most + 1);
 }
 
-/// Constant-time implementation off `intRangeLessThan`.
+/// Constant-time implementation of `intRangeLessThan`.
 /// The results of this function may be biased.
 pub fn intRangeLessThanBiased(r: Random, comptime T: type, at_least: T, less_than: T) T {
     assert(at_least < less_than);
@@ -245,7 +245,7 @@ pub fn intRangeLessThan(r: Random, comptime T: type, at_least: T, less_than: T) 
     }
 }
 
-/// Constant-time implementation off `intRangeAtMostBiased`.
+/// Constant-time implementation of `intRangeAtMostBiased`.
 /// The results of this function may be biased.
 pub fn intRangeAtMostBiased(r: Random, comptime T: type, at_least: T, at_most: T) T {
     assert(at_least <= at_most);

@@ -922,7 +922,7 @@ pub const ReceiveFlags = packed struct(u8) {
 
 pub const IncomingMessage = struct {
     /// Populated by receive functions.
-    from: IpAddress,
+    from: ?IpAddress,
     /// Populated by receive functions, points into the caller-supplied buffer.
     data: []u8,
     /// Supplied by caller before calling receive functions; mutated by receive

@@ -13109,7 +13109,7 @@ fn netReceivePosix(
                 syscall.finish();
                 const data = data_buffer[0..@intCast(rc)];
                 message.* = .{
-                    .from = addressFromPosix(&storage),
+                    .from = if (msg.namelen == 0) null else addressFromPosix(&storage),
                     .data = data,
                     .control = if (msg.control) |ptr| @as([*]u8, @ptrCast(ptr))[0..msg.controllen] else message.control,
                     .flags = .{
@@ -13187,7 +13187,7 @@ fn netReceiveOneWindows(
     });
     switch (iosb.u.Status) {
         .SUCCESS, .RECEIVE_EXPEDITED => |status| message.* = .{
-            .from = addressFromPosix(&storage),
+            .from = if (addr_len == 0) null else addressFromPosix(&storage),
             .data = data_buffer[0..iosb.Information],
             .control = &.{},
             .flags = .{
@@ -14615,7 +14615,7 @@ fn lookupDns(
 
                 // Ignore replies from addresses we didn't send to.
                 const ns = for (mapped_nameservers) |*ns| {
-                    if (received_message.from.eql(ns)) break ns;
+                    if (received_message.from.?.eql(ns)) break ns;
                 } else {
                     continue;
                 };

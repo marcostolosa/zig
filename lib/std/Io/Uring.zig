@@ -5122,7 +5122,7 @@ fn netReceive(
                 const data = remaining_data_buffer[0..@intCast(completion.result)];
                 data_i += data.len;
                 message.* = .{
-                    .from = addressFromPosix(&storage),
+                    .from = if (msg.msg_namelen == 0) null else addressFromPosix(&storage),
                     .data = data,
                     .control = if (msg.control) |ptr| @as([*]u8, @ptrCast(ptr))[0..msg.controllen] else message.control,
                     .flags = .{

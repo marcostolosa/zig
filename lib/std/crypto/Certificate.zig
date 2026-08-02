@@ -318,7 +318,7 @@ pub const Parsed = struct {
         const subject_alt_name = parsed_subject.subjectAltName();
         if (subject_alt_name.len == 0) {
             // note: checkIpAddress is intentionally omitted, as it is not permitted in the common name field anyway.
-            if (checkDnsHostname(host_name, parsed_subject.commonName())) {
+            if (checkHostName(host_name, parsed_subject.commonName())) {
                 return;
             } else {
                 return error.CertificateHostMismatch;
@@ -333,7 +333,7 @@ pub const Parsed = struct {
             switch (@as(GeneralNameTag, @fromBackingInt(@intCast(@backingInt(general_name.identifier.tag))))) {
                 .dNSName => {
                     const dns_name = subject_alt_name[general_name.slice.start..general_name.slice.end];
-                    if (checkDnsHostname(host_name, dns_name)) return;
+                    if (checkHostName(host_name, dns_name)) return;
                 },
                 .iPAddress => {
                     const ip_address = subject_alt_name[general_name.slice.start..general_name.slice.end];
@@ -346,7 +346,7 @@ pub const Parsed = struct {
         return error.CertificateHostMismatch;
     }
 
-    // Check DNS hostname according to RFC2818 specification:
+    // Check hostname according to RFC2818 specification:
     //
     // If more than one identity of a given type is present in
     // the certificate (e.g., more than one DNSName name, a match in any one
@@ -354,7 +354,7 @@ pub const Parsed = struct {
     // character * which is considered to match any single domain name
     // component. E.g., *.a.com matches foo.a.com but not bar.foo.a.com.
     // Partial wildcards like f*.com are not supported.
-    fn checkDnsHostname(host_name: []const u8, dns_name: []const u8) bool {
+    fn checkHostName(host_name: []const u8, dns_name: []const u8) bool {
         // Empty strings should not match
         if (host_name.len == 0 or dns_name.len == 0) return false;
 
@@ -401,43 +401,43 @@ pub const Parsed = struct {
     }
 };
 
-test "Parsed.checkDnsHostname RFC 6125 compliance" {
+test "Parsed.checkHostName RFC 6125 compliance" {
     const expectEqual = std.testing.expectEqual;
 
     // Exact match tests
-    try expectEqual(true, Parsed.checkDnsHostname("ziglang.org", "ziglang.org"));
-    try expectEqual(true, Parsed.checkDnsHostname("ziglang.org", "Ziglang.org")); // case insensitive
-    try expectEqual(true, Parsed.checkDnsHostname("ZIGLANG.ORG", "ziglang.org")); // case insensitive
+    try expectEqual(true, Parsed.checkHostName("ziglang.org", "ziglang.org"));
+    try expectEqual(true, Parsed.checkHostName("ziglang.org", "Ziglang.org")); // case insensitive
+    try expectEqual(true, Parsed.checkHostName("ZIGLANG.ORG", "ziglang.org")); // case insensitive
 
     // Valid wildcard matches
-    try expectEqual(true, Parsed.checkDnsHostname("bar.ziglang.org", "*.ziglang.org"));
-    try expectEqual(true, Parsed.checkDnsHostname("BAR.ziglang.org", "*.Ziglang.ORG")); // case insensitive
+    try expectEqual(true, Parsed.checkHostName("bar.ziglang.org", "*.ziglang.org"));
+    try expectEqual(true, Parsed.checkHostName("BAR.ziglang.org", "*.Ziglang.ORG")); // case insensitive
 
     // RFC 6125: Wildcard matches exactly one label
-    try expectEqual(false, Parsed.checkDnsHostname("foo.bar.ziglang.org", "*.ziglang.org"));
-    try expectEqual(false, Parsed.checkDnsHostname("ziglang.org", "*.ziglang.org")); // no empty match
+    try expectEqual(false, Parsed.checkHostName("foo.bar.ziglang.org", "*.ziglang.org"));
+    try expectEqual(false, Parsed.checkHostName("ziglang.org", "*.ziglang.org")); // no empty match
 
     // RFC 6125: No partial wildcards allowed
-    try expectEqual(false, Parsed.checkDnsHostname("ziglang.org", "zig*.org"));
-    try expectEqual(false, Parsed.checkDnsHostname("ziglang.org", "*lang.org"));
-    try expectEqual(false, Parsed.checkDnsHostname("ziglang.org", "zi*ng.org"));
+    try expectEqual(false, Parsed.checkHostName("ziglang.org", "zig*.org"));
+    try expectEqual(false, Parsed.checkHostName("ziglang.org", "*lang.org"));
+    try expectEqual(false, Parsed.checkHostName("ziglang.org", "zi*ng.org"));
 
     // RFC 6125: No multiple wildcards
-    try expectEqual(false, Parsed.checkDnsHostname("foo.bar.org", "*.*.org"));
+    try expectEqual(false, Parsed.checkHostName("foo.bar.org", "*.*.org"));
 
     // RFC 6125: Wildcard must be in leftmost label
-    try expectEqual(false, Parsed.checkDnsHostname("foo.bar.org", "foo.*.org"));
+    try expectEqual(false, Parsed.checkHostName("foo.bar.org", "foo.*.org"));
 
     // Single label hostnames should not match wildcards
-    try expectEqual(false, Parsed.checkDnsHostname("localhost", "*.local"));
-    try expectEqual(false, Parsed.checkDnsHostname("localhost", "*.localhost"));
+    try expectEqual(false, Parsed.checkHostName("localhost", "*.local"));
+    try expectEqual(false, Parsed.checkHostName("localhost", "*.localhost"));
 
     // Edge cases
-    try expectEqual(false, Parsed.checkDnsHostname("", ""));
-    try expectEqual(false, Parsed.checkDnsHostname("example.com", ""));
-    try expectEqual(false, Parsed.checkDnsHostname("", "*.example.com"));
-    try expectEqual(false, Parsed.checkDnsHostname("example.com", "*"));
-    try expectEqual(false, Parsed.checkDnsHostname("example.com", "*."));
+    try expectEqual(false, Parsed.checkHostName("", ""));
+    try expectEqual(false, Parsed.checkHostName("example.com", ""));
+    try expectEqual(false, Parsed.checkHostName("", "*.example.com"));
+    try expectEqual(false, Parsed.checkHostName("example.com", "*"));
+    try expectEqual(false, Parsed.checkHostName("example.com", "*."));
 }
 
 test "Parsed.checkIpAddress RFC 5280 4.2.1.6 compliance" {

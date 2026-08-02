@@ -363,16 +363,6 @@ fn linkAsArchive(lld: *Lld, arena: Allocator) link.Error!void {
     }
 }
 
-fn addCommonArgs(argv: *std.array_list.Managed([]const u8), coff: bool) !void {
-    if (builtin.os.tag == .netbsd) {
-        // NetBSD 10.1's `malloc` appears to have some nasty bugs that occur
-        // when doing parallel linking in LLD, manifesting as input and/or
-        // output section memory randomly being unmapped. So just don't do
-        // parallel linking for now.
-        try argv.append(if (coff) "-threads:1" else "--threads=1");
-    }
-}
-
 fn coffLink(lld: *Lld, arena: Allocator) !void {
     const comp = lld.base.comp;
     const gpa = comp.gpa;
@@ -435,7 +425,6 @@ fn coffLink(lld: *Lld, arena: Allocator) !void {
         // it calls exit() and does not reset all global data between invocations.
         const linker_command = "lld-link";
         try argv.appendSlice(&[_][]const u8{ comp.self_exe_path.?, linker_command });
-        try addCommonArgs(&argv, true);
 
         if (target.isMinGW()) {
             try argv.append("-lldmingw");
@@ -845,8 +834,6 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
         // it calls exit() and does not reset all global data between invocations.
         const linker_command = "ld.lld";
         try argv.appendSlice(&[_][]const u8{ comp.self_exe_path.?, linker_command });
-        try addCommonArgs(&argv, false);
-
         if (is_obj) {
             try argv.append("-r");
         }
@@ -1421,8 +1408,6 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
         // it calls exit() and does not reset all global data between invocations.
         const linker_command = "wasm-ld";
         try argv.appendSlice(&[_][]const u8{ comp.self_exe_path.?, linker_command });
-        try addCommonArgs(&argv, false);
-
         try argv.append("--error-limit=0");
 
         if (comp.config.lto != .none) {
@@ -1746,7 +1731,6 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
     if (stderr.len > 0) log.warn("unexpected LLD stderr:\n{s}", .{stderr});
 }
 
-const builtin = @import("builtin");
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;

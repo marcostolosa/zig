@@ -253,28 +253,23 @@ pub fn addCases(cases: *@import("tests.zig").StackTracesContext, os: std.Target.
             \\       ^
             \\
             ,
-            // On all other platforms, we resolve the innermost inline callee but we don't yet
-            // resolve the inline callers.
             else =>
             \\panic: oh no
             \\source.zig:6:12: [address] in foo
             \\    if (b) @panic("oh no");
             \\           ^
-            ,
-        },
-        .expect_strip = switch (os) {
-            .windows =>
-            \\panic: oh no
-            \\???:?:?: [address] in source.foo
-            \\???:?:?: [address] in source.main
-            \\
-            ,
-            else =>
-            \\panic: oh no
-            \\???:?:?: [address] in source.foo
+            \\source.zig:3:8: [address] in main
+            \\    foo(true);
+            \\       ^
             \\
             ,
         },
+        .expect_strip =
+        \\panic: oh no
+        \\???:?:?: [address] in source.foo
+        \\???:?:?: [address] in source.main
+        \\
+        ,
     });
 
     // Make sure all inline calls are resolved and in the right order!
@@ -320,22 +315,25 @@ pub fn addCases(cases: *@import("tests.zig").StackTracesContext, os: std.Target.
             \\source.zig:11:5: [address] in baz
             \\    @panic("oh no");
             \\    ^
-            ,
-        },
-        .expect_strip = switch (os) {
-            .windows =>
-            \\panic: oh no
-            \\???:?:?: [address] in baz
-            \\???:?:?: [address] in bar
-            \\???:?:?: [address] in foo
-            \\???:?:?: [address] in main
-            \\
-            ,
-            else =>
-            \\panic: oh no
-            \\???:?:?: [address] in baz
+            \\source.zig:8:8: [address] in bar
+            \\    baz();
+            \\       ^
+            \\source.zig:5:8: [address] in foo
+            \\    bar();
+            \\       ^
+            \\source.zig:2:8: [address] in main
+            \\    foo();
+            \\       ^
             \\
             ,
         },
+        .expect_strip =
+        \\panic: oh no
+        \\???:?:?: [address] in baz
+        \\???:?:?: [address] in bar
+        \\???:?:?: [address] in foo
+        \\???:?:?: [address] in main
+        \\
+        ,
     });
 }

@@ -513,7 +513,6 @@ test "runtime 128 bit integer division" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_c and builtin.cpu.arch.isArm()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     var a: u128 = 152313999999999991610955792383;
@@ -1445,8 +1444,6 @@ test "struct in comptime false branch is not evaluated" {
 }
 
 test "result of nested switch assigned to variable" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
-
     var zds: u32 = 0;
     zds = switch (zds) {
         0 => switch (zds) {

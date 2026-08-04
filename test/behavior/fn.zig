@@ -147,7 +147,6 @@ fn fnWithUnreachable() noreturn {
 
 test "extern struct with stdcallcc fn pointer" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_c and builtin.cpu.arch == .x86) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const S = extern struct {
@@ -292,7 +291,6 @@ fn voidFun(a: i32, b: void, c: i32, d: void) !void {
 
 test "call function with empty string" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     acceptsString("");
 }
@@ -420,7 +418,6 @@ test "import passed byref to function in return type" {
 
 test "implicit cast function to function ptr" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const S1 = struct {

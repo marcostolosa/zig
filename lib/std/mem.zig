@@ -32,12 +32,12 @@ pub const Alignment = enum(math.Log2Int(usize)) {
     _,
 
     pub fn toByteUnits(a: Alignment) usize {
-        return @as(usize, 1) << @intFromEnum(a);
+        return @as(usize, 1) << @backingInt(a);
     }
 
     pub fn fromByteUnits(n: usize) Alignment {
         assert(std.math.isPowerOfTwo(n));
-        return @enumFromInt(@ctz(n));
+        return @fromBackingInt(@intCast(@ctz(n)));
     }
 
     pub fn fromByteUnitsOptional(maybe_n: ?usize) ?Alignment {
@@ -49,36 +49,36 @@ pub const Alignment = enum(math.Log2Int(usize)) {
     }
 
     pub fn order(lhs: Alignment, rhs: Alignment) std.math.Order {
-        return std.math.order(@intFromEnum(lhs), @intFromEnum(rhs));
+        return std.math.order(@backingInt(lhs), @backingInt(rhs));
     }
 
     pub fn compare(lhs: Alignment, op: std.math.CompareOperator, rhs: Alignment) bool {
-        return std.math.compare(@intFromEnum(lhs), op, @intFromEnum(rhs));
+        return std.math.compare(@backingInt(lhs), op, @backingInt(rhs));
     }
 
     pub fn max(lhs: Alignment, rhs: Alignment) Alignment {
-        return @enumFromInt(@max(@intFromEnum(lhs), @intFromEnum(rhs)));
+        return @fromBackingInt(@intCast(@max(@backingInt(lhs), @backingInt(rhs))));
     }
 
     pub fn min(lhs: Alignment, rhs: Alignment) Alignment {
-        return @enumFromInt(@min(@intFromEnum(lhs), @intFromEnum(rhs)));
+        return @fromBackingInt(@intCast(@min(@backingInt(lhs), @backingInt(rhs))));
     }
 
     /// Return next address with this alignment.
     pub fn forward(a: Alignment, address: usize) usize {
-        const x = (@as(usize, 1) << @intFromEnum(a)) - 1;
+        const x = (@as(usize, 1) << @backingInt(a)) - 1;
         return (address + x) & ~x;
     }
 
     /// Return previous address with this alignment.
     pub fn backward(a: Alignment, address: usize) usize {
-        const x = (@as(usize, 1) << @intFromEnum(a)) - 1;
+        const x = (@as(usize, 1) << @backingInt(a)) - 1;
         return address & ~x;
     }
 
     /// Return whether address is aligned to this amount.
     pub fn check(a: Alignment, address: usize) bool {
-        return @ctz(address) >= @intFromEnum(a);
+        return @ctz(address) >= @backingInt(a);
     }
 };
 
@@ -280,7 +280,7 @@ pub fn zeroes(comptime T: type) T {
             return @as(T, 0);
         },
         .@"enum" => {
-            return @as(T, @enumFromInt(0));
+            return @as(T, @fromBackingInt(@intCast(0)));
         },
         .void => {
             return {};
@@ -1937,7 +1937,7 @@ fn readPackedIntLittle(comptime T: type, bytes: []const u8, bit_offset: usize) T
     const bit_count = @as(usize, @bitSizeOf(T));
     const bit_shift = @as(u3, @intCast(bit_offset % 8));
 
-    const load_size = (bit_count + 7) / 8;
+    const load_size = @divCeil(bit_count, 8);
     const load_tail_bits = @as(u3, @intCast((load_size * 8) - bit_count));
     const LoadInt = @Int(.unsigned, load_size * 8);
 
@@ -1964,9 +1964,9 @@ fn readPackedIntBig(comptime T: type, bytes: []const u8, bit_offset: usize) T {
 
     const bit_count = @as(usize, @bitSizeOf(T));
     const bit_shift = @as(u3, @intCast(bit_offset % 8));
-    const byte_count = (@as(usize, bit_shift) + bit_count + 7) / 8;
+    const byte_count = @divCeil(@as(usize, bit_shift) + bit_count, 8);
 
-    const load_size = (bit_count + 7) / 8;
+    const load_size = @divCeil(bit_count, 8);
     const load_tail_bits = @as(u3, @intCast((load_size * 8) - bit_count));
     const LoadInt = @Int(.unsigned, load_size * 8);
 
@@ -2233,7 +2233,7 @@ pub fn byteSwapAllFieldsAligned(comptime S: type, comptime a: Alignment, ptr: *a
                     .@"struct" => byteSwapAllFieldsAligned(f_type, .fromByteUnits(f_attr.@"align" orelse @alignOf(f_type)), &@field(ptr, f_name)),
                     .@"union", .array => byteSwapAllFieldsAligned(f_type, .fromByteUnits(f_attr.@"align" orelse @alignOf(f_type)), &@field(ptr, f_name)),
                     .@"enum" => {
-                        @field(ptr, f_name) = @enumFromInt(@byteSwap(@intFromEnum(@field(ptr, f_name))));
+                        @field(ptr, f_name) = @fromBackingInt(@intCast(@byteSwap(@backingInt(@field(ptr, f_name)))));
                     },
                     .bool => {},
                     .float => |float| {
@@ -2364,7 +2364,7 @@ pub fn byteSwapAllElements(comptime Elem: type, slice: []Elem) void {
         switch (@typeInfo(@TypeOf(elem.*))) {
             .@"struct", .@"union", .array => byteSwapAllFields(@TypeOf(elem.*), elem),
             .@"enum" => {
-                elem.* = @enumFromInt(@byteSwap(@intFromEnum(elem.*)));
+                elem.* = @fromBackingInt(@intCast(@byteSwap(@backingInt(elem.*))));
             },
             .bool => {},
             .float => |float| {
@@ -4780,60 +4780,45 @@ pub fn alignForwardLog2(addr: usize, log2_alignment: u8) usize {
 pub fn doNotOptimizeAway(val: anytype) void {
     if (@inComptime()) return;
 
+    if (builtin.zig_backend == .stage2_c and builtin.abi == .msvc) {
+        _ = @atomicRmw(*const anyopaque, @as(*volatile *const anyopaque, &struct {
+            var escape: *const anyopaque = undefined;
+        }.escape), .Xchg, &val, .acq_rel); // TODO: syncscope("singlethreaded")
+        return;
+    }
+
     const max_gp_register_bits = @bitSizeOf(c_long);
-    const t = @typeInfo(@TypeOf(val));
-    switch (t) {
+    switch (@typeInfo(@TypeOf(val))) {
         .void, .null, .comptime_int, .comptime_float => return,
-        .@"enum" => doNotOptimizeAway(@intFromEnum(val)),
+        .@"enum" => doNotOptimizeAway(@backingInt(val)),
         .bool => doNotOptimizeAway(@intFromBool(val)),
-        .int => {
-            const bits = t.int.bits;
-            if (bits <= max_gp_register_bits and builtin.zig_backend != .stage2_c) {
-                const val2 = @as(
-                    @Int(t.int.signedness, @max(8, std.math.ceilPowerOfTwoAssert(u16, bits))),
-                    val,
-                );
-                asm volatile (""
-                    :
-                    : [_] "r" (val2),
-                );
-            } else doNotOptimizeAway(&val);
+        .int => |int| if (int.bits <= max_gp_register_bits) {
+            const val2 = @as(
+                @Int(int.signedness, @max(8, std.math.ceilPowerOfTwoAssert(u16, int.bits))),
+                val,
+            );
+            asm volatile (""
+                :
+                : [_] "r" (val2),
+            );
+        } else doNotOptimizeAway(&val),
+        .float => |float| switch (float.bits) {
+            else => comptime unreachable,
+            16, 80, 128 => doNotOptimizeAway(&val),
+            32, 64 => asm volatile (""
+                :
+                : [_] "rm" (val),
+            ),
         },
-        .float => {
-            if ((t.float.bits == 32 or t.float.bits == 64) and builtin.zig_backend != .stage2_c) {
-                asm volatile (""
-                    :
-                    : [_] "rm" (val),
-                );
-            } else doNotOptimizeAway(&val);
-        },
-        .pointer => {
-            if (builtin.zig_backend == .stage2_c) {
-                doNotOptimizeAwayC(val);
-            } else {
-                asm volatile (""
-                    :
-                    : [_] "m" (val),
-                    : .{ .memory = true });
-            }
-        },
-        .array => {
-            if (t.array.len * @sizeOf(t.array.child) <= 64) {
-                for (val) |v| doNotOptimizeAway(v);
-            } else doNotOptimizeAway(&val);
-        },
+        .pointer => asm volatile (""
+            :
+            : [_] "m" (val),
+            : .{ .memory = true }),
+        .array => |array| if (array.len * @sizeOf(array.child) <= 64) {
+            for (val) |v| doNotOptimizeAway(v);
+        } else doNotOptimizeAway(&val),
         else => doNotOptimizeAway(&val),
     }
-}
-
-/// .stage2_c doesn't support asm blocks yet, so use volatile stores instead
-var deopt_target: if (builtin.zig_backend == .stage2_c) u8 else void = undefined;
-fn doNotOptimizeAwayC(ptr: anytype) void {
-    const dest = @as(*volatile u8, @ptrCast(&deopt_target));
-    for (asBytes(ptr)) |b| {
-        dest.* = b;
-    }
-    dest.* = 0;
 }
 
 test doNotOptimizeAway {
@@ -4994,12 +4979,9 @@ pub fn alignInSlice(slice: anytype, comptime new_alignment: usize) ?AlignedSlice
 }
 
 test "read/write(Var)PackedInt" {
-    switch (builtin.cpu.arch) {
-        // This test generates too much code to execute on WASI.
-        // LLVM backend fails with "too many locals: locals exceed maximum"
-        .wasm32, .wasm64 => return error.SkipZigTest,
-        else => {},
-    }
+    // This test generates too much code to execute on WASI.
+    // LLVM backend fails with "too many locals: locals exceed maximum"
+    if (builtin.cpu.arch.isWasm()) return error.SkipZigTest;
 
     const foreign_endian: Endian = if (native_endian == .big) .little else .big;
     const expect = std.testing.expect;

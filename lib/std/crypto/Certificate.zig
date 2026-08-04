@@ -327,7 +327,7 @@ pub const Parsed = struct {
         while (name_i < general_names.slice.end) {
             const general_name = try der.Element.parse(subject_alt_name, name_i);
             name_i = general_name.slice.end;
-            switch (@as(GeneralNameTag, @enumFromInt(@intFromEnum(general_name.identifier.tag)))) {
+            switch (@as(GeneralNameTag, @fromBackingInt(@intCast(@backingInt(general_name.identifier.tag))))) {
                 .dNSName => {
                     const dns_name = subject_alt_name[general_name.slice.start..general_name.slice.end];
                     if (checkHostName(host_name, dns_name)) return;
@@ -642,7 +642,7 @@ const Date = struct {
             while (month < date.month) : (month += 1) {
                 const days: u64 = std.time.epoch.getDaysInMonth(
                     date.year,
-                    @enumFromInt(month),
+                    @fromBackingInt(@intCast(month)),
                 );
                 sec += days * std.time.epoch.secs_per_day;
             }
@@ -893,7 +893,7 @@ pub const der = struct {
         null = 5,
         object_identifier = 6,
         sequence = 16,
-        sequence_of = 17,
+        set = 17,
         utc_time = 23,
         generalized_time = 24,
         _,
@@ -1211,7 +1211,7 @@ pub const rsa = struct {
                     0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05,
                     0x00, 0x04, 0x40,
                 },
-                else => @compileError("unreachable"),
+                else => comptime unreachable,
             };
             em_index -= hash_der.len;
             @memcpy(em[em_index..][0..hash_der.len], hash_der);

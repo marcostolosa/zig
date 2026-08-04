@@ -24,6 +24,8 @@ dylibs: std.ArrayList(File.Index) = .empty,
 
 segments: std.ArrayList(macho.segment_command_64) = .empty,
 sections: std.MultiArrayList(Section) = .{},
+/// Populated by `allocateSections`.
+header_size: ?u32 = null,
 
 resolver: SymbolResolver = .{},
 /// This table will be populated after `scanRelocs` has run.
@@ -181,7 +183,7 @@ pub fn createEmpty(
             .tag = .macho,
             .comp = comp,
             .emit = emit,
-            .gc_sections = options.gc_sections orelse (optimize_mode != .Debug),
+            .gc_sections = options.gc_sections orelse (optimize_mode != .debug),
             .print_gc_sections = options.print_gc_sections,
             .stack_size = options.stack_size orelse 16777216,
             .allow_shlib_undefined = allow_shlib_undefined,
@@ -2209,13 +2211,14 @@ fn initSegments(self: *MachO) !void {
 }
 
 fn allocateSections(self: *MachO) !void {
-    const headerpad = try load_commands.calcMinHeaderPadSize(self);
+    const header_size = try load_commands.calcMinHeaderSize(self);
+    self.header_size = header_size;
     var vmaddr: u64 = if (self.pagezero_seg_index) |index|
         self.segments.items[index].vmaddr + self.segments.items[index].vmsize
     else
         0;
-    vmaddr += headerpad;
-    var fileoff = headerpad;
+    vmaddr += header_size;
+    var fileoff = header_size;
     var prev_seg_id: u8 = if (self.pagezero_seg_index) |index| index + 1 else 0;
 
     const page_size = self.getPageSize();
@@ -2892,6 +2895,11 @@ fn writeLoadCommands(self: *MachO) !struct { usize, usize, u64 } {
 
     if (self.base.isDynLib()) {
         try load_commands.writeDylibIdLC(self, &writer);
+        ncmds += 1;
+    }
+
+    if (self.needsEncryptionInfo()) {
+        try load_commands.writeEncryptionInfoLC(self, &writer);
         ncmds += 1;
     }
 
@@ -4676,7 +4684,7 @@ pub const MachTask = extern struct {
         var out_port: std.c.mach_port_name_t = undefined;
         switch (getKernError(std.c.mach_port_allocate(
             self.port,
-            @intFromEnum(right),
+            @backingInt(right),
             &out_port,
         ))) {
             .SUCCESS => return .{ .port = out_port },
@@ -4694,7 +4702,7 @@ pub const MachTask = extern struct {
             self.port,
             port.port,
             port.port,
-            @intFromEnum(msg),
+            @backingInt(msg),
         ))) {
             .SUCCESS => return,
             .FAILURE => return error.PermissionDenied,
@@ -5119,12 +5127,12 @@ pub fn machTaskForSelf() MachTask {
 }
 
 pub fn getKernError(err: std.c.kern_return_t) KernE {
-    return @as(KernE, @enumFromInt(@as(u32, @truncate(@as(usize, @intCast(err))))));
+    return @as(KernE, @fromBackingInt(@intCast(@as(u32, @truncate(@as(usize, @intCast(err)))))));
 }
 
 pub fn unexpectedKernError(err: KernE) std.posix.UnexpectedError {
     if (std.options.unexpected_error_tracing) {
-        std.debug.print("unexpected error: {d}\n", .{@intFromEnum(err)});
+        std.debug.print("unexpected error: {d}\n", .{@backingInt(err)});
         std.debug.dumpCurrentStackTrace(.{});
     }
     return error.Unexpected;
@@ -5408,6 +5416,18 @@ pub fn alignPow(macho_file: *MachO, x: u32) error{AlreadyReported}!u32 {
         return diags.fail("alignment overflow", .{});
     }
     return result;
+}
+
+pub fn needsEncryptionInfo(macho_file: *MachO) bool {
+    const target = macho_file.getTarget();
+    return switch (target.os.tag) {
+        .ios,
+        .tvos,
+        .visionos,
+        .watchos,
+        => target.abi != .simulator,
+        else => false,
+    };
 }
 
 /// Branch instruction has 26 bits immediate but is 4 byte aligned.

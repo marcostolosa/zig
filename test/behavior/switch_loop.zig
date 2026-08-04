@@ -179,7 +179,6 @@ test "switch loop with pointer capture" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
 
     const S = struct {
         const U = union(enum) {
@@ -224,7 +223,6 @@ test "unanalyzed continue with operand" {
 
 test "switch loop on larger than pointer integer" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     var entry: @Int(.unsigned, @bitSizeOf(usize) + 1) = undefined;
@@ -257,8 +255,8 @@ test "switch loop on non-exhaustive enum" {
             start = .a;
             const result: u32 = s: switch (start) {
                 .a => continue :s .c,
-                else => continue :s @enumFromInt(123),
-                .b, _ => |x| break :s @intFromEnum(x),
+                else => continue :s @fromBackingInt(@intCast(123)),
+                .b, _ => |x| break :s @backingInt(x),
             };
             try expect(result == 123);
         }
@@ -269,7 +267,7 @@ test "switch loop on non-exhaustive enum" {
 
 test "switch loop with discarded tag capture" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+
     const S = struct {
         const U = union(enum) {
             a: u32,
@@ -408,7 +406,7 @@ test "switch loop with tag capture" {
                 .a => |nothing, tag| {
                     comptime assert(nothing == {});
                     comptime assert(tag == .a);
-                    try expect(@intFromEnum(tag) == @intFromEnum(@This().a));
+                    try expect(@backingInt(tag) == @backingInt(@This().a));
                     continue :label .{ .d = 456 };
                 },
                 .b, .d => |_, tag| {

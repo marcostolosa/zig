@@ -10,6 +10,7 @@ const error_traces = @import("error_traces.zig");
 const stack_traces = @import("stack_traces.zig");
 const llvm_ir = @import("llvm_ir.zig");
 const libc = @import("libc.zig");
+const link = @import("link.zig");
 
 // Implementations
 pub const ErrorTracesContext = @import("src/ErrorTrace.zig");
@@ -17,11 +18,12 @@ pub const StackTracesContext = @import("src/StackTrace.zig");
 pub const DebuggerContext = @import("src/Debugger.zig");
 pub const LlvmIrContext = @import("src/LlvmIr.zig");
 pub const LibcContext = @import("src/Libc.zig");
+pub const LinkContext = @import("src/Link.zig");
 
 const ModuleTestTarget = struct {
     linkage: ?std.builtin.LinkMode = null,
     target: std.Target.Query = .{},
-    optimize_mode: std.builtin.OptimizeMode = .Debug,
+    optimize_mode: std.builtin.OptimizeMode = .debug,
     link_libc: ?bool = null,
     single_threaded: ?bool = null,
     use_llvm: ?bool = null,
@@ -55,38 +57,38 @@ const module_test_targets = blk: {
         },
 
         .{
-            .optimize_mode = .ReleaseFast,
+            .optimize_mode = .fast,
         },
         .{
             .link_libc = true,
-            .optimize_mode = .ReleaseFast,
+            .optimize_mode = .fast,
         },
         .{
-            .optimize_mode = .ReleaseFast,
+            .optimize_mode = .fast,
             .single_threaded = true,
         },
 
         .{
-            .optimize_mode = .ReleaseSafe,
+            .optimize_mode = .safe,
         },
         .{
             .link_libc = true,
-            .optimize_mode = .ReleaseSafe,
+            .optimize_mode = .safe,
         },
         .{
-            .optimize_mode = .ReleaseSafe,
+            .optimize_mode = .safe,
             .single_threaded = true,
         },
 
         .{
-            .optimize_mode = .ReleaseSmall,
+            .optimize_mode = .small,
         },
         .{
             .link_libc = true,
-            .optimize_mode = .ReleaseSmall,
+            .optimize_mode = .small,
         },
         .{
-            .optimize_mode = .ReleaseSmall,
+            .optimize_mode = .small,
             .single_threaded = true,
         },
 
@@ -198,7 +200,7 @@ const module_test_targets = blk: {
         //    },
         //    .use_llvm = false,
         //    .use_lld = false,
-        //    .optimize_mode = .ReleaseFast,
+        //    .optimize_mode = .fast,
         //    .strip = true,
         //    .skip_modules = &.{"std"}, // TODO get these passing
         //},
@@ -211,7 +213,7 @@ const module_test_targets = blk: {
         //    },
         //    .use_llvm = false,
         //    .use_lld = false,
-        //    .optimize_mode = .ReleaseFast,
+        //    .optimize_mode = .fast,
         //    .strip = true,
         //    .skip_modules = &.{"std"}, // TODO get these passing
         //},
@@ -277,6 +279,15 @@ const module_test_targets = blk: {
                 .cpu_arch = .arm,
                 .os_tag = .linux,
                 .abi = .musleabi,
+                .ofmt = .c,
+            },
+            .link_libc = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .arm,
+                .os_tag = .linux,
+                .abi = .musleabi,
             },
             .linkage = .dynamic,
             .link_libc = true,
@@ -287,6 +298,15 @@ const module_test_targets = blk: {
                 .cpu_arch = .arm,
                 .os_tag = .linux,
                 .abi = .musleabihf,
+            },
+            .link_libc = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .arm,
+                .os_tag = .linux,
+                .abi = .musleabihf,
+                .ofmt = .c,
             },
             .link_libc = true,
         },
@@ -339,6 +359,15 @@ const module_test_targets = blk: {
             },
             .link_libc = true,
         },
+        .{
+            .target = .{
+                .cpu_arch = .armeb,
+                .os_tag = .linux,
+                .abi = .musleabi,
+                .ofmt = .c,
+            },
+            .link_libc = true,
+        },
         // Crashes in weird ways when applying relocations.
         // .{
         //     .target = .{
@@ -355,6 +384,15 @@ const module_test_targets = blk: {
                 .cpu_arch = .armeb,
                 .os_tag = .linux,
                 .abi = .musleabihf,
+            },
+            .link_libc = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .armeb,
+                .os_tag = .linux,
+                .abi = .musleabihf,
+                .ofmt = .c,
             },
             .link_libc = true,
         },
@@ -1110,6 +1148,15 @@ const module_test_targets = blk: {
                 .cpu_arch = .x86,
                 .os_tag = .linux,
                 .abi = .musl,
+                .ofmt = .c,
+            },
+            .link_libc = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .x86,
+                .os_tag = .linux,
+                .abi = .musl,
             },
             .linkage = .dynamic,
             .link_libc = true,
@@ -1255,7 +1302,7 @@ const module_test_targets = blk: {
         //    },
         //    .use_llvm = false,
         //    .use_lld = false,
-        //    .optimize_mode = .ReleaseFast,
+        //    .optimize_mode = .fast,
         //    .strip = true,
         //},
 
@@ -1521,7 +1568,6 @@ const module_test_targets = blk: {
                 .os_tag = .wasi,
                 .abi = .none,
             },
-            .skip_modules = &.{ "compiler-rt", "std" },
             .use_llvm = false,
             .use_lld = false,
         },
@@ -1640,6 +1686,15 @@ const module_test_targets = blk: {
                 .cpu_arch = .x86,
                 .os_tag = .windows,
                 .abi = .gnu,
+            },
+            .link_libc = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .x86,
+                .os_tag = .windows,
+                .abi = .gnu,
+                .ofmt = .c,
             },
             .link_libc = true,
         },
@@ -1959,7 +2014,6 @@ const c_abi_targets = blk: {
                 .abi = .musl,
             },
             .use_llvm = false,
-            .c_defines = &.{"ZIG_BACKEND_STAGE2_X86_64"},
         },
         .{
             .target = .{
@@ -1970,7 +2024,6 @@ const c_abi_targets = blk: {
             },
             .use_llvm = false,
             .strip = true,
-            .c_defines = &.{"ZIG_BACKEND_STAGE2_X86_64"},
         },
         .{
             .target = .{
@@ -1981,7 +2034,6 @@ const c_abi_targets = blk: {
             },
             .use_llvm = false,
             .pic = true,
-            .c_defines = &.{"ZIG_BACKEND_STAGE2_X86_64"},
         },
         .{
             .target = .{
@@ -2008,6 +2060,15 @@ const c_abi_targets = blk: {
                 .abi = .musl,
             },
         },
+        .{
+            .target = .{
+                .cpu_arch = .wasm32,
+                .os_tag = .wasi,
+                .abi = .musl,
+            },
+            .use_llvm = false,
+            .use_lld = false,
+        },
 
         // Windows Targets
 
@@ -2019,35 +2080,32 @@ const c_abi_targets = blk: {
             },
         },
 
-        //.{
-        //    .target = .{
-        //        .cpu_arch = .x86_64,
-        //        .os_tag = .windows,
-        //        .abi = .gnu,
-        //    },
-        //    .use_llvm = false,
-        //    .c_defines = &.{"ZIG_BACKEND_STAGE2_X86_64"},
-        //},
-        //.{
-        //    .target = .{
-        //        .cpu_arch = .x86_64,
-        //        .cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v2 },
-        //        .os_tag = .windows,
-        //        .abi = .gnu,
-        //    },
-        //    .use_llvm = false,
-        //    .c_defines = &.{"ZIG_BACKEND_STAGE2_X86_64"},
-        //},
-        //.{
-        //    .target = .{
-        //        .cpu_arch = .x86_64,
-        //        .cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v3 },
-        //        .os_tag = .windows,
-        //        .abi = .gnu,
-        //    },
-        //    .use_llvm = false,
-        //    .c_defines = &.{"ZIG_BACKEND_STAGE2_X86_64"},
-        //},
+        .{
+            .target = .{
+                .cpu_arch = .x86_64,
+                .os_tag = .windows,
+                .abi = .gnu,
+            },
+            .use_llvm = false,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .x86_64,
+                .cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v2 },
+                .os_tag = .windows,
+                .abi = .gnu,
+            },
+            .use_llvm = false,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .x86_64,
+                .cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v3 },
+                .os_tag = .windows,
+                .abi = .gnu,
+            },
+            .use_llvm = false,
+        },
         .{
             .target = .{
                 .cpu_arch = .x86_64,
@@ -2055,6 +2113,96 @@ const c_abi_targets = blk: {
                 .abi = .gnu,
             },
             .use_llvm = true,
+        },
+    };
+};
+
+const LinkTarget = struct {
+    target: std.Target.Query = .{},
+    optimize_mode: std.builtin.OptimizeMode = .debug,
+    link_libc: bool = false,
+    use_llvm: bool = false,
+    use_lld: bool = false,
+};
+
+const link_targets = blk: {
+    @setEvalBranchQuota(30000);
+    break :blk [_]LinkTarget{
+        // Native Targets
+
+        // .{
+        //     .use_llvm = true,
+        // },
+
+        // Windows Targets
+
+        .{
+            .target = .{
+                .cpu_arch = .x86_64,
+                .os_tag = .windows,
+                .abi = .gnu,
+            },
+        },
+        .{
+            .target = .{
+                .cpu_arch = .x86_64,
+                .os_tag = .windows,
+                .abi = .gnu,
+            },
+            .link_libc = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .x86_64,
+                .os_tag = .windows,
+                .abi = .gnu,
+            },
+            .use_llvm = true,
+            .use_lld = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .x86_64,
+                .os_tag = .windows,
+                .abi = .gnu,
+            },
+            .link_libc = true,
+            .use_llvm = true,
+            .use_lld = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .x86_64,
+                .os_tag = .windows,
+                .abi = .msvc,
+            },
+        },
+        .{
+            .target = .{
+                .cpu_arch = .x86_64,
+                .os_tag = .windows,
+                .abi = .msvc,
+            },
+            .link_libc = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .x86_64,
+                .os_tag = .windows,
+                .abi = .msvc,
+            },
+            .use_llvm = true,
+            .use_lld = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .x86_64,
+                .os_tag = .windows,
+                .abi = .msvc,
+            },
+            .link_libc = true,
+            .use_llvm = true,
+            .use_lld = true,
         },
     };
 };
@@ -2276,7 +2424,7 @@ pub fn addStackTraceTests(
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/src/convert-stack-trace.zig"),
             .target = b.graph.host,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
 
@@ -2330,7 +2478,7 @@ pub fn addErrorTraceTests(
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/src/convert-stack-trace.zig"),
             .target = b.graph.host,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
 
@@ -2394,10 +2542,10 @@ pub fn addStandaloneTests(
             .enable_ios_sdk = enable_ios_sdk,
             .enable_macos_sdk = enable_macos_sdk,
             .enable_symlinks_windows = enable_symlinks_windows,
-            .simple_skip_debug = mem.indexOfScalar(OptimizeMode, optimize_modes, .Debug) == null,
-            .simple_skip_release_safe = mem.indexOfScalar(OptimizeMode, optimize_modes, .ReleaseSafe) == null,
-            .simple_skip_release_fast = mem.indexOfScalar(OptimizeMode, optimize_modes, .ReleaseFast) == null,
-            .simple_skip_release_small = mem.indexOfScalar(OptimizeMode, optimize_modes, .ReleaseSmall) == null,
+            .simple_skip_debug = mem.indexOfScalar(OptimizeMode, optimize_modes, .debug) == null,
+            .simple_skip_release_safe = mem.indexOfScalar(OptimizeMode, optimize_modes, .safe) == null,
+            .simple_skip_release_fast = mem.indexOfScalar(OptimizeMode, optimize_modes, .fast) == null,
+            .simple_skip_release_small = mem.indexOfScalar(OptimizeMode, optimize_modes, .small) == null,
         });
         const test_cases_dep_step = test_cases_dep.builder.default_step;
         test_cases_dep_step.name = b.dupe(test_cases_dep_name);
@@ -2690,16 +2838,6 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
 
         const target = &resolved_target.result;
 
-        if (target.cpu.arch == .s390x and target.ofmt == .c) {
-            // https://codeberg.org/ziglang/zig/issues/35523
-            continue;
-        }
-
-        if (target.cpu.arch == .riscv64 and target.ofmt == .c) {
-            // https://codeberg.org/ziglang/zig/issues/30930
-            continue;
-        }
-
         if (std.mem.eql(u8, options.name, "libc")) {
             // The libc API tests obviously need to link libc. So for test
             // target entries where we wouldn't link libc by default, skip the
@@ -2965,7 +3103,7 @@ pub fn wouldUseLlvm(use_llvm: ?bool, query: std.Target.Query, optimize_mode: Opt
     if (use_llvm) |x| return x;
     if (query.ofmt == .c) return false;
     switch (optimize_mode) {
-        .Debug => {},
+        .debug => {},
         else => return true,
     }
     const cpu_arch = query.cpu_arch orelse builtin.cpu.arch;
@@ -3083,6 +3221,77 @@ pub fn addCAbiTests(b: *std.Build, options: CAbiTestOptions) *Step {
     return step;
 }
 
+const LinkTestOptions = struct {
+    test_target_filters: []const []const u8,
+    test_filters: []const []const u8,
+    optimize_modes: []const OptimizeMode,
+    skip_non_native: bool,
+    skip_windows: bool,
+    skip_llvm: bool,
+    max_rss: usize,
+};
+
+pub fn addLinkTests(b: *std.Build, options: LinkTestOptions) *Step {
+    const step = b.step("test-link", "Run the linker tests");
+    const update_snapshots = b.option(
+        bool,
+        "link-snapshot-update",
+        "Update linker test snapshots in-place instead of testing against them",
+    ) orelse false;
+
+    for (link_targets) |link_target| {
+        if (options.skip_non_native and !link_target.target.isNative()) continue;
+        if (options.skip_windows and link_target.target.os_tag == .windows) continue;
+
+        const resolved_target = b.resolveTargetQuery(link_target.target);
+        const triple_txt = resolved_target.query.zigTriple(b.allocator) catch @panic("OOM");
+        const target = &resolved_target.result;
+
+        if (options.test_target_filters.len > 0) {
+            for (options.test_target_filters) |filter| {
+                if (std.mem.indexOf(u8, triple_txt, filter) != null) break;
+            } else continue;
+        }
+
+        for (options.optimize_modes) |optimize_mode| {
+            if (link_target.optimize_mode != optimize_mode) continue;
+            if (link_target.link_libc and target.abi == .msvc and b.graph.host.result.os.tag != .windows) continue;
+            const would_use_llvm = wouldUseLlvm(link_target.use_llvm, link_target.target, optimize_mode);
+            if (options.skip_llvm and would_use_llvm) continue;
+
+            const opt_update_step = if (update_snapshots) update: {
+                const update_step = Step.UpdateSourceFiles.create(b);
+                step.dependOn(&update_step.step);
+                break :update update_step;
+            } else null;
+
+            var context: LinkContext = .{
+                .b = b,
+                .step = step,
+                .optimize = optimize_mode,
+                .target = resolved_target,
+                .target_desc = std.fmt.allocPrint(b.allocator, "{s}-{t}{s}{s}{s}", .{
+                    target.zigTriple(b.allocator) catch @panic("OOM"),
+                    optimize_mode,
+                    if (link_target.use_llvm) "-llvm" else "",
+                    if (link_target.use_lld) "-lld" else "",
+                    if (link_target.link_libc) "-libc" else "",
+                }) catch @panic("OOM"),
+                .use_llvm = link_target.use_llvm,
+                .use_lld = link_target.use_lld,
+                .link_libc = link_target.link_libc,
+                .test_filters = options.test_filters,
+                .update_step = opt_update_step,
+                .updated_snapshots = .empty,
+                .max_rss = options.max_rss,
+            };
+
+            link.addCases(&context);
+        }
+    }
+    return step;
+}
+
 pub fn addCases(
     b: *std.Build,
     parent_step: *Step,
@@ -3095,14 +3304,12 @@ pub fn addCases(
 
     var cases = @import("src/Cases.zig").init(gpa, arena, io);
 
-    // Ensure changes to these files get picked up
-    // https://codeberg.org/ziglang/zig/issues/35473
-    b.graph.poisonCache();
+    b.dependOnDirectory(b.path("test/cases"));
 
     var dir = try b.root.openDir(io, "test/cases", .{ .iterate = true });
     defer dir.close(io);
 
-    cases.addFromDir(dir, b);
+    cases.addFromDir(dir, "test/cases", b);
     try @import("cases.zig").addCases(&cases, build_options, b);
 
     cases.lowerToBuildSteps(
@@ -3153,25 +3360,31 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []cons
         .root_module = b.createModule(.{
             .root_source_file = b.path("tools/incr-check.zig"),
             .target = b.graph.host,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
 
-    // Ensure changes to these files get picked up
-    // https://codeberg.org/ziglang/zig/issues/35473
-    b.graph.poisonCache();
+    b.dependOnDirectory(b.path("test/incremental"));
 
     var dir = try b.root.openDir(io, "test/incremental", .{ .iterate = true });
     defer dir.close(io);
 
     var it = try dir.walk(b.graph.arena);
     while (try it.next(io)) |entry| {
-        if (entry.kind != .file) continue;
         if (std.mem.endsWith(u8, entry.basename, ".swp")) continue;
 
         for (test_filters) |test_filter| {
             if (std.mem.indexOf(u8, entry.path, test_filter)) |_| break;
         } else if (test_filters.len > 0) continue;
+
+        switch (entry.kind) {
+            .file => {},
+            .directory => {
+                b.dependOnDirectory(b.path(b.pathJoin(&.{ "test", "incremental", entry.path })));
+            },
+            else => continue,
+        }
+        b.dependOnFileContents(b.path(b.pathJoin(&.{ "test", "incremental", entry.path })));
 
         for (incremental_targets) |target_str| {
             const run = b.addRunArtifact(incr_check);

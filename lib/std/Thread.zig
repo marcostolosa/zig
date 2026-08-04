@@ -67,7 +67,7 @@ pub fn setName(self: Thread, io: Io, name: []const u8) SetNameError!void {
                 return;
             } else {
                 const err = std.c.pthread_setname_np(self.getHandle(), name_with_terminator.ptr);
-                switch (@as(posix.E, @enumFromInt(err))) {
+                switch (@as(posix.E, @fromBackingInt(@intCast(err)))) {
                     .SUCCESS => return,
                     .RANGE => unreachable,
                     else => |e| return posix.unexpectedErrno(e),
@@ -101,14 +101,14 @@ pub fn setName(self: Thread, io: Io, name: []const u8) SetNameError!void {
             if (self.getHandle() != std.c.pthread_self()) return error.Unsupported;
 
             const err = std.c.pthread_setname_np(name_with_terminator.ptr);
-            switch (@as(posix.E, @enumFromInt(err))) {
+            switch (@as(posix.E, @fromBackingInt(@intCast(err)))) {
                 .SUCCESS => return,
                 else => |e| return posix.unexpectedErrno(e),
             }
         },
         .serenity => if (use_pthreads) {
             const err = std.c.pthread_setname_np(self.getHandle(), name_with_terminator.ptr);
-            switch (@as(posix.E, @enumFromInt(err))) {
+            switch (@as(posix.E, @fromBackingInt(@intCast(err)))) {
                 .SUCCESS => return,
                 .NAMETOOLONG => unreachable,
                 .SRCH => unreachable,
@@ -117,7 +117,7 @@ pub fn setName(self: Thread, io: Io, name: []const u8) SetNameError!void {
         },
         .netbsd, .illumos => if (use_pthreads) {
             const err = std.c.pthread_setname_np(self.getHandle(), name_with_terminator.ptr, null);
-            switch (@as(posix.E, @enumFromInt(err))) {
+            switch (@as(posix.E, @fromBackingInt(@intCast(err)))) {
                 .SUCCESS => return,
                 .INVAL => unreachable,
                 .SRCH => unreachable,
@@ -135,7 +135,7 @@ pub fn setName(self: Thread, io: Io, name: []const u8) SetNameError!void {
         },
         .dragonfly => if (use_pthreads) {
             const err = std.c.pthread_setname_np(self.getHandle(), name_with_terminator.ptr);
-            switch (@as(posix.E, @enumFromInt(err))) {
+            switch (@as(posix.E, @fromBackingInt(@intCast(err)))) {
                 .SUCCESS => return,
                 .INVAL => unreachable,
                 .FAULT => unreachable,
@@ -168,7 +168,7 @@ pub fn getName(self: Thread, buffer_ptr: *[max_name_len:0]u8) GetNameError!?[]co
                 return std.mem.sliceTo(buffer, 0);
             } else {
                 const err = std.c.pthread_getname_np(self.getHandle(), buffer.ptr, max_name_len + 1);
-                switch (@as(posix.E, @enumFromInt(err))) {
+                switch (@as(posix.E, @fromBackingInt(@intCast(err)))) {
                     .SUCCESS => return std.mem.sliceTo(buffer, 0),
                     .RANGE => unreachable,
                     else => |e| return posix.unexpectedErrno(e),
@@ -211,7 +211,7 @@ pub fn getName(self: Thread, buffer_ptr: *[max_name_len:0]u8) GetNameError!?[]co
         },
         .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => if (use_pthreads) {
             const err = std.c.pthread_getname_np(self.getHandle(), buffer.ptr, max_name_len + 1);
-            switch (@as(posix.E, @enumFromInt(err))) {
+            switch (@as(posix.E, @fromBackingInt(@intCast(err)))) {
                 .SUCCESS => return std.mem.sliceTo(buffer, 0),
                 .SRCH => unreachable,
                 else => |e| return posix.unexpectedErrno(e),
@@ -219,7 +219,7 @@ pub fn getName(self: Thread, buffer_ptr: *[max_name_len:0]u8) GetNameError!?[]co
         },
         .serenity => if (use_pthreads) {
             const err = std.c.pthread_getname_np(self.getHandle(), buffer.ptr, max_name_len + 1);
-            switch (@as(posix.E, @enumFromInt(err))) {
+            switch (@as(posix.E, @fromBackingInt(@intCast(err)))) {
                 .SUCCESS => return,
                 .NAMETOOLONG => unreachable,
                 .SRCH => unreachable,
@@ -229,7 +229,7 @@ pub fn getName(self: Thread, buffer_ptr: *[max_name_len:0]u8) GetNameError!?[]co
         },
         .netbsd, .illumos => if (use_pthreads) {
             const err = std.c.pthread_getname_np(self.getHandle(), buffer.ptr, max_name_len + 1);
-            switch (@as(posix.E, @enumFromInt(err))) {
+            switch (@as(posix.E, @fromBackingInt(@intCast(err)))) {
                 .SUCCESS => return std.mem.sliceTo(buffer, 0),
                 .INVAL => unreachable,
                 .SRCH => unreachable,
@@ -245,7 +245,7 @@ pub fn getName(self: Thread, buffer_ptr: *[max_name_len:0]u8) GetNameError!?[]co
         },
         .dragonfly => if (use_pthreads) {
             const err = std.c.pthread_getname_np(self.getHandle(), buffer.ptr, max_name_len + 1);
-            switch (@as(posix.E, @enumFromInt(err))) {
+            switch (@as(posix.E, @fromBackingInt(@intCast(err)))) {
                 .SUCCESS => return std.mem.sliceTo(buffer, 0),
                 .INVAL => unreachable,
                 .FAULT => unreachable,
@@ -429,7 +429,7 @@ fn callFn(comptime f: anytype, args: anytype) switch (Impl) {
 
             const status = @call(.auto, f, args);
             switch (Impl) {
-                WindowsThreadImpl => return @enumFromInt(status),
+                WindowsThreadImpl => return @fromBackingInt(@intCast(status)),
                 LinuxThreadImpl => return status,
                 // pthreads don't support exit status, ignore value
                 PosixThreadImpl => return default_value,
@@ -598,7 +598,7 @@ const WindowsThreadImpl = struct {
                 instance,
                 .{ .CREATE_SUSPENDED = true },
                 0,
-                @enumFromInt(stack_size),
+                @fromBackingInt(@intCast(stack_size)),
                 .default,
                 &attr_list,
             )) {
@@ -639,8 +639,7 @@ const WindowsThreadImpl = struct {
     }
 
     fn join(self: Impl) void {
-        const infinite_timeout: windows.LARGE_INTEGER = std.math.minInt(windows.LARGE_INTEGER);
-        switch (windows.ntdll.NtWaitForSingleObject(self.thread.thread_handle, .FALSE, &infinite_timeout)) {
+        switch (windows.ntdll.NtWaitForSingleObject(self.thread.thread_handle, .FALSE, null)) {
             windows.NTSTATUS.WAIT_0 => {},
             else => |status| windows.unexpectedStatus(status) catch unreachable,
         }
@@ -712,7 +711,7 @@ const PosixThreadImpl = struct {
                 // The "proper" way to get the cpu count would be to query
                 // /dev/kstat via ioctls, and traverse a linked list for each
                 // cpu. (illumos)
-                const rc = c.sysconf(@intFromEnum(std.c._SC.NPROCESSORS_ONLN));
+                const rc = c.sysconf(@backingInt(std.c._SC.NPROCESSORS_ONLN));
                 return switch (posix.errno(rc)) {
                     .SUCCESS => @as(usize, @intCast(rc)),
                     else => |err| posix.unexpectedErrno(err),
@@ -1146,6 +1145,13 @@ const LinuxThreadImpl = struct {
         parent_tid: i32 = undefined,
         mapped: []align(std.heap.page_size_min) u8,
 
+        // On SPARC, the kernel needs to be able to restore the current register window from the
+        // stack when returning from a syscall. That presents a bit of a problem in `freeAndExit`
+        // since we're deallocating the stack! The good news is that, since we do not care about
+        // the contents of the incoming and local registers at that point, we can just tell the
+        // kernel that our stack is this undefined global buffer.
+        var sparc_exit_stack: [192]u8 align(16) = undefined;
+
         /// Calls `munmap(mapped.ptr, mapped.len)` then `exit(1)` without touching the stack (which lives in `mapped.ptr`).
         /// Ported over from musl libc's pthread detached implementation:
         /// https://github.com/ifduyue/musl/search?q=__unmapself
@@ -1365,51 +1371,39 @@ const LinuxThreadImpl = struct {
                       [len] "{r5}" (self.mapped.len),
                 ),
                 .sparc => asm volatile (
-                    \\ # See sparc64 comments below.
-                    \\ 1:
-                    \\  cmp %%fp, 0
-                    \\  beq 2f
-                    \\  nop
-                    \\  ba 1b
-                    \\  restore
-                    \\ 2:
-                    \\  mov %%g1, %%o0 // ptr
-                    \\  mov %%g2, %%o1 // len
-                    \\  mov 73, %%g1 // SYS_munmap
-                    \\  t 0x3 // ST_FLUSH_WINDOWS
-                    \\  t 0x10
-                    \\  mov 1, %%g1 // SYS_exit
-                    \\  mov 0, %%o0
-                    \\  t 0x10
+                    \\ // See sparc64 comments below.
+                    \\ t 0x3 // ST_FLUSH_WINDOWS
+                    \\ mov %%g3, %%sp
+                    \\ mov %%g1, %%o0
+                    \\ mov %%g2, %%o1
+                    \\ mov 73, %%g1 // SYS_munmap
+                    \\ t 0x10
+                    \\ mov 1, %%g1 // SYS_exit
+                    \\ mov 0, %%o0
+                    \\ t 0x10
                     :
                     : [ptr] "{g1}" (@intFromPtr(self.mapped.ptr)),
                       [len] "{g2}" (self.mapped.len),
+                      [stack] "{g3}" (&sparc_exit_stack),
                     : .{ .memory = true }),
                 .sparc64 => asm volatile (
-                    \\ # SPARCs really don't like it when active stack frames
-                    \\ # is unmapped (it will result in a segfault), so we
-                    \\ # force-deactivate it by running `restore` until
-                    \\ # all frames are cleared.
-                    \\ 1:
-                    \\  cmp %%fp, 0
-                    \\  beq 2f
-                    \\  nop
-                    \\  ba 1b
-                    \\  restore
-                    \\ 2:
-                    \\  mov %%g1, %%o0 // ptr
-                    \\  mov %%g2, %%o1 // len
-                    \\  mov 73, %%g1 // SYS_munmap
-                    \\  # Flush register window contents to prevent background
-                    \\  # memory access before unmapping the stack.
-                    \\  flushw
-                    \\  t 0x6d
-                    \\  mov 1, %%g1 // SYS_exit
-                    \\  mov 0, %%o0
-                    \\  t 0x6d
+                    \\ // Ensure that the kernel only has to flush the current register window.
+                    \\ flushw
+                    \\ // Set up a fake stack for the syscall to restore l/i registers from. Local
+                    \\ // and incoming registers must be treated as effectively garbage past this
+                    \\ // instruction!
+                    \\ sub %%g3, 2047, %%sp
+                    \\ mov %%g1, %%o0
+                    \\ mov %%g2, %%o1
+                    \\ mov 73, %%g1 // SYS_munmap
+                    \\ t 0x6d
+                    \\ mov 1, %%g1 // SYS_exit
+                    \\ mov 0, %%o0
+                    \\ t 0x6d
                     :
                     : [ptr] "{g1}" (@intFromPtr(self.mapped.ptr)),
                       [len] "{g2}" (self.mapped.len),
+                      [stack] "{g3}" (&sparc_exit_stack),
                     : .{ .memory = true }),
                 .loongarch32, .loongarch64 => asm volatile (
                     \\ ori     $a7, $zero, 215     # SYS_munmap

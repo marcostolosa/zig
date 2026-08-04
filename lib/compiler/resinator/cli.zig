@@ -15,7 +15,7 @@ pub const usage_string_after_command_name =
     \\ [options] [--] <INPUT> [<OUTPUT>]
     \\
     \\The sequence -- can be used to signify when to stop parsing options.
-    \\This is necessary when the input path begins with a forward slash.
+    \\This avoids ambiguity when the input path begins with a forward slash.
     \\
     \\Supported option prefixes are /, -, and --, so e.g. /h, -h, and --h all work.
     \\Drop-in compatible with the Microsoft Resource Compiler.
@@ -369,7 +369,7 @@ pub const Options = struct {
         try writer.print("Default language: {s} (id=0x{x})\n", .{ language_name, language_id });
 
         const code_page = self.default_code_page orelse .windows1252;
-        try writer.print("Default codepage: {s} (id={})\n", .{ @tagName(code_page), @intFromEnum(code_page) });
+        try writer.print("Default codepage: {s} (id={})\n", .{ @tagName(code_page), @backingInt(code_page) });
     }
 };
 

@@ -13,7 +13,7 @@ const Path = std.Build.Cache.Path;
 
 const build_options = @import("build_options");
 const Zcu = @import("../Zcu.zig");
-const Module = @import("../Package/Module.zig");
+const Module = @import("../Module.zig");
 const InternPool = @import("../InternPool.zig");
 const Alignment = InternPool.Alignment;
 const Compilation = @import("../Compilation.zig");
@@ -43,6 +43,8 @@ type_dependencies: std.ArrayList(link.ConstPool.Index),
 /// one array.
 align_dependency_masks: std.ArrayList(u64),
 
+/// Emitted at the top of the file. This can be cached since it only depends on the target.
+header: String,
 /// All NAVs, regardless of whether they are functions or simple constants, are put in this map.
 navs: std.array_hash_map.Auto(InternPool.Nav.Index, RenderedDecl),
 /// All UAVs which may be referenced are in this map. The UAV alignment is not included in the
@@ -211,7 +213,7 @@ pub fn addConst(
     const zcu = pt.zcu;
     const gpa = zcu.comp.gpa;
     assert(zcu.intern_pool.typeOf(val) == .type_type);
-    assert(@intFromEnum(pool_index) == c.types.items.len);
+    assert(@backingInt(pool_index) == c.types.items.len);
 
     const ty: Type = .fromInterned(val);
 
@@ -262,7 +264,7 @@ pub fn addConst(
         _ = try codegen.CType.lower(ty, &deps, arena.allocator(), zcu);
         // This call may add more items to `c.types`.
         const type_deps = try c.addCTypeDependencies(pt, &deps);
-        c.types.items[@intFromEnum(pool_index)].deps = type_deps;
+        c.types.items[@backingInt(pool_index)].deps = type_deps;
     }
 }
 
@@ -279,7 +281,7 @@ pub fn updateConstIncomplete(
     assert(zcu.intern_pool.typeOf(val) == .type_type);
     const ty: Type = .fromInterned(val);
 
-    const rendered: *RenderedType = &c.types.items[@intFromEnum(index)];
+    const rendered: *RenderedType = &c.types.items[@backingInt(index)];
 
     rendered.errunion_definition = .empty;
     rendered.definition_deps = .empty;
@@ -315,7 +317,7 @@ pub fn updateConst(
     assert(zcu.intern_pool.typeOf(val) == .type_type);
     const ty: Type = .fromInterned(val);
 
-    const rendered: *RenderedType = &c.types.items[@intFromEnum(index)];
+    const rendered: *RenderedType = &c.types.items[@backingInt(index)];
 
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
@@ -371,7 +373,7 @@ pub fn updateConst(
     {
         // This call invalidates `rendered`.
         const definition_deps = try c.addCTypeDependencies(pt, &deps);
-        c.types.items[@intFromEnum(index)].definition_deps = definition_deps;
+        c.types.items[@backingInt(index)].definition_deps = definition_deps;
     }
 }
 
@@ -404,9 +406,8 @@ pub fn createEmpty(
     emit: Path,
     options: link.File.OpenOptions,
 ) !*C {
+    assert(comp.root_mod.resolved_target.result.ofmt == .c);
     const io = comp.io;
-    const target = &comp.root_mod.resolved_target.result;
-    assert(target.ofmt == .c);
     const optimize_mode = comp.root_mod.optimize_mode;
     const use_lld = build_options.have_llvm and comp.config.use_lld;
     const use_llvm = comp.config.use_llvm;
@@ -422,14 +423,13 @@ pub fn createEmpty(
     });
     errdefer file.close(io);
 
-    const c_file = try arena.create(C);
-
-    c_file.* = .{
+    const c = try arena.create(C);
+    c.* = .{
         .base = .{
             .tag = .c,
             .comp = comp,
             .emit = emit,
-            .gc_sections = options.gc_sections orelse (optimize_mode != .Debug and output_mode != .Obj),
+            .gc_sections = options.gc_sections orelse (optimize_mode != .debug and output_mode != .Obj),
             .print_gc_sections = options.print_gc_sections,
             .stack_size = options.stack_size orelse 16777216,
             .allow_shlib_undefined = options.allow_shlib_undefined orelse false,
@@ -439,6 +439,7 @@ pub fn createEmpty(
         .string_bytes = .empty,
         .type_dependencies = .empty,
         .align_dependency_masks = .empty,
+        .header = .empty,
         .navs = .empty,
         .uavs = .empty,
         .type_pool = .empty,
@@ -447,8 +448,7 @@ pub fn createEmpty(
         .exported_navs = .empty,
         .exported_uavs = .empty,
     };
-
-    return c_file;
+    return c;
 }
 
 pub fn deinit(c: *C) void {
@@ -467,6 +467,21 @@ pub fn deinit(c: *C) void {
     c.bigint_types.deinit(gpa);
     c.exported_navs.deinit(gpa);
     c.exported_uavs.deinit(gpa);
+}
+
+pub fn prelink(c: *C, prog_node: std.Progress.Node) !void {
+    const comp = c.base.comp;
+
+    const sub_prog_node = prog_node.start("Generate Header", 0);
+    defer sub_prog_node.end();
+
+    var header_aw: std.Io.Writer.Allocating = .init(comp.gpa);
+    defer header_aw.deinit();
+    codegen.genHeader(comp.zcu.?, &header_aw.writer) catch |err| switch (err) {
+        error.WriteFailed => return error.OutOfMemory,
+        else => |e| return e,
+    };
+    c.header = try c.addString(&.{header_aw.written()});
 }
 
 pub fn updateContainerType(
@@ -727,7 +742,6 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
     const io = comp.io;
     const zcu = c.base.comp.zcu.?;
     const ip = &zcu.intern_pool;
-    const target = zcu.getTarget();
     const active = zcu.activate(tid);
     defer active.deactivate();
     const pt = active.pt;
@@ -858,7 +872,7 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
         while (true) {
             if (index < need_types.count()) {
                 const pool_index = need_types.keys()[index];
-                const rendered = &c.types.items[@intFromEnum(pool_index)];
+                const rendered = &c.types.items[@backingInt(pool_index)];
                 try mergeNeededCTypes(
                     c,
                     &need_types,
@@ -872,7 +886,7 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
 
             if (errunion_index < need_errunion_types.count()) {
                 const payload_pool_index = need_errunion_types.keys()[errunion_index];
-                const rendered = &c.types.items[@intFromEnum(payload_pool_index)];
+                const rendered = &c.types.items[@backingInt(payload_pool_index)];
                 try mergeNeededCTypes(
                     c,
                     &need_types,
@@ -886,7 +900,7 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
 
             if (aligned_index < need_aligned_types.count()) {
                 const pool_index = need_aligned_types.keys()[aligned_index];
-                const rendered = &c.types.items[@intFromEnum(pool_index)];
+                const rendered = &c.types.items[@backingInt(pool_index)];
                 try mergeNeededCTypes(
                     c,
                     &need_types,
@@ -916,7 +930,7 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
             aligned_type_strings,
         ) |pool_index, align_mask, *str_out| {
             const ty: Type = .fromInterned(pool_index.val(&c.type_pool));
-            const has_layout = c.types.items[@intFromEnum(pool_index)].errunion_definition.len > 0;
+            const has_layout = c.types.items[@backingInt(pool_index)].errunion_definition.len > 0;
             for (0..@bitSizeOf(@TypeOf(align_mask))) |bit_index| {
                 switch (@as(u1, @truncate(align_mask >> @intCast(bit_index)))) {
                     0 => continue,
@@ -943,7 +957,7 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
     // We have discovered the full set of NAVs, UAVs, and types we need to emit, and will now begin
     // to build the output buffer. Our strategy is to emit the C source in this order:
     //
-    // * ABI defines and `#include "zig.h"`
+    // * Header
     // * Big-int type definitions
     // * Other CType definitions (traversing the dependency graph to sort topologically)
     // * Global assembly
@@ -968,7 +982,7 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
 
     // We know exactly what we'll be emitting, so can reserve capacity for all of our buffers!
 
-    try f.all_buffers.ensureUnusedCapacity(gpa, 3 + // ABI defines and `#include "zig.h"`
+    try f.all_buffers.ensureUnusedCapacity(gpa, 1 + // Header
         1 + // Big-int type definitions
         need_types.count() + // `RenderedType.fwd_decl` (worst-case)
         need_types.count() + // `RenderedType.definition`
@@ -984,20 +998,7 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
         need_uavs.count() * 3 + // UAV definitions ("static ", "zig_align(4)", "<definition body>")
         need_navs.count() * 2); // NAV definitions ("static ", "<definition body>")
 
-    // ABI defines and `#include "zig.h"`
-    switch (target.abi) {
-        .msvc, .itanium => f.appendBufAssumeCapacity("#define ZIG_TARGET_ABI_MSVC\n"),
-        else => {},
-    }
-    f.appendBufAssumeCapacity(try std.fmt.allocPrint(
-        arena,
-        "#define ZIG_TARGET_MAX_INT_ALIGNMENT {d}\n",
-        .{target.cMaxIntAlignment()},
-    ));
-    f.appendBufAssumeCapacity(
-        \\#include "zig.h"
-        \\
-    );
+    f.appendBufAssumeCapacity(c.header.get(c));
 
     // Big-int type definitions
     var bigint_aw: std.Io.Writer.Allocating = .init(gpa);
@@ -1450,7 +1451,7 @@ const FlushTypes = struct {
         const c = ft.c;
         if (ft.aligned_status.contains(pool_index)) return;
         if (ft.aligned_types.getIndex(pool_index)) |i| {
-            const rendered = &c.types.items[@intFromEnum(pool_index)];
+            const rendered = &c.types.items[@backingInt(pool_index)];
             ft.processDepsAsFwd(&rendered.deps);
             ft.f.appendBufAssumeCapacity(ft.aligned_type_strings[i]);
         }
@@ -1459,7 +1460,7 @@ const FlushTypes = struct {
     fn doTypeFwd(ft: *FlushTypes, pool_index: link.ConstPool.Index) void {
         const c = ft.c;
         if (ft.status.contains(pool_index)) return;
-        const rendered = &c.types.items[@intFromEnum(pool_index)];
+        const rendered = &c.types.items[@backingInt(pool_index)];
         if (rendered.fwd_decl.len > 0) {
             ft.f.appendBufAssumeCapacity(rendered.fwd_decl.get(c));
             ft.status.putAssumeCapacityNoClobber(pool_index, false);
@@ -1477,7 +1478,7 @@ const FlushTypes = struct {
         if (ft.status.get(pool_index)) |completed| {
             if (completed) return;
         }
-        const rendered = &c.types.items[@intFromEnum(pool_index)];
+        const rendered = &c.types.items[@backingInt(pool_index)];
         ft.processDeps(&rendered.definition_deps);
         if (rendered.fwd_decl.len == 0 and ft.status.contains(pool_index)) {
             // `doTypeFwd` already rendered the defintion, we just had to complete the type by
@@ -1495,7 +1496,7 @@ const FlushTypes = struct {
         const c = ft.c;
         const gop = ft.errunion_status.getOrPutAssumeCapacity(pool_index);
         if (gop.found_existing) return;
-        const rendered = &c.types.items[@intFromEnum(pool_index)];
+        const rendered = &c.types.items[@backingInt(pool_index)];
         ft.f.appendBufAssumeCapacity(rendered.errunion_fwd_decl.get(c));
         gop.value_ptr.* = false;
     }
@@ -1504,7 +1505,7 @@ const FlushTypes = struct {
         if (ft.errunion_status.get(pool_index)) |completed| {
             if (completed) return;
         }
-        const rendered = &c.types.items[@intFromEnum(pool_index)];
+        const rendered = &c.types.items[@backingInt(pool_index)];
         ft.processDeps(&rendered.deps);
         if (rendered.errunion_definition.len > 0) {
             ft.f.appendBufAssumeCapacity(rendered.errunion_definition.get(c));

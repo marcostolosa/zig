@@ -12,7 +12,6 @@ const Path = std.Build.Cache.Path;
 const assert = std.debug.assert;
 const mem = std.mem;
 const process = std.process;
-const allocPrint = std.fmt.allocPrint;
 const Allocator = std.mem.Allocator;
 
 const Step = @import("../Step.zig");
@@ -196,8 +195,8 @@ pub fn make(
         const cache_dir_string = try convertPathArg(arena, run_index, maker, .{ .root_dir = cache_root }, false);
 
         try argv_list.ensureUnusedCapacity(gpa, 3);
-        argv_list.appendAssumeCapacity(try allocPrint(arena, "--cache-dir={s}", .{cache_dir_string}));
-        argv_list.appendAssumeCapacity(try allocPrint(arena, "--seed=0x{x}", .{graph.random_seed}));
+        argv_list.appendAssumeCapacity(try arena.print("--cache-dir={s}", .{cache_dir_string}));
+        argv_list.appendAssumeCapacity(try arena.print("--seed=0x{x}", .{graph.random_seed}));
         argv_list.appendAssumeCapacity("--listen=-");
     }
 
@@ -255,7 +254,7 @@ pub fn make(
             .check, .zig_test => false,
         };
 
-    if (!has_side_effects and try step.cacheHitAndWatch(maker, &man)) {
+    if (!has_side_effects and try step.cacheHitWatched(maker, &man, progress_node)) {
         // Cache hit; skip running command.
         const digest = man.final();
         try populateGeneratedStdIo(maker, &conf_run, cache_root, &digest);
@@ -1242,7 +1241,7 @@ fn evalZigTest(
                 step.test_results = test_results;
                 if (test_metadata) |tm| {
                     run.cached_test_metadata = tm.toCachedTestMetadata();
-                    if (maker.web_server) |*ws| {
+                    if (maker.web_server) |ws| {
                         if (graph.time_report) {
                             ws.updateTimeReportRunTest(
                                 run_index,
@@ -1381,7 +1380,7 @@ fn sendRunFuzzTestMessage(
     w.interface.writeStruct(header, .little) catch |err| switch (err) {
         error.WriteFailed => return w.err.?,
     };
-    w.interface.writeByte(@intFromEnum(kind)) catch |err| switch (err) {
+    w.interface.writeByte(@backingInt(kind)) catch |err| switch (err) {
         error.WriteFailed => return w.err.?,
     };
     w.interface.writeInt(u64, amount_or_instance, .little) catch |err| switch (err) {
@@ -1627,8 +1626,8 @@ pub fn rerunInFuzzMode(
         const cache_dir_string = try convertPathArg(arena, run_index, maker, .{ .root_dir = cache_root }, false);
 
         try argv_list.ensureUnusedCapacity(gpa, 3);
-        argv_list.appendAssumeCapacity(try allocPrint(arena, "--cache-dir={s}", .{cache_dir_string}));
-        argv_list.appendAssumeCapacity(try allocPrint(arena, "--seed=0x{x}", .{graph.random_seed}));
+        argv_list.appendAssumeCapacity(try arena.print("--cache-dir={s}", .{cache_dir_string}));
+        argv_list.appendAssumeCapacity(try arena.print("--seed=0x{x}", .{graph.random_seed}));
         argv_list.appendAssumeCapacity("--listen=-");
     }
 
@@ -1925,7 +1924,7 @@ fn runCommand(
                                 const path = try maker.resolveLazyPath(arena, lazy_path.get(conf), run_index);
                                 path.root_dir.handle.createDirPath(io, path.subPathOrDot()) catch |e|
                                     return step.fail(maker, "failed creating directory {f}: {t}", .{ path, e });
-                                interp_argv.appendAssumeCapacity(try allocPrint(arena, "--dir={f}::{s}", .{ path, name.slice(conf) }));
+                                interp_argv.appendAssumeCapacity(try arena.print("--dir={f}::{s}", .{ path, name.slice(conf) }));
                             }
                             // Wasmtime doeesn't inherit environment variables from the parent process
                             // by default. '-S inherit-env' was added in Wasmtime version 20.
@@ -2107,14 +2106,75 @@ fn runCommand(
             if (conf_run.expect_term_value.value) |expected_term_value| {
                 const expected_term: process.Child.Term = switch (conf_run.flags2.expect_term_status) {
                     .exited => .{ .exited = @intCast(expected_term_value) },
-                    .signal => .{ .signal = @enumFromInt(expected_term_value) },
-                    .stopped => .{ .stopped = @enumFromInt(expected_term_value) },
+                    .signal => .{ .signal = @fromBackingInt(@intCast(expected_term_value)) },
+                    .stopped => .{ .stopped = @fromBackingInt(@intCast(expected_term_value)) },
                     .unknown => .{ .unknown = expected_term_value },
                 };
                 if (!termMatches(expected_term, generic_result.term)) {
                     return step.fail(maker, "process {f} (expected {f})", .{
                         fmtTerm(generic_result.term),
                         fmtTerm(expected_term),
+                    });
+                }
+            }
+            const snapshots: []const ?struct {
+                path: Cache.Path,
+                result: enum { stderr, stdout },
+            } = &.{
+                if (conf_run.expect_stderr_snapshot.value) |path| .{
+                    .path = try maker.resolveLazyPathIndex(arena, path, run_index),
+                    .result = .stderr,
+                } else null,
+                if (conf_run.expect_stdout_snapshot.value) |path| .{
+                    .path = try maker.resolveLazyPathIndex(arena, path, run_index),
+                    .result = .stdout,
+                } else null,
+            };
+            for (snapshots) |opt_snapshot| {
+                const snapshot = opt_snapshot orelse continue;
+
+                const file = snapshot.path.root_dir.handle.openFile(io, snapshot.path.sub_path, .{}) catch |err|
+                    return step.fail(maker, "unable to open snapshot file {f}: {t}", .{ snapshot.path, err });
+                defer file.close(io);
+
+                var file_reader = file.reader(io, &.{});
+                const snapshot_contents = file_reader.interface.allocRemaining(gpa, .unlimited) catch |err|
+                    return step.fail(maker, "unable to read snapshot file {f}: {t}", .{ snapshot.path, err });
+                defer gpa.free(snapshot_contents);
+
+                const result = switch (snapshot.result) {
+                    .stderr => generic_result.stderr.?,
+                    .stdout => generic_result.stdout.?,
+                };
+                if (std.mem.findDiff(u8, snapshot_contents, result)) |diff_index| {
+                    var diff_line_number: usize = 1;
+
+                    for (snapshot_contents[0..diff_index]) |value| {
+                        if (value == '\n') diff_line_number += 1;
+                    }
+
+                    return step.fail(maker,
+                        \\
+                        \\========= snapshot file: =========
+                        \\{f}
+                        \\========= contained: =============
+                        \\{s}
+                        \\========= {t} output was: ========
+                        \\{s}
+                        \\==================================
+                        \\first difference on line {d}:
+                        \\expected:
+                        \\{f}
+                        \\found:
+                        \\{f}
+                    , .{
+                        snapshot.path,
+                        snapshot_contents,
+                        snapshot.result,
+                        result,
+                        diff_line_number,
+                        fmtSnapshotIndicatorLine(snapshot_contents, diff_index),
+                        fmtSnapshotIndicatorLine(result, diff_index),
                     });
                 }
             }
@@ -2129,6 +2189,38 @@ fn runCommand(
             try step.handleChildProcessTerm(maker, generic_result.term);
         },
     }
+}
+
+const FmtIndicatorLine = struct {
+    buf: []const u8,
+    index: usize,
+};
+
+fn fmtSnapshotIndicatorLine(buf: []const u8, index: usize) std.fmt.Alt(
+    FmtIndicatorLine,
+    snapshotIndicatorLine,
+) {
+    return .{ .data = .{ .buf = buf, .index = index } };
+}
+
+fn snapshotIndicatorLine(line: FmtIndicatorLine, w: *std.Io.Writer) std.Io.Writer.Error!void {
+    const line_begin_index = if (std.mem.lastIndexOfScalar(u8, line.buf[0..line.index], '\n')) |line_begin|
+        line_begin + 1
+    else
+        0;
+    const line_end_index = if (std.mem.findScalar(u8, line.buf[line.index..], '\n')) |line_end|
+        (line.index + line_end)
+    else
+        line.buf.len;
+
+    try w.writeAll(line.buf[line_begin_index..line_end_index]);
+    try w.writeByte('\n');
+    try w.splatByteAll(' ', line_end_index - line_begin_index);
+    try w.writeByte('\n');
+    if (line.index >= line.buf.len)
+        try w.writeAll("^ (end of file)")
+    else
+        try w.print("^ ('\\x{x:0>2}')\n", .{line.buf[line.index]});
 }
 
 const EvalGenericResult = struct {
@@ -2213,6 +2305,7 @@ fn spawnChildAndCollect(
     };
 
     if (conf_run.flags.stdio == .zig_test) {
+        try setColorEnvironmentVariables(&conf_run, environ_map, graph.stderr_mode.?);
         const started: Io.Clock.Timestamp = .now(io, .awake);
         const result = evalZigTest(run, run_index, maker, progress_node, spawn_options, fuzz_context) catch |err| switch (err) {
             error.Canceled => |e| return e,
@@ -2301,11 +2394,15 @@ fn setColorEnvironmentVariables(
 }
 
 fn checksContainStdout(conf_run: *const Configuration.Step.Run) bool {
-    return conf_run.expect_stdout_exact.value != null or conf_run.expect_stdout_match.slice.len != 0;
+    return conf_run.expect_stdout_exact.value != null or
+        conf_run.expect_stdout_match.slice.len != 0 or
+        conf_run.expect_stdout_snapshot.value != null;
 }
 
 fn checksContainStderr(conf_run: *const Configuration.Step.Run) bool {
-    return conf_run.expect_stderr_exact.value != null or conf_run.expect_stderr_match.slice.len != 0;
+    return conf_run.expect_stderr_exact.value != null or
+        conf_run.expect_stderr_match.slice.len != 0 or
+        conf_run.expect_stderr_snapshot.value != null;
 }
 
 /// If `path` is absolute, return it unchanged. If `make_absolute` is true, make it absolute.
@@ -2381,7 +2478,7 @@ fn addPathForDynLibs(
             const dll_path = try maker.generatedPath(conf_comp.generated_bin.value.?).toString(arena);
             const search_path = Dir.path.dirname(dll_path).?;
             if (environ_map.get(path_key)) |prev_path| {
-                const new_path = try allocPrint(arena, "{s}{c}{s}", .{ prev_path, path_delimiter, search_path });
+                const new_path = try arena.print("{s}{c}{s}", .{ prev_path, path_delimiter, search_path });
                 try environ_map.put(path_key, new_path);
             } else {
                 try environ_map.put(path_key, search_path);

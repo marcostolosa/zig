@@ -12,7 +12,7 @@ const Compilation = @import("../Compilation.zig");
 const build_options = @import("build_options");
 const trace = @import("../tracy.zig").trace;
 const Cache = std.Build.Cache;
-const Module = @import("../Package/Module.zig");
+const Module = @import("../Module.zig");
 const link = @import("../link.zig");
 
 pub const Lib = struct {
@@ -398,7 +398,7 @@ fn start_asm_path(comp: *Compilation, arena: Allocator, basename: []const u8) ![
             try result.appendSlice("powerpc" ++ s ++ "powerpc32");
         }
     } else if (arch == .s390x) {
-        try result.appendSlice("s390" ++ s ++ "s390-64");
+        try result.appendSlice("s390");
     } else if (arch.isLoongArch()) {
         try result.appendSlice("loongarch");
     } else if (arch == .m68k) {
@@ -608,8 +608,6 @@ fn add_include_dirs_arch(
             try args.append(try path.join(arena, &[_][]const u8{ dir, "s390", nptl }));
         } else {
             try args.append("-I");
-            try args.append(try path.join(arena, &[_][]const u8{ dir, "s390" ++ s ++ "s390-64" }));
-            try args.append("-I");
             try args.append(try path.join(arena, &[_][]const u8{ dir, "s390" }));
         }
     } else if (arch.isLoongArch()) {
@@ -703,7 +701,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
     const full_abilists_path = try comp.dirs.zig_lib.join(arena, &.{abilists_path});
     const abilists_index = try man.addFile(full_abilists_path, abilists_max_size);
 
-    if (try man.hit()) {
+    if (try man.hit(prog_node)) {
         const digest = man.final();
 
         return queueSharedObjects(comp, .{
@@ -1223,7 +1221,6 @@ fn buildSharedLib(
             .omit_frame_pointer = comp.root_mod.omit_frame_pointer,
             .valgrind = false,
             .optimize_mode = optimize_mode,
-            .structured_cfg = comp.root_mod.structured_cfg,
         },
         .global = config,
         .cc_argv = &.{},

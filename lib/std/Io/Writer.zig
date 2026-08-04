@@ -164,7 +164,7 @@ pub fn countSplat(data: []const []const u8, splat: usize) usize {
 }
 
 pub fn countSendFileLowerBound(n: usize, file_reader: *File.Reader, limit: Limit) ?usize {
-    const total: u64 = @min(@intFromEnum(limit), file_reader.getSize() catch return null);
+    const total: u64 = @min(@backingInt(limit), file_reader.getSize() catch return null);
     return std.math.lossyCast(usize, total + n);
 }
 
@@ -220,7 +220,7 @@ pub fn writeSplatHeaderLimit(
     splat: usize,
     limit: Limit,
 ) Error!usize {
-    var remaining = @intFromEnum(limit);
+    var remaining = @backingInt(limit);
     {
         const copy_len = @min(header.len, w.buffer.len - w.end, remaining);
         if (header.len - copy_len != 0) return writeSplatHeaderLimitFinish(w, header, data, splat, remaining);
@@ -230,7 +230,7 @@ pub fn writeSplatHeaderLimit(
     }
     for (data[0 .. data.len - 1], 0..) |buf, i| {
         const copy_len = @min(buf.len, w.buffer.len - w.end, remaining);
-        if (buf.len - copy_len != 0) return @intFromEnum(limit) - remaining +
+        if (buf.len - copy_len != 0) return @backingInt(limit) - remaining +
             try writeSplatHeaderLimitFinish(w, &.{}, data[i..], splat, remaining);
         @memcpy(w.buffer[w.end..][0..copy_len], buf[0..copy_len]);
         w.end += copy_len;
@@ -239,7 +239,7 @@ pub fn writeSplatHeaderLimit(
     const pattern = data[data.len - 1];
     const splat_n = pattern.len * splat;
     if (splat_n > @min(w.buffer.len - w.end, remaining)) {
-        const buffered_n = @intFromEnum(limit) - remaining;
+        const buffered_n = @backingInt(limit) - remaining;
         const written = try writeSplatHeaderLimitFinish(w, &.{}, data[data.len - 1 ..][0..1], splat, remaining);
         return buffered_n + written;
     }
@@ -250,7 +250,7 @@ pub fn writeSplatHeaderLimit(
     }
 
     remaining -= splat_n;
-    return @intFromEnum(limit) - remaining;
+    return @backingInt(limit) - remaining;
 }
 
 fn writeSplatHeaderLimitFinish(
@@ -874,7 +874,7 @@ pub fn splatBytes(w: *Writer, bytes: []const u8, n: usize) Error!usize {
 }
 
 /// Asserts the `buffer` was initialized with a capacity of at least `@sizeOf(T)` bytes.
-pub inline fn writeInt(w: *Writer, comptime T: type, value: T, endian: std.builtin.Endian) Error!void {
+pub inline fn writeInt(w: *Writer, comptime T: type, value: T, endian: std.lang.Endian) Error!void {
     var bytes: [@divExact(@typeInfo(T).int.bits, 8)]u8 = undefined;
     std.mem.writeInt(std.math.ByteAlignedInt(@TypeOf(value)), &bytes, value, endian);
     return w.writeAll(&bytes);
@@ -882,7 +882,7 @@ pub inline fn writeInt(w: *Writer, comptime T: type, value: T, endian: std.built
 
 /// The function is inline to avoid the dead code in case `endian` is
 /// comptime-known and matches host endianness.
-pub inline fn writeStruct(w: *Writer, value: anytype, endian: std.builtin.Endian) Error!void {
+pub inline fn writeStruct(w: *Writer, value: anytype, endian: std.lang.Endian) Error!void {
     switch (@typeInfo(@TypeOf(value))) {
         .@"struct" => |info| switch (info.layout) {
             .auto => @compileError("ill-defined memory layout"),
@@ -907,7 +907,7 @@ pub inline fn writeSliceEndian(
     w: *Writer,
     Elem: type,
     slice: []const Elem,
-    endian: std.builtin.Endian,
+    endian: std.lang.Endian,
 ) Error!void {
     switch (@typeInfo(Elem)) {
         .@"struct" => |info| comptime assert(info.layout != .auto),
@@ -998,7 +998,7 @@ pub fn sendFileAll(w: *Writer, file_reader: *File.Reader, limit: Limit) FileAllE
     // Explicitly assert it here as well to ensure the assert is hit even if
     // the fallback path is not taken.
     assert(w.buffer.len > 0);
-    var remaining = @intFromEnum(limit);
+    var remaining = @backingInt(limit);
     while (remaining > 0) {
         const n = sendFile(w, file_reader, .limited(remaining)) catch |err| switch (err) {
             error.EndOfStream => break,
@@ -1011,7 +1011,7 @@ pub fn sendFileAll(w: *Writer, file_reader: *File.Reader, limit: Limit) FileAllE
         };
         remaining -= n;
     }
-    return @intFromEnum(limit) - remaining;
+    return @backingInt(limit) - remaining;
 }
 
 /// Equivalent to `sendFileAll` but uses direct `pread` and `read` calls on
@@ -1021,14 +1021,14 @@ pub fn sendFileAll(w: *Writer, file_reader: *File.Reader, limit: Limit) FileAllE
 ///
 /// Asserts nonzero buffer capacity.
 pub fn sendFileReadingAll(w: *Writer, file_reader: *File.Reader, limit: Limit) FileAllError!usize {
-    var remaining = @intFromEnum(limit);
+    var remaining = @backingInt(limit);
     while (remaining > 0) {
         remaining -= sendFileReading(w, file_reader, .limited(remaining)) catch |err| switch (err) {
             error.EndOfStream => break,
             else => |e| return e,
         };
     }
-    return @intFromEnum(limit) - remaining;
+    return @backingInt(limit) - remaining;
 }
 
 pub fn alignBuffer(
@@ -1105,7 +1105,7 @@ pub fn printValue(
                 .float, .comptime_float => return printFloat(w, value, options.toNumber(.decimal, .lower)),
                 .int, .comptime_int => return printInt(w, value, 10, .lower, options),
                 .@"struct" => return value.formatNumber(w, options.toNumber(.decimal, .lower)),
-                .@"enum" => return printInt(w, @intFromEnum(value), 10, .lower, options),
+                .@"enum" => return printInt(w, @backingInt(value), 10, .lower, options),
                 .vector => return printVector(w, fmt, options, value, max_depth),
                 else => invalidFmtError(fmt, value),
             },
@@ -1113,14 +1113,14 @@ pub fn printValue(
             'u' => return w.printUnicodeCodepoint(value),
             'b' => switch (@typeInfo(T)) {
                 .int, .comptime_int => return printInt(w, value, 2, .lower, options),
-                .@"enum" => return printInt(w, @intFromEnum(value), 2, .lower, options),
+                .@"enum" => return printInt(w, @backingInt(value), 2, .lower, options),
                 .@"struct" => return value.formatNumber(w, options.toNumber(.binary, .lower)),
                 .vector => return printVector(w, fmt, options, value, max_depth),
                 else => invalidFmtError(fmt, value),
             },
             'o' => switch (@typeInfo(T)) {
                 .int, .comptime_int => return printInt(w, value, 8, .lower, options),
-                .@"enum" => return printInt(w, @intFromEnum(value), 8, .lower, options),
+                .@"enum" => return printInt(w, @backingInt(value), 8, .lower, options),
                 .@"struct" => return value.formatNumber(w, options.toNumber(.octal, .lower)),
                 .vector => return printVector(w, fmt, options, value, max_depth),
                 else => invalidFmtError(fmt, value),
@@ -1128,7 +1128,7 @@ pub fn printValue(
             'x' => switch (@typeInfo(T)) {
                 .float, .comptime_float => return printFloatHexOptions(w, value, options.toNumber(.hex, .lower)),
                 .int, .comptime_int => return printInt(w, value, 16, .lower, options),
-                .@"enum" => return printInt(w, @intFromEnum(value), 16, .lower, options),
+                .@"enum" => return printInt(w, @backingInt(value), 16, .lower, options),
                 .@"struct" => return value.formatNumber(w, options.toNumber(.hex, .lower)),
                 .pointer => |info| switch (info.size) {
                     .one, .slice => {
@@ -1153,7 +1153,7 @@ pub fn printValue(
             'X' => switch (@typeInfo(T)) {
                 .float, .comptime_float => return printFloatHexOptions(w, value, options.toNumber(.hex, .upper)),
                 .int, .comptime_int => return printInt(w, value, 16, .upper, options),
-                .@"enum" => return printInt(w, @intFromEnum(value), 16, .upper, options),
+                .@"enum" => return printInt(w, @backingInt(value), 16, .upper, options),
                 .@"struct" => return value.formatNumber(w, options.toNumber(.hex, .upper)),
                 .pointer => |info| switch (info.size) {
                     .one, .slice => {
@@ -1472,7 +1472,7 @@ fn printEnumNonexhaustive(w: *Writer, value: anytype) Error!void {
         return;
     }
     try w.writeAll("@enumFromInt(");
-    try w.printInt(@intFromEnum(value), 10, .lower, .{});
+    try w.printInt(@backingInt(value), 10, .lower, .{});
     try w.writeByte(')');
 }
 
@@ -2742,29 +2742,26 @@ pub const Allocating = struct {
 
     fn drain(w: *Writer, data: []const []const u8, splat: usize) Error!usize {
         const a: *Allocating = @fieldParentPtr("writer", w);
-        const pattern = data[data.len - 1];
-        const splat_len = pattern.len * splat;
-        const start_len = a.writer.end;
         assert(data.len != 0);
-        for (data) |bytes| {
-            a.ensureUnusedCapacity(bytes.len + splat_len + 1) catch return error.WriteFailed;
+        const count = countSplat(data, splat);
+        a.ensureUnusedCapacity(count + 1) catch return error.WriteFailed;
+        for (data[0 .. data.len - 1]) |bytes| {
             @memcpy(a.writer.buffer[a.writer.end..][0..bytes.len], bytes);
             a.writer.end += bytes.len;
         }
-        if (splat == 0) {
-            a.writer.end -= pattern.len;
-        } else switch (pattern.len) {
+        const pattern = data[data.len - 1];
+        switch (pattern.len) {
             0 => {},
             1 => {
-                @memset(a.writer.buffer[a.writer.end..][0 .. splat - 1], pattern[0]);
-                a.writer.end += splat - 1;
+                @memset(a.writer.buffer[a.writer.end..][0..splat], pattern[0]);
+                a.writer.end += splat;
             },
-            else => for (0..splat - 1) |_| {
+            else => for (0..splat) |_| {
                 @memcpy(a.writer.buffer[a.writer.end..][0..pattern.len], pattern);
                 a.writer.end += pattern.len;
             },
         }
-        return a.writer.end - start_len;
+        return count;
     }
 
     fn sendFile(w: *Writer, file_reader: *File.Reader, limit: Limit) FileError!usize {
@@ -2817,12 +2814,12 @@ pub const Allocating = struct {
     }
 
     test Allocating {
-        try testAllocating(.fromByteUnits(1));
-        try testAllocating(.fromByteUnits(4));
-        try testAllocating(.fromByteUnits(8));
-        try testAllocating(.fromByteUnits(16));
-        try testAllocating(.fromByteUnits(32));
-        try testAllocating(.fromByteUnits(64));
+        try testAllocating(.@"1");
+        try testAllocating(.@"4");
+        try testAllocating(.@"8");
+        try testAllocating(.@"16");
+        try testAllocating(.@"32");
+        try testAllocating(.@"64");
     }
 };
 

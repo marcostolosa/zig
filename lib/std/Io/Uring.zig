@@ -177,11 +177,11 @@ const Fiber = struct {
             _,
 
             fn subWrap(lhs: Awaiting, rhs: Awaiting) Awaiting {
-                return @enumFromInt(@intFromEnum(lhs) -% @intFromEnum(rhs));
+                return @fromBackingInt(@intCast(@backingInt(lhs) -% @backingInt(rhs)));
             }
 
             fn fromIoUringFd(fd: fd_t) Awaiting {
-                const awaiting: Awaiting = @enumFromInt(fd);
+                const awaiting: Awaiting = @fromBackingInt(@intCast(fd));
                 switch (awaiting) {
                     .nothing, .group => unreachable,
                     _ => return awaiting,
@@ -191,7 +191,7 @@ const Fiber = struct {
             fn toIoUringFd(awaiting: Awaiting) fd_t {
                 switch (awaiting) {
                     .nothing, .group => unreachable,
-                    _ => return @intFromEnum(awaiting),
+                    _ => return @backingInt(awaiting),
                 }
             }
         };
@@ -217,7 +217,7 @@ const Fiber = struct {
         const unblocked: CancelProtection = .{ .user = .unblocked, .acknowledged = false };
 
         fn check(cancel_protection: CancelProtection) Io.CancelProtection {
-            return @enumFromInt(@intFromBool(cancel_protection != unblocked));
+            return @fromBackingInt(@intCast(@intFromBool(cancel_protection != unblocked)));
         }
 
         fn acknowledge(cancel_protection: *CancelProtection) void {
@@ -359,7 +359,7 @@ const Fiber = struct {
             Fiber.CancelStatus,
             &fiber.cancel_status,
             .Or,
-            .{ .requested = true, .awaiting = @enumFromInt(0) },
+            .{ .requested = true, .awaiting = @fromBackingInt(@intCast(0)) },
             .acquire,
         );
         assert(!cancel_status.requested);
@@ -385,7 +385,7 @@ const Fiber = struct {
                     .addr = @intFromPtr(fiber),
                     .len = 0,
                     .rw_flags = 0,
-                    .user_data = @intFromEnum(Completion.Userdata.wakeup),
+                    .user_data = @backingInt(Completion.Userdata.wakeup),
                     .buf_index = 0,
                     .personality = 0,
                     .splice_fd_in = 0,
@@ -397,10 +397,10 @@ const Fiber = struct {
                     .ioprio = 0,
                     .fd = awaiting_io_uring_fd,
                     .off = @intFromPtr(fiber) | 0b01,
-                    .addr = @intFromEnum(linux.IORING_MSG_RING_COMMAND.DATA),
+                    .addr = @backingInt(linux.IORING_MSG_RING_COMMAND.DATA),
                     .len = 0,
                     .rw_flags = 0,
-                    .user_data = @intFromEnum(Completion.Userdata.cleanup),
+                    .user_data = @backingInt(Completion.Userdata.cleanup),
                     .buf_index = 0,
                     .personality = 0,
                     .splice_fd_in = 0,
@@ -537,11 +537,11 @@ const CachedFd = struct {
         _,
 
         fn fromFd(fd: fd_t) Once {
-            return @enumFromInt(@as(u31, @intCast(fd)));
+            return @fromBackingInt(@intCast(@as(u31, @intCast(fd))));
         }
 
         fn toFd(once: Once) fd_t {
-            return @as(u31, @intCast(@intFromEnum(once)));
+            return @as(u31, @intCast(@backingInt(once)));
         }
     };
 
@@ -552,8 +552,8 @@ const CachedFd = struct {
             .uninitialized => {},
             .initializing => unreachable,
             _ => |fd| {
-                assert(@intFromEnum(fd) >= 0);
-                _ = linux.close(@intFromEnum(fd));
+                assert(@backingInt(fd) >= 0);
+                _ = linux.close(@backingInt(fd));
                 cached_fd.* = .init;
             },
         }
@@ -573,7 +573,7 @@ const CachedFd = struct {
                 .initializing => try futexWait(
                     ev,
                     @ptrCast(&cached_fd.once),
-                    @bitCast(@intFromEnum(once)),
+                    @bitCast(@backingInt(once)),
                     .none,
                 ),
                 _ => |fd| {
@@ -917,7 +917,7 @@ pub fn deinit(ev: *Evented) void {
     const idle_stack_end_offset = std.mem.alignForward(
         usize,
         ev.threads.allocated.len * @sizeOf(Thread) + idle_stack_size,
-        std.heap.page_size_max,
+        std.heap.pageSize(),
     );
     for (ev.threads.allocated[1..active_threads]) |*thread| thread.thread.join();
     for (ev.threads.allocated[0..active_threads]) |*thread| thread.deinit(ev.backing_allocator);
@@ -997,11 +997,11 @@ fn schedule(ev: *Evented, thread: *Thread, ready_queue: Fiber.Queue) bool {
             .flags = linux.IOSQE_CQE_SKIP_SUCCESS,
             .ioprio = 0,
             .fd = idle_search_thread.io_uring.fd,
-            .off = @intFromEnum(Completion.Userdata.wakeup),
-            .addr = @intFromEnum(linux.IORING_MSG_RING_COMMAND.DATA),
+            .off = @backingInt(Completion.Userdata.wakeup),
+            .addr = @backingInt(linux.IORING_MSG_RING_COMMAND.DATA),
             .len = 0,
             .rw_flags = 0,
-            .user_data = @intFromEnum(Completion.Userdata.wakeup),
+            .user_data = @backingInt(Completion.Userdata.wakeup),
             .buf_index = 0,
             .personality = 0,
             .splice_fd_in = 0,
@@ -1135,8 +1135,9 @@ fn mainIdleEntry() callconv(.naked) void {
 
 fn mainIdle(
     ev: *Evented,
-    message: *const SwitchMessage,
+    contexts: *const Io.fiber.Switch,
 ) callconv(.withStackAlign(.c, @max(@alignOf(Thread), @alignOf(Io.fiber.Context)))) noreturn {
+    const message: *const SwitchMessage = @fieldParentPtr("contexts", contexts);
     message.handle(ev);
     ev.idle(&ev.threads.allocated[0]);
     ev.yield(@ptrCast(&ev.main_fiber_buffer), .nothing);
@@ -1164,7 +1165,7 @@ fn idle(ev: *Evented, thread: *Thread) void {
             if (cqes.len == 0) break;
             for (cqes) |cqe| if (cqe.flags & linux.IORING_CQE_F_SKIP == 0) switch (@as(
                 Completion.Userdata,
-                @enumFromInt(cqe.user_data),
+                @fromBackingInt(@intCast(cqe.user_data)),
             )) {
                 .unused => unreachable, // bad submission queued?
                 .wakeup => {},
@@ -1204,7 +1205,7 @@ fn idle(ev: *Evented, thread: *Thread) void {
                             .addr = cqe.user_data & ~@as(usize, 0b11),
                             .len = 0,
                             .rw_flags = 0,
-                            .user_data = @intFromEnum(Completion.Userdata.wakeup),
+                            .user_data = @backingInt(Completion.Userdata.wakeup),
                             .buf_index = 0,
                             .personality = 0,
                             .splice_fd_in = 0,
@@ -1337,11 +1338,11 @@ const SwitchMessage = struct {
                     .flags = linux.IOSQE_CQE_SKIP_SUCCESS,
                     .ioprio = 0,
                     .fd = each_thread.io_uring.fd,
-                    .off = @intFromEnum(Completion.Userdata.exit),
-                    .addr = @intFromEnum(linux.IORING_MSG_RING_COMMAND.DATA),
+                    .off = @backingInt(Completion.Userdata.exit),
+                    .addr = @backingInt(linux.IORING_MSG_RING_COMMAND.DATA),
                     .len = 0,
                     .rw_flags = 0,
-                    .user_data = @intFromEnum(Completion.Userdata.cleanup),
+                    .user_data = @backingInt(Completion.Userdata.cleanup),
                     .buf_index = 0,
                     .personality = 0,
                     .splice_fd_in = 0,
@@ -1414,8 +1415,9 @@ const AsyncClosure = struct {
 
     fn call(
         closure: *AsyncClosure,
-        message: *const SwitchMessage,
+        contexts: *const Io.fiber.Switch,
     ) callconv(.withStackAlign(.c, @alignOf(AsyncClosure))) noreturn {
+        const message: *const SwitchMessage = @fieldParentPtr("contexts", contexts);
         const ev = closure.evented;
         const fiber = closure.fiber;
         message.handle(ev);
@@ -1779,8 +1781,9 @@ const Group = struct {
 
         fn call(
             closure: *Group.AsyncClosure,
-            message: *const SwitchMessage,
+            contexts: *const Io.fiber.Switch,
         ) callconv(.withStackAlign(.c, @alignOf(Group.AsyncClosure))) noreturn {
+            const message: *const SwitchMessage = @fieldParentPtr("contexts", contexts);
             const ev = closure.evented;
             const fiber = closure.fiber;
             message.handle(ev);
@@ -1986,7 +1989,7 @@ fn futexWait(
             else => 0,
             .boot => linux.IORING_TIMEOUT_BOOTTIME,
         }),
-        .user_data = @intFromEnum(Completion.Userdata.wakeup),
+        .user_data = @backingInt(Completion.Userdata.wakeup),
         .buf_index = 0,
         .personality = 0,
         .splice_fd_in = 0,
@@ -2052,7 +2055,7 @@ fn futexWake(userdata: ?*anyopaque, ptr: *const u32, max_waiters: u32) void {
         .addr = @intFromPtr(ptr),
         .len = 0,
         .rw_flags = 0,
-        .user_data = @intFromEnum(Completion.Userdata.futex_wake),
+        .user_data = @backingInt(Completion.Userdata.futex_wake),
         .buf_index = 0,
         .personality = 0,
         .splice_fd_in = 0,
@@ -2188,7 +2191,7 @@ fn deviceIoControl(
         switch (linux.errno(rc)) {
             .SUCCESS => return @bitCast(@as(u32, @truncate(rc))),
             .INTR => {},
-            else => |err| return -@as(i32, @intFromEnum(err)),
+            else => |err| return -@as(i32, @backingInt(err)),
         }
     }
 }
@@ -2547,7 +2550,7 @@ fn batchCancel(userdata: ?*anyopaque, batch: *Io.Batch) void {
             .addr = @intFromPtr(&pending.userdata) | 0b10,
             .len = 0,
             .rw_flags = 0,
-            .user_data = @intFromEnum(Completion.Userdata.wakeup),
+            .user_data = @backingInt(Completion.Userdata.wakeup),
             .buf_index = 0,
             .personality = 0,
             .splice_fd_in = 0,
@@ -3558,7 +3561,7 @@ fn dirHardLink(
         old_sub_path_posix,
         new_dir.handle,
         new_sub_path_posix,
-        if (options.follow_symlinks) 0 else linux.AT.SYMLINK_NOFOLLOW,
+        if (options.follow_symlinks) linux.AT.SYMLINK_FOLLOW else 0,
     );
 }
 
@@ -3990,7 +3993,7 @@ fn fileHardLink(
         "",
         new_dir.handle,
         new_sub_path_posix,
-        linux.AT.EMPTY_PATH | @as(u32, if (options.follow_symlinks) 0 else linux.AT.SYMLINK_NOFOLLOW),
+        linux.AT.EMPTY_PATH | @as(u32, if (options.follow_symlinks) linux.AT.SYMLINK_FOLLOW else 0),
     );
 }
 
@@ -4050,7 +4053,7 @@ fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
     if (memory.len == 0) return;
     switch (linux.errno(linux.munmap(memory.ptr, memory.len))) {
         .SUCCESS => {},
-        else => |err| if (builtin.mode == .Debug)
+        else => |err| if (builtin.mode == .debug)
             std.log.err("failed to unmap {d} bytes at {*}: {t}", .{ memory.len, memory.ptr, err }),
     }
     mm.* = undefined;
@@ -4701,7 +4704,7 @@ fn childWait(userdata: ?*anyopaque, child: *process.Child) process.Child.WaitErr
             .fd = pid,
             .off = @intFromPtr(&info),
             .addr = 0,
-            .len = @intFromEnum(linux.P.PID),
+            .len = @backingInt(linux.P.PID),
             .rw_flags = 0,
             .user_data = @intFromPtr(maybe_sync.cancel_region.fiber),
             .buf_index = 0,
@@ -4737,11 +4740,11 @@ fn childWait(userdata: ?*anyopaque, child: *process.Child) process.Child.WaitErr
                     }
                 }
                 const status: u32 = @bitCast(info.fields.common.second.sigchld.status);
-                const code: linux.CLD = @enumFromInt(info.code);
+                const code: linux.CLD = @fromBackingInt(@intCast(info.code));
                 return switch (code) {
                     .EXITED => .{ .exited = @truncate(status) },
-                    .KILLED, .DUMPED => .{ .signal = @enumFromInt(status) },
-                    .TRAPPED, .STOPPED => .{ .stopped = @enumFromInt(status) },
+                    .KILLED, .DUMPED => .{ .signal = @fromBackingInt(@intCast(status)) },
+                    .TRAPPED, .STOPPED => .{ .stopped = @fromBackingInt(@intCast(status)) },
                     _, .CONTINUED => .{ .unknown = status },
                 };
             },
@@ -4782,7 +4785,7 @@ fn childKill(userdata: ?*anyopaque, child: *process.Child) void {
             .fd = pid,
             .off = @intFromPtr(&info),
             .addr = 0,
-            .len = @intFromEnum(linux.P.PID),
+            .len = @backingInt(linux.P.PID),
             .rw_flags = 0,
             .user_data = @intFromPtr(maybe_sync.cancel_region.fiber),
             .buf_index = 0,
@@ -5183,7 +5186,7 @@ fn netWriteFileUnavailable(
     _ = header;
     _ = file_reader;
     _ = limit;
-    return error.NetworkDown;
+    return error.Unimplemented;
 }
 
 fn netClose(userdata: ?*anyopaque, handles: []const net.Socket.Handle) void {
@@ -5370,7 +5373,7 @@ fn closeAsync(ev: *Evented, fd: fd_t) void {
         .addr = 0,
         .len = 0,
         .rw_flags = 0,
-        .user_data = @intFromEnum(Completion.Userdata.close),
+        .user_data = @backingInt(Completion.Userdata.close),
         .buf_index = 0,
         .personality = 0,
         .splice_fd_in = 0,
@@ -5542,6 +5545,8 @@ fn linkat(
     new_path: [*:0]const u8,
     flags: u32,
 ) File.HardLinkError!void {
+    // allowed flags: https://man7.org/linux/man-pages/man2/linkat.2.html
+    assert(flags & ~(@as(u32, linux.AT.SYMLINK_FOLLOW | linux.AT.EMPTY_PATH)) == 0);
     while (true) {
         const thread = try cancel_region.awaitIoUring();
         thread.enqueue().* = .{

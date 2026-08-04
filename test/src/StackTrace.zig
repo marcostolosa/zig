@@ -192,6 +192,12 @@ fn addCaseInstance(
         return;
     }
 
+    if (!use_llvm and resolve_inline_callers) {
+        // To enable this coverage, `std.debug.Dwarf` needs to gain the ability to derive call-site
+        // source locations from DWARF debug info emitted by selfhosted.
+        return;
+    }
+
     const annotated_case_name = b.fmt("check {s} ({s}{s}{s}{s}{s}{s}{s}{s})", .{
         name,
         triple orelse "",

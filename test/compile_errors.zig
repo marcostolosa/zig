@@ -251,4 +251,20 @@ pub fn addCases(ctx: *Cases, b: *std.Build) !void {
             ":1:5: error: expected expression, found 'invalid token'",
         });
     }
+
+    {
+        const case = ctx.obj("no coercion from vector element to c pointer", b.graph.host);
+
+        case.addError(
+            \\export fn foo() void {
+            \\  var size: @Vector(4, c_int) = undefined;
+            \\  bar(&size[0]);
+            \\}
+            \\extern fn bar([*c]c_int) void;
+        , &[_][]const u8{
+            ":3:7: error: expected type '[*c]c_int', found '*align(4:0:4:0) c_int'",
+            ":3:7: note: pointer host size '4' cannot cast into pointer host size '0'",
+            ":5:15: note: parameter type declared here",
+        });
+    }
 }

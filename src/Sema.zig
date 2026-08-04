@@ -27841,8 +27841,6 @@ fn coerceExtra(
                     .pointer => p: {
                         if (!sema.checkPtrAttributes(dest_ty, inst_ty, &in_memory_result)) break :p;
                         const inst_info = inst_ty.ptrInfo(zcu);
-                        if (inst_info.packed_offset.host_size != dest_info.packed_offset.host_size or
-                            inst_info.packed_offset.bit_offset != dest_info.packed_offset.bit_offset) break :p;
                         switch (try sema.coerceInMemoryAllowed(
                             block,
                             .fromInterned(dest_info.child),
@@ -29701,6 +29699,19 @@ fn checkPtrAttributes(sema: *Sema, dest_ty: Type, inst_ty: Type, in_memory_resul
         } };
         return false;
     }
+
+    if (inst_info.packed_offset.host_size != dest_info.packed_offset.host_size or
+        inst_info.packed_offset.bit_offset != dest_info.packed_offset.bit_offset)
+    {
+        in_memory_result.* = .{ .ptr_bit_range = .{
+            .actual_host = inst_info.packed_offset.host_size,
+            .wanted_host = dest_info.packed_offset.host_size,
+            .actual_offset = inst_info.packed_offset.bit_offset,
+            .wanted_offset = dest_info.packed_offset.bit_offset,
+        } };
+        return false;
+    }
+
     if (inst_info.flags.alignment == .none and dest_info.flags.alignment == .none) return true;
     if (len0) return true;
 
@@ -29721,19 +29732,6 @@ fn checkPtrAttributes(sema: *Sema, dest_ty: Type, inst_ty: Type, in_memory_resul
         } };
         return false;
     }
-
-    if (inst_info.packed_offset.host_size != dest_info.packed_offset.host_size or
-        inst_info.packed_offset.bit_offset != dest_info.packed_offset.bit_offset)
-    {
-        in_memory_result.* = .{ .ptr_bit_range = .{
-            .actual_host = inst_info.packed_offset.host_size,
-            .wanted_host = dest_info.packed_offset.host_size,
-            .actual_offset = inst_info.packed_offset.bit_offset,
-            .wanted_offset = dest_info.packed_offset.bit_offset,
-        } };
-        return false;
-    }
-
     return true;
 }
 

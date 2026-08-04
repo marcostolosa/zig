@@ -3316,7 +3316,6 @@ fn fileWritePositional(
         switch (c.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .INTR => {},
-            .INVAL => |err| return errnoBug(err),
             .FAULT => |err| return errnoBug(err),
             .DESTADDRREQ => |err| return errnoBug(err), // `connect` was never called.
             .CONNRESET => |err| return errnoBug(err), // Not a socket handle.
@@ -3333,6 +3332,7 @@ fn fileWritePositional(
             .NXIO => return error.Unseekable,
             .SPIPE => return error.Unseekable,
             .OVERFLOW => return error.Unseekable,
+            .INVAL => return error.Unseekable,
             else => |err| return unexpectedErrno(err),
         }
     }
@@ -3539,6 +3539,7 @@ fn fileReadPositional(
             .NXIO => return error.Unseekable,
             .SPIPE => return error.Unseekable,
             .OVERFLOW => return error.Unseekable,
+            .INVAL => return error.Unseekable,
             .NOBUFS => return error.SystemResources,
             .NOMEM => return error.SystemResources,
             .AGAIN => return error.WouldBlock,
@@ -3546,7 +3547,6 @@ fn fileReadPositional(
             .ISDIR => return error.IsDir,
             .NOTCONN => |err| return errnoBug(err), // not a socket
             .CONNRESET => |err| return errnoBug(err), // not a socket
-            .INVAL => |err| return errnoBug(err),
             .FAULT => |err| return errnoBug(err),
             .BADF => return error.NotOpenForReading,
             else => |err| return unexpectedErrno(err),

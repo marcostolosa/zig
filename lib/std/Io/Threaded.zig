@@ -10015,6 +10015,7 @@ fn fileReadPositionalPosix(file: File, data: []const []u8, offset: u64) File.Rea
                 .NXIO => return syscall.fail(error.Unseekable),
                 .SPIPE => return syscall.fail(error.Unseekable),
                 .OVERFLOW => return syscall.fail(error.Unseekable),
+                .INVAL => return syscall.fail(error.Unseekable),
                 .NOBUFS => return syscall.fail(error.SystemResources),
                 .NOMEM => return syscall.fail(error.SystemResources),
                 .AGAIN => return syscall.fail(error.WouldBlock),
@@ -10022,7 +10023,6 @@ fn fileReadPositionalPosix(file: File, data: []const []u8, offset: u64) File.Rea
                 .ISDIR => return syscall.fail(error.IsDir),
                 .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
                 .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
-                .INVAL => |err| return syscall.errnoBug(err),
                 .FAULT => |err| return syscall.errnoBug(err),
                 .BADF => {
                     syscall.finish();
@@ -10049,6 +10049,7 @@ fn fileReadPositionalPosix(file: File, data: []const []u8, offset: u64) File.Rea
             .NXIO => return syscall.fail(error.Unseekable),
             .SPIPE => return syscall.fail(error.Unseekable),
             .OVERFLOW => return syscall.fail(error.Unseekable),
+            .INVAL => return syscall.fail(error.Unseekable),
             .NOBUFS => return syscall.fail(error.SystemResources),
             .NOMEM => return syscall.fail(error.SystemResources),
             .AGAIN => return syscall.fail(error.WouldBlock),
@@ -10056,7 +10057,6 @@ fn fileReadPositionalPosix(file: File, data: []const []u8, offset: u64) File.Rea
             .ISDIR => return syscall.fail(error.IsDir),
             .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
             .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
-            .INVAL => |err| return syscall.errnoBug(err),
             .FAULT => |err| return syscall.errnoBug(err),
             .BADF => {
                 syscall.finish();
@@ -10753,7 +10753,6 @@ fn fileWritePositional(
                 try syscall.checkCancel();
                 continue;
             },
-            .INVAL => |err| return syscall.errnoBug(err),
             .FAULT => |err| return syscall.errnoBug(err),
             .DESTADDRREQ => |err| return syscall.errnoBug(err), // `connect` was never called.
             .CONNRESET => |err| return syscall.errnoBug(err), // Not a socket handle.
@@ -10770,6 +10769,7 @@ fn fileWritePositional(
             .NXIO => return syscall.fail(error.Unseekable),
             .SPIPE => return syscall.fail(error.Unseekable),
             .OVERFLOW => return syscall.fail(error.Unseekable),
+            .INVAL => return syscall.fail(error.Unseekable),
             else => |err| return syscall.unexpectedErrno(err),
         }
     }

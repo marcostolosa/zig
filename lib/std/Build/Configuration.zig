@@ -15,9 +15,11 @@ unlazy_deps: []String,
 system_integrations: []SystemIntegration,
 available_options: []AvailableOption,
 search_prefixes: []String,
+/// Stores the owner step that declared the generated file. `.none` if the owner
+/// step is not reachable from the build graph.
+generated_files: []Step.OptionalIndex,
 extra: []u32,
 default_step: Step.Index,
-generated_files_len: u32,
 poisoned: bool,
 
 /// The field order here matches `Configuration` which documents the order in
@@ -30,12 +32,10 @@ pub const Header = extern struct {
     system_integrations_len: u32,
     available_options_len: u32,
     search_prefixes_len: u32,
+    generated_files_len: u32,
     extra_len: u32,
 
     default_step: Step.Index,
-    /// There is not actually any data stored for this - it just provides a way
-    /// for maker process to preallocate an array for these.
-    generated_files_len: u32,
     flags: Flags,
 
     pub const Flags = packed struct(u32) {
@@ -58,8 +58,8 @@ pub const Wip = struct {
     steps: std.ArrayList(Step) = .empty,
     path_deps: std.ArrayList(PathDep) = .empty,
     search_prefixes: std.ArrayList(String) = .empty,
+    generated_files: std.ArrayList(Step.OptionalIndex) = .empty,
     extra: std.ArrayList(u32) = .empty,
-    next_generated_file_index: u32 = 0,
     cache_poison: bool = false,
 
     const DedupeTable = std.HashMapUnmanaged(ExtraSlice, void, ExtraSlice.Context, std.hash_map.default_max_load_percentage);
@@ -139,13 +139,13 @@ pub const Wip = struct {
         wip.steps.deinit(gpa);
         wip.path_deps.deinit(gpa);
         wip.search_prefixes.deinit(gpa);
+        wip.generated_files.deinit(gpa);
         wip.extra.deinit(gpa);
         wip.* = undefined;
     }
 
     pub const Static = struct {
         default_step: Step.Index,
-        generated_files_len: u32,
         poisoned: bool,
     };
 
@@ -158,10 +158,10 @@ pub const Wip = struct {
             .system_integrations_len = @intCast(wip.system_integrations.items.len),
             .available_options_len = @intCast(wip.available_options.items.len),
             .search_prefixes_len = @intCast(wip.search_prefixes.items.len),
+            .generated_files_len = @intCast(wip.generated_files.items.len),
             .extra_len = @intCast(wip.extra.items.len),
 
             .default_step = static.default_step,
-            .generated_files_len = static.generated_files_len,
             .flags = .{
                 .poisoned = static.poisoned,
             },
@@ -175,6 +175,7 @@ pub const Wip = struct {
             @ptrCast(wip.system_integrations.items),
             @ptrCast(wip.available_options.items),
             @ptrCast(wip.search_prefixes.items),
+            @ptrCast(wip.generated_files.items),
             @ptrCast(wip.extra.items),
         };
         try w.writeVecAll(&buffers);
@@ -431,11 +432,6 @@ pub const Wip = struct {
         wip.extra.appendAssumeCapacity(@backingInt(string));
     }
 
-    pub fn addGeneratedFile(wip: *Wip) GeneratedFileIndex {
-        defer wip.next_generated_file_index += 1;
-        return @fromBackingInt(@intCast(wip.next_generated_file_index));
-    }
-
     /// Returned slice expires upon next append to the configuration.
     pub fn stringSlice(wip: *const Wip, s: String) [:0]const u8 {
         const start_slice = wip.string_bytes.items[@backingInt(s)..];
@@ -504,6 +500,22 @@ pub const Step = extern struct {
 
         pub fn ptr(i: Index, c: *const Configuration) *const Step {
             return &c.steps[@backingInt(i)];
+        }
+    };
+
+    pub const OptionalIndex = enum(u32) {
+        none = max_u32,
+        _,
+
+        pub fn init(i: ?Index) OptionalIndex {
+            return @fromBackingInt(@backingInt(i orelse return .none));
+        }
+
+        pub fn unwrap(this: @This()) ?Index {
+            return switch (this) {
+                .none => null,
+                else => @fromBackingInt(@backingInt(this)),
+            };
         }
     };
 
@@ -1578,6 +1590,10 @@ pub const LazyPath = union(@This().Tag) {
 
 pub const GeneratedFileIndex = enum(u32) {
     _,
+
+    pub fn owner(i: GeneratedFileIndex, c: *const Configuration) Step.OptionalIndex {
+        return c.generated_files[@backingInt(i)];
+    }
 };
 
 pub const OptionalGeneratedFileIndex = enum(u32) {
@@ -1585,13 +1601,13 @@ pub const OptionalGeneratedFileIndex = enum(u32) {
     _,
 
     pub fn init(i: ?GeneratedFileIndex) OptionalGeneratedFileIndex {
-        return @fromBackingInt(@intCast(@backingInt(i orelse return .none)));
+        return @fromBackingInt(@backingInt(i orelse return .none));
     }
 
     pub fn unwrap(this: @This()) ?GeneratedFileIndex {
         return switch (this) {
             .none => null,
-            else => @fromBackingInt(@intCast(@backingInt(this))),
+            else => @fromBackingInt(@backingInt(this)),
         };
     }
 };
@@ -3134,9 +3150,9 @@ pub fn load(arena: Allocator, reader: *Io.Reader) LoadError!Configuration {
         .system_integrations = try arena.alloc(SystemIntegration, header.system_integrations_len),
         .available_options = try arena.alloc(AvailableOption, header.available_options_len),
         .search_prefixes = try arena.alloc(String, header.search_prefixes_len),
+        .generated_files = try arena.alloc(Step.OptionalIndex, header.generated_files_len),
         .extra = try arena.alloc(u32, header.extra_len),
         .default_step = header.default_step,
-        .generated_files_len = header.generated_files_len,
         .poisoned = header.flags.poisoned,
     };
     var vecs = [_][]u8{
@@ -3147,6 +3163,7 @@ pub fn load(arena: Allocator, reader: *Io.Reader) LoadError!Configuration {
         @ptrCast(result.system_integrations),
         @ptrCast(result.available_options),
         @ptrCast(result.search_prefixes),
+        @ptrCast(result.generated_files),
         @ptrCast(result.extra),
     };
     try reader.readVecAll(&vecs);

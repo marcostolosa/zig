@@ -671,9 +671,14 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
         wc.unlazy_deps.appendAssumeCapacity(try wc.addString(k));
     }
 
+    try wc.generated_files.ensureUnusedCapacity(gpa, b.graph.generated_files.items.len);
+    for (b.graph.generated_files.items) |owner| {
+        const owner_index: ?Configuration.Step.Index = if (s.step_map.getIndex(owner)) |i| @fromBackingInt(@intCast(i)) else null;
+        wc.generated_files.appendAssumeCapacity(.init(owner_index));
+    }
+
     try wc.write(writer, .{
         .default_step = s.stepIndex(b.default_step),
-        .generated_files_len = @intCast(graph.generated_files.items.len),
         .poisoned = switch (graph.cache_poison) {
             .pure, .disallowed, .ignored => false,
             .poisoned => true,

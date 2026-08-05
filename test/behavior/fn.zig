@@ -743,6 +743,38 @@ test "coerce generic function making generic parameter concrete" {
     try expect(result == 123);
 }
 
+test "coerce generic function making concrete return type generic" {
+    const S = struct {
+        fn concrete(T: type, x: T) u32 {
+            comptime assert(@TypeOf(x) == u32);
+            return x;
+        }
+        fn generic(T: type, x: T) T {
+            comptime assert(@TypeOf(x) == u32);
+            return x;
+        }
+    };
+    const coerced: @TypeOf(S.generic) = S.concrete;
+    const result = coerced(u32, 123);
+    try expect(result == 123);
+}
+
+test "coerce generic function making generic return type concrete" {
+    const S = struct {
+        fn concrete(T: type, x: T) u32 {
+            comptime assert(@TypeOf(x) == u32);
+            return x;
+        }
+        fn generic(T: type, x: T) T {
+            comptime assert(@TypeOf(x) == u32);
+            return x;
+        }
+    };
+    const coerced: @TypeOf(S.concrete) = S.generic;
+    const result = coerced(u32, 123);
+    try expect(result == 123);
+}
+
 test "return undefined pointer from function, directly and by expired local" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 

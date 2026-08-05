@@ -29476,7 +29476,7 @@ fn coerceInMemoryAllowedFns(
             .generic_poison_type => true,
             .noreturn_type => !dest_is_mut,
             else => false,
-        }) {
+        } and dest_info.return_type != .generic_poison_type) {
             const rt = try sema.coerceInMemoryAllowed(
                 block,
                 .fromInterned(dest_info.return_type),

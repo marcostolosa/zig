@@ -41,7 +41,7 @@ pub fn MultiArrayList(comptime T: type) type {
             return self;
         }
 
-        const Elem = switch (@typeInfo(T)) {
+        pub const Elem = switch (@typeInfo(T)) {
             .@"struct" => T,
             .@"union" => |u| struct {
                 pub const Bare = std.meta.BareUnion(T);
@@ -663,7 +663,7 @@ pub fn MultiArrayList(comptime T: type) type {
             return @alignCast(self.bytes[0..capacityInBytes(self.capacity)]);
         }
 
-        fn FieldType(comptime field: Field) type {
+        pub fn FieldType(comptime field: Field) type {
             return @FieldType(Elem, @tagName(field));
         }
 

@@ -8,7 +8,7 @@ const Point = struct {
     pub var z: u32 = 1;
 };
 
-test "field access by string" {
+test "struct field access by string" {
     var p = Point{ .x = 0, .y = 0 };
 
     @field(p, "x") = 4;
@@ -18,11 +18,21 @@ test "field access by string" {
     try expectEqual(5, @field(p, "y"));
 }
 
-test "decl access by string" {
+test "struct decl access by string" {
     try expectEqual(1, @field(Point, "z"));
 
     @field(Point, "z") = 2;
     try expectEqual(2, @field(Point, "z"));
+}
+
+const Value = enum {
+    zero,
+    one,
+    two,
+};
+
+test "enum field access by string" {
+    try std.testing.expectEqual(Value.two, @field(Value, "two"));
 }
 
 // test

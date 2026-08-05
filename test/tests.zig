@@ -279,6 +279,15 @@ const module_test_targets = blk: {
                 .cpu_arch = .arm,
                 .os_tag = .linux,
                 .abi = .musleabi,
+                .ofmt = .c,
+            },
+            .link_libc = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .arm,
+                .os_tag = .linux,
+                .abi = .musleabi,
             },
             .linkage = .dynamic,
             .link_libc = true,
@@ -289,6 +298,15 @@ const module_test_targets = blk: {
                 .cpu_arch = .arm,
                 .os_tag = .linux,
                 .abi = .musleabihf,
+            },
+            .link_libc = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .arm,
+                .os_tag = .linux,
+                .abi = .musleabihf,
+                .ofmt = .c,
             },
             .link_libc = true,
         },
@@ -341,6 +359,15 @@ const module_test_targets = blk: {
             },
             .link_libc = true,
         },
+        .{
+            .target = .{
+                .cpu_arch = .armeb,
+                .os_tag = .linux,
+                .abi = .musleabi,
+                .ofmt = .c,
+            },
+            .link_libc = true,
+        },
         // Crashes in weird ways when applying relocations.
         // .{
         //     .target = .{
@@ -357,6 +384,15 @@ const module_test_targets = blk: {
                 .cpu_arch = .armeb,
                 .os_tag = .linux,
                 .abi = .musleabihf,
+            },
+            .link_libc = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .armeb,
+                .os_tag = .linux,
+                .abi = .musleabihf,
+                .ofmt = .c,
             },
             .link_libc = true,
         },
@@ -418,6 +454,23 @@ const module_test_targets = blk: {
                 .os_tag = .linux,
                 .abi = .none,
             },
+        },
+        .{
+            .target = .{
+                .cpu_arch = .loongarch32,
+                .os_tag = .linux,
+                .abi = .gnu,
+            },
+            .link_libc = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .loongarch32,
+                .os_tag = .linux,
+                .abi = .gnusf,
+            },
+            .link_libc = true,
+            .extra_target = true,
         },
 
         .{
@@ -1112,6 +1165,15 @@ const module_test_targets = blk: {
                 .cpu_arch = .x86,
                 .os_tag = .linux,
                 .abi = .musl,
+                .ofmt = .c,
+            },
+            .link_libc = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .x86,
+                .os_tag = .linux,
+                .abi = .musl,
             },
             .linkage = .dynamic,
             .link_libc = true,
@@ -1523,7 +1585,6 @@ const module_test_targets = blk: {
                 .os_tag = .wasi,
                 .abi = .none,
             },
-            .skip_modules = &.{"compiler-rt"},
             .use_llvm = false,
             .use_lld = false,
         },
@@ -1642,6 +1703,15 @@ const module_test_targets = blk: {
                 .cpu_arch = .x86,
                 .os_tag = .windows,
                 .abi = .gnu,
+            },
+            .link_libc = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .x86,
+                .os_tag = .windows,
+                .abi = .gnu,
+                .ofmt = .c,
             },
             .link_libc = true,
         },
@@ -1961,7 +2031,6 @@ const c_abi_targets = blk: {
                 .abi = .musl,
             },
             .use_llvm = false,
-            .c_defines = &.{"ZIG_BACKEND_STAGE2_X86_64"},
         },
         .{
             .target = .{
@@ -1972,7 +2041,6 @@ const c_abi_targets = blk: {
             },
             .use_llvm = false,
             .strip = true,
-            .c_defines = &.{"ZIG_BACKEND_STAGE2_X86_64"},
         },
         .{
             .target = .{
@@ -1983,7 +2051,6 @@ const c_abi_targets = blk: {
             },
             .use_llvm = false,
             .pic = true,
-            .c_defines = &.{"ZIG_BACKEND_STAGE2_X86_64"},
         },
         .{
             .target = .{
@@ -2010,6 +2077,15 @@ const c_abi_targets = blk: {
                 .abi = .musl,
             },
         },
+        .{
+            .target = .{
+                .cpu_arch = .wasm32,
+                .os_tag = .wasi,
+                .abi = .musl,
+            },
+            .use_llvm = false,
+            .use_lld = false,
+        },
 
         // Windows Targets
 
@@ -2028,7 +2104,6 @@ const c_abi_targets = blk: {
                 .abi = .gnu,
             },
             .use_llvm = false,
-            .c_defines = &.{"ZIG_BACKEND_STAGE2_X86_64"},
         },
         .{
             .target = .{
@@ -2038,7 +2113,6 @@ const c_abi_targets = blk: {
                 .abi = .gnu,
             },
             .use_llvm = false,
-            .c_defines = &.{"ZIG_BACKEND_STAGE2_X86_64"},
         },
         .{
             .target = .{
@@ -2048,7 +2122,6 @@ const c_abi_targets = blk: {
                 .abi = .gnu,
             },
             .use_llvm = false,
-            .c_defines = &.{"ZIG_BACKEND_STAGE2_X86_64"},
         },
         .{
             .target = .{
@@ -2486,13 +2559,13 @@ pub fn addStandaloneTests(
             .enable_ios_sdk = enable_ios_sdk,
             .enable_macos_sdk = enable_macos_sdk,
             .enable_symlinks_windows = enable_symlinks_windows,
-            .simple_skip_debug = mem.indexOfScalar(OptimizeMode, optimize_modes, .debug) == null,
-            .simple_skip_release_safe = mem.indexOfScalar(OptimizeMode, optimize_modes, .safe) == null,
-            .simple_skip_release_fast = mem.indexOfScalar(OptimizeMode, optimize_modes, .fast) == null,
-            .simple_skip_release_small = mem.indexOfScalar(OptimizeMode, optimize_modes, .small) == null,
+            .simple_skip_debug = mem.findScalar(OptimizeMode, optimize_modes, .debug) == null,
+            .simple_skip_release_safe = mem.findScalar(OptimizeMode, optimize_modes, .safe) == null,
+            .simple_skip_release_fast = mem.findScalar(OptimizeMode, optimize_modes, .fast) == null,
+            .simple_skip_release_small = mem.findScalar(OptimizeMode, optimize_modes, .small) == null,
         });
         const test_cases_dep_step = test_cases_dep.builder.default_step;
-        test_cases_dep_step.name = b.dupe(test_cases_dep_name);
+        test_cases_dep_step.name = b.graph.dupeString(test_cases_dep_name);
         step.dependOn(test_cases_dep.builder.default_step);
     }
     return step;
@@ -2782,16 +2855,6 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
 
         const target = &resolved_target.result;
 
-        if (target.cpu.arch == .s390x and target.ofmt == .c) {
-            // https://codeberg.org/ziglang/zig/issues/35523
-            continue;
-        }
-
-        if (target.cpu.arch == .riscv64 and target.ofmt == .c) {
-            // https://codeberg.org/ziglang/zig/issues/30930
-            continue;
-        }
-
         if (std.mem.eql(u8, options.name, "libc")) {
             // The libc API tests obviously need to link libc. So for test
             // target entries where we wouldn't link libc by default, skip the
@@ -2816,7 +2879,7 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
 
         if (options.test_target_filters.len > 0) {
             for (options.test_target_filters) |filter| {
-                if (std.mem.indexOf(u8, triple_txt, filter) != null) break;
+                if (std.mem.find(u8, triple_txt, filter) != null) break;
             } else continue;
         }
 
@@ -3114,7 +3177,7 @@ pub fn addCAbiTests(b: *std.Build, options: CAbiTestOptions) *Step {
 
         if (options.test_target_filters.len > 0) {
             for (options.test_target_filters) |filter| {
-                if (std.mem.indexOf(u8, triple_txt, filter) != null) break;
+                if (std.mem.find(u8, triple_txt, filter) != null) break;
             } else continue;
         }
 
@@ -3203,7 +3266,7 @@ pub fn addLinkTests(b: *std.Build, options: LinkTestOptions) *Step {
 
         if (options.test_target_filters.len > 0) {
             for (options.test_target_filters) |filter| {
-                if (std.mem.indexOf(u8, triple_txt, filter) != null) break;
+                if (std.mem.find(u8, triple_txt, filter) != null) break;
             } else continue;
         }
 
@@ -3328,7 +3391,7 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []cons
         if (std.mem.endsWith(u8, entry.basename, ".swp")) continue;
 
         for (test_filters) |test_filter| {
-            if (std.mem.indexOf(u8, entry.path, test_filter)) |_| break;
+            if (std.mem.find(u8, entry.path, test_filter)) |_| break;
         } else if (test_filters.len > 0) continue;
 
         switch (entry.kind) {

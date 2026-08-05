@@ -5848,7 +5848,7 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       {#header_open|@Union#}
       <pre>{#syntax#}@Union(
     comptime layout: std.lang.Type.ContainerLayout,
-    /// Either the integer tag type, or the integer backing type, depending on `layout`.
+    /// Either the enum tag type, or the integer backing type, depending on `layout`.
     comptime ArgType: ?type,
     comptime field_names: []const []const u8,
     comptime field_types: *const [field_names.len]type,
@@ -7499,7 +7499,7 @@ fn readU32Be() u32 {}
             <pre>{#syntax#}errdefer{#endsyntax#}</pre>
           </th>
           <td>
-            {#syntax#}errdefer{#endsyntax#} will execute an expression when control flow leaves the current block if the function returns an error, the errdefer expression can capture the unwrapped value.
+            {#syntax#}errdefer{#endsyntax#} will execute an expression when control flow leaves the current block if the function returns an error.
             <ul>
               <li>See also {#link|errdefer#}</li>
             </ul>

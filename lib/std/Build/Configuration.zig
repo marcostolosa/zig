@@ -121,7 +121,7 @@ pub const Wip = struct {
         }
 
         pub fn hash(_: @This(), adapted_key: []const u8) u64 {
-            assert(std.mem.indexOfScalar(u8, adapted_key, 0) == null);
+            assert(std.mem.findScalar(u8, adapted_key, 0) == null);
             return std.hash_map.hashString(adapted_key);
         }
     };
@@ -182,7 +182,7 @@ pub const Wip = struct {
 
     pub fn addString(wip: *Wip, bytes: []const u8) Allocator.Error!String {
         const gpa = wip.gpa;
-        assert(std.mem.indexOfScalar(u8, bytes, 0) == null);
+        assert(std.mem.findScalar(u8, bytes, 0) == null);
         const gop = try wip.string_table.getOrPutContextAdapted(
             gpa,
             @as([]const u8, bytes),
@@ -439,7 +439,7 @@ pub const Wip = struct {
     /// Returned slice expires upon next append to the configuration.
     pub fn stringSlice(wip: *const Wip, s: String) [:0]const u8 {
         const start_slice = wip.string_bytes.items[@backingInt(s)..];
-        return start_slice[0..std.mem.indexOfScalar(u8, start_slice, 0).? :0];
+        return start_slice[0..std.mem.findScalar(u8, start_slice, 0).? :0];
     }
 };
 
@@ -569,8 +569,7 @@ pub const Step = extern struct {
         flags2: Flags2,
         args: Storage.LengthPrefixedList(Arg.Index),
         cwd: Storage.FlagOptional(.flags, .cwd, LazyPath.Index),
-        preopen_names: Storage.LengthPrefixedList(String),
-        preopen_paths: Storage.LengthPrefixedList(LazyPath.Index),
+        preopens: Storage.FlagLengthPrefixedList(.flags, .preopens, Preopen),
         captured_stdout: Storage.FlagOptional(.flags, .captured_stdout, CapturedStream),
         captured_stderr: Storage.FlagOptional(.flags, .captured_stderr, CapturedStream),
         file_inputs: Storage.LengthPrefixedList(LazyPath.Index),
@@ -646,6 +645,11 @@ pub const Step = extern struct {
             manual,
         };
 
+        pub const Preopen = extern struct {
+            name: String,
+            path: LazyPath.Index,
+        };
+
         pub const StdIn = union(@This().Tag) {
             none: void,
             bytes: Bytes,
@@ -676,7 +680,8 @@ pub const Step = extern struct {
             captured_stdout: bool,
             captured_stderr: bool,
             environ_map: bool,
-            _: u4 = 0,
+            preopens: bool,
+            _: u3 = 0,
         };
 
         pub const Flags2 = packed struct(u32) {
@@ -1076,6 +1081,7 @@ pub const Step = extern struct {
             autoconf_undef,
             autoconf_at,
             cmake,
+            meson,
             blank,
             nasm,
 
@@ -1084,6 +1090,7 @@ pub const Step = extern struct {
                     .autoconf_undef => .autoconf_undef,
                     .autoconf_at => .autoconf_at,
                     .cmake => .cmake,
+                    .meson => .meson,
                     .blank => .blank,
                     .nasm => .nasm,
                 };
@@ -1946,7 +1953,7 @@ pub const String = enum(u32) {
 
     pub fn slice(index: String, c: *const Configuration) [:0]const u8 {
         const start_slice = c.string_bytes[@backingInt(index)..];
-        return start_slice[0..std.mem.indexOfScalar(u8, start_slice, 0).? :0];
+        return start_slice[0..std.mem.findScalar(u8, start_slice, 0).? :0];
     }
 };
 

@@ -580,6 +580,7 @@ pub fn deinit(ev: *Evented) void {
     ev.stderr_mutex.deinit();
     for (&ev.futexes) |*futex| futex.deinit();
     ev.exit_semaphore.as_object().release();
+    ev.backing_allocator_mutex.deinit();
     ev.backing_allocator.free(ev.main_loop_stack[0..main_loop_stack_size]);
     ev.queue.as_object().release();
 }
@@ -825,7 +826,7 @@ const Mutex = struct {
         sleeper: Sleeper = undefined,
         cancelable: Cancelable,
         mutex: *Mutex,
-        node: std.DoublyLinkedList.Node = undefined,
+        node: std.DoublyLinkedList.Node = .{},
 
         fn add(context: ?*anyopaque) callconv(.c) void {
             const waiter: *Waiter = @ptrCast(@alignCast(context));
@@ -2781,7 +2782,7 @@ fn realPath(ev: *Evented, fd: c.fd_t, out_buffer: []u8) File.RealPathError!usize
             else => |err| return unexpectedErrno(err),
         }
     }
-    const n = std.mem.indexOfScalar(u8, &buffer, 0) orelse buffer.len;
+    const n = std.mem.findScalar(u8, &buffer, 0) orelse buffer.len;
     if (n > out_buffer.len) return error.NameTooLong;
     @memcpy(out_buffer[0..n], buffer[0..n]);
     return n;
@@ -2803,7 +2804,7 @@ fn dirRealPathFile(
         while (true) {
             if (c.realpath(sub_path_posix, out_buffer.ptr)) |redundant_pointer| {
                 assert(redundant_pointer == out_buffer.ptr);
-                return std.mem.indexOfScalar(u8, out_buffer, 0) orelse out_buffer.len;
+                return std.mem.findScalar(u8, out_buffer, 0) orelse out_buffer.len;
             }
             const err: c.E = @fromBackingInt(@intCast(c._errno().*));
             switch (err) {
@@ -3791,7 +3792,7 @@ fn fileRealPath(userdata: ?*anyopaque, file: File, out_buffer: []u8) File.RealPa
             else => |err| return unexpectedErrno(err),
         }
     }
-    const n = std.mem.indexOfScalar(u8, &buffer, 0) orelse buffer.len;
+    const n = std.mem.findScalar(u8, &buffer, 0) orelse buffer.len;
     if (n > out_buffer.len) return error.NameTooLong;
     @memcpy(out_buffer[0..n], buffer[0..n]);
     return n;
@@ -4714,7 +4715,7 @@ fn sleep(userdata: ?*anyopaque, timeout: Io.Timeout) Io.Cancelable!void {
         return ev.yield(.{ .after = ev.timeFromTimeout(timeout) });
     };
     var waiter: SleepWaiter = .{
-        .cancelable = .{ .queue = queue, .cancel = &Futex.Waiter.canceled },
+        .cancelable = .{ .queue = queue, .cancel = &SleepWaiter.canceled },
         .timer = timer,
     };
     timer.as_object().set_context(&waiter);

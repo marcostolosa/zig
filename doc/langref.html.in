@@ -5407,6 +5407,7 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       <pre>{#syntax#}@ptrCast(value: anytype) anytype{#endsyntax#}</pre>
       <p>
       Converts a pointer of one type to a pointer of another type. The return type is the inferred result type.
+      Doesn't assert the validity of the sentinel if the pointed-to-element is a slice. Use sentinel-terminated slicing instead.
       </p>
       <p>
       {#link|Optional Pointers#} are allowed. Casting an optional pointer which is {#link|null#}

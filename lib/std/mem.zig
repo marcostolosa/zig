@@ -302,7 +302,7 @@ test copySentinelInclusive {
     try testing.expectEqualStrings("hello this\x00\xff", &dst);
     try testing.expectEqual(n, 11);
 }
-/// Generally, Zig users are encouraged to explicitly initialize all fields of a struct explicitly rather than using this function.
+/// Generally, Zig users are encouraged to initialize all fields of a struct explicitly rather than using this function.
 /// However, it is recognized that there are sometimes use cases for initializing all fields to a "zero" value. For example, when
 /// interfacing with a C API where this practice is more common and relied upon. If you are performing code review and see this
 /// function used, examine closely - it may be a code smell.

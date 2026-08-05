@@ -2796,7 +2796,8 @@ pub fn addCliTests(b: *std.Build) *Step {
         run_check.addFileArg(b.path("test/cli/emit_no_bin_when_not_required/build.zig"));
 
         run_check.addArg("--cache-dir");
-        run_check.addFileArg(b.tmpPath());
+        run_check.addDirectoryArg(b.tmpPath());
+        run_check.has_side_effects = true;
 
         run_check.setName("emit -fno-emit-bin when artifact is not required");
         run_check.expectStdErrMatch("-fno-emit-bin");

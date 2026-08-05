@@ -544,7 +544,7 @@ pub fn AlignedManaged(comptime T: type, comptime alignment: ?mem.Alignment) type
             return self.allocatedSlice()[self.items.len..];
         }
 
-        /// Deprecated in favor of `getLast`
+        /// Deprecated in favor of `last`
         pub const getLastOrNull = last;
 
         /// Returns the last element from the list, or `null` if the list is
@@ -552,6 +552,13 @@ pub fn AlignedManaged(comptime T: type, comptime alignment: ?mem.Alignment) type
         pub fn last(self: Self) ?T {
             if (self.items.len == 0) return null;
             return self.items[self.items.len - 1];
+        }
+
+        /// Returns a pointer to the last element from the list, or `null` if
+        /// the list is empty.
+        pub fn lastPtr(self: Self) ?*T {
+            if (self.items.len == 0) return null;
+            return &self.items[self.items.len - 1];
         }
     };
 }

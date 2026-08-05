@@ -63,6 +63,9 @@ memory_blocked_steps: std.ArrayList(Configuration.Step.Index),
 initial_steps: std.array_hash_map.Auto(Configuration.Step.Index, void),
 /// Allocated into `gpa`.
 step_stack: std.array_hash_map.Auto(Configuration.Step.Index, void),
+/// Allocated into `gpa`, records whether generated artifacts
+/// required by the reachable task graph
+req_artifacts: std.array_hash_map.Auto(Configuration.GeneratedFileIndex, bool),
 pkg_config: PkgConfig,
 
 error_style: ErrorStyle,
@@ -783,6 +786,7 @@ pub fn main(init: process.Init.Minimal) !void {
                 .memory_blocked_steps = .empty,
                 .initial_steps = .empty,
                 .step_stack = .empty,
+                .req_artifacts = .empty,
                 .pkg_config = .{ .debug = debug_pkg_config },
 
                 .error_style = error_style,
@@ -798,6 +802,7 @@ pub fn main(init: process.Init.Minimal) !void {
                 maker.memory_blocked_steps.deinit(gpa);
                 maker.initial_steps.deinit(gpa);
                 maker.step_stack.deinit(gpa);
+                maker.req_artifacts.deinit(gpa);
             }
 
             if (maker.available_rss == 0) {
@@ -2208,6 +2213,8 @@ fn prepare(maker: *Maker, step_indices: []const Configuration.Step.Index) !void 
         try constructGraphAndCheckForDependencyLoop(maker, s, &maker.step_stack, rand);
     }
 
+    try computeRequiredArtifacts(maker);
+
     {
         // Check that we have enough memory to complete the build.
         var any_problems = false;
@@ -3027,6 +3034,59 @@ fn constructGraphAndCheckForDependencyLoop(
         .skipped => unreachable,
         .skipped_oom => unreachable,
     }
+}
+
+/// Compute required artifacts for Run and Install steps.
+fn computeRequiredArtifacts(
+    maker: *Maker,
+) error{OutOfMemory}!void {
+    const c = &maker.scanned_config.configuration;
+    for (maker.steps, 0..) |_, i| {
+        const step_index: Configuration.Step.Index = @fromBackingInt(@intCast(i));
+        const step_reachable = maker.step_stack.contains(step_index);
+        const conf_step = step_index.ptr(c);
+        switch (conf_step.flags(c).tag) {
+            .install_artifact => {
+                // see the Maker/Step/InstallArtifact.zig for the exact contract on dependencies
+                const conf_ia = step_index.ptr(c).extended.get(c.extra).install_artifact;
+                const compile_step_index = step_index.ptr(c).deps.slice(c)[0];
+                const conf_comp_step = compile_step_index.ptr(c);
+                const conf_comp = conf_comp_step.extended.get(c.extra).compile;
+                if (conf_ia.bin_dir.value != null) {
+                    if (conf_comp.generated_bin.value) |bin| {
+                        try maker.markConsumed(bin, step_reachable);
+                    }
+                }
+            },
+            .run => {
+                const conf_run = step_index.ptr(c).extended.get(c.extra).run;
+
+                if (conf_run.producer.value) |producer_index| {
+                    const conf_comp = producer_index.ptr(c).extended.get(c.extra).compile;
+                    if (conf_comp.generated_bin.value) |bin| try maker.markConsumed(bin, step_reachable);
+                }
+
+                for (conf_run.args.slice) |arg_index| {
+                    const arg = arg_index.get(c);
+                    switch (arg.flags.tag) {
+                        .artifact => {
+                            if (arg.producer.value) |producer_index| {
+                                const arg_conf_comp = producer_index.ptr(c).extended.get(c.extra).compile;
+                                if (arg_conf_comp.generated_bin.value) |arg_bin| try maker.markConsumed(arg_bin, step_reachable);
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+}
+
+fn markConsumed(maker: *Maker, bin: Configuration.GeneratedFileIndex, reachable: bool) !void {
+    const gop = try maker.req_artifacts.getOrPutValue(maker.gpa, bin, false);
+    if (reachable) gop.value_ptr.* = true;
 }
 
 /// When file watching, prepares the step for being re-evaluated. Returns

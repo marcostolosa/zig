@@ -2783,6 +2783,27 @@ pub fn addCliTests(b: *std.Build) *Step {
         step.dependOn(&run_test.step);
     }
 
+    {
+        // Test skipping the binary emission when reachable task
+        // graph doesn't require it.
+        const run_check = b.addSystemCommand(&.{
+            b.graph.zig_exe,
+            "build",
+            "check",
+            "--verbose",
+        });
+        run_check.addArg("--build-file");
+        run_check.addFileArg(b.path("test/cli/emit_no_bin_when_not_required/build.zig"));
+
+        run_check.addArg("--cache-dir");
+        run_check.addFileArg(b.tmpPath());
+
+        run_check.setName("emit -fno-emit-bin when artifact is not required");
+        run_check.expectStdErrMatch("-fno-emit-bin");
+
+        step.dependOn(&run_check.step);
+    }
+
     return step;
 }
 

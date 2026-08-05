@@ -610,7 +610,8 @@ fn lowerZigArgs(
     try addBool(gpa, zig_args, "--verbose-llvm-cpu-features", graph.verbose_llvm_cpu_features);
     try addBool(gpa, zig_args, "--time-report", graph.time_report);
 
-    if (conf_comp.generated_bin.value == null) try zig_args.append(gpa, "-fno-emit-bin");
+    const bin_required = dependencyRequired(maker, conf_comp.generated_bin.value);
+    if (!bin_required) try zig_args.append(gpa, "-fno-emit-bin");
     if (conf_comp.generated_asm.value != null) try zig_args.append(gpa, "-femit-asm");
     if (conf_comp.generated_docs.value != null) try zig_args.append(gpa, "-femit-docs");
     if (conf_comp.generated_implib.value != null) try zig_args.append(gpa, "-femit-implib");
@@ -927,6 +928,19 @@ fn lowerZigArgs(
         zig_args.shrinkRetainingCapacity(2);
         try zig_args.append(gpa, resolved_args_file);
     }
+}
+
+/// Test if the given dependency is required.
+/// If the `maker.req_artifacts` has it explicitly set to `false`
+/// then the build graph contains a step that declares a dependency on this
+/// generated file but sits outside of the build graph currently being executed.
+/// Otherwise the generated file is required by a task that runs within
+/// the current build graph and this will be emmitted.
+fn dependencyRequired(
+    maker: *Maker,
+    gen_file_index: ?Configuration.GeneratedFileIndex,
+) bool {
+    return if (gen_file_index) |gen| (maker.req_artifacts.get(gen) orelse true) else false;
 }
 
 pub fn rebuildInFuzzMode(

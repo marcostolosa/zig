@@ -326,10 +326,7 @@ pub fn resize(self: Allocator, allocation: anytype, new_len: usize) bool {
         return false;
     }
     const old_memory: []u8 = @ptrCast(@constCast(mem.absorbSentinel(allocation)));
-    // I would like to use saturating multiplication here, but LLVM cannot lower it
-    // on WebAssembly: https://github.com/ziglang/zig/issues/9660
-    //const new_len_bytes = new_len *| @sizeOf(T);
-    const new_len_bytes = math.mul(usize, @sizeOf(T), new_len) catch return false;
+    const new_len_bytes = new_len *| @sizeOf(T);
     return self.rawResize(
         old_memory,
         .fromByteUnits(slice_info.attrs.@"align" orelse @alignOf(T)),
@@ -372,10 +369,7 @@ pub fn remap(self: Allocator, allocation: anytype, new_len: usize) ?@TypeOf(allo
         return new_memory;
     }
     const old_memory: []u8 = @ptrCast(@constCast(mem.absorbSentinel(allocation)));
-    // I would like to use saturating multiplication here, but LLVM cannot lower it
-    // on WebAssembly: https://github.com/ziglang/zig/issues/9660
-    //const new_len_bytes = new_len *| @sizeOf(T);
-    const new_len_bytes = math.mul(usize, @sizeOf(T), new_len) catch return null;
+    const new_len_bytes = new_len *| @sizeOf(T);
     const new_ptr = self.rawRemap(
         old_memory,
         .fromByteUnits(slice_info.attrs.@"align" orelse @alignOf(T)),

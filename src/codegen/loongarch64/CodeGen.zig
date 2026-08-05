@@ -313,13 +313,14 @@ fn airCondBr(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
 
     try cg.genBody(cond_br.then_body);
 
-    const jmp_reloc = try cg.jump();
+    const then_terminated = cg.bodyEndsInTerminator(cond_br.then_body);
+    const jmp_reloc: ?u32 = if (then_terminated) null else try cg.jump();
 
     cg.mir.instructions.items[beq_inst_idx].data.branch.target = @intCast(cg.mir.instructions.items.len);
 
     try cg.genBody(cond_br.else_body);
 
-    cg.performReloc(jmp_reloc);
+    if (jmp_reloc) |r| cg.performReloc(r);
 }
 
 fn airBlock(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
@@ -358,8 +359,6 @@ fn airLoop(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
     try cg.loop_starts.put(cg.gpa, inst, loop_start_idx);
     try cg.genBody(loop_data.body);
     _ = cg.loop_starts.remove(inst);
-
-    try cg.mir.instructions.append(cg.gpa, .{ .tag = .b, .data = .{ .b = .{ .target = loop_start_idx } } });
 }
 
 fn airRepeat(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
@@ -367,6 +366,21 @@ fn airRepeat(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
     const loop_start = cg.loop_starts.get(repeat.loop_inst) orelse return cg.fail("airRepeat: loop start not found", .{});
 
     try cg.mir.instructions.append(cg.gpa, .{ .tag = .b, .data = .{ .b = .{ .target = loop_start } } });
+}
+
+fn bodyEndsInTerminator(cg: *CodeGen, body: []const Air.Inst.Index) bool {
+    if (body.len == 0) return false;
+    const last = body[body.len - 1];
+    const tag = cg.air.instructions.items(.tag)[@backingInt(last)];
+    return switch (tag) {
+        .repeat, .br, .ret, .ret_safe, .unreach => true,
+        .cond_br => blk: {
+            const cond_br = cg.air.unwrapCondBr(last);
+            break :blk cg.bodyEndsInTerminator(cond_br.then_body) and
+                cg.bodyEndsInTerminator(cond_br.else_body);
+        },
+        else => false,
+    };
 }
 
 fn jump(cg: *CodeGen) Error!u32 {
@@ -520,10 +534,10 @@ fn resolveInst(cg: *CodeGen, ref: Air.Inst.Ref) Error!MCValue {
                     .nav => |nav| {
                         const elf_file = cg.lf.cast(.elf) orelse return cg.fail("TODO: non-ELF linker for LoongArch", .{});
                         const zo = elf_file.zigObjectPtr().?;
-                        const sym = zo.navs.get(nav) orelse return cg.fail("Symbol for nav {} not found", .{nav});
+                        const sym_index = try zo.getOrCreateMetadataForNav(zcu, nav);
                         // TODO: handle ptr_info.byte_offset for struct/arrays fields
                         // Currently defaults to 0, which works for simple vars but breaks for fields
-                        return .{ .lea_symbol = .{ .sym_index = @fromBackingInt(@intCast(sym.symbol_index)) } };
+                        return .{ .lea_symbol = .{ .sym_index = @fromBackingInt(@intCast(sym_index)) } };
                     },
                     else => return cg.fail("TODO: resolve pointer base_addr {s}", .{@tagName(ptr_info.base_addr)}),
                 }

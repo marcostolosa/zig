@@ -40,8 +40,8 @@ pub const Inst = struct {
         addi_d_reloc,
     };
 
-    pub const Data = union(enum) {
-        none,
+    pub const Data = union {
+        none: void,
         rrr: struct { rd: abi.Register, rj: abi.Register, rk: abi.Register },
         rri: struct { rd: abi.Register, rj: abi.Register, imm12: i12 },
         branch: struct { rj: abi.Register, rd: abi.Register, target: u32 }, // target = Inst.Index
@@ -74,43 +74,14 @@ pub fn emit(
     for (self.instructions.items, 0..) |inst, i| {
         switch (inst.tag) {
             .pcalau12i_reloc => {
-                const reloc_data = inst.data.reloc;
-                const offset: u32 = @intCast(w.end);
-                try w.writeInt(u32, bits.pcalau12i(reloc_data.rd, 0), .little);
-
-                const elf_file = lf.cast(.elf).?;
-                const zo = elf_file.zigObjectPtr().?;
-                const atom_ptr = zo.symbol(@backingInt(atom_id)).atom(elf_file).?;
-                const sym_idx = @backingInt(reloc_data.sym_index);
-
-                const hi_r_type: u32 = @backingInt(std.elf.R_LARCH.PCALA_HI20); // 71
-                try atom_ptr.addReloc(gpa, .{
-                    .r_offset = offset,
-                    .r_info = (@as(u64, sym_idx) << 32) | hi_r_type,
-                    .r_addend = 0,
-                }, zo);
+                const rd = inst.data.reloc;
+                try emitReloc(gpa, lf, atom_id, w, bits.pcalau12i(rd.rd, 0), rd.sym_index, @backingInt(std.elf.R_LARCH.PCALA_HI20));
                 continue;
             },
             .ld_d_reloc, .addi_d_reloc => {
-                const reloc_data = inst.data.reloc;
-                const offset: u32 = @intCast(w.end);
-                const word_lo: bits.Word = if (inst.tag == .addi_d_reloc)
-                    bits.addiD(reloc_data.rd, reloc_data.rd, 0)
-                else
-                    bits.ldD(reloc_data.rd, reloc_data.rd, 0);
-                try w.writeInt(u32, word_lo, .little);
-
-                const elf_file = lf.cast(.elf).?;
-                const zo = elf_file.zigObjectPtr().?;
-                const atom_ptr = zo.symbol(@backingInt(atom_id)).atom(elf_file).?;
-                const sym_idx = @backingInt(reloc_data.sym_index);
-
-                const lo_r_type: u32 = @backingInt(std.elf.R_LARCH.PCALA_LO12); // 72
-                try atom_ptr.addReloc(gpa, .{
-                    .r_offset = offset,
-                    .r_info = (@as(u64, sym_idx) << 32) | lo_r_type,
-                    .r_addend = 0,
-                }, zo);
+                const rd = inst.data.reloc;
+                const word_lo = if (inst.tag == .addi_d_reloc) bits.addiD(rd.rd, rd.rd, 0) else bits.ldD(rd.rd, rd.rd, 0);
+                try emitReloc(gpa, lf, atom_id, w, word_lo, rd.sym_index, @backingInt(std.elf.R_LARCH.PCALA_LO12));
                 continue;
             },
             else => {},
@@ -135,23 +106,40 @@ pub fn emit(
             .slt => bits.slt(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
             .sltu => bits.sltu(inst.data.rrr.rd, inst.data.rrr.rj, inst.data.rrr.rk),
             .sltui => bits.sltui(inst.data.rri.rd, inst.data.rri.rj, inst.data.rri.imm12),
-            .beq => blk: {
-                // TODO: bounds-check branch offsets
-                const offset = @as(i64, @intCast(inst.data.branch.target)) - @as(i64, @intCast(i));
-                break :blk bits.beq(inst.data.branch.rj, inst.data.branch.rd, @intCast(offset));
-            },
-            .bne => blk: {
-                // TODO: bounds-check branch offsets
-                const offset = @as(i64, @intCast(inst.data.branch.target)) - @as(i64, @intCast(i));
-                break :blk bits.bne(inst.data.branch.rj, inst.data.branch.rd, @intCast(offset));
-            },
-            .b => blk: {
-                // TODO: bounds-check branch offsets
-                const offset = @as(i64, @intCast(inst.data.b.target)) - @as(i64, @intCast(i));
-                break :blk bits.b(@intCast(offset));
-            },
+            .beq => bits.beq(inst.data.branch.rj, inst.data.branch.rd, @intCast(branchOffset(inst.data.branch.target, i))),
+            .bne => bits.bne(inst.data.branch.rj, inst.data.branch.rd, @intCast(branchOffset(inst.data.branch.target, i))),
+            .b => bits.b(@intCast(branchOffset(inst.data.b.target, i))),
             .pcalau12i_reloc, .ld_d_reloc, .addi_d_reloc => unreachable, // Processed above via continue
         };
         try w.writeInt(u32, word, .little);
     }
+}
+
+fn emitReloc(
+    gpa: std.mem.Allocator,
+    lf: *link.File,
+    atom_id: link.File.AtomId,
+    w: *std.Io.Writer,
+    word: bits.Word,
+    sym_index: link.File.SymbolId,
+    r_type: u32,
+) !void {
+    const offset: u32 = @intCast(w.end);
+    try w.writeInt(u32, word, .little);
+
+    const elf_file = lf.cast(.elf).?;
+    const zo = elf_file.zigObjectPtr().?;
+    const atom_ptr = zo.symbol(@backingInt(atom_id)).atom(elf_file).?;
+    const sym_idx = @backingInt(sym_index);
+
+    try atom_ptr.addReloc(gpa, .{
+        .r_offset = offset,
+        .r_info = (@as(u64, sym_idx) << 32) | r_type,
+        .r_addend = 0,
+    }, zo);
+}
+
+fn branchOffset(target: u32, idx: usize) i64 {
+    // TODO: bounds-check branch offsets
+    return @as(i64, @intCast(target)) - @as(i64, @intCast(idx));
 }

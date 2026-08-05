@@ -94,6 +94,7 @@ pub const IpAddress = union(enum) {
     }
 
     /// Parse the given IP address string into an `IpAddress` value.
+    /// Shortened IPv4 addresses are not suported.
     ///
     /// This is a pure function but it cannot handle IPv6 addresses that have
     /// scope ids ("%foo" at the end). To also handle those, `resolve` must be
@@ -111,6 +112,7 @@ pub const IpAddress = union(enum) {
         return parseIp6(text, port);
     }
 
+    /// Shortened IPv4 addresses are not suported.
     pub fn parseIp4(text: []const u8, port: u16) Ip4Address.ParseError!IpAddress {
         return .{ .ip4 = try Ip4Address.parse(text, port) };
     }
@@ -122,6 +124,8 @@ pub const IpAddress = union(enum) {
         return .{ .ip6 = try Ip6Address.parse(text, port) };
     }
 
+    /// Shortened IPv4 addresses are not suported.
+    ///
     /// This function requires an `Io` parameter because it must query the operating
     /// system to convert interface name to index. For example, in
     /// "fe80::e0e:76ff:fed4:cf22%eno1", "eno1" must be resolved to an index by
@@ -141,6 +145,12 @@ pub const IpAddress = union(enum) {
         return resolveIp6(io, text, port);
     }
 
+    /// This function requires an `Io` parameter because it must query the operating
+    /// system to convert interface name to index. For example, in
+    /// "fe80::e0e:76ff:fed4:cf22%eno1", "eno1" must be resolved to an index by
+    /// creating a socket and then using an `ioctl` syscall.
+    ///
+    /// For a pure function that cannot handle scopes, see `parseIp6`.
     pub fn resolveIp6(io: Io, text: []const u8, port: u16) Ip6Address.ResolveError!IpAddress {
         return .{ .ip6 = try Ip6Address.resolve(io, text, port) };
     }
@@ -391,6 +401,7 @@ pub const Ip4Address = struct {
         NonCanonical,
     };
 
+    /// Shortened IPv4 addresses are not suported.
     pub fn parse(buffer: []const u8, port: u16) ParseError!Ip4Address {
         var bytes: [4]u8 = @splat(0);
         var index: u8 = 0;

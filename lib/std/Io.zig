@@ -917,8 +917,7 @@ pub const Clock = enum {
 
     /// This function is not cancelable because it does not block.
     ///
-    /// Resolution is determined by `resolution` which may be 0 if the
-    /// clock is unsupported.
+    /// Clock resolution and availability is determined by `resolution`.
     ///
     /// See also:
     /// * `Clock.Timestamp.now`
@@ -931,7 +930,7 @@ pub const Clock = enum {
         Unexpected,
     };
 
-    /// Reveals the granularity of `clock`. May be zero, indicating
+    /// Reveals the granularity of `clock`. May return `ClockUnavailable`, indicating
     /// unsupported clock.
     pub fn resolution(clock: Clock, io: Io) ResolutionError!Io.Duration {
         return io.vtable.clockResolution(io.userdata, clock);
@@ -943,8 +942,7 @@ pub const Clock = enum {
 
         /// This function is not cancelable because it does not block.
         ///
-        /// Resolution is determined by `resolution` which may be 0 if
-        /// the clock is unsupported.
+        /// Clock resolution and availability is determined by `resolution`.
         ///
         /// See also:
         /// * `Clock.now`
@@ -989,8 +987,7 @@ pub const Clock = enum {
             };
         }
 
-        /// Resolution is determined by `resolution` which may be 0 if
-        /// the clock is unsupported.
+        /// Clock resolution and availability is determined by `resolution`.
         pub fn fromNow(io: Io, duration: Clock.Duration) Clock.Timestamp {
             return .{
                 .clock = duration.clock,
@@ -998,15 +995,13 @@ pub const Clock = enum {
             };
         }
 
-        /// Resolution is determined by `resolution` which may be 0 if
-        /// the clock is unsupported.
+        /// Clock resolution and availability is determined by `resolution`.
         pub fn untilNow(timestamp: Clock.Timestamp, io: Io) Clock.Duration {
             const now_ts = Clock.Timestamp.now(io, timestamp.clock);
             return timestamp.durationTo(now_ts);
         }
 
-        /// Resolution is determined by `resolution` which may be 0 if
-        /// the clock is unsupported.
+        /// Clock resolution and availability is determined by `resolution`.
         pub fn durationFromNow(timestamp: Clock.Timestamp, io: Io) Clock.Duration {
             const now_ts = timestamp.clock.now(io);
             return .{
@@ -1015,8 +1010,7 @@ pub const Clock = enum {
             };
         }
 
-        /// Resolution is determined by `resolution` which may be 0 if
-        /// the clock is unsupported.
+        /// Clock resolution and availability is determined by `resolution`.
         pub fn toClock(t: Clock.Timestamp, io: Io, clock: Clock) Clock.Timestamp {
             if (t.clock == clock) return t;
             const now_old = t.clock.now(io);
@@ -1104,8 +1098,7 @@ pub const Timestamp = struct {
         });
     }
 
-    /// Resolution is determined by `Clock.resolution` which may be 0 if
-    /// the clock is unsupported.
+    /// Clock resolution and availability is determined by `Clock.resolution`.
     pub fn untilNow(t: Timestamp, io: Io, clock: Clock) Duration {
         const now_ts = clock.now(io);
         return t.durationTo(now_ts);

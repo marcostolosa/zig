@@ -3516,7 +3516,7 @@ void do_a_thing(struct Foo *foo) {
 
       {#header_close#}
       {#header_open|Optional Pointers#}
-      <p>An optional pointer is guaranteed to be the same size as a pointer. The {#syntax#}null{#endsyntax#} of
+      <p>An optional not-allowzero pointer is guaranteed to be the same size as a pointer. The {#syntax#}null{#endsyntax#} of
       the optional is guaranteed to be address 0.</p>
       {#code|test_optional_pointer.zig#}
 

@@ -569,7 +569,7 @@ pub fn AlignedManaged(comptime T: type, comptime alignment: ?mem.Alignment) type
         }
 
         /// Remove and return the last element from the list, or return `null` if list is empty.
-        /// Invalidates element pointers to the removed element.
+        /// Invalidates element pointers to the removed element, if any.
         pub fn pop(self: *Self) ?T {
             if (self.items.len == 0) return null;
             self.pointer_stability.assertUnlocked();
@@ -1493,13 +1493,11 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
             return addManyAsSliceAssumeCapacity(self, n);
         }
 
-        /// Remove and return the last element from the list.
-        /// If the list is empty, returns `null`.
-        /// Invalidates pointers to last element.
+        /// Remove and return the last element from the list, or return `null` if list is empty.
+        /// Invalidates element pointers to the removed element, if any.
         pub fn pop(self: *Self) ?T {
             if (self.items.len == 0) return null;
             self.pointer_stability.assertUnlocked();
-
             const val = self.items[self.items.len - 1];
             self.items[self.items.len - 1] = undefined;
             self.items.len -= 1;

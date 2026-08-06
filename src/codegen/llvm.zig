@@ -1022,11 +1022,13 @@ pub const Object = struct {
         const fn_info = zcu.typeToFunc(fn_ty).?;
         const target = &owner_mod.resolved_target.result;
 
+        const linkage: Builder.Linkage = if (o.builder.strip) .private else .internal;
+
         const gop = try o.nav_map.getOrPut(gpa, func.owner_nav);
         if (!gop.found_existing) {
             errdefer assert(o.nav_map.remove(func.owner_nav));
             // First time lowering this NAV! Create a fresh global.
-            const llvm_name = try o.builder.strtabStringNoLlvmIntrinsic(nav.fqn.toSlice(ip));
+            const llvm_name = try o.builder.strtabStringNoLlvmIntrinsic(nav.fqn.toSlice(ip), linkage);
             gop.value_ptr.* = try o.builder.addGlobal(llvm_name, .{
                 .type = .void, // placeholder; populated below
                 .kind = .{ .alias = .none }, // placeholder; populated below
@@ -1042,7 +1044,7 @@ pub const Object = struct {
             const global = llvm_function.ptrConst(&o.builder).global.ptr(&o.builder);
             global.type = try o.lowerType(fn_ty, .in_memory);
             global.addr_space = toLlvmAddressSpace(nav.resolved.?.@"addrspace", target);
-            global.linkage = if (o.builder.strip) .private else .internal;
+            global.linkage = linkage;
             global.visibility = .default;
             global.dll_storage_class = .default;
             global.unnamed_addr = .unnamed_addr;
@@ -1315,11 +1317,23 @@ pub const Object = struct {
             return;
         };
 
+        const linkage: Builder.Linkage = linkage: {
+            if (opt_extern) |@"extern"| {
+                switch (@"extern".linkage) {
+                    .internal => {},
+                    .strong => break :linkage .external,
+                    .weak => break :linkage .extern_weak,
+                    .link_once => unreachable,
+                }
+            }
+            break :linkage if (o.builder.strip and !workaroundPrivateSymbolBugs(zcu.getTarget(), &resolved)) .private else .internal;
+        };
+
         const gop = try o.nav_map.getOrPut(gpa, nav_id);
         if (!gop.found_existing) {
             errdefer assert(o.nav_map.remove(nav_id));
             // First time lowering this NAV! Create a fresh global.
-            const llvm_name = try o.builder.strtabStringNoLlvmIntrinsic(nav.fqn.toSlice(ip));
+            const llvm_name = try o.builder.strtabStringNoLlvmIntrinsic(nav.fqn.toSlice(ip), linkage);
             gop.value_ptr.* = try o.builder.addGlobal(llvm_name, .{
                 .type = .void, // placeholder; populated below
                 .kind = .{ .alias = .none }, // placeholder; populated below
@@ -1355,19 +1369,13 @@ pub const Object = struct {
                 true => .dllimport,
                 false => .default,
             };
-            llvm_global.ptr(&o.builder).linkage = switch (@"extern".linkage) {
-                .internal => if (o.builder.strip and !workaroundPrivateSymbolBugs(zcu.getTarget(), &resolved)) .private else .internal,
-                .strong => .external,
-                .weak => .extern_weak,
-                .link_once => unreachable,
-            };
             llvm_global.ptr(&o.builder).visibility = .fromSymbolVisibility(@"extern".visibility);
         } else {
-            llvm_global.ptr(&o.builder).linkage = if (o.builder.strip and !workaroundPrivateSymbolBugs(zcu.getTarget(), &resolved)) .private else .internal;
             llvm_global.ptr(&o.builder).visibility = .default;
             llvm_global.ptr(&o.builder).dll_storage_class = .default;
             llvm_global.ptr(&o.builder).unnamed_addr = .unnamed_addr;
         }
+        llvm_global.ptr(&o.builder).linkage = linkage;
 
         const llvm_section: Builder.String = if (resolved.@"linksection".toSlice(ip)) |section| s: {
             break :s try o.builder.string(section);

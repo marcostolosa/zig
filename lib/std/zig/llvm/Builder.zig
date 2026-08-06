@@ -93,6 +93,7 @@ pub const DataLayout = struct {
     float_specs: PrimitiveSpec.Map,
     vector_specs: PrimitiveSpec.Map,
     pointer_specs: PointerSpec.Map,
+    mangling: Mangling,
     string_repr: String,
 
     const PrimitiveSpec = packed struct(u32) {
@@ -133,6 +134,17 @@ pub const DataLayout = struct {
         const NullPtrRepr = enum(u1) { all_zeros, all_ones };
 
         const Map = std.array_hash_map.Auto(AddrSpace, PointerSpec);
+    };
+
+    const Mangling = enum {
+        none,
+        elf,
+        goff,
+        mips,
+        macho,
+        windows_x86_coff,
+        windows_coff,
+        xcoff,
     };
 
     pub fn stringForTarget(target: *const std.Target) []const u8 {
@@ -340,6 +352,7 @@ pub const DataLayout = struct {
         });
 
         var endian: ?std.lang.Endian = null;
+        var mangling: Mangling = .none;
         var spec_it = std.mem.splitScalar(u8, string_repr.slice(builder).?, '-');
         while (spec_it.next()) |spec| switch (spec[0]) {
             else => {},
@@ -441,6 +454,21 @@ pub const DataLayout = struct {
                         _ = std.fmt.parseInt(PrimitiveSpec.BitWidth, native_bit_width, 10) catch unreachable;
                     }
                 }
+            },
+            'm' => {
+                assert(spec.len == 3 and spec[1] == ':');
+                assert(mangling == .none);
+
+                mangling = switch (spec[2]) {
+                    'e' => .elf,
+                    'l' => .goff,
+                    'm' => .mips,
+                    'o' => .macho,
+                    'x' => .windows_x86_coff,
+                    'w' => .windows_coff,
+                    'a' => .xcoff,
+                    else => unreachable,
+                };
             },
         };
 
@@ -2924,11 +2952,17 @@ pub const StrtabString = enum(u32) {
     };
 };
 
-pub fn strtabStringNoLlvmIntrinsic(self: *Builder, bytes: []const u8) Allocator.Error!StrtabString {
-    return if (std.mem.startsWith(u8, bytes, "llvm."))
-        self.strtabStringFmt("\x01{s}", .{bytes})
-    else
-        self.strtabString(bytes);
+pub fn strtabStringNoLlvmIntrinsic(self: *Builder, bytes: []const u8, private: bool) Allocator.Error!StrtabString {
+    _ = private;
+    // TODO: better way to detect this
+    return if (std.mem.startsWith(u8, bytes, "llvm.")) {
+        // elf: private: .Lname else name
+        // goff: private: @name else name
+        // mips: private: $name else name
+        // macho: private: l_name else _name
+        // windows: TODO
+        // xcoff: private: L..name else name
+    } else self.strtabString(bytes);
 }
 
 pub fn strtabString(self: *Builder, bytes: []const u8) Allocator.Error!StrtabString {

@@ -103,12 +103,40 @@ pub const Message = struct {
     pub const Handshake = extern struct {
         /// See `build_system_version`.
         version: u32,
+        base_paths: BasePaths,
         flags: Flags,
 
         pub const Flags = packed struct(u32) {
             file_system_watch_supported: bool,
             _: u31 = 0,
         };
+
+        /// Trailing:
+        /// * global_cache:    [global_cache_len]u8,
+        /// * local_cache:     [local_cache_len]u8,
+        /// * zig_lib:         [zig_lib_len]u8,
+        /// * build_root:      [build_root_len]u8,
+        /// * install_prefix:  [install_prefix_len]u8,
+        /// * install_lib:     [install_lib_len]u8,
+        /// * install_bin:     [install_bin_len]u8,
+        /// * install_include: [install_include_len]u8,
+        pub const BasePaths = extern struct {
+            global_cache_len: u32,
+            local_cache_len: u32,
+            zig_lib_len: u32,
+            build_root_len: u32,
+            install_prefix_len: u32,
+            install_lib_len: u32,
+            install_bin_len: u32,
+            install_include_len: u32,
+        };
+
+        comptime {
+            // exclude `zig_exe` and `cwd`
+            const expected_base_path_count = @typeInfo(std.Build.Configuration.LazyPath.Relative.Base).@"enum".field_names.len - 2;
+            const protocol_base_path_count = @typeInfo(BasePaths).@"struct".field_names.len;
+            assert(expected_base_path_count == protocol_base_path_count);
+        }
     };
 
     /// Trailing:

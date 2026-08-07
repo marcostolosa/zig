@@ -4401,7 +4401,7 @@ fn dirCreateFilePosix(
             }
         };
 
-        fl_flags |= @as(usize, 1 << @bitOffsetOf(posix.O, "NONBLOCK"));
+        fl_flags &= ~@as(usize, 1 << @bitOffsetOf(posix.O, "NONBLOCK"));
 
         const syscall: Syscall = try .start();
         while (true) {
@@ -4997,7 +4997,7 @@ fn dirOpenFilePosix(
             }
         };
 
-        fl_flags |= @as(usize, 1 << @bitOffsetOf(posix.O, "NONBLOCK"));
+        fl_flags &= ~@as(usize, 1 << @bitOffsetOf(posix.O, "NONBLOCK"));
 
         const syscall: Syscall = try .start();
         while (true) {

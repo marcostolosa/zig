@@ -417,12 +417,18 @@ pub fn Custom(
             self.pointer_stability.lock();
             defer self.pointer_stability.unlock();
 
-            try self.entries.ensureTotalCapacity(gpa, new_capacity);
-            if (new_capacity <= linear_scan_max) return;
-            if (self.index_header) |header| if (new_capacity <= header.capacity()) return;
+            if (new_capacity <= linear_scan_max) {
+                return self.entries.ensureTotalCapacity(gpa, new_capacity);
+            }
+            if (self.index_header) |header| if (new_capacity <= header.capacity()) {
+                return self.entries.ensureTotalCapacity(gpa, new_capacity);
+            }
 
             const new_bit_index = try IndexHeader.findBitIndex(new_capacity);
             const new_header = try IndexHeader.alloc(gpa, new_bit_index);
+            errdefer new_header.free(gpa);
+
+            try self.entries.ensureTotalCapacity(gpa, new_capacity);
 
             if (self.index_header) |old_header| old_header.free(gpa);
             self.insertAllEntriesIntoNewHeader(if (store_hash) {} else ctx, new_header);

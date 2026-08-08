@@ -14015,6 +14015,21 @@ fn zirDiv(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.Ins
     const maybe_lhs_val = sema.resolveValue(casted_lhs);
     const maybe_rhs_val = sema.resolveValue(casted_rhs);
 
+    const rhs_scalar_ty = rhs_ty.scalarType(zcu);
+
+    const lhs_maybe_negative = a: {
+        if (lhs_scalar_ty.isUnsignedInt(zcu)) break :a false;
+        const lhs_val = maybe_lhs_val orelse break :a true;
+        if (lhs_val.compareAllWithZero(.gte, zcu)) break :a false;
+        break :a true;
+    };
+    const rhs_maybe_negative = a: {
+        if (rhs_scalar_ty.isUnsignedInt(zcu)) break :a false;
+        const rhs_val = maybe_rhs_val orelse break :a true;
+        if (rhs_val.compareAllWithZero(.gte, zcu)) break :a false;
+        break :a true;
+    };
+
     if ((lhs_ty.zigTypeTag(zcu) == .comptime_float and rhs_ty.zigTypeTag(zcu) == .comptime_int) or
         (lhs_ty.zigTypeTag(zcu) == .comptime_int and rhs_ty.zigTypeTag(zcu) == .comptime_float))
     {
@@ -14033,9 +14048,6 @@ fn zirDiv(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.Ins
         }
     }
 
-    // TODO: emit compile error when .div is used on integers and there would be an
-    // ambiguous result between div_floor and div_trunc.
-
     // The rules here are like those in `analyzeArithmetic`:
     //
     // * If both operands are comptime-known, call the corresponding function in `arith`.
@@ -14052,6 +14064,17 @@ fn zirDiv(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.Ins
 
     if (maybe_lhs_val) |lhs_val| {
         if (maybe_rhs_val) |rhs_val| {
+            if (is_int and lhs_val.compareAllWithZero(.lt, zcu) != rhs_val.compareAllWithZero(.lt, zcu)) {
+                const rem = try arith.modRem(sema, block, resolved_type, lhs_val, rhs_val, lhs_src, rhs_src, .rem);
+                if (!rem.compareAllWithZero(.eq, zcu)) {
+                    return sema.fail(
+                        block,
+                        src,
+                        "division with '{f}' and '{f}': signed integers must use @divTrunc, @divFloor, @divCeil, or @divExact",
+                        .{ lhs_ty.fmt(pt), rhs_ty.fmt(pt) },
+                    );
+                }
+            }
             return .fromValue(try arith.div(sema, block, resolved_type, lhs_val, rhs_val, src, lhs_src, rhs_src, .div));
         }
         if (allow_div_zero) {
@@ -14074,7 +14097,7 @@ fn zirDiv(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.Ins
     }
 
     const air_tag: Air.Inst.Tag = if (is_int) blk: {
-        if (lhs_ty.isSignedInt(zcu) or rhs_ty.isSignedInt(zcu)) {
+        if (lhs_maybe_negative or rhs_maybe_negative) {
             return sema.fail(
                 block,
                 src,

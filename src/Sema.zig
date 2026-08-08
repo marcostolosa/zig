@@ -13791,13 +13791,15 @@ fn getArrayCatInfo(sema: *Sema, block: *Block, src: LazySrcLoc, operand: Air.Ins
             switch (ptr_info.flags.size) {
                 .slice => {
                     const val = try sema.resolveConstDefinedValue(block, src, operand, .{ .simple = .slice_cat_operand });
+                    const slice_len = val.sliceLen(zcu);
+                    if (slice_len.isUndef(zcu)) return sema.failWithUndefSliceLen(block, src);
                     return .{
                         .elem_type = .fromInterned(ptr_info.child),
                         .sentinel = switch (ptr_info.sentinel) {
                             .none => null,
                             else => Value.fromInterned(ptr_info.sentinel),
                         },
-                        .len = val.sliceLen(zcu),
+                        .len = slice_len.toUnsignedInt(zcu),
                     };
                 },
                 .one => {
@@ -21794,7 +21796,7 @@ fn ptrCastFull(
                     .pointer => operand_val,
                     else => unreachable,
                 };
-                const slice_len: Value = .fromInterned(zcu.intern_pool.sliceLen(slice_val.toIntern()));
+                const slice_len = slice_val.sliceLen(zcu);
                 if (slice_len.isUndef(zcu)) break :len .undef;
                 break :src .{ .fromInterned(src_info.child), slice_len.toUnsignedInt(zcu) };
             },
@@ -27808,7 +27810,9 @@ fn elemValSlice(
     const maybe_index_val = try sema.resolveDefinedValue(block, elem_index_src, elem_index);
 
     if (maybe_slice_val) |slice_val| {
-        const slice_len = slice_val.sliceLen(zcu);
+        const slice_len_val = slice_val.sliceLen(zcu);
+        if (slice_len_val.isUndef(zcu)) return sema.failWithUndefSliceLen(block, slice_src);
+        const slice_len = slice_len_val.toUnsignedInt(zcu);
         const slice_len_s = slice_len + @intFromBool(slice_sent);
         if (slice_len_s == 0) {
             return sema.fail(block, slice_src, "indexing into empty slice is not allowed", .{});
@@ -27831,7 +27835,7 @@ fn elemValSlice(
 
     if (oob_safety and block.wantSafety()) {
         const len_inst = if (maybe_slice_val) |slice_val|
-            try pt.intRef(.usize, slice_val.sliceLen(zcu))
+            try pt.intRef(.usize, slice_val.sliceLen(zcu).toUnsignedInt(zcu))
         else
             try block.addTyOp(.slice_len, .usize, slice);
         const cmp_op: Air.Inst.Tag = if (slice_sent) .cmp_lte else .cmp_lt;
@@ -27872,7 +27876,9 @@ fn elemPtrSlice(
         if (slice_val.isUndef(zcu)) {
             return pt.undefRef(elem_ptr_ty);
         }
-        const slice_len = slice_val.sliceLen(zcu);
+        const slice_len_val = slice_val.sliceLen(zcu);
+        if (slice_len_val.isUndef(zcu)) return sema.failWithUndefSliceLen(block, slice_src);
+        const slice_len = slice_len_val.toUnsignedInt(zcu);
         const slice_len_s = slice_len + @intFromBool(slice_sent);
         if (slice_len_s == 0) {
             return sema.fail(block, slice_src, "cannot index into empty slice", .{});
@@ -27893,7 +27899,7 @@ fn elemPtrSlice(
         const len_inst = len: {
             if (maybe_undef_slice_val) |slice_val|
                 if (!slice_val.isUndef(zcu))
-                    break :len try pt.intRef(.usize, slice_val.sliceLen(zcu));
+                    break :len try pt.intRef(.usize, slice_val.sliceLen(zcu).toUnsignedInt(zcu));
             break :len try block.addTyOp(.slice_len, .usize, slice);
         };
         const cmp_op: Air.Inst.Tag = if (slice_sent) .cmp_lte else .cmp_lt;
@@ -31140,7 +31146,9 @@ fn analyzeSliceLen(
         if (slice_val.isUndef(zcu)) {
             return .undef_usize;
         }
-        return pt.intRef(.usize, slice_val.sliceLen(zcu));
+        const slice_len = slice_val.sliceLen(zcu);
+        if (slice_len.isUndef(zcu)) return sema.failWithUndefSliceLen(block, src);
+        return pt.intRef(.usize, slice_len.toUnsignedInt(zcu));
     }
     try sema.requireRuntimeBlock(block, src, null);
     return block.addTyOp(.slice_len, .usize, slice_inst);
@@ -31581,7 +31589,9 @@ fn analyzeSlice(
                             return sema.fail(block, src, "slice of undefined", .{});
                         }
                         const has_sentinel = slice_ty.sentinel(zcu) != null;
-                        const slice_len = slice_val.sliceLen(zcu);
+                        const slice_len_val = slice_val.sliceLen(zcu);
+                        if (slice_len_val.isUndef(zcu)) return sema.failWithUndefSliceLen(block, src);
+                        const slice_len = slice_len_val.toUnsignedInt(zcu);
                         const len_plus_sent = slice_len + @intFromBool(has_sentinel);
                         const slice_len_val_with_sentinel = try pt.intValue(.usize, len_plus_sent);
                         if (!(try sema.compareAll(end_val, .lte, slice_len_val_with_sentinel, .usize))) {
@@ -31596,7 +31606,7 @@ fn analyzeSlice(
                                 "end index {f} out of bounds for slice of length {d}{s}",
                                 .{
                                     end_val.fmtValueSema(pt, sema),
-                                    slice_val.sliceLen(zcu),
+                                    slice_len,
                                     sentinel_label,
                                 },
                             );
@@ -31605,7 +31615,6 @@ fn analyzeSlice(
                         // If the slice has a sentinel, we consider end_is_len
                         // is only true if it equals the length WITHOUT the
                         // sentinel, so we don't add a sentinel type.
-                        const slice_len_val = try pt.intValue(.usize, slice_len);
                         if (end_val.eql(slice_len_val, .usize, zcu)) {
                             end_is_len = true;
                         }
@@ -31859,7 +31868,7 @@ fn analyzeSlice(
             if (try sema.resolveDefinedValue(block, src, ptr_or_slice)) |slice_val| {
                 // we don't need to add one for sentinels because the
                 // underlying value data includes the sentinel
-                break :blk try pt.intRef(.usize, slice_val.sliceLen(zcu));
+                break :blk try pt.intRef(.usize, slice_val.sliceLen(zcu).toUnsignedInt(zcu));
             }
 
             const slice_len_inst = try block.addTyOp(.slice_len, .usize, ptr_or_slice);

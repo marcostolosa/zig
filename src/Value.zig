@@ -818,8 +818,8 @@ pub fn pointerNav(val: Value, zcu: *const Zcu) ?InternPool.Nav.Index {
 pub const slice_ptr_index = 0;
 pub const slice_len_index = 1;
 
-pub fn sliceLen(val: Value, zcu: *Zcu) u64 {
-    return Value.fromInterned(zcu.intern_pool.sliceLen(val.toIntern())).toUnsignedInt(zcu);
+pub fn sliceLen(val: Value, zcu: *Zcu) Value {
+    return Value.fromInterned(zcu.intern_pool.sliceLen(val.toIntern()));
 }
 pub fn slicePtr(val: Value, zcu: *Zcu) Value {
     return Value.fromInterned(zcu.intern_pool.slicePtr(val.toIntern()));

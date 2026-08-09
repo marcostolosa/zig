@@ -1805,12 +1805,11 @@ pub const Condition = struct {
     fn deregister(cond: *Condition, io: Io) void {
         var prev_state = cond.state.load(.monotonic);
         while (true) {
-            assert(prev_state.waiters > 0); // underflow caused by illegal state
             const new_signals = @min(prev_state.signals, prev_state.waiters - 1);
             prev_state = cond.state.cmpxchgWeak(prev_state, .{
                 .waiters = prev_state.waiters - 1,
                 .signals = new_signals,
-            }, .acquire, .monotonic) orelse {
+            }, .monotonic, .monotonic) orelse {
                 if (prev_state.signals > 0 and prev_state.signals < prev_state.waiters) {
                     // We kept a signal we are not consuming; wake a remaining waiter for it.
                     _ = cond.epoch.fetchAdd(1, .release);

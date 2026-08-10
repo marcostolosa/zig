@@ -294,17 +294,18 @@ pub fn build(b: *std.Build) !void {
 
         const version_string = b.fmt("{d}.{d}.{d}", .{ zig_version.major, zig_version.minor, zig_version.patch });
 
-        var code: u8 = undefined;
-        const git_describe_untrimmed = b.runAllowFail(&[_][]const u8{
+        const git_describe_result = b.runFallible(&[_][]const u8{
             "git",
             "-C", b.fmt("{f}", .{b.root}), // affects the --git-dir argument
             "--git-dir", ".git", // affected by the -C argument
             "describe", "--match",    "*.*.*", //
             "--tags",   "--abbrev=9",
-        }, &code, .ignore) catch {
-            break :v version_string;
+        }, .{ .stderr_behavior = .ignore });
+
+        const git_describe = switch (git_describe_result) {
+            .success => |v| mem.trim(u8, v, " \n\r"),
+            else => break :v version_string,
         };
-        const git_describe = mem.trim(u8, git_describe_untrimmed, " \n\r");
 
         switch (mem.countScalar(u8, git_describe, '-')) {
             0 => {

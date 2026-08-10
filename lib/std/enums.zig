@@ -1264,9 +1264,12 @@ test "EnumSet non-exhaustive" {
 }
 
 pub fn EnumIndexer(comptime E: type) type {
-    // n log n for `std.mem.sortUnstable` call below.
+    // O(n log n) is the worst case for `std.mem.sortUnstable` call below.
+    // However the number of branches sometimes exceeded n log n (issue #31316),
+    // so just to be sure, branching limit is set to O(n^2) (the worst case
+    // of insertion sort, which is part of `std.mem.sortUnstable`).
     const fields_len = @typeInfo(E).@"enum".field_names.len;
-    @setEvalBranchQuota(3 * fields_len * std.math.log2(@max(fields_len, 1)) + eval_branch_quota_cushion);
+    @setEvalBranchQuota(3 * fields_len * fields_len + eval_branch_quota_cushion);
 
     if (@typeInfo(E).@"enum".mode == .nonexhaustive) {
         const BackingInt = @typeInfo(E).@"enum".tag_type;
@@ -1492,6 +1495,57 @@ test "EnumIndexer large dense unsorted" {
     try testing.expectEqual(E.f499, Indexer.keyForIndex(0));
     try testing.expectEqual(499, Indexer.indexOf(.f0));
     try testing.expectEqual(0, Indexer.indexOf(.f499));
+}
+
+test "EnumIndexer setEvalBranchQuota" {
+    const E = enum(u32) {
+        f0 = '0',
+        f1 = '1',
+        f2 = '2',
+        f3 = '3',
+        f4 = '4',
+        f5 = '5',
+        f6 = '6',
+        f7 = '7',
+        f8 = '8',
+        f9 = '9',
+        f10 = 10,
+        f11 = 11,
+        f12 = 12,
+        f13 = 13,
+        f14 = 14,
+        f15 = 15,
+        f16 = 16,
+        f17 = 17,
+        f18 = 18,
+        f19 = 19,
+        f20 = 20,
+        f21 = 21,
+        f22 = 22,
+        f23 = 23,
+        f24 = 24,
+        f25 = 25,
+        f26 = 26,
+        f27 = 27,
+        f28 = 28,
+        f29 = 29,
+        f30 = 30,
+        f31 = 31,
+        f32 = 32,
+        f33 = 33,
+        f34 = 34,
+        f35 = 35,
+        f36 = 36,
+        f37 = 37,
+        f38 = 38,
+        f39 = 39,
+    };
+
+    const Indexer = std.enums.EnumIndexer(E);
+    try testing.expectEqual(E.f10, Indexer.keyForIndex(0));
+    try testing.expectEqual(E.f0, Indexer.keyForIndex(30));
+    try testing.expectEqual(30, Indexer.indexOf(.f0));
+    try testing.expectEqual(39, Indexer.indexOf(.f9));
 }
 
 test values {

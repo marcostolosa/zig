@@ -278,14 +278,14 @@ pub fn build(b: *std.Build) !void {
                 else => |e| return e,
             };
             defer git_file.close(io);
-            var line_buffer: ["gitdir: ".len + std.Io.Dir.max_path_bytes + 1]u8 = undefined;
+            var line_buffer: ["gitdir: ".len + Io.Dir.max_path_bytes + 1]u8 = undefined;
             var git_file_reader = git_file.reader(io, &line_buffer);
-            if (std.mem.cutPrefix(u8, std.mem.trimEnd(u8, try git_file_reader.interface.allocRemaining(
+            if (mem.cutPrefix(u8, mem.trimEnd(u8, try git_file_reader.interface.allocRemaining(
                 arena,
-                .limited("gitdir: ".len + std.Io.Dir.max_path_bytes + "\r\n".len),
+                .limited("gitdir: ".len + Io.Dir.max_path_bytes + "\r\n".len),
             ), "\r\n"), "gitdir: ")) |git_dir| {
                 const head_file = b.pathJoin(&.{ git_dir, "logs", "HEAD" });
-                b.dependOnFileContents(if (std.Io.Dir.path.isAbsolute(head_file))
+                b.dependOnFileContents(if (Io.Dir.path.isAbsolute(head_file))
                     b.graph.cwdRelativePath(head_file)
                 else
                     b.path(head_file));
@@ -1062,7 +1062,7 @@ fn addCxxKnownPath(
     const path_padded = run: {
         var args = std.array_list.Managed([]const u8).init(arena);
         try args.append(ctx.cxx_compiler);
-        var it = std.mem.tokenizeAny(u8, ctx.cxx_compiler_arg1, &std.ascii.whitespace);
+        var it = mem.tokenizeAny(u8, ctx.cxx_compiler_arg1, &std.ascii.whitespace);
         while (it.next()) |arg| try args.append(arg);
         try args.append(b.fmt("-print-file-name={s}", .{objname}));
         break :run b.run(args.items);
@@ -1594,10 +1594,10 @@ fn generateLangRef(b: *std.Build) !std.Build.LazyPath {
     var it = dir.iterateAssumeFirstIteration();
     while (it.next(io) catch @panic("failed to read dir")) |entry| {
         if (entry.kind != .file) continue;
-        if (std.mem.startsWith(u8, entry.name, ".")) continue;
-        if (!std.mem.endsWith(u8, entry.name, ".zig")) continue;
+        if (mem.startsWith(u8, entry.name, ".")) continue;
+        if (!mem.endsWith(u8, entry.name, ".zig")) continue;
 
-        const out_basename = b.fmt("{s}.out", .{std.fs.path.stem(entry.name)});
+        const out_basename = b.fmt("{s}.out", .{fs.path.stem(entry.name)});
         const cmd = b.addRunArtifact(doctest_exe);
 
         cmd.addArg("--zig");

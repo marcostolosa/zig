@@ -235,10 +235,9 @@ pub const VTable = struct {
     netListenUnix: *const fn (?*anyopaque, *const net.UnixAddress, net.UnixAddress.ListenOptions) net.UnixAddress.ListenError!net.Socket.Handle,
     netConnectUnix: *const fn (?*anyopaque, *const net.UnixAddress) net.UnixAddress.ConnectError!net.Socket.Handle,
     netSocketCreatePair: *const fn (?*anyopaque, net.Socket.CreatePairOptions) net.Socket.CreatePairError![2]net.Socket,
-    netSend: *const fn (?*anyopaque, net.Socket.Handle, []net.OutgoingMessage, net.SendFlags) struct { ?net.Socket.SendError, usize },
     netWrite: *const fn (?*anyopaque, dest: net.Socket.Handle, header: []const u8, data: []const []const u8, splat: usize) net.Stream.Writer.Error!usize,
     netWriteFile: *const fn (?*anyopaque, net.Socket.Handle, header: []const u8, *Io.File.Reader, Io.Limit) net.Stream.Writer.WriteFileError!usize,
-    netClose: *const fn (?*anyopaque, handle: []const net.Socket.Handle) void,
+    netClose: *const fn (?*anyopaque, sockets: []const net.Socket) void,
     netShutdown: *const fn (?*anyopaque, handle: net.Socket.Handle, how: net.ShutdownHow) net.ShutdownError!void,
     netInterfaceNameResolve: *const fn (?*anyopaque, *const net.Interface.Name) net.Interface.Name.ResolveError!net.Interface,
     netInterfaceName: *const fn (?*anyopaque, net.Interface) net.Interface.NameError!net.Interface.Name,
@@ -252,6 +251,7 @@ pub const Operation = union(enum) {
     /// other systems this tag is unreachable.
     device_io_control: DeviceIoControl,
     net_receive: NetReceive,
+    net_send: NetSend,
     net_read: NetRead,
 
     pub const Tag = @typeInfo(Operation).@"union".tag_type.?;
@@ -378,6 +378,49 @@ pub const Operation = union(enum) {
         pub const Result = struct { ?net.Socket.ReceiveError, usize };
     };
 
+    pub const NetSend = struct {
+        socket_handle: net.Socket.Handle,
+        messages: []net.OutgoingMessage,
+        flags: net.SendFlags,
+
+        pub const Error = error{
+            /// The socket type requires that message be sent atomically, and the
+            /// size of the message to be sent made this impossible. The message
+            /// was not transmitted, or was partially transmitted.
+            MessageOversize,
+            /// The output queue for a network interface was full. This generally indicates that the
+            /// interface has stopped sending, but may be caused by transient congestion. (Normally,
+            /// this does not occur in Linux. Packets are just silently dropped when a device queue
+            /// overflows.)
+            ///
+            /// This is also caused when there is not enough kernel memory available.
+            SystemResources,
+            /// No route to network.
+            NetworkUnreachable,
+            /// Network reached but no route to host.
+            HostUnreachable,
+            /// The local network interface used to reach the destination is offline.
+            NetworkDown,
+            /// The destination address is not listening. Can still occur for
+            /// connectionless messages.
+            ConnectionRefused,
+            /// Operating system or protocol does not support the address family.
+            AddressFamilyUnsupported,
+            /// Another TCP Fast Open is already in progress.
+            FastOpenAlreadyInProgress,
+            /// Network session was unexpectedly closed by recipient.
+            ConnectionResetByPeer,
+            /// Local end has been shut down on a connection-oriented socket, or
+            /// the socket was never connected.
+            SocketUnconnected,
+            /// An attempt was made to send to a network/broadcast address as
+            /// though it was a unicast address.
+            AccessDenied,
+        } || Io.UnexpectedError;
+
+        pub const Result = struct { ?net.Socket.SendError, usize };
+    };
+
     pub const NetRead = struct {
         socket_handle: net.Socket.Handle,
         data: [][]u8,
@@ -467,6 +510,7 @@ pub const OperateTimeoutError = Cancelable || Timeout.Error || ConcurrentError;
 
 /// Performs one `Operation` with provided `timeout`.
 pub fn operateTimeout(io: Io, operation: Operation, timeout: Timeout) OperateTimeoutError!Operation.Result {
+    if (timeout == .none) return io.vtable.operate(io.userdata, operation);
     var storage: [1]Operation.Storage = undefined;
     var batch: Batch = .init(&storage);
     batch.addAt(0, operation);
@@ -778,10 +822,10 @@ pub const Clock = enum {
     /// * On Linux, corresponds `CLOCK_BOOTTIME`.
     /// * On macOS, corresponds to `CLOCK_MONOTONIC_RAW`.
     boot,
-    /// Tracks the amount of CPU in user or kernel mode used by the calling
+    /// Tracks the amount of CPU time in user or kernel mode used by the calling
     /// process.
     cpu_process,
-    /// Tracks the amount of CPU in user or kernel mode used by the calling
+    /// Tracks the amount of CPU time in user or kernel mode used by the calling
     /// thread.
     cpu_thread,
 
@@ -980,6 +1024,10 @@ pub const Timestamp = struct {
         const now_ts = clock.now(io);
         return t.durationTo(now_ts);
     }
+
+    pub fn compare(lhs: Timestamp, op: math.CompareOperator, rhs: Timestamp) bool {
+        return math.compare(lhs.nanoseconds, op, rhs.nanoseconds);
+    }
 };
 
 pub const Duration = struct {
@@ -1147,6 +1195,7 @@ pub const Duration = struct {
 
 /// Declares under what conditions an operation should return `error.Timeout`.
 pub const Timeout = union(enum) {
+    /// `.none` will wait forever
     none,
     duration: Clock.Duration,
     deadline: Clock.Timestamp,
@@ -2525,7 +2574,7 @@ pub fn lockStderr(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) Cancelabl
 
 /// Same as `lockStderr` but non-blocking.
 pub fn tryLockStderr(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) Cancelable!?LockedStderr {
-    const ls = (try io.vtable.tryLockStderr(io.userdata, buffer, terminal_mode)) orelse return null;
+    const ls = (try io.vtable.tryLockStderr(io.userdata, terminal_mode)) orelse return null;
     try ls.clear(buffer);
     return ls;
 }
@@ -2706,7 +2755,6 @@ pub const failing: std.Io = .{
         .netListenUnix = failingNetListenUnix,
         .netConnectUnix = failingNetConnectUnix,
         .netSocketCreatePair = failingNetSocketCreatePair,
-        .netSend = failingNetSend,
         .netWrite = failingNetWrite,
         .netWriteFile = failingNetWriteFile,
         .netClose = unreachableNetClose,
@@ -2854,6 +2902,7 @@ pub fn failingOperate(userdata: ?*anyopaque, operation: Operation) Cancelable!Op
         .file_write_streaming => .{ .file_write_streaming = error.InputOutput },
         .device_io_control => unreachable,
         .net_receive => .{ .net_receive = .{ error.NetworkDown, 0 } },
+        .net_send => .{ .net_send = .{ error.NetworkDown, 0 } },
         .net_read => .{ .net_read = error.NetworkDown },
     };
 }
@@ -3450,14 +3499,6 @@ pub fn failingNetSocketCreatePair(userdata: ?*anyopaque, options: net.Socket.Cre
     return error.OperationUnsupported;
 }
 
-pub fn failingNetSend(userdata: ?*anyopaque, handle: net.Socket.Handle, messages: []net.OutgoingMessage, flags: net.SendFlags) struct { ?net.Socket.SendError, usize } {
-    _ = userdata;
-    _ = handle;
-    _ = messages;
-    _ = flags;
-    return .{ error.NetworkDown, 0 };
-}
-
 pub fn failingNetWrite(userdata: ?*anyopaque, dest: net.Socket.Handle, header: []const u8, data: []const []const u8, splat: usize) net.Stream.Writer.Error!usize {
     _ = userdata;
     _ = dest;
@@ -3476,9 +3517,9 @@ pub fn failingNetWriteFile(userdata: ?*anyopaque, handle: net.Socket.Handle, hea
     return error.NetworkDown;
 }
 
-pub fn unreachableNetClose(userdata: ?*anyopaque, handle: []const net.Socket.Handle) void {
+pub fn unreachableNetClose(userdata: ?*anyopaque, sockets: []const net.Socket) void {
     _ = userdata;
-    _ = handle;
+    _ = sockets;
     unreachable;
 }
 

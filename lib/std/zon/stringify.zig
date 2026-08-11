@@ -700,11 +700,11 @@ test "std.zon stringify strings" {
     defer aw.deinit();
 
     // Minimal case
-    try s.string("abc⚡\n", .{ .escape_non_ascii = true });
-    try std.testing.expectEqualStrings("\"abc\\u{26a1}\\n\"", aw.written());
+    try s.string("abc⚡ÿ\n", .{ .escape_non_ascii = true });
+    try std.testing.expectEqualStrings("\"abc\\u{26a1}\\u{ff}\\n\"", aw.written());
     aw.clearRetainingCapacity();
 
-    try s.tuple("abc⚡\n", .{});
+    try s.tuple("abc⚡ÿ\n", .{});
     try std.testing.expectEqualStrings(
         \\.{
         \\    97,
@@ -713,16 +713,18 @@ test "std.zon stringify strings" {
         \\    226,
         \\    154,
         \\    161,
+        \\    195,
+        \\    191,
         \\    10,
         \\}
     , aw.written());
     aw.clearRetainingCapacity();
 
-    try s.value("abc⚡\n", .{ .escape_non_ascii = false });
-    try std.testing.expectEqualStrings("\"abc⚡\\n\"", aw.written());
+    try s.value("abc⚡ÿ\n", .{ .escape_non_ascii = false });
+    try std.testing.expectEqualStrings("\"abc⚡ÿ\\n\"", aw.written());
     aw.clearRetainingCapacity();
 
-    try s.value("abc⚡\n", .{ .emit_strings_as_containers = true });
+    try s.value("abc⚡ÿ\n", .{ .emit_strings_as_containers = true });
     try std.testing.expectEqualStrings(
         \\.{
         \\    97,
@@ -731,6 +733,8 @@ test "std.zon stringify strings" {
         \\    226,
         \\    154,
         \\    161,
+        \\    195,
+        \\    191,
         \\    10,
         \\}
     , aw.written());

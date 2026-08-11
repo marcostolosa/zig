@@ -388,17 +388,11 @@ fn writeCodepoint(
         // Quotes need escaping if they conflict with the in-use quote character
         '\'' => if (options.quote_style == .single) try self.writer.writeAll("\\'") else try self.writer.writeByte('\''),
         '\"' => if (options.quote_style == .double) try self.writer.writeAll("\\\"") else try self.writer.writeByte('"'),
-        // Non-ASCII but still one byte
-        0x80...0xFF => if (options.escape_non_ascii) {
-            try self.writer.print("\\x{x:0>2}", .{codepoint});
-        } else {
-            try self.writer.writeByte(@intCast(codepoint));
-        },
 
         // Surrogates can only be written with an escape
         0xD800...0xDFFF => try self.writer.print("\\u{{{x}}}", .{codepoint}),
         // Other valid codepoints
-        0x100...0xD7FF, 0xE000...0x10FFFF => if (options.escape_non_ascii) {
+        0x80...0xD7FF, 0xE000...0x10FFFF => if (options.escape_non_ascii) {
             try self.writer.print("\\u{{{x}}}", .{codepoint});
         } else {
             var buf: [7]u8 = undefined;

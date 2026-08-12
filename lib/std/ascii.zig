@@ -10,8 +10,19 @@
 
 const std = @import("std");
 
+/// Lowercase letters for general use.
+///
+/// See also: `isLower`
 pub const lowercase = "abcdefghijklmnopqrstuvwxyz";
+
+/// Uppercase letters for general use.
+///
+/// See also: `isUpper`
 pub const uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+/// Letters of both lower and upper cases.
+///
+/// See also: `isAlphabetic`
 pub const letters = lowercase ++ uppercase;
 
 /// The C0 control codes of the ASCII encoding.
@@ -123,7 +134,7 @@ pub fn isDigit(c: u8) bool {
     };
 }
 
-/// Returns whether the character is a lowercase letter.
+/// Returns whether this character is included in `lowercase`.
 pub fn isLower(c: u8) bool {
     return switch (c) {
         'a'...'z' => true,
@@ -170,7 +181,7 @@ test whitespace {
     }
 }
 
-/// Returns whether the character is an uppercase letter.
+/// Returns whether this character is included in `uppercase`.
 pub fn isUpper(c: u8) bool {
     return switch (c) {
         'A'...'Z' => true,
@@ -360,6 +371,7 @@ test eqlIgnoreCase {
     try std.testing.expect(!eqlIgnoreCase("hElLo!", "helro!"));
 }
 
+/// Compares strings case-insensitively and returns if whether the `haystack` starts with the `needle`.
 pub fn startsWithIgnoreCase(haystack: []const u8, needle: []const u8) bool {
     return if (needle.len > haystack.len) false else eqlIgnoreCase(haystack[0..needle.len], needle);
 }
@@ -369,6 +381,7 @@ test startsWithIgnoreCase {
     try std.testing.expect(!startsWithIgnoreCase("Needle in hAyStAcK", "haystack"));
 }
 
+/// Compares strings case-insensitively and returns if whether the `haystack` ends with the `needle`.
 pub fn endsWithIgnoreCase(haystack: []const u8, needle: []const u8) bool {
     return if (needle.len > haystack.len) false else eqlIgnoreCase(haystack[haystack.len - needle.len ..], needle);
 }

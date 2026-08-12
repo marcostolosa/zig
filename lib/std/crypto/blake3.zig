@@ -709,6 +709,42 @@ const ChunkBatch = struct {
     }
 };
 
+const ChunkBatchStreaming = struct {
+    input: []const u8,
+    start_chunk: usize,
+    end_chunk: usize,
+    chunk_counter: u64,
+    cvs: [][8]u32,
+    key: [8]u32,
+    flags: Flags,
+
+    fn process(ctx: ChunkBatchStreaming) void {
+        var cv_buffer: [max_simd_degree * Blake3.digest_length]u8 = undefined;
+        var chunk_idx = ctx.start_chunk;
+
+        while (chunk_idx < ctx.end_chunk) {
+            const batch_size: usize = @min(ctx.end_chunk - chunk_idx, max_simd_degree);
+            const offset = chunk_idx * chunk_length;
+            const batch_len = batch_size * chunk_length;
+
+            const num_cvs = compressChunksParallel(
+                ctx.input[offset..][0..batch_len],
+                ctx.key,
+                ctx.chunk_counter + @as(u64, @intCast(chunk_idx)),
+                ctx.flags,
+                &cv_buffer,
+            );
+
+            for (0..num_cvs) |i| {
+                const cv_bytes = cv_buffer[i * Blake3.digest_length ..][0..Blake3.digest_length];
+                ctx.cvs[chunk_idx + i] = loadCvWords(cv_bytes.*);
+            }
+
+            chunk_idx += batch_size;
+        }
+    }
+};
+
 const ParentBatchContext = struct {
     input_cvs: [][8]u32,
     output_cvs: [][8]u32,
@@ -954,7 +990,15 @@ pub const Blake3 = struct {
     pub const digest_length = 32;
     pub const key_length = 32;
 
-    pub const Options = struct { key: ?[key_length]u8 = null };
+    pub const Options = struct {
+        key: ?[key_length]u8 = null,
+        /// batch size controls how much is read in the hashParallelStreaming function
+        /// this enable to trade memory usage, for reduced number of syscall
+        batch_size: usize = default_batch_size,
+    };
+
+    pub const default_batch_size: usize = 4 * 1024 * 1024;
+
     pub const KdfOptions = struct {};
 
     key: [8]u32,
@@ -1076,6 +1120,102 @@ pub const Blake3 = struct {
         var hasher = init_internal(key_words, flags);
         for (current_level, 0..) |cv, i| hasher.pushCv(cv, i);
         hasher.final(out);
+    }
+
+    pub fn hashParallelStreaming(
+        reader: *Io.Reader,
+        input_len: u64,
+        out: []u8,
+        options: Options,
+        allocator: Allocator,
+        io: Io,
+    ) (Io.Reader.Error || Allocator.Error || Io.Cancelable || error{InvalidBatchSize})!void {
+        if (options.batch_size == 0 or options.batch_size % chunk_length != 0) {
+            return error.InvalidBatchSize;
+        }
+
+        var hasher: Blake3 = .init(options);
+
+        if (input_len < parallel_threshold) {
+            var read_buffer: [4096]u8 = undefined;
+            var remaining_len: usize = @intCast(input_len);
+
+            while (remaining_len > 0) {
+                const read_len = @min(remaining_len, read_buffer.len);
+                try reader.readSliceAll(read_buffer[0..read_len]);
+                hasher.update(read_buffer[0..read_len]);
+                remaining_len -= read_len;
+            }
+
+            hasher.final(out);
+            return;
+        }
+
+        const trailing_len: u64 = input_len % chunk_length;
+        const last_chunk_len: u64 = if (trailing_len != 0) trailing_len else chunk_length;
+        const batchable_input_len = input_len - last_chunk_len;
+
+        // avoids overallocating memory in case input is smaller than bathc size.
+        const batch_buffer_capacity: usize = @intCast(@min(batchable_input_len, options.batch_size));
+        const batch_buffer = try allocator.alloc(u8, batch_buffer_capacity);
+        defer allocator.free(batch_buffer);
+
+        const cvs = try allocator.alloc([8]u32, batch_buffer_capacity / chunk_length);
+        defer allocator.free(cvs);
+
+        const thread_count = Thread.getCpuCount() catch 1;
+        var batchable_bytes_processed: u64 = 0;
+
+        while (batchable_bytes_processed < batchable_input_len) {
+            const bytes_to_batch: usize = @intCast(
+                @min(batchable_input_len - batchable_bytes_processed, batch_buffer_capacity),
+            );
+            try reader.readSliceAll(batch_buffer[0..bytes_to_batch]);
+
+            const chunk_count = bytes_to_batch / chunk_length;
+            const chunks_per_thread = (chunk_count + thread_count - 1) / thread_count;
+            const chunk_counter = batchable_bytes_processed / chunk_length;
+
+            var group: Io.Group = .init;
+            defer group.cancel(io);
+
+            for (0..thread_count) |thread_id| {
+                const start_chunk = chunks_per_thread * thread_id;
+
+                if (start_chunk >= chunk_count) {
+                    break;
+                }
+
+                const cbs: ChunkBatchStreaming = .{
+                    .input = batch_buffer[0..bytes_to_batch],
+                    .start_chunk = start_chunk,
+                    .end_chunk = @min(start_chunk + chunks_per_thread, chunk_count),
+                    .chunk_counter = chunk_counter,
+                    .cvs = cvs[0..chunk_count],
+                    .key = hasher.key,
+                    .flags = hasher.chunk.flags,
+                };
+
+                group.async(io, ChunkBatchStreaming.process, .{cbs});
+            }
+
+            try group.await(io);
+
+            for (cvs[0..chunk_count], 0..) |cv, i| {
+                hasher.pushCv(cv, chunk_counter + @as(u64, @intCast(i)));
+            }
+
+            batchable_bytes_processed = batchable_bytes_processed + @as(u64, @intCast(bytes_to_batch));
+        }
+
+        var trailing_buffer: [chunk_length]u8 = undefined;
+        try reader.readSliceAll(trailing_buffer[0..@as(usize, @intCast(last_chunk_len))]);
+        hasher.chunk.chunk_counter = batchable_input_len / chunk_length;
+        hasher.chunk.update(trailing_buffer[0..@as(usize, @intCast(last_chunk_len))]);
+        hasher.mergeCvStack(hasher.chunk.chunk_counter);
+        hasher.final(out);
+
+        return;
     }
 
     fn init_internal(key: [8]u32, flags: Flags) Blake3 {
@@ -1486,4 +1626,100 @@ test "BLAKE3 parallel with partial trailing chunk" {
 
         try std.testing.expectEqualSlices(u8, &expected, &actual);
     }
+}
+
+test "BLAKE3 parallel vs parallelStreaming" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Test various sizes including those above the parallelization threshold
+    const test_sizes = [_]usize{
+        0, // Empty
+        64, // One block
+        1024, // One chunk
+        1024 * 10, // Multiple chunks
+        1024 * 100, // 100KB
+        1024 * 1000, // 1MB
+        1024 * 5000, // 5MB (above threshold)
+        1024 * 10000, // 10MB (above threshold)
+    };
+
+    for (test_sizes) |size| {
+        // Allocate and fill test data with a pattern
+        const input = try allocator.alloc(u8, size);
+        defer allocator.free(input);
+        for (input, 0..) |*byte, i| {
+            byte.* = @truncate(i);
+        }
+
+        // Test regular hash
+        var expected: [32]u8 = undefined;
+        try Blake3.hashParallel(input, &expected, .{}, allocator, io);
+
+        var actual: [32]u8 = undefined;
+        var reader: Io.Reader = .fixed(input);
+        try Blake3.hashParallelStreaming(&reader, input.len, &actual, .{}, allocator, io);
+
+        try std.testing.expectEqualSlices(u8, &expected, &actual);
+
+        // Test keyed hash
+        const key: [32]u8 = @splat(0x42);
+        var expected_keyed: [32]u8 = undefined;
+        try Blake3.hashParallel(input, &expected_keyed, .{ .key = key }, allocator, io);
+
+        var actual_keyed: [32]u8 = undefined;
+        reader = .fixed(input);
+        try Blake3.hashParallelStreaming(&reader, input.len, &actual_keyed, .{ .key = key }, allocator, io);
+
+        try std.testing.expectEqualSlices(u8, &expected_keyed, &actual_keyed);
+    }
+}
+
+test "BLAKE3 parallelStreaming with partial trailing chunk" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const test_sizes = [_]usize{
+        3072 * 1024,
+        3072 * 1024 + 1,
+        3073 * 1024 + 1,
+        3074 * 1024 + 1,
+        3075 * 1024,
+        3075 * 1024 + 1,
+        3075 * 1024 + 1023,
+        3077 * 1024 + 1,
+        4095 * 1024 + 1,
+    };
+
+    for (test_sizes) |size| {
+        const input = try allocator.alloc(u8, size);
+        defer allocator.free(input);
+        for (input, 0..) |*byte, i| byte.* = @truncate(i);
+
+        var expected: [32]u8 = undefined;
+        Blake3.hash(input, &expected, .{});
+
+        var actual: [32]u8 = undefined;
+        var reader: Io.Reader = .fixed(input);
+        try Blake3.hashParallelStreaming(&reader, input.len, &actual, .{}, allocator, io);
+
+        try std.testing.expectEqualSlices(u8, &expected, &actual);
+    }
+}
+
+test "BLAKE3 rejects invalid batch size" {
+    var reader: Io.Reader = .fixed("");
+    var actual: [Blake3.digest_length]u8 = undefined;
+
+    try std.testing.expectError(
+        error.InvalidBatchSize,
+        Blake3.hashParallelStreaming(
+            &reader,
+            0,
+            &actual,
+            .{ .batch_size = chunk_length + 1 },
+            std.testing.allocator,
+            std.testing.io,
+        ),
+    );
 }

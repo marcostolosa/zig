@@ -270,8 +270,8 @@ fn hash(x: u32) Hash {
 
 /// Trades between speed and compression size.
 ///
-/// Default paramaters are [taken from zlib]
-/// (https://github.com/madler/zlib/blob/v1.3.1/deflate.c#L112)
+/// Default paramaters are
+/// [taken from zlib](https://github.com/madler/zlib/blob/v1.3.1/deflate.c#L112)
 pub const Options = struct {
     /// Perform less lookups when a match of at least this length has been found.
     good: u16,
@@ -1057,8 +1057,8 @@ fn writeBlock(c: *Compress, eos: bool) Writer.Error!void {
 
 /// Huffman tree construction.
 ///
-/// The approach for building the huffman tree is [taken from zlib]
-/// (https://github.com/madler/zlib/blob/v1.3.1/trees.c#L625) with some modifications.
+/// The approach for building the huffman tree is
+/// [taken from zlib](https://github.com/madler/zlib/blob/v1.3.1/trees.c#L625) with some modifications.
 const huffman = struct {
     const max_leafs = 286;
     const max_nodes = max_leafs * 2;

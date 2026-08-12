@@ -49,8 +49,9 @@ pub fn emitRaw(
     operand_words: usize,
 ) !void {
     const word_count = 1 + operand_words;
+    if (word_count > std.math.maxInt(u16)) return error.OutOfMemory;
     try section.instructions.ensureUnusedCapacity(allocator, word_count);
-    section.writeWord((@as(Word, @intCast(word_count << 16))) | @intFromEnum(opcode));
+    section.writeWord((@as(Word, @intCast(word_count)) << 16) | @backingInt(opcode));
 }
 
 /// Write an entire instruction, including all operands
@@ -70,7 +71,8 @@ pub fn emitAssumeCapacity(
     operands: opcode.Operands(),
 ) !void {
     const word_count = instructionSize(opcode, operands);
-    section.writeWord(@as(Word, @intCast(word_count << 16)) | @intFromEnum(opcode));
+    if (word_count > std.math.maxInt(u16)) return error.OutOfMemory;
+    section.writeWord((@as(Word, @intCast(word_count)) << 16) | @backingInt(opcode));
     section.writeOperands(opcode.Operands(), operands);
 }
 
@@ -81,8 +83,9 @@ pub fn emit(
     operands: opcode.Operands(),
 ) !void {
     const word_count = instructionSize(opcode, operands);
+    if (word_count > std.math.maxInt(u16)) return error.OutOfMemory;
     try section.instructions.ensureUnusedCapacity(allocator, word_count);
-    section.writeWord(@as(Word, @intCast(word_count << 16)) | @intFromEnum(opcode));
+    section.writeWord((@as(Word, @intCast(word_count)) << 16) | @backingInt(opcode));
     section.writeOperands(opcode.Operands(), operands);
 }
 
@@ -102,29 +105,29 @@ pub fn writeDoubleWord(section: *Section, dword: DoubleWord) void {
 }
 
 fn writeOperands(section: *Section, comptime Operands: type, operands: Operands) void {
-    const fields = switch (@typeInfo(Operands)) {
-        .@"struct" => |info| info.fields,
+    const info = switch (@typeInfo(Operands)) {
+        .@"struct" => |info| info,
         .void => return,
         else => unreachable,
     };
-    inline for (fields) |field| {
-        section.writeOperand(field.type, @field(operands, field.name));
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        section.writeOperand(field_type, @field(operands, field_name));
     }
 }
 
 pub fn writeOperand(section: *Section, comptime Operand: type, operand: Operand) void {
     switch (Operand) {
         spec.LiteralSpecConstantOpInteger => unreachable,
-        spec.Id => section.writeWord(@intFromEnum(operand)),
+        spec.Id => section.writeWord(@backingInt(operand)),
         spec.LiteralInteger => section.writeWord(operand),
         spec.LiteralString => section.writeString(operand),
         spec.LiteralContextDependentNumber => section.writeContextDependentNumber(operand),
         spec.LiteralExtInstInteger => section.writeWord(operand.inst),
-        spec.PairLiteralIntegerIdRef => section.writeWords(&.{ operand.value, @enumFromInt(operand.label) }),
-        spec.PairIdRefLiteralInteger => section.writeWords(&.{ @intFromEnum(operand.target), operand.member }),
-        spec.PairIdRefIdRef => section.writeWords(&.{ @intFromEnum(operand[0]), @intFromEnum(operand[1]) }),
+        spec.PairLiteralIntegerIdRef => section.writeWords(&.{ operand.value, @fromBackingInt(@intCast(operand.label)) }),
+        spec.PairIdRefLiteralInteger => section.writeWords(&.{ @backingInt(operand.target), operand.member }),
+        spec.PairIdRefIdRef => section.writeWords(&.{ @backingInt(operand[0]), @backingInt(operand[1]) }),
         else => switch (@typeInfo(Operand)) {
-            .@"enum" => section.writeWord(@intFromEnum(operand)),
+            .@"enum" => section.writeWord(@backingInt(operand)),
             .optional => |info| if (operand) |child| section.writeOperand(info.child, child),
             .pointer => |info| {
                 std.debug.assert(info.size == .slice); // Should be no other pointer types in the spec.
@@ -171,12 +174,13 @@ fn writeContextDependentNumber(section: *Section, operand: spec.LiteralContextDe
 
 fn writeExtendedMask(section: *Section, comptime Operand: type, operand: Operand) void {
     var mask: Word = 0;
-    inline for (@typeInfo(Operand).@"struct".fields, 0..) |field, bit| {
-        switch (@typeInfo(field.type)) {
-            .optional => if (@field(operand, field.name) != null) {
+    const info = @typeInfo(Operand).@"struct";
+    inline for (info.field_names, info.field_types, 0..) |field_name, field_type, bit| {
+        switch (@typeInfo(field_type)) {
+            .optional => if (@field(operand, field_name) != null) {
                 mask |= 1 << @as(u5, @intCast(bit));
             },
-            .bool => if (@field(operand, field.name)) {
+            .bool => if (@field(operand, field_name)) {
                 mask |= 1 << @as(u5, @intCast(bit));
             },
             else => unreachable,
@@ -185,10 +189,10 @@ fn writeExtendedMask(section: *Section, comptime Operand: type, operand: Operand
 
     section.writeWord(mask);
 
-    inline for (@typeInfo(Operand).@"struct".fields) |field| {
-        switch (@typeInfo(field.type)) {
-            .optional => |info| if (@field(operand, field.name)) |child| {
-                section.writeOperands(info.child, child);
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        switch (@typeInfo(field_type)) {
+            .optional => |opt_info| if (@field(operand, field_name)) |child| {
+                section.writeOperands(opt_info.child, child);
             },
             .bool => {},
             else => unreachable,
@@ -199,7 +203,7 @@ fn writeExtendedMask(section: *Section, comptime Operand: type, operand: Operand
 fn writeExtendedUnion(section: *Section, comptime Operand: type, operand: Operand) void {
     return switch (operand) {
         inline else => |op, tag| {
-            section.writeWord(@intFromEnum(tag));
+            section.writeWord(@backingInt(tag));
             section.writeOperands(
                 @FieldType(Operand, @tagName(tag)),
                 op,
@@ -213,15 +217,15 @@ fn instructionSize(comptime opcode: spec.Opcode, operands: opcode.Operands()) us
 }
 
 fn operandsSize(comptime Operands: type, operands: Operands) usize {
-    const fields = switch (@typeInfo(Operands)) {
-        .@"struct" => |info| info.fields,
+    const info = switch (@typeInfo(Operands)) {
+        .@"struct" => |info| info,
         .void => return 0,
         else => unreachable,
     };
 
     var total: usize = 0;
-    inline for (fields) |field| {
-        total += operandSize(field.type, @field(operands, field.name));
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        total += operandSize(field_type, @field(operands, field_name));
     }
 
     return total;
@@ -231,7 +235,7 @@ fn operandSize(comptime Operand: type, operand: Operand) usize {
     return switch (Operand) {
         spec.LiteralSpecConstantOpInteger => unreachable,
         spec.Id, spec.LiteralInteger, spec.LiteralExtInstInteger => 1,
-        spec.LiteralString => std.math.divCeil(usize, operand.len + 1, @sizeOf(Word)) catch unreachable,
+        spec.LiteralString => @divCeil(operand.len + 1, @sizeOf(Word)),
         spec.LiteralContextDependentNumber => switch (operand) {
             .int32, .uint32, .float32 => 1,
             .int64, .uint64, .float64 => 2,
@@ -252,9 +256,9 @@ fn operandSize(comptime Operand: type, operand: Operand) usize {
                 if (struct_info.layout == .@"packed") return 1;
 
                 var total: usize = 0;
-                inline for (@typeInfo(Operand).@"struct".fields) |field| {
-                    switch (@typeInfo(field.type)) {
-                        .optional => |info| if (@field(operand, field.name)) |child| {
+                inline for (struct_info.field_names, struct_info.field_types) |field_name, field_type| {
+                    switch (@typeInfo(field_type)) {
+                        .optional => |info| if (@field(operand, field_name)) |child| {
                             total += operandsSize(info.child, child);
                         },
                         .bool => {},

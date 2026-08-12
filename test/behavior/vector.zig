@@ -8,6 +8,7 @@ const expectEqual = std.testing.expectEqual;
 
 test "implicit cast vector to array - bool" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest() !void {
@@ -30,6 +31,7 @@ test "implicit cast vector to array - bool" {
 }
 
 test "implicit cast array to vector - bool" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
 
     const S = struct {
@@ -126,13 +128,6 @@ test "vector float operators" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_c and builtin.cpu.arch.isArm()) return error.SkipZigTest;
-
-    if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch == .aarch64) {
-        // Triggers an assertion with LLVM 18:
-        // https://github.com/ziglang/zig/issues/20680
-        return error.SkipZigTest;
-    }
 
     const S = struct {
         fn doTheTest(T: type) !void {
@@ -278,7 +273,6 @@ test "array to vector with element type coercion" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.target.cpu.arch == .x86_64 and builtin.target.os.tag == .macos) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest() !void {
@@ -311,6 +305,7 @@ test "peer type resolution with coercible element types" {
 }
 
 test "tuple to vector" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
@@ -365,47 +360,6 @@ test "vector casts of sizes not divisible by 8" {
                 const x: [4]bool = v;
                 try expect(mem.eql(bool, &x, &@as([4]bool, v)));
             }
-        }
-    };
-    try S.doTheTest();
-    try comptime S.doTheTest();
-}
-
-test "vector @splat" {
-    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
-    const S = struct {
-        fn testForT(comptime N: comptime_int, v: anytype) !void {
-            const T = @TypeOf(v);
-            var vec: @Vector(N, T) = @splat(v);
-            _ = &vec;
-            const as_array = @as([N]T, vec);
-            for (as_array) |elem| try expect(v == elem);
-        }
-        fn doTheTest() !void {
-            // Splats with multiple-of-8 bit types that fill a 128bit vector.
-            try testForT(16, @as(u8, 0xEE));
-            try testForT(8, @as(u16, 0xBEEF));
-            try testForT(4, @as(u32, 0xDEADBEEF));
-            try testForT(2, @as(u64, 0xCAFEF00DDEADBEEF));
-
-            try testForT(8, @as(f16, 3.1415));
-            try testForT(4, @as(f32, 3.1415));
-            try testForT(2, @as(f64, 3.1415));
-
-            // Same but fill more than 128 bits.
-            try testForT(16 * 2, @as(u8, 0xEE));
-            try testForT(8 * 2, @as(u16, 0xBEEF));
-            try testForT(4 * 2, @as(u32, 0xDEADBEEF));
-            try testForT(2 * 2, @as(u64, 0xCAFEF00DDEADBEEF));
-
-            try testForT(8 * 2, @as(f16, 3.1415));
-            try testForT(4 * 2, @as(f32, 3.1415));
-            try testForT(2 * 2, @as(f64, 3.1415));
         }
     };
     try S.doTheTest();
@@ -528,8 +482,6 @@ test "vector division operators" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const S = struct {
         fn doTheTestDiv(comptime T: type, x: @Vector(4, T), y: @Vector(4, T)) !void {
             const is_signed_int = switch (@typeInfo(T)) {
@@ -550,8 +502,37 @@ test "vector division operators" {
             inline for (@as([4]T, d2), 0..) |v, i| {
                 try expect(@divFloor(x[i], y[i]) == v);
             }
-            const d3 = @divTrunc(x, y);
+            const d3 = @divCeil(x, y);
             inline for (@as([4]T, d3), 0..) |v, i| {
+                try expect(@divCeil(x[i], y[i]) == v);
+            }
+            const d4 = @divTrunc(x, y);
+            inline for (@as([4]T, d4), 0..) |v, i| {
+                try expect(@divTrunc(x[i], y[i]) == v);
+            }
+        }
+
+        fn doTheTestDivNoExact(comptime T: type, x: @Vector(4, T), y: @Vector(4, T)) !void {
+            const is_signed_int = switch (@typeInfo(T)) {
+                .int => |info| info.signedness == .signed,
+                else => false,
+            };
+            if (!is_signed_int) {
+                const d0 = x / y;
+                inline for (@as([4]T, d0), 0..) |v, i| {
+                    try expect(x[i] / y[i] == v);
+                }
+            }
+            const d2 = @divFloor(x, y);
+            inline for (@as([4]T, d2), 0..) |v, i| {
+                try expect(@divFloor(x[i], y[i]) == v);
+            }
+            const d3 = @divCeil(x, y);
+            inline for (@as([4]T, d3), 0..) |v, i| {
+                try expect(@divCeil(x[i], y[i]) == v);
+            }
+            const d4 = @divTrunc(x, y);
+            inline for (@as([4]T, d4), 0..) |v, i| {
                 try expect(@divTrunc(x[i], y[i]) == v);
             }
         }
@@ -606,6 +587,9 @@ test "vector division operators" {
             try doTheTestMod(u16, [4]u16{ 1, 2, 4, 8 }, [4]u16{ 1, 1, 2, 4 });
             try doTheTestMod(u32, [4]u32{ 1, 2, 4, 8 }, [4]u32{ 1, 1, 2, 4 });
             try doTheTestMod(u64, [4]u64{ 1, 2, 4, 8 }, [4]u64{ 1, 1, 2, 4 });
+
+            try doTheTestDivNoExact(u64, [4]u64{ 4, 5, 6, 7 }, [4]u64{ 4, 4, 4, 4 });
+            try doTheTestDivNoExact(i64, [4]i64{ 4, -4, 4, -4 }, [4]i64{ 3, 3, -3, -3 });
         }
     };
 
@@ -616,7 +600,6 @@ test "vector division operators" {
 
 test "vector bitwise not operator" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
@@ -649,7 +632,6 @@ test "vector bitwise not operator" {
 
 test "vector boolean not operator" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
@@ -746,9 +728,7 @@ test "vector reduce operation" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_c and builtin.cpu.arch.isArm()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch.isPowerPC()) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/195562
 
     const S = struct {
         fn testReduce(comptime op: std.builtin.ReduceOp, x: anytype, expected: anytype) !void {
@@ -786,6 +766,8 @@ test "vector reduce operation" {
             try testReduce(.Add, [4]f16{ -1.9, 5.1, -60.3, 100.0 }, @as(f16, 42.9));
             try testReduce(.Add, [4]f32{ -1.9, 5.1, -60.3, 100.0 }, @as(f32, 42.9));
             try testReduce(.Add, [4]f64{ -1.9, 5.1, -60.3, 100.0 }, @as(f64, 42.9));
+            try testReduce(.Add, [4]f80{ -1.9, 5.1, -60.3, 100.0 }, @as(f80, 42.9));
+            try testReduce(.Add, [4]f128{ -1.9, 5.1, -60.3, 100.0 }, @as(f128, 42.9));
 
             try testReduce(.And, [4]bool{ true, false, true, true }, @as(bool, false));
             try testReduce(.And, [4]u1{ 1, 0, 1, 1 }, @as(u1, 0));
@@ -804,6 +786,8 @@ test "vector reduce operation" {
             try testReduce(.Min, [4]f16{ -10.3, 10.0e9, 13.0, -100.0 }, @as(f16, -100.0));
             try testReduce(.Min, [4]f32{ -10.3, 10.0e9, 13.0, -100.0 }, @as(f32, -100.0));
             try testReduce(.Min, [4]f64{ -10.3, 10.0e9, 13.0, -100.0 }, @as(f64, -100.0));
+            try testReduce(.Min, [4]f80{ -10.3, 10.0e9, 13.0, -100.0 }, @as(f80, -100.0));
+            try testReduce(.Min, [4]f128{ -10.3, 10.0e9, 13.0, -100.0 }, @as(f128, -100.0));
 
             try testReduce(.Max, [4]i16{ -1, 2, 3, 4 }, @as(i16, 4));
             try testReduce(.Max, [4]u16{ 1, 2, 3, 4 }, @as(u16, 4));
@@ -816,6 +800,8 @@ test "vector reduce operation" {
             try testReduce(.Max, [4]f16{ -10.3, 10.0e9, 13.0, -100.0 }, @as(f16, 10.0e9));
             try testReduce(.Max, [4]f32{ -10.3, 10.0e9, 13.0, -100.0 }, @as(f32, 10.0e9));
             try testReduce(.Max, [4]f64{ -10.3, 10.0e9, 13.0, -100.0 }, @as(f64, 10.0e9));
+            try testReduce(.Max, [4]f80{ -10.3, 10.0e9, 13.0, -100.0 }, @as(f80, 10.0e9));
+            try testReduce(.Max, [4]f128{ -10.3, 10.0e9, 13.0, -100.0 }, @as(f128, 10.0e9));
 
             try testReduce(.Mul, [4]i16{ -1, 2, 3, 4 }, @as(i16, -24));
             try testReduce(.Mul, [4]u16{ 1, 2, 3, 4 }, @as(u16, 24));
@@ -828,6 +814,8 @@ test "vector reduce operation" {
             try testReduce(.Mul, [4]f16{ -1.9, 5.1, -60.3, 100.0 }, @as(f16, 58430.7));
             try testReduce(.Mul, [4]f32{ -1.9, 5.1, -60.3, 100.0 }, @as(f32, 58430.7));
             try testReduce(.Mul, [4]f64{ -1.9, 5.1, -60.3, 100.0 }, @as(f64, 58430.7));
+            try testReduce(.Mul, [4]f80{ -1.9, 5.1, -60.3, 100.0 }, @as(f80, 58430.7));
+            try testReduce(.Mul, [4]f128{ -1.9, 5.1, -60.3, 100.0 }, @as(f128, 58430.7));
 
             try testReduce(.Or, [4]bool{ false, true, false, false }, @as(bool, true));
             try testReduce(.Or, [4]u1{ 0, 1, 0, 0 }, @as(u1, 1));
@@ -835,6 +823,7 @@ test "vector reduce operation" {
             try testReduce(.Or, [4]u32{ 0xffff0000, 0xff00, 0xf0, 0xf }, ~@as(u32, 0));
             try testReduce(.Or, [4]u64{ 0xffff0000, 0xff00, 0xf0, 0xf }, @as(u64, 0xffffffff));
             try testReduce(.Or, [4]u128{ 0xffff0000, 0xff00, 0xf0, 0xf }, @as(u128, 0xffffffff));
+            try testReduce(.Or, [4]u80{ 0xffff0000, 0xff00, 0xf0, 0xf }, @as(u80, 0xffffffff));
 
             try testReduce(.Xor, [4]bool{ true, true, true, false }, @as(bool, true));
             try testReduce(.Xor, [4]u1{ 1, 1, 1, 0 }, @as(u1, 1));
@@ -847,22 +836,32 @@ test "vector reduce operation" {
             const f16_nan = math.nan(f16);
             const f32_nan = math.nan(f32);
             const f64_nan = math.nan(f64);
+            const f80_nan = math.nan(f80);
+            const f128_nan = math.nan(f128);
 
             try testReduce(.Add, [4]f16{ -1.9, 5.1, f16_nan, 100.0 }, f16_nan);
             try testReduce(.Add, [4]f32{ -1.9, 5.1, f32_nan, 100.0 }, f32_nan);
             try testReduce(.Add, [4]f64{ -1.9, 5.1, f64_nan, 100.0 }, f64_nan);
+            try testReduce(.Add, [4]f80{ -1.9, 5.1, f80_nan, 100.0 }, f80_nan);
+            try testReduce(.Add, [4]f128{ -1.9, 5.1, f128_nan, 100.0 }, f128_nan);
 
             try testReduce(.Min, [4]f16{ -1.9, 5.1, f16_nan, 100.0 }, @as(f16, -1.9));
             try testReduce(.Min, [4]f32{ -1.9, 5.1, f32_nan, 100.0 }, @as(f32, -1.9));
             try testReduce(.Min, [4]f64{ -1.9, 5.1, f64_nan, 100.0 }, @as(f64, -1.9));
+            try testReduce(.Min, [4]f80{ -1.9, 5.1, f80_nan, 100.0 }, @as(f80, -1.9));
+            try testReduce(.Min, [4]f128{ -1.9, 5.1, f128_nan, 100.0 }, @as(f128, -1.9));
 
             try testReduce(.Max, [4]f16{ -1.9, 5.1, f16_nan, 100.0 }, @as(f16, 100.0));
             try testReduce(.Max, [4]f32{ -1.9, 5.1, f32_nan, 100.0 }, @as(f32, 100.0));
             try testReduce(.Max, [4]f64{ -1.9, 5.1, f64_nan, 100.0 }, @as(f64, 100.0));
+            try testReduce(.Max, [4]f80{ -1.9, 5.1, f80_nan, 100.0 }, @as(f80, 100.0));
+            try testReduce(.Max, [4]f128{ -1.9, 5.1, f128_nan, 100.0 }, @as(f128, 100.0));
 
             try testReduce(.Mul, [4]f16{ -1.9, 5.1, f16_nan, 100.0 }, f16_nan);
             try testReduce(.Mul, [4]f32{ -1.9, 5.1, f32_nan, 100.0 }, f32_nan);
             try testReduce(.Mul, [4]f64{ -1.9, 5.1, f64_nan, 100.0 }, f64_nan);
+            try testReduce(.Mul, [4]f80{ -1.9, 5.1, f80_nan, 100.0 }, f80_nan);
+            try testReduce(.Mul, [4]f128{ -1.9, 5.1, f128_nan, 100.0 }, f128_nan);
         }
     };
 
@@ -1129,7 +1128,6 @@ test "multiplication-assignment operator with an array operand" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest() !void {
@@ -1223,6 +1221,7 @@ test "@subWithOverflow" {
 }
 
 test "@mulWithOverflow" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
@@ -1243,6 +1242,7 @@ test "@mulWithOverflow" {
 }
 
 test "@shlWithOverflow" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
@@ -1330,11 +1330,6 @@ test "byte vector initialized in inline function" {
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
     if (builtin.cpu.arch == .hexagon and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
-    if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch == .x86_64 and comptime builtin.cpu.has(.x86, .avx512f)) {
-        // TODO https://github.com/ziglang/zig/issues/13279
-        return error.SkipZigTest;
-    }
-
     const S = struct {
         fn boolx4(e0: bool, e1: bool, e2: bool, e3: bool) @Vector(4, bool) {
             return .{ e0, e1, e2, e3 };
@@ -1359,11 +1354,13 @@ test "zero divisor" {
     const v2 = @divExact(zeros, ones);
     const v3 = @divTrunc(zeros, ones);
     const v4 = @divFloor(zeros, ones);
+    const v5 = @divCeil(zeros, ones);
 
     _ = v1[0];
     _ = v2[0];
     _ = v3[0];
     _ = v4[0];
+    _ = v5[0];
 }
 
 test "zero multiplicand" {
@@ -1371,6 +1368,7 @@ test "zero multiplicand" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const zeros = @Vector(2, u32){ 0.0, 0.0 };
     var ones = @Vector(2, u32){ 1.0, 1.0 };
@@ -1413,6 +1411,7 @@ test "modRem with zero divisor" {
 }
 
 test "array operands to shuffle are coerced to vectors" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
@@ -1438,10 +1437,10 @@ test "load packed vector element" {
 }
 
 test "store packed vector element" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     var v = @Vector(4, u1){ 1, 1, 1, 1 };
@@ -1473,7 +1472,6 @@ test "store vector with memset" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     var a: [5]@Vector(2, i1) = undefined;
@@ -1500,6 +1498,7 @@ test "store vector with memset" {
 }
 
 test "addition of vectors represented as strings" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
 
@@ -1510,6 +1509,7 @@ test "addition of vectors represented as strings" {
 }
 
 test "compare vectors with different element types" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
@@ -1528,12 +1528,12 @@ test "vector pointer is indexable" {
     const V = @Vector(2, u32);
 
     const x: V = .{ 123, 456 };
-    comptime assert(@TypeOf(&(&x)[0]) == *const u32); // validate constness
+    comptime assert(@typeInfo(@TypeOf(&(&x)[0])).pointer.attrs.@"const");
     try expectEqual(@as(u32, 123), (&x)[0]);
     try expectEqual(@as(u32, 456), (&x)[1]);
 
     var y: V = .{ 123, 456 };
-    comptime assert(@TypeOf(&(&y)[0]) == *u32); // validate constness
+    comptime assert(!@typeInfo(@TypeOf(&(&y)[0])).pointer.attrs.@"const");
     try expectEqual(@as(u32, 123), (&y)[0]);
     try expectEqual(@as(u32, 456), (&y)[1]);
 

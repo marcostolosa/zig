@@ -75,7 +75,7 @@ pub const Memory = struct {
                 };
             },
             .frame => |index| {
-                const base_loc = mir.frame_locs.get(@intFromEnum(index));
+                const base_loc = mir.frame_locs.get(@backingInt(index));
                 return .{
                     .base = base_loc.base,
                     .disp = base_loc.disp + offset,
@@ -190,8 +190,8 @@ pub const Register = enum(u8) {
     /// The goal of this function is to return the same ID for `zero` and `x0` but two
     /// seperate IDs for `x0` and `f0`. We will assume that each register set has 32 registers
     /// and is repeated twice, once for the named version, once for the number version.
-    pub fn id(reg: Register) std.math.IntFittingRange(0, @typeInfo(Register).@"enum".fields.len) {
-        const base = switch (@intFromEnum(reg)) {
+    pub fn id(reg: Register) std.math.IntFittingRange(0, @typeInfo(Register).@"enum".field_names.len) {
+        const base = switch (@backingInt(reg)) {
             // zig fmt: off
             @intFromEnum(Register.zero) ... @intFromEnum(Register.x31) => @intFromEnum(Register.zero),
             @intFromEnum(Register.ft0)  ... @intFromEnum(Register.f31) => @intFromEnum(Register.ft0),
@@ -204,7 +204,7 @@ pub const Register = enum(u8) {
     }
 
     pub fn encodeId(reg: Register) u5 {
-        return @truncate(@intFromEnum(reg));
+        return @truncate(@backingInt(reg));
     }
 
     pub fn dwarfNum(reg: Register) u8 {
@@ -212,7 +212,7 @@ pub const Register = enum(u8) {
     }
 
     pub fn bitSize(reg: Register, zcu: *const Zcu) u32 {
-        return switch (@intFromEnum(reg)) {
+        return switch (@backingInt(reg)) {
             // zig fmt: off
             @intFromEnum(Register.zero) ... @intFromEnum(Register.x31) => 64,
             @intFromEnum(Register.ft0)  ... @intFromEnum(Register.f31) => if (zcu.getTarget().cpu.has(.riscv, .d)) 64 else 32,
@@ -223,7 +223,7 @@ pub const Register = enum(u8) {
     }
 
     pub fn class(reg: Register) abi.RegisterClass {
-        return switch (@intFromEnum(reg)) {
+        return switch (@backingInt(reg)) {
             // zig fmt: off
             @intFromEnum(Register.zero) ... @intFromEnum(Register.x31) => .int,
             @intFromEnum(Register.ft0)  ... @intFromEnum(Register.f31) => .float,
@@ -251,10 +251,10 @@ pub const FrameIndex = enum(u32) {
     /// Other indices are used for local variable stack slots
     _,
 
-    pub const named_count = @typeInfo(FrameIndex).@"enum".fields.len;
+    pub const named_count = @typeInfo(FrameIndex).@"enum".field_names.len;
 
     pub fn isNamed(fi: FrameIndex) bool {
-        return @intFromEnum(fi) < named_count;
+        return @backingInt(fi) < named_count;
     }
 };
 

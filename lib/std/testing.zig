@@ -79,6 +79,7 @@ fn expectEqualInner(comptime T: type, expected: T, actual: T) !void {
     switch (@typeInfo(@TypeOf(actual))) {
         .noreturn,
         .@"opaque",
+        .spirv,
         .frame,
         .@"anyframe",
         => @compileError("value of type " ++ @typeName(@TypeOf(actual)) ++ " encountered"),
@@ -140,39 +141,45 @@ fn expectEqualInner(comptime T: type, expected: T, actual: T) !void {
             try expectEqualSlices(info.child, &expect_array, &actual_array);
         },
 
-        .@"struct" => |structType| {
-            inline for (structType.fields) |field| {
-                try expectEqual(@field(expected, field.name), @field(actual, field.name));
+        .@"struct" => |@"struct"| {
+            inline for (@"struct".field_names) |field_name| {
+                try expectEqual(@field(expected, field_name), @field(actual, field_name));
             }
         },
 
-        .@"union" => |union_info| {
-            if (union_info.tag_type == null) {
-                const first_size = @bitSizeOf(union_info.fields[0].type);
-                inline for (union_info.fields) |field| {
-                    if (@bitSizeOf(field.type) != first_size) {
-                        @compileError("Unable to compare untagged unions with varying field sizes for type " ++ @typeName(@TypeOf(actual)));
+        .@"union" => |@"union"| if (@"union".backing_integer) |Int| {
+            try expectEqual(@as(Int, @bitCast(expected)), @as(Int, @bitCast(actual)));
+        } else switch (@"union".layout) {
+            .@"packed" => {
+                const Int = @Int(.unsigned, @bitSizeOf(T));
+                try expectEqual(@as(Int, @bitCast(expected)), @as(Int, @bitCast(actual)));
+            },
+            .@"extern" => {
+                const first_size = @bitSizeOf(@"union".field_types[0]);
+                inline for (@"union".field_types) |field_type| {
+                    if (@bitSizeOf(field_type) != first_size) {
+                        @compileError("Unable to compare extern unions with varying field sizes for type " ++ @typeName(T));
                     }
                 }
-
-                const BackingInt = @Int(.unsigned, @bitSizeOf(T));
+                const FieldInt = @Int(.unsigned, first_size);
+                const expected_field = @field(expected, @"union".field_names[0]);
+                const actual_field = @field(actual, @"union".field_names[0]);
                 return expectEqual(
-                    @as(BackingInt, @bitCast(expected)),
-                    @as(BackingInt, @bitCast(actual)),
+                    @as(FieldInt, @bitCast(expected_field)),
+                    @as(FieldInt, @bitCast(actual_field)),
                 );
-            }
+            },
+            .auto => {
+                const Tag = @"union".tag_type orelse @compileError("byteSwapAllFields expects packed, extern, or tagged union");
 
-            const Tag = std.meta.Tag(@TypeOf(expected));
-
-            const expectedTag = @as(Tag, expected);
-            const actualTag = @as(Tag, actual);
-
-            try expectEqual(expectedTag, actualTag);
-
-            // we only reach this switch if the tags are equal
-            switch (expected) {
-                inline else => |val, tag| try expectEqual(val, @field(actual, @tagName(tag))),
-            }
+                try expectEqual(@as(Tag, expected), @as(Tag, actual));
+                switch (expected) {
+                    inline else => |expected_payload, tag| {
+                        const actual_payload = @field(actual, @tagName(tag));
+                        try expectEqual(expected_payload, actual_payload);
+                    },
+                }
+            },
         },
 
         .optional => {
@@ -737,6 +744,7 @@ fn expectEqualDeepInner(comptime T: type, expected: T, actual: T) error{TestExpe
     switch (@typeInfo(@TypeOf(actual))) {
         .noreturn,
         .@"opaque",
+        .spirv,
         .frame,
         .@"anyframe",
         => @compileError("value of type " ++ @typeName(@TypeOf(actual)) ++ " encountered"),
@@ -840,9 +848,9 @@ fn expectEqualDeepInner(comptime T: type, expected: T, actual: T) error{TestExpe
         },
 
         .@"struct" => |structType| {
-            inline for (structType.fields) |field| {
-                expectEqualDeep(@field(expected, field.name), @field(actual, field.name)) catch |e| {
-                    print("Field {s} incorrect. expected {any}, found {any}\n", .{ field.name, @field(expected, field.name), @field(actual, field.name) });
+            inline for (structType.field_names) |field_name| {
+                expectEqualDeep(@field(expected, field_name), @field(actual, field_name)) catch |e| {
+                    print("Field {s} incorrect. expected {any}, found {any}\n", .{ field_name, @field(expected, field_name), @field(actual, field_name) });
                     return e;
                 };
             }
@@ -991,7 +999,7 @@ test "expectEqualDeep composite type" {
 }
 
 fn printIndicatorLine(source: []const u8, indicator_index: usize) void {
-    const line_begin_index = if (std.mem.lastIndexOfScalar(u8, source[0..indicator_index], '\n')) |line_begin|
+    const line_begin_index = if (std.mem.findScalarLast(u8, source[0..indicator_index], '\n')) |line_begin|
         line_begin + 1
     else
         0;
@@ -1165,14 +1173,14 @@ fn CheckAllAllocationFailuresExtraArgs(comptime TestFn: type) type {
 
     const ArgsTuple = std.meta.ArgsTuple(TestFn);
 
-    const fields = @typeInfo(ArgsTuple).@"struct".fields;
-    if (fields.len == 0 or fields[0].type != std.mem.Allocator) {
+    const field_types = @typeInfo(ArgsTuple).@"struct".field_types;
+    if (field_types.len == 0 or field_types[0] != std.mem.Allocator) {
         @compileError("The provided function must have an " ++ @typeName(std.mem.Allocator) ++ " as its first argument");
     }
 
-    var extra_args: [fields.len - 1]type = undefined;
-    for (&extra_args, fields[1..]) |*arg, field| {
-        arg.* = field.type;
+    var extra_args: [field_types.len - 1]type = undefined;
+    for (&extra_args, field_types[1..]) |*arg, field_type| {
+        arg.* = field_type;
     }
 
     return @Tuple(&extra_args);
@@ -1204,8 +1212,8 @@ test "checkAllAllocationFailures provide result type to 'extra_args' argument" {
 /// Given a type, references all the declarations inside, so that the semantic analyzer sees them.
 pub fn refAllDecls(comptime T: type) void {
     if (!builtin.is_test) return;
-    inline for (comptime std.meta.declarations(T)) |decl| {
-        _ = &@field(T, decl.name);
+    inline for (comptime std.meta.declarations(T)) |decl_name| {
+        _ = &@field(T, decl_name);
     }
 }
 

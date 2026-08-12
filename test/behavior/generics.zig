@@ -175,7 +175,7 @@ test "generic fn keeps non-generic parameter types" {
 
     const S = struct {
         fn f(comptime T: type, s: []T) !void {
-            try expect(A != @typeInfo(@TypeOf(s)).pointer.alignment);
+            try expect(A != @typeInfo(@TypeOf(s)).pointer.attrs.@"align");
         }
     };
 
@@ -255,10 +255,13 @@ test "generic function instantiation turns into comptime call" {
         }
 
         pub fn fieldInfo(comptime T: type, comptime field: FieldEnum(T)) switch (@typeInfo(T)) {
-            .@"enum" => std.builtin.Type.EnumField,
+            .@"enum" => struct { name: [:0]const u8, value: comptime_int },
             else => void,
         } {
-            return @typeInfo(T).@"enum".fields[@intFromEnum(field)];
+            return .{
+                .name = @typeInfo(T).@"enum".field_names[@backingInt(field)],
+                .value = @typeInfo(T).@"enum".field_values[@backingInt(field)],
+            };
         }
 
         pub fn FieldEnum(comptime T: type) type {
@@ -483,8 +486,6 @@ test "union in struct captures argument" {
 
 test "function argument tuple used as struct field" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const S = struct {
         fn DeleagateWithContext(comptime Function: type) type {
             const ArgArgs = std.meta.ArgsTuple(Function);
@@ -558,7 +559,6 @@ fn StructCapture(comptime T: type) type {
 
 test "call generic function that uses capture from function declaration's scope" {
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const S = StructCapture(f64);
     const s = S.foo(123);

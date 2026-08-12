@@ -63,6 +63,8 @@ pub fn run(
         }
     }
 
+    step.clearFailedCommand(maker.gpa);
+
     return parsed;
 }
 
@@ -104,6 +106,7 @@ fn getPkgs(
         else => |e| return e,
     };
 
+    step.clearFailedCommand(maker.gpa);
     pc.pkgs = result;
     return result;
 }

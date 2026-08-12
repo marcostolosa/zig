@@ -24,13 +24,15 @@ dylibs: std.ArrayList(File.Index) = .empty,
 
 segments: std.ArrayList(macho.segment_command_64) = .empty,
 sections: std.MultiArrayList(Section) = .{},
+/// Populated by `allocateSections`.
+header_size: ?u32 = null,
 
 resolver: SymbolResolver = .{},
 /// This table will be populated after `scanRelocs` has run.
 /// Key is symbol index.
-undefs: std.AutoArrayHashMapUnmanaged(SymbolResolver.Index, UndefRefs) = .empty,
+undefs: std.array_hash_map.Auto(SymbolResolver.Index, UndefRefs) = .empty,
 undefs_mutex: std.Io.Mutex = .init,
-dupes: std.AutoArrayHashMapUnmanaged(SymbolResolver.Index, std.ArrayList(File.Index)) = .empty,
+dupes: std.array_hash_map.Auto(SymbolResolver.Index, std.ArrayList(File.Index)) = .empty,
 dupes_mutex: std.Io.Mutex = .init,
 
 dyld_info_cmd: macho.dyld_info_command = .{},
@@ -181,11 +183,7 @@ pub fn createEmpty(
             .tag = .macho,
             .comp = comp,
             .emit = emit,
-            .zcu_object_basename = if (use_llvm)
-                try std.fmt.allocPrint(arena, "{s}_zcu.o", .{fs.path.stem(emit.sub_path)})
-            else
-                null,
-            .gc_sections = options.gc_sections orelse (optimize_mode != .Debug),
+            .gc_sections = options.gc_sections orelse (optimize_mode != .debug),
             .print_gc_sections = options.print_gc_sections,
             .stack_size = options.stack_size orelse 16777216,
             .allow_shlib_undefined = allow_shlib_undefined,
@@ -341,7 +339,7 @@ pub fn flush(
     arena: Allocator,
     tid: Zcu.PerThread.Id,
     prog_node: std.Progress.Node,
-) link.File.FlushError!void {
+) link.Error!void {
     const tracy = trace(@src());
     defer tracy.end();
 
@@ -353,9 +351,11 @@ pub fn flush(
     const sub_prog_node = prog_node.start("MachO Flush", 0);
     defer sub_prog_node.end();
 
-    const zcu_obj_path: ?Path = if (self.base.zcu_object_basename) |raw| p: {
-        break :p try comp.resolveEmitPathFlush(arena, .temp, raw);
-    } else null;
+    const zcu_obj_path: ?Path = p: {
+        const zcu = comp.zcu orelse break :p null;
+        const llvm_object = zcu.llvm_object orelse break :p null;
+        break :p try comp.resolveEmitPathFlush(arena, .temp, llvm_object.out_bin_basename);
+    };
 
     // --verbose-link
     if (comp.verbose_link) try self.dumpArgv(comp);
@@ -379,9 +379,9 @@ pub fn flush(
     // This is a set of object files emitted by clang in a single `build-exe` invocation.
     // For instance, the implicit `a.o` as compiled by `zig build-exe a.c` will end up
     // in this set.
-    try positionals.ensureUnusedCapacity(comp.c_object_table.keys().len);
-    for (comp.c_object_table.keys()) |key| {
-        positionals.appendAssumeCapacity(try link.openObjectInput(io, diags, key.status.success.object_path));
+    try positionals.ensureUnusedCapacity(comp.c_objects.items.len);
+    for (comp.c_objects.items) |c_object| {
+        positionals.appendAssumeCapacity(try link.openObjectInput(io, diags, c_object.status.success.object_path));
     }
 
     if (zcu_obj_path) |path| try positionals.append(try link.openObjectInput(io, diags, path));
@@ -490,7 +490,7 @@ pub fn flush(
         }
     };
 
-    if (diags.hasErrors()) return error.LinkFailure;
+    if (diags.hasErrors()) return error.AlreadyReported;
 
     {
         const index = @as(File.Index, @intCast(try self.files.addOne(gpa)));
@@ -504,7 +504,7 @@ pub fn flush(
     try self.resolveSymbols();
     try self.convertTentativeDefsAndResolveSpecialSymbols();
     self.dedupLiterals() catch |err| switch (err) {
-        error.LinkFailure => |e| return e,
+        error.AlreadyReported => |e| return e,
         else => |e| return diags.fail("failed to deduplicate literals: {s}", .{@errorName(e)}),
     };
 
@@ -513,7 +513,7 @@ pub fn flush(
     }
 
     self.checkDuplicates() catch |err| switch (err) {
-        error.HasDuplicates => return error.LinkFailure,
+        error.HasDuplicates => return error.AlreadyReported,
         else => |e| return diags.fail("failed to check for duplicate symbol definitions: {s}", .{@errorName(e)}),
     };
 
@@ -528,7 +528,7 @@ pub fn flush(
     self.claimUnresolved();
 
     self.scanRelocs() catch |err| switch (err) {
-        error.HasUndefinedSymbols => return error.LinkFailure,
+        error.HasUndefinedSymbols => return error.AlreadyReported,
         else => |e| return diags.fail("failed to scan relocations: {s}", .{@errorName(e)}),
     };
 
@@ -542,7 +542,7 @@ pub fn flush(
 
     try self.initSegments();
     self.allocateSections() catch |err| switch (err) {
-        error.LinkFailure => |e| return e,
+        error.AlreadyReported => |e| return e,
         else => |e| return diags.fail("failed to allocate sections: {s}", .{@errorName(e)}),
     };
     self.allocateSegments();
@@ -558,7 +558,7 @@ pub fn flush(
 
     if (self.getZigObject()) |zo| {
         zo.resolveRelocs(self) catch |err| switch (err) {
-            error.ResolveFailed => return error.LinkFailure,
+            error.ResolveFailed => return error.AlreadyReported,
             else => |e| return e,
         };
     }
@@ -567,7 +567,7 @@ pub fn flush(
     try self.writeSectionsToFile();
     try self.allocateLinkeditSegment();
     self.writeLinkeditSectionsToFile() catch |err| switch (err) {
-        error.OutOfMemory, error.LinkFailure => |e| return e,
+        error.OutOfMemory, error.AlreadyReported => |e| return e,
         else => |e| return diags.fail("failed to write linkedit sections to file: {t}", .{e}),
     };
 
@@ -594,11 +594,11 @@ pub fn flush(
 
     const ncmds, const sizeofcmds, const uuid_cmd_offset = self.writeLoadCommands() catch |err| switch (err) {
         error.WriteFailed => unreachable,
-        error.OutOfMemory, error.LinkFailure => |e| return e,
+        error.OutOfMemory, error.AlreadyReported => |e| return e,
     };
     try self.writeHeader(ncmds, sizeofcmds);
     self.writeUuid(uuid_cmd_offset, self.requiresCodeSig()) catch |err| switch (err) {
-        error.OutOfMemory, error.LinkFailure => |e| return e,
+        error.OutOfMemory, error.AlreadyReported => |e| return e,
         else => |e| return diags.fail("failed to calculate and write uuid: {s}", .{@errorName(e)}),
     };
     if (self.getDebugSymbols()) |dsym| dsym.flush(self) catch |err| switch (err) {
@@ -609,7 +609,7 @@ pub fn flush(
     // Code signing always comes last.
     if (codesig) |*csig| {
         self.writeCodeSignature(csig) catch |err| switch (err) {
-            error.OutOfMemory, error.LinkFailure => |e| return e,
+            error.OutOfMemory, error.AlreadyReported => |e| return e,
             else => |e| return diags.fail("failed to write code signature: {s}", .{@errorName(e)}),
         };
         const emit = self.base.emit;
@@ -630,10 +630,12 @@ fn dumpArgv(self: *MachO, comp: *Compilation) !void {
 
     const directory = self.base.emit.root_dir;
     const full_out_path = try directory.join(arena, &[_][]const u8{self.base.emit.sub_path});
-    const zcu_obj_path: ?[]const u8 = if (self.base.zcu_object_basename) |raw| p: {
-        const p = try comp.resolveEmitPathFlush(arena, .temp, raw);
+    const zcu_obj_path: ?[]const u8 = p: {
+        const zcu = comp.zcu orelse break :p null;
+        const llvm_object = zcu.llvm_object orelse break :p null;
+        const p = try comp.resolveEmitPathFlush(arena, .temp, llvm_object.out_bin_basename);
         break :p try p.toString(arena);
-    } else null;
+    };
 
     var argv = std.array_list.Managed([]const u8).init(arena);
 
@@ -657,8 +659,8 @@ fn dumpArgv(self: *MachO, comp: *Compilation) !void {
             .dso_exact => |dso_exact| try argv.appendSlice(&.{ "-l", dso_exact.name }),
         };
 
-        for (comp.c_object_table.keys()) |key| {
-            try argv.append(try key.status.success.object_path.toString(arena));
+        for (comp.c_objects.items) |c_object| {
+            try argv.append(try c_object.status.success.object_path.toString(arena));
         }
 
         if (zcu_obj_path) |p| {
@@ -749,8 +751,8 @@ fn dumpArgv(self: *MachO, comp: *Compilation) !void {
             .dso_exact => |dso_exact| try argv.appendSlice(&.{ "-l", dso_exact.name }),
         };
 
-        for (comp.c_object_table.keys()) |key| {
-            try argv.append(try key.status.success.object_path.toString(arena));
+        for (comp.c_objects.items) |c_object| {
+            try argv.append(try c_object.status.success.object_path.toString(arena));
         }
 
         if (zcu_obj_path) |p| {
@@ -968,7 +970,7 @@ pub fn parseInputFiles(self: *MachO) !void {
         }
     }
 
-    if (diags.hasErrors()) return error.LinkFailure;
+    if (diags.hasErrors()) return error.AlreadyReported;
 }
 
 fn parseInputFileWorker(self: *MachO, file: File) void {
@@ -989,6 +991,11 @@ fn parseInputFileWorker(self: *MachO, file: File) void {
 fn addArchive(self: *MachO, lib: link.Input.Object, handle: File.HandleIndex, fat_arch: ?fat.Arch) !void {
     const tracy = trace(@src());
     defer tracy.end();
+
+    if (self.base.isStaticLib()) {
+        // Ignore static library inputs when generating a static library.
+        return;
+    }
 
     const gpa = self.base.comp.gpa;
 
@@ -1068,7 +1075,7 @@ fn isHoisted(self: *MachO, install_name: []const u8) bool {
         if (mem.startsWith(u8, dirname, "/usr/lib")) return true;
         if (eatPrefix(dirname, "/System/Library/Frameworks/")) |path| {
             const basename = fs.path.basename(install_name);
-            if (mem.indexOfScalar(u8, path, '.')) |index| {
+            if (mem.findScalar(u8, path, '.')) |index| {
                 if (mem.eql(u8, basename, path[0..index])) return true;
             }
         }
@@ -1365,7 +1372,7 @@ fn convertTentativeDefsAndResolveSpecialSymbols(self: *MachO) !void {
             resolveSpecialSymbolsWorker(self, obj);
         }
     }
-    if (diags.hasErrors()) return error.LinkFailure;
+    if (diags.hasErrors()) return error.AlreadyReported;
 }
 
 fn convertTentativeDefinitionsWorker(self: *MachO, object: *Object) void {
@@ -1450,7 +1457,7 @@ fn checkDuplicates(self: *MachO) !void {
         }
     }
 
-    if (diags.hasErrors()) return error.LinkFailure;
+    if (diags.hasErrors()) return error.AlreadyReported;
 
     try self.reportDuplicates();
 }
@@ -1517,7 +1524,7 @@ fn scanRelocs(self: *MachO) !void {
         }
     }
 
-    if (diags.hasErrors()) return error.LinkFailure;
+    if (diags.hasErrors()) return error.AlreadyReported;
 
     if (self.getInternalObject()) |obj| {
         try obj.checkUndefs(self);
@@ -1737,14 +1744,14 @@ fn initSyntheticSections(self: *MachO) !void {
                     });
                 }
             } else if (eatPrefix(name, "section$start$")) |actual_name| {
-                const sep = mem.indexOfScalar(u8, actual_name, '$').?; // TODO error rather than a panic
+                const sep = mem.findScalar(u8, actual_name, '$').?; // TODO error rather than a panic
                 const segname = actual_name[0..sep]; // TODO check segname is valid
                 const sectname = actual_name[sep + 1 ..]; // TODO check sectname is valid
                 if (self.getSectionByName(segname, sectname) == null) {
                     _ = try self.addSection(segname, sectname, .{});
                 }
             } else if (eatPrefix(name, "section$end$")) |actual_name| {
-                const sep = mem.indexOfScalar(u8, actual_name, '$').?; // TODO error rather than a panic
+                const sep = mem.findScalar(u8, actual_name, '$').?; // TODO error rather than a panic
                 const segname = actual_name[0..sep]; // TODO check segname is valid
                 const sectname = actual_name[sep + 1 ..]; // TODO check sectname is valid
                 if (self.getSectionByName(segname, sectname) == null) {
@@ -1765,7 +1772,7 @@ fn getSegmentProt(segname: []const u8) macho.vm_prot_t {
 fn getSegmentRank(segname: []const u8) u8 {
     if (mem.eql(u8, segname, "__PAGEZERO")) return 0x0;
     if (mem.eql(u8, segname, "__LINKEDIT")) return 0xf;
-    if (mem.indexOf(u8, segname, "ZIG")) |_| return 0xe;
+    if (mem.find(u8, segname, "ZIG")) |_| return 0xe;
     if (mem.startsWith(u8, segname, "__TEXT")) return 0x1;
     if (mem.startsWith(u8, segname, "__DATA_CONST")) return 0x2;
     if (mem.startsWith(u8, segname, "__DATA")) return 0x3;
@@ -1990,7 +1997,7 @@ fn calcSectionSizes(self: *MachO) !void {
         }
     }
 
-    if (diags.hasErrors()) return error.LinkFailure;
+    if (diags.hasErrors()) return error.AlreadyReported;
 
     try self.calcSymtabSize();
 
@@ -2209,13 +2216,14 @@ fn initSegments(self: *MachO) !void {
 }
 
 fn allocateSections(self: *MachO) !void {
-    const headerpad = try load_commands.calcMinHeaderPadSize(self);
+    const header_size = try load_commands.calcMinHeaderSize(self);
+    self.header_size = header_size;
     var vmaddr: u64 = if (self.pagezero_seg_index) |index|
         self.segments.items[index].vmaddr + self.segments.items[index].vmsize
     else
         0;
-    vmaddr += headerpad;
-    var fileoff = headerpad;
+    vmaddr += header_size;
+    var fileoff = header_size;
     var prev_seg_id: u8 = if (self.pagezero_seg_index) |index| index + 1 else 0;
 
     const page_size = self.getPageSize();
@@ -2339,7 +2347,7 @@ fn allocateSyntheticSymbols(self: *MachO) void {
                 }
             } else if (mem.startsWith(u8, name, "section$start$")) {
                 const actual_name = name["section$start$".len..];
-                const sep = mem.indexOfScalar(u8, actual_name, '$').?; // TODO error rather than a panic
+                const sep = mem.findScalar(u8, actual_name, '$').?; // TODO error rather than a panic
                 const segname = actual_name[0..sep];
                 const sectname = actual_name[sep + 1 ..];
                 if (self.getSectionByName(segname, sectname)) |sect_id| {
@@ -2349,7 +2357,7 @@ fn allocateSyntheticSymbols(self: *MachO) void {
                 }
             } else if (mem.startsWith(u8, name, "section$end$")) {
                 const actual_name = name["section$end$".len..];
-                const sep = mem.indexOfScalar(u8, actual_name, '$').?; // TODO error rather than a panic
+                const sep = mem.findScalar(u8, actual_name, '$').?; // TODO error rather than a panic
                 const segname = actual_name[0..sep];
                 const sectname = actual_name[sep + 1 ..];
                 if (self.getSectionByName(segname, sectname)) |sect_id| {
@@ -2527,7 +2535,7 @@ fn writeSectionsAndUpdateLinkeditSizes(self: *MachO) !void {
         };
     }
 
-    if (diags.hasErrors()) return error.LinkFailure;
+    if (diags.hasErrors()) return error.AlreadyReported;
 }
 
 fn writeAtomsWorker(self: *MachO, file: File) void {
@@ -2895,6 +2903,11 @@ fn writeLoadCommands(self: *MachO) !struct { usize, usize, u64 } {
         ncmds += 1;
     }
 
+    if (self.needsEncryptionInfo()) {
+        try load_commands.writeEncryptionInfoLC(self, &writer);
+        ncmds += 1;
+    }
+
     for (self.rpath_list) |rpath| {
         try load_commands.writeRpathLC(rpath, &writer);
         ncmds += 1;
@@ -3074,21 +3087,15 @@ pub fn updateFunc(
     pt: Zcu.PerThread,
     func_index: InternPool.Index,
     mir: *const codegen.AnyMir,
-) link.File.UpdateNavError!void {
-    if (build_options.skip_non_native and builtin.object_format != .macho) {
-        @panic("Attempted to compile for object format that was disabled by build configuration");
-    }
+) link.Error!void {
     return self.getZigObject().?.updateFunc(self, pt, func_index, mir);
 }
 
-pub fn updateNav(self: *MachO, pt: Zcu.PerThread, nav: InternPool.Nav.Index) link.File.UpdateNavError!void {
-    if (build_options.skip_non_native and builtin.object_format != .macho) {
-        @panic("Attempted to compile for object format that was disabled by build configuration");
-    }
+pub fn updateNav(self: *MachO, pt: Zcu.PerThread, nav: InternPool.Nav.Index) link.Error!void {
     return self.getZigObject().?.updateNav(self, pt, nav);
 }
 
-pub fn updateLineNumber(self: *MachO, pt: Zcu.PerThread, ti_id: InternPool.TrackedInst.Index) !void {
+pub fn updateLineNumber(self: *MachO, pt: Zcu.PerThread, ti_id: InternPool.TrackedInst.Index) link.Error!void {
     return self.getZigObject().?.updateLineNumber(pt, ti_id);
 }
 
@@ -3097,10 +3104,7 @@ pub fn updateExports(
     pt: Zcu.PerThread,
     exported: Zcu.Exported,
     export_indices: []const Zcu.Export.Index,
-) link.File.UpdateExportsError!void {
-    if (build_options.skip_non_native and builtin.object_format != .macho) {
-        @panic("Attempted to compile for object format that was disabled by build configuration");
-    }
+) link.Error!void {
     return self.getZigObject().?.updateExports(self, pt, exported, export_indices);
 }
 
@@ -3125,9 +3129,8 @@ pub fn lowerUav(
     pt: Zcu.PerThread,
     uav: InternPool.Index,
     explicit_alignment: InternPool.Alignment,
-    src_loc: Zcu.LazySrcLoc,
-) !codegen.SymbolResult {
-    return self.getZigObject().?.lowerUav(self, pt, uav, explicit_alignment, src_loc);
+) !link.File.SymbolId {
+    return self.getZigObject().?.lowerUav(self, pt, uav, explicit_alignment);
 }
 
 pub fn getUavVAddr(self: *MachO, uav: InternPool.Index, reloc_info: link.File.RelocInfo) !u64 {
@@ -3274,7 +3277,11 @@ fn copyRangeAllZeroOut(self: *MachO, old_offset: u64, new_offset: u64, size: u64
     file_writer.pos = new_offset;
     const size_u = math.cast(usize, size) orelse return error.Overflow;
     const n = file_writer.interface.sendFileAll(&file_reader, .limited(size_u)) catch |err| switch (err) {
-        error.ReadFailed => return file_reader.err.?,
+        error.ReadFailed => switch (file_reader.err.?) {
+            error.ConnectionResetByPeer => return error.Unexpected, // not a socket
+            error.SocketUnconnected => return error.Unexpected, // not a socket
+            else => |e| return e,
+        },
         error.WriteFailed => return file_writer.err.?,
     };
     assert(n == size_u);
@@ -4108,7 +4115,7 @@ const Section = struct {
 };
 
 pub const LiteralPool = struct {
-    table: std.AutoArrayHashMapUnmanaged(void, void) = .empty,
+    table: std.array_hash_map.Auto(void, void) = .empty,
     keys: std.ArrayList(Key) = .empty,
     values: std.ArrayList(MachO.Ref) = .empty,
     data: std.ArrayList(u8) = .empty,
@@ -4547,7 +4554,7 @@ pub const Ref = struct {
 pub const SymbolResolver = struct {
     keys: std.ArrayList(Key) = .empty,
     values: std.ArrayList(Ref) = .empty,
-    table: std.AutoArrayHashMapUnmanaged(void, void) = .empty,
+    table: std.array_hash_map.Auto(void, void) = .empty,
 
     const Result = struct {
         found_existing: bool,
@@ -4682,7 +4689,7 @@ pub const MachTask = extern struct {
         var out_port: std.c.mach_port_name_t = undefined;
         switch (getKernError(std.c.mach_port_allocate(
             self.port,
-            @intFromEnum(right),
+            @backingInt(right),
             &out_port,
         ))) {
             .SUCCESS => return .{ .port = out_port },
@@ -4700,7 +4707,7 @@ pub const MachTask = extern struct {
             self.port,
             port.port,
             port.port,
-            @intFromEnum(msg),
+            @backingInt(msg),
         ))) {
             .SUCCESS => return,
             .FAILURE => return error.PermissionDenied,
@@ -5125,12 +5132,12 @@ pub fn machTaskForSelf() MachTask {
 }
 
 pub fn getKernError(err: std.c.kern_return_t) KernE {
-    return @as(KernE, @enumFromInt(@as(u32, @truncate(@as(usize, @intCast(err))))));
+    return @as(KernE, @fromBackingInt(@intCast(@as(u32, @truncate(@as(usize, @intCast(err)))))));
 }
 
 pub fn unexpectedKernError(err: KernE) std.posix.UnexpectedError {
     if (std.options.unexpected_error_tracing) {
-        std.debug.print("unexpected error: {d}\n", .{@intFromEnum(err)});
+        std.debug.print("unexpected error: {d}\n", .{@backingInt(err)});
         std.debug.dumpCurrentStackTrace(.{});
     }
     return error.Unexpected;
@@ -5382,7 +5389,7 @@ fn isReachable(atom: *const Atom, rel: Relocation, macho_file: *MachO) bool {
     return true;
 }
 
-pub fn pwriteAll(macho_file: *MachO, bytes: []const u8, offset: u64) error{LinkFailure}!void {
+pub fn pwriteAll(macho_file: *MachO, bytes: []const u8, offset: u64) error{AlreadyReported}!void {
     const comp = macho_file.base.comp;
     const io = comp.io;
     const diags = &comp.link_diags;
@@ -5390,7 +5397,7 @@ pub fn pwriteAll(macho_file: *MachO, bytes: []const u8, offset: u64) error{LinkF
         return diags.fail("failed to write: {t}", .{err});
 }
 
-pub fn setLength(macho_file: *MachO, length: u64) error{LinkFailure}!void {
+pub fn setLength(macho_file: *MachO, length: u64) error{AlreadyReported}!void {
     const comp = macho_file.base.comp;
     const io = comp.io;
     const diags = &comp.link_diags;
@@ -5398,7 +5405,7 @@ pub fn setLength(macho_file: *MachO, length: u64) error{LinkFailure}!void {
         return diags.fail("failed to set file end pos: {t}", .{err});
 }
 
-pub fn cast(macho_file: *MachO, comptime T: type, x: anytype) error{LinkFailure}!T {
+pub fn cast(macho_file: *MachO, comptime T: type, x: anytype) error{AlreadyReported}!T {
     return std.math.cast(T, x) orelse {
         const comp = macho_file.base.comp;
         const diags = &comp.link_diags;
@@ -5406,7 +5413,7 @@ pub fn cast(macho_file: *MachO, comptime T: type, x: anytype) error{LinkFailure}
     };
 }
 
-pub fn alignPow(macho_file: *MachO, x: u32) error{LinkFailure}!u32 {
+pub fn alignPow(macho_file: *MachO, x: u32) error{AlreadyReported}!u32 {
     const result, const ov = @shlWithOverflow(@as(u32, 1), try cast(macho_file, u5, x));
     if (ov != 0) {
         const comp = macho_file.base.comp;
@@ -5414,6 +5421,18 @@ pub fn alignPow(macho_file: *MachO, x: u32) error{LinkFailure}!u32 {
         return diags.fail("alignment overflow", .{});
     }
     return result;
+}
+
+pub fn needsEncryptionInfo(macho_file: *MachO) bool {
+    const target = macho_file.getTarget();
+    return switch (target.os.tag) {
+        .ios,
+        .tvos,
+        .visionos,
+        .watchos,
+        => target.abi != .simulator,
+        else => false,
+    };
 }
 
 /// Branch instruction has 26 bits immediate but is 4 byte aligned.

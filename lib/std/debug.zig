@@ -63,16 +63,22 @@ pub const cpu_context = @import("debug/cpu_context.zig");
 /// ```
 pub const SelfInfo = if (@hasDecl(root, "debug") and @hasDecl(root.debug, "SelfInfo"))
     root.debug.SelfInfo
-else switch (std.Target.ObjectFormat.default(native_os, native_arch)) {
-    .coff => if (native_os == .windows) @import("debug/SelfInfo/Windows.zig") else void,
-    .elf => switch (native_os) {
-        .freestanding, .other => void,
-        else => @import("debug/SelfInfo/Elf.zig"),
-    },
-    .macho => @import("debug/SelfInfo/MachO.zig"),
-    .plan9, .spirv, .wasm => void,
-    .c, .hex, .raw => unreachable,
-};
+else
+    TargetInfo(native_os, native_arch);
+
+/// Returns the default `SelfInfo` for the given `os` and `arch`.
+pub fn TargetInfo(os: std.Target.Os.Tag, arch: std.Target.Cpu.Arch) type {
+    return switch (std.Target.ObjectFormat.default(os, arch)) {
+        .coff => if (os == .windows) @import("debug/SelfInfo/Windows.zig") else void,
+        .elf => switch (os) {
+            .freestanding, .other => void,
+            else => @import("debug/SelfInfo/Elf.zig"),
+        },
+        .macho => @import("debug/SelfInfo/MachO.zig"),
+        .plan9, .spirv, .wasm => void,
+        .c, .hex, .raw => unreachable,
+    };
+}
 
 pub const SelfInfoError = error{
     /// The required debug info is invalid or corrupted.
@@ -145,6 +151,10 @@ pub fn FullPanic(comptime panicFn: fn ([]const u8, ?usize) noreturn) type {
             @branchHint(.cold);
             call("invalid error code", @returnAddress());
         }
+        pub fn unexpectedErrorCode(err: anyerror) noreturn {
+            @branchHint(.cold);
+            std.debug.panicExtra(@returnAddress(), "unexpected error code, found error.{s}", .{@errorName(err)});
+        }
         pub fn integerOutOfBounds() noreturn {
             @branchHint(.cold);
             call("integer does not fit in destination type", @returnAddress());
@@ -201,6 +211,10 @@ pub fn FullPanic(comptime panicFn: fn ([]const u8, ?usize) noreturn) type {
             @branchHint(.cold);
             call("'noreturn' function returned", @returnAddress());
         }
+        pub fn loadUninstantiableType() noreturn {
+            @branchHint(.cold);
+            call("attempt to load uninstantiable type", @returnAddress());
+        }
     };
 }
 
@@ -231,13 +245,12 @@ pub const Symbol = struct {
     };
 };
 
-/// Deprecated because it returns the optimization mode of the standard
-/// library, when the caller probably wants to use the optimization mode of
-/// their own module.
-pub const runtime_safety = switch (builtin.mode) {
-    .Debug, .ReleaseSafe => true,
-    .ReleaseFast, .ReleaseSmall => false,
-};
+/// Deprecated in favor of `std.lang.Optimize.runtimeSafety`, to be removed after 0.18.0
+///
+/// Returns whether the standard library has safety checks enabled. Callsites
+/// likely would rather know whether their own module's optimization mode
+/// (found via `@import("builtin").optimize`) has safety checks enabled.
+pub const runtime_safety = builtin.mode.runtimeSafety();
 
 /// Whether we can unwind the stack on this target, allowing capturing and/or printing the current
 /// stack trace. It is still legal to call `captureCurrentStackTrace`, `writeCurrentStackTrace`, and
@@ -251,7 +264,7 @@ pub const sys_can_stack_trace = switch (builtin.cpu.arch) {
     // because Emscripten's implementation is very slow.
     .wasm32,
     .wasm64,
-    => native_os == .emscripten and builtin.mode == .Debug,
+    => native_os == .emscripten and builtin.mode == .debug,
 
     // `@returnAddress()` is unsupported in LLVM 21.
     .bpfel,
@@ -308,6 +321,9 @@ pub fn unlockStderr() void {
 /// Alternatively, use the higher-level `std.log` or `Io.lockStderr` to
 /// integrate with the application's chosen `Io` implementation.
 pub fn print(comptime fmt: []const u8, args: anytype) void {
+    const io = std.Options.debug_io;
+    const prev = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev);
     var buffer: [64]u8 = undefined;
     const stderr = lockStderr(&buffer);
     defer unlockStderr();
@@ -326,6 +342,9 @@ pub inline fn getSelfDebugInfo() !*SelfInfo {
 /// Tries to print a hexadecimal view of the bytes, unbuffered, and ignores any error returned.
 /// Obtains the stderr mutex while dumping.
 pub fn dumpHex(bytes: []const u8) void {
+    const io = std.Options.debug_io;
+    const prev = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev);
     const stderr = lockStderr(&.{}).terminal();
     defer unlockStderr();
     dumpHexFallible(stderr, bytes) catch {};
@@ -337,7 +356,7 @@ pub fn dumpHexFallible(t: Io.Terminal, bytes: []const u8) !void {
     var chunks = mem.window(u8, bytes, 16, 16);
     while (chunks.next()) |window| {
         // 1. Print the address.
-        const address = (@intFromPtr(bytes.ptr) + 0x10 * (std.math.divCeil(usize, chunks.index orelse bytes.len, 16) catch unreachable)) - 0x10;
+        const address = (@intFromPtr(bytes.ptr) + 0x10 * @divCeil(chunks.index orelse bytes.len, 16) - 0x10);
         try t.setColor(.dim);
         // We print the address in lowercase and the bytes in uppercase hexadecimal to distinguish them more.
         // Also, make sure all lines are aligned by padding the address.
@@ -407,16 +426,16 @@ pub const CpuContextPtr = if (cpu_context.Native == noreturn) noreturn else *con
 
 /// Invokes detectable illegal behavior when `ok` is `false`.
 ///
-/// In Debug and ReleaseSafe modes, calls to this function are always
+/// In debug and safe modes, calls to this function are always
 /// generated, and the `unreachable` statement triggers a panic.
 ///
-/// In ReleaseFast and ReleaseSmall modes, calls to this function are optimized
+/// In fast and small modes, calls to this function are optimized
 /// away, and in fact the optimizer is able to use the assertion in its
 /// heuristics.
 ///
 /// Inside a test block, it is best to use the `testing` module rather than
 /// this function, because this function may not detect a test failure in
-/// ReleaseFast and ReleaseSmall mode. Outside of a test block, this assert
+/// fast and small mode. Outside of a test block, this assert
 /// function is the correct function to use.
 pub fn assert(ok: bool) void {
     @disableInstrumentation();
@@ -482,7 +501,6 @@ const use_trap_panic = switch (builtin.zig_backend) {
     .stage2_powerpc,
     .stage2_riscv64,
     .stage2_spirv,
-    .stage2_wasm,
     .stage2_x86,
     => true,
     else => false,
@@ -495,7 +513,17 @@ pub fn defaultPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
     if (use_trap_panic) @trap();
 
     switch (builtin.os.tag) {
-        .freestanding, .other, .@"3ds", .psp, .vita => {
+        .freestanding,
+        .other,
+
+        .@"3ds",
+        .wiiu,
+        .@"switch",
+
+        .psx,
+        .psp,
+        .vita,
+        => {
             @trap();
         },
         .uefi => {
@@ -789,6 +817,9 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, t: Io.Termin
 }
 /// A thin wrapper around `writeCurrentStackTrace` which writes to stderr and ignores write errors.
 pub fn dumpCurrentStackTrace(options: StackUnwindOptions) void {
+    const io = std.Options.debug_io;
+    const prev = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev);
     const stderr = lockStderr(&.{}).terminal();
     defer unlockStderr();
     writeCurrentStackTrace(.{
@@ -820,7 +851,7 @@ pub fn writeErrorReturnTrace(et: *const std.builtin.StackTrace, t: Io.Terminal) 
     // writing the stack trace.
     const len = @min(et.instruction_addresses.len, et.index);
     const skipped = et.index - len;
-    try writeTrace(et.instruction_addresses[0..len], @enumFromInt(skipped), t, false);
+    try writeTrace(et.instruction_addresses[0..len], @fromBackingInt(@intCast(skipped)), t, false);
 }
 
 /// Write a previously captured stack trace to `writer`, annotated with source locations.
@@ -879,6 +910,9 @@ fn writeTrace(
 }
 /// A thin wrapper around `writeStackTrace` which writes to stderr and ignores write errors.
 pub fn dumpStackTrace(st: *const StackTrace) void {
+    const io = std.Options.debug_io;
+    const prev = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev);
     const stderr = lockStderr(&.{}).terminal();
     defer unlockStderr();
     writeStackTrace(st, stderr) catch |err| switch (err) {
@@ -888,6 +922,9 @@ pub fn dumpStackTrace(st: *const StackTrace) void {
 
 /// A thin wrapper around `writeErrorReturnTrace` which writes to stderr and ignores write errors.
 pub fn dumpErrorReturnTrace(et: *const std.builtin.StackTrace) void {
+    const io = std.Options.debug_io;
+    const prev = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev);
     const stderr = lockStderr(&.{}).terminal();
     defer unlockStderr();
     writeErrorReturnTrace(et, stderr) catch |err| switch (err) {
@@ -1730,7 +1767,7 @@ test "manage resources correctly" {
 /// In release mode, it is size 0 and all methods are no-ops.
 /// This is a pre-made type with default settings.
 /// For more advanced usage, see `ConfigurableTrace`.
-pub const Trace = ConfigurableTrace(2, 4, builtin.mode == .Debug);
+pub const Trace = ConfigurableTrace(2, 4, builtin.mode == .debug);
 
 pub fn ConfigurableTrace(comptime size: usize, comptime stack_frame_count: usize, comptime is_enabled: bool) type {
     return struct {

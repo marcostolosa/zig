@@ -40,18 +40,14 @@ unset CXX
 
 ninja install
 
+# Must be done after zig cc is finished.
+export ZIG_LIB_DIR="$PWD/../lib"
+
 stage3-release/bin/zig build test docs \
   --maxrss ${ZSF_MAX_RSS:-0} \
   -Dstatic-llvm \
-  -Dskip-spirv \
-  -Dskip-wasm \
-  -Dskip-linux \
-  -Dskip-netbsd \
-  -Dskip-openbsd \
-  -Dskip-windows \
-  -Dskip-darwin \
+  -Dskip-non-native \
   --search-prefix "$PREFIX" \
-  --zig-lib-dir "$PWD/../lib" \
   --test-timeout 2m
 
 # Ensure that the fuzzer at least compiles.

@@ -259,9 +259,9 @@ const AddExtraOpts = struct {
 
 pub fn addExtra(symbol: *Symbol, opts: AddExtraOpts, elf_file: *Elf) void {
     var extras = symbol.extra(elf_file);
-    inline for (@typeInfo(@TypeOf(opts)).@"struct".fields) |field| {
-        if (@field(opts, field.name)) |x| {
-            @field(extras, field.name) = x;
+    inline for (@typeInfo(@TypeOf(opts)).@"struct".field_names) |field_name| {
+        if (@field(opts, field_name)) |x| {
+            @field(extras, field_name) = x;
         }
     }
     symbol.setExtra(extras, elf_file);
@@ -310,7 +310,7 @@ pub fn setOutputSym(symbol: Symbol, elf_file: *Elf, out: *elf.Elf64_Sym) void {
         break :blk symbol.address(.{ .plt = false, .trampoline = false }, elf_file);
     };
     const st_other = blk: {
-        const vis = @as(elf.STV, @enumFromInt(@as(u3, @truncate(esym.st_other))));
+        const vis = @as(elf.STV, @fromBackingInt(@intCast(@as(u3, @truncate(esym.st_other)))));
         if (file_ptr != .shared_object or vis != elf.STV.PROTECTED) break :blk esym.st_other;
         // Reset protected visibility to default for symbols originating in shared objects
         break :blk esym.st_other & 0b11111000;
@@ -332,7 +332,7 @@ const Format = struct {
         const symbol = f.symbol;
         try writer.writeAll(symbol.name(elf_file));
         switch (symbol.version_index.VERSION) {
-            @intFromEnum(elf.VER_NDX.LOCAL), @intFromEnum(elf.VER_NDX.GLOBAL) => {},
+            @backingInt(elf.VER_NDX.LOCAL), @backingInt(elf.VER_NDX.GLOBAL) => {},
             else => {
                 const file_ptr = symbol.file(elf_file).?;
                 assert(file_ptr == .shared_object);

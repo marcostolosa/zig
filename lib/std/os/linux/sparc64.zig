@@ -10,11 +10,11 @@ pub fn syscall0(
     return asm volatile (
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
-        \\ nop
+        \\  nop
         \\ neg %%o0
-        \\ 1:
+        \\1:
         : [ret] "={o0}" (-> u64),
-        : [number] "{g1}" (@intFromEnum(number)),
+        : [number] "{g1}" (@backingInt(number)),
         : .{ .memory = true, .xcc = true, .o1 = true, .o2 = true, .o3 = true, .o4 = true, .o5 = true, .o7 = true });
 }
 
@@ -25,11 +25,11 @@ pub fn syscall1(
     return asm volatile (
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
-        \\ nop
+        \\  nop
         \\ neg %%o0
-        \\ 1:
+        \\1:
         : [ret] "={o0}" (-> u64),
-        : [number] "{g1}" (@intFromEnum(number)),
+        : [number] "{g1}" (@backingInt(number)),
           [arg1] "{o0}" (arg1),
         : .{ .memory = true, .xcc = true, .o1 = true, .o2 = true, .o3 = true, .o4 = true, .o5 = true, .o7 = true });
 }
@@ -42,11 +42,11 @@ pub fn syscall2(
     return asm volatile (
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
-        \\ nop
+        \\  nop
         \\ neg %%o0
-        \\ 1:
+        \\1:
         : [ret] "={o0}" (-> u64),
-        : [number] "{g1}" (@intFromEnum(number)),
+        : [number] "{g1}" (@backingInt(number)),
           [arg1] "{o0}" (arg1),
           [arg2] "{o1}" (arg2),
         : .{ .memory = true, .xcc = true, .o1 = true, .o2 = true, .o3 = true, .o4 = true, .o5 = true, .o7 = true });
@@ -61,11 +61,11 @@ pub fn syscall3(
     return asm volatile (
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
-        \\ nop
+        \\  nop
         \\ neg %%o0
-        \\ 1:
+        \\1:
         : [ret] "={o0}" (-> u64),
-        : [number] "{g1}" (@intFromEnum(number)),
+        : [number] "{g1}" (@backingInt(number)),
           [arg1] "{o0}" (arg1),
           [arg2] "{o1}" (arg2),
           [arg3] "{o2}" (arg3),
@@ -82,11 +82,11 @@ pub fn syscall4(
     return asm volatile (
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
-        \\ nop
+        \\  nop
         \\ neg %%o0
-        \\ 1:
+        \\1:
         : [ret] "={o0}" (-> u64),
-        : [number] "{g1}" (@intFromEnum(number)),
+        : [number] "{g1}" (@backingInt(number)),
           [arg1] "{o0}" (arg1),
           [arg2] "{o1}" (arg2),
           [arg3] "{o2}" (arg3),
@@ -105,11 +105,11 @@ pub fn syscall5(
     return asm volatile (
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
-        \\ nop
+        \\  nop
         \\ neg %%o0
-        \\ 1:
+        \\1:
         : [ret] "={o0}" (-> u64),
-        : [number] "{g1}" (@intFromEnum(number)),
+        : [number] "{g1}" (@backingInt(number)),
           [arg1] "{o0}" (arg1),
           [arg2] "{o1}" (arg2),
           [arg3] "{o2}" (arg3),
@@ -130,11 +130,11 @@ pub fn syscall6(
     return asm volatile (
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
-        \\ nop
+        \\  nop
         \\ neg %%o0
-        \\ 1:
+        \\1:
         : [ret] "={o0}" (-> u64),
-        : [number] "{g1}" (@intFromEnum(number)),
+        : [number] "{g1}" (@backingInt(number)),
           [arg1] "{o0}" (arg1),
           [arg2] "{o1}" (arg2),
           [arg3] "{o2}" (arg3),
@@ -151,17 +151,17 @@ pub fn syscall_pipe(
         \\ mov %[arg], %%g3
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
-        \\ nop
+        \\  nop
         \\ # Return the error code
         \\ ba 2f
-        \\ neg %%o0
+        \\  neg %%o0
         \\1:
         \\ st %%o0, [%%g3+0]
         \\ st %%o1, [%%g3+4]
         \\ clr %%o0
         \\2:
         : [ret] "={o0}" (-> u64),
-        : [number] "{g1}" (@intFromEnum(SYS.pipe)),
+        : [number] "{g1}" (@backingInt(SYS.pipe)),
           [arg] "r" (fd),
         : .{ .memory = true, .g3 = true });
 }
@@ -175,16 +175,16 @@ pub fn syscall_fork() u64 {
     return asm volatile (
         \\ t 0x6d
         \\ bcc,pt %%xcc, 1f
-        \\ nop
+        \\  nop
         \\ ba 2f
-        \\ neg %%o0
-        \\ 1:
+        \\  neg %%o0
+        \\1:
         \\ # Clear the child's %%o0
         \\ dec %%o1
         \\ and %%o1, %%o0, %%o0
-        \\ 2:
+        \\2:
         : [ret] "={o0}" (-> u64),
-        : [number] "{g1}" (@intFromEnum(SYS.fork)),
+        : [number] "{g1}" (@backingInt(SYS.fork)),
         : .{ .memory = true, .xcc = true, .o1 = true, .o2 = true, .o3 = true, .o4 = true, .o5 = true, .o7 = true });
 }
 
@@ -196,33 +196,48 @@ pub fn clone() callconv(.naked) u64 {
     //         g1         o0,    o1,    o2,   o3,  o4
     asm volatile (
         \\ save %%sp, -192, %%sp
+        \\
+        \\ // clone() on SPARC can fail with EFAULT if %%sp points to uncommitted memory, so flush
+        \\ // all register windows up to this point to ensure that the kernel has enough committed
+        \\ // memory for its stack frame.
+        \\ save %%sp, -192, %%sp
+        \\ flushw
+        \\ restore
+        \\
         \\ # Save the func pointer and the arg pointer
         \\ mov %%i0, %%g2
         \\ mov %%i3, %%g3
+        \\
         \\ # Shuffle the arguments
         \\ mov 217, %%g1 // SYS_clone
         \\ mov %%i2, %%o0
-        \\ # Add some extra space for the initial frame
-        \\ sub %%i1, 176 + 2047, %%o1
+        \\
+        \\ # Align, and add some extra space for the initial frame
+        \\ and %%i1, -16, %%i1
+        \\ sub %%i1, 192 + 2047, %%o1
+        \\
         \\ mov %%i4, %%o2
         \\ mov %%i5, %%o3
-        \\ ldx [%%fp + 0x8af], %%o4
+        \\ ldx [%%fp + 176 + 2047], %%o4
         \\ t 0x6d
         \\ bcs,pn %%xcc, 1f
-        \\ nop
+        \\  nop
         \\ # The child pid is returned in o0 while o1 tells if this
-        \\ # process is # the child (=1) or the parent (=0).
+        \\ # process is the child (=1) or the parent (=0).
         \\ brnz %%o1, 2f
-        \\ nop
+        \\  nop
+        \\
         \\ # Parent process, return the child pid
         \\ mov %%o0, %%i0
         \\ ret
-        \\ restore
+        \\  restore
+        \\
         \\1:
         \\ # The syscall failed
         \\ sub %%g0, %%o0, %%i0
         \\ ret
-        \\ restore
+        \\  restore
+        \\
         \\2:
         \\ # Child process
     );
@@ -234,9 +249,8 @@ pub fn clone() callconv(.naked) u64 {
         \\ mov %%g0, %%i7
         \\
         \\ # call func(arg)
-        \\ mov %%g0, %%fp
         \\ call %%g2
-        \\ mov %%g3, %%o0
+        \\  mov %%g3, %%o0
         \\ # Exit
         \\ mov 1, %%g1 // SYS_exit
         \\ t 0x6d
@@ -245,13 +259,16 @@ pub fn clone() callconv(.naked) u64 {
 
 pub const restore = restore_rt;
 
-// Need to use C ABI here instead of naked
-// to prevent an infinite loop when calling rt_sigreturn.
-pub fn restore_rt() callconv(.c) void {
-    return asm volatile ("t 0x6d"
+pub fn restore_rt() callconv(.naked) noreturn {
+    asm volatile (
+        \\ nop
+        \\ nop
+    );
+    asm volatile (
+        \\ t 0x6d
         :
-        : [number] "{g1}" (@intFromEnum(SYS.rt_sigreturn)),
-        : .{ .memory = true, .xcc = true, .o0 = true, .o1 = true, .o2 = true, .o3 = true, .o4 = true, .o5 = true, .o7 = true });
+        : [number] "{g1}" (@backingInt(SYS.rt_sigreturn)),
+    );
 }
 
 pub const VDSO = struct {

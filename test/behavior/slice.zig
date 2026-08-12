@@ -67,6 +67,7 @@ test "comptime slice of undefined pointer of length 0" {
 
 test "implicitly cast array of size 0 to slice" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     var msg = [_]u8{};
     try assertLenIsZero(&msg);
@@ -172,7 +173,6 @@ test "pass a slice of types to a function" {
 
 test "generic malloc free" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-
     const a = memAlloc(u8, 10) catch unreachable;
     memFree(u8, a);
 }
@@ -186,7 +186,6 @@ fn memFree(comptime T: type, memory: []T) void {
 
 test "slice of hardcoded address to pointer" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const S = struct {
         fn doTheTest() !void {
             const pointer = @as([*]u8, @ptrFromInt(0x04))[0..2];
@@ -225,7 +224,6 @@ test "comptime pointer cast array and then slice" {
 test "slicing zero length array" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const s1 = ""[0..];
     const s2 = ([_]u32{})[0..];
     try expect(s1.len == 0);
@@ -276,6 +274,7 @@ test "slice string literal has correct type" {
 
 test "result location zero sized array inside struct field implicit cast to slice" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const E = struct {
         entries: []u32,
@@ -382,15 +381,17 @@ test "obtaining a null terminated slice" {
 }
 
 test "empty array to slice" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const S = struct {
         fn doTheTest() !void {
             const empty: []align(16) u8 = &[_]u8{};
             const align_1: []align(1) u8 = empty;
             const align_4: []align(4) u8 = empty;
             const align_16: []align(16) u8 = empty;
-            try expect(1 == @typeInfo(@TypeOf(align_1)).pointer.alignment);
-            try expect(4 == @typeInfo(@TypeOf(align_4)).pointer.alignment);
-            try expect(16 == @typeInfo(@TypeOf(align_16)).pointer.alignment);
+            try expect(1 == @typeInfo(@TypeOf(align_1)).pointer.attrs.@"align");
+            try expect(4 == @typeInfo(@TypeOf(align_4)).pointer.attrs.@"align");
+            try expect(16 == @typeInfo(@TypeOf(align_16)).pointer.attrs.@"align");
         }
     };
 
@@ -806,7 +807,6 @@ test "slice sentinel access at comptime" {
 test "slicing array with sentinel as end index" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const S = struct {
         fn do() !void {
             var array = [_:0]u8{ 1, 2, 3, 4 };
@@ -1050,6 +1050,8 @@ test "peer slices keep abi alignment with empty struct" {
 }
 
 test "sentinel expression in slice operation has result type" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const sentinel = std.math.maxInt(u16);
 
     const arr: [3]u16 = .{ 1, 2, sentinel };
@@ -1074,4 +1076,98 @@ test "conditionally return second argument slice" {
 
     try expectEqualStrings("", S.foo(false, "false"));
     try expectEqualStrings("true", S.foo(true, "true"));
+}
+
+test "slice field alignment" {
+    const S = struct {
+        fn doTheTest(p: *align(1) const []u8) !void {
+            comptime assert(@TypeOf(&p.ptr) == *align(1) const [*]u8);
+            comptime assert(@TypeOf(&p.len) == *align(1) const usize);
+            try expect(p.len == 10);
+        }
+    };
+    var arr: [10]u8 = @splat(0);
+    try S.doTheTest(&&arr);
+}
+
+test "directly deref slice with comptime-known length" {
+    {
+        const slice: []const u16 = &.{ 1, 2, 3 };
+        const array = slice.*;
+
+        comptime assert(@TypeOf(array) == [3]u16);
+        comptime assert(array[0] == 1);
+        comptime assert(array[1] == 2);
+        comptime assert(array[2] == 3);
+    }
+    {
+        const slice: [:0]const u16 = &.{ 1, 2, 3 };
+        const array = slice.*;
+
+        comptime assert(@TypeOf(array) == [3:0]u16);
+        comptime assert(array[0] == 1);
+        comptime assert(array[1] == 2);
+        comptime assert(array[2] == 3);
+        comptime assert(array[3] == 0);
+    }
+}
+
+test "address of dereferenced slice is array pointer" {
+    {
+        const slice: []const u16 = &.{ 1, 2, 3 };
+        const array_ptr = &slice.*;
+
+        comptime assert(@TypeOf(array_ptr) == *const [3]u16);
+        comptime assert(array_ptr[0] == 1);
+        comptime assert(array_ptr[1] == 2);
+        comptime assert(array_ptr[2] == 3);
+    }
+    {
+        const slice: [:0]const u16 = &.{ 1, 2, 3 };
+        const array_ptr = &slice.*;
+
+        comptime assert(@TypeOf(array_ptr) == *const [3:0]u16);
+        comptime assert(array_ptr[0] == 1);
+        comptime assert(array_ptr[1] == 2);
+        comptime assert(array_ptr[2] == 3);
+        comptime assert(array_ptr[3] == 0);
+    }
+}
+
+test "coerce slice with comptime-known length to array pointer" {
+    {
+        const slice: []const u16 = &.{ 1, 2, 3 };
+        const array_ptr: *const [3]u16 = slice;
+
+        comptime assert(array_ptr[0] == 1);
+        comptime assert(array_ptr[1] == 2);
+        comptime assert(array_ptr[2] == 3);
+    }
+    {
+        const slice: [:0]const u16 = &.{ 1, 2, 3 };
+        const array_ptr: *const [3:0]u16 = slice;
+
+        comptime assert(array_ptr[0] == 1);
+        comptime assert(array_ptr[1] == 2);
+        comptime assert(array_ptr[2] == 3);
+        comptime assert(array_ptr[3] == 0);
+    }
+    {
+        const slice: [:0]const u16 = &.{ 1, 2, 3 };
+        const array_ptr: *const [3]u16 = slice;
+
+        comptime assert(array_ptr[0] == 1);
+        comptime assert(array_ptr[1] == 2);
+        comptime assert(array_ptr[2] == 3);
+    }
+}
+
+test "modify slice through coerced array pointer" {
+    comptime {
+        var array: [3]u16 = .{ 1, 2, 3 };
+        const slice: []u16 = &array;
+        const array_ptr: *[3]u16 = slice;
+        array_ptr[2] = 0;
+        assert(slice[2] == 0);
+    }
 }

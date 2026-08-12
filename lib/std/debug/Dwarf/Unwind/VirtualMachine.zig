@@ -247,10 +247,15 @@ fn evalInstructions(
                     .val_expr => |len| .{ .val_expression = try takeExprBlock(&fr, len) },
                 };
             },
-            .def_cfa => |cfa| vm.current_row.cfa = .{ .reg_off = .{
-                .register = cfa.register,
-                .offset = @intCast(cfa.offset),
-            } },
+            .def_cfa => |cfa| vm.current_row.cfa = .{
+                .reg_off = .{
+                    .register = cfa.register,
+                    // Unfortunately, LLVM emits negative CFI directives as their unsigned variants
+                    // rather than the signed variants that DWARF has for exactly that purpose, hence
+                    // `@bitCast` instead of `@intCast`.
+                    .offset = @bitCast(cfa.offset),
+                },
+            },
             .def_cfa_sf => |cfa| vm.current_row.cfa = .{ .reg_off = .{
                 .register = cfa.register,
                 .offset = cfa.offset_sf * cie.data_alignment_factor,
@@ -272,7 +277,8 @@ fn evalInstructions(
             },
             .def_cfa_offset => |offset| switch (vm.current_row.cfa) {
                 .none, .expression => return error.InvalidOperation,
-                .reg_off => |*ro| ro.offset = @intCast(offset),
+                // See the comment for `def_cfa` above.
+                .reg_off => |*ro| ro.offset = @bitCast(offset),
             },
             .def_cfa_offset_sf => |offset_sf| switch (vm.current_row.cfa) {
                 .none, .expression => return error.InvalidOperation,
@@ -453,7 +459,7 @@ pub const Instruction = union(enum) {
                 .def_cfa_offset_sf => .{ .def_cfa_offset_sf = try reader.takeLeb128(i64) },
                 .def_cfa_expression => .{ .def_cfa_expr = try reader.takeLeb128(usize) },
 
-                _ => switch (@intFromEnum(inst.low.extended)) {
+                _ => switch (@backingInt(inst.low.extended)) {
                     0x1C...0x3F => return error.UnimplementedUserOpcode,
                     else => return error.InvalidOpcode,
                 },

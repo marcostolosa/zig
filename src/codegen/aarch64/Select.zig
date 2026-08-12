@@ -4,12 +4,12 @@ air: Air,
 nav_index: InternPool.Nav.Index,
 
 // Blocks
-def_order: std.AutoArrayHashMapUnmanaged(Air.Inst.Index, void),
-blocks: std.AutoArrayHashMapUnmanaged(Air.Inst.Index, Block),
-loops: std.AutoArrayHashMapUnmanaged(Air.Inst.Index, Loop),
+def_order: std.array_hash_map.Auto(Air.Inst.Index, void),
+blocks: std.array_hash_map.Auto(Air.Inst.Index, Block),
+loops: std.array_hash_map.Auto(Air.Inst.Index, Loop),
 active_loops: std.ArrayList(Loop.Index),
 loop_live: struct {
-    set: std.AutoArrayHashMapUnmanaged(struct { Loop.Index, Air.Inst.Index }, void),
+    set: std.array_hash_map.Auto(struct { Loop.Index, Air.Inst.Index }, void),
     list: std.ArrayList(Air.Inst.Index),
 },
 dom_start: u32,
@@ -52,9 +52,9 @@ pub const Block = struct {
     live_registers: LiveRegisters,
     target_label: u32,
 
-    pub const main: Air.Inst.Index = @enumFromInt(
+    pub const main: Air.Inst.Index = @fromBackingInt(@intCast(
         std.math.maxInt(@typeInfo(Air.Inst.Index).@"enum".tag_type),
-    );
+    ));
 
     fn branch(target_block: *const Block, isel: *Select) !void {
         if (isel.instructions.items.len > target_block.target_label) {
@@ -72,19 +72,19 @@ pub const Loop = struct {
     live_registers: LiveRegisters,
     repeat_list: u32,
 
-    pub const invalid: Air.Inst.Index = @enumFromInt(
+    pub const invalid: Air.Inst.Index = @fromBackingInt(@intCast(
         std.math.maxInt(@typeInfo(Air.Inst.Index).@"enum".tag_type),
-    );
+    ));
 
     pub const Index = enum(u32) {
         _,
 
         fn inst(li: Loop.Index, isel: *Select) Air.Inst.Index {
-            return isel.loops.keys()[@intFromEnum(li)];
+            return isel.loops.keys()[@backingInt(li)];
         }
 
         fn get(li: Loop.Index, isel: *Select) *Loop {
-            return &isel.loops.values()[@intFromEnum(li)];
+            return &isel.loops.values()[@backingInt(li)];
         }
     };
 
@@ -133,7 +133,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
     var air_body_index: usize = 0;
     var air_inst_index = air_body[air_body_index];
     const initial_def_order_len = isel.def_order.count();
-    air_tag: switch (air_tags[@intFromEnum(air_inst_index)]) {
+    air_tag: switch (air_tags[@backingInt(air_inst_index)]) {
         // No "scalarize" legalizations are enabled, so these instructions never appear.
         .legalize_vec_elem_val => unreachable,
         .legalize_vec_store_elem => unreachable,
@@ -152,7 +152,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .add,
         .add_safe,
@@ -175,6 +175,8 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         .div_trunc_optimized,
         .div_floor,
         .div_floor_optimized,
+        .div_ceil,
+        .div_ceil_optimized,
         .div_exact,
         .div_exact_optimized,
         .rem,
@@ -207,7 +209,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         .slice_elem_val,
         .ptr_elem_val,
         => {
-            const bin_op = air_data[@intFromEnum(air_inst_index)].bin_op;
+            const bin_op = air_data[@backingInt(air_inst_index)].bin_op;
 
             try isel.analyzeUse(bin_op.lhs);
             try isel.analyzeUse(bin_op.rhs);
@@ -215,7 +217,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .ptr_add,
         .ptr_sub,
@@ -227,7 +229,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         .slice_elem_ptr,
         .ptr_elem_ptr,
         => {
-            const ty_pl = air_data[@intFromEnum(air_inst_index)].ty_pl;
+            const ty_pl = air_data[@backingInt(air_inst_index)].ty_pl;
             const bin_op = isel.air.extraData(Air.Bin, ty_pl.payload).data;
 
             try isel.analyzeUse(bin_op.lhs);
@@ -236,17 +238,17 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .alloc => {
-            const ty = air_data[@intFromEnum(air_inst_index)].ty;
+            const ty = air_data[@backingInt(air_inst_index)].ty;
 
             isel.stack_align = isel.stack_align.maxStrict(ty.ptrAlignment(zcu));
             try isel.def_order.putNoClobber(gpa, air_inst_index, {});
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .inferred_alloc,
         .inferred_alloc_comptime,
@@ -255,9 +257,10 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         .work_item_id,
         .work_group_size,
         .work_group_id,
+        .spirv_runtime_array_len,
         => unreachable,
         .ret_ptr => {
-            const ty = air_data[@intFromEnum(air_inst_index)].ty;
+            const ty = air_data[@backingInt(air_inst_index)].ty;
 
             if (isel.live_values.get(Block.main)) |ret_vi| switch (ret_vi.parent(isel)) {
                 .unallocated, .stack_slot => isel.stack_align = isel.stack_align.maxStrict(ty.ptrAlignment(zcu)),
@@ -268,10 +271,10 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .assembly => {
-            const ty_pl = air_data[@intFromEnum(air_inst_index)].ty_pl;
+            const ty_pl = air_data[@backingInt(air_inst_index)].ty_pl;
             const unwrapped_asm = isel.air.unwrapAsm(air_inst_index);
 
             for (unwrapped_asm.outputs) |operand| if (operand != .none) try isel.analyzeUse(operand);
@@ -279,7 +282,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .not,
         .clz,
@@ -291,8 +294,8 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         .load,
         .fptrunc,
         .fpext,
-        .intcast,
-        .intcast_safe,
+        .int_cast,
+        .int_cast_safe,
         .trunc,
         .optional_payload,
         .optional_payload_ptr,
@@ -324,17 +327,25 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         .c_va_arg,
         .c_va_copy,
         => {
-            const ty_op = air_data[@intFromEnum(air_inst_index)].ty_op;
+            const ty_op = air_data[@backingInt(air_inst_index)].ty_op;
 
             try isel.analyzeUse(ty_op.operand);
             try isel.def_order.putNoClobber(gpa, air_inst_index, {});
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
-        .bitcast => {
-            const ty_op = air_data[@intFromEnum(air_inst_index)].ty_op;
+        .bit_cast,
+        .ptr_cast,
+        .ptr_from_int,
+        .int_from_ptr,
+        .error_cast,
+        .error_from_int,
+        .int_from_error,
+        .union_from_enum,
+        => {
+            const ty_op = air_data[@backingInt(air_inst_index)].ty_op;
             maybe_noop: {
                 if (ty_op.ty.toInterned().? != isel.air.typeOf(ty_op.operand, ip).toIntern()) break :maybe_noop;
                 if (true) break :maybe_noop;
@@ -349,8 +360,9 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
+        .bit_cast_safe => unreachable, // legalized
         inline .block, .dbg_inline_block => |air_tag| {
             const air_body_block = switch (air_tag) {
                 else => comptime unreachable,
@@ -376,7 +388,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .loop => {
             const air_body_block = isel.air.unwrapBlock(air_inst_index);
@@ -385,7 +397,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
             const initial_dom_len = isel.dom_len;
             isel.dom_start = @intCast(isel.dom.items.len);
             isel.dom_len = @intCast(isel.blocks.count());
-            try isel.active_loops.append(gpa, @enumFromInt(isel.loops.count()));
+            try isel.active_loops.append(gpa, @fromBackingInt(@intCast(isel.loops.count())));
             try isel.loops.putNoClobber(gpa, air_inst_index, .{
                 .def_order = @intCast(isel.def_order.count()),
                 .dom = isel.dom_start,
@@ -394,11 +406,11 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
                 .live_registers = undefined,
                 .repeat_list = undefined,
             });
-            try isel.dom.appendNTimes(gpa, 0, std.math.divCeil(usize, isel.dom_len, @bitSizeOf(DomInt)) catch unreachable);
+            try isel.dom.appendNTimes(gpa, 0, @divCeil(isel.dom_len, @bitSizeOf(DomInt)));
             try isel.analyze(air_body_block.body);
             for (
                 isel.dom.items[initial_dom_start..].ptr,
-                isel.dom.items[isel.dom_start..][0 .. std.math.divCeil(usize, initial_dom_len, @bitSizeOf(DomInt)) catch unreachable],
+                isel.dom.items[isel.dom_start..][0..@divCeil(initial_dom_len, @bitSizeOf(DomInt))],
             ) |*initial_dom, loop_dom| initial_dom.* |= loop_dom;
             isel.dom_start = initial_dom_start;
             isel.dom_len = initial_dom_len;
@@ -408,7 +420,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         },
         .repeat, .trap, .unreach => air_body_index += 1,
         .br => {
-            const br = air_data[@intFromEnum(air_inst_index)].br;
+            const br = air_data[@backingInt(air_inst_index)].br;
             const block_index = isel.blocks.getIndex(br.block_inst).?;
             if (block_index < isel.dom_len) isel.dom.items[isel.dom_start + block_index / @bitSizeOf(DomInt)] |= @as(DomInt, 1) << @truncate(block_index);
             try isel.analyzeUse(br.operand);
@@ -418,7 +430,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         .breakpoint, .dbg_stmt, .dbg_empty_stmt, .dbg_var_ptr, .dbg_var_val, .dbg_arg_inline, .c_va_end => {
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .call,
         .call_always_tail,
@@ -474,7 +486,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             var ret_it: CallAbiIterator = .init;
             if (try ret_it.ret(isel, isel.air.typeOfIndex(air_inst_index, ip))) |ret_vi| {
-                tracking_log.debug("${d} <- %{d}", .{ @intFromEnum(ret_vi), @intFromEnum(air_inst_index) });
+                tracking_log.debug("${d} <- %{d}", .{ @backingInt(ret_vi), @backingInt(air_inst_index) });
                 switch (ret_vi.parent(isel)) {
                     .unallocated, .stack_slot => {},
                     .value, .constant => unreachable,
@@ -492,7 +504,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .sqrt,
         .sin,
@@ -522,17 +534,17 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         .error_name,
         .cmp_lte_errors_len,
         => {
-            const un_op = air_data[@intFromEnum(air_inst_index)].un_op;
+            const un_op = air_data[@backingInt(air_inst_index)].un_op;
 
             try isel.analyzeUse(un_op);
             try isel.def_order.putNoClobber(gpa, air_inst_index, {});
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .cmp_vector, .cmp_vector_optimized => {
-            const ty_pl = air_data[@intFromEnum(air_inst_index)].ty_pl;
+            const ty_pl = air_data[@backingInt(air_inst_index)].ty_pl;
             const extra = isel.air.extraData(Air.VectorCmp, ty_pl.payload).data;
 
             try isel.analyzeUse(extra.lhs);
@@ -541,7 +553,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .cond_br => {
             const cond_br = isel.air.unwrapCondBr(air_inst_index);
@@ -571,7 +583,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
             const initial_dom_len = isel.dom_len;
             isel.dom_start = @intCast(isel.dom.items.len);
             isel.dom_len = @intCast(isel.blocks.count());
-            try isel.active_loops.append(gpa, @enumFromInt(isel.loops.count()));
+            try isel.active_loops.append(gpa, @fromBackingInt(@intCast(isel.loops.count())));
             try isel.loops.putNoClobber(gpa, air_inst_index, .{
                 .def_order = @intCast(isel.def_order.count()),
                 .dom = isel.dom_start,
@@ -580,7 +592,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
                 .live_registers = undefined,
                 .repeat_list = undefined,
             });
-            try isel.dom.appendNTimes(gpa, 0, std.math.divCeil(usize, isel.dom_len, @bitSizeOf(DomInt)) catch unreachable);
+            try isel.dom.appendNTimes(gpa, 0, @divCeil(isel.dom_len, @bitSizeOf(DomInt)));
 
             var cases_it = switch_br.iterateCases();
             while (cases_it.next()) |case| try isel.analyze(case.body);
@@ -588,7 +600,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             for (
                 isel.dom.items[initial_dom_start..].ptr,
-                isel.dom.items[isel.dom_start..][0 .. std.math.divCeil(usize, initial_dom_len, @bitSizeOf(DomInt)) catch unreachable],
+                isel.dom.items[isel.dom_start..][0..@divCeil(initial_dom_len, @bitSizeOf(DomInt))],
             ) |*initial_dom, loop_dom| initial_dom.* |= loop_dom;
             isel.dom_start = initial_dom_start;
             isel.dom_len = initial_dom_len;
@@ -597,7 +609,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
             air_body_index += 1;
         },
         .switch_dispatch => {
-            const br = air_data[@intFromEnum(air_inst_index)].br;
+            const br = air_data[@backingInt(air_inst_index)].br;
 
             try isel.analyzeUse(br.operand);
 
@@ -612,7 +624,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .try_ptr, .try_ptr_cold => {
             const unwrapped_try = isel.air.unwrapTryPtr(air_inst_index);
@@ -623,10 +635,10 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .ret, .ret_safe, .ret_load => {
-            const un_op = air_data[@intFromEnum(air_inst_index)].un_op;
+            const un_op = air_data[@backingInt(air_inst_index)].un_op;
             isel.returns = true;
 
             const block_index = 0;
@@ -649,17 +661,17 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         .atomic_store_release,
         .atomic_store_seq_cst,
         => {
-            const bin_op = air_data[@intFromEnum(air_inst_index)].bin_op;
+            const bin_op = air_data[@backingInt(air_inst_index)].bin_op;
 
             try isel.analyzeUse(bin_op.lhs);
             try isel.analyzeUse(bin_op.rhs);
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
-        .struct_field_ptr, .struct_field_val => {
-            const ty_pl = air_data[@intFromEnum(air_inst_index)].ty_pl;
+        .struct_field_ptr, .agg_field_val => {
+            const ty_pl = air_data[@backingInt(air_inst_index)].ty_pl;
             const extra = isel.air.extraData(Air.StructField, ty_pl.payload).data;
 
             try isel.analyzeUse(extra.struct_operand);
@@ -667,10 +679,10 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .slice_len => {
-            const ty_op = air_data[@intFromEnum(air_inst_index)].ty_op;
+            const ty_op = air_data[@backingInt(air_inst_index)].ty_op;
 
             try isel.analyzeUse(ty_op.operand);
             try isel.def_order.putNoClobber(gpa, air_inst_index, {});
@@ -682,10 +694,10 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .slice_ptr => {
-            const ty_op = air_data[@intFromEnum(air_inst_index)].ty_op;
+            const ty_op = air_data[@backingInt(air_inst_index)].ty_op;
 
             try isel.analyzeUse(ty_op.operand);
             try isel.def_order.putNoClobber(gpa, air_inst_index, {});
@@ -697,17 +709,17 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .reduce, .reduce_optimized => {
-            const reduce = air_data[@intFromEnum(air_inst_index)].reduce;
+            const reduce = air_data[@backingInt(air_inst_index)].reduce;
 
             try isel.analyzeUse(reduce.operand);
             try isel.def_order.putNoClobber(gpa, air_inst_index, {});
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .shuffle_one => {
             const extra = isel.air.unwrapShuffleOne(zcu, air_inst_index);
@@ -717,7 +729,7 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .shuffle_two => {
             const extra = isel.air.unwrapShuffleTwo(zcu, air_inst_index);
@@ -728,10 +740,10 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .select, .mul_add => {
-            const pl_op = air_data[@intFromEnum(air_inst_index)].pl_op;
+            const pl_op = air_data[@backingInt(air_inst_index)].pl_op;
             const bin_op = isel.air.extraData(Air.Bin, pl_op.payload).data;
 
             try isel.analyzeUse(pl_op.operand);
@@ -741,10 +753,10 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .cmpxchg_weak, .cmpxchg_strong => {
-            const ty_pl = air_data[@intFromEnum(air_inst_index)].ty_pl;
+            const ty_pl = air_data[@backingInt(air_inst_index)].ty_pl;
             const extra = isel.air.extraData(Air.Cmpxchg, ty_pl.payload).data;
 
             try isel.analyzeUse(extra.ptr);
@@ -754,20 +766,20 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .atomic_load => {
-            const atomic_load = air_data[@intFromEnum(air_inst_index)].atomic_load;
+            const atomic_load = air_data[@backingInt(air_inst_index)].atomic_load;
 
             try isel.analyzeUse(atomic_load.ptr);
             try isel.def_order.putNoClobber(gpa, air_inst_index, {});
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .atomic_rmw => {
-            const pl_op = air_data[@intFromEnum(air_inst_index)].pl_op;
+            const pl_op = air_data[@backingInt(air_inst_index)].pl_op;
             const extra = isel.air.extraData(Air.AtomicRmw, pl_op.payload).data;
 
             try isel.analyzeUse(extra.operand);
@@ -775,10 +787,10 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .aggregate_init => {
-            const ty_pl = air_data[@intFromEnum(air_inst_index)].ty_pl;
+            const ty_pl = air_data[@backingInt(air_inst_index)].ty_pl;
             const elements: []const Air.Inst.Ref = @ptrCast(isel.air.extra.items[ty_pl.payload..][0..@intCast(ty_pl.ty.toType().arrayLen(zcu))]);
 
             for (elements) |element| try isel.analyzeUse(element);
@@ -786,10 +798,10 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .union_init => {
-            const ty_pl = air_data[@intFromEnum(air_inst_index)].ty_pl;
+            const ty_pl = air_data[@backingInt(air_inst_index)].ty_pl;
             const extra = isel.air.extraData(Air.UnionInit, ty_pl.payload).data;
 
             try isel.analyzeUse(extra.init);
@@ -797,19 +809,19 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .prefetch => {
-            const prefetch = air_data[@intFromEnum(air_inst_index)].prefetch;
+            const prefetch = air_data[@backingInt(air_inst_index)].prefetch;
 
             try isel.analyzeUse(prefetch.ptr);
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .field_parent_ptr => {
-            const ty_pl = air_data[@intFromEnum(air_inst_index)].ty_pl;
+            const ty_pl = air_data[@backingInt(air_inst_index)].ty_pl;
             const extra = isel.air.extraData(Air.FieldParentPtr, ty_pl.payload).data;
 
             try isel.analyzeUse(extra.field_ptr);
@@ -817,16 +829,16 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
         .set_err_return_trace => {
-            const un_op = air_data[@intFromEnum(air_inst_index)].un_op;
+            const un_op = air_data[@backingInt(air_inst_index)].un_op;
 
             try isel.analyzeUse(un_op);
 
             air_body_index += 1;
             air_inst_index = air_body[air_body_index];
-            continue :air_tag air_tags[@intFromEnum(air_inst_index)];
+            continue :air_tag air_tags[@backingInt(air_inst_index)];
         },
     }
     assert(air_body_index == air_body.len);
@@ -883,7 +895,7 @@ pub fn finishAnalysis(isel: *Select) !void {
     }
 }
 
-pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory, CodegenFail }!void {
+pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory, AlreadyReported }!void {
     const zcu = isel.pt.zcu;
     const ip = &zcu.intern_pool;
     const gpa = zcu.gpa;
@@ -911,11 +923,11 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
         inst_index: Air.Inst.Index,
 
         fn tag(it: *@This(), inst_index: Air.Inst.Index) Air.Inst.Tag {
-            return it.tag_items[@intFromEnum(inst_index)];
+            return it.tag_items[@backingInt(inst_index)];
         }
 
         fn data(it: *@This(), inst_index: Air.Inst.Index) Air.Inst.Data {
-            return it.data_items[@intFromEnum(inst_index)];
+            return it.data_items[@backingInt(inst_index)];
         }
 
         fn next(it: *@This()) ?Air.Inst.Tag {
@@ -2087,7 +2099,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                                         32 => "truncf",
                                         64 => "trunc",
                                         80 => "__truncx",
-                                        128 => "truncq",
+                                        128 => "truncf128",
                                     },
                                     .reloc = .{ .label = @intCast(isel.instructions.items.len) },
                                 });
@@ -2101,7 +2113,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                                         32 => "floorf",
                                         64 => "floor",
                                         80 => "__floorx",
-                                        128 => "floorq",
+                                        128 => "floorf128",
                                     },
                                     .reloc = .{ .label = @intCast(isel.instructions.items.len) },
                                 });
@@ -2419,7 +2431,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                             32 => "fmodf",
                             64 => "fmod",
                             80 => "__fmodx",
-                            128 => "fmodq",
+                            128 => "fmodf128",
                         },
                         .reloc = .{ .label = @intCast(isel.instructions.items.len) },
                     });
@@ -2587,7 +2599,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                                     32 => "fmaxf",
                                     64 => "fmax",
                                     80 => "__fmaxx",
-                                    128 => "fmaxq",
+                                    128 => "fmaxf128",
                                 },
                                 .min => switch (bits) {
                                     else => unreachable,
@@ -2595,7 +2607,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                                     32 => "fminf",
                                     64 => "fmin",
                                     80 => "__fminx",
-                                    128 => "fminq",
+                                    128 => "fminf128",
                                 },
                             },
                             .reloc = .{ .label = @intCast(isel.instructions.items.len) },
@@ -2844,7 +2856,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                     const remaining_source = std.mem.span(as.source);
                     return isel.fail("unable to assemble: '{s}'", .{std.mem.trim(
                         u8,
-                        as.source[0 .. std.mem.indexOfScalar(u8, remaining_source, '\n') orelse remaining_source.len],
+                        as.source[0 .. std.mem.findScalar(u8, remaining_source, '\n') orelse remaining_source.len],
                         &std.ascii.whitespace,
                     )});
                 },
@@ -3189,7 +3201,16 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
             }
             if (air.next()) |next_air_tag| continue :air_tag next_air_tag;
         },
-        .bitcast => |air_tag| {
+        .bit_cast,
+        .bit_cast_safe, // TODO safety check
+        .ptr_cast,
+        .ptr_from_int,
+        .int_from_ptr,
+        .error_cast,
+        .error_from_int,
+        .int_from_error,
+        .union_from_enum,
+        => |air_tag| {
             if (isel.live_values.fetchRemove(air.inst_index)) |dst_vi| unused: {
                 defer dst_vi.value.deref(isel);
                 const ty_op = air.data(air.inst_index).ty_op;
@@ -4034,7 +4055,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                                     32 => "sqrtf",
                                     64 => "sqrt",
                                     80 => "__sqrtx",
-                                    128 => "sqrtq",
+                                    128 => "sqrtf128",
                                 },
                                 .floor => switch (bits) {
                                     else => unreachable,
@@ -4042,7 +4063,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                                     32 => "floorf",
                                     64 => "floor",
                                     80 => "__floorx",
-                                    128 => "floorq",
+                                    128 => "floorf128",
                                 },
                                 .ceil => switch (bits) {
                                     else => unreachable,
@@ -4050,7 +4071,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                                     32 => "ceilf",
                                     64 => "ceil",
                                     80 => "__ceilx",
-                                    128 => "ceilq",
+                                    128 => "ceilf128",
                                 },
                                 .round => switch (bits) {
                                     else => unreachable,
@@ -4058,7 +4079,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                                     32 => "roundf",
                                     64 => "round",
                                     80 => "__roundx",
-                                    128 => "roundq",
+                                    128 => "roundf128",
                                 },
                                 .trunc_float => switch (bits) {
                                     else => unreachable,
@@ -4066,7 +4087,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                                     32 => "truncf",
                                     64 => "trunc",
                                     80 => "__truncx",
-                                    128 => "truncq",
+                                    128 => "truncf128",
                                 },
                             },
                             .reloc = .{ .label = @intCast(isel.instructions.items.len) },
@@ -4126,7 +4147,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                             32 => "sinf",
                             64 => "sin",
                             80 => "__sinx",
-                            128 => "sinq",
+                            128 => "sinf128",
                         },
                         .cos => switch (bits) {
                             else => unreachable,
@@ -4134,7 +4155,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                             32 => "cosf",
                             64 => "cos",
                             80 => "__cosx",
-                            128 => "cosq",
+                            128 => "cosf128",
                         },
                         .tan => switch (bits) {
                             else => unreachable,
@@ -4142,7 +4163,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                             32 => "tanf",
                             64 => "tan",
                             80 => "__tanx",
-                            128 => "tanq",
+                            128 => "tanf128",
                         },
                         .exp => switch (bits) {
                             else => unreachable,
@@ -4150,7 +4171,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                             32 => "expf",
                             64 => "exp",
                             80 => "__expx",
-                            128 => "expq",
+                            128 => "expf128",
                         },
                         .exp2 => switch (bits) {
                             else => unreachable,
@@ -4158,7 +4179,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                             32 => "exp2f",
                             64 => "exp2",
                             80 => "__exp2x",
-                            128 => "exp2q",
+                            128 => "exp2f128",
                         },
                         .log => switch (bits) {
                             else => unreachable,
@@ -4166,7 +4187,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                             32 => "logf",
                             64 => "log",
                             80 => "__logx",
-                            128 => "logq",
+                            128 => "logf128",
                         },
                         .log2 => switch (bits) {
                             else => unreachable,
@@ -4174,7 +4195,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                             32 => "log2f",
                             64 => "log2",
                             80 => "__log2x",
-                            128 => "log2q",
+                            128 => "log2f128",
                         },
                         .log10 => switch (bits) {
                             else => unreachable,
@@ -4182,7 +4203,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                             32 => "log10f",
                             64 => "log10",
                             80 => "__log10x",
-                            128 => "log10q",
+                            128 => "log10f128",
                         },
                     },
                     .reloc = .{ .label = @intCast(isel.instructions.items.len) },
@@ -5220,7 +5241,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
             }
             if (air.next()) |next_air_tag| continue :air_tag next_air_tag;
         },
-        .intcast => |air_tag| {
+        .int_cast => |air_tag| {
             if (isel.live_values.fetchRemove(air.inst_index)) |dst_vi| unused: {
                 defer dst_vi.value.deref(isel);
 
@@ -5311,7 +5332,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
             }
             if (air.next()) |next_air_tag| continue :air_tag next_air_tag;
         },
-        .intcast_safe => |air_tag| {
+        .int_cast_safe => |air_tag| {
             if (isel.live_values.fetchRemove(air.inst_index)) |dst_vi| unused: {
                 defer dst_vi.value.deref(isel);
 
@@ -5806,7 +5827,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
             }
             if (air.next()) |next_air_tag| continue :air_tag next_air_tag;
         },
-        .struct_field_val => {
+        .agg_field_val => {
             if (isel.live_values.fetchRemove(air.inst_index)) |field_vi| unused: {
                 defer field_vi.value.deref(isel);
 
@@ -7097,7 +7118,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                                 32 => "fmaf",
                                 64 => "fma",
                                 80 => "__fmax",
-                                128 => "fmaq",
+                                128 => "fmaf128",
                             },
                             .reloc = .{ .label = @intCast(isel.instructions.items.len) },
                         });
@@ -7491,7 +7512,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
             }
             if (air.next()) |next_air_tag| continue :air_tag next_air_tag;
         },
-        .work_item_id, .work_group_size, .work_group_id => unreachable,
+        .work_item_id, .work_group_size, .work_group_id, .spirv_runtime_array_len => unreachable,
     }
     assert(air.body_index == 0);
 }
@@ -7575,7 +7596,7 @@ pub fn layout(
     is_sysv_var_args: bool,
     saved_gra_len: u7,
     saved_vra_len: u7,
-    mod: *const Package.Module,
+    mod: *const Module,
 ) !usize {
     const zcu = isel.pt.zcu;
     const ip = &zcu.intern_pool;
@@ -7598,7 +7619,7 @@ pub fn layout(
 
         // callee saved gr area
         save_ra = .r19;
-        while (save_ra != .r29) : (save_ra = @enumFromInt(@intFromEnum(save_ra) + 1)) {
+        while (save_ra != .r29) : (save_ra = @fromBackingInt(@intCast(@backingInt(save_ra) + 1))) {
             if (!isel.saved_registers.contains(save_ra)) continue;
             saves_size = std.mem.alignForward(u10, saves_size, 8);
             saves_buf[saves_len] = .{
@@ -7620,7 +7641,7 @@ pub fn layout(
 
         // callee saved vr area
         save_ra = .v8;
-        while (save_ra != .v16) : (save_ra = @enumFromInt(@intFromEnum(save_ra) + 1)) {
+        while (save_ra != .v16) : (save_ra = @fromBackingInt(@intCast(@backingInt(save_ra) + 1))) {
             if (!isel.saved_registers.contains(save_ra)) continue;
             saves_size = std.mem.alignForward(u10, saves_size, 8);
             saves_buf[saves_len] = .{
@@ -7660,7 +7681,7 @@ pub fn layout(
 
         // incoming vr arguments
         save_ra = if (mod.strip) incoming.nsrn else CallAbiIterator.nsrn_start;
-        while (save_ra != if (is_sysv_var_args) CallAbiIterator.nsrn_end else incoming.nsrn) : (save_ra = @enumFromInt(@intFromEnum(save_ra) + 1)) {
+        while (save_ra != if (is_sysv_var_args) CallAbiIterator.nsrn_end else incoming.nsrn) : (save_ra = @fromBackingInt(@intCast(@backingInt(save_ra) + 1))) {
             saves_size = std.mem.alignForward(u10, saves_size, 16);
             saves_buf[saves_len] = .{
                 .class = .vector,
@@ -7715,7 +7736,7 @@ pub fn layout(
             1 => saves_size += 8,
         }
         save_ra = if (mod.strip) incoming.ngrn else CallAbiIterator.ngrn_start;
-        while (save_ra != if (is_sysv_var_args) CallAbiIterator.ngrn_end else incoming.ngrn) : (save_ra = @enumFromInt(@intFromEnum(save_ra) + 1)) {
+        while (save_ra != if (is_sysv_var_args) CallAbiIterator.ngrn_end else incoming.ngrn) : (save_ra = @fromBackingInt(@intCast(@backingInt(save_ra) + 1))) {
             saves_size = std.mem.alignForward(u10, saves_size, 8);
             saves_buf[saves_len] = .{
                 .class = .integer,
@@ -7896,7 +7917,7 @@ fn fmtDom(isel: *Select, inst: Air.Inst.Index, start: u32, len: u32) struct {
     start: u32,
     len: u32,
     pub fn format(data: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        try writer.print("%{d} -> {{", .{@intFromEnum(data.inst)});
+        try writer.print("%{d} -> {{", .{@backingInt(data.inst)});
         var first = true;
         for (data.isel.blocks.keys()[0..data.len], 0..) |block_inst_index, dom_index| {
             if (@as(u1, @truncate(data.isel.dom.items[
@@ -7909,7 +7930,7 @@ fn fmtDom(isel: *Select, inst: Air.Inst.Index, start: u32, len: u32) struct {
             }
             switch (block_inst_index) {
                 Block.main => try writer.writeAll(" %main"),
-                else => try writer.print(" %{d}", .{@intFromEnum(block_inst_index)}),
+                else => try writer.print(" %{d}", .{@backingInt(block_inst_index)}),
             }
         }
         if (!first) try writer.writeByte(' ');
@@ -7928,7 +7949,7 @@ fn fmtLoopLive(isel: *Select, loop_inst: Air.Inst.Index) struct {
         const live_insts =
             data.isel.loop_live.list.items[loops[loop_index].live..loops[loop_index + 1].live];
 
-        try writer.print("%{d} <- {{", .{@intFromEnum(data.inst)});
+        try writer.print("%{d} <- {{", .{@backingInt(data.inst)});
         var first = true;
         for (live_insts) |live_inst| {
             if (first) {
@@ -7936,7 +7957,7 @@ fn fmtLoopLive(isel: *Select, loop_inst: Air.Inst.Index) struct {
             } else {
                 try writer.writeByte(',');
             }
-            try writer.print(" %{d}", .{@intFromEnum(live_inst)});
+            try writer.print(" %{d}", .{@backingInt(live_inst)});
         }
         if (!first) try writer.writeByte(' ');
         try writer.writeByte('}');
@@ -8001,7 +8022,7 @@ fn emitLiteral(isel: *Select, bytes: []const u8) !void {
     }
 }
 
-fn fail(isel: *Select, comptime format: []const u8, args: anytype) error{ OutOfMemory, CodegenFail } {
+fn fail(isel: *Select, comptime format: []const u8, args: anytype) error{ OutOfMemory, AlreadyReported } {
     @branchHint(.cold);
     return isel.pt.zcu.codegenFail(isel.nav_index, format, args);
 }
@@ -8069,7 +8090,7 @@ fn movImmediate(isel: *Select, dst_reg: Register, src_imm: u64) !void {
                         .doubleword => .xzr,
                     },
                     .{ .immediate = .{
-                        .N = @enumFromInt(elem_width >> 6),
+                        .N = @fromBackingInt(@intCast(elem_width >> 6)),
                         .immr = hi + mid_masked,
                         .imms = ((((lo + hi) & smask) | mid_masked) - 1) | -%@as(u6, @truncate(elem_width)) << 1,
                     } },
@@ -8086,18 +8107,18 @@ fn movImmediate(isel: *Select, dst_reg: Register, src_imm: u64) !void {
         try isel.emit(if (remaining_parts > 0) .movk(
             dst_reg,
             parts[part_index],
-            .{ .lsl = @enumFromInt(part_index) },
+            .{ .lsl = @fromBackingInt(@intCast(part_index)) },
         ) else switch (fill_part) {
             else => unreachable,
             min_part => .movz(
                 dst_reg,
                 parts[part_index],
-                .{ .lsl = @enumFromInt(part_index) },
+                .{ .lsl = @fromBackingInt(@intCast(part_index)) },
             ),
             max_part => .movn(
                 dst_reg,
                 ~parts[part_index],
-                .{ .lsl = @enumFromInt(part_index) },
+                .{ .lsl = @fromBackingInt(@intCast(part_index)) },
             ),
         });
     }
@@ -8891,14 +8912,8 @@ pub const Value = struct {
 
         pub const Tag = @typeInfo(Parent).@"union".tag_type.?;
         pub const Payload = Payload: {
-            const fields = @typeInfo(Parent).@"union".fields;
-            var types: [fields.len]type = undefined;
-            var names: [fields.len][]const u8 = undefined;
-            for (fields, &types, &names) |f, *ty, *name| {
-                ty.* = f.type;
-                name.* = f.name;
-            }
-            break :Payload @Union(.auto, null, &names, &types, &@splat(.{}));
+            const info = @typeInfo(Parent).@"union";
+            break :Payload @Union(.auto, null, info.field_names, info.field_types[0..], &@splat(.{}));
         };
     };
 
@@ -8916,14 +8931,8 @@ pub const Value = struct {
 
         pub const Tag = @typeInfo(Location).@"union".tag_type.?;
         pub const Payload = Payload: {
-            const fields = @typeInfo(Location).@"union".fields;
-            var types: [fields.len]type = undefined;
-            var names: [fields.len][]const u8 = undefined;
-            for (fields, &types, &names) |f, *ty, *name| {
-                ty.* = f.type;
-                name.* = f.name;
-            }
-            break :Payload @Union(.auto, null, &names, &types, &@splat(.{}));
+            const info = @typeInfo(Location).@"union";
+            break :Payload @Union(.auto, null, info.field_names, info.field_types[0..], &@splat(.{}));
         };
     };
 
@@ -8945,7 +8954,7 @@ pub const Value = struct {
         _,
 
         fn get(vi: Value.Index, isel: *Select) *Value {
-            return &isel.values.items[@intFromEnum(vi)];
+            return &isel.values.items[@backingInt(vi)];
         }
 
         fn setAlignment(vi: Value.Index, isel: *Select, new_alignment: InternPool.Alignment) void {
@@ -9090,15 +9099,15 @@ pub const Value = struct {
             assert(parts_len > 1);
             const value = vi.get(isel);
             assert(value.flags.parts_len_minus_one == 0);
-            value.parts = @enumFromInt(isel.values.items.len);
+            value.parts = @fromBackingInt(@intCast(isel.values.items.len));
             value.flags.parts_len_minus_one = @intCast(parts_len - 1);
         }
 
         fn addPart(vi: Value.Index, isel: *Select, part_offset: u64, part_size: u64) Value.Index {
             const part_vi = isel.initValueAdvanced(vi.alignment(isel), part_offset, part_size);
             tracking_log.debug("${d} <- ${d}[{d}]", .{
-                @intFromEnum(part_vi),
-                @intFromEnum(vi),
+                @backingInt(part_vi),
+                @backingInt(vi),
                 part_offset,
             });
             part_vi.setParent(isel, .{ .value = vi });
@@ -9123,7 +9132,7 @@ pub const Value = struct {
             const end_vi = vi.partAtOffset(isel, part_size - 1 + part_offset);
             return .{
                 .vi = start_vi,
-                .remaining = @intCast(@intFromEnum(end_vi) - @intFromEnum(start_vi) + 1),
+                .remaining = @intCast(@backingInt(end_vi) - @backingInt(start_vi) + 1),
             };
         }
         comptime {
@@ -9139,7 +9148,7 @@ pub const Value = struct {
             last += 1;
             while (true) {
                 const mid = (first + last) / 2;
-                const mid_vi: Value.Index = @enumFromInt(@intFromEnum(value.parts) + mid);
+                const mid_vi: Value.Index = @fromBackingInt(@intCast(@backingInt(value.parts) + mid));
                 if (mid == first) return mid_vi;
                 if (offset < mid_vi.get(isel).offset_from_parent) last = mid else first = mid;
             }
@@ -10033,7 +10042,7 @@ pub const Value = struct {
         fn allocStackSlot(vi: Value.Index, isel: *Select) Value.Indirect {
             const offset = vi.alignment(isel).forward(isel.stack_size);
             isel.stack_size = @intCast(offset + vi.size(isel));
-            tracking_log.debug("${d} -> [sp, #0x{x}]", .{ @intFromEnum(vi), @abs(offset) });
+            tracking_log.debug("${d} -> [sp, #0x{x}]", .{ @backingInt(vi), @abs(offset) });
             return .{
                 .base = .sp,
                 .offset = @intCast(offset),
@@ -10136,7 +10145,7 @@ pub const Value = struct {
         pub fn next(it: *PartIterator) ?Value.Index {
             if (it.remaining == 0) return null;
             it.remaining -= 1;
-            defer it.vi = @enumFromInt(@intFromEnum(it.vi) + 1);
+            defer it.vi = @fromBackingInt(@intCast(@backingInt(it.vi) + 1));
             return it.vi;
         }
 
@@ -10189,7 +10198,7 @@ pub const Value = struct {
                         0 => unreachable,
                         1...64 => unreachable,
                         65...256 => |bits| if (offset == 0 and size == ty_size) {
-                            const parts_len = std.math.divCeil(u16, bits, 64) catch unreachable;
+                            const parts_len = @divCeil(bits, 64);
                             vi.setParts(isel, @intCast(parts_len));
                             for (0..parts_len) |part_index| _ = vi.addPart(isel, 8 * part_index, 8);
                         },
@@ -10233,7 +10242,7 @@ pub const Value = struct {
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
                         const array_len = array_type.lenIncludingSentinel();
                         if (array_len > Value.max_parts and
-                            (std.math.divCeil(u64, size, @as(u64, 1) << min_part_log2_stride) catch unreachable) > Value.max_parts)
+                            (@divCeil(size, @as(u64, 1) << min_part_log2_stride)) > Value.max_parts)
                             return isel.fail("Value.FieldPartIterator.next({f})", .{isel.fmtType(ty)});
                         const alignment = vi.alignment(isel);
                         const Part = struct { offset: u64, size: u64 };
@@ -10283,7 +10292,7 @@ pub const Value = struct {
                     .anyframe_type => unreachable,
                     .error_union_type => |error_union_type| {
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
-                        if ((std.math.divCeil(u64, size, @as(u64, 1) << min_part_log2_stride) catch unreachable) > Value.max_parts)
+                        if ((@divCeil(size, @as(u64, 1) << min_part_log2_stride)) > Value.max_parts)
                             return isel.fail("Value.FieldPartIterator.next({f})", .{isel.fmtType(ty)});
                         const alignment = vi.alignment(isel);
                         const payload_ty: ZigType = .fromInterned(error_union_type.payload_type);
@@ -10390,7 +10399,7 @@ pub const Value = struct {
                         }
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
                         if (loaded_struct.field_types.len > Value.max_parts and
-                            (std.math.divCeil(u64, size, @as(u64, 1) << min_part_log2_stride) catch unreachable) > Value.max_parts)
+                            (@divCeil(size, @as(u64, 1) << min_part_log2_stride)) > Value.max_parts)
                             return isel.fail("Value.FieldPartIterator.next({f})", .{isel.fmtType(ty)});
                         const alignment = vi.alignment(isel);
                         const Part = struct { offset: u64, size: u64, signedness: ?std.lang.Signedness, is_vector: bool };
@@ -10451,7 +10460,7 @@ pub const Value = struct {
                     .tuple_type => |tuple_type| {
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
                         if (tuple_type.types.len > Value.max_parts and
-                            (std.math.divCeil(u64, size, @as(u64, 1) << min_part_log2_stride) catch unreachable) > Value.max_parts)
+                            (@divCeil(size, @as(u64, 1) << min_part_log2_stride)) > Value.max_parts)
                             return isel.fail("Value.FieldPartIterator.next({f})", .{isel.fmtType(ty)});
                         const alignment = vi.alignment(isel);
                         const Part = struct { offset: u64, size: u64, is_vector: bool };
@@ -10506,7 +10515,7 @@ pub const Value = struct {
                             } },
                         }
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
-                        if ((std.math.divCeil(u64, size, @as(u64, 1) << min_part_log2_stride) catch unreachable) > Value.max_parts)
+                        if ((@divCeil(size, @as(u64, 1) << min_part_log2_stride)) > Value.max_parts)
                             return isel.fail("Value.FieldPartIterator.next({f})", .{isel.fmtType(ty)});
                         const union_layout = ZigType.getUnionLayout(loaded_union, zcu);
                         const alignment = vi.alignment(isel);
@@ -10607,7 +10616,7 @@ pub const Value = struct {
         vi: Value.Index,
         ra: Register.Alias,
 
-        fn finish(mat: Value.Materialize, isel: *Select) error{ OutOfMemory, CodegenFail }!void {
+        fn finish(mat: Value.Materialize, isel: *Select) error{ OutOfMemory, AlreadyReported }!void {
             const live_vi = isel.live_registers.getPtr(mat.ra);
             assert(live_vi.* == .allocating);
             var vi = mat.vi;
@@ -11220,7 +11229,7 @@ fn initValueAdvanced(
         } },
         .parts = undefined,
     };
-    return @enumFromInt(isel.values.items.len);
+    return @fromBackingInt(@intCast(isel.values.items.len));
 }
 const WhichValues = enum { only_referenced, all };
 pub fn dumpValues(isel: *Select, which: WhichValues) void {
@@ -11236,7 +11245,7 @@ fn dumpValuesInner(isel: *Select, which: WhichValues) !void {
     defer std.debug.unlockStderr();
     const stderr = &locked_stderr.file_writer.interface;
 
-    var reverse_live_values: std.AutoArrayHashMapUnmanaged(Value.Index, std.ArrayList(Air.Inst.Index)) = .empty;
+    var reverse_live_values: std.array_hash_map.Auto(Value.Index, std.ArrayList(Air.Inst.Index)) = .empty;
     defer {
         for (reverse_live_values.values()) |*list| list.deinit(gpa);
         reverse_live_values.deinit(gpa);
@@ -11257,7 +11266,7 @@ fn dumpValuesInner(isel: *Select, which: WhichValues) !void {
     var reverse_live_registers: std.AutoHashMapUnmanaged(Value.Index, Register.Alias) = .empty;
     defer reverse_live_registers.deinit(gpa);
     {
-        try reverse_live_registers.ensureTotalCapacity(gpa, @typeInfo(Register.Alias).@"enum".fields.len);
+        try reverse_live_registers.ensureTotalCapacity(gpa, @typeInfo(Register.Alias).@"enum".field_names.len);
         var live_reg_it = isel.live_registers.iterator();
         while (live_reg_it.next()) |live_reg_entry| switch (live_reg_entry.value.*) {
             _ => reverse_live_registers.putAssumeCapacityNoClobber(live_reg_entry.value.*, live_reg_entry.key),
@@ -11265,13 +11274,13 @@ fn dumpValuesInner(isel: *Select, which: WhichValues) !void {
         };
     }
 
-    var roots: std.AutoArrayHashMapUnmanaged(Value.Index, u32) = .empty;
+    var roots: std.array_hash_map.Auto(Value.Index, u32) = .empty;
     defer roots.deinit(gpa);
     {
         try roots.ensureTotalCapacity(gpa, isel.values.items.len);
-        var vi: Value.Index = @enumFromInt(isel.values.items.len);
-        while (@intFromEnum(vi) > 0) {
-            vi = @enumFromInt(@intFromEnum(vi) - 1);
+        var vi: Value.Index = @fromBackingInt(@intCast(isel.values.items.len));
+        while (@backingInt(vi) > 0) {
+            vi = @fromBackingInt(@intCast(@backingInt(vi) - 1));
             if (which == .only_referenced and vi.get(isel).refs == 0) continue;
             while (true) switch (vi.parent(isel)) {
                 .unallocated, .stack_slot, .constant => break,
@@ -11287,14 +11296,14 @@ fn dumpValuesInner(isel: *Select, which: WhichValues) !void {
         const vi = root_entry.key;
         const value = vi.get(isel);
         try stderr.splatByteAll(' ', 2 * (@as(usize, 1) + root_entry.value));
-        try stderr.print("${d}", .{@intFromEnum(vi)});
+        try stderr.print("${d}", .{@backingInt(vi)});
         {
             var first = true;
             if (reverse_live_values.get(vi)) |aiis| for (aiis.items) |aii| {
                 if (aii == Block.main) {
                     try stderr.print("{s}%main", .{if (first) " <- " else ", "});
                 } else {
-                    try stderr.print("{s}%{d}", .{ if (first) " <- " else ", ", @intFromEnum(aii) });
+                    try stderr.print("{s}%{d}", .{ if (first) " <- " else ", ", @backingInt(aii) });
                 }
                 first = false;
             };
@@ -11315,8 +11324,8 @@ fn dumpValuesInner(isel: *Select, which: WhichValues) !void {
                 if (value.offset_from_parent != 0) try stderr.print("+0x{x}", .{value.offset_from_parent});
                 try stderr.writeByte(']');
             },
-            .value => try stderr.print(" ${d}+0x{x}", .{ @intFromEnum(value.parent_payload.value), value.offset_from_parent }),
-            .address => try stderr.print(" ${d}[0x{x}]", .{ @intFromEnum(value.parent_payload.address), value.offset_from_parent }),
+            .value => try stderr.print(" ${d}+0x{x}", .{ @backingInt(value.parent_payload.value), value.offset_from_parent }),
+            .address => try stderr.print(" ${d}[0x{x}]", .{ @backingInt(value.parent_payload.address), value.offset_from_parent }),
             .constant => try stderr.print(" <{f}, {f}>", .{
                 isel.fmtType(value.parent_payload.constant.typeOf(zcu)),
                 isel.fmtConstant(value.parent_payload.constant),
@@ -11341,7 +11350,7 @@ fn dumpValuesInner(isel: *Select, which: WhichValues) !void {
         var part_index = value.flags.parts_len_minus_one;
         if (part_index > 0) while (true) : (part_index -= 1) {
             roots.putAssumeCapacityNoClobber(
-                @enumFromInt(@intFromEnum(value.parts) + part_index),
+                @fromBackingInt(@intCast(@backingInt(value.parts) + part_index)),
                 root_entry.value + 1,
             );
             if (part_index == 0) break;
@@ -11366,7 +11375,7 @@ fn writeToMemory(isel: *Select, constant: Constant, buffer: []u8) error{OutOfMem
     if (try isel.writeKeyToMemory(ip.indexToKey(constant.toIntern()), buffer)) return true;
     constant.writeToMemory(zcu, buffer) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
-        error.ReinterpretDeclRef, error.Unimplemented, error.IllDefinedMemoryLayout => return false,
+        error.ReinterpretDeclRef, error.IllDefinedMemoryLayout => return false,
     };
     return true;
 }
@@ -11508,7 +11517,7 @@ const TryAllocRegResult = union(enum) {
 fn tryAllocIntReg(isel: *Select) TryAllocRegResult {
     var failed_result: TryAllocRegResult = .out_of_registers;
     var ra: Register.Alias = .r0;
-    while (true) : (ra = @enumFromInt(@intFromEnum(ra) + 1)) {
+    while (true) : (ra = @fromBackingInt(@intCast(@backingInt(ra) + 1))) {
         if (ra == .r18) continue; // The Platform Register
         if (ra == Register.Alias.fp) continue;
         const live_vi = isel.live_registers.getPtr(ra);
@@ -11546,7 +11555,7 @@ fn allocIntReg(isel: *Select) !Register.Alias {
 fn tryAllocVecReg(isel: *Select) TryAllocRegResult {
     var failed_result: TryAllocRegResult = .out_of_registers;
     var ra: Register.Alias = .v0;
-    while (true) : (ra = @enumFromInt(@intFromEnum(ra) + 1)) {
+    while (true) : (ra = @fromBackingInt(@intCast(@backingInt(ra) + 1))) {
         const live_vi = isel.live_registers.getPtr(ra);
         switch (live_vi.*) {
             _ => switch (failed_result) {
@@ -11623,8 +11632,8 @@ fn use(isel: *Select, air_ref: Air.Inst.Ref) !Value.Index {
         const ty = isel.air.typeOf(air_ref, ip);
         const vi = isel.initValue(ty);
         tracking_log.debug("${d} <- %{d}", .{
-            @intFromEnum(vi),
-            @intFromEnum(air_inst_index),
+            @backingInt(vi),
+            @backingInt(air_inst_index),
         });
         live_gop.value_ptr.* = vi.ref(isel);
         break :vi_ty .{ vi, ty };
@@ -11633,7 +11642,7 @@ fn use(isel: *Select, air_ref: Air.Inst.Ref) !Value.Index {
         const ty = constant.typeOf(zcu);
         const vi = isel.initValue(ty);
         tracking_log.debug("${d} <- <{f}, {f}>", .{
-            @intFromEnum(vi),
+            @backingInt(vi),
             isel.fmtType(ty),
             isel.fmtConstant(constant),
         });
@@ -11648,7 +11657,7 @@ fn use(isel: *Select, air_ref: Air.Inst.Ref) !Value.Index {
     return vi;
 }
 
-fn fill(isel: *Select, dst_ra: Register.Alias) error{ OutOfMemory, CodegenFail }!bool {
+fn fill(isel: *Select, dst_ra: Register.Alias) error{ OutOfMemory, AlreadyReported }!bool {
     switch (dst_ra) {
         else => {},
         Register.Alias.fp, .zr, .sp, .pc, .fpcr, .fpsr, .ffr => return false,
@@ -11681,7 +11690,7 @@ fn fill(isel: *Select, dst_ra: Register.Alias) error{ OutOfMemory, CodegenFail }
     return true;
 }
 
-fn fillMemory(isel: *Select, dst_ra: Register.Alias) error{ OutOfMemory, CodegenFail }!bool {
+fn fillMemory(isel: *Select, dst_ra: Register.Alias) error{ OutOfMemory, AlreadyReported }!bool {
     const dst_live_vi = isel.live_registers.getPtr(dst_ra);
     const dst_vi = switch (dst_live_vi.*) {
         _ => |dst_vi| dst_vi,
@@ -11848,8 +11857,8 @@ fn merge(
 }
 
 const call = struct {
-    const param_reg: Value.Index = @enumFromInt(@intFromEnum(Value.Index.allocating) - 2);
-    const callee_clobbered_reg: Value.Index = @enumFromInt(@intFromEnum(Value.Index.allocating) - 1);
+    const param_reg: Value.Index = @fromBackingInt(@intCast(@backingInt(Value.Index.allocating) - 2));
+    const callee_clobbered_reg: Value.Index = @fromBackingInt(@intCast(@backingInt(Value.Index.allocating) - 1));
     const caller_saved_regs: LiveRegisters = .init(.{
         .r0 = param_reg,
         .r1 = param_reg,
@@ -12167,9 +12176,7 @@ pub const CallAbiIterator = struct {
                 const loaded_struct = ip.loadStructType(ty.toIntern());
                 switch (loaded_struct.layout) {
                     .auto, .@"extern" => {},
-                    .@"packed" => continue :type_key .{
-                        .int_type = ip.indexToKey(loaded_struct.packed_backing_int_type).int_type,
-                    },
+                    .@"packed" => continue :type_key ip.indexToKey(loaded_struct.packed_backing_int_type),
                 }
                 const size = wip_vi.size(isel);
                 if (size <= 16 * 4) homogeneous_aggregate: {
@@ -12291,9 +12298,7 @@ pub const CallAbiIterator = struct {
                 }
             },
             .opaque_type, .func_type => continue :type_key .{ .simple_type = .anyopaque },
-            .enum_type => continue :type_key .{
-                .int_type = ip.indexToKey(ip.loadEnumType(ty.toIntern()).int_tag_type).int_type,
-            },
+            .enum_type => continue :type_key ip.indexToKey(ip.loadEnumType(ty.toIntern()).int_tag_type),
             .error_set_type,
             .inferred_error_set_type,
             => continue :type_key .{ .simple_type = .anyerror },
@@ -12379,7 +12384,7 @@ pub const CallAbiIterator = struct {
                 .f32 => .single,
                 .f64 => .double,
                 .f128 => .quad,
-                .c_longdouble => switch (zcu.getTarget().cTypeBitSize(.longdouble)) {
+                .c_longdouble => switch (zcu.getTarget().cTypeBitSize(.longdouble).?) {
                     else => unreachable,
                     64 => .double,
                     80 => null,
@@ -12445,7 +12450,7 @@ pub const CallAbiIterator = struct {
         wip_vi.setAlignment(isel, natural_alignment.maxStrict(.@"8"));
         if (it.ngrn == ngrn_end) return it.stack(isel, wip_vi);
         wip_vi.setHint(isel, it.ngrn);
-        it.ngrn = @enumFromInt(@intFromEnum(it.ngrn) + 1);
+        it.ngrn = @fromBackingInt(@intCast(@backingInt(it.ngrn) + 1));
     }
 
     fn integers(it: *CallAbiIterator, isel: *Select, wip_vi: Value.Index, part_sizes: [2]u64) void {
@@ -12454,11 +12459,11 @@ pub const CallAbiIterator = struct {
         assert(natural_alignment.order(.@"16").compare(.lte));
         wip_vi.setAlignment(isel, natural_alignment.maxStrict(.@"8"));
         // C.8
-        if (natural_alignment == .@"16") it.ngrn = @enumFromInt(std.mem.alignForward(
+        if (natural_alignment == .@"16") it.ngrn = @fromBackingInt(@intCast(std.mem.alignForward(
             @typeInfo(Register.Alias).@"enum".tag_type,
-            @intFromEnum(it.ngrn),
+            @backingInt(it.ngrn),
             2,
-        ));
+        )));
         if (it.ngrn == ngrn_end) return it.stack(isel, wip_vi);
         wip_vi.setParts(isel, part_sizes.len);
         for (0.., part_sizes) |part_index, part_size|
@@ -12473,7 +12478,7 @@ pub const CallAbiIterator = struct {
         wip_vi.setIsVector(isel);
         if (it.nsrn == nsrn_end) return it.stack(isel, wip_vi);
         wip_vi.setHint(isel, it.nsrn);
-        it.nsrn = @enumFromInt(@intFromEnum(it.nsrn) + 1);
+        it.nsrn = @fromBackingInt(@intCast(@backingInt(it.nsrn) + 1));
     }
 
     fn vectors(
@@ -12488,7 +12493,7 @@ pub const CallAbiIterator = struct {
         const natural_alignment = wip_vi.alignment(isel);
         assert(natural_alignment.order(.@"16").compare(.lte));
         wip_vi.setAlignment(isel, natural_alignment.maxStrict(.@"8"));
-        if (@intFromEnum(it.nsrn) > @intFromEnum(nsrn_end) - parts_len) return it.stack(isel, wip_vi);
+        if (@backingInt(it.nsrn) > @backingInt(nsrn_end) - parts_len) return it.stack(isel, wip_vi);
         if (parts_len == 1) return it.vector(isel, wip_vi);
         wip_vi.setParts(isel, parts_len);
         const fdt_size = @as(u64, 1) << fdt_log2_size;
@@ -12508,7 +12513,7 @@ const assert = std.debug.assert;
 const codegen = @import("../../codegen.zig");
 const Constant = @import("../../Value.zig");
 const InternPool = @import("../../InternPool.zig");
-const Package = @import("../../Package.zig");
+const Module = @import("../../Module.zig");
 const Register = codegen.aarch64.encoding.Register;
 const Select = @This();
 const std = @import("std");

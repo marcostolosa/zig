@@ -333,8 +333,8 @@ pub fn deinit(d: *Diagnostics) void {
 /// Used by the __has_warning builtin macro.
 pub fn warningExists(name: []const u8) bool {
     if (std.mem.eql(u8, name, "pedantic")) return true;
-    inline for (comptime std.meta.declarations(Option)) |group| {
-        if (std.mem.eql(u8, name, group.name)) return true;
+    inline for (comptime std.meta.declarations(Option)) |group_name| {
+        if (std.mem.eql(u8, name, group_name)) return true;
     }
     return std.meta.stringToEnum(Option, name) != null;
 }
@@ -349,9 +349,9 @@ pub fn set(d: *Diagnostics, name: []const u8, to: Message.Kind) Compilation.Erro
         return;
     }
 
-    inline for (comptime std.meta.declarations(Option)) |group| {
-        if (std.mem.eql(u8, name, group.name)) {
-            for (@field(Option, group.name)) |option| {
+    inline for (comptime std.meta.declarations(Option)) |group_name| {
+        if (std.mem.eql(u8, name, group_name)) {
+            for (@field(Option, group_name)) |option| {
                 d.state.options.put(option, to);
             }
             return;
@@ -405,7 +405,7 @@ pub fn effectiveKind(d: *Diagnostics, message: anytype) Message.Kind {
 
     // Use extension diagnostic behavior if not set explicitly.
     if (message.extension and !set_explicit) {
-        kind = @enumFromInt(@max(@intFromEnum(kind), @intFromEnum(d.state.extensions)));
+        kind = @fromBackingInt(@intCast(@max(@backingInt(kind), @backingInt(d.state.extensions))));
     }
 
     // Make diagnostic a warning if -Weverything is set.
@@ -494,8 +494,8 @@ pub fn addWithLocation(
 
 pub fn formatArgs(w: *std.Io.Writer, fmt: []const u8, args: anytype) std.Io.Writer.Error!void {
     var i: usize = 0;
-    inline for (std.meta.fields(@TypeOf(args))) |arg_info| {
-        const arg = @field(args, arg_info.name);
+    inline for (comptime std.meta.fieldNames(@TypeOf(args))) |arg_name| {
+        const arg = @field(args, arg_name);
         i += switch (@TypeOf(arg)) {
             []const u8 => try formatString(w, fmt[i..], arg),
             else => switch (@typeInfo(@TypeOf(arg))) {
@@ -510,7 +510,7 @@ pub fn formatArgs(w: *std.Io.Writer, fmt: []const u8, args: anytype) std.Io.Writ
 
 pub fn templateIndex(w: *std.Io.Writer, fmt: []const u8, template: []const u8) std.Io.Writer.Error!usize {
     const i = std.mem.indexOf(u8, fmt, template) orelse {
-        if (@import("builtin").mode == .Debug) {
+        if (@import("builtin").mode == .debug) {
             std.debug.panic("template `{s}` not found in format string `{s}`", .{ template, fmt });
         }
         try w.print("template `{s}` not found in format string `{s}` (this is a bug in arocc)", .{ template, fmt });

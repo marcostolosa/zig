@@ -1732,9 +1732,9 @@ pub const Inst = struct {
             assert(@sizeOf(Data) == 8);
         }
         const Mnemonic = @import("Encoding.zig").Mnemonic;
-        if (@typeInfo(Mnemonic).@"enum".fields.len != 978 or
-            @typeInfo(Fixes).@"enum".fields.len != 231 or
-            @typeInfo(Tag).@"enum".fields.len != 251)
+        if (@typeInfo(Mnemonic).@"enum".field_names.len != 978 or
+            @typeInfo(Fixes).@"enum".field_names.len != 231 or
+            @typeInfo(Tag).@"enum".field_names.len != 251)
         {
             const cond_src = (struct {
                 fn src() std.lang.SourceLocation {
@@ -1742,32 +1742,32 @@ pub const Inst = struct {
                 }
             }).src();
             @setEvalBranchQuota(2_000_000);
-            for (@typeInfo(Mnemonic).@"enum".fields) |mnemonic| {
-                if (mnemonic.name[0] == '.') continue;
-                for (@typeInfo(Fixes).@"enum".fields) |fixes| {
-                    const pattern = fixes.name[if (std.mem.indexOfScalar(u8, fixes.name, ' ')) |index| index + " ".len else 0..];
-                    const wildcard_index = std.mem.indexOfScalar(u8, pattern, '_').?;
+            for (@typeInfo(Mnemonic).@"enum".field_names) |mnemonic_name| {
+                if (mnemonic_name[0] == '.') continue;
+                for (@typeInfo(Fixes).@"enum".field_names) |fixes_name| {
+                    const pattern = fixes_name[if (std.mem.findScalar(u8, fixes_name, ' ')) |index| index + " ".len else 0..];
+                    const wildcard_index = std.mem.findScalar(u8, pattern, '_').?;
                     const mnem_prefix = pattern[0..wildcard_index];
                     const mnem_suffix = pattern[wildcard_index + "_".len ..];
-                    if (!std.mem.startsWith(u8, mnemonic.name, mnem_prefix)) continue;
-                    if (!std.mem.endsWith(u8, mnemonic.name, mnem_suffix)) continue;
+                    if (!std.mem.startsWith(u8, mnemonic_name, mnem_prefix)) continue;
+                    if (!std.mem.endsWith(u8, mnemonic_name, mnem_suffix)) continue;
                     if (@hasField(
                         Tag,
-                        mnemonic.name[mnem_prefix.len .. mnemonic.name.len - mnem_suffix.len],
+                        mnemonic_name[mnem_prefix.len .. mnemonic_name.len - mnem_suffix.len],
                     )) break;
-                } else @compileError("'" ++ mnemonic.name ++ "' is not encodable in Mir");
+                } else @compileError("'" ++ mnemonic_name ++ "' is not encodable in Mir");
             }
             @compileError(std.fmt.comptimePrint(
                 \\All mnemonics are encodable in Mir! You may now change the condition at {s}:{d} to:
-                \\if (@typeInfo(Mnemonic).@"enum".fields.len != {d} or
-                \\    @typeInfo(Fixes).@"enum".fields.len != {d} or
-                \\    @typeInfo(Tag).@"enum".fields.len != {d})
+                \\if (@typeInfo(Mnemonic).@"enum".field_names.len != {d} or
+                \\    @typeInfo(Fixes).@"enum".field_names.len != {d} or
+                \\    @typeInfo(Tag).@"enum".field_names.len != {d})
             , .{
                 cond_src.file,
                 cond_src.line - 6,
-                @typeInfo(Mnemonic).@"enum".fields.len,
-                @typeInfo(Fixes).@"enum".fields.len,
-                @typeInfo(Tag).@"enum".fields.len,
+                @typeInfo(Mnemonic).@"enum".field_names.len,
+                @typeInfo(Fixes).@"enum".field_names.len,
+                @typeInfo(Tag).@"enum".field_names.len,
             }));
         }
     }
@@ -1822,8 +1822,8 @@ pub const NullTerminatedString = enum(u32) {
 
     pub fn toSlice(nts: NullTerminatedString, mir: *const Mir) ?[:0]const u8 {
         if (nts == .none) return null;
-        const string_bytes = mir.string_bytes[@intFromEnum(nts)..];
-        return string_bytes[0..std.mem.indexOfScalar(u8, string_bytes, 0).? :0];
+        const string_bytes = mir.string_bytes[@backingInt(nts)..];
+        return string_bytes[0..std.mem.findScalar(u8, string_bytes, 0).? :0];
     }
 };
 
@@ -1890,13 +1890,13 @@ pub const Memory = struct {
             },
             .base = switch (mem.base) {
                 .none, .table => undefined,
-                .reg => |reg| @intFromEnum(reg),
-                .frame => |frame_index| @intFromEnum(frame_index),
+                .reg => |reg| @backingInt(reg),
+                .frame => |frame_index| @backingInt(frame_index),
                 .rip_inst => |inst_index| inst_index,
-                .nav => |nav| @intFromEnum(nav),
-                .uav => |uav| @intFromEnum(uav.val),
-                .lazy_sym => |lazy_sym| @intFromEnum(lazy_sym.ty),
-                .extern_func => |extern_func| @intFromEnum(extern_func),
+                .nav => |nav| @backingInt(nav),
+                .uav => |uav| @backingInt(uav.val),
+                .lazy_sym => |lazy_sym| @backingInt(lazy_sym.ty),
+                .extern_func => |extern_func| @backingInt(extern_func),
             },
             .off = switch (mem.mod) {
                 .rm => |rm| @bitCast(rm.disp),
@@ -1905,8 +1905,8 @@ pub const Memory = struct {
             .extra = switch (mem.mod) {
                 .rm => switch (mem.base) {
                     else => undefined,
-                    .uav => |uav| @intFromEnum(uav.orig_ty),
-                    .lazy_sym => |lazy_sym| @intFromEnum(lazy_sym.kind),
+                    .uav => |uav| @backingInt(uav.orig_ty),
+                    .lazy_sym => |lazy_sym| @backingInt(lazy_sym.kind),
                 },
                 .off => switch (mem.base) {
                     .reg => @intCast(mem.mod.off >> 32),
@@ -1919,7 +1919,7 @@ pub const Memory = struct {
     pub fn decode(mem: Memory) encoder.Instruction.Memory {
         switch (mem.info.mod) {
             .rm => {
-                if (mem.info.base == .reg and @as(Register, @enumFromInt(mem.base)) == .rip) {
+                if (mem.info.base == .reg and @as(Register, @fromBackingInt(@intCast(mem.base))) == .rip) {
                     assert(mem.info.index == .none and mem.info.scale == .@"1");
                     return encoder.Instruction.Memory.initRip(mem.info.size, @bitCast(mem.off));
                 }
@@ -1927,14 +1927,14 @@ pub const Memory = struct {
                     .disp = @bitCast(mem.off),
                     .base = switch (mem.info.base) {
                         .none => .none,
-                        .reg => .{ .reg = @enumFromInt(mem.base) },
-                        .frame => .{ .frame = @enumFromInt(mem.base) },
+                        .reg => .{ .reg = @fromBackingInt(@intCast(mem.base)) },
+                        .frame => .{ .frame = @fromBackingInt(@intCast(mem.base)) },
                         .table => .table,
                         .rip_inst => .{ .rip_inst = mem.base },
-                        .nav => .{ .nav = @enumFromInt(mem.base) },
-                        .uav => .{ .uav = .{ .val = @enumFromInt(mem.base), .orig_ty = @enumFromInt(mem.extra) } },
-                        .lazy_sym => .{ .lazy_sym = .{ .kind = @enumFromInt(mem.extra), .ty = @enumFromInt(mem.base) } },
-                        .extern_func => .{ .extern_func = @enumFromInt(mem.base) },
+                        .nav => .{ .nav = @fromBackingInt(@intCast(mem.base)) },
+                        .uav => .{ .uav = .{ .val = @fromBackingInt(@intCast(mem.base)), .orig_ty = @fromBackingInt(@intCast(mem.extra)) } },
+                        .lazy_sym => .{ .lazy_sym = .{ .kind = @fromBackingInt(@intCast(mem.extra)), .ty = @fromBackingInt(@intCast(mem.base)) } },
+                        .extern_func => .{ .extern_func = @fromBackingInt(@intCast(mem.base)) },
                     },
                     .scale_index = switch (mem.info.index) {
                         .none => null,
@@ -1951,7 +1951,7 @@ pub const Memory = struct {
             .off => {
                 assert(mem.info.base == .reg);
                 return encoder.Instruction.Memory.initMoffs(
-                    @enumFromInt(mem.base),
+                    @fromBackingInt(@intCast(mem.base)),
                     @as(u64, mem.extra) << 32 | mem.off,
                 );
             },
@@ -1974,12 +1974,11 @@ pub fn emit(
     mir: Mir,
     lf: *link.File,
     pt: Zcu.PerThread,
-    src_loc: Zcu.LazySrcLoc,
     func_index: InternPool.Index,
     atom_id: link.File.AtomId,
     w: *std.Io.Writer,
     debug_output: link.File.DebugInfoOutput,
-) codegen.CodeGenError!void {
+) codegen.Error!void {
     const zcu = pt.zcu;
     const comp = zcu.comp;
     const gpa = comp.gpa;
@@ -1993,7 +1992,7 @@ pub fn emit(
             .allocator = gpa,
             .mir = mir,
             .cc = fn_info.cc,
-            .src_loc = src_loc,
+            .src_loc = zcu.navSrcLoc(nav),
         },
         .bin_file = lf,
         .pt = pt,
@@ -2028,12 +2027,11 @@ pub fn emitLazy(
     mir: Mir,
     lf: *link.File,
     pt: Zcu.PerThread,
-    src_loc: Zcu.LazySrcLoc,
     lazy_sym: link.File.LazySymbol,
     atom_id: link.File.AtomId,
     w: *std.Io.Writer,
     debug_output: link.File.DebugInfoOutput,
-) codegen.CodeGenError!void {
+) codegen.Error!void {
     const zcu = pt.zcu;
     const comp = zcu.comp;
     const gpa = comp.gpa;
@@ -2044,7 +2042,7 @@ pub fn emitLazy(
             .allocator = gpa,
             .mir = mir,
             .cc = .auto,
-            .src_loc = src_loc,
+            .src_loc = Zcu.Type.fromInterned(lazy_sym.ty).srcLocOrNull(zcu) orelse .unneeded,
         },
         .bin_file = lf,
         .pt = pt,
@@ -2069,15 +2067,15 @@ pub fn emitLazy(
 }
 
 pub fn extraData(mir: Mir, comptime T: type, index: u32) struct { data: T, end: u32 } {
-    const fields = std.meta.fields(T);
+    const info = @typeInfo(T).@"struct";
     var i: u32 = index;
     var result: T = undefined;
-    inline for (fields) |field| {
-        @field(result, field.name) = switch (field.type) {
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        @field(result, field_name) = switch (field_type) {
             u32 => mir.extra[i],
             i32, Memory.Info => @bitCast(mir.extra[i]),
-            bits.FrameIndex => @enumFromInt(mir.extra[i]),
-            else => @compileError("bad field type: " ++ field.name ++ ": " ++ @typeName(field.type)),
+            bits.FrameIndex => @fromBackingInt(@intCast(mir.extra[i])),
+            else => @compileError("bad field type: " ++ field_name ++ ": " ++ @typeName(field_type)),
         };
         i += 1;
     }
@@ -2093,7 +2091,7 @@ pub const FrameLoc = struct {
 };
 
 pub fn resolveFrameAddr(mir: Mir, frame_addr: bits.FrameAddr) bits.RegisterOffset {
-    const frame_loc = mir.frame_locs.get(@intFromEnum(frame_addr.index));
+    const frame_loc = mir.frame_locs.get(@backingInt(frame_addr.index));
     return .{ .reg = frame_loc.base, .off = frame_loc.disp + frame_addr.off };
 }
 
@@ -2109,7 +2107,7 @@ pub fn resolveMemoryExtra(mir: Mir, payload: u32) Memory {
                 .index = mem.info.index,
                 .scale = mem.info.scale,
             },
-            .base = @intFromEnum(mir.frame_locs.items(.base)[mem.base]),
+            .base = @backingInt(mir.frame_locs.items(.base)[mem.base]),
             .off = @bitCast(mir.frame_locs.items(.disp)[mem.base] + @as(i32, @bitCast(mem.off))),
             .extra = mem.extra,
         } else mem,

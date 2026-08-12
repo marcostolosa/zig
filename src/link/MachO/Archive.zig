@@ -45,7 +45,7 @@ pub fn unpack(self: *Archive, macho_file: *MachO, path: Path, handle_index: File
                 const amt = try handle.readPositionalAll(io, buf, pos);
                 if (amt != len) return error.InputOutput;
                 pos += len;
-                const actual_len = mem.indexOfScalar(u8, buf, @as(u8, 0)) orelse len;
+                const actual_len = mem.findScalar(u8, buf, @as(u8, 0)) orelse len;
                 break :name buf[0..actual_len];
             }
             unreachable;
@@ -89,12 +89,13 @@ pub fn unpack(self: *Archive, macho_file: *MachO, path: Path, handle_index: File
 pub fn writeHeader(
     object_name: []const u8,
     object_size: usize,
-    format: Format,
     writer: *Writer,
 ) !void {
     var hdr: ar_hdr = .{};
 
-    const object_name_len = mem.alignForward(usize, object_name.len + 1, ptrWidth(format));
+    const object_name_start = writer.end + @sizeOf(ar_hdr);
+    const object_start = mem.alignForward(usize, object_name_start + object_name.len + 1, 8);
+    const object_name_len = object_start - object_name_start;
     const total_object_size = object_size + object_name_len;
 
     {
@@ -160,7 +161,7 @@ pub const ar_hdr = extern struct {
     fn name(self: *const ar_hdr) ?[]const u8 {
         const value = &self.ar_name;
         if (mem.startsWith(u8, value, "#1/")) return null;
-        const sentinel = mem.indexOfScalar(u8, value, '/') orelse value.len;
+        const sentinel = mem.findScalar(u8, value, '/') orelse value.len;
         return value[0..sentinel];
     }
 
@@ -193,7 +194,7 @@ pub const ArSymtab = struct {
     pub fn write(ar: ArSymtab, format: Format, macho_file: *MachO, writer: *Writer) !void {
         const ptr_width = ptrWidth(format);
         // Header
-        try writeHeader(SYMDEF, ar.size(format), format, writer);
+        try writeHeader(SYMDEF, ar.size(format), writer);
         // Symtab size
         try writeInt(format, ar.entries.items.len * 2 * ptr_width, writer);
         // Symtab entries

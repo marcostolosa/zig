@@ -75,7 +75,7 @@ fn iter_fn(info: *dl_phdr_info, size: usize, counter: *usize) IterFnError!void {
     // Count how many libraries are loaded
     counter.* += @as(usize, 1);
 
-    // The image should contain at least a PT_LOAD segment
+    // The image should contain at least a PT.LOAD segment
     if (info.phnum < 1) return error.MissingPtLoadSegment;
 
     // Quick & dirty validation of the phdr pointers, make sure we're not
@@ -332,8 +332,8 @@ test "fsync" {
 test "getrlimit and setrlimit" {
     if (posix.system.rlimit_resource == void) return error.SkipZigTest;
 
-    inline for (@typeInfo(posix.rlimit_resource).@"enum".fields) |field| {
-        const resource: posix.rlimit_resource = @enumFromInt(field.value);
+    inline for (@typeInfo(posix.rlimit_resource).@"enum".field_values) |field_value| {
+        const resource: posix.rlimit_resource = @fromBackingInt(@intCast(field_value));
         const limit = try posix.getrlimit(resource);
 
         // XNU kernel does not support RLIMIT_STACK if a custom stack is active,

@@ -335,8 +335,8 @@ pub const Parser = struct {
 
     fn formatArgs(w: *std.Io.Writer, fmt: []const u8, args: anytype) !void {
         var i: usize = 0;
-        inline for (std.meta.fields(@TypeOf(args))) |arg_info| {
-            const arg = @field(args, arg_info.name);
+        inline for (comptime std.meta.fieldNames(@TypeOf(args))) |arg_name| {
+            const arg = @field(args, arg_name);
             i += switch (@TypeOf(arg)) {
                 []const u8 => try Diagnostics.formatString(w, fmt[i..], arg),
                 Ascii => try arg.format(w, fmt[i..]),
@@ -508,7 +508,7 @@ pub const Parser = struct {
             },
         };
         for (slice) |c| {
-            const char = std.fmt.charToDigit(c, @intFromEnum(base)) catch break;
+            const char = std.fmt.charToDigit(c, @backingInt(base)) catch break;
             val, const overflow = @shlWithOverflow(val, base.log2());
             if (overflow != 0) overflowed = true;
             val += char;

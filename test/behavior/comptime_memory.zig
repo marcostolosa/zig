@@ -118,8 +118,8 @@ fn shuffle(ptr: usize, comptime From: type, comptime To: type) usize {
     const pResult = @as(*align(1) [array_len]To, @ptrCast(&result));
     var i: usize = 0;
     while (i < array_len) : (i += 1) {
-        inline for (@typeInfo(To).@"struct".fields) |f| {
-            @field(pResult[i], f.name) = @field(pSource[i], f.name);
+        inline for (@typeInfo(To).@"struct".field_names) |f_name| {
+            @field(pResult[i], f_name) = @field(pSource[i], f_name);
         }
     }
     return result;
@@ -516,7 +516,6 @@ fn fieldPtrTest() u32 {
 }
 test "pointer in aggregate field can mutate comptime state" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     try comptime std.testing.expect(fieldPtrTest() == 2);
 }
 
@@ -553,6 +552,8 @@ test "comptime store of packed struct with void field into array" {
 }
 
 test "comptime store of reinterpreted zero-bit type" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const S = struct {
         fn doTheTest(comptime T: type) void {
             comptime var buf: T = undefined;
@@ -581,4 +582,22 @@ test "comptime store to extern struct reinterpreted as byte array" {
     @memset(bytes, 0);
 
     comptime std.debug.assert(val.x == 0);
+}
+
+test "reinterpret sentinel-terminated array as packed struct" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
+    const S = packed struct(u16) { lo: u8, hi: u8 };
+    const data: [2:0]u8 = .{ 0x12, 0x34 };
+    const ptr: *align(1) const S = @ptrCast(&data);
+    switch (endian) {
+        .little => {
+            try testing.expect(ptr.lo == 0x12);
+            try testing.expect(ptr.hi == 0x34);
+        },
+        .big => {
+            try testing.expect(ptr.lo == 0x34);
+            try testing.expect(ptr.hi == 0x12);
+        },
+    }
 }

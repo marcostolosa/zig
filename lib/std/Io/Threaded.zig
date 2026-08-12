@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 const is_windows = native_os == .windows;
 const is_darwin = native_os.isDarwin();
-const is_debug = builtin.mode == .Debug;
+const is_debug = builtin.mode == .debug;
 
 const std = @import("../std.zig");
 const Io = std.Io;
@@ -218,6 +218,7 @@ pub const Environ = struct {
             DEBUGINFOD_CACHE_PATH: ?[:0]const u8 = null,
             XDG_CACHE_HOME: ?[:0]const u8 = null,
             HOME: ?[:0]const u8 = null,
+            TERM: ?[:0]const u8 = null,
         },
     };
 
@@ -332,8 +333,8 @@ pub const Environ = struct {
                             .flags = .{ .nonblocking = true },
                         };
                     };
-                } else inline for (@typeInfo(String).@"struct".fields) |field| {
-                    if (std.mem.eql(u8, key, field.name)) @field(environ.string, field.name) = value;
+                } else inline for (@typeInfo(String).@"struct".field_names) |field_name| {
+                    if (std.mem.eql(u8, key, field_name)) @field(environ.string, field_name) = value;
                 }
             }
         }
@@ -439,12 +440,12 @@ pub const UseFchmodat2 = if (have_fchmodat2 and !have_fchmodat_flags) enum {
 pub const apc_align = @max(default_fn_align, 2);
 
 const default_fn_align = switch (builtin.mode) {
-    .Debug, .ReleaseSafe, .ReleaseFast => switch (builtin.cpu.arch) {
+    .debug, .safe, .fast => switch (builtin.cpu.arch) {
         else => |arch| @compileError("Unsupported architecture: " ++ @tagName(arch)),
         .arm, .thumb => 4,
         .aarch64, .x86, .x86_64 => 16,
     },
-    .ReleaseSmall => 1,
+    .small => 1,
 };
 
 const Runnable = struct {
@@ -580,7 +581,7 @@ const Group = struct {
         var it = t.worker_threads.load(.acquire); // acquire `Thread` values
         while (it) |thread| : (it = thread.next) {
             // This non-mutating RMW exists for ordering reasons: see comment in `Group.Task.start` for reasons.
-            _ = thread.status.fetchOr(.{ .cancelation = @enumFromInt(0), .awaitable = .null }, .release);
+            _ = thread.status.fetchOr(.{ .cancelation = @fromBackingInt(@intCast(0)), .awaitable = .null }, .release);
             if (thread.cancelAwaitable(.fromGroup(g.ptr))) any_blocked = true;
         }
         return any_blocked;
@@ -828,6 +829,7 @@ const Thread = struct {
     /// Always released when `Status.cancelation` is set to `.parked`.
     futex_waiter: if (use_parking_futex) ?*parking_futex.Waiter else ?noreturn,
     unpark_flag: UnparkFlag,
+    park_tid: if (ParkTid == std.Thread.Id) void else ParkTid,
 
     csprng: Csprng,
 
@@ -1018,7 +1020,7 @@ const Thread = struct {
                 };
                 syscall.finish();
                 if (status >= 0) return;
-                switch (@as(c.E, @enumFromInt(-status))) {
+                switch (@as(c.E, @fromBackingInt(@intCast(-status)))) {
                     .INTR => {}, // spurious wake
                     // Address of the futex was paged out. This is unlikely, but possible in theory, and
                     // pthread/libdispatch on darwin bother to handle it. In this case we'll return
@@ -1029,7 +1031,7 @@ const Thread = struct {
                 }
             },
             .freebsd => {
-                const flags = @intFromEnum(std.c.UMTX_OP.WAIT_UINT_PRIVATE);
+                const flags = @backingInt(std.c.UMTX_OP.WAIT_UINT_PRIVATE);
                 var tm_size: usize = 0;
                 var tm: std.c._umtx_time = undefined;
                 var tm_ptr: ?*const std.c._umtx_time = null;
@@ -1146,7 +1148,7 @@ const Thread = struct {
                 while (true) {
                     const status = c.__ulock_wake(flags, ptr, 0);
                     if (status >= 0) return;
-                    switch (@as(c.E, @enumFromInt(-status))) {
+                    switch (@as(c.E, @fromBackingInt(@intCast(-status)))) {
                         .INTR, .CANCELED => continue, // spurious wake()
                         .FAULT => unreachable, // __ulock_wake doesn't generate EFAULT according to darwin pthread_cond_t
                         .NOENT => return, // nothing was woken up
@@ -1158,7 +1160,7 @@ const Thread = struct {
             .freebsd => {
                 const rc = std.c._umtx_op(
                     @intFromPtr(ptr),
-                    @intFromEnum(std.c.UMTX_OP.WAKE_PRIVATE),
+                    @backingInt(std.c.UMTX_OP.WAKE_PRIVATE),
                     @as(c_ulong, @min(max_waiters, std.math.maxInt(c_int))),
                     0, // there is no timeout struct
                     0, // there is no timeout struct pointer
@@ -1219,7 +1221,7 @@ const Thread = struct {
                         parking_futex.removeCanceledWaiter(futex_waiter);
                     }
                     if (need_unpark_flag) setUnparkFlag(&thread.unpark_flag);
-                    unpark(&.{thread.id}, null);
+                    unpark(&.{if (ParkTid == std.Thread.Id) thread.id else thread.park_tid}, null);
                     return false;
                 },
 
@@ -1282,9 +1284,9 @@ const Thread = struct {
                 .linux => {
                     const pid: posix.pid_t = pid: {
                         const cached_pid = @atomicLoad(Pid, &t.pid, .monotonic);
-                        if (cached_pid != .unknown) break :pid @intFromEnum(cached_pid);
+                        if (cached_pid != .unknown) break :pid @backingInt(cached_pid);
                         const pid = std.os.linux.getpid();
-                        @atomicStore(Pid, &t.pid, @enumFromInt(pid), .monotonic);
+                        @atomicStore(Pid, &t.pid, @fromBackingInt(@intCast(pid)), .monotonic);
                         break :pid pid;
                     };
                     return switch (std.os.linux.tgkill(pid, @bitCast(thread.id), .IO)) {
@@ -1351,7 +1353,7 @@ const Syscall = struct {
             .unblocked => {},
         }
         switch (thread.status.fetchOr(.{
-            .cancelation = @enumFromInt(0b011),
+            .cancelation = @fromBackingInt(@intCast(0b011)),
             .awaitable = .null,
         }, .monotonic).cancelation) {
             .parked => unreachable,
@@ -1371,7 +1373,7 @@ const Syscall = struct {
     fn checkCancel(s: Syscall) Io.Cancelable!void {
         const thread = s.thread orelse return;
         switch (thread.status.fetchOr(.{
-            .cancelation = @enumFromInt(0b010),
+            .cancelation = @fromBackingInt(@intCast(0b010)),
             .awaitable = .null,
         }, .monotonic).cancelation) {
             .none => unreachable,
@@ -1388,7 +1390,7 @@ const Syscall = struct {
     fn finish(s: Syscall) void {
         const thread = s.thread orelse return;
         switch (thread.status.fetchXor(.{
-            .cancelation = @enumFromInt(0b011),
+            .cancelation = @fromBackingInt(@intCast(0b011)),
             .awaitable = .null,
         }, .monotonic).cancelation) {
             .none => unreachable,
@@ -1473,7 +1475,7 @@ const AlertableSyscall = struct {
             .unblocked => {},
         }
         const old_status = thread.status.fetchOr(.{
-            .cancelation = @enumFromInt(0b010),
+            .cancelation = @fromBackingInt(@intCast(0b010)),
             .awaitable = .null,
         }, .monotonic);
         switch (old_status.cancelation) {
@@ -1496,7 +1498,7 @@ const AlertableSyscall = struct {
         comptime assert(is_windows);
         const thread = s.thread orelse return;
         const old_status = thread.status.fetchOr(.{
-            .cancelation = @enumFromInt(0b010),
+            .cancelation = @fromBackingInt(@intCast(0b010)),
             .awaitable = .null,
         }, .monotonic);
         switch (old_status.cancelation) {
@@ -1519,7 +1521,7 @@ const AlertableSyscall = struct {
         comptime assert(is_windows);
         const thread = s.thread orelse return;
         switch (thread.status.fetchXor(.{
-            .cancelation = @enumFromInt(0b010),
+            .cancelation = @fromBackingInt(@intCast(0b010)),
             .awaitable = .null,
         }, .monotonic).cancelation) {
             .none => unreachable,
@@ -1562,7 +1564,7 @@ pub const splat_buffer_size = 64;
 /// NtWaitForMultipleObjects accepts. We use this value also for poll() on
 /// posix systems.
 const poll_buffer_len = 64;
-pub const default_PATH = "/usr/local/bin:/bin/:/usr/bin";
+pub const default_PATH = "/usr/local/bin:/bin:/usr/bin";
 /// There are multiple kernel bugs being worked around with retries.
 const max_windows_kernel_bug_retries = 13;
 
@@ -1748,6 +1750,7 @@ fn worker(t: *Threaded) void {
         .cancel_protection = .unblocked,
         .futex_waiter = undefined,
         .unpark_flag = unpark_flag_init,
+        .park_tid = if (ParkTid == std.Thread.Id) {} else getParkTid(),
         .csprng = .uninitialized,
     };
     Thread.current = &thread;
@@ -1943,15 +1946,7 @@ pub fn io(t: *Threaded) Io {
                 .windows => netShutdownWindows,
                 else => netShutdownPosix,
             },
-            .netWrite = switch (native_os) {
-                .windows => netWriteWindows,
-                else => netWritePosix,
-            },
             .netWriteFile = netWriteFile,
-            .netSend = switch (native_os) {
-                .windows => netSendWindows,
-                else => netSendPosix,
-            },
             .netInterfaceNameResolve = netInterfaceNameResolve,
             .netInterfaceName = netInterfaceName,
             .netLookup = netLookup,
@@ -2093,7 +2088,7 @@ fn async(
 
     const busy_count = t.busy_count;
 
-    if (busy_count >= @intFromEnum(t.async_limit)) {
+    if (busy_count >= @backingInt(t.async_limit)) {
         mutexUnlock(&t.mutex);
         future.destroy(gpa);
         start(context.ptr, result.ptr);
@@ -2146,7 +2141,7 @@ fn concurrent(
 
     const busy_count = t.busy_count;
 
-    if (busy_count >= @intFromEnum(t.concurrent_limit))
+    if (busy_count >= @backingInt(t.concurrent_limit))
         return error.ConcurrencyUnavailable;
 
     t.busy_count = busy_count + 1;
@@ -2190,7 +2185,7 @@ fn groupAsync(
 
     const busy_count = t.busy_count;
 
-    if (busy_count >= @intFromEnum(t.async_limit)) {
+    if (busy_count >= @backingInt(t.async_limit)) {
         mutexUnlock(&t.mutex);
         task.destroy(gpa);
         return groupAsyncEager(start, context.ptr);
@@ -2254,7 +2249,7 @@ fn groupConcurrent(
 
     const busy_count = t.busy_count;
 
-    if (busy_count >= @intFromEnum(t.concurrent_limit))
+    if (busy_count >= @backingInt(t.concurrent_limit))
         return error.ConcurrencyUnavailable;
 
     t.busy_count = busy_count + 1;
@@ -2381,7 +2376,7 @@ fn recancel(userdata: ?*anyopaque) void {
 fn recancelInner() void {
     const thread = Thread.current.?; // called `recancel` but was not canceled
     switch (thread.status.fetchXor(.{
-        .cancelation = @enumFromInt(0b001),
+        .cancelation = @fromBackingInt(@intCast(0b001)),
         .awaitable = .null,
     }, .monotonic).cancelation) {
         .canceled => {},
@@ -2562,8 +2557,36 @@ fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Oper
             };
             break :o .{ null, 1 };
         } },
+        .net_send => |*o| return .{
+            .net_send = o: {
+                if (!have_networking) break :o .{ error.NetworkDown, 0 };
+                if (is_windows) break :o netSendWindows(t, o.socket_handle, o.messages, o.flags);
+                const send_err, const sent = netSendPosix(t, o.socket_handle, o.messages, o.flags, false);
+                if (send_err) |err| switch (err) {
+                    error.Canceled => |e| if (sent == 0) {
+                        return e;
+                    } else {
+                        // Leave the `error.Canceled` for later, but don't try to send any more messages.
+                        recancelInner();
+                        break :o .{ null, sent };
+                    },
+                    error.WouldBlock => unreachable,
+                    else => |e| break :o .{ e, sent },
+                };
+                break :o .{ null, sent };
+            },
+        },
         .net_read => |o| return .{
             .net_read = netRead(o.socket_handle, o.data) catch |err| switch (err) {
+                error.Canceled => |e| return e,
+                else => |e| e,
+            },
+        },
+        .net_write => |o| return .{
+            .net_write = (if (is_windows)
+                netWriteWindows(o.socket_handle, o.header, o.data, o.splat)
+            else
+                netWritePosix(o.socket_handle, o.header, o.data, o.splat)) catch |err| switch (err) {
                 error.Canceled => |e| return e,
                 else => |e| e,
             },
@@ -2623,10 +2646,26 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         };
                         poll_len += 1;
                     },
+                    .net_send => |*o| {
+                        poll_buffer[poll_len] = .{
+                            .fd = o.socket_handle,
+                            .events = posix.POLL.OUT | posix.POLL.ERR,
+                            .revents = 0,
+                        };
+                        poll_len += 1;
+                    },
                     .net_read => |o| {
                         poll_buffer[poll_len] = .{
                             .fd = o.socket_handle,
                             .events = posix.POLL.IN | posix.POLL.ERR,
+                            .revents = 0,
+                        };
+                        poll_len += 1;
+                    },
+                    .net_write => |o| {
+                        poll_buffer[poll_len] = .{
+                            .fd = o.socket_handle,
+                            .events = posix.POLL.OUT | posix.POLL.ERR,
                             .revents = 0,
                         };
                         poll_len += 1;
@@ -2808,7 +2847,37 @@ fn batchAwaitConcurrent(userdata: ?*anyopaque, b: *Io.Batch, timeout: Io.Timeout
                     storage.* = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
                     b.completed.tail = index;
                 },
+                .net_send => |*o| nb: {
+                    const result: Io.Operation.Result = .{
+                        .net_send = o: {
+                            const send_err, const sent = netSendPosix(t, o.socket_handle, o.messages, o.flags, true);
+                            if (send_err) |err| switch (err) {
+                                error.Canceled => |e| if (sent == 0) {
+                                    return e;
+                                } else {
+                                    // Leave the `error.Canceled` for later, but don't try to send any more messages.
+                                    recancelInner();
+                                    break :o .{ null, sent };
+                                },
+                                error.WouldBlock => {
+                                    if (sent != 0) break :o .{ null, sent };
+                                    try poll_storage.add(o.socket_handle, posix.POLL.OUT | posix.POLL.ERR);
+                                    break :nb;
+                                },
+                                else => |e| break :o .{ e, sent },
+                            };
+                            break :o .{ null, sent };
+                        },
+                    };
+                    switch (b.completed.tail) {
+                        .none => b.completed.head = index,
+                        else => |tail_index| b.storage[tail_index.toIndex()].completion.node.next = index,
+                    }
+                    storage.* = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
+                    b.completed.tail = index;
+                },
                 .net_read => |o| try poll_storage.add(o.socket_handle, posix.POLL.IN | posix.POLL.ERR),
+                .net_write => |o| try poll_storage.add(o.socket_handle, posix.POLL.OUT | posix.POLL.ERR),
             }
             index = submission.node.next;
         }
@@ -3004,7 +3073,9 @@ fn batchApc(
                 .file_write_streaming => .{ .file_write_streaming = ntWriteFileResult(iosb) },
                 .device_io_control => .{ .device_io_control = iosb.* },
                 .net_receive => unreachable,
+                .net_send => unreachable,
                 .net_read => unreachable,
+                .net_write => unreachable,
             };
             storage.* = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
         },
@@ -3213,11 +3284,28 @@ fn batchDrainSubmittedWindows(t: *Threaded, b: *Io.Batch, concurrency: bool) (Io
                     .net_receive = netReceiveWindows(t, o.socket_handle, o.message_buffer, o.data_buffer, o.flags),
                 });
             },
+            .net_send => |*o| {
+                // TODO integrate with overlapped I/O or equivalent to avoid this error
+                if (concurrency) return error.ConcurrencyUnavailable;
+                batchCompleteBlockingWindows(b, operation_userdata, .{
+                    .net_send = netSendWindows(t, o.socket_handle, o.messages, o.flags),
+                });
+            },
             .net_read => |*o| {
                 // TODO integrate with overlapped I/O or equivalent to avoid this error
                 if (concurrency) return error.ConcurrencyUnavailable;
                 batchCompleteBlockingWindows(b, operation_userdata, .{
                     .net_read = netRead(o.socket_handle, o.data) catch |err| switch (err) {
+                        error.Canceled => |e| return e,
+                        else => |e| e,
+                    },
+                });
+            },
+            .net_write => |*o| {
+                // TODO integrate with overlapped I/O or equivalent to avoid this error
+                if (concurrency) return error.ConcurrencyUnavailable;
+                batchCompleteBlockingWindows(b, operation_userdata, .{
+                    .net_write = netWriteWindows(o.socket_handle, o.header, o.data, o.splat) catch |err| switch (err) {
                         error.Canceled => |e| return e,
                         else => |e| e,
                     },
@@ -3857,7 +3945,26 @@ fn fileLength(userdata: ?*anyopaque, file: File) File.LengthError!u64 {
             }
         }
     } else if (is_windows) {
-        // TODO call NtQueryInformationFile and ask for only the size instead of "all"
+        var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+        var info: windows.FILE.STANDARD_INFORMATION = undefined;
+        const syscall: Syscall = try .start();
+        while (true) switch (windows.ntdll.NtQueryInformationFile(
+            file.handle,
+            &io_status_block,
+            &info,
+            @sizeOf(windows.FILE.STANDARD_INFORMATION),
+            .Standard,
+        )) {
+            .SUCCESS => break syscall.finish(),
+            .INVALID_PARAMETER => |err| return syscall.ntstatusBug(err),
+            .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+            .CANCELLED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            else => |s| return syscall.unexpectedNtstatus(s),
+        };
+        return @as(u64, @bitCast(info.EndOfFile));
     }
 
     const stat = try fileStat(t, file);
@@ -4381,7 +4488,7 @@ fn dirCreateFilePosix(
             }
         };
 
-        fl_flags |= @as(usize, 1 << @bitOffsetOf(posix.O, "NONBLOCK"));
+        fl_flags &= ~@as(usize, 1 << @bitOffsetOf(posix.O, "NONBLOCK"));
 
         const syscall: Syscall = try .start();
         while (true) {
@@ -4977,7 +5084,7 @@ fn dirOpenFilePosix(
             }
         };
 
-        fl_flags |= @as(usize, 1 << @bitOffsetOf(posix.O, "NONBLOCK"));
+        fl_flags &= ~@as(usize, 1 << @bitOffsetOf(posix.O, "NONBLOCK"));
 
         const syscall: Syscall = try .start();
         while (true) {
@@ -5052,7 +5159,7 @@ pub fn dirOpenFileWtf16(
             .VALID_FLAGS,
             .OPEN,
             .{
-                .IO = if (flags.follow_symlinks) .SYNCHRONOUS_NONALERT else .ASYNCHRONOUS,
+                .IO = .SYNCHRONOUS_NONALERT,
                 .NON_DIRECTORY_FILE = !allow_directory,
                 .OPEN_REPARSE_POINT = !flags.follow_symlinks,
             },
@@ -5346,7 +5453,7 @@ fn dirOpenDirHaiku(
             syscall.finish();
             return .{ .handle = rc };
         }
-        switch (@as(posix.E, @enumFromInt(rc))) {
+        switch (@as(posix.E, @fromBackingInt(@intCast(rc)))) {
             .INTR => {
                 try syscall.checkCancel();
                 continue;
@@ -5825,7 +5932,7 @@ fn dirReadHaiku(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
                 const syscall: Syscall = try .start();
                 while (true) {
                     const rc = posix.system._kern_rewind_dir(dr.dir.handle);
-                    switch (@as(posix.E, @enumFromInt(@min(rc, 0)))) {
+                    switch (@as(posix.E, @fromBackingInt(@intCast(@min(rc, 0))))) {
                         .SUCCESS => {
                             syscall.finish();
                             break;
@@ -5847,7 +5954,7 @@ fn dirReadHaiku(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
             const syscall: Syscall = try .start();
             const n: usize = while (true) {
                 const rc = posix.system._kern_read_dir(dr.dir.handle, dr.buffer.ptr, dr.buffer.len, @truncate(dr.buffer.len / @sizeOf(posix.system.DirEnt)));
-                switch (@as(posix.E, @enumFromInt(@min(rc, 0)))) {
+                switch (@as(posix.E, @fromBackingInt(@intCast(@min(rc, 0))))) {
                     .SUCCESS => {
                         syscall.finish();
                         break @intCast(rc);
@@ -5890,7 +5997,7 @@ fn dirReadHaiku(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
             const syscall: Syscall = try .start();
             while (true) {
                 const rc = posix.system._kern_read_stat(dr.dir.handle, name, false, &stat, @sizeOf(std.c.Stat));
-                switch (@as(posix.E, @enumFromInt(@min(rc, 0)))) {
+                switch (@as(posix.E, @fromBackingInt(@intCast(@min(rc, 0))))) {
                     .SUCCESS => {
                         syscall.finish();
                         break;
@@ -6816,9 +6923,9 @@ fn dirRealPathFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, o
             if (std.c.realpath(sub_path_posix, out_buffer.ptr)) |redundant_pointer| {
                 syscall.finish();
                 assert(redundant_pointer == out_buffer.ptr);
-                return std.mem.indexOfScalar(u8, out_buffer, 0) orelse out_buffer.len;
+                return std.mem.findScalar(u8, out_buffer, 0) orelse out_buffer.len;
             }
-            const err: posix.E = @enumFromInt(std.c._errno().*);
+            const err: posix.E = @fromBackingInt(@intCast(std.c._errno().*));
             if (err == .INTR) {
                 try syscall.checkCancel();
                 continue;
@@ -6960,7 +7067,7 @@ fn realPathPosix(fd: posix.fd_t, out_buffer: []u8) File.RealPathError!usize {
                     },
                 }
             }
-            const n = std.mem.indexOfScalar(u8, &sufficient_buffer, 0) orelse sufficient_buffer.len;
+            const n = std.mem.findScalar(u8, &sufficient_buffer, 0) orelse sufficient_buffer.len;
             if (n > out_buffer.len) return error.NameTooLong;
             @memcpy(out_buffer[0..n], sufficient_buffer[0..n]);
             return n;
@@ -7118,9 +7225,10 @@ fn dirDeleteFileWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.
     if (builtin.link_libc) return dirDeleteFilePosix(userdata, dir, sub_path);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
+    const wasi = std.os.wasi;
     const syscall: Syscall = try .start();
     while (true) {
-        const res = std.os.wasi.path_unlink_file(dir.handle, sub_path.ptr, sub_path.len);
+        const res = wasi.path_unlink_file(dir.handle, sub_path.ptr, sub_path.len);
         switch (res) {
             .SUCCESS => {
                 syscall.finish();
@@ -7130,11 +7238,35 @@ fn dirDeleteFileWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.
                 try syscall.checkCancel();
                 continue;
             },
+            .ACCES, .PERM => |e| {
+                const original_error: Dir.DeleteFileError = switch (e) {
+                    .ACCES => error.AccessDenied,
+                    .PERM => error.PermissionDenied,
+                    else => unreachable,
+                };
+                var stat: wasi.filestat_t = undefined;
+                while (true) {
+                    try syscall.checkCancel();
+                    switch (wasi.path_filestat_get(dir.handle, .{}, sub_path.ptr, sub_path.len, &stat)) {
+                        .SUCCESS => {
+                            syscall.finish();
+                            break;
+                        },
+                        .INTR => continue,
+                        else => {
+                            syscall.finish();
+                            return original_error;
+                        },
+                    }
+                }
+                if (stat.filetype == .DIRECTORY)
+                    return error.IsDir
+                else
+                    return original_error;
+            },
             else => |e| {
                 syscall.finish();
                 switch (e) {
-                    .ACCES => return error.AccessDenied,
-                    .PERM => return error.PermissionDenied,
                     .BUSY => return error.FileBusy,
                     .FAULT => |err| return errnoBug(err),
                     .IO => return error.FileSystem,
@@ -7505,6 +7637,7 @@ fn dirRenamePreserve(
 ) Dir.RenamePreserveError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     if (is_windows) return dirRenameWindowsInner(old_dir, old_sub_path, new_dir, new_sub_path, false);
+    if (is_darwin) return dirRenamePreserveDarwin(old_dir, old_sub_path, new_dir, new_sub_path);
     if (native_os == .linux) return dirRenamePreserveLinux(old_dir, old_sub_path, new_dir, new_sub_path);
     // Make a hard link then delete the original.
     try dirHardLink(t, old_dir, old_sub_path, new_dir, new_sub_path, .{ .follow_symlinks = false });
@@ -7696,6 +7829,58 @@ fn dirRenamePosix(
     return renameat(old_dir.handle, old_sub_path_posix, new_dir.handle, new_sub_path_posix);
 }
 
+fn dirRenamePreserveDarwin(
+    old_dir: Dir,
+    old_sub_path: []const u8,
+    new_dir: Dir,
+    new_sub_path: []const u8,
+) Dir.RenamePreserveError!void {
+    var old_path_buffer: [posix.PATH_MAX]u8 = undefined;
+    var new_path_buffer: [posix.PATH_MAX]u8 = undefined;
+    const old_sub_path_posix = try pathToPosix(old_sub_path, &old_path_buffer);
+    const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
+
+    const syscall: Syscall = try .start();
+    while (true) {
+        switch (posix.errno(std.c.renameatx_np(
+            old_dir.handle,
+            old_sub_path_posix,
+            new_dir.handle,
+            new_sub_path_posix,
+            .{ .EXCL = true },
+        ))) {
+            .SUCCESS => {
+                syscall.finish();
+                break;
+            },
+            .INTR => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .INVAL => |err| return syscall.errnoBug(err),
+            .FAULT => |err| return syscall.errnoBug(err),
+            .BADF => |err| return syscall.errnoBug(err),
+            .ISDIR => |err| return syscall.errnoBug(err),
+            .NOTEMPTY => |err| return syscall.errnoBug(err),
+            .OPNOTSUPP => return syscall.fail(error.OperationUnsupported),
+            .IO => return syscall.fail(error.HardwareFailure),
+            .DEADLK => return syscall.fail(error.AccessDenied),
+            .ACCES => return syscall.fail(error.AccessDenied),
+            .DQUOT => return syscall.fail(error.DiskQuota),
+            .EXIST => return syscall.fail(error.PathAlreadyExists),
+            .LOOP => return syscall.fail(error.LinkQuotaExceeded),
+            .NAMETOOLONG => return syscall.fail(error.NameTooLong),
+            .NOENT => return syscall.fail(error.FileNotFound),
+            .NOSPC => return syscall.fail(error.NoSpaceLeft),
+            .NOTDIR => return syscall.fail(error.NotDir),
+            .PERM => return syscall.fail(error.PermissionDenied),
+            .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
+            .XDEV => return syscall.fail(error.CrossDevice),
+            else => |err| return syscall.unexpectedErrno(err),
+        }
+    }
+}
+
 fn dirRenamePreserveLinux(
     old_dir: Dir,
     old_sub_path: []const u8,
@@ -7781,49 +7966,6 @@ fn renameat(
         .INVAL => |err| return syscall.errnoBug(err),
         else => |err| return syscall.unexpectedErrno(err),
     };
-}
-
-fn renameatPreserve(
-    old_dir: posix.fd_t,
-    old_sub_path: [*:0]const u8,
-    new_dir: posix.fd_t,
-    new_sub_path: [*:0]const u8,
-) Dir.RenameError!void {
-    const syscall: Syscall = try .start();
-    while (true) {
-        switch (posix.errno(posix.system.renameat(old_dir, old_sub_path, new_dir, new_sub_path))) {
-            .SUCCESS => return syscall.finish(),
-            .INTR => {
-                try syscall.checkCancel();
-                continue;
-            },
-            else => |e| {
-                syscall.finish();
-                switch (e) {
-                    .ACCES => return error.AccessDenied,
-                    .PERM => return error.PermissionDenied,
-                    .BUSY => return error.FileBusy,
-                    .DQUOT => return error.DiskQuota,
-                    .FAULT => |err| return errnoBug(err),
-                    .INVAL => |err| return errnoBug(err),
-                    .ISDIR => return error.IsDir,
-                    .LOOP => return error.SymLinkLoop,
-                    .MLINK => return error.LinkQuotaExceeded,
-                    .NAMETOOLONG => return error.NameTooLong,
-                    .NOENT => return error.FileNotFound,
-                    .NOTDIR => return error.NotDir,
-                    .NOMEM => return error.SystemResources,
-                    .NOSPC => return error.NoSpaceLeft,
-                    .EXIST => return error.PathAlreadyExists,
-                    .NOTEMPTY => return error.PathAlreadyExists,
-                    .ROFS => return error.ReadOnlyFileSystem,
-                    .XDEV => return error.CrossDevice,
-                    .ILSEQ => return error.BadPathName,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
-        }
-    }
 }
 
 const dirSymLink = switch (native_os) {
@@ -8100,7 +8242,7 @@ fn dirReadLinkWindows(dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLink
         .{
             .DIRECTORY_FILE = false,
             .NON_DIRECTORY_FILE = false,
-            .IO = .ASYNCHRONOUS,
+            .IO = .SYNCHRONOUS_NONALERT,
             .OPEN_REPARSE_POINT = true,
         },
         null,
@@ -8165,31 +8307,16 @@ fn dirReadLinkWindows(dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLink
     defer windows.CloseHandle(result_handle);
 
     var reparse_buf: [windows.MAXIMUM_REPARSE_DATA_BUFFER_SIZE]u8 align(@alignOf(windows.REPARSE_DATA_BUFFER)) = undefined;
-
-    syscall = try .start();
-    while (true) switch (windows.ntdll.NtFsControlFile(
-        result_handle,
-        null, // event
-        null, // APC routine
-        null, // APC context
-        &io_status_block,
-        .GET_REPARSE_POINT,
-        null, // input buffer
-        0, // input buffer length
-        &reparse_buf,
-        reparse_buf.len,
-    )) {
-        .SUCCESS => {
-            syscall.finish();
-            break;
-        },
-        .CANCELLED => {
-            try syscall.checkCancel();
-            continue;
-        },
-        .NOT_A_REPARSE_POINT => return syscall.fail(error.NotLink),
-        else => |status| return syscall.unexpectedNtstatus(status),
-    };
+    switch ((try deviceIoControl(&.{
+        .file = .{ .handle = result_handle, .flags = .{ .nonblocking = false } },
+        .code = .GET_REPARSE_POINT,
+        .out = &reparse_buf,
+    })).u.Status) {
+        .SUCCESS => {},
+        .CANCELLED => unreachable,
+        .NOT_A_REPARSE_POINT => return error.NotLink,
+        else => |status| return windows.unexpectedStatus(status),
+    }
 
     const reparse_struct: *const windows.REPARSE_DATA_BUFFER = @ptrCast(@alignCast(&reparse_buf));
     const IoReparseTagInt = @typeInfo(windows.IO_REPARSE_TAG).@"struct".backing_integer.?;
@@ -8790,9 +8917,8 @@ fn isTty(file: File) Io.Cancelable!bool {
 
 fn fileEnableAnsiEscapeCodes(userdata: ?*anyopaque, file: File) File.EnableAnsiEscapeCodesError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
 
-    if (!is_windows) return if (!try supportsAnsiEscapeCodes(file)) error.NotTerminalDevice;
+    if (!is_windows) return if (!try supportsAnsiEscapeCodes(t, file)) error.NotTerminalDevice;
 
     // For Windows Terminal, VT Sequences processing is enabled by default.
     const console: File = .{
@@ -8840,14 +8966,13 @@ fn fileEnableAnsiEscapeCodes(userdata: ?*anyopaque, file: File) File.EnableAnsiE
 
 fn fileSupportsAnsiEscapeCodes(userdata: ?*anyopaque, file: File) Io.Cancelable!bool {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
-    return supportsAnsiEscapeCodes(file);
+    return supportsAnsiEscapeCodes(t, file);
 }
 
-fn supportsAnsiEscapeCodes(file: File) Io.Cancelable!bool {
+fn supportsAnsiEscapeCodes(t: *Threaded, file: File) Io.Cancelable!bool {
     if (is_windows) {
         var get_console_mode = windows.CONSOLE.USER_IO.GET_MODE;
-        switch ((try deviceIoControl(&.{
+        return switch ((try deviceIoControl(&.{
             .file = .{
                 .handle = windows.peb().ProcessParameters.ConsoleHandle,
                 .flags = .{ .nonblocking = false },
@@ -8855,15 +8980,33 @@ fn supportsAnsiEscapeCodes(file: File) Io.Cancelable!bool {
             .code = windows.IOCTL.CONDRV.ISSUE_USER_IO,
             .in = @ptrCast(&get_console_mode.request(file, 0, .{}, 0, .{})),
         })).u.Status) {
-            .SUCCESS => if (get_console_mode.Data & windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0)
-                return true,
+            .SUCCESS => get_console_mode.Data & windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0,
             .CANCELLED => unreachable,
-            .INVALID_HANDLE => return isCygwinPty(file),
-            else => return false,
-        }
+            .INVALID_HANDLE => isCygwinPty(file),
+            else => false,
+        };
     }
 
-    if (try isTty(file)) return true;
+    if (native_os == .wasi) {
+        // WASI sanitizes stdout when fd is a tty so ANSI escape codes
+        // will not be interpreted as actual cursor commands, and
+        // stderr is always sanitized.
+
+        return false;
+    }
+
+    if (try isTty(file)) {
+        if (file.handle == posix.STDOUT_FILENO or file.handle == posix.STDERR_FILENO) {
+            t.scanEnviron();
+            if (t.environ.string.TERM) |term| {
+                if (std.mem.eql(u8, term, "dumb")) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
 
     return false;
 }
@@ -8943,7 +9086,7 @@ fn isCygwinPty(file: File) Io.Cancelable!bool {
     // The name we get from NtQueryInformationFile will be prefixed with a '\', e.g. \msys-1888ae32e00d56aa-pty0-to-master
     return (std.mem.startsWith(u16, name_wide, &[_]u16{ '\\', 'm', 's', 'y', 's', '-' }) or
         std.mem.startsWith(u16, name_wide, &[_]u16{ '\\', 'c', 'y', 'g', 'w', 'i', 'n', '-' })) and
-        std.mem.indexOf(u16, name_wide, &[_]u16{ '-', 'p', 't', 'y' }) != null;
+        std.mem.find(u16, name_wide, &[_]u16{ '-', 'p', 't', 'y' }) != null;
 }
 
 fn fileSetLength(userdata: ?*anyopaque, file: File, length: u64) File.SetLengthError!void {
@@ -10168,7 +10311,7 @@ fn fileSeekBy(userdata: ?*anyopaque, file: File, offset: i64) File.SeekError!voi
 
     if (posix.SEEK == void) return error.Unseekable;
 
-    if (native_os == .linux and !builtin.link_libc and @sizeOf(usize) == 4) {
+    if (native_os == .linux and !builtin.link_libc and @sizeOf(posix.system.syscall_arg_t) == 4) {
         var result: i64 = undefined;
         const syscall: Syscall = try .start();
         while (true) {
@@ -10280,7 +10423,7 @@ fn fileSeekTo(userdata: ?*anyopaque, file: File, offset: u64) File.SeekError!voi
 }
 
 fn posixSeekTo(fd: posix.fd_t, offset: u64) File.SeekError!void {
-    if (native_os == .linux and !builtin.link_libc and @sizeOf(usize) == 4) {
+    if (native_os == .linux and !builtin.link_libc and @sizeOf(posix.system.syscall_arg_t) == 4) {
         const syscall: Syscall = try .start();
         while (true) {
             var result: i64 = undefined;
@@ -10465,7 +10608,7 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) process.Execut
                     if (std.c.realpath(argv0, &resolved_buf)) |p| {
                         assert(p == &resolved_buf);
                         break syscall.finish();
-                    } else switch (@as(std.c.E, @enumFromInt(std.c._errno().*))) {
+                    } else switch (@as(std.c.E, @fromBackingInt(@intCast(std.c._errno().*)))) {
                         .INTR => {
                             try syscall.checkCancel();
                             continue;
@@ -10508,7 +10651,7 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) process.Execut
                         if (std.c.realpath(resolved_path, &resolved_buf)) |p| {
                             assert(p == &resolved_buf);
                             break syscall.finish();
-                        } else switch (@as(std.c.E, @enumFromInt(std.c._errno().*))) {
+                        } else switch (@as(std.c.E, @fromBackingInt(@intCast(std.c._errno().*)))) {
                             .INTR => {
                                 try syscall.checkCancel();
                                 continue;
@@ -10892,6 +11035,7 @@ fn fileWriteStreaming(
                     .PIPE => return error.BrokenPipe,
                     .CONNRESET => |err| return errnoBug(err), // Not a socket handle.
                     .BUSY => return error.DeviceBusy,
+                    .ACCES => return error.AccessDenied,
                     else => |err| return posix.unexpectedErrno(err),
                 }
             },
@@ -10966,12 +11110,12 @@ fn fileWriteFileStreaming(
 ) File.Writer.WriteFileError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const reader_buffered = file_reader.interface.buffered();
-    if (reader_buffered.len >= @intFromEnum(limit)) {
+    if (reader_buffered.len >= @backingInt(limit)) {
         const n = try fileWriteStreaming(t, file, header, &.{limit.slice(reader_buffered)}, 1);
         file_reader.interface.toss(n -| header.len);
         return n;
     }
-    const file_limit = @intFromEnum(limit) - reader_buffered.len;
+    const file_limit = @backingInt(limit) - reader_buffered.len;
     const out_fd = file.handle;
     const in_fd = file_reader.file.handle;
 
@@ -11171,9 +11315,12 @@ fn fileWriteFileStreaming(
         var off: std.os.linux.off_t = undefined;
         const off_ptr: ?*std.os.linux.off_t, const count: usize = switch (file_reader.mode) {
             .positional => o: {
-                const size = file_reader.getSize() catch return 0;
+                const size = file_reader.getSize() catch |err| switch (err) {
+                    error.Canceled => |e| return e,
+                    else => break :sf,
+                };
                 off = std.math.cast(std.os.linux.off_t, file_reader.pos) orelse return error.ReadFailed;
-                break :o .{ &off, @min(@intFromEnum(limit), size - file_reader.pos, max_count) };
+                break :o .{ &off, @min(@backingInt(limit), size - file_reader.pos, max_count) };
             },
             .streaming => .{ null, limit.minInt(max_count) },
             .streaming_simple, .positional_simple => break :sf,
@@ -11245,7 +11392,7 @@ fn fileWriteFileStreaming(
             file_reader.interface.toss(n -| header.len);
             return n;
         }
-        var len: usize = @intFromEnum(limit);
+        var len: usize = @backingInt(limit);
         var off_in: i64 = undefined;
         const off_in_ptr: ?*i64 = switch (file_reader.mode) {
             .positional_simple, .streaming_simple => return error.Unimplemented,
@@ -11305,7 +11452,7 @@ fn fileWriteFileStreaming(
             .freebsd => n: {
                 const syscall: Syscall = try .start();
                 while (true) {
-                    const rc = std.c.copy_file_range(in_fd, off_in_ptr, out_fd, null, @intFromEnum(limit), 0);
+                    const rc = std.c.copy_file_range(in_fd, off_in_ptr, out_fd, null, @backingInt(limit), 0);
                     switch (std.c.errno(rc)) {
                         .SUCCESS => {
                             syscall.finish();
@@ -11365,7 +11512,8 @@ fn netWriteFile(
     _ = header;
     _ = file_reader;
     _ = limit;
-    @panic("TODO implement netWriteFile");
+    // TODO implement netWriteFile
+    return error.Unimplemented;
 }
 
 fn fileWriteFilePositional(
@@ -11378,7 +11526,7 @@ fn fileWriteFilePositional(
 ) File.WriteFilePositionalError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const reader_buffered = file_reader.interface.buffered();
-    if (reader_buffered.len >= @intFromEnum(limit)) {
+    if (reader_buffered.len >= @backingInt(limit)) {
         const n = try fileWritePositional(t, file, header, &.{limit.slice(reader_buffered)}, 1, offset);
         file_reader.interface.toss(n -| header.len);
         return n;
@@ -11405,7 +11553,7 @@ fn fileWriteFilePositional(
             file_reader.interface.toss(n -| header.len);
             return n;
         }
-        var len: usize = @min(@intFromEnum(limit), std.math.maxInt(usize) - offset);
+        var len: usize = @min(@backingInt(limit), std.math.maxInt(usize) - offset);
         var off_in: i64 = undefined;
         const off_in_ptr: ?*i64 = switch (file_reader.mode) {
             .positional_simple, .streaming_simple => return error.Unimplemented,
@@ -11467,7 +11615,7 @@ fn fileWriteFilePositional(
             .freebsd => n: {
                 const syscall: Syscall = try .start();
                 while (true) {
-                    const rc = std.c.copy_file_range(in_fd, off_in_ptr, out_fd, &off_out, @intFromEnum(limit), 0);
+                    const rc = std.c.copy_file_range(in_fd, off_in_ptr, out_fd, &off_out, @backingInt(limit), 0);
                     switch (std.c.errno(rc)) {
                         .SUCCESS => {
                             syscall.finish();
@@ -11519,7 +11667,10 @@ fn fileWriteFilePositional(
         if (file_reader.pos != 0) break :fcf;
         if (offset != 0) break :fcf;
         if (limit != .unlimited) break :fcf;
-        const size = file_reader.getSize() catch break :fcf;
+        const size = file_reader.getSize() catch |err| switch (err) {
+            error.Canceled => |e| return e,
+            else => break :fcf,
+        };
         if (header.len != 0 or reader_buffered.len != 0) {
             const n = try fileWritePositional(t, file, header, &.{limit.slice(reader_buffered)}, 1, offset);
             file_reader.interface.toss(n -| header.len);
@@ -11711,7 +11862,6 @@ fn nowWasi(clock: Io.Clock) Io.Timestamp {
 
 fn sleep(userdata: ?*anyopaque, timeout: Io.Timeout) Io.Cancelable!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    if (timeout == .none) return;
     if (use_parking_sleep) return parking_sleep.sleep(timeout);
     if (native_os == .wasi) return sleepWasi(t, timeout);
     if (@TypeOf(posix.system.clock_nanosleep) != void) return sleepPosix(timeout);
@@ -11737,7 +11887,7 @@ fn sleepPosix(timeout: Io.Timeout) Io.Cancelable!void {
             .deadline => true,
         } }, &timespec, &timespec);
         // POSIX-standard libc clock_nanosleep() returns *positive* errno values directly
-        switch (if (builtin.link_libc) @as(posix.E, @enumFromInt(rc)) else posix.errno(rc)) {
+        switch (if (builtin.link_libc) @as(posix.E, @fromBackingInt(@intCast(rc))) else posix.errno(rc)) {
             .INTR => {
                 try syscall.checkCancel();
                 continue;
@@ -11785,8 +11935,8 @@ fn sleepWasi(t: *Threaded, timeout: Io.Timeout) Io.Cancelable!void {
 
 fn sleepNanosleep(t: *Threaded, timeout: Io.Timeout) Io.Cancelable!void {
     const t_io = io(t);
-    const sec_type = @typeInfo(posix.timespec).@"struct".fields[0].type;
-    const nsec_type = @typeInfo(posix.timespec).@"struct".fields[1].type;
+    const sec_type = @typeInfo(posix.timespec).@"struct".field_types[0];
+    const nsec_type = @typeInfo(posix.timespec).@"struct".field_types[1];
 
     var timespec: posix.timespec = t: {
         const d = timeout.toDurationFromNow(t_io) orelse break :t .{
@@ -12028,6 +12178,7 @@ fn posixBind(
             else => |e| {
                 syscall.finish();
                 switch (e) {
+                    .ACCES => return error.AccessDenied,
                     .ADDRINUSE => return error.AddressInUse,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .INVAL => |err| return errnoBug(err), // invalid parameters
@@ -12110,6 +12261,7 @@ fn posixConnectUnix(
                     .NOTDIR => return error.NotDir,
                     .ROFS => return error.ReadOnlyFileSystem,
                     .PERM => return error.PermissionDenied,
+                    .CONNREFUSED => return error.ConnectionRefused,
 
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .CONNABORTED => |err| return errnoBug(err),
@@ -12407,9 +12559,9 @@ fn openSocketPosix(
     };
     errdefer closeFd(socket_fd);
 
-    if (options.ip6_only) {
+    if (options.ip6_only) |ip6_only| {
         if (posix.IPV6 == void) return error.OptionUnsupported;
-        try setSocketOptionPosix(socket_fd, posix.IPPROTO.IPV6, posix.IPV6.V6ONLY, 1);
+        try setSocketOptionPosix(socket_fd, posix.IPPROTO.IPV6, posix.IPV6.V6ONLY, @intFromBool(ip6_only));
     }
 
     return socket_fd;
@@ -12799,13 +12951,13 @@ fn netReadWindows(socket_handle: net.Socket.Handle, data: [][]u8) net.Stream.Rea
 }
 
 fn netSendPosix(
-    userdata: ?*anyopaque,
+    t: *Threaded,
     socket_handle: net.Socket.Handle,
     messages: []net.OutgoingMessage,
     flags: net.SendFlags,
-) struct { ?net.Socket.SendError, usize } {
+    nonblocking: bool,
+) struct { ?(net.Socket.SendError || error{WouldBlock}), usize } {
     if (!have_networking) return .{ error.NetworkDown, 0 };
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
 
     const posix_flags: u32 =
         @as(u32, if (@hasDecl(posix.MSG, "CONFIRM") and flags.confirm) posix.MSG.CONFIRM else 0) |
@@ -12813,6 +12965,7 @@ fn netSendPosix(
         @as(u32, if (@hasDecl(posix.MSG, "EOR") and flags.eor) posix.MSG.EOR else 0) |
         @as(u32, if (@hasDecl(posix.MSG, "OOB") and flags.oob) posix.MSG.OOB else 0) |
         @as(u32, if (@hasDecl(posix.MSG, "FASTOPEN") and flags.fastopen) posix.MSG.FASTOPEN else 0) |
+        @as(u32, if (@hasDecl(posix.MSG, "DONTWAIT") and nonblocking) posix.MSG.DONTWAIT else 0) |
         posix.MSG.NOSIGNAL;
 
     var i: usize = 0;
@@ -12828,13 +12981,12 @@ fn netSendPosix(
 }
 
 fn netSendWindows(
-    userdata: ?*anyopaque,
+    t: *Threaded,
     socket_handle: net.Socket.Handle,
     messages: []net.OutgoingMessage,
     flags: net.SendFlags,
 ) struct { ?net.Socket.SendError, usize } {
     if (!have_networking) return .{ error.NetworkDown, 0 };
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
     for (messages, 0..) |*m, i| {
         t.netSendOneWindows(socket_handle, m, flags) catch |err| return .{ err, i };
     }
@@ -12886,7 +13038,7 @@ fn netSendOnePosix(
     socket_handle: net.Socket.Handle,
     message: *net.OutgoingMessage,
     flags: u32,
-) net.Socket.SendError!void {
+) (net.Socket.SendError || error{WouldBlock})!void {
     _ = t;
     var addr: PosixAddress = undefined;
     var iovec: posix.iovec_const = .{ .base = @constCast(message.data_ptr), .len = message.data_len };
@@ -12914,6 +13066,7 @@ fn netSendOnePosix(
                 continue;
             },
             .ACCES => return syscall.fail(error.AccessDenied),
+            .AGAIN => return syscall.fail(error.WouldBlock),
             .ALREADY => return syscall.fail(error.FastOpenAlreadyInProgress),
             .CONNRESET => return syscall.fail(error.ConnectionResetByPeer),
             .MSGSIZE => return syscall.fail(error.MessageOversize),
@@ -12941,7 +13094,7 @@ fn netSendManyPosix(
     socket_handle: net.Socket.Handle,
     messages: []net.OutgoingMessage,
     flags: u32,
-) net.Socket.SendError!usize {
+) (net.Socket.SendError || error{WouldBlock})!usize {
     var msg_buffer: [64]posix.system.mmsghdr = undefined;
     var addr_buffer: [msg_buffer.len]PosixAddress = undefined;
     var iovecs_buffer: [msg_buffer.len]posix.iovec = undefined;
@@ -12984,6 +13137,7 @@ fn netSendManyPosix(
                 continue;
             },
             .ACCES => return syscall.fail(error.AccessDenied),
+            .AGAIN => return syscall.fail(error.WouldBlock),
             .ALREADY => return syscall.fail(error.FastOpenAlreadyInProgress),
             .CONNRESET => return syscall.fail(error.ConnectionResetByPeer),
             .MSGSIZE => return syscall.fail(error.MessageOversize),
@@ -12996,7 +13150,6 @@ fn netSendManyPosix(
             .NOTCONN => return syscall.fail(error.SocketUnconnected),
             .NETDOWN => return syscall.fail(error.NetworkDown),
 
-            .AGAIN => |err| return syscall.errnoBug(err),
             .BADF => |err| return syscall.errnoBug(err), // File descriptor used after closed.
             .DESTADDRREQ => |err| return syscall.errnoBug(err), // The socket is not connection-mode, and no peer address is set.
             .FAULT => |err| return syscall.errnoBug(err), // An invalid user space address was specified for an argument.
@@ -13155,15 +13308,12 @@ fn netReceiveOneWindows(
 }
 
 fn netWritePosix(
-    userdata: ?*anyopaque,
     fd: net.Socket.Handle,
     header: []const u8,
     data: []const []const u8,
     splat: usize,
 ) net.Stream.Writer.Error!usize {
     if (!have_networking) return error.NetworkDown;
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
 
     var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
     var msg: posix.msghdr_const = .{
@@ -13249,15 +13399,12 @@ fn netWritePosix(
 }
 
 fn netWriteWindows(
-    userdata: ?*anyopaque,
     handle: net.Socket.Handle,
     header: []const u8,
     data: []const []const u8,
     splat: usize,
 ) net.Stream.Writer.Error!usize {
     if (!have_networking) return error.NetworkDown;
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
 
     var iovecs: [max_iovecs_len]windows.AFD.WSABUF(.@"const") = undefined;
     var len: u32 = 0;
@@ -13348,13 +13495,13 @@ fn addBuf(v: []posix.iovec_const, i: *iovlen_t, bytes: []const u8) void {
     i.* += 1;
 }
 
-fn netClose(userdata: ?*anyopaque, handles: []const net.Socket.Handle) void {
+fn netClose(userdata: ?*anyopaque, sockets: []const net.Socket) void {
     if (!have_networking) unreachable;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
-    for (handles) |handle| switch (native_os) {
-        .windows => windows.CloseHandle(handle),
-        else => closeFd(handle),
+    for (sockets) |socket| switch (native_os) {
+        .windows => windows.CloseHandle(socket.handle),
+        else => closeFd(socket.handle),
     };
 }
 
@@ -13511,7 +13658,7 @@ fn netInterfaceNameResolve(
             .INVALID_PARAMETER => unreachable,
             else => |err| return windows.unexpectedError(err),
         }
-        return .{ .index = @intFromEnum(index) };
+        return .{ .index = @backingInt(index) };
     }
 
     if (builtin.link_libc) {
@@ -13574,7 +13721,7 @@ fn netInterfaceName(userdata: ?*anyopaque, interface: net.Interface) net.Interfa
         }
         try Thread.checkCancel();
         var luid: windows.NET.LUID = undefined;
-        switch (ConvertInterfaceIndexToLuid.?(@enumFromInt(interface.index), &luid)) {
+        switch (ConvertInterfaceIndexToLuid.?(@fromBackingInt(@intCast(interface.index)), &luid)) {
             .SUCCESS => {},
             .FILE_NOT_FOUND => return error.InterfaceNotFound,
             .INVALID_PARAMETER => unreachable,
@@ -13627,12 +13774,15 @@ fn netLookupFallible(
 
     // On Linux, glibc provides getaddrinfo_a which is capable of supporting our semantics.
     // However, musl's POSIX-compliant getaddrinfo is not, so we bypass it.
+    const is_glibc = builtin.link_libc and builtin.target.isGnuLibC();
 
-    if (builtin.target.isGnuLibC()) {
+    if (is_glibc) {
         // TODO use getaddrinfo_a / gai_cancel
     }
 
-    if (native_os == .linux or is_windows) {
+    // On Linux, we have to go through glibc because of the Name Service Switch feature.
+    const non_glibc_linux = native_os == .linux and !is_glibc;
+    if (non_glibc_linux or is_windows) {
         if (IpAddress.parseIp6(name, options.port)) |addr| {
             if (options.family == .ip4) return error.UnknownHostName;
             if (copyCanon(options.canonical_name_buffer, name)) |canon| {
@@ -13673,7 +13823,7 @@ fn netLookupFallible(
         // Check for equal to "localhost(.)" or ends in ".localhost(.)"
         const localhost = if (name[name.len - 1] == '.') "localhost." else "localhost";
         if (std.mem.endsWith(u8, name, localhost) and
-            (name.len == localhost.len or name[name.len - localhost.len] == '.'))
+            (name.len == localhost.len or name[name.len - localhost.len - 1] == '.'))
         {
             var results_buffer: [3]HostName.LookupResult = undefined;
             var results_index: usize = 0;
@@ -13853,9 +14003,14 @@ fn netLookupFallible(
         var port_buffer: [8]u8 = undefined;
         const port_c = std.fmt.bufPrintSentinel(&port_buffer, "{d}", .{options.port}, 0) catch unreachable;
 
+        const family: i32 = if (options.family) |f| switch (f) {
+            .ip4 => posix.AF.INET,
+            .ip6 => posix.AF.INET6,
+        } else posix.AF.UNSPEC;
+
         const hints: posix.addrinfo = .{
             .flags = .{ .CANONNAME = options.canonical_name_buffer != null, .NUMERICSERV = true },
-            .family = posix.AF.UNSPEC,
+            .family = family,
             .socktype = posix.SOCK.STREAM,
             .protocol = posix.IPPROTO.TCP,
             .canonname = null,
@@ -13867,7 +14022,7 @@ fn netLookupFallible(
         const syscall: Syscall = try .start();
         while (true) {
             switch (posix.system.getaddrinfo(name_c.ptr, port_c.ptr, &hints, &res)) {
-                @as(posix.system.EAI, @enumFromInt(0)) => {
+                @as(posix.system.EAI, @fromBackingInt(@intCast(0))) => {
                     syscall.finish();
                     break;
                 },
@@ -14012,7 +14167,7 @@ fn processCurrentPath(userdata: ?*anyopaque, buffer: []u8) process.CurrentPathEr
 
     const err: posix.E = if (builtin.link_libc) err: {
         const c_err = if (std.c.getcwd(buffer.ptr, buffer.len)) |_| 0 else std.c._errno().*;
-        break :err @enumFromInt(c_err);
+        break :err @fromBackingInt(@intCast(c_err));
     } else err: {
         break :err posix.errno(posix.system.getcwd(buffer.ptr, buffer.len));
     };
@@ -14157,9 +14312,11 @@ fn addressUnixToPosix(a: *const net.UnixAddress, storage: *UnixAddress) posix.so
 }
 
 fn address4FromPosix(in: *const posix.sockaddr.in) net.Ip4Address {
+    // The network byte order address in `in.addr` is already the byte order we want.
+    const addr_bytes: *const [4]u8 = @ptrCast(&in.addr);
     return .{
         .port = std.mem.bigToNative(u16, in.port),
-        .bytes = @bitCast(in.addr),
+        .bytes = addr_bytes.*,
     };
 }
 
@@ -14173,9 +14330,11 @@ fn address6FromPosix(in6: *const posix.sockaddr.in6) net.Ip6Address {
 }
 
 fn address4ToPosix(a: net.Ip4Address) posix.sockaddr.in {
+    // The byte order of `a.bytes` is already equivalent to a network byte order address.
+    const addr_raw: *align(1) const u32 = @ptrCast(&a.bytes);
     return .{
         .port = std.mem.nativeToBig(u16, a.port),
-        .addr = @bitCast(a.bytes),
+        .addr = addr_raw.*,
     };
 }
 
@@ -14202,12 +14361,12 @@ pub fn posixSocketModeProtocol(family: posix.sa_family_t, mode: net.Socket.Mode,
             .raw => posix.SOCK.RAW,
             .rdm => if (@hasDecl(posix.SOCK, "RDM")) posix.SOCK.RDM else return error.OptionUnsupported,
         },
-        if (protocol) |p| @intFromEnum(p) else if (is_windows) switch (family) {
+        if (protocol) |p| @backingInt(p) else if (is_windows) switch (family) {
             posix.AF.UNIX => switch (mode) {
                 .stream => 0,
                 else => return error.ProtocolUnsupportedByAddressFamily,
             },
-            posix.AF.INET, posix.AF.INET6 => @intFromEnum(@as(net.Protocol, switch (mode) {
+            posix.AF.INET, posix.AF.INET6 => @backingInt(@as(net.Protocol, switch (mode) {
                 .stream => .tcp,
                 .dgram => .udp,
                 else => return error.ProtocolUnsupportedByAddressFamily,
@@ -14379,13 +14538,6 @@ pub fn nanosecondsFromPosix(timespec: *const posix.timespec) i96 {
 }
 
 fn timestampToPosix(nanoseconds: i96) posix.timespec {
-    if (builtin.zig_backend == .stage2_wasm) {
-        // Workaround for https://codeberg.org/ziglang/zig/issues/30575
-        return .{
-            .sec = @intCast(@divTrunc(nanoseconds, std.time.ns_per_s)),
-            .nsec = @intCast(@rem(nanoseconds, std.time.ns_per_s)),
-        };
-    }
     return .{
         .sec = @intCast(@divFloor(nanoseconds, std.time.ns_per_s)),
         .nsec = @intCast(@mod(nanoseconds, std.time.ns_per_s)),
@@ -14493,7 +14645,7 @@ fn lookupDns(
     var socket = s: {
         if (any_ip6) ip6: {
             const ip6_addr: IpAddress = .{ .ip6 = .unspecified(0) };
-            const socket = ip6_addr.bind(t_io, .{ .ip6_only = true, .mode = .dgram }) catch |err| switch (err) {
+            const socket = ip6_addr.bind(t_io, .{ .ip6_only = false, .mode = .dgram }) catch |err| switch (err) {
                 error.AddressFamilyUnsupported => break :ip6,
                 else => |e| return e,
             };
@@ -14522,6 +14674,11 @@ fn lookupDns(
     };
 
     send: while (now_ts.nanoseconds < final_ts.nanoseconds) : (now_ts = clock.now(t_io)) {
+        const timeout: Io.Timeout = .{ .deadline = .{
+            .raw = now_ts.addDuration(attempt_duration),
+            .clock = clock,
+        } };
+
         const max_messages = queries_buffer.len * HostName.ResolvConf.max_nameservers;
         {
             var message_buffer: [max_messages]net.OutgoingMessage = undefined;
@@ -14537,13 +14694,13 @@ fn lookupDns(
                     message_i += 1;
                 }
             }
-            _ = netSendPosix(t, socket.handle, message_buffer[0..message_i], .{});
+            const send_err, _ = socket.sendManyTimeout(t_io, message_buffer[0..message_i], .{}, timeout);
+            if (send_err) |err| switch (err) {
+                error.Canceled => |e| return e,
+                error.Timeout => continue :send,
+                else => {},
+            };
         }
-
-        const timeout: Io.Timeout = .{ .deadline = .{
-            .raw = now_ts.addDuration(attempt_duration),
-            .clock = clock,
-        } };
 
         while (true) {
             var message_buffer: [max_messages]net.IncomingMessage = @splat(.init);
@@ -14580,12 +14737,11 @@ fn lookupDns(
                         if (answers_remaining == 0) break :send;
                     },
                     2 => {
-                        var retry_message: net.OutgoingMessage = .{
-                            .address = ns,
-                            .data_ptr = query.ptr,
-                            .data_len = query.len,
+                        socket.sendTimeout(t_io, ns, query, timeout) catch |err| switch (err) {
+                            error.Canceled => |e| return e,
+                            error.Timeout => continue :send,
+                            else => {},
                         };
-                        _ = netSendPosix(t, socket.handle, (&retry_message)[0..1], .{});
                         continue;
                     },
                     else => continue,
@@ -14810,7 +14966,7 @@ fn writeResolutionQuery(q: *[280]u8, op: u4, dname: []const u8, class: u8, ty: H
         if (j - i - 1 > 62) unreachable;
         q[i - 1] = @intCast(j - i);
     }
-    q[i + 1] = @intFromEnum(ty);
+    q[i + 1] = @backingInt(ty);
     q[i + 3] = class;
     return n;
 }
@@ -14923,9 +15079,9 @@ const WindowsEnvironStrings = struct {
 
             i += 1; // skip over null byte
 
-            inline for (@typeInfo(WindowsEnvironStrings).@"struct".fields) |field| {
-                const field_name_w = comptime std.unicode.wtf8ToWtf16LeStringLiteral(field.name);
-                if (windows.eqlIgnoreCaseWtf16(key_w, field_name_w)) @field(result, field.name) = value_w;
+            inline for (@typeInfo(WindowsEnvironStrings).@"struct".field_names) |field_name| {
+                const field_name_w = comptime std.unicode.wtf8ToWtf16LeStringLiteral(field_name);
+                if (windows.eqlIgnoreCaseWtf16(key_w, field_name_w)) @field(result, field_name) = value_w;
             }
         }
 
@@ -15285,11 +15441,10 @@ fn childKill(userdata: ?*anyopaque, child: *process.Child) void {
 fn childKillWindows(t: *Threaded, child: *process.Child, exit_code: windows.UINT) !void {
     _ = t; // TODO cancelation
     const handle = child.id.?;
-    _ = windows.ntdll.RtlReportSilentProcessExit(handle, @enumFromInt(exit_code));
-    switch (windows.ntdll.NtTerminateProcess(handle, @enumFromInt(exit_code))) {
+    _ = windows.ntdll.RtlReportSilentProcessExit(handle, @fromBackingInt(@intCast(exit_code)));
+    switch (windows.ntdll.NtTerminateProcess(handle, @fromBackingInt(@intCast(exit_code)))) {
         .SUCCESS, .PROCESS_IS_TERMINATING => {
-            const infinite_timeout: windows.LARGE_INTEGER = std.math.minInt(windows.LARGE_INTEGER);
-            _ = windows.ntdll.NtWaitForSingleObject(handle, .FALSE, &infinite_timeout);
+            _ = windows.ntdll.NtWaitForSingleObject(handle, .FALSE, null);
             childCleanupWindows(child);
         },
         .ACCESS_DENIED => {
@@ -15312,8 +15467,7 @@ fn childWaitWindows(child: *process.Child) process.Child.WaitError!process.Child
     const handle = child.id.?;
 
     const alertable_syscall: AlertableSyscall = try .start();
-    const infinite_timeout: windows.LARGE_INTEGER = std.math.minInt(windows.LARGE_INTEGER);
-    while (true) switch (windows.ntdll.NtWaitForSingleObject(handle, .TRUE, &infinite_timeout)) {
+    while (true) switch (windows.ntdll.NtWaitForSingleObject(handle, .TRUE, null)) {
         windows.NTSTATUS.WAIT_0 => break alertable_syscall.finish(),
         .USER_APC, .ALERTED, .TIMEOUT => {
             try alertable_syscall.checkCancel();
@@ -15330,7 +15484,7 @@ fn childWaitWindows(child: *process.Child) process.Child.WaitError!process.Child
         @sizeOf(windows.PROCESS.BASIC_INFORMATION),
         null,
     )) {
-        .SUCCESS => .{ .exited = @as(u8, @truncate(@intFromEnum(info.ExitStatus))) },
+        .SUCCESS => .{ .exited = @as(u8, @truncate(@backingInt(info.ExitStatus))) },
         else => .{ .unknown = 0 },
     };
 
@@ -15410,11 +15564,11 @@ fn childWaitPosix(child: *process.Child) process.Child.WaitError!process.Child.T
                 syscall.finish();
                 if (ru_ptr) |p| child.resource_usage_statistics.rusage = p.*;
                 const status: u32 = @bitCast(info.fields.common.second.sigchld.status);
-                const code: linux.CLD = @enumFromInt(info.code);
+                const code: linux.CLD = @fromBackingInt(@intCast(info.code));
                 return switch (code) {
                     .EXITED => .{ .exited = @truncate(status) },
-                    .KILLED, .DUMPED => .{ .signal = @enumFromInt(status) },
-                    .TRAPPED, .STOPPED => .{ .stopped = @enumFromInt(status) },
+                    .KILLED, .DUMPED => .{ .signal = @fromBackingInt(@intCast(status)) },
+                    .TRAPPED, .STOPPED => .{ .stopped = @fromBackingInt(@intCast(status)) },
                     _, .CONTINUED => .{ .unknown = status },
                 };
             },
@@ -16190,7 +16344,7 @@ fn windowsCreateProcessPathExt(
     }
     var io_status: windows.IO_STATUS_BLOCK = undefined;
 
-    const num_supported_pathext = @typeInfo(process.WindowsExtension).@"enum".fields.len;
+    const num_supported_pathext = @typeInfo(process.WindowsExtension).@"enum".field_names.len;
     var pathext_seen: [num_supported_pathext]bool = @splat(false);
     var any_pathext_seen = false;
     var unappended_exists = false;
@@ -16240,7 +16394,7 @@ fn windowsCreateProcessPathExt(
                 //       fails to spawn, in which case we still want to try the PATHEXT appended versions.
                 unappended_exists = true;
             } else if (windowsCreateProcessSupportsExtension(filename[app_name_len..])) |pathext_ext| {
-                pathext_seen[@intFromEnum(pathext_ext)] = true;
+                pathext_seen[@backingInt(pathext_ext)] = true;
                 any_pathext_seen = true;
             }
         }
@@ -16258,7 +16412,7 @@ fn windowsCreateProcessPathExt(
 
             const is_bat_or_cmd = bat_or_cmd: {
                 const app_name = app_buf.items[0..app_name_len];
-                const ext_start = std.mem.lastIndexOfScalar(u16, app_name, '.') orelse break :bat_or_cmd false;
+                const ext_start = std.mem.findScalarLast(u16, app_name, '.') orelse break :bat_or_cmd false;
                 const ext = app_name[ext_start..];
                 const ext_enum = windowsCreateProcessSupportsExtension(ext) orelse break :bat_or_cmd false;
                 switch (ext_enum) {
@@ -16294,7 +16448,7 @@ fn windowsCreateProcessPathExt(
                     // it's treated as an unrecoverable error. Otherwise, it'll be
                     // skipped as normal.
                     const app_name = app_buf.items[0..app_name_len];
-                    const ext_start = std.mem.lastIndexOfScalar(u16, app_name, '.') orelse break :unappended err;
+                    const ext_start = std.mem.findScalarLast(u16, app_name, '.') orelse break :unappended err;
                     const ext = app_name[ext_start..];
                     if (windows.eqlIgnoreCaseWtf16(ext, std.unicode.utf8ToUtf16LeStringLiteral(".EXE"))) {
                         return error.UnrecoverableInvalidExe;
@@ -16313,7 +16467,7 @@ fn windowsCreateProcessPathExt(
     var ext_it = std.mem.tokenizeScalar(u16, pathext, ';');
     while (ext_it.next()) |ext| {
         const ext_enum = windowsCreateProcessSupportsExtension(ext) orelse continue;
-        if (!pathext_seen[@intFromEnum(ext_enum)]) continue;
+        if (!pathext_seen[@backingInt(ext_enum)]) continue;
 
         dir_buf.shrinkRetainingCapacity(dir_path_len);
         if (dir_path_len != 0) switch (dir_buf.items[dir_buf.items.len - 1]) {
@@ -16435,12 +16589,12 @@ fn windowsCreateProcess(
 fn windowsCreateProcessSupportsExtension(ext: []const u16) ?process.WindowsExtension {
     comptime {
         // Ensures keeping this function in sync with the enum.
-        const fields = @typeInfo(process.WindowsExtension).@"enum".fields;
-        assert(fields.len == 4);
-        assert(@intFromEnum(process.WindowsExtension.bat) == 0);
-        assert(@intFromEnum(process.WindowsExtension.cmd) == 1);
-        assert(@intFromEnum(process.WindowsExtension.com) == 2);
-        assert(@intFromEnum(process.WindowsExtension.exe) == 3);
+        const field_names = @typeInfo(process.WindowsExtension).@"enum".field_names;
+        assert(field_names.len == 4);
+        assert(@backingInt(process.WindowsExtension.bat) == 0);
+        assert(@backingInt(process.WindowsExtension.cmd) == 1);
+        assert(@backingInt(process.WindowsExtension.com) == 2);
+        assert(@backingInt(process.WindowsExtension.exe) == 3);
     }
 
     if (ext.len != 4) return null;
@@ -17373,6 +17527,7 @@ const use_parking_futex = switch (native_os) {
     .windows => true, // RtlWaitOnAddress is a userland implementation anyway
     .netbsd => true, // NetBSD has `futex(2)`, but it's historically been quite buggy. TODO: evaluate whether it's okay to use now.
     .illumos => true, // Illumos has no futex mechanism
+    .haiku => true, // Haiku has no futex mechanism
     else => false,
 };
 const use_parking_sleep = switch (native_os) {
@@ -17418,7 +17573,7 @@ const parking_futex = struct {
     const Waiter = struct {
         node: std.DoublyLinkedList.Node,
         address: usize,
-        tid: std.Thread.Id,
+        tid: ParkTid,
         /// `thread_status.cancelation` is `.parked` while the thread is waiting. The single thread
         /// which atomically updates it (to `.none` or `.canceling`) is responsible for:
         ///
@@ -17459,7 +17614,7 @@ const parking_futex = struct {
 
         // Put the threadlocal access outside of the critical section.
         const opt_thread = Thread.current;
-        const self_tid = if (opt_thread) |thread| thread.id else std.Thread.getCurrentId();
+        const self_tid = getParkTid();
 
         var waiter: Waiter = .{
             .node = undefined, // populated by list append
@@ -17495,7 +17650,7 @@ const parking_futex = struct {
                     }
                     thread.futex_waiter = &waiter;
                     const old_status = thread.status.fetchOr(
-                        .{ .cancelation = @enumFromInt(0b001), .awaitable = .null },
+                        .{ .cancelation = @fromBackingInt(@intCast(0b001)), .awaitable = .null },
                         .release, // release `thread.futex_waiter`
                     );
                     switch (old_status.cancelation) {
@@ -17533,7 +17688,7 @@ const parking_futex = struct {
             error.Timeout => {
                 // We're not out of the woods yet: an unpark could race with the timeout.
                 const old_status = waiter.thread_status.fetchAnd(
-                    .{ .cancelation = @enumFromInt(0b110), .awaitable = .all_ones },
+                    .{ .cancelation = @fromBackingInt(@intCast(0b110)), .awaitable = .all_ones },
                     .monotonic,
                 );
                 switch (old_status.cancelation) {
@@ -17590,7 +17745,7 @@ const parking_futex = struct {
                 it = waiter.node.next;
                 if (waiter.address != @intFromPtr(ptr)) continue;
                 const old_status = waiter.thread_status.fetchAnd(
-                    .{ .cancelation = @enumFromInt(0b110), .awaitable = .all_ones },
+                    .{ .cancelation = @fromBackingInt(@intCast(0b110)), .awaitable = .all_ones },
                     .monotonic,
                 );
                 switch (old_status.cancelation) {
@@ -17655,7 +17810,7 @@ const parking_sleep = struct {
             thread.futex_waiter = null;
             {
                 const old_status = thread.status.fetchOr(
-                    .{ .cancelation = @enumFromInt(0b001), .awaitable = .null },
+                    .{ .cancelation = @fromBackingInt(@intCast(0b001)), .awaitable = .null },
                     .release, // release `thread.futex_waiter`
                 );
                 switch (old_status.cancelation) {
@@ -17682,7 +17837,7 @@ const parking_sleep = struct {
                 error.Timeout => {
                     // We're not out of the woods yet: an unpark could race with the timeout.
                     const old_status = thread.status.fetchAnd(
-                        .{ .cancelation = @enumFromInt(0b110), .awaitable = .all_ones },
+                        .{ .cancelation = @fromBackingInt(@intCast(0b110)), .awaitable = .all_ones },
                         .monotonic,
                     );
                     switch (old_status.cancelation) {
@@ -17707,7 +17862,12 @@ const parking_sleep = struct {
                 },
             }
         }
+
         // Uncancelable sleep; we expect not to be manually unparked.
+
+        // On systems where parking the thread requires a one-time setup operation (e.g. creating a
+        // semaphore), we need to ensure that setup is done before we call `park`.
+        _ = getParkTid();
         var dummy_flag: UnparkFlag = unpark_flag_init;
         if (park(timeout, null, if (need_unpark_flag) &dummy_flag)) {
             unreachable; // unexpected unpark
@@ -17733,12 +17893,12 @@ const ParkingMutex = struct {
         _,
         /// Returns the head of the waiter list. Illegal to call if `s == .unlocked`.
         fn waiter(s: State) ?*Waiter {
-            return @ptrFromInt(@intFromEnum(s));
+            return @ptrFromInt(@backingInt(s));
         }
         /// Returns a locked state where `w` is contending the lock.
         /// If `w` is `null`, returns `.locked_once`.
         fn fromWaiter(w: ?*Waiter) State {
-            return @enumFromInt(@intFromPtr(w));
+            return @fromBackingInt(@intCast(@intFromPtr(w)));
         }
     };
     const Waiter = struct {
@@ -17746,7 +17906,7 @@ const ParkingMutex = struct {
         /// Never modified once the `Waiter` is in the linked list.
         next: ?*Waiter,
         /// Never modified once the `Waiter` is in the linked list.
-        tid: std.Thread.Id,
+        tid: ParkTid,
     };
     fn lock(m: *ParkingMutex) void {
         state: switch (State.unlocked) { // assume 'unlocked' to optimize for uncontended case
@@ -17762,7 +17922,7 @@ const ParkingMutex = struct {
 
             .locked_once, _ => |last_state| {
                 const old_waiter = last_state.waiter();
-                const self_tid = if (Thread.current) |t| t.id else std.Thread.getCurrentId();
+                const self_tid = getParkTid();
                 var waiter: Waiter = .{
                     .next = old_waiter,
                     .unpark_flag = unpark_flag_init,
@@ -17890,8 +18050,35 @@ fn setUnparkFlag(f: *UnparkFlag) void {
 /// but it seems that someone at Microsoft forgot how big their TIDs are supposed to be.
 const UnparkTid = switch (native_os) {
     .windows => usize,
+    else => ParkTid,
+};
+
+const ParkTid = switch (native_os) {
+    .haiku => std.c.sem_id,
     else => std.Thread.Id,
 };
+
+threadlocal var park_sem: std.c.sem_id = -1;
+
+fn getParkTid() ParkTid {
+    switch (native_os) {
+        .haiku => {
+            if (park_sem == -1) {
+                park_sem = std.c._kern_create_sem(0, null);
+                if (park_sem < 0) @panic("_kern_create_sem failed");
+                _ = std.c.on_exit_thread(destroyParkSem, null);
+            }
+            return park_sem;
+        },
+        else => {
+            return if (Thread.current) |thread| thread.id else std.Thread.getCurrentId();
+        },
+    }
+}
+
+fn destroyParkSem(_: ?*anyopaque) callconv(.c) void {
+    _ = std.c._kern_delete_sem(park_sem);
+}
 
 fn park(
     timeout: Io.Timeout,
@@ -17958,6 +18145,27 @@ fn park(
             }
         },
         .illumos => @panic("TODO: illumos lwp_park"),
+        .haiku => {
+            const timeout_flags: u32, const timeout_us = switch (timeout) {
+                .none => .{ 0, 0 },
+                .deadline => |deadline| .{
+                    if (deadline.clock == .real) std.c.B_ABSOLUTE_TIMEOUT | std.c.B_TIMEOUT_REAL_TIME_BASE else std.c.B_ABSOLUTE_TIMEOUT,
+                    deadline.raw.toMicroseconds(),
+                },
+                .duration => |duration| .{
+                    if (duration.clock == .real) std.c.B_ABSOLUTE_TIMEOUT | std.c.B_TIMEOUT_REAL_TIME_BASE else std.c.B_ABSOLUTE_TIMEOUT,
+                    nowPosix(duration.clock).addDuration(duration.raw).toMicroseconds(),
+                },
+            };
+            while (true) {
+                switch (std.c._kern_acquire_sem_etc(park_sem, 1, timeout_flags, timeout_us)) {
+                    0 => return,
+                    std.c.E.B_TIMED_OUT => return error.Timeout,
+                    std.c.E.B_INTERRUPTED => {},
+                    else => unreachable,
+                }
+            }
+        },
         else => comptime unreachable,
     }
 }
@@ -18000,6 +18208,14 @@ fn unpark(tids: []const UnparkTid, addr_hint: ?*const anyopaque) void {
             }
         },
         .illumos => @panic("TODO: illumos lwp_unpark"),
+        .haiku => {
+            for (tids) |tid| {
+                switch (std.c._kern_release_sem_etc(tid, 1, 0)) {
+                    0 => {},
+                    else => recoverableOsBugDetected(),
+                }
+            }
+        },
         else => comptime unreachable,
     }
 }
@@ -18157,7 +18373,7 @@ fn fileMemoryMapCreate(
             error.Unseekable, error.Canceled, error.AccessDenied => |e| return e,
             error.OperationUnsupported => {},
             else => {
-                if (builtin.mode == .Debug)
+                if (builtin.mode == .debug)
                     std.log.warn("memory mapping failed with {t}, falling back to file operations", .{err});
             },
         }
@@ -18264,7 +18480,7 @@ fn createFileMap(
             .INVALID_VIEW_SIZE => |status| return windows.statusBug(status),
             else => |status| return windows.unexpectedStatus(status),
         }
-        if (builtin.mode == .Debug) {
+        if (builtin.mode == .debug) {
             const page_size = std.heap.pageSize();
             const alignment: Alignment = .fromByteUnits(page_size);
             assert(contents_len == alignment.forward(len));
@@ -18302,7 +18518,7 @@ fn createFileMap(
                 if (rc != std.c.MAP_FAILED) {
                     break @as([*]align(page_align) u8, @ptrCast(@alignCast(rc)))[0..len];
                 }
-                break :e @enumFromInt(posix.system._errno().*);
+                break :e @fromBackingInt(@intCast(posix.system._errno().*));
             } else e: {
                 const err = posix.errno(rc);
                 if (err == .SUCCESS) {
@@ -18355,7 +18571,7 @@ fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
             switch (posix.errno(posix.system.munmap(memory.ptr, memory.len))) {
                 .SUCCESS => {},
                 else => |e| {
-                    if (builtin.mode == .Debug)
+                    if (builtin.mode == .debug)
                         std.log.err("failed to unmap {d} bytes at {*}: {t}", .{ memory.len, memory.ptr, e });
                 },
             }
@@ -18395,7 +18611,7 @@ fn fileMemoryMapSetLength(
                     syscall.finish();
                     const err: posix.E = if (builtin.link_libc) e: {
                         if (rc != std.c.MAP_FAILED) break @as([*]align(page_align) u8, @ptrCast(@alignCast(rc)))[0..new_len];
-                        break :e @enumFromInt(posix.system._errno().*);
+                        break :e @fromBackingInt(@intCast(posix.system._errno().*));
                     } else e: {
                         const err = posix.errno(rc);
                         if (err == .SUCCESS) break @as([*]align(page_align) u8, @ptrFromInt(rc))[0..new_len];
@@ -18719,7 +18935,7 @@ fn deviceIoControl(o: *const Io.Operation.DeviceIoControl) Io.Cancelable!Io.Oper
                 },
                 else => |err| {
                     syscall.finish();
-                    return -@as(i32, @intFromEnum(err));
+                    return -@as(i32, @backingInt(err));
                 },
             }
         }
@@ -18768,7 +18984,7 @@ fn eventWait(event: *Io.Event) void {
         .is_set => return,
     };
     while (true) {
-        Thread.futexWaitUncancelable(@ptrCast(event), @intFromEnum(Io.Event.waiting), null);
+        Thread.futexWaitUncancelable(@ptrCast(event), @backingInt(Io.Event.waiting), null);
         switch (@atomicLoad(Io.Event, event, .acquire)) {
             .unset => unreachable, // `reset` called before pending `wait` returned
             .waiting => continue,
@@ -18867,10 +19083,10 @@ pub fn mutexLock(m: *Io.Mutex) void {
         return;
     };
     if (initial_state == .contended) {
-        Thread.futexWaitUncancelable(@ptrCast(&m.state.raw), @intFromEnum(Io.Mutex.State.contended), null);
+        Thread.futexWaitUncancelable(@ptrCast(&m.state.raw), @backingInt(Io.Mutex.State.contended), null);
     }
     while (m.state.swap(.contended, .acquire) != .unlocked) {
-        Thread.futexWaitUncancelable(@ptrCast(&m.state.raw), @intFromEnum(Io.Mutex.State.contended), null);
+        Thread.futexWaitUncancelable(@ptrCast(&m.state.raw), @backingInt(Io.Mutex.State.contended), null);
     }
 }
 
@@ -18955,7 +19171,7 @@ fn OpenFile(sub_path_w: []const u16, options: OpenFileOptions) OpenError!windows
             .{
                 .DIRECTORY_FILE = options.filter == .dir_only,
                 .NON_DIRECTORY_FILE = options.filter == .non_directory_only,
-                .IO = if (options.follow_symlinks) .SYNCHRONOUS_NONALERT else .ASYNCHRONOUS,
+                .IO = .SYNCHRONOUS_NONALERT,
                 .OPEN_REPARSE_POINT = !options.follow_symlinks,
             },
             null,

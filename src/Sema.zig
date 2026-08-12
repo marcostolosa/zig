@@ -29886,6 +29886,9 @@ fn storePtr2(
 ) CompileError!void {
     const pt = sema.pt;
     const zcu = pt.zcu;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const ptr_ty = sema.typeOf(ptr);
     if (ptr_ty.isConstPtr(zcu))
         return sema.fail(block, ptr_src, "cannot assign to constant", .{});
@@ -29917,10 +29920,21 @@ fn storePtr2(
     // We're performing the store at runtime, so the pointee type must not be comptime-only.
     if (comptime_only) return sema.failWithOwnedErrorMsg(block, msg: {
         const msg = try sema.errMsg(src, "cannot store comptime-only type '{f}' at runtime", .{elem_ty.fmt(pt)});
-        errdefer msg.destroy(sema.gpa);
+        errdefer msg.destroy(gpa);
         try sema.errNote(ptr_src, msg, "operation is runtime due to this pointer", .{});
         break :msg msg;
     });
+
+    if (maybe_operand_val) |operand_val| {
+        if (sema.isComptimeMutablePtr(operand_val)) return sema.failWithOwnedErrorMsg(block, msg: {
+            const msg = try sema.errMsg(operand_src, "runtime value contains reference to comptime var", .{});
+            errdefer msg.destroy(gpa);
+            try sema.errNote(operand_src, msg, "comptime var pointers are not available at runtime", .{});
+            const val_str = try pt.zcu.intern_pool.getOrPutString(gpa, io, pt.tid, "runtime_value", .no_embedded_nulls);
+            try sema.explainWhyValueContainsReferenceToComptimeVar(msg, operand_src, val_str, operand_val);
+            break :msg msg;
+        });
+    }
 
     try sema.requireRuntimeBlock(block, src, runtime_src);
 

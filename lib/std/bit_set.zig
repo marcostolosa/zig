@@ -299,7 +299,8 @@ pub fn Integer(comptime size: u16) type {
                 bits_remain: MaskInt,
 
                 /// Returns the index of the next unvisited set bit
-                /// in the bit set, in ascending order.
+                /// in the bit set, in the order specified by the
+                /// `IteratorOptions`.
                 pub fn next(self: *IterSelf) ?usize {
                     if (self.bits_remain == 0) return null;
 
@@ -1341,7 +1342,8 @@ fn GenericIterator(comptime MaskInt: type, comptime options: IteratorOptions) ty
         }
 
         /// Returns the index of the next unvisited set bit
-        /// in the bit set, in ascending order.
+        /// in the bit set, in the order specified by the
+        /// `IteratorOptions`.
         pub fn next(self: *Self) ?usize {
             while (self.bits_remain == 0) {
                 if (self.words_remain.len == 0) return null;

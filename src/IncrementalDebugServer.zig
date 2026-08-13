@@ -96,12 +96,14 @@ fn runServer(ids: *IncrementalDebugServer) void {
 
                 error.EndOfStream,
                 error.ConnectionResetByPeer,
+                error.Timeout,
                 => log.info("client '{f}' disconnected", .{stream.socket.address}),
 
                 error.AddressFamilyUnsupported,
                 error.SocketUnconnected,
                 error.SocketNotBound,
                 error.AccessDenied,
+                error.ConcurrencyUnavailable,
                 => unreachable,
             }
         };

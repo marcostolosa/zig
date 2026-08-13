@@ -12839,14 +12839,14 @@ fn deferAcceptAfd(t: *Threaded, listen_handle: net.Socket.Handle, info: windows.
     }
 }
 
-fn netRead(socket_handle: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usize {
+fn netRead(socket_handle: net.Socket.Handle, data: [][]u8) (Io.Operation.NetRead.Error || Io.Cancelable)!usize {
     if (!have_networking) return error.NetworkDown;
 
     if (is_windows) return netReadWindows(socket_handle, data);
     return netReadPosix(socket_handle, data);
 }
 
-fn netReadPosix(fd: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usize {
+fn netReadPosix(fd: net.Socket.Handle, data: [][]u8) (Io.Operation.NetRead.Error || Io.Cancelable)!usize {
     var iovecs_buffer: [max_iovecs_len]posix.iovec = undefined;
     var i: usize = 0;
     for (data) |buf| {
@@ -12923,7 +12923,7 @@ fn netReadPosix(fd: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usi
     }
 }
 
-fn netReadWindows(socket_handle: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usize {
+fn netReadWindows(socket_handle: net.Socket.Handle, data: [][]u8) (Io.Operation.NetRead.Error || Io.Cancelable)!usize {
     var iovecs: [max_iovecs_len]windows.AFD.WSABUF(.@"var") = undefined;
     var len: u32 = 0;
     for (data) |buf| {
@@ -13312,7 +13312,7 @@ fn netWritePosix(
     header: []const u8,
     data: []const []const u8,
     splat: usize,
-) net.Stream.Writer.Error!usize {
+) (Io.Operation.NetWrite.Error || Io.Cancelable)!usize {
     if (!have_networking) return error.NetworkDown;
 
     var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
@@ -13403,7 +13403,7 @@ fn netWriteWindows(
     header: []const u8,
     data: []const []const u8,
     splat: usize,
-) net.Stream.Writer.Error!usize {
+) (Io.Operation.NetWrite.Error || Io.Cancelable)!usize {
     if (!have_networking) return error.NetworkDown;
 
     var iovecs: [max_iovecs_len]windows.AFD.WSABUF(.@"const") = undefined;

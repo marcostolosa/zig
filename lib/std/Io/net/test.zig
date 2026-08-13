@@ -355,6 +355,54 @@ test "decompress compressed DNS name" {
     try testing.expectEqualStrings("target.ziglang.org", result.bytes);
 }
 
+test "stream reader/writer with timeout" {
+    const io = testing.io;
+    const localhost: net.IpAddress = .{ .ip4 = .loopback(0) };
+
+    var server = localhost.listen(io, .{}) catch |err| switch (err) {
+        error.NetworkDown => return error.SkipZigTest,
+        else => |e| return e,
+    };
+    defer server.deinit(io);
+
+    const timeout: Io.Timeout = .{ .duration = .{ .raw = .fromMilliseconds(500), .clock = .awake } };
+
+    const S = struct {
+        fn clientFn(addr: net.IpAddress, t: Io.Timeout) !void {
+            var stream = try addr.connect(io, .{ .mode = .stream });
+            defer stream.close(io);
+
+            var stream_writer = stream.writer(io, &.{});
+            stream_writer.timeout = t;
+            try stream_writer.interface.writeAll("Hello world!");
+            try stream_writer.interface.flush();
+        }
+    };
+
+    var client_task = io.concurrent(S.clientFn, .{ server.socket.address, timeout }) catch |err| switch (err) {
+        error.ConcurrencyUnavailable => return error.SkipZigTest,
+    };
+    defer client_task.cancel(io) catch {};
+
+    var stream = try server.accept(io);
+    defer stream.close(io);
+
+    var buf: [12]u8 = undefined;
+    var stream_reader = stream.reader(io, &.{});
+    stream_reader.timeout = timeout;
+    stream_reader.interface.readSliceAll(&buf) catch |err| switch (err) {
+        error.ReadFailed => switch (stream_reader.err.?) {
+            error.ConcurrencyUnavailable => return error.SkipZigTest,
+            else => |e| return e,
+        },
+        else => |e| return e,
+    };
+
+    try client_task.await(io);
+
+    try testing.expectEqualStrings("Hello world!", &buf);
+}
+
 test "cancel accept" {
     const io = testing.io;
     const localhost: net.IpAddress = .{ .ip4 = .loopback(0) };

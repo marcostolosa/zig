@@ -141,10 +141,17 @@ pub const Message = struct {
 
     /// Trailing:
     /// * error_bundle: ErrorBundle,
+    /// * generated_file_index: [generated_file_count]std.Build.Configuration.GeneratedFileIndex,
+    /// * generated_file_base:  [generated_file_count]std.Build.Configuration.LazyPath.Relative.Base,
+    /// * generated_file_sub_path:  [generated_file_count]u32,
+    ///   - null-terminated string_bytes index
+    /// * string_bytes: [string_bytes_len]u8,
     pub const BuildStepCompleted = extern struct {
         step_index: std.Build.Configuration.Step.Index,
         status: Status,
         error_bundle: ErrorBundle,
+        generated_file_count: u32,
+        string_bytes_len: u32,
         // TODO result_error_msgs
         // TODO result_stderr
         // TODO result_peak_rss

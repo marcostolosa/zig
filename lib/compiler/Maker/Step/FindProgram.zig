@@ -77,7 +77,10 @@ fn checkCandidate(
     const io = graph.io;
 
     if (Io.Dir.cwd().access(io, full_path, .{ .execute = true })) |_| {
-        maker.generatedPath(found_path).* = .initCwd(full_path);
+        try maker.populateGeneratedFile(found_path, .{
+            .base = .cwd,
+            .sub_path = full_path,
+        });
         return true;
     } else |err| switch (err) {
         error.Canceled => |e| return e,
@@ -96,7 +99,10 @@ fn checkCandidate(
                 const extended_path = try std.mem.concat(arena, u8, &.{ full_path, ext });
 
                 if (Io.Dir.cwd().access(io, extended_path, .{ .execute = true })) |_| {
-                    maker.generatedPath(found_path).* = .initCwd(extended_path);
+                    try maker.populateGeneratedFile(found_path, .{
+                        .base = .cwd,
+                        .sub_path = extended_path,
+                    });
                     return true;
                 } else |err| switch (err) {
                     error.Canceled => |e| return e,

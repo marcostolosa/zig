@@ -178,3 +178,53 @@ pub fn serveBuildSteps(
     try c.out.writeSliceEndian(Configuration.Step.Index, steps, .little);
     try c.out.flush();
 }
+
+pub const BuildStepCompleted = struct {
+    step_index: Configuration.Step.Index,
+    status: InMessage.BuildStepCompleted.Status,
+    error_bundle: std.zig.ErrorBundle,
+    generated_files: std.MultiArrayList(GeneratedFile),
+    string_bytes: []const u8,
+
+    pub const GeneratedFile = struct {
+        index: Configuration.GeneratedFileIndex,
+        base: Configuration.LazyPath.Relative.Base,
+        sub_path: u32,
+    };
+
+    pub fn deinit(result: *BuildStepCompleted, gpa: Allocator) void {
+        gpa.free(result.error_bundle.extra);
+        gpa.free(result.error_bundle.string_bytes);
+        result.generated_files.deinit(gpa);
+        gpa.free(result.string_bytes);
+    }
+};
+
+pub fn receiveBuildStepCompleted(gpa: Allocator, body: []const u8) Reader.ReadAllocError!BuildStepCompleted {
+    var reader: Reader = .fixed(body);
+
+    const header = try reader.takeStruct(InMessage.BuildStepCompleted, .little);
+
+    const eb_extra = try reader.readSliceEndianAlloc(gpa, u32, header.error_bundle.extra_len, .little);
+    errdefer gpa.free(eb_extra);
+
+    const eb_string_bytes = try reader.readAlloc(gpa, header.error_bundle.string_bytes_len);
+    errdefer gpa.free(eb_string_bytes);
+
+    var generated_files: std.MultiArrayList(BuildStepCompleted.GeneratedFile) = try .initCapacity(gpa, header.generated_file_count);
+    errdefer generated_files.deinit(gpa);
+    generated_files.len = header.generated_file_count;
+
+    try reader.readSliceEndian(Configuration.GeneratedFileIndex, generated_files.items(.index), .little);
+    try reader.readSliceEndian(Configuration.LazyPath.Relative.Base, generated_files.items(.base), .little);
+    try reader.readSliceEndian(u32, generated_files.items(.sub_path), .little);
+    const string_bytes = try reader.readAlloc(gpa, header.string_bytes_len);
+
+    return .{
+        .step_index = header.step_index,
+        .status = header.status,
+        .error_bundle = .{ .extra = eb_extra, .string_bytes = eb_string_bytes },
+        .generated_files = generated_files,
+        .string_bytes = string_bytes,
+    };
+}

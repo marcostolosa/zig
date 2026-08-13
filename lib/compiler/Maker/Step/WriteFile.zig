@@ -106,10 +106,10 @@ pub fn make(
 
             if (try step.cacheHit(maker, &man, progress_node)) {
                 const digest = man.final();
-                maker.generatedPath(conf_wf.generated_directory).* = .{
-                    .root_dir = cache_root,
+                try maker.populateGeneratedFile(conf_wf.generated_directory, .{
+                    .base = .local_cache,
                     .sub_path = try Io.Dir.path.join(arena, &.{ "o", &digest }),
-                };
+                });
                 assert(step.result_cached);
                 return;
             }
@@ -124,7 +124,10 @@ pub fn make(
             try operate(maker, step_index, open_dir_cache, out_path, progress_node);
             try step.writeManifest(maker, &man);
 
-            maker.generatedPath(conf_wf.generated_directory).* = out_path;
+            try maker.populateGeneratedFile(conf_wf.generated_directory, .{
+                .base = .local_cache,
+                .sub_path = out_path.sub_path,
+            });
         },
         .tmp => {
             step.result_cached = false;
@@ -140,13 +143,21 @@ pub fn make(
 
             try operate(maker, step_index, open_dir_cache, out_path, progress_node);
 
-            maker.generatedPath(conf_wf.generated_directory).* = out_path;
+            try maker.populateGeneratedFile(conf_wf.generated_directory, .{
+                .base = .local_cache,
+                .sub_path = out_path.sub_path,
+            });
         },
         .mutate => {
             step.result_cached = false;
-            const root_path = try maker.resolveLazyPathIndex(arena, conf_wf.mutate_path.value.?, step_index);
+            const mutate_path = conf_wf.mutate_path.value.?;
+            assert(mutate_path.get(conf) == .generated);
+            const root_path = try maker.resolveLazyPathIndex(arena, mutate_path, step_index);
             try operate(maker, step_index, open_dir_cache, root_path, progress_node);
-            maker.generatedPath(conf_wf.generated_directory).* = root_path;
+            try maker.populateGeneratedFile(conf_wf.generated_directory, .{
+                .base = .local_cache,
+                .sub_path = root_path.sub_path,
+            });
         },
     }
 }

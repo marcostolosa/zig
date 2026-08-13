@@ -138,10 +138,10 @@ pub fn make(
 
     if (try step.cacheHit(maker, &man, progress_node)) {
         const digest = man.final();
-        maker.generatedPath(conf_ch.generated_dir).* = .{
-            .root_dir = cache_root,
+        try maker.populateGeneratedFile(conf_ch.generated_dir, .{
+            .base = .local_cache,
             .sub_path = try Io.Dir.path.join(arena, &.{ "o", &digest }),
-        };
+        });
         return;
     }
 
@@ -164,10 +164,10 @@ pub fn make(
     out_path.root_dir.handle.writeFile(io, .{ .sub_path = out_path.sub_path, .data = output }) catch |err|
         return step.fail(maker, "unable to write file {f}: {t}", .{ out_path, err });
 
-    maker.generatedPath(conf_ch.generated_dir).* = .{
-        .root_dir = cache_root,
+    try maker.populateGeneratedFile(conf_ch.generated_dir, .{
+        .base = .local_cache,
         .sub_path = try Io.Dir.path.join(arena, &.{ "o", &digest }),
-    };
+    });
 
     try step.writeManifest(maker, &man);
 }

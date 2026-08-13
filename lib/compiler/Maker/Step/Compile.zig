@@ -65,7 +65,11 @@ pub fn make(
 
     // Update generated files
     if (maybe_output_dir) |output_dir| {
-        if (conf_comp.emit_directory.value) |gf| maker.generatedPath(gf).* = output_dir;
+        assert(output_dir.root_dir.eql(maker.graph.local_cache_root));
+        if (conf_comp.emit_directory.value) |gf| try maker.populateGeneratedFile(gf, .{
+            .base = .local_cache,
+            .sub_path = output_dir.sub_path,
+        });
         try updateGeneratedFile(maker, arena, &conf_comp, output_dir, &target, conf_comp.generated_bin.value, .bin);
         try updateGeneratedFile(maker, arena, &conf_comp, output_dir, &target, conf_comp.generated_pdb.value, .pdb);
         try updateGeneratedFile(maker, arena, &conf_comp, output_dir, &target, conf_comp.generated_implib.value, .implib);
@@ -80,7 +84,7 @@ pub fn make(
         conf_comp.version.value != null and target.flags.os_tag != .windows)
     {
         if (conf_comp.generated_bin.value) |generated_bin| {
-            const full_dest_path = maker.generatedPath(generated_bin).*;
+            const full_dest_path = try maker.resolveGeneratedFile(arena, generated_bin, compile_index);
             try maker.installSymLinks(arena, full_dest_path, compile_index, compile_index);
         }
     }
@@ -96,7 +100,6 @@ fn updateGeneratedFile(
     ea: std.zig.EmitArtifact,
 ) Allocator.Error!void {
     const gf = opt_gf orelse return;
-    const graph = maker.graph;
     const conf = &maker.scanned_config.configuration;
     const name = try ea.cacheName(arena, .{
         .root_name = conf_comp.root_name.slice(conf),
@@ -115,7 +118,11 @@ fn updateGeneratedFile(
         else
             null,
     });
-    maker.generatedPath(gf).* = try out_path.join(graph.arena, name);
+    const generated_file_path = try out_path.join(arena, name);
+    try maker.populateGeneratedFile(gf, .{
+        .base = .local_cache,
+        .sub_path = generated_file_path.sub_path,
+    });
 }
 
 /// List of importable modules in a compilation's module graph, including
@@ -1363,7 +1370,7 @@ pub fn appendIncludeDirFlags(
         },
         .config_header_step => |ch_index| {
             const conf_ch = ch_index.ptr(conf).extended.get(conf.extra).config_header;
-            const path = maker.generatedPath(conf_ch.generated_dir).*;
+            const path = try maker.resolveGeneratedFile(arena, conf_ch.generated_dir, asking_step);
             zig_args.appendAssumeCapacity("-I");
             zig_args.appendAssumeCapacity(try path.toString(arena));
         },

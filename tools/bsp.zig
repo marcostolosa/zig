@@ -8,16 +8,23 @@ const Client = std.zig.Client;
 const Server = std.zig.Server;
 const log = std.log.scoped(.bsp);
 
+const BasePaths = std.EnumArray(Configuration.LazyPath.Relative.Base, []const u8);
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const gpa = init.gpa;
     const arena = init.arena.allocator();
 
     var maker_args: std.ArrayList([]const u8) = .empty;
+    var report_step_status: bool = false;
 
     const args = try init.minimal.args.toSlice(arena);
     for (args[1..]) |arg| {
-        try maker_args.append(arena, try arena.dupe(u8, arg));
+        if (std.mem.eql(u8, arg, "--bsp-report-step-status")) {
+            report_step_status = true;
+        } else {
+            try maker_args.append(arena, try arena.dupe(u8, arg));
+        }
     }
     if (maker_args.items.len < 1) try maker_args.append(arena, "zig");
     if (maker_args.items.len < 2) try maker_args.append(arena, "build");
@@ -26,6 +33,8 @@ pub fn main(init: std.process.Init) !void {
     log.debug("cmd: {f}", .{std.zig.SubprocessCommand{
         .argv = maker_args.items,
     }});
+
+    const cwd = try std.process.currentPathAlloc(io, arena);
 
     var child_process = std.process.spawn(io, .{
         .argv = maker_args.items,
@@ -56,7 +65,11 @@ pub fn main(init: std.process.Init) !void {
     };
 
     const err = blk: {
-        const handshake: Server.Message.Handshake = handshake: {
+        var conf_arena_allocator: std.heap.ArenaAllocator = .init(gpa);
+        defer conf_arena_allocator.deinit();
+        const conf_arena = conf_arena_allocator.allocator();
+
+        const handshake: Server.Message.Handshake, const base_paths: BasePaths = handshake: {
             const header = client.receiveMessageWithMultiReader(&multi_reader, .none) catch |err| switch (err) {
                 error.Canceled, error.ConcurrencyUnavailable => |e| return e,
                 error.Timeout => unreachable,
@@ -74,13 +87,28 @@ pub fn main(init: std.process.Init) !void {
             }
 
             var r: Io.Reader = .fixed(body);
-            break :handshake try r.takeStruct(Server.Message.Handshake, .little);
+
+            const handshake = try r.takeStruct(Server.Message.Handshake, .little);
+            if (handshake.version != Server.build_system_version) {
+                std.debug.panic("Unexpected protocol version! Expected: {d}, Actual: {d}", .{ Server.build_system_version, handshake.version });
+            }
+
+            const base_paths: BasePaths = .init(.{
+                .cwd = cwd,
+                .zig_exe = maker_args.items[0],
+                .global_cache = try r.readAlloc(conf_arena, handshake.base_paths.global_cache_len),
+                .local_cache = try r.readAlloc(conf_arena, handshake.base_paths.local_cache_len),
+                .zig_lib = try r.readAlloc(conf_arena, handshake.base_paths.zig_lib_len),
+                .build_root = try r.readAlloc(conf_arena, handshake.base_paths.build_root_len),
+                .install_prefix = try r.readAlloc(conf_arena, handshake.base_paths.install_prefix_len),
+                .install_lib = try r.readAlloc(conf_arena, handshake.base_paths.install_lib_len),
+                .install_bin = try r.readAlloc(conf_arena, handshake.base_paths.install_bin_len),
+                .install_include = try r.readAlloc(conf_arena, handshake.base_paths.install_include_len),
+            });
+
+            break :handshake .{ handshake, base_paths };
         };
         _ = handshake;
-
-        var conf_arena_allocator: std.heap.ArenaAllocator = .init(gpa);
-        defer conf_arena_allocator.deinit();
-        const conf_arena = conf_arena_allocator.allocator();
 
         const configuration = configuration: {
             const header = client.receiveMessageWithMultiReader(&multi_reader, .none) catch |err| switch (err) {
@@ -184,7 +212,17 @@ pub fn main(init: std.process.Init) !void {
                         .bsp_build_started => {},
                         .bsp_build_completed => if (!watch) break,
                         .bsp_step_started => {},
-                        .bsp_step_completed => {},
+                        .bsp_step_completed => {
+                            if (!report_step_status) continue;
+                            var message = try Client.receiveBuildStepCompleted(gpa, body);
+                            defer message.deinit(gpa);
+
+                            log.info("step {q} {t}: ({d} generated files)", .{ message.step_index.ptr(c).name.slice(c), message.status, message.generated_files.len });
+                            for (message.generated_files.items(.base), message.generated_files.items(.sub_path)) |base, sub_path_index| {
+                                const sub_path = std.mem.sliceTo(message.string_bytes[sub_path_index..], 0);
+                                log.info("{s}/{s}", .{ base_paths.get(base), sub_path });
+                            }
+                        },
                         .bsp_configuration => @panic("TODO"),
                         else => std.debug.panic("received unexpected message: {f}", .{fmtEnum(header.tag)}),
                     }

@@ -1572,6 +1572,18 @@ pub const LazyPath = union(@This().Tag) {
             _: u16 = 0,
         };
 
+        pub const Unpacked = struct {
+            base: Base,
+            sub_path: []const u8,
+        };
+
+        pub fn unpack(relative: Relative, c: *const Configuration) Unpacked {
+            return .{
+                .base = relative.flags.base,
+                .sub_path = relative.sub_path.slice(c),
+            };
+        }
+
         pub const Base = enum(u8) {
             cwd,
             local_cache,

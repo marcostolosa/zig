@@ -49,18 +49,18 @@ pub fn make(
     if (try step.cacheHit(maker, &man, progress_node)) {
         // Cache hit, skip subprocess execution.
         const digest = man.final();
-        maker.generatedPath(conf_oc.output_file).* = .{
-            .root_dir = cache_root,
+        try maker.populateGeneratedFile(conf_oc.output_file, .{
+            .base = .local_cache,
             .sub_path = try Io.Dir.path.join(arena, &.{ "o", &digest, basename }),
-        };
+        });
         if (conf_oc.debug_file.value) |debug_file| {
             const debug_basename = opt_debug_basename orelse try arena.print("{s}.debug", .{
                 Io.Dir.path.basename(input_path.sub_path),
             });
-            maker.generatedPath(debug_file).* = .{
-                .root_dir = cache_root,
+            try maker.populateGeneratedFile(debug_file, .{
+                .base = .local_cache,
                 .sub_path = try Io.Dir.path.join(arena, &.{ "o", &digest, debug_basename }),
-            };
+            });
         }
         return;
     }
@@ -112,7 +112,10 @@ pub fn make(
             .sub_path = try Io.Dir.path.join(arena, &.{ "o", &digest, debug_basename }),
         };
         argv.appendAssumeCapacity(try arena.print("--extract-to={f}", .{debug_dest_path}));
-        maker.generatedPath(debug_file).* = debug_dest_path;
+        try maker.populateGeneratedFile(debug_file, .{
+            .base = .local_cache,
+            .sub_path = debug_dest_path.sub_path,
+        });
     }
 
     try argv.ensureUnusedCapacity(arena, conf_oc.add_section.slice.len * 2);
@@ -163,7 +166,10 @@ pub fn make(
         else => |e| return e,
     };
 
-    maker.generatedPath(conf_oc.output_file).* = dest_path;
+    try maker.populateGeneratedFile(conf_oc.output_file, .{
+        .base = .local_cache,
+        .sub_path = dest_path.sub_path,
+    });
 
     step.writeManifest(maker, &man) catch |err| switch (err) {
         error.Canceled => |e| return e,

@@ -55,10 +55,10 @@ pub fn make(
 
     if (try step.cacheHitWatched(maker, &man, progress_node)) {
         const digest = man.final();
-        maker.generatedPath(conf_options.generated_file).* = .{
-            .root_dir = cache_root,
+        try maker.populateGeneratedFile(conf_options.generated_file, .{
+            .base = .local_cache,
             .sub_path = try Io.Dir.path.join(arena, &.{ "o", &digest, basename }),
-        };
+        });
         step.result_cached = true;
         return;
     }
@@ -97,5 +97,8 @@ pub fn make(
 
     try step.writeManifestAndWatch(maker, &man);
 
-    maker.generatedPath(conf_options.generated_file).* = out_path;
+    try maker.populateGeneratedFile(conf_options.generated_file, .{
+        .base = .local_cache,
+        .sub_path = out_path.sub_path,
+    });
 }

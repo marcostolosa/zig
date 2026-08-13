@@ -151,6 +151,10 @@ pub fn make(
 
     const stem = Io.Dir.path.stem(Io.Dir.path.basename(c_source_path));
     const out_basename = try arena.print("{s}.zig", .{stem});
+    const out_path = try output_dir_path.join(arena, out_basename);
 
-    maker.generatedPath(conf_tc.output_file).* = try output_dir_path.join(arena, out_basename);
+    try maker.populateGeneratedFile(conf_tc.output_file, .{
+        .base = .local_cache,
+        .sub_path = out_path.sub_path,
+    });
 }

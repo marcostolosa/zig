@@ -146,7 +146,8 @@ pub fn make(
                 const producer_make_comp_step = maker.stepByIndex(producer_index);
                 const producer_make_comp = &producer_make_comp_step.extended.compile;
 
-                const file_path = producer_make_comp.installed_path orelse maker.generatedPath(producer.generated_bin.value.?).*;
+                const file_path = producer_make_comp.installed_path orelse
+                    try maker.resolveGeneratedFile(arena, producer.generated_bin.value.?, run_index);
 
                 argv_list.appendAssumeCapacity(try mem.concat(arena, u8, &.{
                     prefix, try convertPathArg(arena, run_index, maker, file_path, arg.flags.make_absolute), suffix,
@@ -262,8 +263,8 @@ pub fn make(
     if (!has_side_effects and try step.cacheHitWatched(maker, &man, progress_node)) {
         // Cache hit; skip running command.
         const digest = man.final();
-        try populateGeneratedStdIo(maker, &conf_run, cache_root, &digest);
-        try populateGeneratedPaths(maker, output_placeholders.items, cache_root, &digest);
+        try populateGeneratedStdIo(maker, &conf_run, &digest);
+        try populateGeneratedPaths(maker, output_placeholders.items, &digest);
         step.result_cached = true;
         return;
     }
@@ -272,7 +273,7 @@ pub fn make(
         // We already know the final output paths; use them directly.
         const digest = if (has_side_effects) man.hash.final() else man.final();
         const output_dir_path = "o" ++ Dir.path.sep_str ++ &digest;
-        try populateGeneratedStdIo(maker, &conf_run, cache_root, &digest);
+        try populateGeneratedStdIo(maker, &conf_run, &digest);
         try populateGeneratedPathsCreateDirs(arena, run_index, maker, output_dir_path, output_placeholders.items, argv_list.items);
         try runCommand(arena, run, run_index, maker, progress_node, argv_list.items, has_side_effects, output_dir_path, null);
         if (!has_side_effects) try step.writeManifestAndWatch(maker, &man);
@@ -291,7 +292,7 @@ pub fn make(
         const arg = placeholder.arg_index.get(conf);
         switch (arg.flags.tag) {
             .output_file => if (arg.flags.dep_file) {
-                const generated_path = maker.generatedPath(arg.generated.value.?).*;
+                const generated_path = try maker.resolveGeneratedFile(arena, arg.generated.value.?, run_index);
                 const result = if (has_side_effects)
                     man.addDepFile(generated_path.root_dir.handle, generated_path.sub_path)
                 else
@@ -346,8 +347,8 @@ pub fn make(
 
     if (!has_side_effects) try step.writeManifestAndWatch(maker, &man);
 
-    try populateGeneratedStdIo(maker, &conf_run, cache_root, &digest);
-    try populateGeneratedPaths(maker, output_placeholders.items, cache_root, &digest);
+    try populateGeneratedStdIo(maker, &conf_run, &digest);
+    try populateGeneratedPaths(maker, output_placeholders.items, &digest);
 
     // The utility functions that spawn the child process must unconditionally allocate
     // the failed command because at that point it is not known whether the step will
@@ -1555,7 +1556,7 @@ pub fn rerunInFuzzMode(
                     run.rebuilt_executable.?
                 else
                     producer_make_comp.installed_path orelse
-                        maker.generatedPath(producer.generated_bin.value.?).*;
+                        try maker.resolveGeneratedFile(arena, producer.generated_bin.value.?, run_index);
                 argv_list.appendAssumeCapacity(try mem.concat(arena, u8, &.{
                     prefix, try convertPathArg(arena, run_index, maker, file_path, arg.flags.make_absolute), suffix,
                 }));
@@ -1594,7 +1595,6 @@ pub fn rerunInFuzzMode(
 fn populateGeneratedPaths(
     maker: *Maker,
     output_placeholders: []const IndexedOutput,
-    cache_root: Cache.Directory,
     digest: *const Cache.HexDigest,
 ) !void {
     const conf = &maker.scanned_config.configuration;
@@ -1602,12 +1602,12 @@ fn populateGeneratedPaths(
 
     for (output_placeholders) |placeholder| {
         const arg = placeholder.arg_index.get(conf);
-        maker.generatedPath(arg.generated.value.?).* = .{
-            .root_dir = cache_root,
+        try maker.populateGeneratedFile(arg.generated.value.?, .{
+            .base = .local_cache,
             .sub_path = try Dir.path.join(graph.arena, &.{
                 "o", digest, arg.basename.value.?.slice(conf),
             }),
-        };
+        });
     }
 }
 
@@ -1646,7 +1646,10 @@ fn populateGeneratedPathsCreateDirs(
         create_path.root_dir.handle.createDirPath(io, create_path.sub_path) catch |err|
             return step.fail(maker, "unable to make path {f}: {t}", .{ create_path, err });
 
-        maker.generatedPath(arg.generated.value.?).* = generated_path;
+        try maker.populateGeneratedFile(arg.generated.value.?, .{
+            .base = .local_cache,
+            .sub_path = generated_path.sub_path,
+        });
 
         const arg_output_path = try convertPathArg(arena, run_index, maker, generated_path, arg.flags.make_absolute);
         argv[placeholder.index] = try mem.concat(arena, u8, &.{ prefix, arg_output_path, suffix });
@@ -1656,28 +1659,27 @@ fn populateGeneratedPathsCreateDirs(
 fn populateGeneratedStdIo(
     maker: *Maker,
     conf_run: *const Configuration.Step.Run,
-    cache_root: Cache.Directory,
     digest: *const Cache.HexDigest,
 ) !void {
     const conf = &maker.scanned_config.configuration;
     const graph = maker.graph;
 
     if (conf_run.captured_stdout.value) |captured| {
-        maker.generatedPath(captured.generated_file).* = .{
-            .root_dir = cache_root,
+        try maker.populateGeneratedFile(captured.generated_file, .{
+            .base = .local_cache,
             .sub_path = try Dir.path.join(graph.arena, &.{
                 "o", digest, captured.basename.slice(conf),
             }),
-        };
+        });
     }
 
     if (conf_run.captured_stderr.value) |captured| {
-        maker.generatedPath(captured.generated_file).* = .{
-            .root_dir = cache_root,
+        try maker.populateGeneratedFile(captured.generated_file, .{
+            .base = .local_cache,
             .sub_path = try Dir.path.join(graph.arena, &.{
                 "o", digest, captured.basename.slice(conf),
             }),
-        };
+        });
     }
 }
 
@@ -1754,7 +1756,7 @@ fn runCommand(
         const root_module = producer.root_module.get(conf);
         const root_module_target = root_module.resolved_target.get(conf).?.result.get(conf);
         if (root_module_target.flags.os_tag == .windows) {
-            try addPathForDynLibs(maker, arena, producer_index, &environ_map, argv[0]);
+            try addPathForDynLibs(maker, arena, run_index, producer_index, &environ_map, argv[0]);
         }
     }
 
@@ -1974,7 +1976,10 @@ fn runCommand(
                     output_dir_path, captured.basename.slice(conf),
                 }),
             };
-            maker.generatedPath(captured.generated_file).* = output_path;
+            try maker.populateGeneratedFile(captured.generated_file, .{
+                .base = .local_cache,
+                .sub_path = output_path.sub_path,
+            });
 
             const sub_path_parent = output_path.dirname().?;
             sub_path_parent.root_dir.handle.createDirPath(io, sub_path_parent.sub_path) catch |err|
@@ -2412,6 +2417,7 @@ fn convertPathArg(
 fn addPathForDynLibs(
     maker: *Maker,
     arena: Allocator,
+    run_index: Configuration.Step.Index,
     artifact: Configuration.Step.Index,
     environ_map: *process.Environ.Map,
     argv0: []const u8,
@@ -2434,13 +2440,13 @@ fn addPathForDynLibs(
         const root_module = conf_comp.root_module.get(conf);
         const target = root_module.resolved_target.get(conf).?.result.get(conf);
         if (target.flags.os_tag == .windows and conf_comp.isDynamicLibrary()) {
-            const dll_path = try maker.generatedPath(conf_comp.generated_bin.value.?).toString(arena);
-            const search_path = Dir.path.dirname(dll_path).?;
+            const dll_path = try maker.resolveGeneratedFile(arena, conf_comp.generated_bin.value.?, run_index);
+            const search_path = dll_path.dirname().?;
             if (environ_map.get(path_key)) |prev_path| {
-                const new_path = try arena.print("{s}{c}{s}", .{ prev_path, path_delimiter, search_path });
+                const new_path = try arena.print("{s}{c}{f}", .{ prev_path, path_delimiter, search_path });
                 try environ_map.put(path_key, new_path);
             } else {
-                try environ_map.put(path_key, search_path);
+                try environ_map.put(path_key, try search_path.toString(arena));
             }
         }
     }

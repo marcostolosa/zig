@@ -454,9 +454,7 @@ pub fn io(ev: *Evented) Io {
             .netListenIp = netListenIpUnavailable,
             .netAccept = netAcceptUnavailable,
             .netBindIp = netBindIpUnavailable,
-            .netConnectIp = netConnectIpUnavailable,
             .netListenUnix = netListenUnixUnavailable,
-            .netConnectUnix = netConnectUnixUnavailable,
             .netSocketCreatePair = netSocketCreatePairUnavailable,
             .netWriteFile = netWriteFileUnavailable,
             .netClose = netClose,
@@ -4825,18 +4823,6 @@ fn netBindIpUnavailable(
     return error.NetworkDown;
 }
 
-fn netConnectIpUnavailable(
-    userdata: ?*anyopaque,
-    address: *const net.IpAddress,
-    options: net.IpAddress.ConnectOptions,
-) net.IpAddress.ConnectError!net.Socket {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = address;
-    _ = options;
-    return error.NetworkDown;
-}
-
 fn netListenUnixUnavailable(
     userdata: ?*anyopaque,
     address: *const net.UnixAddress,
@@ -4846,16 +4832,6 @@ fn netListenUnixUnavailable(
     _ = ev;
     _ = address;
     _ = options;
-    return error.AddressFamilyUnsupported;
-}
-
-fn netConnectUnixUnavailable(
-    userdata: ?*anyopaque,
-    address: *const net.UnixAddress,
-) net.UnixAddress.ConnectError!net.Socket.Handle {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = address;
     return error.AddressFamilyUnsupported;
 }
 

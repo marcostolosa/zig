@@ -231,9 +231,7 @@ pub const VTable = struct {
     netListenIp: *const fn (?*anyopaque, address: *const net.IpAddress, net.IpAddress.ListenOptions) net.IpAddress.ListenError!net.Socket,
     netAccept: *const fn (?*anyopaque, server: net.Socket.Handle, options: net.Server.AcceptOptions) net.Server.AcceptError!net.Socket,
     netBindIp: *const fn (?*anyopaque, address: *const net.IpAddress, options: net.IpAddress.BindOptions) net.IpAddress.BindError!net.Socket,
-    netConnectIp: *const fn (?*anyopaque, address: *const net.IpAddress, options: net.IpAddress.ConnectOptions) net.IpAddress.ConnectError!net.Socket,
     netListenUnix: *const fn (?*anyopaque, *const net.UnixAddress, net.UnixAddress.ListenOptions) net.UnixAddress.ListenError!net.Socket.Handle,
-    netConnectUnix: *const fn (?*anyopaque, *const net.UnixAddress) net.UnixAddress.ConnectError!net.Socket.Handle,
     netSocketCreatePair: *const fn (?*anyopaque, net.Socket.CreatePairOptions) net.Socket.CreatePairError![2]net.Socket,
     netWriteFile: *const fn (?*anyopaque, net.Socket.Handle, header: []const u8, *Io.File.Reader, Io.Limit) net.Stream.Writer.WriteFileError!usize,
     netClose: *const fn (?*anyopaque, sockets: []const net.Socket) void,
@@ -249,6 +247,8 @@ pub const Operation = union(enum) {
     /// On Windows this is NtDeviceIoControlFile. On POSIX this is ioctl. On
     /// other systems this tag is unreachable.
     device_io_control: DeviceIoControl,
+    net_connect_ip: NetConnectIp,
+    net_connect_unix: NetConnectUnix,
     net_receive: NetReceive,
     net_send: NetSend,
     net_read: NetRead,
@@ -340,6 +340,70 @@ pub const Operation = union(enum) {
             /// negative errno.
             pub const Result = i32;
         },
+    };
+
+    pub const NetConnectIp = struct {
+        address: net.IpAddress,
+        mode: net.Socket.Mode,
+        protocol: ?net.Protocol,
+
+        /// Passed as undefined, set by the operation.
+        socket_storage: *net.Socket,
+
+        pub const Error = error{
+            AddressUnavailable,
+            AddressFamilyUnsupported,
+            /// Insufficient memory or other resource internal to the operating system.
+            SystemResources,
+            ConnectionPending,
+            ConnectionRefused,
+            ConnectionResetByPeer,
+            HostUnreachable,
+            NetworkUnreachable,
+            /// One of the `ConnectOptions` is not supported by the Io
+            /// implementation.
+            OptionUnsupported,
+            /// Per-process limit on the number of open file descriptors has been reached.
+            ProcessFdQuotaExceeded,
+            /// System-wide limit on the total number of open files has been reached.
+            SystemFdQuotaExceeded,
+            ProtocolUnsupportedBySystem,
+            ProtocolUnsupportedByAddressFamily,
+            SocketModeUnsupported,
+            /// The user tried to connect to a broadcast address without having the socket broadcast flag enabled or
+            /// the connection request failed because of a local firewall rule.
+            AccessDenied,
+            /// Non-blocking was requested and the operation cannot return immediately.
+            NetworkDown,
+        } || Io.OperateTimeoutError || Io.UnexpectedError;
+
+        pub const Result = Error!void;
+    };
+
+    pub const NetConnectUnix = struct {
+        address: net.UnixAddress,
+
+        /// Passed as undefined, set by the operation.
+        socket_storage: *net.Socket.Handle,
+
+        pub const Error = error{
+            SystemResources,
+            ProcessFdQuotaExceeded,
+            SystemFdQuotaExceeded,
+            AddressFamilyUnsupported,
+            ProtocolUnsupportedBySystem,
+            SocketModeUnsupported,
+            AccessDenied,
+            PermissionDenied,
+            SymLinkLoop,
+            FileNotFound,
+            NotDir,
+            ReadOnlyFileSystem,
+            NetworkDown,
+            ConnectionRefused,
+        } || Io.OperateTimeoutError || Io.UnexpectedError;
+
+        pub const Result = Error!void;
     };
 
     pub const NetReceive = struct {
@@ -2804,9 +2868,7 @@ pub const failing: std.Io = .{
         .netListenIp = failingNetListenIp,
         .netAccept = failingNetAccept,
         .netBindIp = failingNetBindIp,
-        .netConnectIp = failingNetConnectIp,
         .netListenUnix = failingNetListenUnix,
-        .netConnectUnix = failingNetConnectUnix,
         .netSocketCreatePair = failingNetSocketCreatePair,
         .netWriteFile = failingNetWriteFile,
         .netClose = unreachableNetClose,
@@ -2953,6 +3015,8 @@ pub fn failingOperate(userdata: ?*anyopaque, operation: Operation) Cancelable!Op
         .file_read_streaming => .{ .file_read_streaming = error.InputOutput },
         .file_write_streaming => .{ .file_write_streaming = error.InputOutput },
         .device_io_control => unreachable,
+        .net_connect_ip => .{ .net_connect_ip = error.NetworkDown },
+        .net_connect_unix => .{ .net_connect_unix = error.NetworkDown },
         .net_receive => .{ .net_receive = .{ error.NetworkDown, 0 } },
         .net_send => .{ .net_send = .{ error.NetworkDown, 0 } },
         .net_read => .{ .net_read = error.NetworkDown },
@@ -3526,23 +3590,10 @@ pub fn failingNetBindIp(userdata: ?*anyopaque, address: *const net.IpAddress, op
     return error.NetworkDown;
 }
 
-pub fn failingNetConnectIp(userdata: ?*anyopaque, address: *const net.IpAddress, options: net.IpAddress.ConnectOptions) net.IpAddress.ConnectError!net.Socket {
-    _ = userdata;
-    _ = address;
-    _ = options;
-    return error.NetworkDown;
-}
-
 pub fn failingNetListenUnix(userdata: ?*anyopaque, address: *const net.UnixAddress, options: net.UnixAddress.ListenOptions) net.UnixAddress.ListenError!net.Socket.Handle {
     _ = userdata;
     _ = address;
     _ = options;
-    return error.NetworkDown;
-}
-
-pub fn failingNetConnectUnix(userdata: ?*anyopaque, address: *const net.UnixAddress) net.UnixAddress.ConnectError!net.Socket.Handle {
-    _ = userdata;
-    _ = address;
     return error.NetworkDown;
 }
 

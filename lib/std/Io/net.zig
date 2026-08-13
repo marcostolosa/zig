@@ -306,34 +306,7 @@ pub const IpAddress = union(enum) {
         return io.vtable.netBindIp(io.userdata, address, options);
     }
 
-    pub const ConnectError = error{
-        AddressUnavailable,
-        AddressFamilyUnsupported,
-        /// Insufficient memory or other resource internal to the operating system.
-        SystemResources,
-        ConnectionPending,
-        ConnectionRefused,
-        ConnectionResetByPeer,
-        HostUnreachable,
-        NetworkUnreachable,
-        Timeout,
-        /// One of the `ConnectOptions` is not supported by the Io
-        /// implementation.
-        OptionUnsupported,
-        /// Per-process limit on the number of open file descriptors has been reached.
-        ProcessFdQuotaExceeded,
-        /// System-wide limit on the total number of open files has been reached.
-        SystemFdQuotaExceeded,
-        ProtocolUnsupportedBySystem,
-        ProtocolUnsupportedByAddressFamily,
-        SocketModeUnsupported,
-        /// The user tried to connect to a broadcast address without having the socket broadcast flag enabled or
-        /// the connection request failed because of a local firewall rule.
-        AccessDenied,
-        /// Non-blocking was requested and the operation cannot return immediately.
-        WouldBlock,
-        NetworkDown,
-    } || Io.Timeout.Error || Io.UnexpectedError || Io.Cancelable;
+    pub const ConnectError = Io.Operation.NetConnectIp.Error;
 
     pub const ConnectOptions = struct {
         mode: Socket.Mode,
@@ -343,7 +316,17 @@ pub const IpAddress = union(enum) {
 
     /// Initiates a connection-oriented network stream.
     pub fn connect(address: *const IpAddress, io: Io, options: ConnectOptions) ConnectError!Stream {
-        return .{ .socket = try io.vtable.netConnectIp(io.userdata, address, options) };
+        var socket: Socket = undefined;
+        const result = try io.operateTimeout(.{
+            .net_connect_ip = .{
+                .address = address.*,
+                .mode = options.mode,
+                .protocol = options.protocol,
+                .socket_storage = &socket,
+            },
+        }, options.timeout);
+        try result.net_connect_ip;
+        return .{ .socket = socket };
     }
 };
 
@@ -890,28 +873,15 @@ pub const UnixAddress = struct {
         };
     }
 
-    pub const ConnectError = error{
-        SystemResources,
-        ProcessFdQuotaExceeded,
-        SystemFdQuotaExceeded,
-        AddressFamilyUnsupported,
-        ProtocolUnsupportedBySystem,
-        SocketModeUnsupported,
-        AccessDenied,
-        PermissionDenied,
-        SymLinkLoop,
-        FileNotFound,
-        NotDir,
-        ReadOnlyFileSystem,
-        WouldBlock,
-        NetworkDown,
-        ConnectionRefused,
-    } || Io.Cancelable || Io.UnexpectedError;
+    pub const ConnectError = Io.Operation.NetConnectUnix.Error;
 
-    pub fn connect(ua: *const UnixAddress, io: Io) ConnectError!Stream {
-        assert(ua.path.len <= max_len);
+    pub fn connect(address: *const UnixAddress, io: Io) ConnectError!Stream {
+        assert(address.path.len <= max_len);
+        var socket: Socket.Handle = undefined;
+        const result = try io.operate(.{ .net_connect_unix = .{ .address = address.*, .socket_storage = &socket } });
+        try result.net_connect_unix;
         return .{ .socket = .{
-            .handle = try io.vtable.netConnectUnix(io.userdata, ua),
+            .handle = socket,
             .address = .{ .ip4 = .loopback(0) },
         } };
     }

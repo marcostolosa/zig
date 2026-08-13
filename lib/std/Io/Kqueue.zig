@@ -648,8 +648,6 @@ pub fn io(k: *Kqueue) Io {
             .netListenUnix = netListenUnix,
             .netAccept = netAccept,
             .netBindIp = netBindIp,
-            .netConnectIp = netConnectIp,
-            .netConnectUnix = netConnectUnix,
             .netShutdown = netShutdown,
             .netRead = netRead,
             .netSend = netSend,
@@ -1031,21 +1029,6 @@ fn netBindIp(
     try posixGetSockName(k, socket_fd, &storage.any, &addr_len);
     return .{ .handle = socket_fd, .address = Io.Threaded.addressFromPosix(&storage) };
 }
-fn netConnectIp(userdata: ?*anyopaque, address: *const net.IpAddress, options: net.IpAddress.ConnectOptions) net.IpAddress.ConnectError!net.Socket {
-    if (options.timeout != .none) @panic("TODO");
-    const k: *Kqueue = @ptrCast(@alignCast(userdata));
-    const family = Io.Threaded.posixAddressFamily(address);
-    const socket_fd = try openSocketPosix(k, family, .{
-        .mode = options.mode,
-        .protocol = options.protocol,
-    });
-    errdefer closeFd(socket_fd);
-    var storage: Io.Threaded.PosixAddress = undefined;
-    var addr_len = Io.Threaded.addressToPosix(address, &storage);
-    try posixConnect(k, socket_fd, &storage.any, addr_len);
-    try posixGetSockName(k, socket_fd, &storage.any, &addr_len);
-    return .{ .handle = socket_fd, .address = Io.Threaded.addressFromPosix(&storage) };
-}
 
 fn posixConnect(k: *Kqueue, socket_fd: posix.socket_t, addr: *const posix.sockaddr, addr_len: posix.socklen_t) !void {
     while (true) {
@@ -1089,15 +1072,6 @@ fn netListenUnix(
     _ = k;
     _ = unix_address;
     _ = options;
-    @panic("TODO");
-}
-fn netConnectUnix(
-    userdata: ?*anyopaque,
-    unix_address: *const net.UnixAddress,
-) net.UnixAddress.ConnectError!net.Socket.Handle {
-    const k: *Kqueue = @ptrCast(@alignCast(userdata));
-    _ = k;
-    _ = unix_address;
     @panic("TODO");
 }
 

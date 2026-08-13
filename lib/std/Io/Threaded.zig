@@ -1932,14 +1932,6 @@ pub fn io(t: *Threaded) Io {
                 .windows => netBindIpWindows,
                 else => netBindIpPosix,
             },
-            .netConnectIp = switch (native_os) {
-                .windows => netConnectIpWindows,
-                else => netConnectIpPosix,
-            },
-            .netConnectUnix = switch (native_os) {
-                .windows => netConnectUnixWindows,
-                else => netConnectUnixPosix,
-            },
             .netSocketCreatePair = netSocketCreatePair,
             .netClose = netClose,
             .netShutdown = switch (native_os) {
@@ -2534,29 +2526,53 @@ fn futexWake(userdata: ?*anyopaque, ptr: *const u32, max_waiters: u32) void {
 fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Operation.Result {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     switch (operation) {
-        .file_read_streaming => |o| return .{
+        .file_read_streaming => |*o| return .{
             .file_read_streaming = fileReadStreaming(t, o.file, o.data) catch |err| switch (err) {
                 error.Canceled => |e| return e,
                 else => |e| e,
             },
         },
-        .file_write_streaming => |o| return .{
+        .file_write_streaming => |*o| return .{
             .file_write_streaming = fileWriteStreaming(t, o.file, o.header, o.data, o.splat) catch |err| switch (err) {
                 error.Canceled => |e| return e,
                 else => |e| e,
             },
         },
         .device_io_control => |*o| return .{ .device_io_control = try deviceIoControl(o) },
-        .net_receive => |*o| return .{ .net_receive = o: {
-            if (!have_networking) break :o .{ error.NetworkDown, 0 };
-            if (is_windows) break :o netReceiveWindows(t, o.socket_handle, o.message_buffer, o.data_buffer, o.flags);
-            netReceivePosix(o.socket_handle, &o.message_buffer[0], o.data_buffer, o.flags, false) catch |err| switch (err) {
-                error.Canceled => |e| return e,
-                error.WouldBlock => unreachable,
-                else => |e| break :o .{ e, 0 },
-            };
-            break :o .{ null, 1 };
-        } },
+        .net_connect_ip => |o| return .{
+            .net_connect_ip = o: {
+                if (!have_networking) break :o error.NetworkDown;
+                if (is_windows) break :o netConnectIpWindows(&o.address, o.mode, o.protocol, o.socket_storage);
+                netConnectIpPosix(&o.address, o.mode, o.protocol, o.socket_storage, false) catch |err| switch (err) {
+                    error.Canceled => |e| return e,
+                    error.WouldBlock => unreachable,
+                    else => |e| break :o e,
+                };
+            },
+        },
+        .net_connect_unix => |*o| return .{
+            .net_connect_unix = o: {
+                if (!have_networking) break :o error.NetworkDown;
+                if (is_windows) break :o netConnectUnixWindows(&o.address, o.socket_storage);
+                netConnectUnixPosix(&o.address, o.socket_storage, false) catch |err| switch (err) {
+                    error.Canceled => |e| return e,
+                    error.WouldBlock => unreachable,
+                    else => |e| break :o e,
+                };
+            },
+        },
+        .net_receive => |*o| return .{
+            .net_receive = o: {
+                if (!have_networking) break :o .{ error.NetworkDown, 0 };
+                if (is_windows) break :o netReceiveWindows(t, o.socket_handle, o.message_buffer, o.data_buffer, o.flags);
+                netReceivePosix(o.socket_handle, &o.message_buffer[0], o.data_buffer, o.flags, false) catch |err| switch (err) {
+                    error.Canceled => |e| return e,
+                    error.WouldBlock => unreachable,
+                    else => |e| break :o .{ e, 0 },
+                };
+                break :o .{ null, 1 };
+            },
+        },
         .net_send => |*o| return .{
             .net_send = o: {
                 if (!have_networking) break :o .{ error.NetworkDown, 0 };
@@ -2576,17 +2592,14 @@ fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Oper
                 break :o .{ null, sent };
             },
         },
-        .net_read => |o| return .{
+        .net_read => |*o| return .{
             .net_read = netRead(o.socket_handle, o.data) catch |err| switch (err) {
                 error.Canceled => |e| return e,
                 else => |e| e,
             },
         },
-        .net_write => |o| return .{
-            .net_write = (if (is_windows)
-                netWriteWindows(o.socket_handle, o.header, o.data, o.splat)
-            else
-                netWritePosix(o.socket_handle, o.header, o.data, o.splat)) catch |err| switch (err) {
+        .net_write => |*o| return .{
+            .net_write = netWrite(o.socket_handle, o.header, o.data, o.splat) catch |err| switch (err) {
                 error.Canceled => |e| return e,
                 else => |e| e,
             },
@@ -2611,10 +2624,11 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
         var poll_len: u32 = 0;
         {
             var index = b.submitted.head;
+            const storage = &b.storage[index.toIndex()];
             while (index != .none and poll_len < poll_buffer_len) {
                 const submission = &b.storage[index.toIndex()].submission;
                 switch (submission.operation) {
-                    .file_read_streaming => |o| {
+                    .file_read_streaming => |*o| {
                         poll_buffer[poll_len] = .{
                             .fd = o.file.handle,
                             .events = posix.POLL.IN | posix.POLL.ERR,
@@ -2622,7 +2636,7 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         };
                         poll_len += 1;
                     },
-                    .file_write_streaming => |o| {
+                    .file_write_streaming => |*o| {
                         poll_buffer[poll_len] = .{
                             .fd = o.file.handle,
                             .events = posix.POLL.OUT | posix.POLL.ERR,
@@ -2630,13 +2644,53 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         };
                         poll_len += 1;
                     },
-                    .device_io_control => |o| {
+                    .device_io_control => |*o| {
                         poll_buffer[poll_len] = .{
                             .fd = o.file.handle,
                             .events = posix.POLL.OUT | posix.POLL.IN | posix.POLL.ERR,
                             .revents = 0,
                         };
                         poll_len += 1;
+                    },
+                    .net_connect_ip => |*o| nb: {
+                        const result: Io.Operation.Result = .{
+                            .net_connect_ip = o: {
+                                netConnectIpPosix(&o.address, o.mode, o.protocol, o.socket_storage, true) catch |err| switch (err) {
+                                    error.Canceled => |e| return e,
+                                    error.WouldBlock => {
+                                        poll_buffer[poll_len] = .{
+                                            .fd = o.socket_storage.handle,
+                                            .events = posix.POLL.OUT | posix.POLL.ERR,
+                                            .revents = 0,
+                                        };
+                                        poll_len += 1;
+                                        break :nb;
+                                    },
+                                    else => |e| break :o e,
+                                };
+                            },
+                        };
+                        storage.* = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
+                    },
+                    .net_connect_unix => |*o| nb: {
+                        const result: Io.Operation.Result = .{
+                            .net_connect_unix = o: {
+                                netConnectUnixPosix(&o.address, o.socket_storage, true) catch |err| switch (err) {
+                                    error.Canceled => |e| return e,
+                                    error.WouldBlock => {
+                                        poll_buffer[poll_len] = .{
+                                            .fd = o.socket_storage.*,
+                                            .events = posix.POLL.OUT | posix.POLL.ERR,
+                                            .revents = 0,
+                                        };
+                                        poll_len += 1;
+                                        break :nb;
+                                    },
+                                    else => |e| break :o e,
+                                };
+                            },
+                        };
+                        storage.* = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
                     },
                     .net_receive => |*o| {
                         poll_buffer[poll_len] = .{
@@ -2654,7 +2708,7 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         };
                         poll_len += 1;
                     },
-                    .net_read => |o| {
+                    .net_read => |*o| {
                         poll_buffer[poll_len] = .{
                             .fd = o.socket_handle,
                             .events = posix.POLL.IN | posix.POLL.ERR,
@@ -2662,7 +2716,7 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         };
                         poll_len += 1;
                     },
-                    .net_write => |o| {
+                    .net_write => |*o| {
                         poll_buffer[poll_len] = .{
                             .fd = o.socket_handle,
                             .events = posix.POLL.OUT | posix.POLL.ERR,
@@ -2822,24 +2876,56 @@ fn batchAwaitConcurrent(userdata: ?*anyopaque, b: *Io.Batch, timeout: Io.Timeout
             const storage = &b.storage[index.toIndex()];
             const submission = storage.submission;
             switch (submission.operation) {
-                .file_read_streaming => |o| try poll_storage.add(o.file.handle, posix.POLL.IN | posix.POLL.ERR),
-                .file_write_streaming => |o| try poll_storage.add(o.file.handle, posix.POLL.OUT | posix.POLL.ERR),
-                .device_io_control => |o| try poll_storage.add(o.file.handle, posix.POLL.IN | posix.POLL.OUT | posix.POLL.ERR),
+                .file_read_streaming => |*o| try poll_storage.add(o.file.handle, posix.POLL.IN | posix.POLL.ERR),
+                .file_write_streaming => |*o| try poll_storage.add(o.file.handle, posix.POLL.OUT | posix.POLL.ERR),
+                .device_io_control => |*o| try poll_storage.add(o.file.handle, posix.POLL.IN | posix.POLL.OUT | posix.POLL.ERR),
+                .net_connect_ip => |*o| nb: {
+                    const result: Io.Operation.Result = .{
+                        .net_connect_ip = o: {
+                            netConnectIpPosix(&o.address, o.mode, o.protocol, o.socket_storage, true) catch |err| switch (err) {
+                                error.Canceled => |e| return e,
+                                error.WouldBlock => {
+                                    try poll_storage.add(o.socket_storage.handle, posix.POLL.OUT | posix.POLL.ERR);
+                                    break :nb;
+                                },
+                                else => |e| break :o e,
+                            };
+                        },
+                    };
+                    storage.* = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
+                },
+                .net_connect_unix => |*o| nb: {
+                    const result: Io.Operation.Result = .{
+                        .net_connect_unix = o: {
+                            netConnectUnixPosix(&o.address, o.socket_storage, true) catch |err| switch (err) {
+                                error.Canceled => |e| return e,
+                                error.WouldBlock => {
+                                    try poll_storage.add(o.socket_storage.*, posix.POLL.OUT | posix.POLL.ERR);
+                                    break :nb;
+                                },
+                                else => |e| break :o e,
+                            };
+                        },
+                    };
+                    storage.* = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
+                },
                 .net_receive => |*o| nb: {
                     var data_i: usize = 0;
-                    const result: Io.Operation.Result = .{ .net_receive = for (o.message_buffer, 0..) |*msg, msg_i| {
-                        const remaining_data_buffer = o.data_buffer[data_i..];
-                        netReceivePosix(o.socket_handle, msg, remaining_data_buffer, o.flags, true) catch |err| switch (err) {
-                            error.Canceled => |e| return e,
-                            error.WouldBlock => {
-                                if (msg_i != 0) break .{ null, msg_i };
-                                try poll_storage.add(o.socket_handle, posix.POLL.IN | posix.POLL.ERR);
-                                break :nb;
-                            },
-                            else => |e| break .{ e, 0 },
-                        };
-                        data_i += msg.data.len;
-                    } else .{ null, o.message_buffer.len } };
+                    const result: Io.Operation.Result = .{
+                        .net_receive = for (o.message_buffer, 0..) |*msg, msg_i| {
+                            const remaining_data_buffer = o.data_buffer[data_i..];
+                            netReceivePosix(o.socket_handle, msg, remaining_data_buffer, o.flags, true) catch |err| switch (err) {
+                                error.Canceled => |e| return e,
+                                error.WouldBlock => {
+                                    if (msg_i != 0) break .{ null, msg_i };
+                                    try poll_storage.add(o.socket_handle, posix.POLL.IN | posix.POLL.ERR);
+                                    break :nb;
+                                },
+                                else => |e| break .{ e, 0 },
+                            };
+                            data_i += msg.data.len;
+                        } else .{ null, o.message_buffer.len },
+                    };
                     switch (b.completed.tail) {
                         .none => b.completed.head = index,
                         else => |tail_index| b.storage[tail_index.toIndex()].completion.node.next = index,
@@ -2876,8 +2962,8 @@ fn batchAwaitConcurrent(userdata: ?*anyopaque, b: *Io.Batch, timeout: Io.Timeout
                     storage.* = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
                     b.completed.tail = index;
                 },
-                .net_read => |o| try poll_storage.add(o.socket_handle, posix.POLL.IN | posix.POLL.ERR),
-                .net_write => |o| try poll_storage.add(o.socket_handle, posix.POLL.OUT | posix.POLL.ERR),
+                .net_read => |*o| try poll_storage.add(o.socket_handle, posix.POLL.IN | posix.POLL.ERR),
+                .net_write => |*o| try poll_storage.add(o.socket_handle, posix.POLL.OUT | posix.POLL.ERR),
             }
             index = submission.node.next;
         }
@@ -3072,6 +3158,8 @@ fn batchApc(
                 .file_read_streaming => .{ .file_read_streaming = ntReadFileResult(iosb) },
                 .file_write_streaming => .{ .file_write_streaming = ntWriteFileResult(iosb) },
                 .device_io_control => .{ .device_io_control = iosb.* },
+                .net_connect_ip => unreachable,
+                .net_connect_unix => unreachable,
                 .net_receive => unreachable,
                 .net_send => unreachable,
                 .net_read => unreachable,
@@ -3105,7 +3193,7 @@ fn batchDrainSubmittedWindows(t: *Threaded, b: *Io.Batch, concurrency: bool) (Io
             batchApc(b, &operation_userdata.iosb, 0);
         }
         switch (submission.operation) {
-            .file_read_streaming => |o| o: {
+            .file_read_streaming => |*o| o: {
                 var data_index: usize = 0;
                 while (o.data.len - data_index != 0 and o.data[data_index].len == 0) data_index += 1;
                 if (o.data.len - data_index == 0) {
@@ -3165,7 +3253,7 @@ fn batchDrainSubmittedWindows(t: *Threaded, b: *Io.Batch, concurrency: bool) (Io
                     };
                 }
             },
-            .file_write_streaming => |o| o: {
+            .file_write_streaming => |*o| o: {
                 const buffer = windowsWriteBuffer(o.header, o.data, o.splat);
                 if (buffer.len == 0) {
                     operation_userdata.iosb = .{ .u = .{ .Status = .SUCCESS }, .Information = 0 };
@@ -3221,7 +3309,7 @@ fn batchDrainSubmittedWindows(t: *Threaded, b: *Io.Batch, concurrency: bool) (Io
                     };
                 }
             },
-            .device_io_control => |o| {
+            .device_io_control => |*o| {
                 const NtControlFile = switch (o.code.DeviceType) {
                     .FILE_SYSTEM, .NAMED_PIPE => &windows.ntdll.NtFsControlFile,
                     else => &windows.ntdll.NtDeviceIoControlFile,
@@ -3276,6 +3364,26 @@ fn batchDrainSubmittedWindows(t: *Threaded, b: *Io.Batch, concurrency: bool) (Io
                         },
                     };
                 }
+            },
+            .net_connect_ip => |*o| {
+                // TODO integrate with overlapped I/O or equivalent to avoid this error
+                if (concurrency) return error.ConcurrencyUnavailable;
+                batchCompleteBlockingWindows(b, operation_userdata, .{
+                    .net_connect_ip = netConnectIpWindows(&o.address, o.options) catch |err| switch (err) {
+                        error.Canceled => |e| return e,
+                        else => |e| e,
+                    },
+                });
+            },
+            .net_connect_unix => |*o| {
+                // TODO integrate with overlapped I/O or equivalent to avoid this error
+                if (concurrency) return error.ConcurrencyUnavailable;
+                batchCompleteBlockingWindows(b, operation_userdata, .{
+                    .net_connect_unix = netConnectUnixWindows(&o.address) catch |err| switch (err) {
+                        error.Canceled => |e| return e,
+                        else => |e| e,
+                    },
+                });
             },
             .net_receive => |*o| {
                 // TODO integrate with overlapped I/O or equivalent to avoid this error
@@ -11967,7 +12075,7 @@ fn netListenIpPosix(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     const family = posixAddressFamily(address);
-    const socket_fd = try openSocketPosix(family, .{ .mode = options.mode, .protocol = options.protocol });
+    const socket_fd = try openSocketPosix(family, .{ .mode = options.mode, .protocol = options.protocol }, false);
     errdefer closeFd(socket_fd);
 
     if (options.reuse_address) {
@@ -12039,7 +12147,7 @@ fn netListenUnixPosix(
     if (!net.has_unix_sockets) return error.AddressFamilyUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
-    const socket_fd = openSocketPosix(posix.AF.UNIX, .{ .mode = .stream }) catch |err| switch (err) {
+    const socket_fd = openSocketPosix(posix.AF.UNIX, .{ .mode = .stream }, false) catch |err| switch (err) {
         error.ProtocolUnsupportedBySystem => return error.AddressFamilyUnsupported,
         error.ProtocolUnsupportedByAddressFamily => return error.AddressFamilyUnsupported,
         error.SocketModeUnsupported => return error.AddressFamilyUnsupported,
@@ -12252,8 +12360,7 @@ fn posixConnectUnix(
                 syscall.finish();
                 switch (e) {
                     .AFNOSUPPORT => return error.AddressFamilyUnsupported,
-                    .AGAIN => return error.WouldBlock,
-                    .INPROGRESS => return error.WouldBlock,
+                    .AGAIN, .ALREADY, .INPROGRESS => return error.WouldBlock,
                     .ACCES => return error.AccessDenied,
 
                     .LOOP => return error.SymLinkLoop,
@@ -12358,36 +12465,34 @@ fn socketOptionAfd(socket: net.Socket.Handle, mode: windows.AFD.SOCKOPT_INFO.Mod
 }
 
 fn netConnectIpPosix(
-    userdata: ?*anyopaque,
     address: *const IpAddress,
-    options: IpAddress.ConnectOptions,
-) IpAddress.ConnectError!net.Socket {
-    if (!have_networking) return error.NetworkDown;
-    if (options.timeout != .none) @panic("TODO implement netConnectIpPosix with timeout");
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
+    mode: net.Socket.Mode,
+    protocol: ?net.Protocol,
+    socket_storage: *net.Socket,
+    nonblocking: bool,
+) (Io.Operation.NetConnectIp.Error || error{WouldBlock})!void {
     const family = posixAddressFamily(address);
-    const socket_fd = try openSocketPosix(family, .{ .mode = options.mode, .protocol = options.protocol });
+    _ = nonblocking;
+    const socket_fd = try openSocketPosix(family, .{ .mode = mode, .protocol = protocol }, false);
     errdefer closeFd(socket_fd);
+    socket_storage.handle = socket_fd; // Used outside this fn for polling
     var storage: PosixAddress = undefined;
     var addr_len = addressToPosix(address, &storage);
     try posixConnect(socket_fd, &storage.any, addr_len);
     try posixGetSockName(socket_fd, &storage.any, &addr_len);
-    return .{ .handle = socket_fd, .address = addressFromPosix(&storage) };
+    socket_storage.* = .{ .handle = socket_fd, .address = addressFromPosix(&storage) };
 }
 
 fn netConnectIpWindows(
-    userdata: ?*anyopaque,
     address: *const IpAddress,
-    options: IpAddress.ConnectOptions,
-) IpAddress.ConnectError!net.Socket {
-    if (!have_networking) return error.NetworkDown;
-    if (options.timeout != .none) @panic("TODO implement netConnectIpWindows with timeout");
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
+    mode: net.Socket.Mode,
+    protocol: ?net.Protocol,
+    socket_storage: *net.Socket,
+) Io.Operation.NetConnectIp.Error!net.Socket {
     const family = posixAddressFamily(address);
-    const socket_handle = try openSocketAfd(family, .{ .mode = options.mode, .protocol = options.protocol });
+    const socket_handle = try openSocketAfd(family, .{ .mode = mode, .protocol = protocol });
     errdefer windows.CloseHandle(socket_handle);
+    socket_storage.handle = socket_handle; // Used outside this fn for polling
     try setSocketOptionAfd(socket_handle, ws2_32.SOL.SOCKET, ws2_32.SO.REUSE_UNICASTPORT, true);
     const bound_address = bindSocketIpAfd(socket_handle, &switch (address.*) {
         .ip4 => .{ .ip4 = .unspecified(0) },
@@ -12410,36 +12515,35 @@ fn netConnectIpWindows(
         .CONNECTION_REFUSED => return error.ConnectionRefused,
         else => |status| return windows.unexpectedStatus(status),
     }
-    return .{ .handle = socket_handle, .address = bound_address };
+    socket_storage.* = .{ .handle = socket_handle, .address = bound_address };
 }
 
 fn netConnectUnixPosix(
-    userdata: ?*anyopaque,
     address: *const net.UnixAddress,
-) net.UnixAddress.ConnectError!net.Socket.Handle {
+    socket_storage: *net.Socket.Handle,
+    nonblocking: bool,
+) (Io.Operation.NetConnectUnix.Error || error{WouldBlock})!void {
     if (!net.has_unix_sockets) return error.AddressFamilyUnsupported;
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
-    const socket_fd = openSocketPosix(posix.AF.UNIX, .{ .mode = .stream }) catch |err| switch (err) {
+    if (!have_networking) return error.NetworkDown;
+    _ = nonblocking;
+    const socket_fd = openSocketPosix(posix.AF.UNIX, .{ .mode = .stream }, false) catch |err| switch (err) {
         error.ProtocolUnsupportedByAddressFamily => return error.AddressFamilyUnsupported,
         error.OptionUnsupported => return error.Unexpected,
         else => |e| return e,
     };
     errdefer closeFd(socket_fd);
+    socket_storage.* = socket_fd; // Used outside this fn for polling
     var storage: UnixAddress = undefined;
     const addr_len = addressUnixToPosix(address, &storage);
     try posixConnectUnix(socket_fd, &storage.any, addr_len);
-    return socket_fd;
 }
 
 fn netConnectUnixWindows(
-    userdata: ?*anyopaque,
     address: *const net.UnixAddress,
-) net.UnixAddress.ConnectError!net.Socket.Handle {
+    socket_storage: *net.Socket.Handle,
+) Io.Operation.NetConnectUnix.Error!net.Socket.Handle {
     if (!net.has_unix_sockets) return error.AddressFamilyUnsupported;
     if (!have_networking) return error.NetworkDown;
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
     const is_abstract = address.isAbstract();
     const wps = if (!is_abstract) sliceToPrefixedFileW(null, address.path, .{
         .allow_relative = false,
@@ -12452,6 +12556,7 @@ fn netConnectUnixWindows(
         else => |e| return e,
     };
     errdefer windows.CloseHandle(socket_handle);
+    socket_storage.* = socket_handle; // Used outside this fn for polling
     if (!is_abstract) try socketOptionAfd(socket_handle, .special, 0, ws2_32.SO.UNIX_PATH, @constCast(
         @as([]const u8, @ptrCast(&windows.AFD.SOCKOPT_INFO.UNIX_PATH{
             .Path = wps.data,
@@ -12488,7 +12593,7 @@ fn netBindIpPosix(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     const family = posixAddressFamily(address);
-    const socket_fd = try openSocketPosix(family, options);
+    const socket_fd = try openSocketPosix(family, options, false);
     errdefer closeFd(socket_fd);
     var storage: PosixAddress = undefined;
     var addr_len = addressToPosix(address, &storage);
@@ -12517,7 +12622,8 @@ fn netBindIpWindows(
 fn openSocketPosix(
     family: posix.sa_family_t,
     options: IpAddress.BindOptions,
-) error{
+    nonblocking: bool,
+) (error{
     AddressFamilyUnsupported,
     ProtocolUnsupportedBySystem,
     ProcessFdQuotaExceeded,
@@ -12526,21 +12632,18 @@ fn openSocketPosix(
     ProtocolUnsupportedByAddressFamily,
     SocketModeUnsupported,
     OptionUnsupported,
-    Unexpected,
-    Canceled,
-}!posix.socket_t {
+} || Io.UnexpectedError || Io.Cancelable)!posix.socket_t {
     const mode, const protocol = try posixSocketModeProtocol(family, options.mode, options.protocol);
-    const flags: u32 = mode | if (socket_flags_unsupported) 0 else posix.SOCK.CLOEXEC;
+    const flags: u32 = mode |
+        (if (socket_flags_unsupported) 0 else posix.SOCK.CLOEXEC) |
+        @as(u32, if (nonblocking) posix.SOCK.NONBLOCK else 0);
     const syscall: Syscall = try .start();
-    const socket_fd = while (true) {
+    const socket_fd: posix.fd_t = while (true) {
         const rc = posix.system.socket(family, flags, protocol);
         switch (posix.errno(rc)) {
             .SUCCESS => {
                 syscall.finish();
-                const fd: posix.fd_t = @intCast(rc);
-                errdefer closeFd(fd);
-                if (socket_flags_unsupported) try setCloexec(fd);
-                break fd;
+                break @intCast(rc);
             },
             .INTR => {
                 try syscall.checkCancel();
@@ -13307,14 +13410,24 @@ fn netReceiveOneWindows(
     }
 }
 
-fn netWritePosix(
-    fd: net.Socket.Handle,
+fn netWrite(
+    handle: net.Socket.Handle,
     header: []const u8,
     data: []const []const u8,
     splat: usize,
 ) net.Stream.Writer.Error!usize {
     if (!have_networking) return error.NetworkDown;
 
+    if (is_windows) return netWriteWindows(handle, header, data, splat);
+    return netWritePosix(handle, header, data, splat);
+}
+
+fn netWritePosix(
+    fd: net.Socket.Handle,
+    header: []const u8,
+    data: []const []const u8,
+    splat: usize,
+) net.Stream.Writer.Error!usize {
     var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
     var msg: posix.msghdr_const = .{
         .name = null,
@@ -13404,8 +13517,6 @@ fn netWriteWindows(
     data: []const []const u8,
     splat: usize,
 ) net.Stream.Writer.Error!usize {
-    if (!have_networking) return error.NetworkDown;
-
     var iovecs: [max_iovecs_len]windows.AFD.WSABUF(.@"const") = undefined;
     var len: u32 = 0;
     addAfdBuf(.@"const", &iovecs, &len, header);
@@ -13566,7 +13677,7 @@ fn netInterfaceNameResolve(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
     if (native_os == .linux) {
-        const sock_fd = openSocketPosix(posix.AF.UNIX, .{ .mode = .dgram }) catch |err| switch (err) {
+        const sock_fd = openSocketPosix(posix.AF.UNIX, .{ .mode = .dgram }, false) catch |err| switch (err) {
             error.ProcessFdQuotaExceeded => return error.SystemResources,
             error.SystemFdQuotaExceeded => return error.SystemResources,
             error.AddressFamilyUnsupported => return error.Unexpected,

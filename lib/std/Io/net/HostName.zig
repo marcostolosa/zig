@@ -320,8 +320,6 @@ pub fn connect(
             error.SystemFdQuotaExceeded,
             => |e| return e,
 
-            error.WouldBlock => return error.Unexpected,
-
             else => |e| ip_connect_error = e,
         }
     } else |err| switch (err) {

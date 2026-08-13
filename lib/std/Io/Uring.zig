@@ -774,9 +774,7 @@ pub fn io(ev: *Evented) Io {
             .netListenIp = netListenIpUnavailable,
             .netAccept = netAcceptUnavailable,
             .netBindIp = netBindIp,
-            .netConnectIp = netConnectIpUnavailable,
             .netListenUnix = netListenUnixUnavailable,
-            .netConnectUnix = netConnectUnixUnavailable,
             .netSocketCreatePair = netSocketCreatePairUnavailable,
             .netWriteFile = netWriteFileUnavailable,
             .netClose = netClose,
@@ -2093,6 +2091,8 @@ fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Oper
         .device_io_control => |o| .{
             .device_io_control = try ev.deviceIoControl(try maybe_sync.enterSync(ev), o),
         },
+        .net_connect_ip => @panic("TODO implement net_connect_ip operation"),
+        .net_connect_unix => @panic("TODO implement net_connect_unix operation"),
         .net_receive => |o| .{
             .net_receive = r: {
                 const opt_err, const n = ev.netReceive(&maybe_sync.cancel_region, o.socket_handle, o.message_buffer, o.data_buffer, o.flags);
@@ -2401,6 +2401,8 @@ fn batchDrainSubmitted(
                 return error.ConcurrencyUnavailable
             else
                 .{ .device_io_control = try ev.deviceIoControl(try maybe_sync.enterSync(ev), o) },
+            .net_connect_ip => @panic("TODO implement batchDrainSubmitted for net_connect_ip"),
+            .net_connect_unix => @panic("TODO implement batchDrainSubmitted for net_connect_unix"),
             .net_receive => |o| {
                 _ = o;
                 @panic("TODO implement batchDrainSubmitted for net_receive");
@@ -2517,6 +2519,8 @@ fn batchDrainReady(batch: *Io.Batch) Io.Timeout.Error!void {
                     },
                 },
                 .device_io_control => unreachable,
+                .net_connect_ip => @panic("TODO"),
+                .net_connect_unix => @panic("TODO"),
                 .net_receive => @panic("TODO"),
                 .net_send => @panic("TODO"),
                 .net_read => @panic("TODO"),
@@ -5026,18 +5030,6 @@ fn netBindIp(
     return .{ .handle = socket_fd, .address = addressFromPosix(&storage) };
 }
 
-fn netConnectIpUnavailable(
-    userdata: ?*anyopaque,
-    address: *const net.IpAddress,
-    options: net.IpAddress.ConnectOptions,
-) net.IpAddress.ConnectError!net.Socket {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = address;
-    _ = options;
-    return error.NetworkDown;
-}
-
 fn netListenUnixUnavailable(
     userdata: ?*anyopaque,
     address: *const net.UnixAddress,
@@ -5047,16 +5039,6 @@ fn netListenUnixUnavailable(
     _ = ev;
     _ = address;
     _ = options;
-    return error.AddressFamilyUnsupported;
-}
-
-fn netConnectUnixUnavailable(
-    userdata: ?*anyopaque,
-    address: *const net.UnixAddress,
-) net.UnixAddress.ConnectError!net.Socket.Handle {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = address;
     return error.AddressFamilyUnsupported;
 }
 

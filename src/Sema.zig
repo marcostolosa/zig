@@ -132,6 +132,10 @@ dependencies: std.array_hash_map.Auto(InternPool.Dependee, void) = .empty,
 /// by `analyzeCall`.
 allow_memoize: bool = true,
 
+/// The largest quota requested by `@setEvalBranchQuota` within the comptime call
+/// currently being analyzed.
+quota_request: u32 = 0,
+
 /// The `BranchHint` for the current branch of runtime control flow.
 /// This state is on `Sema` so that `cold` hints can be propagated up through blocks with less special handling.
 branch_hint: ?std.lang.BranchHint = null,
@@ -4926,7 +4930,7 @@ fn zirSetEvalBranchQuota(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Compi
     const src = block.nodeOffset(inst_data.src_node);
     const quota: u32 = @intCast(try sema.resolveInt(block, src, inst_data.operand, .u32, .{ .simple = .operand_setEvalBranchQuota }));
     sema.branch_quota = @max(sema.branch_quota, quota);
-    sema.allow_memoize = false;
+    sema.quota_request = @max(sema.quota_request, quota);
 }
 
 fn zirStoreNode(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!void {
@@ -7235,15 +7239,19 @@ fn analyzeCall(
                 .arg_values = memoized_arg_values,
                 .result = undefined, // ignored by hash+eql
                 .branch_count = undefined, // ignored by hash+eql
+                .branch_quota = undefined, // ignored by hash+eql
             },
         }) orelse break :memoize;
         const memoized_call = ip.indexToKey(memoized_call_index).memoized_call;
-        if (sema.branch_count + memoized_call.branch_count > sema.branch_quota) {
+        const new_quota = @max(sema.branch_quota, memoized_call.branch_quota);
+        if (sema.branch_count + memoized_call.branch_count > new_quota) {
             // Let the call play out se we get the correct source location for the
             // "evaluation exceeded X backwards branches" error.
             break :memoize;
         }
         sema.branch_count += memoized_call.branch_count;
+        sema.branch_quota = new_quota;
+        sema.quota_request = @max(sema.quota_request, memoized_call.branch_quota);
         const result = Air.internedToRef(memoized_call.result);
         if (ensure_result_used) {
             try sema.ensureResultUsed(block, sema.typeOf(result), call_src);
@@ -7370,6 +7378,10 @@ fn analyzeCall(
     defer sema.allow_memoize = old_allow_memoize and sema.allow_memoize;
     sema.allow_memoize = true;
 
+    const old_quota_request = sema.quota_request;
+    defer sema.quota_request = @max(old_quota_request, sema.quota_request);
+    sema.quota_request = 0;
+
     // Store the current eval branch count so we can find out how many eval branches
     // the comptime call caused.
     const old_branch_count = sema.branch_count;
@@ -7405,6 +7417,7 @@ fn analyzeCall(
                 .arg_values = memoized_arg_values,
                 .result = result_val.toIntern(),
                 .branch_count = sema.branch_count - old_branch_count,
+                .branch_quota = sema.quota_request,
             } });
         }
     }

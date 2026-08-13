@@ -159,6 +159,9 @@ pub fn HybridKem(comptime params: Params) type {
         /// The public key is the concatenation of the post-quantum KEM public key
         /// and the traditional elliptic curve public key.
         pub const PublicKey = struct {
+            /// The length of the seed used in encapsulation.
+            pub const encaps_seed_length = 32 + params.Group.seed_length;
+
             bytes: [params.Nek]u8,
 
             /// Size of a serialized representation of the key, in bytes.
@@ -187,12 +190,13 @@ pub fn HybridKem(comptime params: Params) type {
                 return encapsInner(pk, &seed_pq, &seed_t_expanded);
             }
 
-            /// Generates a shared secret, encapsulated for the public key,
-            /// using the provided seed.
+            /// Generates a shared secret, encapsulated for the public key, using the
+            /// provided seed. The seed should be at least `encaps_seed_length` bytes
+            /// in length, or it will be padded with zeros.
             ///
             /// Calling `encaps` instead is recommended.
             pub fn encapsDeterministic(pk: PublicKey, seed: []const u8) !EncapsulatedSecret {
-                if (seed.len < 32) return error.InsufficientRandomness;
+                if (seed.len < 64) return error.InsufficientRandomness;
                 var seed_pq: [32]u8 = seed[0..32].*;
                 var seed_t_expanded: [params.Group.seed_length]u8 = undefined;
 
@@ -396,7 +400,7 @@ test "MLKEM768-X25519 basic round trip" {
 
     const kp = try MlKem768X25519.KeyPair.generateDeterministic(seed);
 
-    var enc_seed: [64]u8 = undefined;
+    var enc_seed: [MlKem768X25519.PublicKey.encaps_seed_length]u8 = undefined;
     @memset(&enc_seed, 0x43);
 
     const encap_result = try kp.public_key.encapsDeterministic(&enc_seed);

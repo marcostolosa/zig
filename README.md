@@ -504,7 +504,7 @@ exists to help you find issues that are **limited in scope and/or
 knowledge of Zig internals.**
 
 Please note that issues labeled
-[Proposal: Proposed](https://codeberg.org/ziglang/zig/issues?labels=746937&state=open)
+[Proposal](https://codeberg.org/ziglang/zig/issues?labels=746937&state=open)
 are still under consideration, and efforts to implement such a proposal have
 a high risk of being wasted. If you are interested in a proposal which is
 still under consideration, please express your interest in the issue tracker,

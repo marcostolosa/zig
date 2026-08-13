@@ -1096,7 +1096,7 @@ pub const Mutable = struct {
 
     /// q = a / b (rem r)
     ///
-    /// a / b are floored (rounded towards 0).
+    /// a / b are floored (rounded towards -inf).
     /// q may alias with a or b.
     ///
     /// Asserts there is enough memory to store q and r.
@@ -1279,7 +1279,7 @@ pub const Mutable = struct {
 
     /// q = a / b (rem r)
     ///
-    /// a / b are truncated (rounded towards -inf).
+    /// a / b are truncated (rounded towards 0).
     /// q may alias with a or b.
     ///
     /// Asserts there is enough memory to store q and r.
@@ -3351,7 +3351,7 @@ pub const Managed = struct {
 
     /// q = a / b (rem r)
     ///
-    /// a / b are floored (rounded towards 0).
+    /// a / b are floored (rounded towards -inf).
     ///
     /// Returns an error if memory could not be allocated.
     pub fn divFloor(q: *Managed, r: *Managed, a: *const Managed, b: *const Managed) !void {
@@ -3370,7 +3370,7 @@ pub const Managed = struct {
 
     /// q = a / b (rem r)
     ///
-    /// a / b are ceiled (rounded towards positive infinity).
+    /// a / b are ceiled (rounded towards +inf).
     ///
     /// Returns an error if memory could not be allocated.
     pub fn divCeil(q: *Managed, r: *Managed, a: *const Managed, b: *const Managed) !void {
@@ -3389,7 +3389,7 @@ pub const Managed = struct {
 
     /// q = a / b (rem r)
     ///
-    /// a / b are truncated (rounded towards -inf).
+    /// a / b are truncated (rounded towards 0).
     ///
     /// Returns an error if memory could not be allocated.
     pub fn divTrunc(q: *Managed, r: *Managed, a: *const Managed, b: *const Managed) !void {

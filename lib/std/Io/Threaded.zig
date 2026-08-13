@@ -7595,9 +7595,27 @@ fn dirRenameWindows(
     new_sub_path: []const u8,
 ) Dir.RenameError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
     return dirRenameWindowsInner(old_dir, old_sub_path, new_dir, new_sub_path, true) catch |err| switch (err) {
-        error.PathAlreadyExists => return error.Unexpected,
+        error.PathAlreadyExists => {
+            // Non-NTFS filesystems (FAT32/exFAT among them): the legacy
+            // FILE_RENAME_INFORMATION path used when FileRenameInformationEx
+            // isn't supported (see the comment above dirRenameWindowsInner)
+            // does not honor REPLACE_IF_EXISTS at all -- it always behaves
+            // as non-replacing, so a rename that explicitly asked to
+            // replace an existing destination comes back reporting the
+            // destination already exists. There is no real atomic
+            // replace-on-rename available on this class of filesystem; the
+            // best it can offer is delete-then-rename. Non-atomic, but a
+            // real crash mid-window here is no worse than the alternative
+            // this used to have: reporting error.Unexpected and failing
+            // the entire build on every single rebuild after the first.
+            new_dir.deleteTree(t.io(), new_sub_path) catch {};
+            return dirRenameWindowsInner(old_dir, old_sub_path, new_dir, new_sub_path, true) catch |err2| switch (err2) {
+                error.PathAlreadyExists => return error.Unexpected,
+                error.OperationUnsupported => return error.Unexpected,
+                else => |e| return e,
+            };
+        },
         error.OperationUnsupported => return error.Unexpected,
         else => |e| return e,
     };

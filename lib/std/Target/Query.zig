@@ -1,7 +1,6 @@
 //! Contains all the same data as `Target`, additionally introducing the
 //! concept of "the native target". The purpose of this abstraction is to
-//! provide meaningful and unsurprising defaults. This struct does reference
-//! any resources and it is copyable.
+//! provide meaningful and unsurprising defaults.
 
 const Query = @This();
 const std = @import("../std.zig");

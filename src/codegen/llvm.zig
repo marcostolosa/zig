@@ -31,16 +31,26 @@ const bindings = if (build_options.have_llvm)
 else
     @compileError("LLVM unavailable");
 
-pub fn legalizeFeatures(_: *const std.Target) ?*const Air.Legalize.Features {
-    return comptime &.initMany(&.{
-        .expand_int_from_float_safe,
-        .expand_int_from_float_optimized_safe,
+pub fn legalizeFeatures(target: *const std.Target) ?*const Air.Legalize.Features {
+    return switch (target.cpu.arch.endian()) {
+        // On little-endian targets, LLVM's `bitcast` on vectors places element 0 in the least
+        // significant bits, which matches our own semantics, so no scalarization is needed.
+        .little => comptime &.initMany(&.{
+            .expand_int_from_float_safe,
+            .expand_int_from_float_optimized_safe,
 
-        .scalarize_bit_cast_array,
-        // Needed because LLVM's `bitcast` on vectors is endian-specific unless the source and dest
-        // types are vectors with equal length (hence also with equal bits-per-element).
-        .scalarize_bit_cast_vector_non_elementwise,
-    });
+            .scalarize_bit_cast_array,
+        }),
+        .big => comptime &.initMany(&.{
+            .expand_int_from_float_safe,
+            .expand_int_from_float_optimized_safe,
+
+            .scalarize_bit_cast_array,
+            // Needed because LLVM's `bitcast` on vectors is endian-specific unless the source and dest
+            // types are vectors with equal length (hence also with equal bits-per-element).
+            .scalarize_bit_cast_vector_non_elementwise,
+        }),
+    };
 }
 
 fn subArchName(target: *const std.Target, comptime family: std.Target.Cpu.Arch.Family, mappings: anytype) ?[]const u8 {

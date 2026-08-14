@@ -30,7 +30,7 @@ fn cmdObjCopy(arena: Allocator, io: Io, args: []const []const u8) !void {
     var opt_output: ?[]const u8 = null;
     var opt_extract: ?[]const u8 = null;
     var opt_add_debuglink: ?[]const u8 = null;
-    var only_section: ?[]const u8 = null;
+    var only_sections: std.ArrayList([]const u8) = .empty;
     var pad_to: ?u64 = null;
     var strip_all: bool = false;
     var strip_debug: bool = false;
@@ -73,11 +73,11 @@ fn cmdObjCopy(arena: Allocator, io: Io, args: []const []const u8) !void {
         } else if (mem.eql(u8, arg, "-j") or mem.eql(u8, arg, "--only-section")) {
             i += 1;
             if (i >= args.len) fatal("expected another argument after '{s}'", .{arg});
-            only_section = args[i];
+            try only_sections.append(arena, args[i]);
         } else if (mem.eql(u8, arg, "--listen=-")) {
             listen = true;
         } else if (mem.startsWith(u8, arg, "--only-section=")) {
-            only_section = arg["--only-section=".len..];
+            try only_sections.append(arena, arg["--only-section=".len..]);
         } else if (mem.eql(u8, arg, "--pad-to")) {
             i += 1;
             if (i >= args.len) fatal("expected another argument after '{s}'", .{arg});
@@ -190,7 +190,7 @@ fn cmdObjCopy(arena: Allocator, io: Io, args: []const []const u8) !void {
 
             try emitElf(arena, &in, &out, elf_hdr, .{
                 .ofmt = out_fmt,
-                .only_section = only_section,
+                .only_sections = only_sections,
                 .pad_to = pad_to,
             });
         },
@@ -199,7 +199,7 @@ fn cmdObjCopy(arena: Allocator, io: Io, args: []const []const u8) !void {
                 fatal("zig objcopy: ELF to ELF copying only supports native endian", .{});
             if (elf_hdr.phoff == 0) // no program header
                 fatal("zig objcopy: ELF to ELF copying only supports programs", .{});
-            if (only_section) |_|
+            if (only_sections.items.len != 0)
                 fatal("zig objcopy: ELF to ELF copying does not support --only-section", .{});
             if (pad_to) |_|
                 fatal("zig objcopy: ELF to ELF copying does not support --pad-to", .{});
@@ -250,7 +250,7 @@ const usage =
     \\  -h, --help                              Print this help and exit
     \\  --output-target=<value>                 Format of the output file
     \\  -O <value>                              Alias for --output-target
-    \\  --only-section=<section>                Remove all but <section>
+    \\  --only-section=<section>                Remove all but <section>. Can be specified multiple times to keep multiple sections.
     \\  -j <value>                              Alias for --only-section
     \\  --pad-to <addr>                         Pad the last section up to address <addr>
     \\  --strip-debug, -g                       Remove all debug sections from the output.
@@ -267,7 +267,7 @@ const usage =
 
 pub const EmitRawElfOptions = struct {
     ofmt: std.Target.ObjectFormat,
-    only_section: ?[]const u8 = null,
+    only_sections: std.ArrayList([]const u8) = .empty,
     pad_to: ?u64 = null,
     add_section: ?AddSection = null,
     set_section_alignment: ?SetSectionAlignment = null,
@@ -303,27 +303,30 @@ fn emitElf(
         fatal("zig objcopy: ELF to ELF copying is not implemented yet", .{});
     }
 
-    if (options.only_section) |target_name| {
+    if (options.only_sections.items.len != 0) {
         switch (options.ofmt) {
             .hex => fatal("zig objcopy: hex format with sections is not implemented yet", .{}),
             .raw => {
-                for (binary_elf_output.sections.items) |section| {
-                    if (section.name) |curr_name| {
-                        if (!std.mem.eql(u8, curr_name, target_name))
-                            continue;
-                    } else {
-                        continue;
-                    }
+                outer: for (options.only_sections.items) |only_section| {
+                    for (binary_elf_output.sections.items) |section| {
+                        const curr_name = section.name orelse continue;
 
-                    try writeBinaryElfSection(in, out, section);
-                    try padFile(out, options.pad_to);
-                    return;
+                        if (!std.mem.eql(u8, curr_name, only_section))
+                            continue;
+
+                        try out.seekTo(section.binaryOffset);
+                        try writeBinaryElfSection(in, out, section);
+                        continue :outer;
+                    } else {
+                        return error.SectionNotFound;
+                    }
                 }
+
+                try padFile(out, options.pad_to);
+                return;
             },
             else => unreachable,
         }
-
-        return error.SectionNotFound;
     }
 
     switch (options.ofmt) {

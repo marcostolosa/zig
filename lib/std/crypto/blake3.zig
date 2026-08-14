@@ -677,6 +677,7 @@ const ChunkBatch = struct {
     input: []const u8,
     start_chunk: usize,
     end_chunk: usize,
+    chunk_counter: u64 = 0,
     cvs: [][8]u32,
     key: [8]u32,
     flags: Flags,
@@ -688,42 +689,6 @@ const ChunkBatch = struct {
         while (chunk_idx < ctx.end_chunk) {
             const remaining = ctx.end_chunk - chunk_idx;
             const batch_size: usize = @min(remaining, max_simd_degree);
-            const offset = chunk_idx * chunk_length;
-            const batch_len = batch_size * chunk_length;
-
-            const num_cvs = compressChunksParallel(
-                ctx.input[offset..][0..batch_len],
-                ctx.key,
-                chunk_idx,
-                ctx.flags,
-                &cv_buffer,
-            );
-
-            for (0..num_cvs) |i| {
-                const cv_bytes = cv_buffer[i * Blake3.digest_length ..][0..Blake3.digest_length];
-                ctx.cvs[chunk_idx + i] = loadCvWords(cv_bytes.*);
-            }
-
-            chunk_idx += batch_size;
-        }
-    }
-};
-
-const ChunkBatchStreaming = struct {
-    input: []const u8,
-    start_chunk: usize,
-    end_chunk: usize,
-    chunk_counter: u64,
-    cvs: [][8]u32,
-    key: [8]u32,
-    flags: Flags,
-
-    fn process(ctx: ChunkBatchStreaming) void {
-        var cv_buffer: [max_simd_degree * Blake3.digest_length]u8 = undefined;
-        var chunk_idx = ctx.start_chunk;
-
-        while (chunk_idx < ctx.end_chunk) {
-            const batch_size: usize = @min(ctx.end_chunk - chunk_idx, max_simd_degree);
             const offset = chunk_idx * chunk_length;
             const batch_len = batch_size * chunk_length;
 
@@ -805,6 +770,7 @@ fn buildMerkleTreeLayerParallel(
     key: [8]u32,
     flags: Flags,
     io: Io,
+    max_concurrency: usize,
 ) Io.Cancelable!void {
     const num_parents = input_cvs.len / 2;
 
@@ -822,7 +788,7 @@ fn buildMerkleTreeLayerParallel(
         return;
     }
 
-    const num_workers = Thread.getCpuCount() catch 1;
+    const num_workers = @min(max_concurrency, num_parents);
     const parents_per_worker = (num_parents + num_workers - 1) / num_workers;
     var group: Io.Group = .init;
     defer group.cancel(io);
@@ -992,12 +958,7 @@ pub const Blake3 = struct {
 
     pub const Options = struct {
         key: ?[key_length]u8 = null,
-        /// batch size controls how much is read in the hashParallelStreaming function
-        /// this enable to trade memory usage, for reduced number of syscall
-        batch_size: usize = default_batch_size,
     };
-
-    pub const default_batch_size: usize = 4 * 1024 * 1024;
 
     pub const KdfOptions = struct {};
 
@@ -1105,6 +1066,7 @@ pub const Blake3 = struct {
                 key_words,
                 flags,
                 io,
+                thread_count,
             );
 
             if (has_odd) {
@@ -1120,102 +1082,6 @@ pub const Blake3 = struct {
         var hasher = init_internal(key_words, flags);
         for (current_level, 0..) |cv, i| hasher.pushCv(cv, i);
         hasher.final(out);
-    }
-
-    pub fn hashParallelStreaming(
-        reader: *Io.Reader,
-        input_len: u64,
-        out: []u8,
-        options: Options,
-        allocator: Allocator,
-        io: Io,
-    ) (Io.Reader.Error || Allocator.Error || Io.Cancelable || error{InvalidBatchSize})!void {
-        if (options.batch_size == 0 or options.batch_size % chunk_length != 0) {
-            return error.InvalidBatchSize;
-        }
-
-        var hasher: Blake3 = .init(options);
-
-        if (input_len < parallel_threshold) {
-            var read_buffer: [4096]u8 = undefined;
-            var remaining_len: usize = @intCast(input_len);
-
-            while (remaining_len > 0) {
-                const read_len = @min(remaining_len, read_buffer.len);
-                try reader.readSliceAll(read_buffer[0..read_len]);
-                hasher.update(read_buffer[0..read_len]);
-                remaining_len -= read_len;
-            }
-
-            hasher.final(out);
-            return;
-        }
-
-        const trailing_len: u64 = input_len % chunk_length;
-        const last_chunk_len: u64 = if (trailing_len != 0) trailing_len else chunk_length;
-        const batchable_input_len = input_len - last_chunk_len;
-
-        // avoids overallocating memory in case input is smaller than bathc size.
-        const batch_buffer_capacity: usize = @intCast(@min(batchable_input_len, options.batch_size));
-        const batch_buffer = try allocator.alloc(u8, batch_buffer_capacity);
-        defer allocator.free(batch_buffer);
-
-        const cvs = try allocator.alloc([8]u32, batch_buffer_capacity / chunk_length);
-        defer allocator.free(cvs);
-
-        const thread_count = Thread.getCpuCount() catch 1;
-        var batchable_bytes_processed: u64 = 0;
-
-        while (batchable_bytes_processed < batchable_input_len) {
-            const bytes_to_batch: usize = @intCast(
-                @min(batchable_input_len - batchable_bytes_processed, batch_buffer_capacity),
-            );
-            try reader.readSliceAll(batch_buffer[0..bytes_to_batch]);
-
-            const chunk_count = bytes_to_batch / chunk_length;
-            const chunks_per_thread = (chunk_count + thread_count - 1) / thread_count;
-            const chunk_counter = batchable_bytes_processed / chunk_length;
-
-            var group: Io.Group = .init;
-            defer group.cancel(io);
-
-            for (0..thread_count) |thread_id| {
-                const start_chunk = chunks_per_thread * thread_id;
-
-                if (start_chunk >= chunk_count) {
-                    break;
-                }
-
-                const cbs: ChunkBatchStreaming = .{
-                    .input = batch_buffer[0..bytes_to_batch],
-                    .start_chunk = start_chunk,
-                    .end_chunk = @min(start_chunk + chunks_per_thread, chunk_count),
-                    .chunk_counter = chunk_counter,
-                    .cvs = cvs[0..chunk_count],
-                    .key = hasher.key,
-                    .flags = hasher.chunk.flags,
-                };
-
-                group.async(io, ChunkBatchStreaming.process, .{cbs});
-            }
-
-            try group.await(io);
-
-            for (cvs[0..chunk_count], 0..) |cv, i| {
-                hasher.pushCv(cv, chunk_counter + @as(u64, @intCast(i)));
-            }
-
-            batchable_bytes_processed = batchable_bytes_processed + @as(u64, @intCast(bytes_to_batch));
-        }
-
-        var trailing_buffer: [chunk_length]u8 = undefined;
-        try reader.readSliceAll(trailing_buffer[0..@as(usize, @intCast(last_chunk_len))]);
-        hasher.chunk.chunk_counter = batchable_input_len / chunk_length;
-        hasher.chunk.update(trailing_buffer[0..@as(usize, @intCast(last_chunk_len))]);
-        hasher.mergeCvStack(hasher.chunk.chunk_counter);
-        hasher.final(out);
-
-        return;
     }
 
     fn init_internal(key: [8]u32, flags: Flags) Blake3 {
@@ -1341,6 +1207,320 @@ pub const Blake3 = struct {
     pub fn reset(self: *Blake3) void {
         self.chunk.reset(self.key, 0);
         self.cv_stack_len = 0;
+    }
+
+    pub const ParallelWriter = struct {
+        pub const Cv = [8]u32;
+        pub const buffer_alignment = @alignOf(Cv);
+        const min_bytes_per_worker = 128 * 1024;
+
+        writer: Io.Writer,
+        second_buffer: []u8,
+        cvs: []Cv,
+        hasher: Blake3,
+        group: Io.Group = .init,
+        chunks_counter: u64 = 0,
+        chunks_in_flight: usize = 0,
+        err: ?Io.Cancelable = null,
+        linear: bool = false,
+        io: std.Io,
+        max_concurrency: usize,
+
+        pub fn init(
+            buffer: []align(@alignOf(ParallelWriter.Cv)) u8,
+            batch_size: usize,
+            options: Options,
+            io: Io,
+        ) error{InvalidBatchSize}!ParallelWriter {
+            const max_concurrency: usize = Thread.getCpuCount() catch 1;
+            return try Blake3.parallelWriter(buffer, batch_size, options, io, max_concurrency);
+        }
+
+        pub fn initWithConcurrency(
+            buffer: []align(@alignOf(ParallelWriter.Cv)) u8,
+            batch_size: usize,
+            options: Options,
+            io: Io,
+            max_concurrency: usize,
+        ) error{ InvalidBatchSize, InvalidConcurrency }!ParallelWriter {
+            if (max_concurrency == 0) {
+                return error.InvalidConcurrency;
+            }
+
+            return try Blake3.parallelWriter(buffer, batch_size, options, io, max_concurrency);
+        }
+
+        fn numberOfChunksFromBatchSize(batch_size: usize) error{InvalidBatchSize}!usize {
+            if (batch_size == 0 or batch_size % chunk_length != 0) {
+                return error.InvalidBatchSize;
+            }
+
+            const number_of_chunks = batch_size / chunk_length;
+
+            if (!std.math.isPowerOfTwo(number_of_chunks)) {
+                return error.InvalidBatchSize;
+            }
+
+            return number_of_chunks;
+        }
+
+        pub fn bufferSizeFromBatchSize(batch_size: usize) error{InvalidBatchSize}!usize {
+            const chunks = try numberOfChunksFromBatchSize(batch_size);
+            const cv_count = chunks + (chunks / 2);
+            const buffers_len = std.math.mul(usize, batch_size, 2) catch return error.InvalidBatchSize;
+            const cvs_len = std.math.mul(usize, cv_count, @sizeOf(Cv)) catch return error.InvalidBatchSize;
+            return std.math.add(usize, buffers_len, cvs_len) catch return error.InvalidBatchSize;
+        }
+
+        fn startBuffered(self: *ParallelWriter, input: []const u8) void {
+            std.debug.assert(input.len != 0);
+            std.debug.assert(input.len % chunk_length == 0);
+            std.debug.assert(self.chunks_in_flight == 0);
+
+            const chunk_counts = input.len / chunk_length;
+            std.debug.assert(self.cvs.len >= chunk_counts);
+
+            const optimal_concurrency = @max(@divCeil(input.len, min_bytes_per_worker), 1);
+            const thread_count = @min(self.max_concurrency, optimal_concurrency);
+            const chunks_per_thread = @divCeil(chunk_counts, thread_count);
+
+            for (0..thread_count) |thread_id| {
+                const start_chunk = thread_id * chunks_per_thread;
+
+                if (start_chunk >= chunk_counts) {
+                    break;
+                }
+
+                const cb: ChunkBatch = .{
+                    .input = input,
+                    .start_chunk = start_chunk,
+                    .end_chunk = @min(start_chunk + chunks_per_thread, chunk_counts),
+                    .cvs = self.cvs[0..chunk_counts],
+                    .key = self.hasher.key,
+                    .flags = self.hasher.chunk.flags,
+                    .chunk_counter = self.chunks_counter,
+                };
+
+                self.group.async(self.io, ChunkBatch.process, .{cb});
+            }
+
+            self.chunks_in_flight = chunk_counts;
+        }
+
+        fn finishPending(self: *ParallelWriter) Io.Cancelable!void {
+            const chunk_counts = self.chunks_in_flight;
+
+            if (chunk_counts == 0) {
+                return;
+            } else {
+                try self.group.await(self.io);
+                self.chunks_in_flight = 0;
+            }
+
+            if (std.math.isPowerOfTwo(chunk_counts) and self.chunks_counter % @as(u64, @intCast(chunk_counts)) == 0) {
+                var current = self.cvs[0..chunk_counts];
+                var use_second_buffer = true;
+
+                while (current.len > 1) {
+                    const parent_count = current.len >> 1;
+
+                    const output =
+                        if (use_second_buffer)
+                            self.cvs[chunk_counts..][0..parent_count]
+                        else
+                            self.cvs[0..parent_count];
+
+                    try buildMerkleTreeLayerParallel(
+                        current,
+                        output,
+                        self.hasher.key,
+                        self.hasher.chunk.flags,
+                        self.io,
+                        self.max_concurrency,
+                    );
+
+                    current = output;
+                    use_second_buffer = !use_second_buffer;
+                }
+
+                self.hasher.mergeCvStack(self.chunks_counter);
+                self.hasher.cv_stack[self.hasher.cv_stack_len] = current[0];
+                self.hasher.cv_stack_len += 1;
+                self.chunks_counter += chunk_counts;
+                return;
+            } else {
+                for (self.cvs[0..chunk_counts], 0..) |cv, i| {
+                    self.hasher.pushCv(cv, self.chunks_counter + @as(u64, @intCast(i)));
+                }
+
+                self.chunks_counter += @as(u64, @intCast(chunk_counts));
+                return;
+            }
+        }
+
+        fn processBuffered(self: *ParallelWriter, input: []const u8) Io.Cancelable!void {
+            try self.finishPending();
+            self.startBuffered(input);
+            try self.finishPending();
+        }
+
+        fn drain(w: *Io.Writer, data: []const []const u8, splat: usize) Io.Writer.Error!usize {
+            const self: *ParallelWriter = @alignCast(@fieldParentPtr("writer", w));
+
+            if (self.linear) {
+                self.hasher.update(w.buffered());
+                w.end = 0;
+
+                for (data[0 .. data.len - 1]) |input| {
+                    self.hasher.update(input);
+                }
+
+                for (0..splat) |_| {
+                    self.hasher.update(data[data.len - 1]);
+                }
+
+                return Io.Writer.countSplat(data, splat);
+            }
+
+            var consumed: usize = 0;
+
+            for (data, 0..) |input, i| {
+                const repetitions = if (i == data.len - 1) splat else 1;
+
+                for (0..repetitions) |_| {
+                    const amount_to_copy = @min(input.len, w.buffer.len - w.end);
+                    @memcpy(w.buffer[w.end..][0..amount_to_copy], input[0..amount_to_copy]);
+                    w.end += amount_to_copy;
+                    consumed += amount_to_copy;
+
+                    if (amount_to_copy != input.len or w.end == w.buffer.len) {
+                        break;
+                    }
+                }
+            }
+
+            if (w.end != w.buffer.len) {
+                return consumed;
+            }
+
+            self.finishPending() catch |err| {
+                self.err = err;
+                return error.WriteFailed;
+            };
+
+            const tmp = w.buffer;
+            w.buffer = self.second_buffer;
+            self.second_buffer = tmp;
+            w.end = 0;
+            self.startBuffered(self.second_buffer);
+            return consumed;
+        }
+
+        fn flush(w: *Io.Writer) Io.Writer.Error!void {
+            const self: *ParallelWriter = @alignCast(@fieldParentPtr("writer", w));
+
+            if (!self.linear) {
+                self.finishPending() catch |err| {
+                    self.err = err;
+                    return error.WriteFailed;
+                };
+
+                self.hasher.chunk.chunk_counter = self.chunks_counter;
+                self.linear = true;
+            }
+
+            self.hasher.update(w.buffered());
+            w.end = 0;
+        }
+
+        pub fn finish(self: *ParallelWriter, out: []u8) (Io.Cancelable || Io.Writer.Error)!void {
+            defer self.writer = .failing;
+
+            if (self.err) |err| {
+                return err;
+            }
+
+            if (self.linear) {
+                self.hasher.update(self.writer.buffered());
+                self.writer.end = 0;
+                self.hasher.final(out);
+
+                return;
+            }
+
+            try self.finishPending();
+
+            const buffered = self.writer.buffered();
+
+            if (buffered.len < parallel_threshold) {
+                self.hasher.chunk.chunk_counter = self.chunks_counter;
+                self.hasher.update(buffered);
+                self.writer.end = 0;
+                self.hasher.final(out);
+                self.writer = .failing;
+                return;
+            }
+
+            const parallel_len =
+                if (buffered.len == 0)
+                    0
+                else
+                    ((buffered.len - 1) / chunk_length) * chunk_length;
+
+            if (parallel_len != 0) {
+                try self.processBuffered(buffered[0..parallel_len]);
+            }
+
+            const tail = buffered[parallel_len..];
+            self.hasher.chunk.chunk_counter = self.chunks_counter;
+            self.hasher.chunk.update(tail);
+            self.hasher.mergeCvStack(self.hasher.chunk.chunk_counter);
+            self.hasher.final(out);
+        }
+
+        pub fn deinit(self: *ParallelWriter) void {
+            defer self.* = undefined;
+            self.group.cancel(self.io);
+            self.chunks_in_flight = 0;
+        }
+    };
+
+    fn parallelWriter(
+        buffer: []align(@alignOf(ParallelWriter.Cv)) u8,
+        batch_size: usize,
+        options: Options,
+        io: std.Io,
+        max_concurrency: usize,
+    ) error{InvalidBatchSize}!ParallelWriter {
+        const required_size = try ParallelWriter.bufferSizeFromBatchSize(batch_size);
+
+        if (buffer.len < required_size) {
+            return error.InvalidBatchSize;
+        }
+
+        const buffer0 = buffer[0..batch_size];
+        const buffer1 = buffer[batch_size..][0..batch_size];
+
+        const cvs_backing_memory = buffer[2 * batch_size .. required_size];
+        const cvs: []ParallelWriter.Cv = @alignCast(std.mem.bytesAsSlice(
+            ParallelWriter.Cv,
+            cvs_backing_memory,
+        ));
+
+        return .{
+            .writer = .{
+                .buffer = buffer0,
+                .vtable = &.{
+                    .drain = ParallelWriter.drain,
+                    .flush = ParallelWriter.flush,
+                },
+            },
+            .second_buffer = buffer1,
+            .cvs = cvs,
+            .hasher = Blake3.init(options),
+            .io = io,
+            .max_concurrency = max_concurrency,
+        };
     }
 };
 
@@ -1628,98 +1808,125 @@ test "BLAKE3 parallel with partial trailing chunk" {
     }
 }
 
-test "BLAKE3 parallel vs parallelStreaming" {
+test "BLAKE3 reader streaming into writer vs linear references" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    // Test various sizes including those above the parallelization threshold
-    const test_sizes = [_]usize{
-        0, // Empty
-        64, // One block
-        1024, // One chunk
-        1024 * 10, // Multiple chunks
-        1024 * 100, // 100KB
-        1024 * 1000, // 1MB
-        1024 * 5000, // 5MB (above threshold)
-        1024 * 10000, // 10MB (above threshold)
+    const sizes = [_]usize{
+        parallel_threshold - 1,
+        parallel_threshold,
+        parallel_threshold + 1,
+        parallel_threshold + chunk_length - 1,
+        parallel_threshold + chunk_length,
     };
 
-    for (test_sizes) |size| {
-        // Allocate and fill test data with a pattern
-        const input = try allocator.alloc(u8, size);
+    const batch_sizes = [_]usize{
+        chunk_length,
+        chunk_length * 2,
+        chunk_length * 4,
+        chunk_length * 8,
+        chunk_length * 16,
+    };
+
+    const keys = [2]?[Blake3.key_length]u8{
+        null,
+        @splat(0xa5),
+    };
+
+    const bytes: [std.Random.DefaultCsprng.secret_seed_length]u8 = @splat(0x5a);
+    var random_instance = std.Random.DefaultCsprng.init(bytes);
+    const random = random_instance.random();
+
+    for (sizes) |input_len| {
+        const input = try allocator.alloc(u8, input_len);
         defer allocator.free(input);
-        for (input, 0..) |*byte, i| {
-            byte.* = @truncate(i);
+        random.bytes(input);
+
+        for (keys) |key| {
+            var expected: [131]u8 = undefined;
+
+            std.crypto.hash.Blake3.hash(input, &expected, .{ .key = key });
+
+            for (batch_sizes) |batch_size| {
+                var reader: Io.Reader = .fixed(input);
+                var actual: [131]u8 = undefined;
+                const memory_needed = try Blake3.ParallelWriter.bufferSizeFromBatchSize(batch_size);
+                const memory = try allocator.alignedAlloc(
+                    u8,
+                    .of(Blake3.ParallelWriter.Cv),
+                    memory_needed,
+                );
+                defer allocator.free(memory);
+
+                var parallel_writer = try Blake3.ParallelWriter.init(
+                    memory,
+                    batch_size,
+                    .{ .key = key },
+                    io,
+                );
+                defer parallel_writer.deinit();
+                try reader.streamExact(&parallel_writer.writer, input.len);
+                try parallel_writer.finish(&actual);
+                try std.testing.expectEqualSlices(u8, &expected, &actual);
+            }
         }
-
-        // Test regular hash
-        var expected: [32]u8 = undefined;
-        try Blake3.hashParallel(input, &expected, .{}, allocator, io);
-
-        var actual: [32]u8 = undefined;
-        var reader: Io.Reader = .fixed(input);
-        try Blake3.hashParallelStreaming(&reader, input.len, &actual, .{}, allocator, io);
-
-        try std.testing.expectEqualSlices(u8, &expected, &actual);
-
-        // Test keyed hash
-        const key: [32]u8 = @splat(0x42);
-        var expected_keyed: [32]u8 = undefined;
-        try Blake3.hashParallel(input, &expected_keyed, .{ .key = key }, allocator, io);
-
-        var actual_keyed: [32]u8 = undefined;
-        reader = .fixed(input);
-        try Blake3.hashParallelStreaming(&reader, input.len, &actual_keyed, .{ .key = key }, allocator, io);
-
-        try std.testing.expectEqualSlices(u8, &expected_keyed, &actual_keyed);
     }
 }
 
-test "BLAKE3 parallelStreaming with partial trailing chunk" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
-
-    const test_sizes = [_]usize{
-        3072 * 1024,
-        3072 * 1024 + 1,
-        3073 * 1024 + 1,
-        3074 * 1024 + 1,
-        3075 * 1024,
-        3075 * 1024 + 1,
-        3075 * 1024 + 1023,
-        3077 * 1024 + 1,
-        4095 * 1024 + 1,
-    };
-
-    for (test_sizes) |size| {
-        const input = try allocator.alloc(u8, size);
-        defer allocator.free(input);
-        for (input, 0..) |*byte, i| byte.* = @truncate(i);
-
-        var expected: [32]u8 = undefined;
-        Blake3.hash(input, &expected, .{});
-
-        var actual: [32]u8 = undefined;
-        var reader: Io.Reader = .fixed(input);
-        try Blake3.hashParallelStreaming(&reader, input.len, &actual, .{}, allocator, io);
-
-        try std.testing.expectEqualSlices(u8, &expected, &actual);
-    }
+test "BLAKE3 rejects wrong bath siez" {
+    var memory: [2 * chunk_length + 42]u8 align(Blake3.ParallelWriter.buffer_alignment) = undefined;
+    try std.testing.expectError(error.InvalidBatchSize, Blake3.ParallelWriter.init(
+        &memory,
+        chunk_length + 1,
+        .{},
+        std.testing.io,
+    ));
 }
 
-test "BLAKE3 rejects invalid batch size" {
-    var reader: Io.Reader = .fixed("");
-    var actual: [Blake3.digest_length]u8 = undefined;
+test "BLAKE3 rejects wrong concurrency" {
+    var memory: [2 * chunk_length + 42]u8 align(Blake3.ParallelWriter.buffer_alignment) = undefined;
+    try std.testing.expectError(error.InvalidConcurrency, Blake3.ParallelWriter.initWithConcurrency(
+        &memory,
+        chunk_length,
+        .{},
+        std.testing.io,
+        0,
+    ));
+}
 
-    try std.testing.expectError(
-        error.InvalidBatchSize,
-        Blake3.hashParallelStreaming(
-            &reader,
-            0,
-            &actual,
-            .{ .batch_size = chunk_length + 1 },
-            std.testing.allocator,
-            std.testing.io,
-        ),
+test "BLAKE3 parallel writer" {
+    var input: [5 * chunk_length + 27]u8 = undefined;
+
+    for (&input, 0..) |*byte, i| {
+        byte.* = @truncate(i);
+    }
+
+    var expected: [Blake3.digest_length]u8 = undefined;
+    Blake3.hash(&input, &expected, .{});
+
+    const batch_size = 2 * chunk_length;
+    const memory_needed = comptime Blake3.ParallelWriter.bufferSizeFromBatchSize(batch_size) catch unreachable;
+    var memory: [memory_needed]u8 align(Blake3.ParallelWriter.buffer_alignment) = undefined;
+    var parallel = try Blake3.ParallelWriter.initWithConcurrency(
+        &memory,
+        batch_size,
+        .{},
+        std.testing.io,
+        2,
     );
+    defer parallel.deinit();
+
+    var reader: Io.Reader = .fixed(&input);
+    const before_flush = 2 * chunk_length + 6;
+    try reader.streamExact(&parallel.writer, before_flush);
+    try parallel.writer.flush();
+
+    try std.testing.expectEqual(
+        input.len - before_flush,
+        reader.streamRemaining(&parallel.writer),
+    );
+
+    var actual: [Blake3.digest_length]u8 = undefined;
+    try parallel.finish(&actual);
+    try std.testing.expectEqualSlices(u8, &expected, &actual);
 }

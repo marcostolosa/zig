@@ -697,6 +697,8 @@ pub const Ip6Address = struct {
         ParseFailed,
         /// The interface name is longer than the host operating system supports.
         NameTooLong,
+        /// A supplied numeric zone index was larger than supported (`u32`).
+        Overflow,
     } || Interface.Name.ResolveError;
 
     /// This function requires an `Io` parameter because it must query the operating
@@ -710,6 +712,24 @@ pub const Ip6Address = struct {
                 .port = port,
                 .interface = i: {
                     const text = p.interface_name orelse break :i .none;
+                    if (zone_id_numeric: {
+                        for (text) |c| {
+                            switch (c) {
+                                '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' => {},
+                                else => break :zone_id_numeric false,
+                            }
+                        }
+
+                        break :zone_id_numeric true;
+                    }) {
+                        const index = std.fmt.parseUnsigned(u32, text, 10) catch |err| switch (err) {
+                            error.Overflow => return error.Overflow,
+                            else => unreachable,
+                        };
+                        if (index == 0) return error.InterfaceNotFound;
+                        break :i .{ .index = index };
+                    }
+
                     const name: Interface.Name = try .fromSlice(text);
                     break :i try name.resolve(io);
                 },
@@ -1489,6 +1509,24 @@ test "IpAddress.setPort works" {
     var addr: IpAddress = .{ .ip4 = undefined };
     addr.setPort(0);
     try std.testing.expectEqual(0, addr.getPort());
+}
+
+test "Ip6Address.resolve does not attempt to resolve numeric zone index" {
+    const address = "fe80::abcd:ef12%4294967295"; //  maxInt(u32)
+    const unresovled = Ip6Address.Unresolved.parse(address).success;
+    const resolved = try Ip6Address.resolve(std.testing.io, address, 0);
+    try std.testing.expectEqual(std.math.maxInt(u32), resolved.interface.index);
+    try std.testing.expectEqual(unresovled.bytes, resolved.bytes);
+}
+
+test "Ip6Address.resolve overflow over u32" {
+    const address = "fe80::abcd:ef12%4294967296"; //  maxInt(u32) + 1
+    try std.testing.expectError(error.Overflow, Ip6Address.resolve(std.testing.io, address, 0));
+}
+
+test "Ip6Address.resolve interface index 0 (invalid)" {
+    const address = "fe80::abcd:ef12%0";
+    try std.testing.expectError(error.InterfaceNotFound, Ip6Address.resolve(std.testing.io, address, 0));
 }
 
 fn testIp6Parse(input: []const u8) !void {

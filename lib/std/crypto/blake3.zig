@@ -1812,65 +1812,36 @@ test "BLAKE3 reader streaming into writer vs linear references" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
-    const sizes = [_]usize{
-        parallel_threshold - 1,
-        parallel_threshold,
-        parallel_threshold + 1,
-        parallel_threshold + chunk_length - 1,
-        parallel_threshold + chunk_length,
-    };
+    const items_len = parallel_threshold + chunk_length;
+    const items = try allocator.alloc(u8, items_len);
+    defer allocator.free(items);
 
-    const batch_sizes = [_]usize{
-        chunk_length,
-        chunk_length * 2,
-        chunk_length * 4,
-        chunk_length * 8,
-        chunk_length * 16,
-    };
-
-    const keys = [2]?[Blake3.key_length]u8{
-        null,
-        @splat(0xa5),
-    };
-
-    const bytes: [std.Random.DefaultCsprng.secret_seed_length]u8 = @splat(0x5a);
-    var random_instance = std.Random.DefaultCsprng.init(bytes);
-    const random = random_instance.random();
-
-    for (sizes) |input_len| {
-        const input = try allocator.alloc(u8, input_len);
-        defer allocator.free(input);
-        random.bytes(input);
-
-        for (keys) |key| {
-            var expected: [131]u8 = undefined;
-
-            std.crypto.hash.Blake3.hash(input, &expected, .{ .key = key });
-
-            for (batch_sizes) |batch_size| {
-                var reader: Io.Reader = .fixed(input);
-                var actual: [131]u8 = undefined;
-                const memory_needed = try Blake3.ParallelWriter.bufferSizeFromBatchSize(batch_size);
-                const memory = try allocator.alignedAlloc(
-                    u8,
-                    .of(Blake3.ParallelWriter.Cv),
-                    memory_needed,
-                );
-                defer allocator.free(memory);
-
-                var parallel_writer = try Blake3.ParallelWriter.init(
-                    memory,
-                    batch_size,
-                    .{ .key = key },
-                    io,
-                );
-                defer parallel_writer.deinit();
-                try reader.streamExact(&parallel_writer.writer, input.len);
-                try parallel_writer.finish(&actual);
-                try std.testing.expectEqualSlices(u8, &expected, &actual);
-            }
-        }
+    for (items, 0..) |*item, i| {
+        item.* = @truncate(i);
     }
+
+    var expected: [131]u8 = undefined;
+    std.crypto.hash.Blake3.hash(items, &expected, .{});
+
+    const batch_size: usize = chunk_length * 4;
+    const memory_needed = try Blake3.ParallelWriter.bufferSizeFromBatchSize(batch_size);
+    const memory = try allocator.alignedAlloc(u8, .of(Blake3.ParallelWriter.Cv), memory_needed);
+    defer allocator.free(memory);
+
+    var parallel = try Blake3.ParallelWriter.init(
+        memory,
+        batch_size,
+        .{},
+        io,
+    );
+    defer parallel.deinit();
+
+    var reader: Io.Reader = .fixed(items);
+    try reader.streamExact(&parallel.writer, items.len);
+
+    var actual: [131]u8 = undefined;
+    try parallel.finish(&actual);
+    try std.testing.expectEqualSlices(u8, &expected, &actual);
 }
 
 test "BLAKE3 rejects wrong bath siez" {

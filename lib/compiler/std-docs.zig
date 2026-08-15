@@ -16,6 +16,7 @@ fn usage(io: Io) noreturn {
         \\  -p [port], --port [port]  Port to listen on. Default is 0, meaning an ephemeral port chosen by the system.
         \\  --[no-]open-browser       Force enabling or disabling opening a browser tab to the served website.
         \\                            By default, enabled unless a port is specified.
+        \\  --zig-pkg[=folder]        Include documentation of packages in ./zig-pkg or in the given folder.
         \\
     ) catch {};
     std.process.exit(0);
@@ -38,6 +39,7 @@ pub fn main(init: std.process.Init) !void {
 
     var listen_port: u16 = 0;
     var force_open_browser: ?bool = null;
+    var zig_pkg_dir_path: ?[]const u8 = null;
     while (argv.next()) |arg| {
         if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
             usage(io);
@@ -50,6 +52,10 @@ pub fn main(init: std.process.Init) !void {
             force_open_browser = true;
         } else if (mem.eql(u8, arg, "--no-open-browser")) {
             force_open_browser = false;
+        } else if (mem.eql(u8, arg, "--zig-pkg")) {
+            zig_pkg_dir_path = "./zig-pkg";
+        } else if (mem.cutPrefix(u8, arg, "--zig-pkg=")) |path| {
+            zig_pkg_dir_path = path;
         } else {
             std.log.err("unrecognized argument: {s}", .{arg});
             usage(io);
@@ -70,6 +76,18 @@ pub fn main(init: std.process.Init) !void {
         };
     }
 
+    var zig_pkg_dir: ?Io.Dir = null;
+    if (zig_pkg_dir_path) |path| {
+        if (Io.Dir.cwd().openDir(io, path, .{ .iterate = true })) |dir| {
+            zig_pkg_dir = dir;
+        } else |err| {
+            std.log.err("unable to open --zig-pkg={s}: {t}", .{ path, err });
+        }
+    }
+    defer if (zig_pkg_dir) |dir| {
+        dir.close(io);
+    };
+
     var context: Context = .{
         .gpa = gpa,
         .io = io,
@@ -77,6 +95,7 @@ pub fn main(init: std.process.Init) !void {
         .global_cache_path = global_cache_path,
         .lib_dir = lib_dir,
         .zig_lib_directory = zig_lib_directory,
+        .zig_pkg_dir = zig_pkg_dir,
     };
 
     var group: Io.Group = .init;
@@ -129,6 +148,7 @@ const Context = struct {
     zig_lib_directory: []const u8,
     zig_exe_path: []const u8,
     global_cache_path: []const u8,
+    zig_pkg_dir: ?Io.Dir,
 };
 
 fn serveRequest(request: *std.http.Server.Request, context: *Context) !void {
@@ -199,14 +219,38 @@ fn serveSourcesTar(request: *std.http.Server.Request, context: *Context) !void {
         },
     });
 
-    var std_dir = try context.lib_dir.openDir(io, "std", .{ .iterate = true });
-    defer std_dir.close(io);
-
-    var walker = try std_dir.walk(gpa);
-    defer walker.deinit();
-
     var archiver: std.tar.Writer = .{ .underlying_writer = &response.writer };
-    archiver.prefix = "std";
+
+    {
+        // Add std
+        var std_dir = try context.lib_dir.openDir(io, "std", .{ .iterate = true });
+        defer std_dir.close(io);
+        archiver.prefix = "std";
+        try addDirToArchive(&archiver, io, gpa, std_dir);
+    }
+
+    {
+        // Since this command is JIT compiled, the builtin module available in
+        // this source file corresponds to the user's host system.
+        const builtin_zig = @embedFile("builtin");
+        archiver.prefix = "builtin";
+        try archiver.writeFileBytes("builtin.zig", builtin_zig, .{});
+    }
+
+    if (context.zig_pkg_dir) |zig_pkg_dir| {
+        // Add other packages from zig-pkg
+        archiver.prefix = "zig-pkg";
+        try addDirToArchive(&archiver, io, gpa, zig_pkg_dir);
+    }
+
+    // intentionally omitting the pointless trailer
+    //try archiver.finish();
+    try response.end();
+}
+
+fn addDirToArchive(archiver: *std.tar.Writer, io: Io, gpa: std.mem.Allocator, dir: Io.Dir) !void {
+    var walker = try dir.walk(gpa);
+    defer walker.deinit();
 
     var path_buf: std.ArrayList(u8) = .empty;
     defer path_buf.deinit(gpa);
@@ -242,18 +286,6 @@ fn serveSourcesTar(request: *std.http.Server.Request, context: *Context) !void {
 
         try archiver.writeFileTimestamp(posix_path, &file_reader, stat.mtime);
     }
-
-    {
-        // Since this command is JIT compiled, the builtin module available in
-        // this source file corresponds to the user's host system.
-        const builtin_zig = @embedFile("builtin");
-        archiver.prefix = "builtin";
-        try archiver.writeFileBytes("builtin.zig", builtin_zig, .{});
-    }
-
-    // intentionally omitting the pointless trailer
-    //try archiver.finish();
-    try response.end();
 }
 
 fn serveWasm(

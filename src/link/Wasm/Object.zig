@@ -25,7 +25,7 @@ start_function: Wasm.OptionalObjectFunctionIndex,
 /// A slice of features that tell the linker what features are mandatory, used
 /// (or therefore missing) and must generate an error when another object uses
 /// features that are not supported by the other.
-features: Wasm.Feature.Set,
+features: ?Wasm.Feature.Set,
 /// Points into `Wasm.object_functions`
 functions: RelativeSlice,
 /// Points into `Wasm.object_function_imports`
@@ -102,58 +102,15 @@ pub const TableImport = struct {
 
 pub const DataSegmentFlags = enum(u32) { active, passive, active_memidx };
 
-pub const SubsectionType = enum(u8) {
-    segment_info = 5,
-    init_funcs = 6,
-    comdat_info = 7,
-    symbol_table = 8,
-};
-
-/// Specified by https://github.com/WebAssembly/tool-conventions/blob/main/Linking.md
-pub const RelocationType = enum(u8) {
-    function_index_leb = 0,
-    table_index_sleb = 1,
-    table_index_i32 = 2,
-    memory_addr_leb = 3,
-    memory_addr_sleb = 4,
-    memory_addr_i32 = 5,
-    type_index_leb = 6,
-    global_index_leb = 7,
-    function_offset_i32 = 8,
-    section_offset_i32 = 9,
-    event_index_leb = 10,
-    memory_addr_rel_sleb = 11,
-    table_index_rel_sleb = 12,
-    global_index_i32 = 13,
-    memory_addr_leb64 = 14,
-    memory_addr_sleb64 = 15,
-    memory_addr_i64 = 16,
-    memory_addr_rel_sleb64 = 17,
-    table_index_sleb64 = 18,
-    table_index_i64 = 19,
-    table_number_leb = 20,
-    memory_addr_tls_sleb = 21,
-    function_offset_i64 = 22,
-    memory_addr_locrel_i32 = 23,
-    table_index_rel_sleb64 = 24,
-    memory_addr_tls_sleb64 = 25,
-    function_index_i32 = 26,
-};
+const SubsectionType = std.wasm.LinkingSubsection;
+const RelocationType = std.wasm.RelocationType;
 
 pub const Symbol = struct {
     flags: Wasm.SymbolFlags,
     name: Wasm.OptionalString,
     pointee: Pointee,
 
-    /// https://github.com/WebAssembly/tool-conventions/blob/df8d737539eb8a8f446ba5eab9dc670c40dfb81e/Linking.md#symbol-table-subsection
-    pub const Tag = enum(u8) {
-        function,
-        data,
-        global,
-        section,
-        event,
-        table,
-    };
+    const Tag = std.wasm.LinkingSymbolType;
 
     const Pointee = union(enum) {
         function: Wasm.ObjectFunctionIndex,
@@ -926,41 +883,42 @@ pub fn parse(
             return diags.failParse(path, "object has TLS segment but target CPU feature bulk_memory is disabled", .{});
     }
 
-    const features = opt_features orelse return error.MissingFeatures;
-    for (features.slice(wasm)) |feat| {
-        log.debug("feature: {s}{s}", .{ @tagName(feat.prefix), @tagName(feat.tag) });
-        switch (feat.prefix) {
-            .invalid => unreachable,
-            .@"-" => switch (feat.tag) {
-                .@"shared-mem" => if (comp.config.shared_memory) {
-                    return diags.failParse(path, "object forbids shared-mem but compilation enables it", .{});
+    if (opt_features) |features| {
+        for (features.slice(wasm)) |feat| {
+            log.debug("feature: {s}{s}", .{ @tagName(feat.prefix), @tagName(feat.tag) });
+            switch (feat.prefix) {
+                .invalid => unreachable,
+                .@"-" => switch (feat.tag) {
+                    .@"shared-mem" => if (comp.config.shared_memory) {
+                        return diags.failParse(path, "object forbids shared-mem but compilation enables it", .{});
+                    },
+                    else => {
+                        const f = feat.tag.toCpuFeature().?;
+                        if (cpu.has(.wasm, f)) {
+                            return diags.failParse(
+                                path,
+                                "object forbids {s} but specified target features include {s}",
+                                .{ @tagName(feat.tag), @tagName(f) },
+                            );
+                        }
+                    },
                 },
-                else => {
-                    const f = feat.tag.toCpuFeature().?;
-                    if (cpu.has(.wasm, f)) {
-                        return diags.failParse(
-                            path,
-                            "object forbids {s} but specified target features include {s}",
-                            .{ @tagName(feat.tag), @tagName(f) },
-                        );
-                    }
+                .@"+", .@"=" => switch (feat.tag) {
+                    .@"shared-mem" => if (!comp.config.shared_memory) {
+                        return diags.failParse(path, "object requires shared-mem but compilation disables it", .{});
+                    },
+                    else => {
+                        const f = feat.tag.toCpuFeature().?;
+                        if (!cpu.has(.wasm, f)) {
+                            return diags.failParse(
+                                path,
+                                "object requires {s} but specified target features exclude {s}",
+                                .{ @tagName(feat.tag), @tagName(f) },
+                            );
+                        }
+                    },
                 },
-            },
-            .@"+", .@"=" => switch (feat.tag) {
-                .@"shared-mem" => if (!comp.config.shared_memory) {
-                    return diags.failParse(path, "object requires shared-mem but compilation disables it", .{});
-                },
-                else => {
-                    const f = feat.tag.toCpuFeature().?;
-                    if (!cpu.has(.wasm, f)) {
-                        return diags.failParse(
-                            path,
-                            "object requires {s} but specified target features exclude {s}",
-                            .{ @tagName(feat.tag), @tagName(f) },
-                        );
-                    }
-                },
-            },
+            }
         }
     }
 
@@ -1383,7 +1341,7 @@ pub fn parse(
         .path = path,
         .archive_member_name = try wasm.internOptionalString(archive_member_name),
         .start_function = start_function,
-        .features = features,
+        .features = opt_features,
         .functions = .{
             .off = functions_start,
             .len = functions_len,

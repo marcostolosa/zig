@@ -2902,7 +2902,7 @@ pub const DataImportId = enum(u32) {
 };
 
 pub const ZcuRelocation = struct {
-    tag: Object.RelocationType,
+    tag: std.wasm.RelocationType,
     offset: u32,
     pointee: Pointee,
     addend: i32,
@@ -2923,7 +2923,7 @@ pub const ZcuRelocation = struct {
         off: u32,
         len: u32,
 
-        pub fn tags(s: Slice, wasm: *const Wasm) []const Object.RelocationType {
+        pub fn tags(s: Slice, wasm: *const Wasm) []const std.wasm.RelocationType {
             return wasm.zcu_relocations.items(.tag)[s.off..][0..s.len];
         }
 
@@ -3012,7 +3012,7 @@ pub const ObjectRelocation = struct {
         /// Uses `Pointee.type_index`.
         type_index_leb,
 
-        pub fn fromType(t: Object.RelocationType) Tag {
+        pub fn fromType(t: std.wasm.RelocationType) Tag {
             return switch (t) {
                 .event_index_leb => unreachable,
                 .function_index_i32 => .function_index_i32,
@@ -3044,7 +3044,7 @@ pub const ObjectRelocation = struct {
             };
         }
 
-        pub fn fromTypeImport(t: Object.RelocationType) Tag {
+        pub fn fromTypeImport(t: std.wasm.RelocationType) Tag {
             return switch (t) {
                 .event_index_leb => unreachable,
                 .function_index_i32 => .function_import_index_i32,

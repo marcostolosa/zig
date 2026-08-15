@@ -657,6 +657,7 @@ pub fn build(b: *std.Build) !void {
         .optimize_modes = optimize_modes,
         .skip_non_native = skip_non_native,
         .skip_windows = skip_windows,
+        .skip_wasm = skip_wasm,
         .skip_llvm = skip_llvm,
         .max_rss = 100_000_000,
     }));

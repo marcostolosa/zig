@@ -176,7 +176,7 @@ const DataExportSymbol = struct {
 };
 
 const Relocation = struct {
-    tag: Object.RelocationType,
+    tag: std.wasm.RelocationType,
     offset: u32,
     pointee: Pointee,
     addend: i32,
@@ -1439,11 +1439,11 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
             try appendLeb128(gpa, binary_bytes, @as(u32, 2));
 
             // WASM_SEGMENT_INFO
-            {
+            const total_data_segments: u32 = @intCast(f.data_segment_groups.items.len);
+            if (total_data_segments > 0) {
                 const sub_offset = try reserveCustomSectionHeader(gpa, binary_bytes);
-                defer replaceHeader(binary_bytes, sub_offset, @backingInt(Object.SubsectionType.segment_info));
+                defer replaceHeader(binary_bytes, sub_offset, @backingInt(std.wasm.LinkingSubsection.segment_info));
 
-                const total_data_segments: u32 = @intCast(f.data_segment_groups.items.len);
                 try appendLeb128(gpa, binary_bytes, total_data_segments);
 
                 for (f.data_segment_groups.items) |group| {
@@ -1465,7 +1465,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
             // WASM_SYMBOL_TABLE
             {
                 const sub_offset = try reserveCustomSectionHeader(gpa, binary_bytes);
-                defer replaceHeader(binary_bytes, sub_offset, @backingInt(Object.SubsectionType.symbol_table));
+                defer replaceHeader(binary_bytes, sub_offset, @backingInt(std.wasm.LinkingSubsection.symbol_table));
 
                 const total_symbols: u32 = @intCast(
                     f.function_imports.entries.len + f.intrinsic_function_imports.entries.len +
@@ -1482,7 +1482,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                 {
                     symbol_table_offsets.function = symbol_count;
                     for (f.function_imports.keys(), f.function_imports.values(), 0..) |symbol_name, i, function_index| {
-                        try binary_bytes.append(gpa, @backingInt(Object.Symbol.Tag.function));
+                        try binary_bytes.append(gpa, @backingInt(std.wasm.LinkingSymbolType.function));
                         const flags = i.flags(wasm);
                         assert(flags.undefined);
                         try appendLeb128(gpa, binary_bytes, flags.toAbiInteger());
@@ -1496,7 +1496,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                     }
                     const intrinsic_flags: Wasm.SymbolFlags = .{ .undefined = true };
                     for (f.intrinsic_function_imports.keys(), f.function_imports.entries.len..) |_, function_index| {
-                        try binary_bytes.append(gpa, @backingInt(Object.Symbol.Tag.function));
+                        try binary_bytes.append(gpa, @backingInt(std.wasm.LinkingSymbolType.function));
                         try appendLeb128(gpa, binary_bytes, intrinsic_flags.toAbiInteger());
                         try appendLeb128(gpa, binary_bytes, @as(u32, @intCast(function_index)));
                         symbol_count += 1;
@@ -1507,7 +1507,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                     ) |resolution, function_index| {
                         const name = resolution.name(wasm).?;
                         const flags = resolution.flags(wasm);
-                        try binary_bytes.append(gpa, @backingInt(Object.Symbol.Tag.function));
+                        try binary_bytes.append(gpa, @backingInt(std.wasm.LinkingSymbolType.function));
                         assert(!flags.undefined);
                         try appendLeb128(gpa, binary_bytes, flags.toAbiInteger());
                         try appendLeb128(gpa, binary_bytes, @as(u32, @intCast(function_index)));
@@ -1524,7 +1524,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                             wasm,
                             symbol.function_index,
                         );
-                        try binary_bytes.append(gpa, @backingInt(Object.Symbol.Tag.function));
+                        try binary_bytes.append(gpa, @backingInt(std.wasm.LinkingSymbolType.function));
                         try appendLeb128(gpa, binary_bytes, symbol.flags.toAbiInteger());
                         try appendLeb128(gpa, binary_bytes, @backingInt(function_index));
                         try appendLeb128(gpa, binary_bytes, @as(u32, @intCast(name.len)));
@@ -1538,7 +1538,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                     symbol_table_offsets.data = symbol_count;
                     for (f.data_imports.keys(), f.data_imports.values()) |name_string, data_index| {
                         const name = name_string.slice(wasm);
-                        try binary_bytes.append(gpa, @backingInt(Object.Symbol.Tag.data));
+                        try binary_bytes.append(gpa, @backingInt(std.wasm.LinkingSymbolType.data));
                         const flags = data_index.flags(wasm);
                         assert(flags.undefined);
                         try appendLeb128(gpa, binary_bytes, flags.toAbiInteger());
@@ -1549,7 +1549,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                     for (wasm.datas.keys()) |resolution| {
                         var buf: [32]u8 = undefined;
                         const name = resolution.name(wasm, &buf);
-                        try binary_bytes.append(gpa, @backingInt(Object.Symbol.Tag.data));
+                        try binary_bytes.append(gpa, @backingInt(std.wasm.LinkingSymbolType.data));
                         const flags = resolution.flags(wasm);
                         assert(!flags.undefined);
                         try appendLeb128(gpa, binary_bytes, flags.toAbiInteger());
@@ -1566,7 +1566,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                     }
                     for (f.data_exports.keys(), f.data_exports.values()) |name_string, symbol| {
                         const name = name_string.slice(wasm);
-                        try binary_bytes.append(gpa, @backingInt(Object.Symbol.Tag.data));
+                        try binary_bytes.append(gpa, @backingInt(std.wasm.LinkingSymbolType.data));
                         try appendLeb128(gpa, binary_bytes, symbol.flags.toAbiInteger());
                         try appendLeb128(gpa, binary_bytes, @as(u32, @intCast(name.len)));
                         try binary_bytes.appendSlice(gpa, name);
@@ -1584,7 +1584,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                 {
                     symbol_table_offsets.global = symbol_count;
                     for (f.global_imports.values(), 0..) |i, global_index| {
-                        try binary_bytes.append(gpa, @backingInt(Object.Symbol.Tag.global));
+                        try binary_bytes.append(gpa, @backingInt(std.wasm.LinkingSymbolType.global));
                         const flags = i.flags(wasm);
                         assert(flags.undefined);
                         try appendLeb128(gpa, binary_bytes, flags.toAbiInteger());
@@ -1597,7 +1597,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                     for (wasm.globals.keys(), f.global_imports.entries.len..) |resolution, global_index| {
                         var buf: [32]u8 = undefined;
                         const name = resolution.name(wasm, &buf).?;
-                        try binary_bytes.append(gpa, @backingInt(Object.Symbol.Tag.global));
+                        try binary_bytes.append(gpa, @backingInt(std.wasm.LinkingSymbolType.global));
                         const flags = resolution.flags(wasm);
                         assert(!flags.undefined);
                         try appendLeb128(gpa, binary_bytes, flags.toAbiInteger());
@@ -1622,7 +1622,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                 {
                     symbol_table_offsets.table = symbol_count;
                     for (wasm.table_imports.values(), 0..) |i, table_index| {
-                        try binary_bytes.append(gpa, @backingInt(Object.Symbol.Tag.table));
+                        try binary_bytes.append(gpa, @backingInt(std.wasm.LinkingSymbolType.table));
                         const flags = i.value(wasm).flags;
                         assert(flags.undefined);
                         try appendLeb128(gpa, binary_bytes, flags.toAbiInteger());
@@ -1634,7 +1634,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                     }
                     for (wasm.tables.keys(), wasm.table_imports.entries.len..) |resolution, table_index| {
                         const name = resolution.name(wasm).?;
-                        try binary_bytes.append(gpa, @backingInt(Object.Symbol.Tag.table));
+                        try binary_bytes.append(gpa, @backingInt(std.wasm.LinkingSymbolType.table));
                         const flags = resolution.flags(wasm);
                         assert(!flags.undefined);
                         try appendLeb128(gpa, binary_bytes, flags.toAbiInteger());
@@ -1648,9 +1648,9 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
             }
 
             // WASM_INIT_FUNCS
-            {
+            if (f.sorted_init_funcs.items.len > 0) {
                 const sub_offset = try reserveCustomSectionHeader(gpa, binary_bytes);
-                defer replaceHeader(binary_bytes, sub_offset, @backingInt(Object.SubsectionType.init_funcs));
+                defer replaceHeader(binary_bytes, sub_offset, @backingInt(std.wasm.LinkingSubsection.init_funcs));
 
                 try appendLeb128(gpa, binary_bytes, @as(u32, @intCast(f.sorted_init_funcs.items.len)));
 
@@ -2453,7 +2453,7 @@ fn processRelocs(
     }
 }
 
-fn memoryRelocationType(tag: Wasm.ObjectRelocation.Tag) Object.RelocationType {
+fn memoryRelocationType(tag: Wasm.ObjectRelocation.Tag) std.wasm.RelocationType {
     return switch (tag) {
         .memory_addr_i32, .memory_addr_import_i32 => .memory_addr_i32,
         .memory_addr_i64, .memory_addr_import_i64 => .memory_addr_i64,

@@ -633,6 +633,73 @@ pub const ExternalKind = enum(u8) {
     global,
 };
 
+pub const LinkingSubsection = enum(u8) {
+    segment_info = 5,
+    init_funcs = 6,
+    comdat_info = 7,
+    symbol_table = 8,
+};
+
+/// https://github.com/WebAssembly/tool-conventions/blob/df8d737539eb8a8f446ba5eab9dc670c40dfb81e/Linking.md#symbol-table-subsection
+pub const LinkingSymbolType = enum(u8) {
+    function,
+    data,
+    global,
+    section,
+    event,
+    table,
+};
+
+pub const LinkingSymbolFlags = packed struct(u32) {
+    binding: Binding = .strong,
+    visibility_hidden: bool = false,
+    padding0: u1 = 0,
+    undefined: bool = false,
+    exported: bool = false,
+    explicit_name: bool = false,
+    no_strip: bool = false,
+    tls: bool = false,
+    absolute: bool = false,
+    padding1: u22 = 0,
+
+    pub const Binding = enum(u2) {
+        strong = 0,
+        weak = 1,
+        local = 2,
+    };
+};
+
+/// Specified by https://github.com/WebAssembly/tool-conventions/blob/main/Linking.md
+pub const RelocationType = enum(u8) {
+    function_index_leb = 0,
+    table_index_sleb = 1,
+    table_index_i32 = 2,
+    memory_addr_leb = 3,
+    memory_addr_sleb = 4,
+    memory_addr_i32 = 5,
+    type_index_leb = 6,
+    global_index_leb = 7,
+    function_offset_i32 = 8,
+    section_offset_i32 = 9,
+    event_index_leb = 10,
+    memory_addr_rel_sleb = 11,
+    table_index_rel_sleb = 12,
+    global_index_i32 = 13,
+    memory_addr_leb64 = 14,
+    memory_addr_sleb64 = 15,
+    memory_addr_i64 = 16,
+    memory_addr_rel_sleb64 = 17,
+    table_index_sleb64 = 18,
+    table_index_i64 = 19,
+    table_number_leb = 20,
+    memory_addr_tls_sleb = 21,
+    function_offset_i64 = 22,
+    memory_addr_locrel_i32 = 23,
+    table_index_rel_sleb64 = 24,
+    memory_addr_tls_sleb64 = 25,
+    function_index_i32 = 26,
+};
+
 /// Defines the enum values for each subsection id for the "Names" custom section
 /// as described by:
 /// https://webassembly.github.io/spec/core/appendix/custom.html?highlight=name#name-section

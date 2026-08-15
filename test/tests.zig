@@ -3123,12 +3123,32 @@ const LinkTestOptions = struct {
     optimize_modes: []const OptimizeMode,
     skip_non_native: bool,
     skip_windows: bool,
+    skip_wasm: bool,
     skip_llvm: bool,
     max_rss: usize,
 };
 
 pub fn addLinkTests(b: *std.Build, options: LinkTestOptions) *Step {
     const step = b.step("test-link", "Run the linker tests");
+
+    wasm: {
+        if (options.skip_non_native or options.skip_wasm) break :wasm;
+
+        const resolved_target = b.resolveTargetQuery(.{
+            .cpu_arch = .wasm32,
+            .os_tag = .freestanding,
+        });
+        const triple_txt = resolved_target.query.zigTriple(b.allocator) catch @panic("OOM");
+
+        if (options.test_target_filters.len > 0) {
+            for (options.test_target_filters) |filter| {
+                if (std.mem.find(u8, triple_txt, filter) != null) break;
+            } else break :wasm;
+        }
+
+        @import("link/wasm.zig").addCases(b, step, options.test_filters);
+    }
+
     const update_snapshots = b.option(
         bool,
         "link-snapshot-update",

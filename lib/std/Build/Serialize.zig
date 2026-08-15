@@ -624,6 +624,12 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                             .file_path = try s.addLazyPath(src.file_path),
                         };
 
+                        const only_sections = try arena.alloc(
+                            Configuration.String,
+                            oc.only_sections.items.len,
+                        );
+                        for (only_sections, oc.only_sections.items) |*dest, src| dest.* = src;
+
                         break :e try wc.addExtraErased(Configuration.Step.ObjCopy, .{
                             .flags = .{
                                 .basename = oc.basename != .none,
@@ -632,7 +638,7 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                                 .format = .init(oc.format),
                                 .strip = oc.strip,
                                 .compress_debug = oc.compress_debug,
-                                .only_section = oc.only_section != .none,
+                                .only_sections = oc.only_sections.items.len != 0,
                                 .pad_to = oc.pad_to != null,
                                 .add_section = add_sections.len != 0,
                                 .update_section = oc.update_sections.items.len != 0,
@@ -642,7 +648,7 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                             .basename = .{ .value = oc.basename.unwrap() },
                             .debug_file = .{ .value = debug_file },
                             .debug_basename = .{ .value = debug_basename },
-                            .only_section = .{ .value = oc.only_section.unwrap() },
+                            .only_sections = .{ .slice = only_sections },
                             .pad_to = .{ .value = oc.pad_to },
                             .add_section = .{ .slice = add_sections },
                             .update_section = .{ .slice = oc.update_sections.items },

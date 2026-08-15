@@ -24,7 +24,7 @@ pub fn make(
     const conf_oc = conf_step.extended.get(conf.extra).obj_copy;
     const cache_root = graph.local_cache_root;
     const input_lazy_path = conf_oc.input_file.get(conf);
-    const only_section: ?[]const u8 = if (conf_oc.only_section.value) |s| s.slice(conf) else null;
+    const only_sections: []const Configuration.String = conf_oc.only_sections.slice;
     const opt_basename: ?[]const u8 = if (conf_oc.basename.value) |s| s.slice(conf) else null;
     const opt_debug_basename: ?[]const u8 = if (conf_oc.debug_basename.value) |s| s.slice(conf) else null;
 
@@ -35,7 +35,9 @@ pub fn make(
 
     const input_path = try maker.resolveLazyPath(arena, input_lazy_path, step_index);
     _ = try man.addFilePath(input_path, null);
-    man.hash.addOptionalBytes(only_section);
+    for (only_sections) |only_section| {
+        man.hash.addBytes(only_section.slice(conf));
+    }
     man.hash.addOptionalBytes(opt_basename);
     man.hash.addOptionalBytes(opt_debug_basename);
     man.hash.addOptional(conf_oc.pad_to.value);
@@ -81,7 +83,9 @@ pub fn make(
 
     argv.addManyAsArrayAssumeCapacity(2).* = .{ graph.zig_exe, "objcopy" };
 
-    if (only_section) |s| argv.addManyAsArrayAssumeCapacity(2).* = .{ "-j", s };
+    for (only_sections) |s| {
+        argv.addManyAsArrayAssumeCapacity(2).* = .{ "-j", s.slice(conf) };
+    }
 
     switch (conf_oc.flags.strip) {
         .none => {},

@@ -11,7 +11,7 @@ output_file: Configuration.GeneratedFileIndex,
 debug_file: ?DebugFile,
 
 format: ?Format,
-only_section: Configuration.OptionalString,
+only_sections: std.ArrayList(Configuration.String) = .empty,
 pad_to: ?u64,
 strip: Strip,
 compress_debug: bool,
@@ -38,7 +38,6 @@ pub const DebugFile = struct {
 pub const Options = struct {
     basename: ?[]const u8 = null,
     format: ?Format = null,
-    only_section: ?[]const u8 = null,
     pad_to: ?u64 = null,
 
     compress_debug: bool = false,
@@ -74,7 +73,6 @@ pub fn create(owner: *std.Build, input_file: std.Build.LazyPath, options: Option
             .output_file = graph.addGeneratedFile(&oc.step),
         } else null,
         .format = options.format,
-        .only_section = if (options.only_section) |s| .init(wc.addString(s) catch @panic("OOM")) else .none,
         .pad_to = options.pad_to,
         .strip = options.strip,
         .compress_debug = options.compress_debug,
@@ -114,6 +112,13 @@ pub fn addSection(oc: *ObjCopy, section_name: []const u8, options: AddSectionOpt
         .file_path = options.file_path,
     }) catch @panic("OOM");
     options.file_path.addStepDependencies(&oc.step);
+}
+
+pub fn onlySection(oc: *ObjCopy, section_name: []const u8) void {
+    const graph = oc.step.owner.graph;
+    const arena = graph.arena;
+    const wc = &graph.wip_configuration;
+    oc.only_sections.append(arena, wc.addString(section_name) catch @panic("OOM")) catch @panic("OOM");
 }
 
 pub fn getOutput(oc: *const ObjCopy) std.Build.LazyPath {

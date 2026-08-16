@@ -491,41 +491,240 @@ pub fn HashMap(
     };
 }
 
-/// A HashMap based on open addressing and linear probing.
-/// A lookup or modification typically incurs only 2 cache misses.
+pub const HashMapUnmanaged = Custom;
+
+// Note: cap the group length at 16 bytes, values larger than that give diminishing returns
+// and may end up performing *worse* because it may result in more straddling of cache line
+// boundaries.
+/// Length of a metadata group.
+const group_len: usize = @min(16, std.simd.suggestVectorLength(Metadata) orelse 16);
+
+const Vec = @Vector(group_len, u8);
+
+const uvec = @Int(.unsigned, group_len);
+
+/// Metadata is packed in 'control words' that are byte-sized. The first bit indicates
+/// whether the element at that position is a marker (empty or deleted) or a genuine element.
+/// The rest of the 7 bits are a hash fragment for the element, or magic marker values.
+/// The hash fragment or 'fingerprint' is used as a quick way to compare two elements
+/// without doing a full key comparison.
+/// One consequence of the layout is that the bit indicating the kind of element is the sign bit,
+/// which we can exploit efficiently in SIMD instructions.
+const Metadata = packed struct(u8) {
+    // 7 bit hash fragment.
+    fingerprint: u7,
+    // 1 if empty, 0 if full.
+    control: u1,
+
+    const empty_data: Metadata = .{
+        .control = 1,
+        .fingerprint = 0,
+    };
+
+    const empty_vec: Vec = @splat(@bitCast(empty_data));
+
+    const deleted: Metadata = .{
+        .control = 1,
+        .fingerprint = 0x7E,
+    };
+
+    const deleted_vec: Vec = @splat(@bitCast(deleted));
+
+    fn make(fingerprint: u7) Metadata {
+        return .{
+            .control = 0,
+            .fingerprint = fingerprint,
+        };
+    }
+
+    fn makeVec(fingerprint: u7) Vec {
+        return @splat(@bitCast(make(fingerprint)));
+    }
+
+    inline fn asByte(m: Metadata) u8 {
+        return @bitCast(m);
+    }
+    inline fn isFull(m: Metadata) bool {
+        return m.control == 0;
+    }
+    inline fn isEmpty(m: Metadata) bool {
+        return m.asByte() == empty_data.asByte();
+    }
+    inline fn isDeleted(m: Metadata) bool {
+        return m.asByte() == deleted.asByte();
+    }
+};
+
+/// Represents a group of metadata control words. As metadata fits in only one byte,
+/// we can use vectorized operations to process a bunch (`group_len`) of them in parallel.
+/// This struct contains helper functions for manipulating the underlying `Vec`.
+const Group = struct {
+    vec: Vec,
+
+    inline fn load(metadata: [*]Metadata, index: usize) Group {
+        return .{ .vec = @bitCast(metadata[index..][0..group_len].*) };
+    }
+    inline fn store(self: Group, metadata: [*]Metadata, index: usize) void {
+        metadata[index..][0..group_len].* = @bitCast(self.vec);
+    }
+
+    inline fn match(self: Group, fp: u7) Match {
+        return Match.init(self.vec == Metadata.makeVec(fp));
+    }
+    inline fn matchEmpty(self: Group) Match {
+        return Match.init(self.vec == Metadata.empty_vec);
+    }
+    inline fn matchEmptyOrDeleted(self: Group) Match {
+        const signed: @Vector(group_len, i8) = @bitCast(self.vec);
+
+        // Note: we can do this since the control bit is the sign bit.
+        return Match.init(signed < @as(@Vector(group_len, i8), @splat(0)));
+    }
+    inline fn convertDeletedToEmptyAndFullToDeleted(self: Group) Group {
+        // Keep every control bit only:
+        // full:     0xxxxxxx & 10000000 = 00000000
+        // empty:    10000000 & 10000000 = 10000000
+        // deleted:  11111110 & 10000000 = 10000000
+        // Now, each byte of x is either 0x00 (full) or 0x80 (special)
+        const x = self.vec & @as(Vec, @splat(0x80));
+
+        // full (0x00):
+        // ~x             = 0xFF
+        // x >> 7         = 0x00
+        // ~x + (x >> 7)  = 0xFF
+        // special (0x80):
+        // ~x             = 0x7F
+        // x >> 7         = 0x01
+        // ~x + (x >> 7)  = 0x80
+        //
+        // Then, finally mask off the low bit with & 0xFE:
+        // 0xFF & 0xFE = 0xFE (deleted)
+        // 0x80 & 0xFE = 0x80 (empty)
+        const shift: @Vector(group_len, u3) = @splat(7);
+        return .{ .vec = (~x +% (x >> shift)) & @as(Vec, @splat(0xFE)) };
+    }
+};
+
+const SplitHash = packed struct(u64) {
+    h2: u7,
+    h1: u57,
+};
+
+/// Represents a conditional test over `group_len` bits. The bits indicate whether the test
+/// was true or false at their respective index.
+const Match = struct {
+    bits: uvec,
+
+    const MatchIter = struct {
+        mask: uvec,
+
+        fn next(self: *MatchIter) ?usize {
+            if (self.mask == 0) return null;
+            const idx = @ctz(self.mask);
+            self.mask &= (self.mask - 1);
+            return idx;
+        }
+    };
+
+    fn init(vec: @Vector(group_len, bool)) Match {
+        return .{
+            .bits = @bitCast(vec),
+        };
+    }
+
+    /// Return an iterator walking over every set bit in the match.
+    fn iter(self: *const Match) MatchIter {
+        return .{
+            .mask = self.bits,
+        };
+    }
+
+    /// Return the first bit that is set.
+    fn firstSet(self: *const Match) ?usize {
+        if (self.bits == 0) return null;
+        return @ctz(self.bits);
+    }
+    /// Return whether any match was successful.
+    inline fn any(self: Match) bool {
+        return self.bits != 0;
+    }
+};
+
+/// Represents a probing state.
+/// We make use of quadratic probing with triangular numbers, i.e we follow the sequence
+/// h(k), h(k)+1, h(k)+3, h(k)+6, ...; Since the table size is a power of two, we visit
+/// every slot of the table exactly once, guaranteeing that we'll eventually find an empty
+/// slot.
+const Probe = struct {
+    index: usize,
+    stride: usize,
+    cap_mask: usize,
+
+    pub fn init(index: usize, cap_mask: usize) Probe {
+        return .{
+            .index = index,
+            .stride = 0,
+            .cap_mask = cap_mask,
+        };
+    }
+
+    inline fn next(self: *Probe) void {
+        self.stride += group_len;
+        self.index = (self.index + self.stride) & self.cap_mask;
+    }
+
+    inline fn slot(self: Probe, offset: usize) usize {
+        return (self.index + offset) & self.cap_mask;
+    }
+    inline fn group(self: Probe, metadata: [*]Metadata) Group {
+        return Group.load(metadata, self.index);
+    }
+};
+
+/// A HashMap based on open-addressing and quadratic probing, based on Google's Swiss Table design.
 /// No order is guaranteed and any modification invalidates live iterators.
 /// It achieves good performance with quite high load factors (by default,
-/// grow is triggered at 80% full) and only one byte of overhead per element.
-/// The struct itself is only 16 bytes for a small footprint. This comes at
-/// the price of handling size with u32, which should be reasonable enough
-/// for almost all uses.
-/// Deletions are achieved with tombstones.
-///
-/// Default initialization of this struct is deprecated; use `.empty` instead.
-pub const HashMapUnmanaged = Custom;
-fn Custom(
+/// grow is triggered at 88% full) and only one byte of overhead per element.
+pub fn Custom(
     comptime K: type,
     comptime V: type,
     comptime Context: type,
-    comptime max_load_percentage: u64,
+    comptime max_load_percentage: u8,
 ) type {
+    // Brief Overview:
+    // The Swiss Table design relies on SIMD operations for very fast probing; logically, the
+    // table is organized into groups of `group_len` slots, where `group_len` is the processor's
+    // SIMD size (in reality, we cap it to 16 bytes, see comment above).
+    //
+    // At any given point, there are N slots, where N is a power-of-two capacity, and N+group_len-1
+    // bytes of metadata. The [N,N+group_len-1] range is mirrored metadata from the low `group_len`
+    // slots of the table as to make SIMD operation more efficient (i.e we always have `group_len`
+    // valid bytes to operate on.)
+    //
+    // Each metadata byte has the following layout: |C|HHHHHHH|, where C is a 'control' bit,
+    // denoting the entry's type, and H is a 7-bit hash fragment. An entry is always either
+    // 'full' (c=0), 'empty' (c=1, H=0) or 'deleted' (c=1, H=all ones).
+    //
+    // Probing is done by taking the top 57 bits of the hash and using them to select a
+    // group. Then, SIMD is leveraged to compare all the bytes of the group simultaneously for
+    // a match in the low 7 bits of the hash. If no suitable member is found, probing is done
+    // quadratically using triangular numbers, ensuring every entry is walked exactly once.
+    //
+    // Resources:
+    // - https://faultlore.com/blah/hashbrown-tldr/
+    // - https://abseil.io/about/design/swisstables
+    // - https://github.com/cockroachdb/swiss/blob/main/map.go
     if (max_load_percentage <= 0 or max_load_percentage >= 100)
         @compileError("max_load_percentage must be between 0 and 100.");
     return struct {
         const Self = @This();
 
-        // This is actually a midway pointer to the single buffer containing
-        // a `Header` field, the `Metadata`s and `Entry`s.
-        // At `-@sizeOf(Header)` is the Header field.
-        // At `sizeOf(Metadata) * capacity + offset`, which is pointed to by
-        // self.header().entries, is the array of entries.
-        // This means that the hashmap only holds one live allocation, to
-        // reduce memory fragmentation and struct size.
-        /// Pointer to the metadata.
-        metadata: ?[*]Metadata = null,
+        table: ?[*]u8 = null,
 
         /// Current number of elements in the hashmap.
         size: Size = 0,
+        /// Allocated capacity.
+        capacity_: Size = 0,
 
         // Having a countdown to grow reduces the number of instructions to
         // execute when determining if the hashmap has enough capacity already.
@@ -536,14 +735,19 @@ fn Custom(
         /// Used to detect memory safety violations.
         pointer_stability: std.debug.SafetyLock = .{},
 
-        // This is purely empirical and not a /very smart magic constant™/.
         /// Capacity of the first grow when bootstrapping the hashmap.
         const minimal_capacity = 8;
 
+        comptime {
+            std.debug.assert(capacityToGrowth(minimal_capacity) < minimal_capacity);
+            std.debug.assert(capacityToGrowth(minimal_capacity) >= 1);
+        }
+
         /// A map containing no keys or values.
         pub const empty: Self = .{
-            .metadata = null,
+            .table = null,
             .size = 0,
+            .capacity_ = 0,
             .available = 0,
         };
 
@@ -564,93 +768,46 @@ fn Custom(
             value: V,
         };
 
-        const Header = struct {
-            values: [*]V,
-            keys: [*]K,
-            capacity: Size,
-        };
+        /// Number of metadata bytes.
+        /// There is one byte per slot, plus a mirrored section of `group_len-1` bytes that mirrors
+        /// the first indicies of the array. This is used to make the code simpler and assume we
+        /// can always do a SIMD operation without running off into KV storage.
+        /// The table ends up in one contiguous allocation like so:
+        /// ----------------------------
+        /// |metadata|mirror padding|KV|
+        /// ---------------------------
+        fn metadataLen(cap: usize) usize {
+            return cap + group_len - 1;
+        }
 
-        /// Metadata for a slot. It can be in three states: empty, used or
-        /// tombstone. Tombstones indicate that an entry was previously used,
-        /// they are a simple way to handle removal.
-        /// To this state, we add 7 bits from the slot's key hash. These are
-        /// used as a fast way to disambiguate between entries without
-        /// having to use the equality function. If two fingerprints are
-        /// different, we know that we don't have to compare the keys at all.
-        /// The 7 bits are the highest ones from a 64 bit hash. This way, not
-        /// only we use the `log2(capacity)` lowest bits from the hash to determine
-        /// a slot index, but we use 7 more bits to quickly resolve collisions
-        /// when multiple elements with different hashes end up wanting to be in the same slot.
-        /// Not using the equality function means we don't have to read into
-        /// the entries array, likely avoiding a cache miss and a potentially
-        /// costly function call.
-        const Metadata = packed struct {
-            const FingerPrint = u7;
+        /// Offset of the start of KV entries in the contiguous allocation.
+        /// This is aligned with KV.
+        fn entriesOffset(cap: usize) usize {
+            return std.mem.alignForward(usize, metadataLen(cap), @alignOf(KV));
+        }
 
-            const free: FingerPrint = 0;
-            const tombstone: FingerPrint = 1;
-
-            fingerprint: FingerPrint = free,
-            used: u1 = 0,
-
-            const slot_free: u8 = @bitCast(Metadata{ .fingerprint = free });
-            const slot_tombstone: u8 = @bitCast(Metadata{ .fingerprint = tombstone });
-
-            pub fn isUsed(self: Metadata) bool {
-                return self.used == 1;
-            }
-
-            pub fn isTombstone(self: Metadata) bool {
-                return @as(u8, @bitCast(self)) == slot_tombstone;
-            }
-
-            pub fn isFree(self: Metadata) bool {
-                return @as(u8, @bitCast(self)) == slot_free;
-            }
-
-            pub fn takeFingerprint(hash: Hash) FingerPrint {
-                const hash_bits = @typeInfo(Hash).int.bits;
-                const fp_bits = @typeInfo(FingerPrint).int.bits;
-                return @as(FingerPrint, @truncate(hash >> (hash_bits - fp_bits)));
-            }
-
-            pub fn fill(self: *Metadata, fp: FingerPrint) void {
-                self.used = 1;
-                self.fingerprint = fp;
-            }
-
-            pub fn remove(self: *Metadata) void {
-                self.used = 0;
-                self.fingerprint = tombstone;
-            }
-        };
-
-        comptime {
-            assert(@sizeOf(Metadata) == 1);
-            assert(@alignOf(Metadata) == 1);
+        /// Total allocated length of the table.
+        fn tableLen(cap: usize) usize {
+            return entriesOffset(cap) + @sizeOf(KV) * cap;
         }
 
         pub const Iterator = struct {
             hm: *const Self,
-            index: Size = 0,
+            index: usize = 0,
 
             pub fn next(it: *Iterator) ?Entry {
-                assert(it.index <= it.hm.capacity());
+                std.debug.assert(it.index <= it.hm.capacity_);
                 if (it.hm.size == 0) return null;
 
-                const cap = it.hm.capacity();
-                const end = it.hm.metadata.? + cap;
-                var metadata = it.hm.metadata.? + it.index;
+                const cap = it.hm.capacity_;
+                const entries = it.hm.entriesPtr();
+                const metadata = it.hm.metadataPtr();
 
-                while (metadata != end) : ({
-                    metadata += 1;
-                    it.index += 1;
-                }) {
-                    if (metadata[0].isUsed()) {
-                        const key = &it.hm.keys()[it.index];
-                        const value = &it.hm.values()[it.index];
+                while (it.index < cap) : (it.index += 1) {
+                    if (metadata[it.index].isFull()) {
+                        const entry = &entries[it.index];
                         it.index += 1;
-                        return Entry{ .key_ptr = key, .value_ptr = value };
+                        return .{ .key_ptr = &entry.key, .value_ptr = &entry.value };
                     }
                 }
 
@@ -658,25 +815,24 @@ fn Custom(
             }
         };
 
-        pub const KeyIterator = FieldIterator(K);
-        pub const ValueIterator = FieldIterator(V);
+        pub const KeyIterator = FieldIterator(K, "key");
 
-        fn FieldIterator(comptime T: type) type {
+        pub const ValueIterator = FieldIterator(V, "value");
+
+        fn FieldIterator(comptime T: type, comptime field: []const u8) type {
             return struct {
                 len: usize,
                 metadata: [*]const Metadata,
-                items: [*]T,
+                items: [*]KV,
 
                 pub fn next(self: *@This()) ?*T {
                     while (self.len > 0) {
                         self.len -= 1;
-                        const used = self.metadata[0].isUsed();
-                        const item = &self.items[0];
+                        const used = self.metadata[0].isFull();
+                        const item = &@field(self.items[0], field);
                         self.metadata += 1;
                         self.items += 1;
-                        if (used) {
-                            return item;
-                        }
+                        if (used) return item;
                     }
                     return null;
                 }
@@ -722,20 +878,24 @@ fn Custom(
             self.pointer_stability.unlock();
         }
 
-        fn isUnderMaxLoadPercentage(size: Size, cap: Size) bool {
-            return size * 100 < max_load_percentage * cap;
+        /// The number of live elements `cap` slots may hold before a grow is
+        /// required.
+        inline fn capacityToGrowth(cap: Size) Size {
+            return (cap * max_load_percentage) / 100;
         }
 
         pub fn deinit(self: *Self, allocator: Allocator) void {
             self.pointer_stability.assertUnlocked();
-            self.deallocate(allocator);
+            if (self.table) |table| {
+                allocator.free(@as([*]align(@alignOf(KV)) u8, @alignCast(table))[0..tableLen(self.capacity_)]);
+            }
             self.* = undefined;
         }
 
         fn capacityForSize(size: Size) Size {
-            var new_cap: u32 = @intCast((@as(u64, size) * 100) / max_load_percentage + 1);
-            new_cap = math.ceilPowerOfTwo(u32, new_cap) catch unreachable;
-            return new_cap;
+            const min_cap = (@as(u64, size) * 100) / max_load_percentage + 1;
+            const new_cap = std.math.ceilPowerOfTwo(u64, min_cap) catch unreachable;
+            return @max(minimal_capacity, @as(Size, @intCast(new_cap)));
         }
 
         pub fn ensureTotalCapacity(self: *Self, allocator: Allocator, new_size: Size) Allocator.Error!void {
@@ -743,6 +903,7 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call ensureTotalCapacityContext instead.");
             return ensureTotalCapacityContext(self, allocator, new_size, undefined);
         }
+
         pub fn ensureTotalCapacityContext(self: *Self, allocator: Allocator, new_size: Size, ctx: Context) Allocator.Error!void {
             self.pointer_stability.lock();
             defer self.pointer_stability.unlock();
@@ -755,6 +916,7 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call ensureUnusedCapacityContext instead.");
             return ensureUnusedCapacityContext(self, allocator, additional_size, undefined);
         }
+
         pub fn ensureUnusedCapacityContext(self: *Self, allocator: Allocator, additional_size: Size, ctx: Context) Allocator.Error!void {
             return ensureTotalCapacityContext(self, allocator, self.count() + additional_size, ctx);
         }
@@ -762,17 +924,23 @@ fn Custom(
         pub fn clearRetainingCapacity(self: *Self) void {
             self.pointer_stability.lock();
             defer self.pointer_stability.unlock();
-            if (self.metadata) |_| {
-                self.initMetadatas();
+            if (self.table) |_| {
+                const metadata = self.metadataPtr()[0..metadataLen(self.capacity_)];
+                @memset(metadata, Metadata.empty_data);
+
                 self.size = 0;
-                self.available = @truncate((self.capacity() * max_load_percentage) / 100);
+                self.available = capacityToGrowth(self.capacity_);
             }
         }
 
         pub fn clearAndFree(self: *Self, allocator: Allocator) void {
             self.pointer_stability.lock();
             defer self.pointer_stability.unlock();
-            self.deallocate(allocator);
+            if (self.table) |table| {
+                allocator.free(@as([*]align(@alignOf(KV)) u8, @alignCast(table))[0..tableLen(self.capacity_)]);
+            }
+            self.table = null;
+            self.capacity_ = 0;
             self.size = 0;
             self.available = 0;
         }
@@ -781,22 +949,16 @@ fn Custom(
             return self.size;
         }
 
-        fn header(self: Self) *Header {
-            return @ptrCast(@as([*]Header, @ptrCast(@alignCast(self.metadata.?))) - 1);
+        inline fn metadataPtr(self: *const Self) [*]Metadata {
+            return @ptrCast(&self.table.?[0]);
         }
 
-        fn keys(self: Self) [*]K {
-            return self.header().keys;
-        }
-
-        fn values(self: Self) [*]V {
-            return self.header().values;
+        inline fn entriesPtr(self: *const Self) [*]KV {
+            return @ptrCast(@alignCast(&self.table.?[entriesOffset(self.capacity_)]));
         }
 
         pub fn capacity(self: Self) Size {
-            if (self.metadata == null) return 0;
-
-            return self.header().capacity;
+            return self.capacity_;
         }
 
         pub fn iterator(self: *const Self) Iterator {
@@ -804,34 +966,26 @@ fn Custom(
         }
 
         pub fn keyIterator(self: Self) KeyIterator {
-            if (self.metadata) |metadata| {
+            if (self.table) |_| {
                 return .{
-                    .len = self.capacity(),
-                    .metadata = metadata,
-                    .items = self.keys(),
+                    .len = self.capacity_,
+                    .metadata = self.metadataPtr(),
+                    .items = self.entriesPtr(),
                 };
             } else {
-                return .{
-                    .len = 0,
-                    .metadata = undefined,
-                    .items = undefined,
-                };
+                return .{ .len = 0, .metadata = undefined, .items = undefined };
             }
         }
 
         pub fn valueIterator(self: Self) ValueIterator {
-            if (self.metadata) |metadata| {
+            if (self.table) |_| {
                 return .{
-                    .len = self.capacity(),
-                    .metadata = metadata,
-                    .items = self.values(),
+                    .len = self.capacity_,
+                    .metadata = self.metadataPtr(),
+                    .items = self.entriesPtr(),
                 };
             } else {
-                return .{
-                    .len = 0,
-                    .metadata = undefined,
-                    .items = undefined,
-                };
+                return .{ .len = 0, .metadata = undefined, .items = undefined };
             }
         }
 
@@ -841,6 +995,7 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call putNoClobberContext instead.");
             return self.putNoClobberContext(allocator, key, value, undefined);
         }
+
         pub fn putNoClobberContext(self: *Self, allocator: Allocator, key: K, value: V, ctx: Context) Allocator.Error!void {
             {
                 self.pointer_stability.lock();
@@ -858,6 +1013,7 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call putAssumeCapacityContext instead.");
             return self.putAssumeCapacityContext(key, value, undefined);
         }
+
         pub fn putAssumeCapacityContext(self: *Self, key: K, value: V, ctx: Context) void {
             const gop = self.getOrPutAssumeCapacityContext(key, ctx);
             gop.value_ptr.* = value;
@@ -870,28 +1026,11 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call putAssumeCapacityNoClobberContext instead.");
             return self.putAssumeCapacityNoClobberContext(key, value, undefined);
         }
+
         pub fn putAssumeCapacityNoClobberContext(self: *Self, key: K, value: V, ctx: Context) void {
-            assert(!self.containsContext(key, ctx));
-
-            const hash: Hash = ctx.hash(key);
-            const mask = self.capacity() - 1;
-            var idx: usize = @truncate(hash & mask);
-
-            var metadata = self.metadata.? + idx;
-            while (metadata[0].isUsed()) {
-                idx = (idx + 1) & mask;
-                metadata = self.metadata.? + idx;
-            }
-
-            assert(self.available > 0);
-            self.available -= 1;
-
-            const fingerprint = Metadata.takeFingerprint(hash);
-            metadata[0].fill(fingerprint);
-            self.keys()[idx] = key;
-            self.values()[idx] = value;
-
-            self.size += 1;
+            const result = self.getOrPutAssumeCapacityContext(key, ctx);
+            std.debug.assert(!result.found_existing);
+            result.value_ptr.* = value;
         }
 
         /// Inserts a new `Entry` into the hash map, returning the previous one, if any.
@@ -900,6 +1039,7 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call fetchPutContext instead.");
             return self.fetchPutContext(allocator, key, value, undefined);
         }
+
         pub fn fetchPutContext(self: *Self, allocator: Allocator, key: K, value: V, ctx: Context) Allocator.Error!?KV {
             const gop = try self.getOrPutContext(allocator, key, ctx);
             var result: ?KV = null;
@@ -920,6 +1060,7 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call fetchPutAssumeCapacityContext instead.");
             return self.fetchPutAssumeCapacityContext(key, value, undefined);
         }
+
         pub fn fetchPutAssumeCapacityContext(self: *Self, key: K, value: V, ctx: Context) ?KV {
             const gop = self.getOrPutAssumeCapacityContext(key, ctx);
             var result: ?KV = null;
@@ -940,63 +1081,29 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call fetchRemoveContext instead.");
             return self.fetchRemoveContext(key, undefined);
         }
+
         pub fn fetchRemoveContext(self: *Self, key: K, ctx: Context) ?KV {
             return self.fetchRemoveAdapted(key, ctx);
         }
-        pub fn fetchRemoveAdapted(self: *Self, key: anytype, ctx: anytype) ?KV {
-            if (self.getIndex(key, ctx)) |idx| {
-                const old_key = &self.keys()[idx];
-                const old_val = &self.values()[idx];
-                const result = KV{
-                    .key = old_key.*,
-                    .value = old_val.*,
-                };
-                self.metadata.?[idx].remove();
-                old_key.* = undefined;
-                old_val.* = undefined;
-                self.size -= 1;
-                self.available += 1;
-                return result;
-            }
 
-            return null;
+        pub fn fetchRemoveAdapted(self: *Self, key: anytype, ctx: anytype) ?KV {
+            const idx = self.getIndex(key, ctx) orelse return null;
+            const result = self.entriesPtr()[idx];
+            self.removeByIndex(idx);
+            return result;
         }
 
-        /// Find the index containing the data for the given key.
         fn getIndex(self: Self, key: anytype, ctx: anytype) ?usize {
             if (self.size == 0) {
-                // We use cold instead of unlikely to force a jump to this case,
-                // no matter the weight of the opposing side.
                 @branchHint(.cold);
                 return null;
             }
-
-            // If you get a compile error on this line, it means that your generic hash
-            // function is invalid for these parameters.
             const hash: Hash = ctx.hash(key);
-
-            const mask = self.capacity() - 1;
-            const fingerprint = Metadata.takeFingerprint(hash);
-            // Don't loop indefinitely when there are no empty slots.
-            var limit = self.capacity();
-            var idx = @as(usize, @truncate(hash & mask));
-
-            var metadata = self.metadata.? + idx;
-            while (!metadata[0].isFree() and limit != 0) {
-                if (metadata[0].isUsed() and metadata[0].fingerprint == fingerprint) {
-                    const test_key = &self.keys()[idx];
-
-                    if (ctx.eql(key, test_key.*)) {
-                        return idx;
-                    }
-                }
-
-                limit -= 1;
-                idx = (idx + 1) & mask;
-                metadata = self.metadata.? + idx;
-            }
-
-            return null;
+            const split: SplitHash = @bitCast(hash);
+            return switch (self.findSlot(key, split, ctx, .read)) {
+                .found => |s| s,
+                .vacant => null,
+            };
         }
 
         pub fn getEntry(self: Self, key: K) ?Entry {
@@ -1004,17 +1111,15 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call getEntryContext instead.");
             return self.getEntryContext(key, undefined);
         }
+
         pub fn getEntryContext(self: Self, key: K, ctx: Context) ?Entry {
             return self.getEntryAdapted(key, ctx);
         }
+
         pub fn getEntryAdapted(self: Self, key: anytype, ctx: anytype) ?Entry {
-            if (self.getIndex(key, ctx)) |idx| {
-                return Entry{
-                    .key_ptr = &self.keys()[idx],
-                    .value_ptr = &self.values()[idx],
-                };
-            }
-            return null;
+            const idx = self.getIndex(key, ctx) orelse return null;
+            const entry = &self.entriesPtr()[idx];
+            return .{ .key_ptr = &entry.key, .value_ptr = &entry.value };
         }
 
         /// Insert an entry if the associated key is not already present, otherwise update preexisting value.
@@ -1023,6 +1128,7 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call putContext instead.");
             return self.putContext(allocator, key, value, undefined);
         }
+
         pub fn putContext(self: *Self, allocator: Allocator, key: K, value: V, ctx: Context) Allocator.Error!void {
             const result = try self.getOrPutContext(allocator, key, ctx);
             result.value_ptr.* = value;
@@ -1034,14 +1140,14 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call getKeyPtrContext instead.");
             return self.getKeyPtrContext(key, undefined);
         }
+
         pub fn getKeyPtrContext(self: Self, key: K, ctx: Context) ?*K {
             return self.getKeyPtrAdapted(key, ctx);
         }
+
         pub fn getKeyPtrAdapted(self: Self, key: anytype, ctx: anytype) ?*K {
-            if (self.getIndex(key, ctx)) |idx| {
-                return &self.keys()[idx];
-            }
-            return null;
+            const idx = self.getIndex(key, ctx) orelse return null;
+            return &self.entriesPtr()[idx].key;
         }
 
         /// Get a copy of the actual key associated with adapted key, if present.
@@ -1050,14 +1156,14 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call getKeyContext instead.");
             return self.getKeyContext(key, undefined);
         }
+
         pub fn getKeyContext(self: Self, key: K, ctx: Context) ?K {
             return self.getKeyAdapted(key, ctx);
         }
+
         pub fn getKeyAdapted(self: Self, key: anytype, ctx: anytype) ?K {
-            if (self.getIndex(key, ctx)) |idx| {
-                return self.keys()[idx];
-            }
-            return null;
+            const idx = self.getIndex(key, ctx) orelse return null;
+            return self.entriesPtr()[idx].key;
         }
 
         /// Get an optional pointer to the value associated with key, if present.
@@ -1066,14 +1172,14 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call getPtrContext instead.");
             return self.getPtrContext(key, undefined);
         }
+
         pub fn getPtrContext(self: Self, key: K, ctx: Context) ?*V {
             return self.getPtrAdapted(key, ctx);
         }
+
         pub fn getPtrAdapted(self: Self, key: anytype, ctx: anytype) ?*V {
-            if (self.getIndex(key, ctx)) |idx| {
-                return &self.values()[idx];
-            }
-            return null;
+            const idx = self.getIndex(key, ctx) orelse return null;
+            return &self.entriesPtr()[idx].value;
         }
 
         /// Get a copy of the value associated with key, if present.
@@ -1082,14 +1188,14 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call getContext instead.");
             return self.getContext(key, undefined);
         }
+
         pub fn getContext(self: Self, key: K, ctx: Context) ?V {
             return self.getAdapted(key, ctx);
         }
+
         pub fn getAdapted(self: Self, key: anytype, ctx: anytype) ?V {
-            if (self.getIndex(key, ctx)) |idx| {
-                return self.values()[idx];
-            }
-            return null;
+            const idx = self.getIndex(key, ctx) orelse return null;
+            return self.entriesPtr()[idx].value;
         }
 
         pub fn getOrPut(self: *Self, allocator: Allocator, key: K) Allocator.Error!GetOrPutResult {
@@ -1097,6 +1203,7 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call getOrPutContext instead.");
             return self.getOrPutContext(allocator, key, undefined);
         }
+
         pub fn getOrPutContext(self: *Self, allocator: Allocator, key: K, ctx: Context) Allocator.Error!GetOrPutResult {
             const gop = try self.getOrPutContextAdapted(allocator, key, ctx, ctx);
             if (!gop.found_existing) {
@@ -1104,23 +1211,40 @@ fn Custom(
             }
             return gop;
         }
+
         pub fn getOrPutAdapted(self: *Self, allocator: Allocator, key: anytype, key_ctx: anytype) Allocator.Error!GetOrPutResult {
             if (@sizeOf(Context) != 0)
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call getOrPutContextAdapted instead.");
             return self.getOrPutContextAdapted(allocator, key, key_ctx, undefined);
         }
+
         pub fn getOrPutContextAdapted(self: *Self, allocator: Allocator, key: anytype, key_ctx: anytype, ctx: Context) Allocator.Error!GetOrPutResult {
+            if (self.table != null) {
+                const hash: Hash = key_ctx.hash(key);
+                const split: SplitHash = @bitCast(hash);
+                const entries = self.entriesPtr();
+                const metadata = self.metadataPtr();
+
+                switch (self.findSlot(key, split, key_ctx, .write)) {
+                    .found => |s| return .{
+                        .key_ptr = &entries[s].key,
+                        .value_ptr = &entries[s].value,
+                        .found_existing = true,
+                    },
+                    .vacant => |s| if (self.available != 0 or !metadata[s].isEmpty())
+                        return self.claimSlot(metadata, entries, s, split.h2),
+                }
+            }
+
             {
                 self.pointer_stability.lock();
                 defer self.pointer_stability.unlock();
                 self.growIfNeeded(allocator, 1, ctx) catch |err| {
-                    // If allocation fails, try to do the lookup anyway.
-                    // If we find an existing item, we can return it.
-                    // Otherwise return the error, we could not add another.
-                    const index = self.getIndex(key, key_ctx) orelse return err;
-                    return GetOrPutResult{
-                        .key_ptr = &self.keys()[index],
-                        .value_ptr = &self.values()[index],
+                    const idx = self.getIndex(key, key_ctx) orelse return err;
+                    const entry = &self.entriesPtr()[idx];
+                    return .{
+                        .key_ptr = &entry.key,
+                        .value_ptr = &entry.value,
                         .found_existing = true,
                     };
                 };
@@ -1133,6 +1257,7 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call getOrPutAssumeCapacityContext instead.");
             return self.getOrPutAssumeCapacityContext(key, undefined);
         }
+
         pub fn getOrPutAssumeCapacityContext(self: *Self, key: K, ctx: Context) GetOrPutResult {
             const result = self.getOrPutAssumeCapacityAdapted(key, ctx);
             if (!result.found_existing) {
@@ -1140,59 +1265,36 @@ fn Custom(
             }
             return result;
         }
+
         pub fn getOrPutAssumeCapacityAdapted(self: *Self, key: anytype, ctx: anytype) GetOrPutResult {
+            std.debug.assert(self.table != null);
 
-            // If you get a compile error on this line, it means that your generic hash
-            // function is invalid for these parameters.
             const hash: Hash = ctx.hash(key);
+            const split: SplitHash = @bitCast(hash);
+            const entries = self.entriesPtr();
+            const metadata = self.metadataPtr();
 
-            const mask = self.capacity() - 1;
-            const fingerprint = Metadata.takeFingerprint(hash);
-            var limit = self.capacity();
-            var idx = @as(usize, @truncate(hash & mask));
+            return switch (self.findSlot(key, split, ctx, .write)) {
+                .found => |s| .{
+                    .key_ptr = &entries[s].key,
+                    .value_ptr = &entries[s].value,
+                    .found_existing = true,
+                },
+                .vacant => |s| self.claimSlot(metadata, entries, s, split.h2),
+            };
+        }
 
-            var first_tombstone_idx: usize = self.capacity(); // invalid index
-            var metadata = self.metadata.? + idx;
-            while (!metadata[0].isFree() and limit != 0) {
-                if (metadata[0].isUsed() and metadata[0].fingerprint == fingerprint) {
-                    const test_key = &self.keys()[idx];
-                    // If you get a compile error on this line, it means that your generic eql
-                    // function is invalid for these parameters.
-
-                    if (ctx.eql(key, test_key.*)) {
-                        return GetOrPutResult{
-                            .key_ptr = test_key,
-                            .value_ptr = &self.values()[idx],
-                            .found_existing = true,
-                        };
-                    }
-                } else if (first_tombstone_idx == self.capacity() and metadata[0].isTombstone()) {
-                    first_tombstone_idx = idx;
-                }
-
-                limit -= 1;
-                idx = (idx + 1) & mask;
-                metadata = self.metadata.? + idx;
+        fn claimSlot(self: *Self, metadata: [*]Metadata, entries: [*]KV, slot: usize, fp: u7) GetOrPutResult {
+            if (metadata[slot].isEmpty()) {
+                std.debug.assert(self.available > 0);
+                self.available -= 1;
             }
-
-            if (first_tombstone_idx < self.capacity()) {
-                // Cheap try to lower probing lengths after deletions. Recycle a tombstone.
-                idx = first_tombstone_idx;
-                metadata = self.metadata.? + idx;
-            }
-            // We're using a slot previously free or a tombstone.
-            self.available -= 1;
-
-            metadata[0].fill(fingerprint);
-            const new_key = &self.keys()[idx];
-            const new_value = &self.values()[idx];
-            new_key.* = undefined;
-            new_value.* = undefined;
+            self.setMetadata(metadata, slot, Metadata.make(fp));
             self.size += 1;
 
-            return GetOrPutResult{
-                .key_ptr = new_key,
-                .value_ptr = new_value,
+            return .{
+                .key_ptr = &entries[slot].key,
+                .value_ptr = &entries[slot].value,
                 .found_existing = false,
             };
         }
@@ -1202,13 +1304,11 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call getOrPutValueContext instead.");
             return self.getOrPutValueContext(allocator, key, value, undefined);
         }
+
         pub fn getOrPutValueContext(self: *Self, allocator: Allocator, key: K, value: V, ctx: Context) Allocator.Error!Entry {
-            const res = try self.getOrPutAdapted(allocator, key, ctx);
-            if (!res.found_existing) {
-                res.key_ptr.* = key;
-                res.value_ptr.* = value;
-            }
-            return Entry{ .key_ptr = res.key_ptr, .value_ptr = res.value_ptr };
+            const res = try self.getOrPutContext(allocator, key, ctx);
+            if (!res.found_existing) res.value_ptr.* = value;
+            return .{ .key_ptr = res.key_ptr, .value_ptr = res.value_ptr };
         }
 
         /// Return true if there is a value associated with key in the map.
@@ -1217,19 +1317,25 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call containsContext instead.");
             return self.containsContext(key, undefined);
         }
+
         pub fn containsContext(self: Self, key: K, ctx: Context) bool {
             return self.containsAdapted(key, ctx);
         }
+
         pub fn containsAdapted(self: Self, key: anytype, ctx: anytype) bool {
             return self.getIndex(key, ctx) != null;
         }
 
         fn removeByIndex(self: *Self, idx: usize) void {
-            self.metadata.?[idx].remove();
-            self.keys()[idx] = undefined;
-            self.values()[idx] = undefined;
+            const metadata = self.metadataPtr();
+            if (self.canMarkEmpty(idx)) {
+                self.setMetadata(metadata, idx, Metadata.empty_data);
+                self.available += 1;
+            } else {
+                self.setMetadata(metadata, idx, Metadata.deleted);
+            }
+            self.entriesPtr()[idx] = undefined;
             self.size -= 1;
-            self.available += 1;
         }
 
         /// If there is an `Entry` with a matching key, it is deleted from
@@ -1261,39 +1367,43 @@ fn Custom(
             return false;
         }
 
-        /// Delete the entry with key pointed to by key_ptr from the hash map.
-        /// key_ptr is assumed to be a valid pointer to a key that is present
-        /// in the hash map.
-        ///
-        /// TODO: answer the question in these doc comments, does this
-        /// increase the unused capacity by one?
         pub fn removeByPtr(self: *Self, key_ptr: *K) void {
-            // if @sizeOf(K) == 0 then there is at most one item in the hash
-            // map, which is assumed to exist as key_ptr must be valid.  This
-            // item must be at index 0.
-            const idx = if (@sizeOf(K) > 0)
-                @as([*]K, @ptrCast(key_ptr)) - self.keys()
+            const idx = if (@sizeOf(KV) > 0)
+                (@intFromPtr(key_ptr) - @intFromPtr(self.entriesPtr())) / @sizeOf(KV)
             else
                 0;
-
             self.removeByIndex(idx);
         }
 
-        fn initMetadatas(self: *Self) void {
-            @memset(@as([*]u8, @ptrCast(self.metadata.?))[0 .. @sizeOf(Metadata) * self.capacity()], 0);
+        inline fn setMetadata(self: *Self, metadata: [*]Metadata, index: usize, value: Metadata) void {
+            setMetadataWith(metadata, self.capacity_ - 1, index, value);
         }
 
-        // This counts the number of occupied slots (not counting tombstones), which is
-        // what has to stay under the max_load_percentage of capacity.
-        fn load(self: Self) Size {
-            const max_load = (self.capacity() * max_load_percentage) / 100;
-            assert(max_load >= self.available);
-            return @as(Size, @truncate(max_load - self.available));
+        fn setMetadataWith(metadata: [*]Metadata, cap_mask: usize, index: usize, value: Metadata) void {
+            const cloned = group_len - 1;
+            metadata[index] = value;
+            // Put cloned metadata for the cloned slots at the end of the array.
+            metadata[((index -% cloned) & cap_mask) + cloned] = value;
         }
 
-        fn growIfNeeded(self: *Self, allocator: Allocator, new_count: Size, ctx: Context) Allocator.Error!void {
-            if (new_count > self.available) {
-                try self.grow(allocator, capacityForSize(self.load() + new_count), ctx);
+        /// Whether the tombstones in the table can be reclaimed in place
+        /// instead of doubling.
+        inline fn shouldRehashInPlace(self: *const Self) bool {
+            return self.capacity_ > group_len and
+                self.size * 8 <= capacityToGrowth(self.capacity_) * 7;
+        }
+
+        /// Make room for `additional` more live elements, if needed.
+        fn growIfNeeded(self: *Self, allocator: Allocator, additional: Size, ctx: Context) Allocator.Error!void {
+            if (additional <= self.available) return;
+
+            const needed = self.size + additional;
+
+            if (needed <= capacityToGrowth(self.capacity_) and self.shouldRehashInPlace()) {
+                // Try to rehash in place first.
+                self.rehash(ctx);
+            } else {
+                try self.grow(allocator, capacityForSize(needed), ctx);
             }
         }
 
@@ -1302,27 +1412,17 @@ fn Custom(
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call cloneContext instead.");
             return self.cloneContext(allocator, @as(Context, undefined));
         }
-        pub fn cloneContext(self: Self, allocator: Allocator, new_ctx: anytype) Allocator.Error!HashMapUnmanaged(K, V, @TypeOf(new_ctx), max_load_percentage) {
-            var other: HashMapUnmanaged(K, V, @TypeOf(new_ctx), max_load_percentage) = .empty;
-            if (self.size == 0)
-                return other;
 
-            const new_cap = capacityForSize(self.size);
-            try other.allocate(allocator, new_cap);
-            other.initMetadatas();
-            other.available = @truncate((new_cap * max_load_percentage) / 100);
+        pub fn cloneContext(self: Self, allocator: Allocator, new_ctx: anytype) Allocator.Error!Custom(K, V, @TypeOf(new_ctx), max_load_percentage) {
+            var other: Custom(K, V, @TypeOf(new_ctx), max_load_percentage) = .empty;
+            if (self.size == 0) return other;
 
-            var i: Size = 0;
-            var metadata = self.metadata.?;
-            const keys_ptr = self.keys();
-            const values_ptr = self.values();
-            while (i < self.capacity()) : (i += 1) {
-                if (metadata[i].isUsed()) {
-                    other.putAssumeCapacityNoClobberContext(keys_ptr[i], values_ptr[i], new_ctx);
-                    if (other.size == self.size)
-                        break;
-                }
-            }
+            try other.ensureTotalCapacityContext(allocator, self.size, new_ctx);
+            errdefer other.deinit(allocator);
+
+            var it = self.iterator();
+            while (it.next()) |entry|
+                other.putAssumeCapacityNoClobberContext(entry.key_ptr.*, entry.value_ptr.*, new_ctx);
 
             return other;
         }
@@ -1336,202 +1436,185 @@ fn Custom(
             return result;
         }
 
-        /// Rehash the map, in-place.
-        ///
-        /// Over time, due to the current tombstone-based implementation, a
-        /// HashMap could become fragmented due to the buildup of tombstone
-        /// entries that causes a performance degradation due to excessive
-        /// probing. The kind of pattern that might cause this is a long-lived
-        /// HashMap with repeated inserts and deletes.
-        ///
-        /// After this function is called, there will be no tombstones in
-        /// the HashMap, each of the entries is rehashed and any existing
-        /// key/value pointers into the HashMap are invalidated.
         pub fn rehash(self: *Self, ctx: anytype) void {
-            const mask = self.capacity() - 1;
+            const cap = self.capacity_;
+            const cap_mask = cap - 1;
+            const cloned = group_len - 1;
+            const metadata = self.metadataPtr();
+            const entries = self.entriesPtr();
 
-            var metadata = self.metadata.?;
-            var keys_ptr = self.keys();
-            var values_ptr = self.values();
-            var curr: Size = 0;
+            var i: usize = 0;
 
-            // While we are re-hashing every slot, we will use the
-            // fingerprint to mark used buckets as being used and either free
-            // (needing to be rehashed) or tombstone (already rehashed).
-
-            while (curr < self.capacity()) : (curr += 1) {
-                metadata[curr].fingerprint = Metadata.free;
+            // First, convert all deleted entries to empty, and all full entries to deleted.
+            while (i < cap) : (i += group_len) {
+                Group.load(metadata, i)
+                    .convertDeletedToEmptyAndFullToDeleted()
+                    .store(metadata, i);
             }
 
-            // Now iterate over all the buckets, rehashing them
+            @memcpy(metadata[cap..][0..cloned], metadata[0..cloned]);
 
-            curr = 0;
-            while (curr < self.capacity()) {
-                if (!metadata[curr].isUsed()) {
-                    assert(metadata[curr].isFree());
-                    curr += 1;
+            i = 0;
+
+            // Then, we need to go through every non-finalized entry and process it according
+            // to its state.
+            while (i < cap) {
+                if (!metadata[i].isDeleted()) {
+                    i += 1;
                     continue;
                 }
 
-                const hash = ctx.hash(keys_ptr[curr]);
-                const fingerprint = Metadata.takeFingerprint(hash);
-                var idx = @as(usize, @truncate(hash & mask));
+                const split: SplitHash = @bitCast(ctx.hash(entries[i].key));
+                const start = split.h1 & cap_mask;
 
-                // For each bucket, rehash to an index:
-                // 1) before the cursor, probed into a free slot, or
-                // 2) equal to the cursor, no need to move, or
-                // 3) ahead of the cursor, probing over already rehashed
+                // Find the first non-processed slot.
+                const target = findFirstNonFull(metadata, start, cap_mask);
 
-                while ((idx < curr and metadata[idx].isUsed()) or
-                    (idx > curr and metadata[idx].fingerprint == Metadata.tombstone))
-                {
-                    idx = (idx + 1) & mask;
+                if (probeGroup(cap_mask, start, i) == probeGroup(cap_mask, start, target)) {
+                    @branchHint(.likely);
+
+                    // Already in the right group.
+                    // Position within the group doesn't affect lookup cost, so leave it.
+                    self.setMetadata(metadata, i, Metadata.make(split.h2));
+                    i += 1;
+                    continue;
                 }
 
-                if (idx < curr) {
-                    assert(metadata[idx].isFree());
-                    metadata[idx].fill(fingerprint);
-                    keys_ptr[idx] = keys_ptr[curr];
-                    values_ptr[idx] = values_ptr[curr];
+                const target_was_empty = metadata[target].isEmpty();
+                self.setMetadata(metadata, target, Metadata.make(split.h2));
 
-                    metadata[curr].used = 0;
-                    assert(metadata[curr].isFree());
-                    keys_ptr[curr] = undefined;
-                    values_ptr[curr] = undefined;
-
-                    curr += 1;
-                } else if (idx == curr) {
-                    metadata[idx].fingerprint = fingerprint;
-                    curr += 1;
+                if (target_was_empty) {
+                    // Target slot is empty, claim it and set our previous slot as empty.
+                    entries[target] = entries[i];
+                    self.setMetadata(metadata, i, Metadata.empty_data);
+                    i += 1;
                 } else {
-                    assert(metadata[idx].fingerprint != Metadata.tombstone);
-                    metadata[idx].fingerprint = Metadata.tombstone;
-                    if (metadata[idx].isUsed()) {
-                        std.mem.swap(K, &keys_ptr[curr], &keys_ptr[idx]);
-                        std.mem.swap(V, &values_ptr[curr], &values_ptr[idx]);
-                    } else {
-                        metadata[idx].used = 1;
-                        keys_ptr[idx] = keys_ptr[curr];
-                        values_ptr[idx] = values_ptr[curr];
-
-                        metadata[curr].fingerprint = Metadata.free;
-                        metadata[curr].used = 0;
-                        keys_ptr[curr] = undefined;
-                        values_ptr[curr] = undefined;
-
-                        curr += 1;
-                    }
-                }
-            }
-        }
-
-        fn grow(self: *Self, allocator: Allocator, new_capacity: Size, ctx: Context) Allocator.Error!void {
-            @branchHint(.cold);
-            const new_cap = @max(new_capacity, minimal_capacity);
-            assert(new_cap > self.capacity());
-            assert(std.math.isPowerOfTwo(new_cap));
-
-            var map: Self = .{};
-            try map.allocate(allocator, new_cap);
-            errdefer comptime unreachable;
-            map.pointer_stability.lock();
-            map.initMetadatas();
-            map.available = @truncate((new_cap * max_load_percentage) / 100);
-
-            if (self.size != 0) {
-                const old_capacity = self.capacity();
-                for (
-                    self.metadata.?[0..old_capacity],
-                    self.keys()[0..old_capacity],
-                    self.values()[0..old_capacity],
-                ) |m, k, v| {
-                    if (!m.isUsed()) continue;
-                    map.putAssumeCapacityNoClobberContext(k, v, ctx);
-                    if (map.size == self.size) break;
+                    // Target slot is deleted, this means it holds an unplaced element we haven't
+                    // got to yet, swap positions and don't increment i so that the next iteration
+                    // can deal with it.
+                    std.mem.swap(KV, &entries[i], &entries[target]);
                 }
             }
 
-            self.size = 0;
-            self.pointer_stability = .{};
-            std.mem.swap(Self, self, &map);
-            map.deinit(allocator);
+            self.available = capacityToGrowth(cap) - self.size;
         }
 
-        fn allocate(self: *Self, allocator: Allocator, new_capacity: Size) Allocator.Error!void {
-            const header_align = @alignOf(Header);
-            const key_align = if (@sizeOf(K) == 0) 1 else @alignOf(K);
-            const val_align = if (@sizeOf(V) == 0) 1 else @alignOf(V);
-            const max_align: Alignment = comptime .fromByteUnits(@max(header_align, key_align, val_align));
+        /// Grow the table to the desired `new_cap`.
+        noinline fn grow(self: *Self, allocator: Allocator, new_cap: Size, ctx: Context) !void {
+            const cap = self.capacity_;
+            const prev_size = tableLen(cap);
 
-            const new_cap: usize = new_capacity;
-            const meta_size = @sizeOf(Header) + new_cap * @sizeOf(Metadata);
-            comptime assert(@alignOf(Metadata) == 1);
+            const new_mask = new_cap - 1;
+            const new_table = (try allocator.alignedAlloc(
+                u8,
+                .fromByteUnits(@alignOf(KV)),
+                tableLen(new_cap),
+            )).ptr;
 
-            const keys_start = std.mem.alignForward(usize, meta_size, key_align);
-            const keys_end = keys_start + new_cap * @sizeOf(K);
+            const nentries: [*]KV = @ptrCast(@alignCast(&new_table[entriesOffset(new_cap)]));
+            const nmetadata: [*]Metadata = @ptrCast(&new_table[0]);
 
-            const vals_start = std.mem.alignForward(usize, keys_end, val_align);
-            const vals_end = vals_start + new_cap * @sizeOf(V);
+            @memset(nmetadata[0..metadataLen(new_cap)], Metadata.empty_data);
 
-            const total_size = max_align.forward(vals_end);
-
-            const slice = try allocator.alignedAlloc(u8, max_align, total_size);
-            const ptr: [*]u8 = @ptrCast(slice.ptr);
-
-            const metadata = ptr + @sizeOf(Header);
-
-            const hdr = @as(*Header, @ptrCast(@alignCast(ptr)));
-            if (@sizeOf([*]V) != 0) {
-                hdr.values = @ptrCast(@alignCast((ptr + vals_start)));
+            if (self.table == null) {
+                @branchHint(.unlikely);
+                self.table = new_table;
+                self.capacity_ = new_cap;
+                self.available = capacityToGrowth(new_cap) - self.size;
+                return;
             }
-            if (@sizeOf([*]K) != 0) {
-                hdr.keys = @ptrCast(@alignCast((ptr + keys_start)));
+
+            const metadata = self.metadataPtr();
+            const entries = self.entriesPtr();
+
+            // Re-hash and re-insert all elements.
+            for (metadata[0..cap], 0..) |m, i| {
+                if (!m.isFull()) continue;
+
+                const entry = entries[i];
+                const split: SplitHash = @bitCast(ctx.hash(entry.key));
+                const slot = findFirstNonFull(nmetadata, split.h1 & new_mask, new_mask);
+
+                setMetadataWith(nmetadata, new_mask, slot, Metadata.make(split.h2));
+                nentries[slot] = entry;
             }
-            hdr.capacity = new_capacity;
-            self.metadata = @ptrCast(@alignCast(metadata));
+
+            allocator.free(@as([*]align(@alignOf(KV)) u8, @alignCast(self.table.?))[0..prev_size]);
+            self.table = new_table;
+            self.capacity_ = new_cap;
+            self.available = capacityToGrowth(new_cap) - self.size;
         }
 
-        fn deallocate(self: *Self, allocator: Allocator) void {
-            if (self.metadata == null) return;
-
-            const header_align = @alignOf(Header);
-            const key_align = if (@sizeOf(K) == 0) 1 else @alignOf(K);
-            const val_align = if (@sizeOf(V) == 0) 1 else @alignOf(V);
-            const max_align = comptime @max(header_align, key_align, val_align);
-
-            const cap: usize = self.capacity();
-            const meta_size = @sizeOf(Header) + cap * @sizeOf(Metadata);
-            comptime assert(@alignOf(Metadata) == 1);
-
-            const keys_start = std.mem.alignForward(usize, meta_size, key_align);
-            const keys_end = keys_start + cap * @sizeOf(K);
-
-            const vals_start = std.mem.alignForward(usize, keys_end, val_align);
-            const vals_end = vals_start + cap * @sizeOf(V);
-
-            const total_size = std.mem.alignForward(usize, vals_end, max_align);
-
-            const slice = @as([*]align(max_align) u8, @ptrCast(@alignCast(self.header())))[0..total_size];
-            allocator.free(slice);
-
-            self.metadata = null;
-            self.available = 0;
+        inline fn probeGroup(cap_mask: usize, start: usize, pos: usize) usize {
+            return ((pos -% start) & cap_mask) / group_len;
         }
 
-        /// This function is used in the debugger pretty formatters in lib/lldb/ to fetch the
-        /// header type to facilitate fancy debug printing for this type.
-        fn dbHelper(self: *Self, hdr: *Header, entry: *Entry) void {
-            _ = self;
-            _ = hdr;
-            _ = entry;
+        /// A table smaller than one group has trailing control bytes that read
+        /// empty but mask back onto real slots, so a match there can point to an
+        /// occupied slot. Rescan from 0, where the load factor guarantees a
+        /// vacancy before those trailing bytes.
+        inline fn fixVacant(metadata: [*]Metadata, slot: usize) usize {
+            if (metadata[slot].isFull()) {
+                @branchHint(.unlikely);
+                return Group.load(metadata, 0).matchEmptyOrDeleted().firstSet().?;
+            }
+            return slot;
         }
 
-        comptime {
-            if (!builtin.strip_debug_info) switch (builtin.zig_backend) {
-                .stage2_llvm => _ = &dbHelper,
-                .stage2_x86_64 => _ = @as(KV, undefined),
-                else => {},
-            };
+        fn findFirstNonFull(metadata: [*]Metadata, start: usize, cap_mask: usize) usize {
+            var probe = Probe.init(start, cap_mask);
+            while (true) {
+                if (probe.group(metadata).matchEmptyOrDeleted().firstSet()) |bit|
+                    return fixVacant(metadata, probe.slot(bit));
+                probe.next();
+            }
+        }
+
+        const Search = union(enum) {
+            found: usize,
+            vacant: usize,
+        };
+
+        /// Find the slot mapping to `key`, returns `vacant` if the slot is empty, or `found` if
+        /// it exists already.
+        fn findSlot(self: *const Self, key: anytype, split: SplitHash, ctx: anytype, comptime rw: std.builtin.PrefetchOptions.Rw) Search {
+            const cap_mask = self.capacity_ - 1;
+            var probe = Probe.init(split.h1 & cap_mask, cap_mask);
+            var vacant: ?usize = null;
+            const entries = self.entriesPtr();
+            const metadata = self.metadataPtr();
+
+            while (true) {
+                @prefetch(&entries[probe.index], .{ .rw = rw, .locality = 3, .cache = .data });
+                const g = probe.group(metadata);
+
+                var iter = g.match(split.h2).iter();
+                while (iter.next()) |idx| {
+                    const s = probe.slot(idx);
+                    if (ctx.eql(key, entries[s].key)) return .{ .found = s };
+                }
+
+                const special = g.matchEmptyOrDeleted();
+                if (special.any()) {
+                    if (vacant == null) vacant = probe.slot(special.firstSet().?);
+                    if (g.matchEmpty().any()) return .{ .vacant = fixVacant(metadata, vacant.?) };
+                }
+
+                probe.next();
+            }
+        }
+
+        /// Return whether `slot` can be marked empty after a deletion.
+        fn canMarkEmpty(self: *const Self, slot: usize) bool {
+            // Safe to mark empty only if every window covering `slot` already contains an
+            // empty, since probing stops in those windows regardless. That holds exactly
+            // when the run of non-empty (full or deleted) slots around `slot` is shorter
+            // than a group, which is what @clz and @ctz count.
+            const cap_mask = self.capacity_ - 1;
+            const metadata = self.metadataPtr();
+            const before = Group.load(metadata, (slot -% group_len) & cap_mask).matchEmpty().bits;
+            const after = Group.load(metadata, slot).matchEmpty().bits;
+            return before != 0 and after != 0 and @clz(before) + @ctz(after) < group_len;
         }
     };
 }

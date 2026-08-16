@@ -2591,6 +2591,12 @@ fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Oper
                 else => |e| e,
             },
         },
+        .net_local_host_name => |o| return .{
+            .net_local_host_name = netLocalHostName(t, o.buffer) catch |err| switch (err) {
+                error.Canceled => |e| return e,
+                else => |e| e,
+            },
+        },
     }
 }
 
@@ -2611,8 +2617,10 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
         var poll_len: u32 = 0;
         {
             var index = b.submitted.head;
+            var prev_index: Io.Operation.OptionalIndex = .none;
             while (index != .none and poll_len < poll_buffer_len) {
                 const submission = &b.storage[index.toIndex()].submission;
+                const next_index = submission.node.next;
                 switch (submission.operation) {
                     .file_read_streaming => |o| {
                         poll_buffer[poll_len] = .{
@@ -2663,8 +2671,23 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         };
                         poll_len += 1;
                     },
+                    .net_local_host_name => {
+                        const result = try operate(t, submission.operation);
+                        switch (prev_index) {
+                            .none => b.submitted.head = next_index,
+                            else => b.storage[prev_index.toIndex()].submission.node.next = next_index,
+                        }
+                        if (next_index == .none) b.submitted.tail = prev_index;
+                        switch (b.completed.tail) {
+                            .none => b.completed.head = index,
+                            else => |tail_index| b.storage[tail_index.toIndex()].completion.node.next = index,
+                        }
+                        b.storage[index.toIndex()] = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
+                        b.completed.tail = index;
+                    },
                 }
-                index = submission.node.next;
+                prev_index = index;
+                index = next_index;
             }
         }
         switch (poll_len) {
@@ -2870,6 +2893,7 @@ fn batchAwaitConcurrent(userdata: ?*anyopaque, b: *Io.Batch, timeout: Io.Timeout
                 },
                 .net_read => |o| try poll_storage.add(o.socket_handle, posix.POLL.IN | posix.POLL.ERR),
                 .net_write => |o| try poll_storage.add(o.socket_handle, posix.POLL.OUT | posix.POLL.ERR),
+                .net_local_host_name => return error.ConcurrencyUnavailable,
             }
             index = submission.node.next;
         }
@@ -3068,6 +3092,7 @@ fn batchApc(
                 .net_send => unreachable,
                 .net_read => unreachable,
                 .net_write => unreachable,
+                .net_local_host_name => unreachable,
             };
             storage.* = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
         },
@@ -3298,6 +3323,15 @@ fn batchDrainSubmittedWindows(t: *Threaded, b: *Io.Batch, concurrency: bool) (Io
                 if (concurrency) return error.ConcurrencyUnavailable;
                 batchCompleteBlockingWindows(b, operation_userdata, .{
                     .net_write = netWriteWindows(o.socket_handle, o.header, o.data, o.splat) catch |err| switch (err) {
+                        error.Canceled => |e| return e,
+                        else => |e| e,
+                    },
+                });
+            },
+            .net_local_host_name => |o| {
+                if (concurrency) return error.ConcurrencyUnavailable;
+                batchCompleteBlockingWindows(b, operation_userdata, .{
+                    .net_local_host_name = netLocalHostName(t, o.buffer) catch |err| switch (err) {
                         error.Canceled => |e| return e,
                         else => |e| e,
                     },
@@ -19253,4 +19287,11 @@ pub fn closeFd(fd: posix.fd_t) void {
         .BADF => recoverableOsBugDetected(), // use after free
         else => recoverableOsBugDetected(), // unexpected failure
     }
+}
+
+pub fn netLocalHostName(userdata: ?*anyopaque, buffer: []u8) net.HostName.LocalHostNameError![]u8 {
+    //TODO: implementation
+    _ = userdata;
+    _ = buffer;
+    return error.LocalHostNameNotFound;
 }

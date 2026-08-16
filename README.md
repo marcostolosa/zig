@@ -120,7 +120,6 @@ directory `out/zig-$target-$cpu` and `out/$target-$cpu`, to be used as
 
 ```sh
 "$ZIG_PREFIX/zig" build \
-  --zig-lib=lib \
   -p stage3 \
   --search-prefix "$LLVM_PREFIX" \
   -Dstatic-llvm
@@ -193,7 +192,7 @@ You now have the `zig.exe` binary at `stage3\bin\zig.exe`.
 Unzip the dev kit and then in cmd.exe in your Zig source checkout:
 
 ```bat
-$DEVKIT\bin\zig.exe build --zig-lib=lib -p stage3 --search-prefix $DEVKIT -Dstatic-llvm -Duse-zig-libcxx -Dtarget=x86_64-windows-gnu
+$DEVKIT\bin\zig.exe build -p stage3 --search-prefix $DEVKIT -Dstatic-llvm -Duse-zig-libcxx -Dtarget=x86_64-windows-gnu
 ```
 
 Replace `$DEVKIT` with the path to the folder that you unzipped after

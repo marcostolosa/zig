@@ -253,6 +253,7 @@ pub const Operation = union(enum) {
     net_send: NetSend,
     net_read: NetRead,
     net_write: NetWrite,
+    net_local_host_name: NetLocalHostName,
 
     pub const Tag = @typeInfo(Operation).@"union".tag_type.?;
 
@@ -484,6 +485,31 @@ pub const Operation = union(enum) {
         } || Io.UnexpectedError;
 
         pub const Result = Error!usize;
+    };
+
+    pub const NetLocalHostName = struct {
+        buffer: []u8,
+
+        pub const Error = error{
+            Unexpected,
+            BufferTooSmall,
+            /// Windows-only
+            ///
+            /// Happens when there is no ComputerName set
+            LocalHostNameNotFound,
+            /// Windows-only
+            ///
+            /// Happens when the Windows Registry has the ComputerName saved in the wrong format.
+            ///
+            /// Should never actually happen except if the machine is misconfigured.
+            ReceivedUnexpectedData,
+            /// WASI-only
+            ///
+            /// WASI doesn't support this concept right now
+            OperationUnsupported,
+        };
+
+        pub const Result = Error![]u8;
     };
 
     pub const Result = Result: {
@@ -2968,6 +2994,7 @@ pub fn failingOperate(userdata: ?*anyopaque, operation: Operation) Cancelable!Op
         .net_send => .{ .net_send = .{ error.NetworkDown, 0 } },
         .net_read => .{ .net_read = error.NetworkDown },
         .net_write => .{ .net_write = error.NetworkDown },
+        .net_local_host_name => .{ .net_local_host_name = error.LocalHostNameNotFound },
     };
 }
 

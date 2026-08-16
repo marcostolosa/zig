@@ -535,3 +535,10 @@ test ResolvConf {
     try rc.parse(std.testing.io, &reader);
     try std.testing.expectEqual(3, rc.nameservers().len);
 }
+
+pub const LocalHostNameError = Io.Operation.NetLocalHostName.Error || Io.Cancelable;
+
+pub fn getLocalHostName(io: Io, buffer: []u8) LocalHostNameError![]u8 {
+    const operation: Io.Operation = .{ .net_local_host_name = .{ .buffer = buffer } };
+    return (try io.operate(operation)).net_local_host_name;
+}

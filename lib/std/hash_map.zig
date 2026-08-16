@@ -493,11 +493,13 @@ pub fn HashMap(
 
 pub const HashMapUnmanaged = Custom;
 
+pub const MapSize = u32;
+
 // Note: cap the group length at 16 bytes, values larger than that give diminishing returns
 // and may end up performing *worse* because it may result in more straddling of cache line
 // boundaries.
 /// Length of a metadata group.
-const group_len: usize = @min(16, std.simd.suggestVectorLength(Metadata) orelse 16);
+const group_len = @min(16, std.simd.suggestVectorLength(Metadata) orelse 16);
 
 const Vec = @Vector(group_len, u8);
 
@@ -561,10 +563,10 @@ const Metadata = packed struct(u8) {
 const Group = struct {
     vec: Vec,
 
-    inline fn load(metadata: [*]Metadata, index: usize) Group {
+    inline fn load(metadata: [*]Metadata, index: MapSize) Group {
         return .{ .vec = @bitCast(metadata[index..][0..group_len].*) };
     }
-    inline fn store(self: Group, metadata: [*]Metadata, index: usize) void {
+    inline fn store(self: Group, metadata: [*]Metadata, index: MapSize) void {
         metadata[index..][0..group_len].* = @bitCast(self.vec);
     }
 
@@ -618,7 +620,7 @@ const Match = struct {
     const MatchIter = struct {
         mask: uvec,
 
-        fn next(self: *MatchIter) ?usize {
+        fn next(self: *MatchIter) ?MapSize {
             if (self.mask == 0) return null;
             const idx = @ctz(self.mask);
             self.mask &= (self.mask - 1);
@@ -640,7 +642,7 @@ const Match = struct {
     }
 
     /// Return the first bit that is set.
-    fn firstSet(self: *const Match) ?usize {
+    fn firstSet(self: *const Match) ?MapSize {
         if (self.bits == 0) return null;
         return @ctz(self.bits);
     }
@@ -656,11 +658,11 @@ const Match = struct {
 /// every slot of the table exactly once, guaranteeing that we'll eventually find an empty
 /// slot.
 const Probe = struct {
-    index: usize,
-    stride: usize,
-    cap_mask: usize,
+    index: MapSize,
+    stride: MapSize,
+    cap_mask: MapSize,
 
-    pub fn init(index: usize, cap_mask: usize) Probe {
+    pub fn init(index: MapSize, cap_mask: MapSize) Probe {
         return .{
             .index = index,
             .stride = 0,
@@ -673,7 +675,7 @@ const Probe = struct {
         self.index = (self.index + self.stride) & self.cap_mask;
     }
 
-    inline fn slot(self: Probe, offset: usize) usize {
+    inline fn slot(self: Probe, offset: MapSize) MapSize {
         return (self.index + offset) & self.cap_mask;
     }
     inline fn group(self: Probe, metadata: [*]Metadata) Group {
@@ -751,12 +753,12 @@ pub fn Custom(
             .available = 0,
         };
 
-        // This hashmap is specially designed for sizes that fit in a u32.
-        pub const Size = u32;
-
         // u64 hashes guarantee us that the fingerprint bits will never be used
         // to compute the index of a slot, maximizing the use of entropy.
         pub const Hash = u64;
+
+        // This hashmap is specially designed for sizes that fit in a u32.
+        pub const Size = MapSize;
 
         pub const Entry = struct {
             key_ptr: *K,
@@ -776,24 +778,24 @@ pub fn Custom(
         /// ----------------------------
         /// |metadata|mirror padding|KV|
         /// ---------------------------
-        fn metadataLen(cap: usize) usize {
+        fn metadataLen(cap: Size) Size {
             return cap + group_len - 1;
         }
 
         /// Offset of the start of KV entries in the contiguous allocation.
         /// This is aligned with KV.
-        fn entriesOffset(cap: usize) usize {
-            return std.mem.alignForward(usize, metadataLen(cap), @alignOf(KV));
+        fn entriesOffset(cap: Size) Size {
+            return std.mem.alignForward(Size, metadataLen(cap), @alignOf(KV));
         }
 
         /// Total allocated length of the table.
-        fn tableLen(cap: usize) usize {
+        fn tableLen(cap: Size) Size {
             return entriesOffset(cap) + @sizeOf(KV) * cap;
         }
 
         pub const Iterator = struct {
             hm: *const Self,
-            index: usize = 0,
+            index: Size = 0,
 
             pub fn next(it: *Iterator) ?Entry {
                 std.debug.assert(it.index <= it.hm.capacity_);
@@ -1093,7 +1095,7 @@ pub fn Custom(
             return result;
         }
 
-        fn getIndex(self: Self, key: anytype, ctx: anytype) ?usize {
+        fn getIndex(self: Self, key: anytype, ctx: anytype) ?Size {
             if (self.size == 0) {
                 @branchHint(.cold);
                 return null;
@@ -1284,7 +1286,7 @@ pub fn Custom(
             };
         }
 
-        fn claimSlot(self: *Self, metadata: [*]Metadata, entries: [*]KV, slot: usize, fp: u7) GetOrPutResult {
+        fn claimSlot(self: *Self, metadata: [*]Metadata, entries: [*]KV, slot: Size, fp: u7) GetOrPutResult {
             if (metadata[slot].isEmpty()) {
                 std.debug.assert(self.available > 0);
                 self.available -= 1;
@@ -1326,7 +1328,7 @@ pub fn Custom(
             return self.getIndex(key, ctx) != null;
         }
 
-        fn removeByIndex(self: *Self, idx: usize) void {
+        fn removeByIndex(self: *Self, idx: Size) void {
             const metadata = self.metadataPtr();
             if (self.canMarkEmpty(idx)) {
                 self.setMetadata(metadata, idx, Metadata.empty_data);
@@ -1372,14 +1374,14 @@ pub fn Custom(
                 (@intFromPtr(key_ptr) - @intFromPtr(self.entriesPtr())) / @sizeOf(KV)
             else
                 0;
-            self.removeByIndex(idx);
+            self.removeByIndex(@truncate(idx));
         }
 
-        inline fn setMetadata(self: *Self, metadata: [*]Metadata, index: usize, value: Metadata) void {
+        inline fn setMetadata(self: *Self, metadata: [*]Metadata, index: Size, value: Metadata) void {
             setMetadataWith(metadata, self.capacity_ - 1, index, value);
         }
 
-        fn setMetadataWith(metadata: [*]Metadata, cap_mask: usize, index: usize, value: Metadata) void {
+        fn setMetadataWith(metadata: [*]Metadata, cap_mask: Size, index: Size, value: Metadata) void {
             const cloned = group_len - 1;
             metadata[index] = value;
             // Put cloned metadata for the cloned slots at the end of the array.
@@ -1443,7 +1445,7 @@ pub fn Custom(
             const metadata = self.metadataPtr();
             const entries = self.entriesPtr();
 
-            var i: usize = 0;
+            var i: Size = 0;
 
             // First, convert all deleted entries to empty, and all full entries to deleted.
             while (i < cap) : (i += group_len) {
@@ -1468,9 +1470,9 @@ pub fn Custom(
                 const start = split.h1 & cap_mask;
 
                 // Find the first non-processed slot.
-                const target = findFirstNonFull(metadata, start, cap_mask);
+                const target = findFirstNonFull(metadata, @truncate(start), cap_mask);
 
-                if (probeGroup(cap_mask, start, i) == probeGroup(cap_mask, start, target)) {
+                if (probeGroup(cap_mask, @truncate(start), i) == probeGroup(cap_mask, @truncate(start), target)) {
                     @branchHint(.likely);
 
                     // Already in the right group.
@@ -1533,7 +1535,7 @@ pub fn Custom(
 
                 const entry = entries[i];
                 const split: SplitHash = @bitCast(ctx.hash(entry.key));
-                const slot = findFirstNonFull(nmetadata, split.h1 & new_mask, new_mask);
+                const slot = findFirstNonFull(nmetadata, @truncate(split.h1 & new_mask), new_mask);
 
                 setMetadataWith(nmetadata, new_mask, slot, Metadata.make(split.h2));
                 nentries[slot] = entry;
@@ -1545,15 +1547,14 @@ pub fn Custom(
             self.available = capacityToGrowth(new_cap) - self.size;
         }
 
-        inline fn probeGroup(cap_mask: usize, start: usize, pos: usize) usize {
+        inline fn probeGroup(cap_mask: Size, start: Size, pos: Size) Size {
             return ((pos -% start) & cap_mask) / group_len;
         }
 
-        /// A table smaller than one group has trailing control bytes that read
         /// empty but mask back onto real slots, so a match there can point to an
         /// occupied slot. Rescan from 0, where the load factor guarantees a
         /// vacancy before those trailing bytes.
-        inline fn fixVacant(metadata: [*]Metadata, slot: usize) usize {
+        inline fn fixVacant(metadata: [*]Metadata, slot: Size) Size {
             if (metadata[slot].isFull()) {
                 @branchHint(.unlikely);
                 return Group.load(metadata, 0).matchEmptyOrDeleted().firstSet().?;
@@ -1561,7 +1562,7 @@ pub fn Custom(
             return slot;
         }
 
-        fn findFirstNonFull(metadata: [*]Metadata, start: usize, cap_mask: usize) usize {
+        fn findFirstNonFull(metadata: [*]Metadata, start: Size, cap_mask: Size) Size {
             var probe = Probe.init(start, cap_mask);
             while (true) {
                 if (probe.group(metadata).matchEmptyOrDeleted().firstSet()) |bit|
@@ -1571,16 +1572,16 @@ pub fn Custom(
         }
 
         const Search = union(enum) {
-            found: usize,
-            vacant: usize,
+            found: Size,
+            vacant: Size,
         };
 
         /// Find the slot mapping to `key`, returns `vacant` if the slot is empty, or `found` if
         /// it exists already.
         fn findSlot(self: *const Self, key: anytype, split: SplitHash, ctx: anytype, comptime rw: std.builtin.PrefetchOptions.Rw) Search {
             const cap_mask = self.capacity_ - 1;
-            var probe = Probe.init(split.h1 & cap_mask, cap_mask);
-            var vacant: ?usize = null;
+            var probe = Probe.init(@truncate(split.h1 & cap_mask), cap_mask);
+            var vacant: ?Size = null;
             const entries = self.entriesPtr();
             const metadata = self.metadataPtr();
 
@@ -1605,7 +1606,7 @@ pub fn Custom(
         }
 
         /// Return whether `slot` can be marked empty after a deletion.
-        fn canMarkEmpty(self: *const Self, slot: usize) bool {
+        fn canMarkEmpty(self: *const Self, slot: Size) bool {
             // Safe to mark empty only if every window covering `slot` already contains an
             // empty, since probing stops in those windows regardless. That holds exactly
             // when the run of non-empty (full or deleted) slots around `slot` is shorter

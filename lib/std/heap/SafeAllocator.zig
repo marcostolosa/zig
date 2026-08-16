@@ -654,7 +654,7 @@ pub fn deinit(s: *SafeAllocator) usize {
     return s.deinitLog(true);
 }
 
-/// Same as `deinit`, expect if `log` is `false`, it will not log leaks.
+/// Same as `deinit`, except if `log` is `false`, it will not log leaks.
 pub fn deinitLog(s: *SafeAllocator, log: bool) usize {
     var leaks: usize = 0;
     const thread_count = @atomicRmw(usize, &n_threads, .Or, 0, .monotonic);

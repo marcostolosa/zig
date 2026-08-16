@@ -721,6 +721,22 @@ pub fn createModule(b: *Build, options: Module.CreateOptions) *Module {
     return Module.create(b, options);
 }
 
+/// This functions adds an existing module to the package's module set, making
+/// it available to other packages which depend on this one.
+/// To create and export a module at the same time use `addModule` instead.
+pub fn exportModule(b: *Build, name: []const u8, mod: *Module) void {
+    const graph = b.graph;
+    const arena = graph.arena;
+    const gop = b.modules.getOrPutValue(
+        arena,
+        graph.dupeString(name),
+        mod,
+    ) catch @panic("OOM");
+    if (gop.found_existing) {
+        panic("A module with the name {q} has already been added to the package.", .{name});
+    }
+}
+
 /// Creates a step that executes a process on the host system.
 ///
 /// `argv` is one or more command line arguments passed to the executed

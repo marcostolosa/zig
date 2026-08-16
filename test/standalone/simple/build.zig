@@ -47,6 +47,7 @@ pub fn build(b: *std.Build) void {
                         .optimize = optimize,
                         .target = resolved_target,
                     }),
+                    .zig_lib_dir = b.path("../../../lib"),
                 });
                 if (case.link_libc) exe.root_module.link_libc = true;
 
@@ -63,6 +64,7 @@ pub fn build(b: *std.Build) void {
                         .optimize = optimize,
                         .target = resolved_target,
                     }),
+                    .zig_lib_dir = b.path("../../../lib"),
                 });
                 if (case.link_libc) exe.root_module.link_libc = true;
 

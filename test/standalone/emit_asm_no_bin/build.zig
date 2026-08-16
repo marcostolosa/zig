@@ -13,6 +13,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .target = b.graph.host,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
     _ = obj.getEmittedAsm();
     b.default_step.dependOn(&obj.step);

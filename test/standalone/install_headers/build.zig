@@ -14,6 +14,7 @@ pub fn build(b: *std.Build) void {
             .target = b.resolveTargetQuery(.{}),
             .optimize = .debug,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
     libfoo.root_module.addCSourceFile(.{ .file = empty_c });
 
@@ -25,6 +26,7 @@ pub fn build(b: *std.Build) void {
             .optimize = .debug,
             .link_libc = true,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
     exe.root_module.addCSourceFile(.{ .file = b.addWriteFiles().add("main.c",
         \\#include <stdio.h>
@@ -70,6 +72,7 @@ pub fn build(b: *std.Build) void {
             .target = b.resolveTargetQuery(.{}),
             .optimize = .debug,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
     libbar.root_module.addCSourceFile(.{ .file = empty_c });
     libbar.installHeader(b.addWriteFiles().add("bar.h",
@@ -95,6 +98,7 @@ pub fn build(b: *std.Build) void {
             .target = b.resolveTargetQuery(.{}),
             .optimize = .debug,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
     const run_check_exists = b.addRunArtifact(check_exists);
     run_check_exists.addArgs(&.{

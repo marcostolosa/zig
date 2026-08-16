@@ -2285,7 +2285,9 @@ pub fn addCliTests(b: *std.Build) *Step {
             "reduce",
             "std",
         }) |cmd| {
-            const run_help = b.addSystemCommand(&.{ b.graph.zig_exe, cmd, "--help" });
+            const run_help = b.addSystemCommand(&.{ b.graph.zig_exe, cmd });
+            run_help.addPrefixedDirectoryArg("--zig-lib=", b.path("lib"));
+            run_help.addArg("--help");
             run_help.setName(b.fmt("zig {s} --help", .{cmd}));
             run_help.expectStdErrEqual("");
             run_help.expectExitCode(0);
@@ -2297,6 +2299,7 @@ pub fn addCliTests(b: *std.Build) *Step {
         // Test `zig init`.
         const tmp_path = b.tmpPath();
         const init_exe = b.addSystemCommand(&.{ b.graph.zig_exe, "init" });
+        init_exe.addPrefixedDirectoryArg("--zig-lib=", b.path("lib"));
         init_exe.setCwd(tmp_path);
         init_exe.setName("zig init");
         init_exe.expectStdOutEqual("");
@@ -2311,20 +2314,25 @@ pub fn addCliTests(b: *std.Build) *Step {
         const ok_src_arg = "src" ++ s ++ "main.zig";
         const es = if (builtin.os.tag == .windows) "\\\\" else "/";
         const expected = "error: unable to open output directory \"does" ++ es ++ "not" ++ es ++ "exist\": FileNotFound\n";
-        const run_bad = b.addSystemCommand(&.{ b.graph.zig_exe, "build-exe", ok_src_arg, bad_out_arg });
+        const run_bad = b.addSystemCommand(&.{ b.graph.zig_exe, "build-exe", ok_src_arg, bad_out_arg, "--zig-lib-dir" });
+        run_bad.addDirectoryArg(b.path("lib"));
         run_bad.setName("zig build-exe error message for bad -femit-bin arg");
         run_bad.expectExitCode(1);
         run_bad.expectStdErrEqual(expected);
         run_bad.expectStdOutEqual("");
         run_bad.step.dependOn(&init_exe.step);
 
-        const run_test = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test" });
+        const run_test = b.addSystemCommand(&.{ b.graph.zig_exe, "build" });
+        run_test.addPrefixedDirectoryArg("--zig-lib=", b.path("lib"));
+        run_test.addArg("test");
         run_test.setCwd(tmp_path);
         run_test.setName("zig build test");
         run_test.expectStdOutEqual("");
         run_test.step.dependOn(&init_exe.step);
 
-        const run_run = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "run" });
+        const run_run = b.addSystemCommand(&.{ b.graph.zig_exe, "build" });
+        run_run.addPrefixedDirectoryArg("--zig-lib=", b.path("lib"));
+        run_run.addArg("run");
         run_run.setCwd(tmp_path);
         run_run.setName("zig build run");
         run_run.expectStdOutEqual("Run `zig build test` to run the tests.\n");
@@ -2339,7 +2347,9 @@ pub fn addCliTests(b: *std.Build) *Step {
     {
         // Test `zig init -m`.
         const tmp_path = b.tmpPath();
-        const init_exe = b.addSystemCommand(&.{ b.graph.zig_exe, "init", "-m" });
+        const init_exe = b.addSystemCommand(&.{ b.graph.zig_exe, "init" });
+        init_exe.addPrefixedDirectoryArg("--zig-lib=", b.path("lib"));
+        init_exe.addArg("-m");
         init_exe.setCwd(tmp_path);
         init_exe.setName("zig init -m");
         init_exe.expectStdOutEqual("");
@@ -2366,7 +2376,8 @@ pub fn addCliTests(b: *std.Build) *Step {
         // This is intended to be the exact CLI usage used by godbolt.org.
         const run = b.addSystemCommand(&.{ b.graph.zig_exe, "build-obj", "--cache-dir" });
         run.addDirectoryArg(tmp_path);
-        run.addArgs(&.{ "--name", "example", "-fno-emit-bin", "-fno-emit-h", "-fstrip", "-Ofast" });
+        run.addArgs(&.{ "--name", "example", "-fno-emit-bin", "-fno-emit-h", "-fstrip", "-Ofast", "--zig-lib-dir" });
+        run.addDirectoryArg(b.path("lib"));
         run.addFileArg(example_zig);
         const example_s = run.addPrefixedOutputFileArg("-femit-asm=", "example.s");
 
@@ -2462,9 +2473,11 @@ pub fn addCliTests(b: *std.Build) *Step {
     }
 
     {
-        const run_test = b.addSystemCommand(&.{
-            b.graph.zig_exe,
-            "build",
+        const run_test = b.addSystemCommand(&.{ b.graph.zig_exe, "build" });
+
+        run_test.addPrefixedDirectoryArg("--zig-lib=", b.path("lib"));
+
+        run_test.addArgs(&.{
             "test",
             "-Dbool_true",
             "-Dbool_false=false",
@@ -2472,6 +2485,7 @@ pub fn addCliTests(b: *std.Build) *Step {
             "-De=two",
             "-Dstring=hello",
         });
+
         run_test.addArg("--build-file");
         run_test.addFileArg(b.path("test/cli/options/build.zig"));
 
@@ -2982,6 +2996,7 @@ pub fn addCAbiTests(b: *std.Build, options: CAbiTestOptions) *Step {
                 .use_llvm = c_abi_target.use_llvm,
                 .use_lld = c_abi_target.use_lld,
                 .max_rss = options.max_rss,
+                .zig_lib_dir = b.path("lib"),
             });
 
             // https://github.com/llvm/llvm-project/issues/195561
@@ -3160,7 +3175,7 @@ pub fn addRunnerTests(
             .directory => run.addDirectoryArg(test_path),
         }
         run.addPrefixedFileArg("--zig=", .zig_exe);
-        run.addPrefixedDirectoryArg("--lib=", .zig_lib);
+        run.addPrefixedDirectoryArg("--lib=", b.path("lib"));
         _ = run.addPrefixedOutputDirectoryArg("--src=", "src");
 
         for (matrix) |test_target| {

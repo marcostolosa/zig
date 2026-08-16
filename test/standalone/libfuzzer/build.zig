@@ -18,6 +18,7 @@ pub fn build(b: *std.Build) void {
             .fuzz = true,
         }),
         .use_llvm = true, // #23423
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     b.installArtifact(exe);

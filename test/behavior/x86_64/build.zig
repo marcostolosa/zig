@@ -16,6 +16,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.addWriteFiles().add("compiler_rt.zig", ""),
             .target = b.resolveTargetQuery(.{ .cpu_arch = .x86_64 }),
         }),
+        .zig_lib_dir = b.path("lib"),
     });
     compiler_rt_lib.bundle_compiler_rt = true;
 
@@ -180,6 +181,7 @@ pub fn build(b: *std.Build) void {
                 .use_llvm = false,
                 .use_lld = false,
                 .root_module = test_mod,
+                .zig_lib_dir = b.path("lib"),
             });
             test_exe.step.name = b.fmt("{s} {s}", .{ test_exe.step.name, cpu });
             if (!target.result.cpu.has(.x86, .sse2)) {

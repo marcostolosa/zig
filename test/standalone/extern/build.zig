@@ -13,6 +13,7 @@ pub fn build(b: *std.Build) void {
             .target = b.graph.host,
             .optimize = optimize,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
     const shared = b.addLibrary(.{
         .linkage = .dynamic,
@@ -23,14 +24,18 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .link_libc = true,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
     if (b.graph.host.result.abi == .msvc) shared.root_module.addCMacro("API", "__declspec(dllexport)");
     shared.root_module.addCSourceFile(.{ .file = b.path("shared.c"), .flags = &.{} });
-    const test_exe = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("main.zig"),
-        .target = b.graph.host,
-        .optimize = optimize,
-    }) });
+    const test_exe = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("main.zig"),
+            .target = b.graph.host,
+            .optimize = optimize,
+        }),
+        .zig_lib_dir = b.path("../../../lib"),
+    });
     test_exe.root_module.addObject(obj);
     test_exe.root_module.linkLibrary(shared);
 

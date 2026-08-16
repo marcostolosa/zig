@@ -22,6 +22,7 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = "depend_on_main_mod",
         .root_module = main_mod,
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const run_cmd = b.addRunArtifact(exe);

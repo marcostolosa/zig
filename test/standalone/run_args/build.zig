@@ -15,6 +15,7 @@ pub fn build(b: *std.Build) !void {
             .root_source_file = b.path("main.zig"),
             .target = b.graph.host,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     // Arg

@@ -70,6 +70,7 @@ fn run_exe(b: *std.Build, optimize: std.builtin.Optimize, case: *const Case, tar
             .optimize = optimize,
             .target = target,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const run_cmd = b.addRunArtifact(exe);

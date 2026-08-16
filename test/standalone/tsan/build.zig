@@ -60,6 +60,7 @@ pub fn build(b: *std.Build) !void {
                         .optimize = .debug,
                         .sanitize_thread = true,
                     }),
+                    .zig_lib_dir = b.path("../../../lib"),
                 });
                 const install_exe = b.addInstallArtifact(exe, .{});
                 test_step.dependOn(&install_exe.step);
@@ -74,6 +75,7 @@ pub fn build(b: *std.Build) !void {
                         .optimize = .debug,
                         .sanitize_thread = true,
                     }),
+                    .zig_lib_dir = b.path("../../../lib"),
                 });
                 const install_exe = b.addInstallArtifact(exe, .{});
                 test_step.dependOn(&install_exe.step);

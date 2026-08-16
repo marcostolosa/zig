@@ -27,6 +27,7 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
         .name = "lib",
         .root_module = lib_mod,
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     exe_mod.linkLibrary(lib);
@@ -34,6 +35,7 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = "app",
         .root_module = exe_mod,
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     b.installArtifact(exe);

@@ -50,6 +50,7 @@ fn addOne(
         .name = name,
         .root_module = mod,
         .linkage = link_mode,
+        .zig_lib_dir = b.path("../../../lib"),
     });
     exe.use_new_linker = true;
     exe.use_llvm = use_llvm;

@@ -27,6 +27,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const hex_step = elf.addObjCopy(.{

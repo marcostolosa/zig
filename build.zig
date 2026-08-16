@@ -87,6 +87,7 @@ pub fn build(b: *std.Build) !void {
                 }),
             }},
         }),
+        .zig_lib_dir = b.path("lib"),
     });
     const run_update_cpu_features = b.addRunArtifact(update_cpu_features);
     run_update_cpu_features.addPassthruArgs();
@@ -677,6 +678,7 @@ pub fn build(b: *std.Build) !void {
                 .target = b.graph.host,
                 .root_source_file = b.path("tools/update_mingw.zig"),
             }),
+            .zig_lib_dir = b.path("lib"),
         });
         const update_mingw_run = b.addRunArtifact(update_mingw_exe);
         update_mingw_run.addDirectoryArg(b.path("lib"));
@@ -702,6 +704,7 @@ pub fn build(b: *std.Build) !void {
                 .{ .name = "preprocessor", .module = mingw_preprocessor_mod },
             },
         }),
+        .zig_lib_dir = b.path("lib"),
     });
     const check_mingw_run = b.addRunArtifact(check_mingw_exe);
     check_mingw_run.addDirectoryArg(b.path("lib/libc/mingw"));
@@ -714,6 +717,7 @@ pub fn build(b: *std.Build) !void {
                 .root_source_file = b.path("tools/gen_parser_oracle.zig"),
                 .target = b.graph.host,
             }),
+            .zig_lib_dir = b.path("lib"),
         });
 
         const gen_oracle_step = b.step("gen-parser-oracle", "Regenerate lib/std/zig/parser_generated_oracle.zig from doc/langref/grammar.peg");
@@ -745,6 +749,7 @@ pub fn build(b: *std.Build) !void {
             .target = b.graph.host,
             .optimize = optimize,
         }),
+        .zig_lib_dir = b.path("lib"),
     });
     const runner_opts: tests.RunnerOptions = .{
         .test_filters = test_filters,
@@ -813,6 +818,7 @@ pub fn build(b: *std.Build) !void {
                 .target = target,
                 .optimize = optimize,
             }),
+            .zig_lib_dir = b.path("lib"),
         });
         objdump_step.dependOn(&b.addInstallArtifact(objdump_exe, .{}).step);
 
@@ -824,6 +830,7 @@ pub fn build(b: *std.Build) !void {
                 .target = target,
                 .optimize = optimize,
             }),
+            .zig_lib_dir = b.path("lib"),
         });
         maker_step.dependOn(&b.addInstallArtifact(maker_exe, .{}).step);
     }
@@ -928,6 +935,7 @@ fn addCompilerStep(b: *std.Build, options: AddCompilerModOptions) *std.Build.Ste
         // compiler takes more than 8G of memory.
         .max_rss = 8_000_000_000,
         .root_module = addCompilerMod(b, options),
+        .zig_lib_dir = b.path("lib"),
     });
     exe.stack_size = stack_size;
 
@@ -1643,6 +1651,7 @@ fn generateLangRef(b: *std.Build) !std.Build.LazyPath {
             .target = b.graph.host,
             .optimize = .debug,
         }),
+        .zig_lib_dir = b.path("lib"),
     });
 
     const langref_path = try b.root.join(arena, "doc/langref");
@@ -1670,7 +1679,7 @@ fn generateLangRef(b: *std.Build) !std.Build.LazyPath {
         cmd.addDirectoryArg(.cache_root);
 
         cmd.addArg("--zig-lib-dir");
-        cmd.addDirectoryArg(.zig_lib);
+        cmd.addDirectoryArg(b.path("lib"));
 
         cmd.addArg("-i");
         cmd.addFileArg(b.path(b.fmt("doc/langref/{s}", .{entry.name})));
@@ -1686,6 +1695,7 @@ fn generateLangRef(b: *std.Build) !std.Build.LazyPath {
             .target = b.graph.host,
             .optimize = .debug,
         }),
+        .zig_lib_dir = b.path("lib"),
     });
 
     const docgen_cmd = b.addRunArtifact(docgen_exe);

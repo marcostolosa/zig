@@ -7,6 +7,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = b.graph.host,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
     if (is_windows) {
         test_obj.root_module.linkSystemLibrary("ntdll", .{});
@@ -21,6 +22,7 @@ pub fn build(b: *std.Build) void {
     const test_exe = b.addExecutable(.{
         .name = "test",
         .root_module = test_exe_mod,
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const test_step = b.step("test", "Test the program");

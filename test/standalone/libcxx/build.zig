@@ -17,6 +17,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
                 .link_libcpp = true,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
         exe.root_module.addCSourceFile(.{ .file = b.path("mt_doit.cpp") });
         link_step.dependOn(&exe.step);
@@ -33,6 +34,7 @@ pub fn build(b: *std.Build) void {
                 .link_libcpp = true,
                 .single_threaded = true,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
         exe.root_module.addCSourceFile(.{ .file = b.path("st_doit.cpp") });
         link_step.dependOn(&exe.step);

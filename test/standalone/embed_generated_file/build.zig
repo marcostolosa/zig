@@ -22,13 +22,17 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = .small,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
-    const exe = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("main.zig"),
-        .target = b.graph.host,
-        .optimize = .debug,
-    }) });
+    const exe = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("main.zig"),
+            .target = b.graph.host,
+            .optimize = .debug,
+        }),
+        .zig_lib_dir = b.path("../../../lib"),
+    });
     exe.root_module.addAnonymousImport("bootloader.elf", .{
         .root_source_file = bootloader.getEmittedBin(),
     });

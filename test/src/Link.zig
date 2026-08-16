@@ -47,6 +47,7 @@ pub const Case = struct {
             .root_module = self.ctx.createModule(overlay),
             .use_llvm = overlay.use_llvm orelse self.ctx.use_llvm,
             .use_lld = overlay.use_lld orelse self.ctx.use_lld,
+            .zig_lib_dir = self.ctx.b.path("lib"),
         });
         lib.use_new_linker = overlay.use_new_linker orelse self.ctx.use_new_linker;
         return lib;
@@ -61,6 +62,7 @@ pub const Case = struct {
             .root_module = self.ctx.createModule(overlay),
             .use_llvm = overlay.use_llvm orelse self.ctx.use_llvm,
             .use_lld = overlay.use_lld orelse self.ctx.use_lld,
+            .zig_lib_dir = self.ctx.b.path("lib"),
         });
         exe.use_new_linker = overlay.use_new_linker orelse self.ctx.use_new_linker;
         return exe;
@@ -85,6 +87,7 @@ pub const Case = struct {
             .root_module = self.ctx.createModule(overlay),
             .use_llvm = overlay.use_llvm orelse self.ctx.use_llvm,
             .use_lld = overlay.use_lld orelse self.ctx.use_lld,
+            .zig_lib_dir = self.ctx.b.path("lib"),
         });
         obj.use_new_linker = overlay.use_new_linker orelse self.ctx.use_new_linker;
         return obj;
@@ -140,6 +143,7 @@ pub const Case = struct {
             .{ snapshot_name, ctx.target_desc },
         ));
         run_step.addArgs(&.{ ctx.b.graph.zig_exe, "objdump" });
+        run_step.addPrefixedDirectoryArg("--zig-lib=", ctx.b.path("lib"));
         run_step.addFileArg(file);
         run_step.addArgs(args);
         run_step.addCheck(.{ .expect_term = .{ .exited = 0 } });

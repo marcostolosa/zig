@@ -17,6 +17,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
             .target = target,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const bat_files = b.addWriteFiles();
@@ -42,6 +43,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
             .target = target,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const run = b.addRunArtifact(test_exe);
@@ -58,6 +60,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
             .target = target,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const fuzz_max_iterations = b.option(u64, "iterations", "The max fuzz iterations (default: 100)") orelse 100;

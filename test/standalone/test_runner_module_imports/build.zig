@@ -17,6 +17,7 @@ pub fn build(b: *std.Build) void {
             .path = b.path("test_runner/main.zig"),
             .mode = .simple,
         },
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const test_step = b.step("test", "Run unit tests");

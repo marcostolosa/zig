@@ -17,6 +17,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .target = target,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const main = b.addExecutable(.{
@@ -26,6 +27,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .target = target,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const run = b.addRunArtifact(main);

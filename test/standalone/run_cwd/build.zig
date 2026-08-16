@@ -6,6 +6,7 @@ pub fn build(b: *Build) void {
             .optimize = .debug,
             .root_source_file = b.path("check_file_exists.zig"),
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const test_step = b.step("test", "Test it");

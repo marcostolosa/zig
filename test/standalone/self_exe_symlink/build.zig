@@ -19,6 +19,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .target = target,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const create_symlink_exe = b.addExecutable(.{
@@ -28,6 +29,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .target = target,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     var run_create_symlink = b.addRunArtifact(create_symlink_exe);

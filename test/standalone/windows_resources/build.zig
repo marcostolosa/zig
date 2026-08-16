@@ -39,6 +39,7 @@ fn add(
             .target = target,
             .optimize = .debug,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
     exe.root_module.addWin32ResourceFile(.{
         .file = b.path("res/zig.rc"),

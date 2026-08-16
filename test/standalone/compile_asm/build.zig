@@ -26,6 +26,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
             .target = target,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
     kernel.root_module.addObjectFile(b.path("./boot.S"));
     kernel.setLinkerScript(b.path("./linker.ld"));

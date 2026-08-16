@@ -20,6 +20,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .link_libc = true,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const io = b.graph.io;

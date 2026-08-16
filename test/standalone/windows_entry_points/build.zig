@@ -25,6 +25,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = .debug,
                 .link_libc = true,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
         exe.root_module.addCSourceFile(.{ .file = b.path("main.c") });
 
@@ -41,6 +42,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = .debug,
                 .link_libc = true,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
         exe.mingw_unicode_entry_point = true;
         exe.root_module.addCSourceFile(.{ .file = b.path("wmain.c") });
@@ -58,6 +60,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = .debug,
                 .link_libc = true,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
         // Note: `exe.subsystem = .windows;` is not necessary
         exe.root_module.addCSourceFile(.{ .file = b.path("winmain.c") });
@@ -75,6 +78,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = .debug,
                 .link_libc = true,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
         exe.mingw_unicode_entry_point = true;
         // Note: `exe.subsystem = .windows;` is not necessary
@@ -92,6 +96,7 @@ pub fn build(b: *std.Build) void {
                 .target = target,
                 .optimize = .debug,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
 
         _ = exe.getEmittedBin();
@@ -107,6 +112,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = .debug,
                 .link_libc = true,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
 
         _ = exe.getEmittedBin();
@@ -121,6 +127,7 @@ pub fn build(b: *std.Build) void {
                 .target = target,
                 .optimize = .debug,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
         exe.mingw_unicode_entry_point = true;
         // Note: `exe.subsystem = .windows;` is not necessary
@@ -138,6 +145,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = .debug,
                 .link_libc = true,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
         exe.mingw_unicode_entry_point = true;
         // Note: `exe.subsystem = .windows;` is not necessary
@@ -146,11 +154,15 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&exe.step);
     }
 
-    const load_dll_exe = b.addExecutable(.{ .name = "load_dll", .root_module = b.createModule(.{
-        .root_source_file = b.path("loaddll.zig"),
-        .target = target,
-        .optimize = .debug,
-    }) });
+    const load_dll_exe = b.addExecutable(.{
+        .name = "load_dll",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("loaddll.zig"),
+            .target = target,
+            .optimize = .debug,
+        }),
+        .zig_lib_dir = b.path("../../../lib"),
+    });
 
     {
         const dll = b.addLibrary(.{
@@ -161,6 +173,7 @@ pub fn build(b: *std.Build) void {
                 .target = target,
                 .optimize = .debug,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
 
         const run = b.addRunArtifact(load_dll_exe);
@@ -183,6 +196,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = .debug,
                 .link_libc = true,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
 
         const run = b.addRunArtifact(load_dll_exe);
@@ -204,6 +218,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = .debug,
                 .link_libc = true,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
         dll.root_module.addCSourceFile(.{ .file = b.path("dllmain.c") });
 

@@ -59,6 +59,7 @@ pub fn build(b: *std.Build) void {
                 .link_libc = dyn_libc,
             }),
             .use_llvm = lib_llvm,
+            .zig_lib_dir = b.path("../../../lib"),
         });
         foo.root_module.addCSourceFile(.{ .file = b.path("foo.c"), .flags = &[_][]const u8{} });
         foo.root_module.addIncludePath(b.path("."));
@@ -72,6 +73,7 @@ pub fn build(b: *std.Build) void {
                 .link_libc = dyn_libc,
             }),
             .use_llvm = exe_llvm,
+            .zig_lib_dir = b.path("../../../lib"),
         });
         test_exe.root_module.linkLibrary(foo);
         test_exe.root_module.addIncludePath(b.path("."));

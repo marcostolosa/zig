@@ -73,6 +73,7 @@ pub fn addTarget(libc: *const Libc, target: std.Build.ResolvedTarget) void {
     const libtest = libc.b.addLibrary(.{
         .name = "test",
         .root_module = libtest_mod,
+        .zig_lib_dir = libc.b.path("lib"),
     });
 
     for (libc.test_cases.items) |*test_case| {
@@ -103,6 +104,7 @@ pub fn addTarget(libc: *const Libc, target: std.Build.ResolvedTarget) void {
             .name = test_case.name,
             .root_module = mod,
             .max_rss = libc.options.max_rss,
+            .zig_lib_dir = libc.b.path("lib"),
         });
 
         const run = libc.b.addRunArtifact(exe);

@@ -15,6 +15,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .target = target,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const obj2 = b.addLibrary(.{
@@ -25,6 +26,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .target = target,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const main_mod = b.createModule(.{
@@ -35,6 +37,9 @@ pub fn build(b: *std.Build) void {
     main_mod.linkLibrary(obj1);
     main_mod.linkLibrary(obj2);
 
-    const main = b.addTest(.{ .root_module = main_mod });
+    const main = b.addTest(.{
+        .root_module = main_mod,
+        .zig_lib_dir = b.path("../../../lib"),
+    });
     test_step.dependOn(&b.addRunArtifact(main).step);
 }

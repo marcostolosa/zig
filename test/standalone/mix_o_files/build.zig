@@ -15,6 +15,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .link_libc = true,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const exe = b.addExecutable(.{
@@ -25,6 +26,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .link_libc = true,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
     exe.root_module.addCSourceFile(.{
         .file = b.path("test.c"),

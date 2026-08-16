@@ -15,6 +15,7 @@ pub fn build(b: *std.Build) void {
             .optimize = .debug,
             .target = target,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
     const generated = b.addRunArtifact(touch).addOutputFileArg("subdir" ++ std.fs.path.sep_str ++ "generated.txt");
 
@@ -25,6 +26,7 @@ pub fn build(b: *std.Build) void {
             .optimize = .debug,
             .target = target,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     addTestRun(test_step, exists_in, "run exists_in (known path)", touch_src.dirname(), &.{"touch.zig"});

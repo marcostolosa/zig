@@ -60,6 +60,7 @@ pub fn build(b: *std.Build) void {
                 .link_libc = dyn_libc,
             }),
             .use_llvm = lib_llvm,
+            .zig_lib_dir = b.path("../../../lib"),
         });
 
         const exe = b.addExecutable(.{
@@ -71,6 +72,7 @@ pub fn build(b: *std.Build) void {
                 .link_libc = true,
             }),
             .use_llvm = exe_llvm,
+            .zig_lib_dir = b.path("../../../lib"),
         });
         exe.root_module.addCSourceFile(.{
             .file = b.path("test.c"),

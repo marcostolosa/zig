@@ -29,6 +29,7 @@ pub fn build(b: *std.Build) void {
                 .target = target,
                 .link_libc = true,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
         // We disable UBSAN for these tests as the libc being tested here is
         // so old, it doesn't even support compiling our UBSAN implementation.
@@ -80,6 +81,7 @@ pub fn build(b: *std.Build) void {
                 .target = target,
                 .link_libc = true,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
         // We disable UBSAN for these tests as the libc being tested here is
         // so old, it doesn't even support compiling our UBSAN implementation.
@@ -170,6 +172,7 @@ pub fn build(b: *std.Build) void {
                     },
                 },
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
         // We disable UBSAN for these tests as the libc being tested here is
         // so old, it doesn't even support compiling our UBSAN implementation.

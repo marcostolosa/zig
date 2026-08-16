@@ -19,6 +19,7 @@ pub fn build(b: *std.Build) !void {
             }),
             .optimize = optimize,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const verify_gnu = b.addExecutable(.{
@@ -30,6 +31,7 @@ pub fn build(b: *std.Build) !void {
             }),
             .optimize = optimize,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
     verify_gnu.root_module.addCSourceFile(.{
         .file = b.path("verify.c"),
@@ -46,6 +48,7 @@ pub fn build(b: *std.Build) !void {
             .target = b.graph.host,
             .optimize = optimize,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const fuzz_max_iterations = b.option(u64, "iterations", "The max fuzz iterations (default: 100)") orelse 100;
@@ -86,6 +89,7 @@ pub fn build(b: *std.Build) !void {
                 }),
                 .optimize = optimize,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
         const verify_msvc = b.addExecutable(.{
             .name = "verify-msvc",
@@ -96,6 +100,7 @@ pub fn build(b: *std.Build) !void {
                 }),
                 .optimize = optimize,
             }),
+            .zig_lib_dir = b.path("../../../lib"),
         });
         verify_msvc.root_module.addCSourceFile(.{
             .file = b.path("verify.c"),

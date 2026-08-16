@@ -13,6 +13,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .target = b.graph.host,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
     exe.root_module.addAnonymousImport("my_pkg", .{ .root_source_file = b.path("pkg.zig") });
 

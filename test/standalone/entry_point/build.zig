@@ -21,11 +21,13 @@ pub fn build(b: *std.Build) !void {
     const exe_foo = b.addExecutable(.{
         .name = "the_exe", // same name for reproducible output
         .root_module = mod,
+        .zig_lib_dir = b.path("../../../lib"),
     });
     exe_foo.entry = .{ .symbol_name = "foo" };
     const exe_bar = b.addExecutable(.{
         .name = "the_exe", // same name for reproducible output
         .root_module = mod,
+        .zig_lib_dir = b.path("../../../lib"),
     });
     exe_bar.entry = .{ .symbol_name = "bar" };
 
@@ -40,6 +42,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = .debug,
             .root_source_file = b.path("check_differ.zig"),
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
 
     const diff_cmd = b.addRunArtifact(check_differ_exe);

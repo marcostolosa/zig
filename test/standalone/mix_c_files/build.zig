@@ -26,6 +26,7 @@ fn add(b: *std.Build, test_step: *std.Build.Step, optimize: std.builtin.Optimize
         }),
         // extern threadlocals are not implemented in the self-hosted linker
         .use_llvm = true,
+        .zig_lib_dir = b.path("../../../lib"),
     });
     exe.root_module.addCSourceFile(.{ .file = b.path("test.c"), .flags = &[_][]const u8{"-std=c11"} });
 

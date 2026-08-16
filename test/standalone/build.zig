@@ -64,6 +64,7 @@ pub fn build(b: *std.Build) void {
                 .root_source_file = b.path(tool_src_path),
                 .target = tools_target,
             }),
+            .zig_lib_dir = b.path("../../lib"),
         });
         if (std.mem.endsWith(u8, tool_src_path, "check_mingw.zig")) {
             const mingw_preprocessor_mod = b.createModule(.{
@@ -92,6 +93,7 @@ pub fn build(b: *std.Build) void {
                 .root_source_file = b.path(tool_src_path),
                 .target = tools_target,
             }),
+            .zig_lib_dir = b.path("../../lib"),
         });
         const run = b.addRunArtifact(tool);
         tools_tests_step.dependOn(&run.step);

@@ -12,6 +12,7 @@ pub fn build(b: *std.Build) void {
             .target = b.graph.host,
             .optimize = optimize,
         }),
+        .zig_lib_dir = b.path("../../../lib"),
     });
     exe.root_module.addCSourceFile(.{
         .file = b.path("test.c"),

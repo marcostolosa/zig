@@ -197,6 +197,11 @@ pub const Options = struct {
         else => false,
     },
 
+    /// The wait instruction is generally not allowed when WebAssembly is running in the main
+    /// (or UI) thread of a web browser. Setting this to true causes `futexWait()` to spin in
+    /// the main thread until it's awakened by a call to `futexWake()` in a different thread.
+    wasm_main_thread_no_wait: bool = false,
+
     /// TODO This is a separate decl instead of a field as a workaround around
     /// compilation errors due to zig not being lazy enough.
     pub const logTerminalMode: fn () Io.Terminal.Mode = log.defaultTerminalMode;

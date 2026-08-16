@@ -15,7 +15,7 @@ pub const SafeAllocator = @import("heap/SafeAllocator.zig");
 pub const FixedBufferAllocator = @import("heap/FixedBufferAllocator.zig");
 pub const BufferFirstAllocator = @import("heap/BufferFirstAllocator.zig");
 pub const PageAllocator = @import("heap/PageAllocator.zig");
-pub const WasmAllocator = if (builtin.single_threaded) BrkAllocator else @compileError("unimplemented");
+pub const WasmAllocator = if (builtin.single_threaded) BrkAllocator else ThreadSafe(BrkAllocator);
 pub const BrkAllocator = @import("heap/BrkAllocator.zig");
 
 /// Deprecated; use `SafeAllocator.Options`.
@@ -364,6 +364,76 @@ pub const brk_allocator: Allocator = .{
     .ptr = undefined,
     .vtable = &BrkAllocator.vtable,
 };
+
+/// Wraps a non-thread-safe allocator and makes it thread-safe.
+fn ThreadSafe(comptime T: type) type {
+    return struct {
+        nts_allocator: T = .{},
+        state: u32 = 0,
+
+        pub fn allocator(self: *@This()) Allocator {
+            return .{
+                .ptr = self,
+                .vtable = &vtable,
+            };
+        }
+
+        pub const vtable: Allocator.VTable = .{
+            .alloc = alloc,
+            .resize = resize,
+            .remap = remap,
+            .free = free,
+        };
+
+        fn alloc(ctx: *anyopaque, n: usize, alignment: std.mem.Alignment, ra: usize) ?[*]u8 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.lock();
+            defer self.unlock();
+            return ntsAlloc(&self.nts_allocator, n, alignment, ra);
+        }
+
+        fn resize(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.lock();
+            defer self.unlock();
+            return ntsResize(&self.nts_allocator, buf, alignment, new_len, ret_addr);
+        }
+
+        fn remap(context: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, return_address: usize) ?[*]u8 {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.lock();
+            defer self.unlock();
+            return ntsRemap(&self.nts_allocator, memory, alignment, new_len, return_address);
+        }
+
+        fn free(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.lock();
+            defer self.unlock();
+            return ntsFree(&self.nts_allocator, buf, alignment, ret_addr);
+        }
+
+        fn lock(self: *@This()) void {
+            while (@cmpxchgWeak(u32, &self.state, 0, 1, .acquire, .monotonic) != null) {
+                var tio: std.Io.Threaded = undefined;
+                futexWaitUncancelable(&tio, &self.state, 1);
+            }
+        }
+
+        fn unlock(self: *@This()) void {
+            @atomicStore(u32, &self.state, 0, .release);
+            var tio: std.Io.Threaded = undefined;
+            futexWake(&tio, &self.state, 1);
+        }
+
+        const ntsAlloc = T.vtable.alloc;
+        const ntsResize = T.vtable.resize;
+        const ntsRemap = T.vtable.remap;
+        const ntsFree = T.vtable.free;
+        const futexWaitUncancelable = std.Io.Threaded.io(undefined).vtable.futexWaitUncancelable;
+        const futexWake = std.Io.Threaded.io(undefined).vtable.futexWake;
+    };
+}
 
 test c_allocator {
     if (builtin.link_libc) {

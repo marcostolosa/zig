@@ -939,6 +939,8 @@ const Thread = struct {
         return Thread.futexWaitInner(ptr, expect, false, timeout_ns);
     }
 
+    var main_thread_spin_ptr: ?*const u32 = null;
+
     fn futexWaitInner(ptr: *const u32, expect: u32, uncancelable: bool, timeout_ns: ?u64) Io.Cancelable!void {
         @branchHint(.cold);
 
@@ -958,6 +960,37 @@ const Thread = struct {
             comptime assert(builtin.cpu.has(.wasm, .atomics));
             // TODO implement cancelation for WASM futex waits by signaling the futex
             if (!uncancelable) try Thread.checkCancel();
+            if (std.options.wasm_main_thread_no_wait) {
+                // see if the current thread is the main thread
+                if (currentId() == 0) {
+                    // enter a spin instead of using the wait instruction
+                    @atomicStore(?*const u32, &main_thread_spin_ptr, ptr, .monotonic);
+                    errdefer @atomicStore(?*const u32, &main_thread_spin_ptr, null, .monotonic);
+                    if (timeout_ns) |ns| {
+                        if (builtin.target.os.tag == .wasi) {
+                            var ns_start: std.os.wasi.timestamp_t = 0;
+                            if (std.os.wasi.clock_time_get(.MONOTONIC, 1, &ns_start) != .SUCCESS)
+                                @panic("unsupported");
+                            // keep spinning until futexWake sets main_thread_spin_ptr to null
+                            while (@atomicLoad(?*const u32, &main_thread_spin_ptr, .acquire) != null) {
+                                if (!uncancelable) try Thread.checkCancel();
+                                var ns_now: std.os.wasi.timestamp_t = 0;
+                                if (std.os.wasi.clock_time_get(.MONOTONIC, 1, &ns_now) != .SUCCESS)
+                                    @panic("unsupported");
+                                if (ns_now - ns_start >= ns) {
+                                    @atomicStore(?*const u32, &main_thread_spin_ptr, null, .monotonic);
+                                    break;
+                                }
+                            }
+                        } else @panic("unsupported");
+                    } else {
+                        while (@atomicLoad(?*const u32, &main_thread_spin_ptr, .acquire) != null) {
+                            if (!uncancelable) try Thread.checkCancel();
+                        }
+                    }
+                    return;
+                }
+            }
             const to: i64 = if (timeout_ns) |ns| std.math.cast(i64, ns) orelse std.math.maxInt(i64) else -1;
             const signed_expect: i32 = @bitCast(expect);
             const result = asm volatile (
@@ -1114,6 +1147,14 @@ const Thread = struct {
             return parking_futex.wake(ptr, max_waiters);
         } else if (builtin.cpu.arch.isWasm()) {
             comptime assert(builtin.cpu.has(.wasm, .atomics));
+            var remaining_waiters = max_waiters;
+            if (std.options.wasm_main_thread_no_wait) {
+                if (@atomicLoad(?*const u32, &main_thread_spin_ptr, .monotonic) == ptr) {
+                    @atomicStore(?*const u32, &main_thread_spin_ptr, null, .release);
+                    remaining_waiters -= 1;
+                }
+                if (remaining_waiters == 0) return;
+            }
             const woken_count = asm volatile (
                 \\local.get %[ptr]
                 \\local.get %[waiters]
@@ -1121,7 +1162,7 @@ const Thread = struct {
                 \\local.set %[ret]
                 : [ret] "=r" (-> u32),
                 : [ptr] "r" (ptr),
-                  [waiters] "r" (max_waiters),
+                  [waiters] "r" (remaining_waiters),
             );
             _ = woken_count; // can be 0 when linker flag 'shared-memory' is not enabled
         } else switch (native_os) {

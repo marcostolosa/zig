@@ -11,10 +11,6 @@ const Alignment = std.mem.Alignment;
 const assert = std.debug.assert;
 const math = std.math;
 
-comptime {
-    if (!builtin.single_threaded) @compileError("unsupported");
-}
-
 next_addrs: [size_class_count]usize = @splat(0),
 /// For each size class, points to the freed pointer.
 frees: [size_class_count]usize = @splat(0),

@@ -543,16 +543,19 @@ const Metadata = packed struct(u8) {
         return @splat(@bitCast(make(fingerprint)));
     }
 
-    inline fn asByte(m: Metadata) u8 {
+    fn asByte(m: Metadata) u8 {
         return @bitCast(m);
     }
-    inline fn isFull(m: Metadata) bool {
+
+    fn isFull(m: Metadata) bool {
         return m.control == 0;
     }
-    inline fn isEmpty(m: Metadata) bool {
+
+    fn isEmpty(m: Metadata) bool {
         return m.asByte() == empty_data.asByte();
     }
-    inline fn isDeleted(m: Metadata) bool {
+
+    fn isDeleted(m: Metadata) bool {
         return m.asByte() == deleted.asByte();
     }
 };
@@ -563,26 +566,29 @@ const Metadata = packed struct(u8) {
 const Group = struct {
     vec: Vec,
 
-    inline fn load(metadata: [*]Metadata, index: MapSize) Group {
+    fn load(metadata: [*]Metadata, index: MapSize) Group {
         return .{ .vec = @bitCast(metadata[index..][0..group_len].*) };
     }
-    inline fn store(self: Group, metadata: [*]Metadata, index: MapSize) void {
+    fn store(self: Group, metadata: [*]Metadata, index: MapSize) void {
         metadata[index..][0..group_len].* = @bitCast(self.vec);
     }
 
-    inline fn match(self: Group, fp: u7) Match {
+    fn match(self: Group, fp: u7) Match {
         return Match.init(self.vec == Metadata.makeVec(fp));
     }
-    inline fn matchEmpty(self: Group) Match {
+
+    fn matchEmpty(self: Group) Match {
         return Match.init(self.vec == Metadata.empty_vec);
     }
-    inline fn matchEmptyOrDeleted(self: Group) Match {
+
+    fn matchEmptyOrDeleted(self: Group) Match {
         const signed: @Vector(group_len, i8) = @bitCast(self.vec);
 
         // Note: we can do this since the control bit is the sign bit.
         return Match.init(signed < @as(@Vector(group_len, i8), @splat(0)));
     }
-    inline fn convertDeletedToEmptyAndFullToDeleted(self: Group) Group {
+
+    fn convertDeletedToEmptyAndFullToDeleted(self: Group) Group {
         // Keep every control bit only:
         // full:     0xxxxxxx & 10000000 = 00000000
         // empty:    10000000 & 10000000 = 10000000
@@ -670,15 +676,15 @@ const Probe = struct {
         };
     }
 
-    inline fn next(self: *Probe) void {
+    fn next(self: *Probe) void {
         self.stride += group_len;
         self.index = (self.index + self.stride) & self.cap_mask;
     }
 
-    inline fn slot(self: Probe, offset: MapSize) MapSize {
+    fn slot(self: Probe, offset: MapSize) MapSize {
         return (self.index + offset) & self.cap_mask;
     }
-    inline fn group(self: Probe, metadata: [*]Metadata) Group {
+    fn group(self: Probe, metadata: [*]Metadata) Group {
         return Group.load(metadata, self.index);
     }
 };
@@ -882,7 +888,7 @@ pub fn Custom(
 
         /// The number of live elements `cap` slots may hold before a grow is
         /// required.
-        inline fn capacityToGrowth(cap: Size) Size {
+        fn capacityToGrowth(cap: Size) Size {
             return (cap * max_load_percentage) / 100;
         }
 
@@ -951,11 +957,11 @@ pub fn Custom(
             return self.size;
         }
 
-        inline fn metadataPtr(self: *const Self) [*]Metadata {
+        fn metadataPtr(self: *const Self) [*]Metadata {
             return @ptrCast(&self.table.?[0]);
         }
 
-        inline fn entriesPtr(self: *const Self) [*]KV {
+        fn entriesPtr(self: *const Self) [*]KV {
             return @ptrCast(@alignCast(&self.table.?[entriesOffset(self.capacity_)]));
         }
 
@@ -1377,7 +1383,7 @@ pub fn Custom(
             self.removeByIndex(@truncate(idx));
         }
 
-        inline fn setMetadata(self: *Self, metadata: [*]Metadata, index: Size, value: Metadata) void {
+        fn setMetadata(self: *Self, metadata: [*]Metadata, index: Size, value: Metadata) void {
             setMetadataWith(metadata, self.capacity_ - 1, index, value);
         }
 
@@ -1390,7 +1396,7 @@ pub fn Custom(
 
         /// Whether the tombstones in the table can be reclaimed in place
         /// instead of doubling.
-        inline fn shouldRehashInPlace(self: *const Self) bool {
+        fn shouldRehashInPlace(self: *const Self) bool {
             return self.capacity_ > group_len and
                 self.size * 8 <= capacityToGrowth(self.capacity_) * 7;
         }
@@ -1547,14 +1553,14 @@ pub fn Custom(
             self.available = capacityToGrowth(new_cap) - self.size;
         }
 
-        inline fn probeGroup(cap_mask: Size, start: Size, pos: Size) Size {
+        fn probeGroup(cap_mask: Size, start: Size, pos: Size) Size {
             return ((pos -% start) & cap_mask) / group_len;
         }
 
         /// empty but mask back onto real slots, so a match there can point to an
         /// occupied slot. Rescan from 0, where the load factor guarantees a
         /// vacancy before those trailing bytes.
-        inline fn fixVacant(metadata: [*]Metadata, slot: Size) Size {
+        fn fixVacant(metadata: [*]Metadata, slot: Size) Size {
             if (metadata[slot].isFull()) {
                 @branchHint(.unlikely);
                 return Group.load(metadata, 0).matchEmptyOrDeleted().firstSet().?;

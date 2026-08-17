@@ -1082,7 +1082,7 @@ const WasiThreadImpl = struct {
     /// The same worker can then be used to perform clean-up.
     ///
     /// We reuse `wasi_tread_start` to run the clean-up routine. Fresh stack memory is allocated
-    /// for it use, as the original stack would be in an unknown state. The caller of this function
+    /// for its use as the original stack would be in an unknown state. The caller of this function
     /// needs to specify the amount.
     pub fn cancel(self: *@This(), immediate: bool, cb: *const fn (usize) void, arg: usize, comptime options: struct {
         stack_size: usize,

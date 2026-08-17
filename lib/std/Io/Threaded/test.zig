@@ -603,6 +603,8 @@ fn getRandomWtf16Path(allocator: std.mem.Allocator, buf: *std.ArrayList(u16), ra
 }
 
 test "localHostName buffer edge" {
+    // Wasi currently doesn't support local hostnames
+    if (builtin.target.os.tag == .wasi) return error.SkipZigTest;
     // assumption: if the buffer is large enough, the computerName will succeed
     var buffer_expected: [Io.net.HostName.max_len * 2]u8 = undefined;
     var buffer_test: [Io.net.HostName.max_len * 2]u8 = undefined;

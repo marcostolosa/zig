@@ -1397,8 +1397,11 @@ pub fn Custom(
         /// Whether the tombstones in the table can be reclaimed in place
         /// instead of doubling.
         fn shouldRehashInPlace(self: *const Self) bool {
+            // We only rehash in place if doing so would reclaim 1/8th of the
+            // usable capacity.
+            // https://github.com/abseil/abseil-cpp/blob/master/absl/container/internal/raw_hash_set.cc#L1917-L1957
             return self.capacity_ > group_len and
-                self.size * 8 <= capacityToGrowth(self.capacity_) * 7;
+                @as(u64, self.size) * 8 <= @as(u64, capacityToGrowth(self.capacity_)) * 7;
         }
 
         /// Make room for `additional` more live elements, if needed.

@@ -758,6 +758,17 @@ test "readFileAlloc" {
     );
 }
 
+test "readFileAlloc can read procfs files on Linux" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const gpa = testing.allocator;
+    const io = testing.io;
+
+    const data = try Dir.cwd().readFileAlloc(io, "/proc/uptime", gpa, .unlimited);
+    defer gpa.free(data);
+    try expect(data.len != 0);
+}
+
 test "file operations with follow_symlinks=false" {
     const io = testing.io;
 

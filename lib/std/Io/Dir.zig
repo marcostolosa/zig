@@ -1368,6 +1368,20 @@ pub fn readFileAllocOptions(
     });
     defer file.close(io);
     var file_reader = file.reader(io, &.{});
+
+    // If the OS reports a size of 0, it might be misreporting (such as Linux
+    // procfs). The default reader mode trusts the size and would erroneously
+    // return 0 bytes. So instead use simple mode, which ignores the size and
+    // reads until EOF. The default positional mode would have queried the size
+    // later anyway, so it's not a wasted syscall.
+    if (file_reader.getSize()) |size| {
+        if (size == 0)
+            file_reader.mode = file_reader.mode.toSimple();
+    } else |err| switch (err) {
+        error.Canceled => |e| return e,
+        else => {},
+    }
+
     return file_reader.interface.allocRemainingAlignedSentinel(gpa, limit, alignment, sentinel) catch |err| switch (err) {
         error.ReadFailed => return file_reader.err.?,
         error.OutOfMemory, error.StreamTooLong => |e| return e,

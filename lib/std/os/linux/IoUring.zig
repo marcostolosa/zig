@@ -317,7 +317,8 @@ pub fn copy_cqe(ring: *IoUring) !linux.io_uring_cqe {
 
 /// Matches the implementation of cq_ring_needs_flush() in liburing.
 pub fn cq_ring_needs_flush(self: *IoUring) bool {
-    return (@atomicLoad(u32, self.sq.flags, .unordered) & linux.IORING_SQ_CQ_OVERFLOW) != 0;
+    const kflags: u32 = @atomicLoad(u32, io_ring.sq.flags, .unordered);
+    return (kflags & (linux.IORING_SQ_CQ_OVERFLOW | linux.IORING_SQ_TASKRUN)) != 0;
 }
 
 /// For advanced use cases only that implement custom completion queue methods.

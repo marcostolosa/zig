@@ -14008,7 +14008,11 @@ fn netLookupFallible(
         } else posix.AF.UNSPEC;
 
         const hints: posix.addrinfo = .{
-            .flags = .{ .CANONNAME = options.canonical_name_buffer != null, .NUMERICSERV = true },
+            .flags = .{
+                .CANONNAME = options.canonical_name_buffer != null,
+                .NUMERICSERV = true,
+                .ADDRCONFIG = true,
+            },
             .family = family,
             .socktype = posix.SOCK.STREAM,
             .protocol = posix.IPPROTO.TCP,

@@ -41,6 +41,23 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
+    // This creates a library for the module.
+    const mod_lib = b.addLibrary(.{
+        .name = "_NAME",
+        .root_module = mod,
+    });
+    
+    // This creates a top level step for generating the web documentation.
+    const doc_step = b.step("doc", "Generate the documentation");
+    
+    // This gets the emitted documentation from the library, and installs it.
+    const install_doc = b.addInstallDirectory(.{
+        .source_dir = docs_lib.getEmittedDocs(),
+        .install_dir = .{ .custom = "docs" },
+        .install_subdir = "lib",
+    });
+    doc_step.dependOn(&install_doc.step);
+
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
     // to the module defined above, it's sometimes preferable to split business

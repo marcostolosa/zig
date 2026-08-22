@@ -423,17 +423,16 @@ fn mainArgs(
                 .wasi => {},
                 else => process.executablePathAlloc(io, arena) catch |err| fatal("unable to find zig self exe path: {t}", .{err}),
             };
-            var dirs: std.zig.Directories = .init(
-                arena,
-                io,
-                EnvVar.ZIG_LIB_DIR.get(environ_map),
-                EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map),
-                .global,
-                preopens,
-                self_exe_path,
-                environ_map,
-                try std.zig.getResolvedCwd(io, arena),
-            );
+            var dirs: std.zig.Directories = .init(arena, io, .{
+                .override_zig_lib = EnvVar.ZIG_LIB_DIR.get(environ_map),
+                .override_global_cache = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map),
+                .build_root = null,
+                .local_cache_strat = .global,
+                .preopens = preopens,
+                .self_exe_path = self_exe_path,
+                .environ_map = environ_map,
+                .cwd = try std.zig.getResolvedCwd(io, arena),
+            });
             defer dirs.deinit(io);
             const host = std.zig.resolveTargetQueryOrFatal(io, .{});
             var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
@@ -458,17 +457,16 @@ fn mainArgs(
                 .wasi => args[0],
                 else => process.executablePathAlloc(io, arena) catch |err| fatal("unable to find zig self exe path: {t}", .{err}),
             };
-            var dirs: std.zig.Directories = .init(
-                arena,
-                io,
-                EnvVar.ZIG_LIB_DIR.get(environ_map),
-                EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map),
-                .global,
-                preopens,
-                if (native_os != .wasi) self_exe_path,
-                environ_map,
-                try std.zig.getResolvedCwd(io, arena),
-            );
+            var dirs: std.zig.Directories = .init(arena, io, .{
+                .override_zig_lib = EnvVar.ZIG_LIB_DIR.get(environ_map),
+                .override_global_cache = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map),
+                .build_root = null,
+                .local_cache_strat = .global,
+                .preopens = preopens,
+                .self_exe_path = if (native_os != .wasi) self_exe_path,
+                .environ_map = environ_map,
+                .cwd = try std.zig.getResolvedCwd(io, arena),
+            });
             defer dirs.deinit(io);
             const host = std.zig.resolveTargetQueryOrFatal(io, .{});
             var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
@@ -511,7 +509,7 @@ fn mainArgs(
     }
 }
 
-const usage_build_generic =
+const compile_usage =
     \\Usage: zig build-exe   [options] [files]
     \\       zig build-lib   [options] [files]
     \\       zig build-obj   [options] [files]
@@ -565,16 +563,16 @@ const usage_build_generic =
     \\  --cache-dir [path]        Override the local cache directory
     \\  --global-cache-dir [path] Override the global cache directory
     \\  --zig-lib-dir [path]      Override path to Zig installation lib directory
+    \\  --build-root [path]       Override path to project source files
     \\
     \\Global Compile Options:
     \\  --name [name]             Compilation unit name (not a file path)
-    \\  --libc [file]             Provide a file which specifies libc paths
-    \\  -x language               Treat subsequent input files as having type <language>
-    \\  --dep [[import=]name]     Add an entry to the next module's import table
     \\  -M[name][=src]            Create a module based on the current per-module settings.
     \\                            The first module is the main module.
     \\                            "std" can be configured by omitting src
     \\                            After a -M argument, per-module settings are reset.
+    \\  --libc [file]             Provide a file which specifies libc paths
+    \\  -x [language]             Treat subsequent input files as having type <language>
     \\  --error-limit [num]       Set the maximum amount of distinct error values
     \\  -fllvm                    Force using LLVM as the codegen backend
     \\  -fno-llvm                 Prevent using LLVM as the codegen backend
@@ -599,6 +597,7 @@ const usage_build_generic =
     \\  --time-report             Send timing diagnostics to '--listen' clients
     \\
     \\Per-Module Compile Options:
+    \\  --dep [[import=]name]     Add an entry to the next module's import table
     \\  -target [name]            <arch><sub>-<os>-<abi> see the targets command
     \\  -O [mode]                 Choose what to optimize for
     \\    debug (default)         Prioritize bug detection, accurate debug info, compilation speed
@@ -751,6 +750,7 @@ const usage_build_generic =
     \\  --import-symbols               (WebAssembly) import missing symbols from the host environment
     \\  --import-table                 (WebAssembly) import function table from the host environment
     \\  --export-table                 (WebAssembly) export function table to the host environment
+    \\  --growable-table               (WebAssembly) remove maximum size from function table, allowing table to grow
     \\  --initial-memory=[bytes]       (WebAssembly) initial size of the linear memory
     \\  --max-memory=[bytes]           (WebAssembly) maximum size of the linear memory
     \\  --shared-memory                (WebAssembly) use shared linear memory
@@ -985,12 +985,15 @@ fn buildOutputType(
     var linker_import_symbols: bool = false;
     var linker_import_table: bool = false;
     var linker_export_table: bool = false;
+    var linker_growable_table: bool = false;
     var linker_initial_memory: ?u64 = null;
     var linker_max_memory: ?u64 = null;
     var linker_global_base: ?u64 = null;
     var linker_print_gc_sections: bool = false;
     var linker_print_icf_sections: bool = false;
     var linker_print_map: bool = false;
+    var linker_nmagic: bool = false;
+    var linker_fatal_warnings: bool = false;
     var llvm_opt_bisect_limit: c_int = -1;
     var linker_z_nocopyreloc = false;
     var linker_z_nodelete = false;
@@ -1050,6 +1053,7 @@ fn buildOutputType(
     var rc_includes: std.zig.RcIncludes = .any;
     var manifest_file: ?[]const u8 = null;
     var linker_export_symbol_names: std.ArrayList([]const u8) = .empty;
+    var build_root_path: ?[]const u8 = null;
 
     // Tracks the position in c_source_files which have already their owner populated.
     var c_source_files_owner_index: usize = 0;
@@ -1163,7 +1167,7 @@ fn buildOutputType(
                         fatal("unable to read response file {q}: {t}", .{ resp_file_path, err });
                 } else if (mem.startsWith(u8, arg, "-")) {
                     if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                        try Io.File.stdout().writeStreamingAll(io, usage_build_generic);
+                        try Io.File.stdout().writeStreamingAll(io, compile_usage);
                         return cleanExit(io);
                     } else if (mem.eql(u8, arg, "--")) {
                         if (arg_mode == .run) {
@@ -1436,6 +1440,8 @@ fn buildOutputType(
                         override_global_cache_dir = args_iter.nextOrFatal();
                     } else if (mem.eql(u8, arg, "--zig-lib-dir")) {
                         override_lib_dir = args_iter.nextOrFatal();
+                    } else if (mem.eql(u8, arg, "--build-root")) {
+                        build_root_path = args_iter.nextOrFatal();
                     } else if (mem.eql(u8, arg, "--debug-log")) {
                         try addDebugLog(arena, args_iter.nextOrFatal());
                     } else if (mem.eql(u8, arg, "--listen")) {
@@ -1762,6 +1768,8 @@ fn buildOutputType(
                         linker_import_table = true;
                     } else if (mem.eql(u8, arg, "--export-table")) {
                         linker_export_table = true;
+                    } else if (mem.eql(u8, arg, "--growable-table")) {
+                        linker_growable_table = true;
                     } else if (prefixedIntArg(arg, "--initial-memory=")) |int| {
                         linker_initial_memory = int;
                     } else if (prefixedIntArg(arg, "--max-memory=")) |int| {
@@ -2676,6 +2684,15 @@ fn buildOutputType(
                     linker_print_icf_sections = true;
                 } else if (mem.eql(u8, arg, "--print-map")) {
                     linker_print_map = true;
+                } else if (mem.eql(u8, arg, "-n") or mem.eql(u8, arg, "--nmagic")) {
+                    linker_nmagic = true;
+                } else if (mem.eql(u8, arg, "--fatal-warnings")) {
+                    linker_fatal_warnings = true;
+                } else if (mem.eql(u8, arg, "--no-fatal-warnings")) {
+                    linker_fatal_warnings = false;
+                } else if (mem.eql(u8, arg, "-m")) {
+                    _ = linker_args_it.nextOrFatal();
+                    warn("-m option is ignored; emulation is derived from target", .{});
                 } else if (mem.eql(u8, arg, "--sort-section")) {
                     const arg1 = linker_args_it.nextOrFatal();
                     linker_sort_section = stringToEnum(link.File.Lld.Elf.SortSection, arg1) orelse {
@@ -2701,6 +2718,8 @@ fn buildOutputType(
                     linker_import_table = true;
                 } else if (mem.eql(u8, arg, "--export-table")) {
                     linker_export_table = true;
+                } else if (mem.eql(u8, arg, "--growable-table")) {
+                    linker_growable_table = true;
                 } else if (mem.eql(u8, arg, "--no-entry")) {
                     entry = .disabled;
                 } else if (mem.eql(u8, arg, "--initial-memory")) {
@@ -2948,9 +2967,11 @@ fn buildOutputType(
                     hash_style = stringToEnum(link.File.Lld.Elf.HashStyle, next_arg) orelse {
                         fatal("expected [sysv|gnu|both] after --hash-style, found {q}", .{next_arg});
                     };
-                } else if (mem.eql(u8, arg, "-wrap")) {
+                } else if (mem.eql(u8, arg, "-wrap") or mem.eql(u8, arg, "--wrap")) {
                     const next_arg = linker_args_it.nextOrFatal();
                     try symbol_wrap_set.put(arena, next_arg, {});
+                } else if (mem.cutPrefix(u8, arg, "--wrap=")) |symbol| {
+                    try symbol_wrap_set.put(arena, symbol, {});
                 } else if (mem.startsWith(u8, arg, "/subsystem:")) {
                     var split_it = mem.splitBackwardsScalar(u8, arg, ':');
                     subsystem = try parseSubsystem(split_it.first());
@@ -3235,23 +3256,22 @@ fn buildOutputType(
     const cwd_path = try std.zig.getResolvedCwd(io, arena);
 
     // This `init` calls `fatal` on error.
-    var dirs: std.zig.Directories = .init(
-        arena,
-        io,
-        override_lib_dir,
-        override_global_cache_dir,
-        s: {
+    var dirs: std.zig.Directories = .init(arena, io, .{
+        .override_zig_lib = override_lib_dir,
+        .override_global_cache = override_global_cache_dir,
+        .build_root = build_root_path,
+        .local_cache_strat = s: {
             if (override_local_cache_dir) |p| break :s .{ .override = p };
             break :s switch (arg_mode) {
                 .run => .global,
                 else => .search,
             };
         },
-        preopens,
-        self_exe_path,
-        environ_map,
-        cwd_path,
-    );
+        .preopens = preopens,
+        .self_exe_path = self_exe_path,
+        .environ_map = environ_map,
+        .cwd = cwd_path,
+    });
     defer dirs.deinit(io);
 
     if (linker_optimization) |o| warn("ignoring deprecated linker optimization setting {q}", .{o});
@@ -3647,8 +3667,8 @@ fn buildOutputType(
         .want_compiler_rt = if (zig_cc_explicitly_link_compiler_rt) true else want_compiler_rt,
         .want_ubsan_rt = want_ubsan_rt,
         .hash_style = hash_style,
-        .linker_script = linker_script,
-        .version_script = version_script,
+        .linker_script = if (linker_script) |p| .initCwd(p) else null,
+        .version_script = if (version_script) |p| .initCwd(p) else null,
         .linker_allow_undefined_version = linker_allow_undefined_version,
         .linker_enable_new_dtags = linker_enable_new_dtags,
         .disable_c_depfile = disable_c_depfile,
@@ -3661,11 +3681,14 @@ fn buildOutputType(
         .linker_import_symbols = linker_import_symbols,
         .linker_import_table = linker_import_table,
         .linker_export_table = linker_export_table,
+        .linker_growable_table = linker_growable_table,
         .linker_initial_memory = linker_initial_memory,
         .linker_max_memory = linker_max_memory,
         .linker_print_gc_sections = linker_print_gc_sections,
         .linker_print_icf_sections = linker_print_icf_sections,
         .linker_print_map = linker_print_map,
+        .linker_nmagic = linker_nmagic,
+        .linker_fatal_warnings = linker_fatal_warnings,
         .llvm_opt_bisect_limit = llvm_opt_bisect_limit,
         .linker_global_base = linker_global_base,
         .linker_export_symbol_names = linker_export_symbol_names.items,
@@ -3718,7 +3741,7 @@ fn buildOutputType(
         .debug_incremental = debug_incremental,
         .enable_link_snapshots = enable_link_snapshots,
         .install_name = install_name,
-        .entitlements = entitlements,
+        .entitlements = if (entitlements) |p| .initCwd(p) else null,
         .pagezero_size = pagezero_size,
         .headerpad_size = headerpad_size,
         .headerpad_max_install_names = headerpad_max_install_names,
@@ -4998,17 +5021,16 @@ fn jitCmdInner(
     const cwd_path = try std.zig.getResolvedCwd(io, arena);
 
     // This `init` calls `fatal` on error.
-    var dirs: std.zig.Directories = .init(
-        arena,
-        io,
-        override_lib_dir,
-        override_global_cache_dir,
-        .global,
-        preopens,
-        self_exe_path,
-        environ_map,
-        cwd_path,
-    );
+    var dirs: std.zig.Directories = .init(arena, io, .{
+        .override_zig_lib = override_lib_dir,
+        .override_global_cache = override_global_cache_dir,
+        .build_root = null,
+        .local_cache_strat = .global,
+        .preopens = preopens,
+        .self_exe_path = self_exe_path,
+        .environ_map = environ_map,
+        .cwd = cwd_path,
+    });
     defer dirs.deinit(io);
 
     var child_argv: std.ArrayList([]const u8) = .empty;

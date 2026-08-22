@@ -292,9 +292,7 @@ pub fn main(init: process.Init.Minimal) !void {
                 try cached_passthru_configure.append(arena, @intCast(configure_argv.items.len));
                 configure_argv.appendAssumeCapacity(arg);
             } else if (mem.eql(u8, arg, "--color")) {
-                const next_arg = nextArgOrFatal(args, &arg_i);
-                color = stringToEnum(Color, next_arg) orelse
-                    fatalWithHint("expected [auto|on|off] found {q}", .{next_arg});
+                color = nextEnumArg(args, &arg_i, Color);
 
                 try cached_passthru_configure.append(arena, @intCast(configure_argv.items.len));
                 configure_argv.appendAssumeCapacity(try arena.print("--color={t}", .{color}));
@@ -401,25 +399,11 @@ pub fn main(init: process.Init.Minimal) !void {
             } else if (mem.eql(u8, arg, "--libc")) {
                 graph.libc_file = nextArgOrFatal(args, &arg_i);
             } else if (mem.eql(u8, arg, "--error-style")) {
-                const next_arg = nextArg(args, &arg_i) orelse
-                    fatalWithHint("expected style after {q}", .{arg});
-                error_style = stringToEnum(ErrorStyle, next_arg) orelse {
-                    fatalWithHint("expected style after {q}, found {q}", .{ arg, next_arg });
-                };
+                error_style = nextEnumArg(args, &arg_i, ErrorStyle);
             } else if (mem.eql(u8, arg, "--multiline-errors")) {
-                const next_arg = nextArg(args, &arg_i) orelse
-                    fatalWithHint("expected style after {q}", .{arg});
-                multiline_errors = stringToEnum(MultilineErrors, next_arg) orelse {
-                    fatalWithHint("expected style after {q}, found {q}", .{ arg, next_arg });
-                };
+                multiline_errors = nextEnumArg(args, &arg_i, MultilineErrors);
             } else if (mem.eql(u8, arg, "--summary")) {
-                const next_arg = nextArg(args, &arg_i) orelse
-                    fatalWithHint("expected [all|new|failures|line|none] after {q}", .{arg});
-                summary = stringToEnum(Summary, next_arg) orelse {
-                    fatalWithHint("expected [all|new|failures|line|none] after {q}, found {q}", .{
-                        arg, next_arg,
-                    });
-                };
+                summary = nextEnumArg(args, &arg_i, Summary);
             } else if (mem.cutPrefix(u8, arg, "--seed=")) |rest| {
                 graph.random_seed = parseRandomSeed(rest);
             } else if (mem.eql(u8, arg, "--build-id")) {
@@ -614,6 +598,8 @@ pub fn main(init: process.Init.Minimal) !void {
     comptime assert(1 == @backingInt(std.zig.Server.Message.PathPrefix.zig_lib));
     comptime assert(2 == @backingInt(std.zig.Server.Message.PathPrefix.local_cache));
     comptime assert(3 == @backingInt(std.zig.Server.Message.PathPrefix.global_cache));
+    comptime assert(4 == @backingInt(std.zig.Server.Message.PathPrefix.build_root));
+    comptime assert(@typeInfo(std.zig.Server.Message.PathPrefix).@"enum".field_names.len == 5);
 
     graph.cache.hash.addBytes(builtin.zig_version_string);
 
@@ -1118,6 +1104,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
         graph.zig_exe, "build-exe", //
         "--cache-dir", graph.local_cache_root.path orelse ".", //
         "--global-cache-dir", graph.global_cache_root.path orelse ".", //
+        "--build-root", graph.build_root_directory.path orelse ".", //
         "--zig-lib-dir", graph.zig_lib_directory.path orelse ".", //
         "--name", configurer_exe_name, //
         "-fsingle-threaded", //
@@ -1412,7 +1399,6 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
 
             if (config_man) |man| {
                 if (try man.hit(compile_prog_node)) {
-                    log.debug("configuration cache hit", .{});
                     const digest = man.final();
                     const path: Path = .{
                         .root_dir = graph.local_cache_root,
@@ -1422,6 +1408,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                     break :cp .{ path, man.toOwnedLock() };
                 }
             }
+            try graph.handleVerbose(null, null, build_configurer_argv.items);
             const configure_exe_path: Path = if (std.zig.buildExeSubprocess(gpa, io, .{
                 .argv = build_configurer_argv.items,
                 .cache_root = graph.local_cache_root,
@@ -2017,7 +2004,7 @@ fn cmdInit(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
             return process.cleanExit(io);
         },
         .minimal => {
-            Templates.writeSimpleFile(io, Package.Manifest.basename,
+            Templates.writeSimpleFile(io, Io.Dir.cwd(), Package.Manifest.basename,
                 \\.{{
                 \\    .name = .{s},
                 \\    .version = "0.0.1",
@@ -2034,7 +2021,7 @@ fn cmdInit(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
                 else => fatal("failed to create {q}: {t}", .{ Package.Manifest.basename, err }),
                 error.PathAlreadyExists => fatal("refusing to overwrite {q}", .{Package.Manifest.basename}),
             };
-            Templates.writeSimpleFile(io, default_build_zig_basename,
+            Templates.writeSimpleFile(io, Io.Dir.cwd(), default_build_zig_basename,
                 \\const std = @import("std");
                 \\
                 \\pub fn build(b: *std.Build) void {{
@@ -3840,10 +3827,11 @@ fn loadManifest(
             0,
         ) catch |err| switch (err) {
             error.FileNotFound => {
-                Templates.writeSimpleFile(io, Package.Manifest.basename,
+                Templates.writeSimpleFile(io, options.dir, Package.Manifest.basename,
                     \\.{{
                     \\    .name = .{s},
-                    \\    .version = "{s}",
+                    \\    .version = "0.0.1",
+                    \\    .minimum_zig_version = "{s}",
                     \\    .paths = .{{""}},
                     \\    .fingerprint = 0x{x},
                     \\}}
@@ -4001,8 +3989,8 @@ const Templates = struct {
         };
     }
 
-    fn writeSimpleFile(io: Io, file_name: []const u8, comptime format: []const u8, args: anytype) !void {
-        const f = try Io.Dir.cwd().createFile(io, file_name, .{ .exclusive = true });
+    fn writeSimpleFile(io: Io, dir: Io.Dir, file_name: []const u8, comptime format: []const u8, args: anytype) !void {
+        const f = try dir.createFile(io, file_name, .{ .exclusive = true });
         defer f.close(io);
         var buf: [4096]u8 = undefined;
         var fw = f.writer(io, &buf);
@@ -4048,4 +4036,26 @@ fn confPathDepToCachePath(
         .install_bin => @panic("TODO"),
         .install_include => @panic("TODO"),
     };
+}
+
+fn fatalEnumHint(comptime E: type, arg: []const u8, param: ?[]const u8) noreturn {
+    var buf: [100]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    for (@typeInfo(E).@"enum".field_names) |field_name| {
+        w.writeAll(field_name) catch unreachable;
+        w.writeByte('|') catch unreachable;
+    }
+    const buffered = w.buffered();
+    const enum_options_text = buffered[0 .. buffered.len - 1];
+    if (param) |p| {
+        fatalWithHint("expected [{s}] after {q}; found {q}", .{ enum_options_text, arg, p });
+    } else {
+        fatalWithHint("expected [{s}] after {q}", .{ enum_options_text, arg });
+    }
+}
+
+fn nextEnumArg(args: []const []const u8, i: *usize, comptime E: type) E {
+    const arg = args[i.* - 1];
+    const next_arg = nextArg(args, i) orelse fatalEnumHint(E, arg, null);
+    return stringToEnum(E, next_arg) orelse fatalEnumHint(E, arg, next_arg);
 }

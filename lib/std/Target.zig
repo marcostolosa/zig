@@ -458,7 +458,7 @@ pub const Os = struct {
 
                                 break :blk default_min;
                             },
-                            .max = .{ .major = 7, .minor = 1, .patch = 9 },
+                            .max = .{ .major = 7, .minor = 2, .patch = 0 },
                         },
                         .glibc = blk: {
                             // For 32-bit targets that traditionally used 32-bit time, we require
@@ -2244,6 +2244,7 @@ pub fn requiresLibC(target: *const Target) bool {
         .dragonfly,
         .haiku,
         .serenity,
+        .emscripten,
         => true,
 
         // Android API levels prior to 29 did not have native TLS support. For these API levels, TLS
@@ -2275,7 +2276,6 @@ pub fn requiresLibC(target: *const Target) bool {
         .hermit,
         .hurd,
         .wasi,
-        .emscripten,
         .uefi,
         .opencl,
         .opengl,

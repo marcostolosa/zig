@@ -658,9 +658,10 @@ fn lowerZigArgs(
         zig_args.appendAssumeCapacity(libc_file);
     }
 
-    (try zig_args.addManyAsArray(gpa, 4)).* = .{
+    (try zig_args.addManyAsArray(gpa, 6)).* = .{
         "--cache-dir",        graph.local_cache_root.path orelse ".",
         "--global-cache-dir", graph.global_cache_root.path orelse ".",
+        "--build-root",       graph.build_root_directory.path orelse ".",
     };
 
     try zig_args.ensureUnusedCapacity(gpa, 1);
@@ -728,6 +729,7 @@ fn lowerZigArgs(
     try addBool(gpa, zig_args, "--import-symbols", conf_comp.flags.import_symbols);
     try addBool(gpa, zig_args, "--import-table", conf_comp.flags.import_table);
     try addBool(gpa, zig_args, "--export-table", conf_comp.flags.export_table);
+    try addBool(gpa, zig_args, "--growable-table", conf_comp.flags.growable_table);
     try addBool(gpa, zig_args, "--shared-memory", conf_comp.flags.shared_memory);
 
     {

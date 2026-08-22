@@ -2618,7 +2618,6 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         poll_buffer[poll_len] = .{
                             .fd = o.file.handle,
                             .events = posix.POLL.IN | posix.POLL.ERR,
-                            .revents = 0,
                         };
                         poll_len += 1;
                     },
@@ -2626,7 +2625,6 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         poll_buffer[poll_len] = .{
                             .fd = o.file.handle,
                             .events = posix.POLL.OUT | posix.POLL.ERR,
-                            .revents = 0,
                         };
                         poll_len += 1;
                     },
@@ -2634,7 +2632,6 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         poll_buffer[poll_len] = .{
                             .fd = o.file.handle,
                             .events = posix.POLL.OUT | posix.POLL.IN | posix.POLL.ERR,
-                            .revents = 0,
                         };
                         poll_len += 1;
                     },
@@ -2642,7 +2639,6 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         poll_buffer[poll_len] = .{
                             .fd = o.socket_handle,
                             .events = posix.POLL.IN | posix.POLL.ERR,
-                            .revents = 0,
                         };
                         poll_len += 1;
                     },
@@ -2650,7 +2646,6 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         poll_buffer[poll_len] = .{
                             .fd = o.socket_handle,
                             .events = posix.POLL.OUT | posix.POLL.ERR,
-                            .revents = 0,
                         };
                         poll_len += 1;
                     },
@@ -2658,7 +2653,6 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         poll_buffer[poll_len] = .{
                             .fd = o.socket_handle,
                             .events = posix.POLL.IN | posix.POLL.ERR,
-                            .revents = 0,
                         };
                         poll_len += 1;
                     },
@@ -2666,7 +2660,6 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         poll_buffer[poll_len] = .{
                             .fd = o.socket_handle,
                             .events = posix.POLL.OUT | posix.POLL.ERR,
-                            .revents = 0,
                         };
                         poll_len += 1;
                     },
@@ -2811,7 +2804,6 @@ fn batchAwaitConcurrent(userdata: ?*anyopaque, b: *Io.Batch, timeout: Io.Timeout
             storage.slice[len] = .{
                 .fd = fd,
                 .events = events,
-                .revents = 0,
             };
             storage.len = len + 1;
         }
@@ -12883,6 +12875,7 @@ fn netReadPosix(fd: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usi
                         .NOMEM => return error.SystemResources,
                         .NOTCONN => return error.SocketUnconnected,
                         .CONNRESET => return error.ConnectionResetByPeer,
+                        .TIMEDOUT => return error.ConnectionTimedOut,
                         .NOTCAPABLE => return error.AccessDenied,
                         else => |err| return posix.unexpectedErrno(err),
                     }
@@ -12914,6 +12907,7 @@ fn netReadPosix(fd: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usi
                     .NOMEM => return error.SystemResources,
                     .NOTCONN => return error.SocketUnconnected,
                     .CONNRESET => return error.ConnectionResetByPeer,
+                    .TIMEDOUT => return error.ConnectionTimedOut,
                     .PIPE => return error.SocketUnconnected,
                     .NETDOWN => return error.NetworkDown,
                     else => |err| return posix.unexpectedErrno(err),
@@ -13077,6 +13071,7 @@ fn netSendOnePosix(
             .HOSTUNREACH => return syscall.fail(error.HostUnreachable),
             .NETUNREACH => return syscall.fail(error.NetworkUnreachable),
             .NOTCONN => return syscall.fail(error.SocketUnconnected),
+            .TIMEDOUT => return syscall.fail(error.ConnectionTimedOut),
             .NETDOWN => return syscall.fail(error.NetworkDown),
             .BADF => |err| return syscall.errnoBug(err), // File descriptor used after closed.
             .DESTADDRREQ => |err| return syscall.errnoBug(err),
@@ -13148,6 +13143,7 @@ fn netSendManyPosix(
             .HOSTUNREACH => return syscall.fail(error.HostUnreachable),
             .NETUNREACH => return syscall.fail(error.NetworkUnreachable),
             .NOTCONN => return syscall.fail(error.SocketUnconnected),
+            .TIMEDOUT => return syscall.fail(error.ConnectionTimedOut),
             .NETDOWN => return syscall.fail(error.NetworkDown),
 
             .BADF => |err| return syscall.errnoBug(err), // File descriptor used after closed.
@@ -13228,6 +13224,7 @@ fn netReceivePosix(
             .MSGSIZE => return syscall.fail(error.MessageOversize),
             .PIPE => return syscall.fail(error.SocketUnconnected),
             .CONNRESET => return syscall.fail(error.ConnectionResetByPeer),
+            .TIMEDOUT => return syscall.fail(error.ConnectionTimedOut),
             .NETDOWN => return syscall.fail(error.NetworkDown),
             .AGAIN => return syscall.fail(error.WouldBlock),
             .BADF => |err| return syscall.errnoBug(err),
@@ -13390,6 +13387,7 @@ fn netWritePosix(
                     .HOSTUNREACH => return error.HostUnreachable,
                     .NETUNREACH => return error.NetworkUnreachable,
                     .NOTCONN => return error.SocketUnconnected,
+                    .TIMEDOUT => return error.ConnectionTimedOut,
                     .NETDOWN => return error.NetworkDown,
                     else => |err| return posix.unexpectedErrno(err),
                 }
@@ -13976,6 +13974,7 @@ fn netLookupFallible(
             .DNS_ERROR_INVALID_NAME_CHAR,
             .DNS_ERROR_RECORD_DOES_NOT_EXIST,
             => return error.UnknownHostName,
+            .TIMEOUT => return error.NameServerFailure,
             else => |err| return windows.unexpectedError(err),
         }
     }

@@ -58,6 +58,8 @@ pub fn legalizeFeatures(_: *const std.Target) *const Air.Legalize.Features {
         .expand_add_safe,
         .expand_sub_safe,
         .expand_mul_safe,
+
+        .expand_array_to_vector,
     });
 }
 
@@ -1474,6 +1476,7 @@ fn genBody(func: *Func, body: []const Air.Inst.Index) InnerError!void {
 
             .slice           => try func.airSlice(inst),
             .array_to_slice  => try func.airArrayToSlice(inst),
+            .array_to_vector => unreachable, // legalize .expand_array_to_vector
 
             .slice_ptr       => try func.airSlicePtr(inst),
             .slice_len       => try func.airSliceLen(inst),
@@ -3533,7 +3536,7 @@ fn airWrapErrUnionPayload(func: *Func, inst: Air.Inst.Index) !void {
     const zcu = pt.zcu;
     const ty_op = func.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
-    const eu_ty = ty_op.ty.toType();
+    const eu_ty = ty_op.ty;
     const pl_ty = eu_ty.errorUnionPayload(zcu);
     const err_ty = eu_ty.errorUnionSet(zcu);
     const operand = try func.resolveInst(ty_op.operand);
@@ -3558,7 +3561,7 @@ fn airWrapErrUnionErr(func: *Func, inst: Air.Inst.Index) !void {
     const zcu = pt.zcu;
     const ty_op = func.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
-    const eu_ty = ty_op.ty.toType();
+    const eu_ty = ty_op.ty;
     const pl_ty = eu_ty.errorUnionPayload(zcu);
     const err_ty = eu_ty.errorUnionSet(zcu);
 
@@ -3580,7 +3583,7 @@ fn airRuntimeNavPtr(func: *Func, inst: Air.Inst.Index) !void {
     const zcu = func.pt.zcu;
     const ip = &zcu.intern_pool;
     const ty_nav = func.air.instructions.items(.data)[@backingInt(inst)].ty_nav;
-    const ptr_ty: Type = .fromInterned(ty_nav.ty);
+    const ptr_ty: Type = ty_nav.ty;
 
     const nav = ip.getNav(ty_nav.nav);
     const tlv_sym_index = if (func.bin_file.cast(.elf)) |elf_file| sym: {
@@ -7292,7 +7295,7 @@ fn airFloatFromInt(func: *Func, inst: Air.Inst.Index) !void {
         const operand = try func.resolveInst(ty_op.operand);
 
         const src_ty = func.typeOf(ty_op.operand);
-        const dst_ty = ty_op.ty.toType();
+        const dst_ty = ty_op.ty;
 
         const src_reg, const src_lock = try func.promoteReg(src_ty, operand);
         defer if (src_lock) |lock| func.register_manager.unlockReg(lock);
@@ -7355,7 +7358,7 @@ fn airIntFromFloat(func: *Func, inst: Air.Inst.Index) !void {
 
         const operand = try func.resolveInst(ty_op.operand);
         const src_ty = func.typeOf(ty_op.operand);
-        const dst_ty = ty_op.ty.toType();
+        const dst_ty = ty_op.ty;
 
         const is_unsigned = dst_ty.isUnsignedInt(zcu);
         const src_bits = src_ty.bitSize(zcu);

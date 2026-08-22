@@ -39,6 +39,7 @@ pub fn legalizeFeatures(_: *const std.Target) ?*const Air.Legalize.Features {
             .expand_packed_store = true,
             .expand_packed_agg_field_val = true,
             .expand_packed_aggregate_init = true,
+            .expand_array_to_vector = true,
 
             .scalarize_bit_cast_array = true,
             .scalarize_bit_cast_vector_non_elementwise = true,
@@ -2870,6 +2871,7 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
             .store_safe       => try airStore(f, inst, true),
             .struct_field_ptr => try airStructFieldPtr(f, inst),
             .array_to_slice   => try airArrayToSlice(f, inst),
+            .array_to_vector  => unreachable, // legalize .expand_array_to_vector
             .cmpxchg_weak     => try airCmpxchg(f, inst, "weak"),
             .cmpxchg_strong   => try airCmpxchg(f, inst, "strong"),
             .atomic_rmw       => try airAtomicRmw(f, inst),
@@ -3411,7 +3413,7 @@ fn airIntCast(f: *Function, inst: Air.Inst.Index, operation: []const u8, info: B
     const zcu = pt.zcu;
     const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
-    const inst_ty = ty_op.ty.toType();
+    const inst_ty = ty_op.ty;
     const inst_scalar_ty = inst_ty.scalarType(zcu);
     const operand_ty = f.typeOf(ty_op.operand);
     const operand_scalar_ty = operand_ty.scalarType(zcu);
@@ -7217,7 +7219,7 @@ fn airMulAdd(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airRuntimeNavPtr(f: *Function, inst: Air.Inst.Index) !CValue {
     const ty_nav = f.air.instructions.items(.data)[@backingInt(inst)].ty_nav;
     const w = &f.code.writer;
-    const local = try f.allocLocal(inst, .fromInterned(ty_nav.ty));
+    const local = try f.allocLocal(inst, ty_nav.ty);
     try f.writeCValue(w, local, .other);
     try w.writeAll(" = ");
     try f.dg.renderNav(w, ty_nav.nav, .other);
@@ -7259,7 +7261,7 @@ fn airCVaArg(f: *Function, inst: Air.Inst.Index) !CValue {
     try w.writeAll(" = va_arg(*(va_list *)");
     try f.writeCValue(w, va_list, .other);
     try w.writeAll(", ");
-    try f.renderType(w, ty_op.ty.toType());
+    try f.renderType(w, ty_op.ty);
     try w.writeAll(");");
     try f.newline();
     return local;

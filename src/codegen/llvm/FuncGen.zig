@@ -504,6 +504,7 @@ fn genBody(self: *FuncGen, body: []const Air.Inst.Index, coverage_point: Air.Cov
             .int_from_float_optimized_safe => unreachable, // handled by `legalizeFeatures`
 
             .array_to_slice => try self.airArrayToSlice(inst),
+            .array_to_vector => try self.airArrayToVector(inst),
             .float_from_int => try self.airFloatFromInt(inst),
             .cmpxchg_weak   => try self.airCmpxchg(inst, .weak),
             .cmpxchg_strong => try self.airCmpxchg(inst, .strong),
@@ -1163,7 +1164,7 @@ fn airRetLoad(self: *FuncGen, inst: Air.Inst.Index) Allocator.Error!void {
 fn airCVaArg(self: *FuncGen, inst: Air.Inst.Index) Allocator.Error!Builder.Value {
     const ty_op = self.air.instructions.items(.data)[@backingInt(inst)].ty_op;
     const list = try self.resolveInst(ty_op.operand);
-    const arg_ty = ty_op.ty.toType();
+    const arg_ty = ty_op.ty;
     const llvm_arg_ty = try self.object.lowerType(arg_ty, .as_value);
 
     return self.wip.vaArg(list, llvm_arg_ty, "");
@@ -1174,7 +1175,7 @@ fn airCVaCopy(self: *FuncGen, inst: Air.Inst.Index) Allocator.Error!Builder.Valu
     const zcu = o.zcu;
     const ty_op = self.air.instructions.items(.data)[@backingInt(inst)].ty_op;
     const src_list = try self.resolveInst(ty_op.operand);
-    const va_list_ty = ty_op.ty.toType();
+    const va_list_ty = ty_op.ty;
 
     const dest_list = try self.buildZigAlloca(va_list_ty, .none);
 
@@ -2027,6 +2028,48 @@ fn airArrayToSlice(self: *FuncGen, inst: Air.Inst.Index) Allocator.Error!Builder
     return self.wip.buildAggregate(slice_llvm_ty, &.{ operand, len }, "");
 }
 
+fn airArrayToVector(fg: *FuncGen, inst: Air.Inst.Index) Allocator.Error!Builder.Value {
+    const o = fg.object;
+    const zcu = o.zcu;
+    const ty_op = fg.air.instructions.items(.data)[@backingInt(inst)].ty_op;
+    const array_ty = fg.typeOf(ty_op.operand);
+    const vector_ty = fg.typeOfIndex(inst);
+    const elem_ty = vector_ty.childType(zcu);
+    const operand = try fg.resolveInst(ty_op.operand);
+
+    assert(array_ty.arrayLen(zcu) == vector_ty.vectorLen(zcu));
+    assert(array_ty.childType(zcu).toIntern() == elem_ty.toIntern());
+    assert(isByRef(array_ty, zcu)); // the operand is runtime-known, so the array has runtime bits
+
+    // A by-ref vector is lowered as `[n x T]` with the same element representation as the array,
+    // so the operand is already the result.
+    if (isByRef(vector_ty, zcu)) return operand;
+
+    // LLVM lays `<n x T>` out as `n` consecutive `T`s, just like `[n]T`, so long as `T` is
+    // accessed as the same type it is used as; then this is one load.
+    if ((try o.lowerType(elem_ty, .memory_access)) == (try o.lowerType(elem_ty, .as_value)) and
+        // f80 has an unusual in-memory representation with padding bytes, so is
+        // not eligible for this optimization
+        !(elem_ty.isRuntimeFloat() and elem_ty.floatBits(zcu.getTarget()) == 80))
+    {
+        return fg.load(operand, array_ty.abiAlignment(zcu), vector_ty, .normal);
+    }
+
+    const llvm_usize = try o.lowerType(.usize, .as_value);
+    const elem_size = elem_ty.abiSize(zcu);
+    var vector = try o.builder.poisonValue(try o.lowerType(vector_ty, .as_value));
+    for (0..@intCast(vector_ty.vectorLen(zcu))) |elem_index| {
+        const elem_ptr = try fg.ptraddScaled(
+            operand,
+            try o.builder.intValue(llvm_usize, elem_index),
+            elem_size,
+        );
+        const elem = try fg.load(elem_ptr, .none, elem_ty, .normal);
+        vector = try fg.wip.insertElement(vector, elem, try o.builder.intValue(.i32, elem_index), "");
+    }
+    return vector;
+}
+
 fn airFloatFromInt(fg: *FuncGen, inst: Air.Inst.Index) TodoError!Builder.Value {
     const o = fg.object;
     const zcu = o.zcu;
@@ -2350,11 +2393,11 @@ fn airFieldParentPtr(self: *FuncGen, inst: Air.Inst.Index) Allocator.Error!Build
 
     const field_ptr = try self.resolveInst(extra.field_ptr);
 
-    const parent_ty = ty_pl.ty.toType().childType(zcu);
+    const parent_ty = ty_pl.ty.childType(zcu);
     const field_offset = parent_ty.structFieldOffset(extra.field_index, zcu);
     if (field_offset == 0) return field_ptr;
 
-    const res_ty = try o.lowerType(ty_pl.ty.toType(), .as_value);
+    const res_ty = try o.lowerType(ty_pl.ty, .as_value);
     const llvm_usize = try o.lowerType(.usize, .as_value);
 
     const field_ptr_int = try self.wip.cast(.ptrtoint, field_ptr, llvm_usize, "");
@@ -3148,7 +3191,7 @@ fn airSaveErrReturnTraceIndex(self: *FuncGen, inst: Air.Inst.Index) Allocator.Er
     const zcu = self.object.zcu;
 
     const ty_pl = self.air.instructions.items(.data)[@backingInt(inst)].ty_pl;
-    const struct_ty = ty_pl.ty.toType();
+    const struct_ty = ty_pl.ty;
     const field_index = ty_pl.payload;
 
     assert(self.err_ret_trace != .none);
@@ -5859,7 +5902,7 @@ fn airErrorSetHasValue(self: *FuncGen, inst: Air.Inst.Index) Allocator.Error!Bui
     const ip = &zcu.intern_pool;
     const ty_op = self.air.instructions.items(.data)[@backingInt(inst)].ty_op;
     const operand = try self.resolveInst(ty_op.operand);
-    const error_set_ty = ty_op.ty.toType();
+    const error_set_ty = ty_op.ty;
 
     const names = error_set_ty.errorSetNames(zcu);
     const valid_block = try self.wip.block(@intCast(names.len), "Valid");
@@ -7952,14 +7995,14 @@ fn appendConstraints(
 fn intrinsicsAllowed(kind: enum { compiler_rt, libc }, scalar_ty: Type, target: *const std.Target) bool {
     if (!scalar_ty.isRuntimeFloat()) return true;
     const bits = scalar_ty.floatBits(target);
-    // Since upstream musl/msvc do not actually define the *f128 functions, llvm decides
-    // that it is a much better idea to just emit a call to the entirely wrong function as
-    // a fallback.  We wouldn't want any linker errors when trying to perform an operation
-    // that isn't actually implemented anywhere, now would we!
-    if (bits == 128 and target.cpu.arch.isX86() and !target.abi.isGnu()) return switch (kind) {
-        .compiler_rt => true,
-        .libc => false,
-    };
+    switch (kind) {
+        .compiler_rt => {},
+        // Since upstream musl/msvc do not actually define the *f128 functions, llvm decides
+        // that it is a much better idea to just emit a call to the entirely wrong function as
+        // a fallback.  We wouldn't want any linker errors when trying to perform an operation
+        // that isn't actually implemented anywhere, now would we!
+        .libc => if (bits == 128 and target.cpu.arch.isX86() and !target.abi.isGnu()) return false,
+    }
     return switch (std.zig.target.compilerRtFloatAbi(target, bits)) {
         .hard => true,
         .soft => false,

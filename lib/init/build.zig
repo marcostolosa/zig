@@ -46,13 +46,13 @@ pub fn build(b: *std.Build) void {
         .name = "_NAME",
         .root_module = mod,
     });
-    
+
     // This creates a top level step for generating the web documentation.
     const doc_step = b.step("doc", "Generate the documentation");
-    
+
     // This gets the emitted documentation from the library, and installs it.
     const install_doc = b.addInstallDirectory(.{
-        .source_dir = docs_lib.getEmittedDocs(),
+        .source_dir = mod_lib.getEmittedDocs(),
         .install_dir = .{ .custom = "docs" },
         .install_subdir = "lib",
     });

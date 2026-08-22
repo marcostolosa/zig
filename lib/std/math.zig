@@ -1109,7 +1109,11 @@ fn AlignCastResult(comptime alignment: Alignment, comptime Ptr: type) type {
 
 /// Align cast a pointer but return an error if it's the wrong alignment
 pub fn alignCast(comptime alignment: Alignment, ptr: anytype) AlignCastError!AlignCastResult(alignment, @TypeOf(ptr)) {
-    if (alignment.check(@intFromPtr(ptr))) return @alignCast(ptr);
+    const start_ptr = switch (@typeInfo(@TypeOf(ptr)).pointer.size) {
+        .slice => ptr.ptr,
+        else => ptr,
+    };
+    if (alignment.check(@intFromPtr(start_ptr))) return @alignCast(ptr);
     return error.UnalignedMemory;
 }
 

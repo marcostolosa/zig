@@ -189,24 +189,15 @@ pub fn genMainBody(fg: *FuncGen) TodoError!void {
     const fn_ty: Type = .fromInterned(ip.getNav(fg.nav_index).resolved.?.type);
     const fn_info = zcu.typeToFunc(fn_ty).?;
     const param_types = fn_info.param_types.get(ip);
+    const ret_strat = try fnReturnStrat(o, fn_info.cc, .fromInterned(fn_info.return_type));
 
-    var it = iterateParamTypes(o, fn_info.cc, fn_info.param_types.get(ip));
+    var it = iterateParamTypes(o, fn_info.cc, param_types, ret_strat);
 
     // Populate `fg.ret_ptr`...
-    fg.ret_ptr = switch (try fnReturnStrat(o, fn_info.cc, .fromInterned(fn_info.return_type))) {
-        .sret => rp: {
-            defer it.llvm_index += 1;
-            break :rp fg.wip.arg(it.llvm_index);
-        },
-        else => .none,
-    };
+    fg.ret_ptr = if (it.sretIndex()) |i| fg.wip.arg(i) else .none;
     // ...and `fg.err_ret_trace`...
-    if (fn_info.cc == .auto and comp.config.any_error_tracing) {
-        fg.err_ret_trace = fg.wip.arg(it.llvm_index);
-        it.llvm_index += 1;
-    } else {
-        fg.err_ret_trace = .none;
-    }
+    fg.err_ret_trace = if (it.errRetReturnTraceIndex()) |i| fg.wip.arg(i) else .none;
+
     // ...and as for `fg.args`, we'll put all of the arguments into this ArrayList, and once that's
     // done we'll use its buffer as `fg.args`.
     var args: std.ArrayList(Builder.Value) = .empty;
@@ -816,13 +807,12 @@ fn buildCall(
         },
     };
 
-    const err_return_tracing = fn_info.cc == .auto and zcu.comp.config.any_error_tracing;
-    if (err_return_tracing) {
+    var it = iterateParamTypes(o, fn_info.cc, fn_info.param_types, ret_strat);
+    if (it.errRetReturnTraceIndex() != null) {
         assert(fg.err_ret_trace != .none);
         try llvm_args.append(fg.gpa, fg.err_ret_trace);
     }
 
-    var it = iterateParamTypes(o, fn_info.cc, fn_info.param_types);
     while (try it.nextCall(arg_types)) |lowering| {
         const arg_ty: Type = .fromInterned(arg_types[it.zig_index - 1]);
         const arg_val = arg_values[it.zig_index - 1];
@@ -922,9 +912,7 @@ fn buildCall(
 
     {
         // Add argument attributes.
-        it = iterateParamTypes(o, fn_info.cc, fn_info.param_types);
-        it.llvm_index += @intFromBool(ret_strat == .sret);
-        it.llvm_index += @intFromBool(err_return_tracing);
+        it = iterateParamTypes(o, fn_info.cc, fn_info.param_types, ret_strat);
         var remaining_inreg_int = cc_info.inreg_int_params;
         var remaining_inreg_float = cc_info.inreg_float_params;
         while (try it.next()) |lowering| switch (lowering) {
@@ -7014,6 +7002,24 @@ fn typeOfIndex(fg: *FuncGen, inst: Air.Inst.Index) Type {
 }
 
 const ParamTypeIterator = struct {
+    const Regs = struct {
+        gpr: u8 = 0,
+        fpu: u8 = 0,
+
+        pub fn take(self: *Regs, taking: Regs) bool {
+            if (self.gpr < taking.gpr or self.fpu < taking.fpu) return false;
+
+            self.gpr -= taking.gpr;
+            self.fpu -= taking.fpu;
+
+            return true;
+        }
+
+        pub fn total(self: Regs) u8 {
+            return self.gpr + self.fpu;
+        }
+    };
+
     object: *Object,
     cc: std.lang.CallingConvention,
     param_types: []const InternPool.Index,
@@ -7023,6 +7029,9 @@ const ParamTypeIterator = struct {
     types_buffer: [8]Builder.Type,
     offsets_buffer: [9]u64,
     byval_attr: ?Object.Byval,
+    free_regs: Regs,
+    has_sret: bool,
+    has_err_ret_trace: bool,
 
     const Lowering = union(enum) {
         no_bits,
@@ -7393,41 +7402,42 @@ const ParamTypeIterator = struct {
         const zcu = o.zcu;
         const target = zcu.getTarget();
         const classes = x86_64_abi.classifySystemV(ty, zcu, target, .arg);
-        var types_len: u32 = 0;
-        const classes_len = for (classes, 0..) |class, class_index| switch (class) {
+        var regs_used: ParamTypeIterator.Regs = .{ .gpr = 0, .fpu = 0 };
+        for (classes, 0..) |class, class_index| switch (class) {
             .integer => {
-                it.types_buffer[types_len] = try o.builder.intType(@min(8 * ty.abiSize(zcu) - 64 * class_index, 64));
-                it.offsets_buffer[types_len] = 8 * class_index;
-                types_len += 1;
+                it.types_buffer[regs_used.total()] = try o.builder.intType(@min(8 * ty.abiSize(zcu) - 64 * class_index, 64));
+                it.offsets_buffer[regs_used.total()] = 8 * class_index;
+                regs_used.gpr += 1;
             },
             .sse => {
-                it.types_buffer[types_len] = .double;
-                it.offsets_buffer[types_len] = 8 * class_index;
-                types_len += 1;
+                it.types_buffer[regs_used.total()] = .double;
+                it.offsets_buffer[regs_used.total()] = 8 * class_index;
+                regs_used.fpu += 1;
             },
             .sseup => {
-                if (it.types_buffer[types_len - 1] == .double) {
+                if (it.types_buffer[regs_used.total() - 1] == .double) {
                     if (ty.isVector(zcu)) {
                         it.zig_index += 1;
                         it.llvm_index += 1;
+                        _ = it.free_regs.take(.{ .fpu = 1 });
                         return .byval;
                     }
-                    it.types_buffer[types_len - 1] = .fp128;
+                    it.types_buffer[regs_used.total() - 1] = .fp128;
                 } else {
-                    it.types_buffer[types_len] = .double;
-                    it.offsets_buffer[types_len] = 8 * class_index;
-                    types_len += 1;
+                    it.types_buffer[regs_used.total()] = .double;
+                    it.offsets_buffer[regs_used.total()] = 8 * class_index;
+                    regs_used.fpu += 1;
                 }
             },
             .float => {
-                it.types_buffer[types_len] = .float;
-                it.offsets_buffer[types_len] = 8 * class_index;
-                types_len += 1;
+                it.types_buffer[regs_used.total()] = .float;
+                it.offsets_buffer[regs_used.total()] = 8 * class_index;
+                regs_used.fpu += 1;
             },
             .float_combine => {
-                it.types_buffer[types_len] = try it.object.builder.vectorType(.normal, 2, .float);
-                it.offsets_buffer[types_len] = 8 * class_index;
-                types_len += 1;
+                it.types_buffer[regs_used.total()] = try it.object.builder.vectorType(.normal, 2, .float);
+                it.offsets_buffer[regs_used.total()] = 8 * class_index;
+                regs_used.fpu += 1;
             },
             .x87 => {
                 it.zig_index += 1;
@@ -7435,30 +7445,34 @@ const ParamTypeIterator = struct {
                 it.byval_attr = .{};
                 return .byref;
             },
-            .x87up => unreachable,
-            .none => break class_index,
+            .none => break,
             .memory => {
                 it.zig_index += 1;
                 it.llvm_index += 1;
                 it.byval_attr = .{};
                 return .byref;
             },
-            .win_i128 => unreachable, // windows only
+            .integer_per_element => {
+                it.zig_index += 1;
+                it.llvm_index += 1;
+                _ = it.free_regs.take(.{ .gpr = @intCast(@min(ty.vectorLen(zcu), it.free_regs.gpr)) });
+                return .byval;
+            },
+            .x87up,
+            // Only produced by `classifyWindows`; see `next_x86_64_win`.
+            .win_i128,
             .bool_vector_mask,
-            .integer_per_element,
             .sse_per_element,
+            // Only produced for `ctx == .ret`; this classifies with `.arg`.
             .sse_sse_x87_per_qword,
             .sse_per_xword,
             .sse_per_yword,
             .sse_per_zword,
-            => {
-                it.zig_index += 1;
-                it.llvm_index += 1;
-                return .byval;
-            },
-        } else classes.len;
-        if (types_len > 1) {
-            if (it.llvm_index + classes_len > 6) {
+            => unreachable,
+        };
+        const fits = it.free_regs.take(regs_used);
+        if (regs_used.total() > 1) {
+            if (!fits) {
                 it.zig_index += 1;
                 it.llvm_index += 1;
                 it.byval_attr = .{};
@@ -7474,28 +7488,53 @@ const ParamTypeIterator = struct {
                 return .byval;
             }
         }
-        it.offsets_buffer[types_len] = 8 * classes_len;
-        it.types_len = types_len;
-        it.llvm_index += types_len;
+        const len = regs_used.total();
+        it.offsets_buffer[len] = 8 * (std.mem.findScalar(x86_64_abi.Class, classes[0..], .none) orelse classes.len);
+        it.types_len = len;
+        it.llvm_index += len;
         it.zig_index += 1;
         return .multiple_llvm_types;
+    }
+
+    pub fn sretIndex(it: ParamTypeIterator) ?u32 {
+        return if (it.has_sret) 0 else null;
+    }
+
+    pub fn errRetReturnTraceIndex(it: ParamTypeIterator) ?u32 {
+        return if (it.has_err_ret_trace)
+            if (it.sretIndex() != null) 1 else 0
+        else
+            null;
     }
 };
 pub fn iterateParamTypes(
     object: *Object,
     cc: std.lang.CallingConvention,
     param_types: []const InternPool.Index,
+    ret_strat: FnReturnStrat,
 ) ParamTypeIterator {
+    const has_sret = ret_strat == .sret;
+    const has_err_ret_trace = cc == .auto and object.zcu.comp.config.any_error_tracing;
+
     return .{
         .object = object,
         .cc = cc,
         .param_types = param_types,
         .zig_index = 0,
-        .llvm_index = 0,
+        .llvm_index = @as(u32, @intFromBool(has_sret)) + @intFromBool(has_err_ret_trace),
         .types_len = undefined,
         .types_buffer = undefined,
         .offsets_buffer = undefined,
         .byval_attr = null,
+        .free_regs = switch (cc) {
+            .x86_64_sysv, .x86_64_x32 => .{
+                .gpr = 6 - @as(u8, @intFromBool(has_sret)),
+                .fpu = 8,
+            },
+            else => .{},
+        },
+        .has_sret = has_sret,
+        .has_err_ret_trace = has_err_ret_trace,
     };
 }
 

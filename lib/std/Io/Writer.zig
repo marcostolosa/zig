@@ -221,35 +221,38 @@ pub fn writeSplatHeaderLimit(
     limit: Limit,
 ) Error!usize {
     var remaining = @backingInt(limit);
+    assert(data.len > 0);
     {
-        const copy_len = @min(header.len, w.buffer.len - w.end, remaining);
-        if (header.len - copy_len != 0) return writeSplatHeaderLimitFinish(w, header, data, splat, remaining);
+        const copy_len = @min(header.len, remaining);
+        if (w.buffer.len - w.end < copy_len) return try writeSplatHeaderLimitFinish(w, header, data, splat, remaining);
         @memcpy(w.buffer[w.end..][0..copy_len], header[0..copy_len]);
         w.end += copy_len;
         remaining -= copy_len;
     }
-    for (data[0 .. data.len - 1], 0..) |buf, i| {
-        const copy_len = @min(buf.len, w.buffer.len - w.end, remaining);
-        if (buf.len - copy_len != 0) return @backingInt(limit) - remaining +
-            try writeSplatHeaderLimitFinish(w, &.{}, data[i..], splat, remaining);
-        @memcpy(w.buffer[w.end..][0..copy_len], buf[0..copy_len]);
-        w.end += copy_len;
-        remaining -= copy_len;
-    }
-    const pattern = data[data.len - 1];
-    const splat_n = pattern.len * splat;
-    if (splat_n > @min(w.buffer.len - w.end, remaining)) {
-        const buffered_n = @backingInt(limit) - remaining;
-        const written = try writeSplatHeaderLimitFinish(w, &.{}, data[data.len - 1 ..][0..1], splat, remaining);
-        return buffered_n + written;
+
+    remaining_zero: {
+        if (remaining == 0) break :remaining_zero;
+        for (data[0 .. data.len - 1], 0..) |bytes, i| {
+            const copy_len = @min(bytes.len, remaining);
+            if (w.buffer.len - w.end < copy_len)
+                return @backingInt(limit) - remaining + try writeSplatHeaderLimitFinish(w, &.{}, data[i..], splat, remaining);
+            @memcpy(w.buffer[w.end..][0..copy_len], bytes[0..copy_len]);
+            w.end += copy_len;
+            remaining -= copy_len;
+        }
+
+        if (remaining == 0) break :remaining_zero;
+        const pattern = data[data.len - 1];
+        for (0..splat) |_| {
+            const copy_len = @min(pattern.len, remaining);
+            if (w.buffer.len - w.end < copy_len)
+                return @backingInt(limit) - remaining + try writeSplatHeaderLimitFinish(w, &.{}, data[data.len - 1 ..][0..1], splat, remaining);
+            @memcpy(w.buffer[w.end..][0..copy_len], pattern[0..copy_len]);
+            w.end += copy_len;
+            remaining -= copy_len;
+        }
     }
 
-    for (0..splat) |_| {
-        @memcpy(w.buffer[w.end..][0..pattern.len], pattern);
-        w.end += pattern.len;
-    }
-
-    remaining -= splat_n;
     return @backingInt(limit) - remaining;
 }
 
@@ -291,6 +294,14 @@ fn writeSplatHeaderLimitFinish(
         return w.vtable.drain(w, (&vecs)[0..i], @min(remaining / pattern.len, splat));
     }
     return w.vtable.drain(w, (&vecs)[0..i], 1);
+}
+
+test "fixed writer writeSplatHeaderLimit" {
+    var buf: [100]u8 = @splat(0);
+    var w: std.Io.Writer = .fixed(&buf);
+    const limit = 6;
+    const n = try w.writeSplatHeaderLimit("header which is longer than limit", &.{""}, 1, .limited(limit));
+    try std.testing.expectEqual(limit, n);
 }
 
 test "writeSplatHeader splatting avoids buffer aliasing temptation" {

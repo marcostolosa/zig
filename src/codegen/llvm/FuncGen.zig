@@ -7402,42 +7402,42 @@ const ParamTypeIterator = struct {
         const zcu = o.zcu;
         const target = zcu.getTarget();
         const classes = x86_64_abi.classifySystemV(ty, zcu, target, .arg);
-        var regs_used: ParamTypeIterator.Regs = .{ .gpr = 0, .fpu = 0 };
+        var used_regs: ParamTypeIterator.Regs = .{ .gpr = 0, .fpu = 0 };
         for (classes, 0..) |class, class_index| switch (class) {
             .integer => {
-                it.types_buffer[regs_used.total()] = try o.builder.intType(@min(8 * ty.abiSize(zcu) - 64 * class_index, 64));
-                it.offsets_buffer[regs_used.total()] = 8 * class_index;
-                regs_used.gpr += 1;
+                it.types_buffer[used_regs.total()] = try o.builder.intType(@min(8 * ty.abiSize(zcu) - 64 * class_index, 64));
+                it.offsets_buffer[used_regs.total()] = 8 * class_index;
+                used_regs.gpr += 1;
             },
             .sse => {
-                it.types_buffer[regs_used.total()] = .double;
-                it.offsets_buffer[regs_used.total()] = 8 * class_index;
-                regs_used.fpu += 1;
+                it.types_buffer[used_regs.total()] = .double;
+                it.offsets_buffer[used_regs.total()] = 8 * class_index;
+                used_regs.fpu += 1;
             },
             .sseup => {
-                if (it.types_buffer[regs_used.total() - 1] == .double) {
+                if (it.types_buffer[used_regs.total() - 1] == .double) {
                     if (ty.isVector(zcu)) {
                         it.zig_index += 1;
                         it.llvm_index += 1;
                         _ = it.free_regs.take(.{ .fpu = 1 });
                         return .byval;
                     }
-                    it.types_buffer[regs_used.total() - 1] = .fp128;
+                    it.types_buffer[used_regs.total() - 1] = .fp128;
                 } else {
-                    it.types_buffer[regs_used.total()] = .double;
-                    it.offsets_buffer[regs_used.total()] = 8 * class_index;
-                    regs_used.fpu += 1;
+                    it.types_buffer[used_regs.total()] = .double;
+                    it.offsets_buffer[used_regs.total()] = 8 * class_index;
+                    used_regs.fpu += 1;
                 }
             },
             .float => {
-                it.types_buffer[regs_used.total()] = .float;
-                it.offsets_buffer[regs_used.total()] = 8 * class_index;
-                regs_used.fpu += 1;
+                it.types_buffer[used_regs.total()] = .float;
+                it.offsets_buffer[used_regs.total()] = 8 * class_index;
+                used_regs.fpu += 1;
             },
             .float_combine => {
-                it.types_buffer[regs_used.total()] = try it.object.builder.vectorType(.normal, 2, .float);
-                it.offsets_buffer[regs_used.total()] = 8 * class_index;
-                regs_used.fpu += 1;
+                it.types_buffer[used_regs.total()] = try it.object.builder.vectorType(.normal, 2, .float);
+                it.offsets_buffer[used_regs.total()] = 8 * class_index;
+                used_regs.fpu += 1;
             },
             .x87 => {
                 it.zig_index += 1;
@@ -7470,8 +7470,8 @@ const ParamTypeIterator = struct {
             .sse_per_zword,
             => unreachable,
         };
-        const fits = it.free_regs.take(regs_used);
-        if (regs_used.total() > 1) {
+        const fits = it.free_regs.take(used_regs);
+        if (used_regs.total() > 1) {
             if (!fits) {
                 it.zig_index += 1;
                 it.llvm_index += 1;
@@ -7488,7 +7488,7 @@ const ParamTypeIterator = struct {
                 return .byval;
             }
         }
-        const len = regs_used.total();
+        const len = used_regs.total();
         it.offsets_buffer[len] = 8 * (std.mem.findScalar(x86_64_abi.Class, classes[0..], .none) orelse classes.len);
         it.types_len = len;
         it.llvm_index += len;

@@ -7004,19 +7004,19 @@ fn typeOfIndex(fg: *FuncGen, inst: Air.Inst.Index) Type {
 const ParamTypeIterator = struct {
     const Regs = struct {
         gpr: u8 = 0,
-        fpu: u8 = 0,
+        fpr: u8 = 0,
 
         pub fn take(self: *Regs, taking: Regs) bool {
-            if (self.gpr < taking.gpr or self.fpu < taking.fpu) return false;
+            if (self.gpr < taking.gpr or self.fpr < taking.fpr) return false;
 
             self.gpr -= taking.gpr;
-            self.fpu -= taking.fpu;
+            self.fpr -= taking.fpr;
 
             return true;
         }
 
         pub fn total(self: Regs) u8 {
-            return self.gpr + self.fpu;
+            return self.gpr + self.fpr;
         }
     };
 
@@ -7402,8 +7402,9 @@ const ParamTypeIterator = struct {
         const zcu = o.zcu;
         const target = zcu.getTarget();
         const classes = x86_64_abi.classifySystemV(ty, zcu, target, .arg);
-        var used_regs: ParamTypeIterator.Regs = .{ .gpr = 0, .fpu = 0 };
-        for (classes, 0..) |class, class_index| switch (class) {
+        const classes_len = std.mem.findScalar(x86_64_abi.Class, classes[0..], .none) orelse classes.len;
+        var used_regs: ParamTypeIterator.Regs = .{ .gpr = 0, .fpr = 0 };
+        for (classes[0..classes_len], 0..) |class, class_index| switch (class) {
             .integer => {
                 it.types_buffer[used_regs.total()] = try o.builder.intType(@min(8 * ty.abiSize(zcu) - 64 * class_index, 64));
                 it.offsets_buffer[used_regs.total()] = 8 * class_index;
@@ -7412,32 +7413,32 @@ const ParamTypeIterator = struct {
             .sse => {
                 it.types_buffer[used_regs.total()] = .double;
                 it.offsets_buffer[used_regs.total()] = 8 * class_index;
-                used_regs.fpu += 1;
+                used_regs.fpr += 1;
             },
             .sseup => {
                 if (it.types_buffer[used_regs.total() - 1] == .double) {
                     if (ty.isVector(zcu)) {
                         it.zig_index += 1;
                         it.llvm_index += 1;
-                        _ = it.free_regs.take(.{ .fpu = 1 });
+                        _ = it.free_regs.take(.{ .fpr = 1 });
                         return .byval;
                     }
                     it.types_buffer[used_regs.total() - 1] = .fp128;
                 } else {
                     it.types_buffer[used_regs.total()] = .double;
                     it.offsets_buffer[used_regs.total()] = 8 * class_index;
-                    used_regs.fpu += 1;
+                    used_regs.fpr += 1;
                 }
             },
             .float => {
                 it.types_buffer[used_regs.total()] = .float;
                 it.offsets_buffer[used_regs.total()] = 8 * class_index;
-                used_regs.fpu += 1;
+                used_regs.fpr += 1;
             },
             .float_combine => {
                 it.types_buffer[used_regs.total()] = try it.object.builder.vectorType(.normal, 2, .float);
                 it.offsets_buffer[used_regs.total()] = 8 * class_index;
-                used_regs.fpu += 1;
+                used_regs.fpr += 1;
             },
             .x87 => {
                 it.zig_index += 1;
@@ -7445,7 +7446,6 @@ const ParamTypeIterator = struct {
                 it.byval_attr = .{};
                 return .byref;
             },
-            .none => break,
             .memory => {
                 it.zig_index += 1;
                 it.llvm_index += 1;
@@ -7458,6 +7458,7 @@ const ParamTypeIterator = struct {
                 _ = it.free_regs.take(.{ .gpr = @intCast(@min(ty.vectorLen(zcu), it.free_regs.gpr)) });
                 return .byval;
             },
+            .none,
             .x87up,
             // Only produced by `classifyWindows`; see `next_x86_64_win`.
             .win_i128,
@@ -7489,7 +7490,7 @@ const ParamTypeIterator = struct {
             }
         }
         const len = used_regs.total();
-        it.offsets_buffer[len] = 8 * (std.mem.findScalar(x86_64_abi.Class, classes[0..], .none) orelse classes.len);
+        it.offsets_buffer[len] = 8 * classes_len;
         it.types_len = len;
         it.llvm_index += len;
         it.zig_index += 1;
@@ -7529,9 +7530,9 @@ pub fn iterateParamTypes(
         .free_regs = switch (cc) {
             .x86_64_sysv, .x86_64_x32 => .{
                 .gpr = 6 - @as(u8, @intFromBool(has_sret)),
-                .fpu = 8,
+                .fpr = 8,
             },
-            else => .{},
+            else => undefined,
         },
         .has_sret = has_sret,
         .has_err_ret_trace = has_err_ret_trace,

@@ -234,8 +234,10 @@ pub fn writeSplatHeaderLimit(
         if (remaining == 0) break :remaining_zero;
         for (data[0 .. data.len - 1], 0..) |bytes, i| {
             const copy_len = @min(bytes.len, remaining);
-            if (w.buffer.len - w.end < copy_len)
-                return @backingInt(limit) - remaining + try writeSplatHeaderLimitFinish(w, &.{}, data[i..], splat, remaining);
+            if (w.buffer.len - w.end < copy_len) {
+                const n = try writeSplatHeaderLimitFinish(w, &.{}, data[i..], splat, remaining);
+                return @backingInt(limit) - remaining + n;
+            }
             @memcpy(w.buffer[w.end..][0..copy_len], bytes[0..copy_len]);
             w.end += copy_len;
             remaining -= copy_len;
@@ -245,8 +247,10 @@ pub fn writeSplatHeaderLimit(
         const pattern = data[data.len - 1];
         for (0..splat) |_| {
             const copy_len = @min(pattern.len, remaining);
-            if (w.buffer.len - w.end < copy_len)
-                return @backingInt(limit) - remaining + try writeSplatHeaderLimitFinish(w, &.{}, data[data.len - 1 ..][0..1], splat, remaining);
+            if (w.buffer.len - w.end < copy_len) {
+                const n = try writeSplatHeaderLimitFinish(w, &.{}, data[data.len - 1 ..][0..1], splat, remaining);
+                return @backingInt(limit) - remaining + n;
+            }
             @memcpy(w.buffer[w.end..][0..copy_len], pattern[0..copy_len]);
             w.end += copy_len;
             remaining -= copy_len;
@@ -297,11 +301,40 @@ fn writeSplatHeaderLimitFinish(
 }
 
 test "fixed writer writeSplatHeaderLimit" {
-    var buf: [100]u8 = @splat(0);
-    var w: std.Io.Writer = .fixed(&buf);
-    const limit = 6;
-    const n = try w.writeSplatHeaderLimit("header which is longer than limit", &.{""}, 1, .limited(limit));
-    try std.testing.expectEqual(limit, n);
+    const TestCase = struct {
+        buf_len: usize = 100,
+        header: []const u8,
+        data: []const []const u8,
+        splat: u8,
+        limit: u8,
+        expected_written: ?usize = null,
+        expected_buf_content: []const u8,
+    };
+    const test_cases = [_]TestCase{
+        // buffer is large
+        .{ .header = "header is longer", .data = &.{""}, .splat = 1, .limit = 6, .expected_written = 6, .expected_buf_content = "header" },
+        .{ .header = "head", .data = &.{"123456"}, .splat = 1, .limit = 5, .expected_written = 5, .expected_buf_content = "head1" },
+        .{ .header = "head", .data = &.{"123"}, .splat = 1, .limit = 10, .expected_written = 7, .expected_buf_content = "head123" },
+        .{ .header = "head", .data = &.{ "1", "abcdefg" }, .splat = 1, .limit = 6, .expected_written = 6, .expected_buf_content = "head1a" },
+        .{ .header = "head", .data = &.{ "123", "abc" }, .splat = 2, .limit = 6, .expected_written = 6, .expected_buf_content = "head12" },
+        .{ .header = "head", .data = &.{ "123", "abc" }, .splat = 2, .limit = 11, .expected_written = 11, .expected_buf_content = "head123abca" },
+        .{ .header = "head", .data = &.{ "123", "a" }, .splat = 2, .limit = 10, .expected_written = 9, .expected_buf_content = "head123aa" },
+        .{ .header = "head", .data = &.{ "123", "abc" }, .splat = 2, .limit = 100, .expected_written = 13, .expected_buf_content = "head123abcabc" },
+
+        // buffer is small
+        .{ .header = "header is longer", .data = &.{""}, .splat = 1, .limit = 6, .expected_buf_content = "head", .buf_len = 4 },
+        .{ .header = "head", .data = &.{"123456"}, .splat = 1, .limit = 8, .expected_buf_content = "head1", .buf_len = 5 },
+        .{ .header = "head", .data = &.{ "123", "ab" }, .splat = 2, .limit = 100, .expected_buf_content = "head123aba", .buf_len = 10 },
+    };
+    inline for (test_cases) |test_case| {
+        var buf: [test_case.buf_len]u8 = @splat(0);
+        var w: std.Io.Writer = .fixed(&buf);
+        const n_or_error = w.writeSplatHeaderLimit(test_case.header, test_case.data, test_case.splat, .limited(test_case.limit));
+        if (n_or_error) |n| {
+            try std.testing.expectEqual(test_case.expected_written, n);
+        } else |_| {}
+        try std.testing.expectEqualStrings(test_case.expected_buf_content, w.buffered());
+    }
 }
 
 test "writeSplatHeader splatting avoids buffer aliasing temptation" {

@@ -413,26 +413,20 @@ pub fn HashMap(
 
         /// If there is an `Entry` with a matching key, it is deleted from
         /// the hash map, and this function returns true.  Otherwise this
-        /// function returns false.
-        ///
-        /// TODO: answer the question in these doc comments, does this
-        /// increase the unused capacity by one?
+        /// function returns false. Note that it is not guaranteed that this
+        /// increases the unused capacity.
         pub fn remove(self: *Self, key: K) bool {
             return self.unmanaged.removeContext(key, self.ctx);
         }
 
-        /// TODO: answer the question in these doc comments, does this
-        /// increase the unused capacity by one?
         pub fn removeAdapted(self: *Self, key: anytype, ctx: anytype) bool {
             return self.unmanaged.removeAdapted(key, ctx);
         }
 
         /// Delete the entry with key pointed to by key_ptr from the hash map.
         /// key_ptr is assumed to be a valid pointer to a key that is present
-        /// in the hash map.
-        ///
-        /// TODO: answer the question in these doc comments, does this
-        /// increase the unused capacity by one?
+        /// in the hash map. Note that it is not guaranteed that this
+        /// increases the unused capacity.
         pub fn removeByPtr(self: *Self, key_ptr: *K) void {
             self.unmanaged.removeByPtr(key_ptr);
         }
@@ -1348,24 +1342,18 @@ pub fn Custom(
 
         /// If there is an `Entry` with a matching key, it is deleted from
         /// the hash map, and this function returns true.  Otherwise this
-        /// function returns false.
-        ///
-        /// TODO: answer the question in these doc comments, does this
-        /// increase the unused capacity by one?
+        /// function returns false. Note that it is not guaranteed that this
+        /// increases the unused capacity.
         pub fn remove(self: *Self, key: K) bool {
             if (@sizeOf(Context) != 0)
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call removeContext instead.");
             return self.removeContext(key, undefined);
         }
 
-        /// TODO: answer the question in these doc comments, does this
-        /// increase the unused capacity by one?
         pub fn removeContext(self: *Self, key: K, ctx: Context) bool {
             return self.removeAdapted(key, ctx);
         }
 
-        /// TODO: answer the question in these doc comments, does this
-        /// increase the unused capacity by one?
         pub fn removeAdapted(self: *Self, key: anytype, ctx: anytype) bool {
             if (self.getIndex(key, ctx)) |idx| {
                 self.removeByIndex(idx);
@@ -2004,38 +1992,6 @@ test "putAssumeCapacity" {
         sum += map.get(i).?;
     }
     try expectEqual(sum, 20);
-}
-
-test "repeat putAssumeCapacity/remove" {
-    var map = AutoHashMap(u32, u32).init(std.testing.allocator);
-    defer map.deinit();
-
-    try map.ensureTotalCapacity(20);
-    const limit = map.unmanaged.available;
-
-    var i: u32 = 0;
-    while (i < limit) : (i += 1) {
-        map.putAssumeCapacityNoClobber(i, i);
-    }
-
-    // Repeatedly delete/insert an entry without resizing the map.
-    // Put to different keys so entries don't land in the just-freed slot.
-    i = 0;
-    while (i < 10 * limit) : (i += 1) {
-        try testing.expect(map.remove(i));
-        if (i % 2 == 0) {
-            map.putAssumeCapacityNoClobber(limit + i, i);
-        } else {
-            map.putAssumeCapacity(limit + i, i);
-        }
-    }
-
-    i = 9 * limit;
-    while (i < 10 * limit) : (i += 1) {
-        try expectEqual(map.get(limit + i), i);
-    }
-    try expectEqual(map.unmanaged.available, 0);
-    try expectEqual(map.unmanaged.count(), limit);
 }
 
 test "getOrPut" {

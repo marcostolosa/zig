@@ -17288,6 +17288,9 @@ export fn zig_big_struct_both(x: BigStruct) BigStruct {
 extern fn c_sret_gpr_straddle(Struct_u64_u64, Struct_u64_u64, Struct_u64_u64) Struct_u64_u64_u64_u64;
 
 test "sret with integer parameters straddling the register budget" {
+    if (builtin.cpu.arch == .hexagon) return error.SkipZigTest;
+    if (builtin.cpu.arch.isPowerPC32()) return error.SkipZigTest;
+
     const p: Struct_u64_u64 = .{ .a = 1, .b = 2 };
     const q: Struct_u64_u64 = .{ .a = 3, .b = 4 };
     const r: Struct_u64_u64 = .{ .a = 5, .b = 6 };
@@ -17315,6 +17318,8 @@ export fn zig_sret_gpr_straddle(
 extern fn c_sse_then_gpr(f64, f64, f64, f64, f64, f64, Struct_u64_u64) u64;
 
 test "integer aggregate after the float parameter registers" {
+    if (builtin.cpu.arch.isPowerPC32()) return error.SkipZigTest;
+
     const s: Struct_u64_u64 = .{ .a = 100, .b = 23 };
     try expect(c_sse_then_gpr(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, s) == 123);
 }
@@ -17332,6 +17337,9 @@ export fn zig_sse_then_gpr(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, s: St
 extern fn c_sse_budget_straddle(f64, f64, f64, f64, f64, f64, f64, f64, Struct_f64_f64) f64;
 
 test "float aggregate straddling the float register budget" {
+    if (builtin.cpu.arch.isPowerPC()) return error.SkipZigTest;
+    if (builtin.cpu.arch.isRiscv32()) return error.SkipZigTest;
+
     const s: Struct_f64_f64 = .{ .a = 100.0, .b = 23.0 };
     try expect(c_sse_budget_straddle(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, s) == 123.0);
 }

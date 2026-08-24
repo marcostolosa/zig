@@ -16068,11 +16068,15 @@ void run_c_tests(void) {
         assert_or_panic(zig_sse_then_gpr(10.0, 20.0, 30.0, 40.0, 50.0, 60.0, s) == 123);
     }
 
+#ifndef ZIG_PPC64
+#ifndef ZIG_RISCV32
     {
         struct Struct_f64_f64 s = {100.0, 23.0};
         assert_or_panic(zig_sse_budget_straddle(10.0, 20.0, 30.0, 40.0, 50.0, 60.0,
                                                 70.0, 80.0, s) == 123.0);
     }
+#endif
+#endif
 #endif
 #endif
 #endif

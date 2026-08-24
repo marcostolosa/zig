@@ -9694,11 +9694,20 @@ fn zirElemPtrLoad(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError
     const extra = sema.code.extraData(Zir.Inst.Bin, inst_data.payload_index).data;
     const array_ptr = sema.resolveInst(extra.lhs);
     const uncoerced_elem_index = sema.resolveInst(extra.rhs);
+
     if (try sema.resolveDefinedValue(block, src, array_ptr)) |array_ptr_val| {
-        const array_ptr_ty = sema.typeOf(array_ptr);
-        if (try sema.pointerDeref(block, src, array_ptr_val, array_ptr_ty)) |array_val| {
-            const array: Air.Inst.Ref = .fromValue(array_val);
-            return elemVal(sema, block, src, array, uncoerced_elem_index, elem_index_src, true);
+        // Avoid potentially instantiating the entire `MutableValue` if both the index and the array
+        // are comptime-known. Otherwise, this leads to O(len) (!) hashing per element access and is
+        // *very* slow for large comptime arrays.
+        const byval_would_intern_mutable_aggregate = sema.resolveValue(uncoerced_elem_index) != null and
+            sema.isComptimeMutablePtr(array_ptr_val);
+
+        if (!byval_would_intern_mutable_aggregate) {
+            const array_ptr_ty = sema.typeOf(array_ptr);
+            if (try sema.pointerDeref(block, src, array_ptr_val, array_ptr_ty)) |array_val| {
+                const array: Air.Inst.Ref = .fromValue(array_val);
+                return elemVal(sema, block, src, array, uncoerced_elem_index, elem_index_src, true);
+            }
         }
     }
     const elem_index = try sema.coerce(block, .usize, uncoerced_elem_index, elem_index_src);

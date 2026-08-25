@@ -8324,7 +8324,7 @@ fn dirReadLinkWindows(dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLink
     })).u.Status) {
         .SUCCESS => {},
         .CANCELLED => unreachable,
-        .NOT_A_REPARSE_POINT => return error.NotLink,
+        .NOT_A_REPARSE_POINT, .INVALID_DEVICE_REQUEST => return error.NotLink,
         else => |status| return windows.unexpectedStatus(status),
     }
 

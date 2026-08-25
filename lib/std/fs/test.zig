@@ -1046,13 +1046,43 @@ test "Dir.rename directories" {
     }.impl);
 }
 
-test "Dir.rename directory onto empty dir" {
-    // TODO: Fix on Windows, see https://github.com/ziglang/zig/issues/6364
-    if (native_os == .windows) return error.SkipZigTest;
+fn hasPosixRenameSemantics(ctx: *TestContext) !bool {
+    return switch (native_os) {
+        .windows => blk: {
+            // Try renaming a directory onto an existing file.
+            // If this fails with `error.NotDir`, then we can be fairly confident POSIX rename
+            // semantics are being used, as otherwise a different error is usually returned
+            // (typically ACCESS_DENIED or OBJECT_NAME_COLLISION, although the error can be different
+            // depending on the underlying filesystem). The rename succeeding means that Windows
+            // rename semantics are in effect, not POSIX.
+            const io = ctx.io;
+            try ctx.dir.createDirPath(io, "test_dir");
+            defer ctx.dir.deleteTree(io, "test_dir") catch {};
+            try ctx.dir.writeFile(io, .{ .sub_path = "test_file", .data = "" });
+            defer ctx.dir.deleteTree(io, "test_file") catch {};
+            ctx.dir.rename("test_dir", ctx.dir, "test_file", io) catch |err| switch (err) {
+                error.NotDir => break :blk true,
+                else => {},
+            };
+            break :blk false;
+        },
+        else => true,
+    };
+}
 
+test "Dir.rename directory onto empty dir" {
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
             const io = ctx.io;
+
+            // Rename on Windows can hit intermittent AccessDenied errors
+            // when certain conditions are true about the host system.
+            // For now, skip this test when the path type is UNC to avoid them.
+            // See https://github.com/ziglang/zig/issues/17134
+            if (ctx.path_type == .unc) return;
+
+            // Windows rename replacement behavior is OS and filesystem dependent
+            if (!(try hasPosixRenameSemantics(ctx))) return error.SkipZigTest;
 
             const test_dir_path = try ctx.transformPath("test_dir");
             const target_dir_path = try ctx.transformPath("target_dir_path");
@@ -1070,12 +1100,19 @@ test "Dir.rename directory onto empty dir" {
 }
 
 test "Dir.rename directory onto non-empty dir" {
-    // TODO: Fix on Windows, see https://github.com/ziglang/zig/issues/6364
-    if (native_os == .windows) return error.SkipZigTest;
-
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
             const io = ctx.io;
+
+            // Rename on Windows can hit intermittent AccessDenied errors
+            // when certain conditions are true about the host system.
+            // For now, skip this test when the path type is UNC to avoid them.
+            // See https://github.com/ziglang/zig/issues/17134
+            if (ctx.path_type == .unc) return;
+
+            // Windows rename replacement behavior is OS and filesystem dependent
+            if (!(try hasPosixRenameSemantics(ctx))) return error.SkipZigTest;
+
             const test_dir_path = try ctx.transformPath("test_dir");
             const target_dir_path = try ctx.transformPath("target_dir_path");
 
@@ -1096,12 +1133,19 @@ test "Dir.rename directory onto non-empty dir" {
 }
 
 test "Dir.rename file <-> dir" {
-    // TODO: Fix on Windows, see https://github.com/ziglang/zig/issues/6364
-    if (native_os == .windows) return error.SkipZigTest;
-
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
             const io = ctx.io;
+
+            // Rename on Windows can hit intermittent AccessDenied errors
+            // when certain conditions are true about the host system.
+            // For now, skip this test when the path type is UNC to avoid them.
+            // See https://github.com/ziglang/zig/issues/17134
+            if (ctx.path_type == .unc) return;
+
+            // Windows rename replacement behavior is OS and filesystem dependent
+            if (!(try hasPosixRenameSemantics(ctx))) return error.SkipZigTest;
+
             const test_file_path = try ctx.transformPath("test_file");
             const test_dir_path = try ctx.transformPath("test_dir");
 

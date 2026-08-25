@@ -5489,7 +5489,8 @@ pub fn dirOpenDirWindows(
         .ObjectName = @constCast(&w.UNICODE_STRING.init(sub_path_w)),
     };
 
-    const syscall: Syscall = try .start();
+    var attempt: u5 = 0;
+    var syscall: Syscall = try .start();
     while (true) switch (w.ntdll.NtCreateFile(
         &result.handle,
         // TODO remove some of these flags if options.access_sub_paths is false
@@ -5538,6 +5539,22 @@ pub fn dirOpenDirWindows(
         // This can happen if the directory has 'List folder contents' permission set to 'Deny'
         // and the directory is trying to be opened for iteration.
         .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+        .DELETE_PENDING => {
+            // This error means that there *was* a file in this location on
+            // the file system, but it was deleted. However, the OS is not
+            // finished with the deletion operation, and so this CreateFile
+            // call has failed. Here, we simulate the kernel bug being
+            // fixed by sleeping and retrying until the error goes away.
+            syscall.finish();
+            if (max_windows_kernel_bug_retries - attempt == 0) return error.FileBusy;
+            try parking_sleep.sleep(.{ .duration = .{
+                .raw = .fromMilliseconds((@as(u32, 1) << attempt) >> 1),
+                .clock = .awake,
+            } });
+            attempt += 1;
+            syscall = try .start();
+            continue;
+        },
         .INVALID_PARAMETER => |err| return syscall.ntstatusBug(err),
         else => |rc| return syscall.unexpectedNtstatus(rc),
     };
@@ -16315,6 +16332,7 @@ fn windowsCreateProcessPathExt(
             error.Unexpected,
             error.ProcessFdQuotaExceeded,
             error.SystemFdQuotaExceeded,
+            error.FileBusy,
             => |e| return e,
 
             error.AccessDenied,

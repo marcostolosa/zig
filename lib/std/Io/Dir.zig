@@ -459,6 +459,8 @@ pub const OpenError = error{
     SystemResources,
     /// On Windows, `\\server` or `\\server\share` was not found.
     NetworkNotFound,
+    /// On Windows, DELETE_PENDING was repeatedly returned when attempting to open the directory.
+    FileBusy,
 } || PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 pub const OpenOptions = struct {
@@ -1456,6 +1458,7 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
                             error.Unexpected,
                             error.BadPathName,
                             error.NetworkNotFound,
+                            error.FileBusy,
                             error.Canceled,
                             => |e| return e,
                         };
@@ -1550,6 +1553,7 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
                             error.Unexpected,
                             error.BadPathName,
                             error.NetworkNotFound,
+                            error.FileBusy,
                             error.Canceled,
                             => |e| return e,
                         };
@@ -1654,6 +1658,7 @@ fn deleteTreeMinStackSizeWithKindHint(parent: Dir, io: Io, sub_path: []const u8,
                             error.Unexpected,
                             error.BadPathName,
                             error.NetworkNotFound,
+                            error.FileBusy,
                             error.Canceled,
                             => |e| return e,
                         };
@@ -1751,6 +1756,7 @@ fn deleteTreeOpenInitialSubpath(dir: Dir, io: Io, sub_path: []const u8, kind_hin
                     error.Unexpected,
                     error.BadPathName,
                     error.NetworkNotFound,
+                    error.FileBusy,
                     error.Canceled,
                     => |e| return e,
                 };

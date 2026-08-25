@@ -812,6 +812,7 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
         error.NameTooLong => return error.Unexpected,
         error.BadPathName => return error.Unexpected,
         error.NetworkNotFound => return error.Unexpected, // Windows-only
+        error.FileBusy => return error.Unexpected, // Windows-only
 
         error.FileNotFound => return error.GLibCNotFound,
         error.NotDir => return error.GLibCNotFound,

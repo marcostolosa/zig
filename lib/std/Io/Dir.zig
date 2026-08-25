@@ -1056,6 +1056,9 @@ pub fn deleteDirAbsolute(io: Io, absolute_path: []const u8) DeleteDirError!void 
 pub const RenameError = error{
     /// In WASI, this error may occur when the file descriptor does
     /// not hold the required rights to rename a resource by path relative to it.
+    ///
+    /// On Windows, this error may be returned instead of `PathAlreadyExists` when
+    /// renaming a directory over an existing directory.
     AccessDenied,
     /// Attempted to replace a nonempty directory.
     DirNotEmpty,
@@ -1063,10 +1066,12 @@ pub const RenameError = error{
     /// The file attempted to be moved or replaced is a running executable.
     FileBusy,
     DiskQuota,
+    /// Attempted to rename a file over an existing directory.
     IsDir,
     SymLinkLoop,
     LinkQuotaExceeded,
     FileNotFound,
+    /// Attempted to rename a directory over an existing file.
     NotDir,
     /// Windows-only. The OS or filesystem does not support POSIX rename semantics
     /// and the new path refers to a file kind that can not be replaced with the old kind.
@@ -1090,14 +1095,22 @@ pub const RenameError = error{
 
 /// Change the name or location of a file or directory.
 ///
-/// If `new_sub_path` already exists, it will be replaced.
+/// If `new_sub_path` already exists, it will be replaced if possible, but the
+/// replacement behavior is ultimately OS and filesystem dependent.
 ///
-/// Renaming a file over an existing directory or a directory over an existing
-/// file will fail with `error.IsDir` or `error.NotDir`
+/// On POSIX systems, and on Windows systems when both the OS and filesystem support POSIX
+/// rename semantics, the replacement behavior is consistent:
+/// - Renaming a directory onto an existing file will fail with `error.NotDir`
+/// - Renaming a directory onto an existing empty directory will succeed
+/// - Renaming a directory onto an existing non-empty directory will fail with `error.DirNotEmpty`
+/// - Renaming a file onto an existing directory will fail with `error.IsDir`
 ///
-/// * On Windows, both paths should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
-/// * On WASI, both paths should be encoded as valid UTF-8.
-/// * On other platforms, both paths are an opaque sequence of bytes with no particular encoding.
+/// On Windows when POSIX rename semantics are not supported by the OS and/or filesystem, the
+/// replacement behavior varies depending on the underlying filesystem.
+///
+/// On Windows, both paths should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
+/// On WASI, both paths should be encoded as valid UTF-8.
+/// On other platforms, both paths are an opaque sequence of bytes with no particular encoding.
 pub fn rename(
     old_dir: Dir,
     old_sub_path: []const u8,

@@ -7633,7 +7633,6 @@ fn dirRenameWindows(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     return dirRenameWindowsInner(old_dir, old_sub_path, new_dir, new_sub_path, true) catch |err| switch (err) {
-        error.PathAlreadyExists => return error.Unexpected,
         error.OperationUnsupported => return error.Unexpected,
         else => |e| return e,
     };

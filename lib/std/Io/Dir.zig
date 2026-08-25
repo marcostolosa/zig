@@ -1068,6 +1068,9 @@ pub const RenameError = error{
     LinkQuotaExceeded,
     FileNotFound,
     NotDir,
+    /// Windows-only. The OS or filesystem does not support POSIX rename semantics
+    /// and the new path refers to a file kind that can not be replaced with the old kind.
+    PathAlreadyExists,
     SystemResources,
     NoSpaceLeft,
     ReadOnlyFileSystem,

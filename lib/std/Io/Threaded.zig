@@ -5532,6 +5532,8 @@ pub fn dirOpenDirWindows(
         .OBJECT_NAME_NOT_FOUND => return syscall.fail(error.FileNotFound),
         .OBJECT_NAME_COLLISION => |err| return w.statusBug(err),
         .OBJECT_PATH_NOT_FOUND => return syscall.fail(error.FileNotFound),
+        .BAD_NETWORK_PATH => return syscall.fail(error.NetworkNotFound), // \\server was not found
+        .BAD_NETWORK_NAME => return syscall.fail(error.NetworkNotFound), // \\server was found but \\server\share wasn't
         .NOT_A_DIRECTORY => return syscall.fail(error.NotDir),
         // This can happen if the directory has 'List folder contents' permission set to 'Deny'
         // and the directory is trying to be opened for iteration.

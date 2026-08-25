@@ -181,6 +181,18 @@ fn testWithPathTypeIfSupported(comptime path_type: PathType, comptime path_sep: 
     var ctx = TestContext.init(path_type, path_sep, testing.allocator, path_type.getTransformFn());
     defer ctx.deinit();
 
+    if (comptime path_type == .unc) {
+        // The UNC path transformation for drive letters relies on a quirk that may not be available for all
+        // drives. So, double check that the network path is reachable by opening a handle to the tmp dir
+        // using the transformed UNC path.
+        const unc_path = try ctx.transformPath("");
+        const dir = ctx.dir.openDir(ctx.io, unc_path, .{}) catch |err| switch (err) {
+            error.NetworkNotFound => return,
+            else => |e| return e,
+        };
+        defer dir.close(ctx.io);
+    }
+
     try test_func(&ctx);
 }
 

@@ -10022,7 +10022,7 @@ fn ntReadFileResult(io_status_block: *const windows.IO_STATUS_BLOCK) !usize {
         .SUCCESS => return io_status_block.Information,
         .END_OF_FILE, .PIPE_BROKEN => return error.EndOfStream,
         .INVALID_HANDLE => return error.NotOpenForReading,
-        .INVALID_DEVICE_REQUEST => return error.IsDir,
+        .INVALID_DEVICE_REQUEST, .INVALID_PARAMETER => return error.IsDir,
         .FILE_LOCK_CONFLICT => return error.LockViolation,
         .ACCESS_DENIED => return error.AccessDenied,
         else => |status| return windows.unexpectedStatus(status),

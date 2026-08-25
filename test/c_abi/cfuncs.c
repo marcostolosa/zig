@@ -16051,32 +16051,6 @@ void run_c_tests(void) {
         assert_or_panic(res.d == 23);
         assert_or_panic(res.e == 24);
     }
-
-    {
-        struct Struct_u64_u64 p = {10, 20};
-        struct Struct_u64_u64 q = {30, 40};
-        struct Struct_u64_u64 r = {50, 60};
-        struct Struct_u64_u64_u64_u64 res = zig_sret_gpr_straddle(p, q, r);
-        assert_or_panic(res.a == 10);
-        assert_or_panic(res.b == 40);
-        assert_or_panic(res.c == 50);
-        assert_or_panic(res.d == 60);
-    }
-
-    {
-        struct Struct_u64_u64 s = {100, 23};
-        assert_or_panic(zig_sse_then_gpr(10.0, 20.0, 30.0, 40.0, 50.0, 60.0, s) == 123);
-    }
-
-#ifndef ZIG_PPC64
-#ifndef ZIG_RISCV32
-    {
-        struct Struct_f64_f64 s = {100.0, 23.0};
-        assert_or_panic(zig_sse_budget_straddle(10.0, 20.0, 30.0, 40.0, 50.0, 60.0,
-                                                70.0, 80.0, s) == 123.0);
-    }
-#endif
-#endif
 #endif
 #endif
 #endif
@@ -16344,6 +16318,28 @@ double c_sse_budget_straddle(double a, double b, double c, double d, double e, d
     assert_or_panic(g == 7.0);
     assert_or_panic(h == 8.0);
     return s.a + s.b;
+}
+
+void c_test_sret_gpr_straddle(void) {
+    struct Struct_u64_u64 p = {10, 20};
+    struct Struct_u64_u64 q = {30, 40};
+    struct Struct_u64_u64 r = {50, 60};
+    struct Struct_u64_u64_u64_u64 res = zig_sret_gpr_straddle(p, q, r);
+    assert_or_panic(res.a == 10);
+    assert_or_panic(res.b == 40);
+    assert_or_panic(res.c == 50);
+    assert_or_panic(res.d == 60);
+}
+
+void c_test_sse_then_gpr(void) {
+    struct Struct_u64_u64 s = {100, 23};
+    assert_or_panic(zig_sse_then_gpr(10.0, 20.0, 30.0, 40.0, 50.0, 60.0, s) == 123);
+}
+
+void c_test_sse_budget_straddle(void) {
+    struct Struct_f64_f64 s = {100.0, 23.0};
+    assert_or_panic(zig_sse_budget_straddle(10.0, 20.0, 30.0, 40.0, 50.0, 60.0,
+                                            70.0, 80.0, s) == 123.0);
 }
 
 struct BigStruct c_big_struct_both(struct BigStruct x) {

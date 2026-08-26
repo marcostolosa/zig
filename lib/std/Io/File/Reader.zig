@@ -155,7 +155,7 @@ pub fn seekBy(r: *Reader, offset: i64) SeekError!void {
                 };
             }
         },
-        .failure => return r.seek_err.?,
+        .failure => return r.seek_err orelse error.Unseekable,
     }
 }
 
@@ -176,7 +176,7 @@ pub fn seekTo(r: *Reader, offset: u64) SeekError!void {
             };
             setLogicalPos(r, offset);
         },
-        .failure => return r.seek_err.?,
+        .failure => return r.seek_err orelse error.Unseekable,
     }
 }
 
@@ -251,6 +251,7 @@ fn readVecPositional(r: *Reader, data: [][]u8) Io.Reader.Error!usize {
                 r.pos = 0;
                 r.seekBy(@intCast(pos)) catch {
                     r.mode = .failure;
+                    if (r.err == null) r.err = error.Unexpected;
                     return error.ReadFailed;
                 };
             }

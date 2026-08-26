@@ -82,6 +82,7 @@ pub fn moveToReader(w: *Writer) File.Reader {
         .mode = w.mode,
         .pos = w.pos,
         .interface = File.Reader.initInterface(w.interface.buffer),
+        .err = if (w.mode == .failure) error.Unexpected else null,
         .seek_err = w.seek_err,
     };
 }
@@ -106,6 +107,7 @@ fn drainPositional(w: *Writer, data: []const []const u8, splat: usize) Io.Writer
                 w.pos = 0;
                 w.seekTo(@intCast(pos)) catch {
                     w.mode = .failure;
+                    if (w.err == null) w.err = error.Unexpected;
                     return error.WriteFailed;
                 };
             }
@@ -153,6 +155,7 @@ fn sendFilePositional(w: *Writer, file_reader: *Io.File.Reader, limit: Io.Limit)
                 w.pos = 0;
                 w.seekTo(@intCast(pos)) catch {
                     w.mode = .failure;
+                    if (w.err == null) w.err = error.Unexpected;
                     return error.WriteFailed;
                 };
             }
@@ -221,7 +224,7 @@ pub fn seekToUnbuffered(w: *Writer, offset: u64) SeekError!void {
             };
             w.pos = offset;
         },
-        .failure => return w.seek_err.?,
+        .failure => return w.seek_err orelse error.Unseekable,
     }
 }
 

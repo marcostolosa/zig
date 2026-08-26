@@ -2491,6 +2491,7 @@ fn batchDrainReady(batch: *Io.Batch) Io.Timeout.Error!void {
                         .NOBUFS => error.SystemResources,
                         .NOMEM => error.SystemResources,
                         .NOTCONN => error.SocketUnconnected,
+                        .CONNREFUSED => error.ConnectionRefused,
                         .CONNRESET => error.ConnectionResetByPeer,
                         else => |err| unexpectedErrno(err),
                     },
@@ -3755,6 +3756,7 @@ fn fileReadPositional(
     defer cancel_region.deinit();
     return ev.preadv(&cancel_region, file.handle, dest, offset) catch |err| switch (err) {
         error.SocketUnconnected => return errnoBug(.NOTCONN), // not a socket
+        error.ConnectionRefused => return errnoBug(.CONNREFUSED), // not a socket
         error.ConnectionResetByPeer => return errnoBug(.CONNRESET), // not a socket
         else => |e| return e,
     };
@@ -5151,6 +5153,7 @@ fn netReceive(
             .MSGSIZE => return .{ error.MessageOversize, message_i },
             .PIPE => return .{ error.SocketUnconnected, message_i },
             .OPNOTSUPP => |err| return .{ errnoBug(err), message_i },
+            .CONNREFUSED => return .{ error.ConnectionRefused, message_i },
             .CONNRESET => return .{ error.ConnectionResetByPeer, message_i },
             .TIMEDOUT => return .{ error.ConnectionTimedOut, message_i },
             .NETDOWN => return .{ error.NetworkDown, message_i },
@@ -5713,6 +5716,7 @@ fn preadv(
             .NOBUFS => return error.SystemResources,
             .NOMEM => return error.SystemResources,
             .NOTCONN => return error.SocketUnconnected,
+            .CONNREFUSED => return error.ConnectionRefused,
             .CONNRESET => return error.ConnectionResetByPeer,
             else => |err| return unexpectedErrno(err),
         }

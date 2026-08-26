@@ -3269,6 +3269,7 @@ fn copyRangeAllZeroOut(self: *MachO, old_offset: u64, new_offset: u64, size: u64
     const size_u = math.cast(usize, size) orelse return error.Overflow;
     const n = file_writer.interface.sendFileAll(&file_reader, .limited(size_u)) catch |err| switch (err) {
         error.ReadFailed => switch (file_reader.err.?) {
+            error.ConnectionRefused => return error.Unexpected, // not a socket
             error.ConnectionResetByPeer => return error.Unexpected, // not a socket
             error.SocketUnconnected => return error.Unexpected, // not a socket
             else => |e| return e,

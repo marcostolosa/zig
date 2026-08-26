@@ -9886,6 +9886,7 @@ fn fileReadStreamingPosix(file: File, data: []const []u8) File.ReadStreamingErro
                 .NOBUFS => return syscall.fail(error.SystemResources),
                 .NOMEM => return syscall.fail(error.SystemResources),
                 .NOTCONN => return syscall.fail(error.SocketUnconnected),
+                .CONNREFUSED => return syscall.fail(error.ConnectionRefused),
                 .CONNRESET => return syscall.fail(error.ConnectionResetByPeer),
                 .NOTCAPABLE => return syscall.fail(error.AccessDenied),
                 .INVAL => |err| return syscall.errnoBug(err),
@@ -9919,6 +9920,7 @@ fn fileReadStreamingPosix(file: File, data: []const []u8) File.ReadStreamingErro
             .NOBUFS => return syscall.fail(error.SystemResources),
             .NOMEM => return syscall.fail(error.SystemResources),
             .NOTCONN => return syscall.fail(error.SocketUnconnected),
+            .CONNREFUSED => return syscall.fail(error.ConnectionRefused),
             .CONNRESET => return syscall.fail(error.ConnectionResetByPeer),
             .INVAL => |err| return syscall.errnoBug(err),
             .FAULT => |err| return syscall.errnoBug(err),
@@ -10057,6 +10059,7 @@ fn fileReadPositionalPosix(file: File, data: []const []u8, offset: u64) File.Rea
                     continue;
                 },
                 .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
+                .CONNREFUSED => |err| return syscall.errnoBug(err), // not a socket
                 .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
                 .INVAL => |err| return syscall.errnoBug(err),
                 .FAULT => |err| return syscall.errnoBug(err), // segmentation fault
@@ -10100,6 +10103,7 @@ fn fileReadPositionalPosix(file: File, data: []const []u8, offset: u64) File.Rea
                 .IO => return syscall.fail(error.InputOutput),
                 .ISDIR => return syscall.fail(error.IsDir),
                 .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
+                .CONNREFUSED => |err| return syscall.errnoBug(err), // not a socket
                 .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
                 .INVAL => |err| return syscall.errnoBug(err),
                 .FAULT => |err| return syscall.errnoBug(err),
@@ -12874,6 +12878,7 @@ fn netReadPosix(fd: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usi
                         .NOBUFS => return error.SystemResources,
                         .NOMEM => return error.SystemResources,
                         .NOTCONN => return error.SocketUnconnected,
+                        .CONNREFUSED => return error.ConnectionRefused,
                         .CONNRESET => return error.ConnectionResetByPeer,
                         .TIMEDOUT => return error.ConnectionTimedOut,
                         .NOTCAPABLE => return error.AccessDenied,
@@ -12906,6 +12911,7 @@ fn netReadPosix(fd: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usi
                     .NOBUFS => return error.SystemResources,
                     .NOMEM => return error.SystemResources,
                     .NOTCONN => return error.SocketUnconnected,
+                    .CONNREFUSED => return error.ConnectionRefused,
                     .CONNRESET => return error.ConnectionResetByPeer,
                     .TIMEDOUT => return error.ConnectionTimedOut,
                     .PIPE => return error.SocketUnconnected,
@@ -13223,6 +13229,7 @@ fn netReceivePosix(
             .NOTCONN => return syscall.fail(error.SocketUnconnected),
             .MSGSIZE => return syscall.fail(error.MessageOversize),
             .PIPE => return syscall.fail(error.SocketUnconnected),
+            .CONNREFUSED => return syscall.fail(error.ConnectionRefused),
             .CONNRESET => return syscall.fail(error.ConnectionResetByPeer),
             .TIMEDOUT => return syscall.fail(error.ConnectionTimedOut),
             .NETDOWN => return syscall.fail(error.NetworkDown),
@@ -13299,7 +13306,7 @@ fn netReceiveOneWindows(
         .CANCELLED => unreachable,
         .INSUFFICIENT_RESOURCES => return error.SystemResources,
         .BUFFER_OVERFLOW => return error.MessageOversize,
-        .PORT_UNREACHABLE => return error.PortUnreachable,
+        .PORT_UNREACHABLE => return error.ConnectionRefused,
         else => |status| return windows.unexpectedStatus(status),
     }
 }

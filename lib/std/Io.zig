@@ -267,6 +267,9 @@ pub const Operation = union(enum) {
             SystemResources,
             /// Trying to read a directory file descriptor as if it were a file.
             IsDir,
+            /// The destination address is not listening, and an error was queued to be returned
+            /// from the next operation due to ICMP propagation or TCP fast open.
+            ConnectionRefused,
             ConnectionResetByPeer,
             /// File was not opened with read capability.
             NotOpenForReading,
@@ -372,7 +375,7 @@ pub const Operation = union(enum) {
             /// This caused an ICMP port unreachable packet to be returned to
             /// the OS where it was queued up to be reported at the next call
             /// to send or receive on the bound socket.
-            PortUnreachable,
+            ConnectionRefused,
             /// The remote peer did not respond to ongoing communication, causing the
             /// OS to abort the connection.
             ConnectionTimedOut,
@@ -433,6 +436,9 @@ pub const Operation = union(enum) {
 
         pub const Error = error{
             SystemResources,
+            /// The destination address is not listening, and an error was queued to be returned
+            /// from the next operation due to ICMP propagation or TCP fast open.
+            ConnectionRefused,
             ConnectionResetByPeer,
             SocketUnconnected,
             /// File descriptor does not hold the required rights to read from it.

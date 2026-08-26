@@ -423,6 +423,7 @@ pub fn read(fd: fd_t, buf: []u8) ReadError!usize {
             .NOBUFS => return error.SystemResources,
             .NOMEM => return error.SystemResources,
             .NOTCONN => return error.SocketUnconnected,
+            .CONNREFUSED => return error.ConnectionRefused,
             .CONNRESET => return error.ConnectionResetByPeer,
             .TIMEDOUT => return error.Unexpected,
             else => |err| return unexpectedErrno(err),

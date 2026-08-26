@@ -3483,7 +3483,10 @@ fn fileWriteFilePositional(
     if (file_reader.pos != 0) return error.Unimplemented;
     if (offset != 0) return error.Unimplemented;
     if (limit != .unlimited) return error.Unimplemented;
-    const size = file_reader.getSize() catch return error.Unimplemented;
+    const size = file_reader.getSize() catch |err| switch (err) {
+        error.Canceled => |e| return e,
+        else => return error.Unimplemented,
+    };
     if (header.len != 0 or reader_buffered.len != 0) {
         const n = try fileWritePositional(
             ev,

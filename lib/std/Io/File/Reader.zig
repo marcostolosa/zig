@@ -125,6 +125,7 @@ pub fn getSize(r: *Reader) SizeError!u64 {
                 return error.Streaming;
             }
         } else |err| {
+            if (err == error.Canceled) return err;
             r.size_err = err;
             return err;
         }
@@ -143,6 +144,7 @@ pub fn seekBy(r: *Reader, offset: i64) SeekError!void {
                     setLogicalPos(r, @intCast(@as(i64, @intCast(logicalPos(r))) + offset));
                     return;
                 } else |err| {
+                    if (err == error.Canceled) return err;
                     r.seek_err = err;
                     break :e err;
                 }
@@ -171,6 +173,7 @@ pub fn seekTo(r: *Reader, offset: u64) SeekError!void {
             if (offset >= logical_pos) return seekBy(r, @intCast(offset - logical_pos));
             if (r.seek_err) |err| return err;
             io.vtable.fileSeekTo(io.userdata, r.file, offset) catch |err| {
+                if (err == error.Canceled) return err;
                 r.seek_err = err;
                 return err;
             };
@@ -249,7 +252,8 @@ fn readVecPositional(r: *Reader, data: [][]u8) Io.Reader.Error!usize {
             const pos = r.pos;
             if (pos != 0) {
                 r.pos = 0;
-                r.seekBy(@intCast(pos)) catch {
+                r.seekBy(@intCast(pos)) catch |seek_err| {
+                    if (seek_err == error.Canceled) io.recancel();
                     r.mode = .failure;
                     return error.ReadFailed;
                 };
@@ -303,7 +307,8 @@ fn discard(io_reader: *Io.Reader, limit: Io.Limit) Io.Reader.Error!usize {
     const file = r.file;
     switch (r.mode) {
         .positional, .positional_simple => {
-            const size = r.getSize() catch {
+            const size = r.getSize() catch |err| {
+                if (err == error.Canceled) io.recancel();
                 r.mode = r.mode.toStreaming();
                 return 0;
             };
@@ -357,10 +362,17 @@ fn discard(io_reader: *Io.Reader, limit: Io.Limit) Io.Reader.Error!usize {
                 }
                 return @backingInt(limit) - remaining;
             }
-            const size = r.getSize() catch return 0;
+            const size = r.getSize() catch |err| {
+                if (err == error.Canceled) io.recancel();
+                return 0;
+            };
             const n = @min(size - r.pos, std.math.maxInt(i64), @backingInt(limit));
             io.vtable.fileSeekBy(io.userdata, file, n) catch |err| {
-                r.seek_err = err;
+                if (err == error.Canceled) {
+                    io.recancel();
+                } else {
+                    r.seek_err = err;
+                }
                 return 0;
             };
             r.pos += n;

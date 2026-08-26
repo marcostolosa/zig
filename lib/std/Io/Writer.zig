@@ -164,7 +164,10 @@ pub fn countSplat(data: []const []const u8, splat: usize) usize {
 }
 
 pub fn countSendFileLowerBound(n: usize, file_reader: *File.Reader, limit: Limit) ?usize {
-    const total: u64 = @min(@backingInt(limit), file_reader.getSize() catch return null);
+    const total: u64 = @min(@backingInt(limit), file_reader.getSize() catch |err| {
+        if (err == error.Canceled) file_reader.io.recancel();
+        return null;
+    });
     return std.math.lossyCast(usize, total + n);
 }
 
@@ -2362,11 +2365,15 @@ pub const Discarding = struct {
         if (file_reader.getSize()) |size| {
             const n = limit.minInt64(size - file_reader.pos);
             if (n == 0) return error.EndOfStream;
-            file_reader.seekBy(@intCast(n)) catch return error.Unimplemented;
+            file_reader.seekBy(@intCast(n)) catch |err| {
+                if (err == error.Canceled) file_reader.io.recancel();
+                return error.Unimplemented;
+            };
             w.end = 0;
             d.count += n;
             return n;
-        } else |_| {
+        } else |err| {
+            if (err == error.Canceled) file_reader.io.recancel();
             // Error is observable on `file_reader` instance, and it is better to
             // treat the file as a pipe.
             return error.Unimplemented;
@@ -2843,8 +2850,10 @@ pub const Allocating = struct {
         const pos = file_reader.logicalPos();
         const additional, const exact = if (file_reader.getSize()) |size|
             .{ size - pos, true }
-        else |_|
-            .{ std.atomic.cache_line, false };
+        else |err| unknown: {
+            if (err == error.Canceled) file_reader.io.recancel();
+            break :unknown .{ std.atomic.cache_line, false };
+        };
         if (additional == 0) return error.EndOfStream;
         a.ensureUnusedCapacity(limit.minInt64(additional)) catch return error.WriteFailed;
         const buffer = a.writer.buffer[a.writer.end..];

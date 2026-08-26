@@ -104,7 +104,8 @@ fn drainPositional(w: *Writer, data: []const []const u8, splat: usize) Io.Writer
             const pos = w.pos;
             if (pos != 0) {
                 w.pos = 0;
-                w.seekTo(@intCast(pos)) catch {
+                w.seekTo(@intCast(pos)) catch |seek_err| {
+                    if (seek_err == error.Canceled) io.recancel();
                     w.mode = .failure;
                     return error.WriteFailed;
                 };
@@ -151,7 +152,8 @@ fn sendFilePositional(w: *Writer, file_reader: *Io.File.Reader, limit: Io.Limit)
             const pos = w.pos;
             if (pos != 0) {
                 w.pos = 0;
-                w.seekTo(@intCast(pos)) catch {
+                w.seekTo(@intCast(pos)) catch |seek_err| {
+                    if (seek_err == error.Canceled) io.recancel();
                     w.mode = .failure;
                     return error.WriteFailed;
                 };
@@ -216,6 +218,7 @@ pub fn seekToUnbuffered(w: *Writer, offset: u64) SeekError!void {
         .streaming, .streaming_simple => {
             if (w.seek_err) |err| return err;
             io.vtable.fileSeekTo(io.userdata, w.file, offset) catch |err| {
+                if (err == error.Canceled) return err;
                 w.seek_err = err;
                 return err;
             };

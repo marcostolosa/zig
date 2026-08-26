@@ -196,7 +196,7 @@ pub fn genMainBody(fg: *FuncGen) TodoError!void {
     // Populate `fg.ret_ptr`...
     fg.ret_ptr = if (it.sretIndex()) |i| fg.wip.arg(i) else .none;
     // ...and `fg.err_ret_trace`...
-    fg.err_ret_trace = if (it.errRetReturnTraceIndex()) |i| fg.wip.arg(i) else .none;
+    fg.err_ret_trace = if (it.errorReturnTraceIndex()) |i| fg.wip.arg(i) else .none;
 
     // ...and as for `fg.args`, we'll put all of the arguments into this ArrayList, and once that's
     // done we'll use its buffer as `fg.args`.
@@ -808,7 +808,7 @@ fn buildCall(
     };
 
     var it = iterateParamTypes(o, fn_info.cc, fn_info.param_types, ret_strat);
-    if (it.errRetReturnTraceIndex() != null) {
+    if (it.errorReturnTraceIndex() != null) {
         assert(fg.err_ret_trace != .none);
         try llvm_args.append(fg.gpa, fg.err_ret_trace);
     }
@@ -7006,7 +7006,7 @@ const ParamTypeIterator = struct {
         gpr: u8 = 0,
         fpr: u8 = 0,
 
-        pub fn take(self: *Regs, taking: Regs) bool {
+        pub fn tryTake(self: *Regs, taking: Regs) bool {
             if (self.gpr < taking.gpr or self.fpr < taking.fpr) return false;
 
             self.gpr -= taking.gpr;
@@ -7401,62 +7401,45 @@ const ParamTypeIterator = struct {
         const o = it.object;
         const zcu = o.zcu;
         const target = zcu.getTarget();
+
+        var used_regs: ParamTypeIterator.Regs = .{ .gpr = 0, .fpr = 0 };
         const classes = x86_64_abi.classifySystemV(ty, zcu, target, .arg);
         const classes_len = std.mem.findScalar(x86_64_abi.Class, classes[0..], .none) orelse classes.len;
-        var used_regs: ParamTypeIterator.Regs = .{ .gpr = 0, .fpr = 0 };
-        for (classes[0..classes_len], 0..) |class, class_index| switch (class) {
+        const early_lowering: ?Lowering = for (classes[0..classes_len], 0..) |class, index| switch (class) {
             .integer => {
-                it.types_buffer[used_regs.total()] = try o.builder.intType(@min(8 * ty.abiSize(zcu) - 64 * class_index, 64));
-                it.offsets_buffer[used_regs.total()] = 8 * class_index;
+                it.types_buffer[used_regs.total()] = try o.builder.intType(@min(8 * ty.abiSize(zcu) - 64 * index, 64));
+                it.offsets_buffer[used_regs.total()] = 8 * index;
                 used_regs.gpr += 1;
             },
             .sse => {
                 it.types_buffer[used_regs.total()] = .double;
-                it.offsets_buffer[used_regs.total()] = 8 * class_index;
+                it.offsets_buffer[used_regs.total()] = 8 * index;
                 used_regs.fpr += 1;
             },
             .sseup => {
                 if (it.types_buffer[used_regs.total() - 1] == .double) {
-                    if (ty.isVector(zcu)) {
-                        it.zig_index += 1;
-                        it.llvm_index += 1;
-                        _ = it.free_regs.take(.{ .fpr = 1 });
-                        return .byval;
-                    }
+                    if (ty.isVector(zcu)) break .byval;
                     it.types_buffer[used_regs.total() - 1] = .fp128;
                 } else {
                     it.types_buffer[used_regs.total()] = .double;
-                    it.offsets_buffer[used_regs.total()] = 8 * class_index;
+                    it.offsets_buffer[used_regs.total()] = 8 * index;
                     used_regs.fpr += 1;
                 }
             },
             .float => {
                 it.types_buffer[used_regs.total()] = .float;
-                it.offsets_buffer[used_regs.total()] = 8 * class_index;
+                it.offsets_buffer[used_regs.total()] = 8 * index;
                 used_regs.fpr += 1;
             },
             .float_combine => {
                 it.types_buffer[used_regs.total()] = try it.object.builder.vectorType(.normal, 2, .float);
-                it.offsets_buffer[used_regs.total()] = 8 * class_index;
+                it.offsets_buffer[used_regs.total()] = 8 * index;
                 used_regs.fpr += 1;
             },
-            .x87 => {
-                it.zig_index += 1;
-                it.llvm_index += 1;
-                it.byval_attr = .{};
-                return .byref;
-            },
-            .memory => {
-                it.zig_index += 1;
-                it.llvm_index += 1;
-                it.byval_attr = .{};
-                return .byref;
-            },
+            .x87, .memory => break .byref,
             .integer_per_element => {
-                it.zig_index += 1;
-                it.llvm_index += 1;
-                _ = it.free_regs.take(.{ .gpr = @intCast(@min(ty.vectorLen(zcu), it.free_regs.gpr)) });
-                return .byval;
+                used_regs.gpr += @intCast(@min(ty.vectorLen(zcu), it.free_regs.gpr));
+                break .byval;
             },
             .none,
             .x87up,
@@ -7470,38 +7453,42 @@ const ParamTypeIterator = struct {
             .sse_per_yword,
             .sse_per_zword,
             => unreachable,
-        };
-        const fits = it.free_regs.take(used_regs);
-        if (used_regs.total() > 1) {
-            if (!fits) {
-                it.zig_index += 1;
-                it.llvm_index += 1;
-                it.byval_attr = .{};
-                return .byref;
-            }
-        } else if (!isByRef(ty, zcu)) {
-            const llvm_ty = try o.lowerType(ty, .as_value);
-            if (it.types_buffer[0] == llvm_ty or
-                (it.types_buffer[0] == .i64 and llvm_ty.isPointer(&o.builder)))
-            {
-                it.zig_index += 1;
-                it.llvm_index += 1;
-                return .byval;
-            }
-        }
+        } else null;
+
+        const fits = it.free_regs.tryTake(used_regs);
+
         const len = used_regs.total();
         it.offsets_buffer[len] = 8 * classes_len;
         it.types_len = len;
-        it.llvm_index += len;
+
+        const lowering: Lowering = if (early_lowering) |l| l else switch (len) {
+            0 => unreachable,
+            1 => single: {
+                if (isByRef(ty, zcu)) break :single .multiple_llvm_types;
+
+                const reg_ty = it.types_buffer[0];
+                const llvm_ty = try o.lowerType(ty, .as_value);
+                break :single if (reg_ty == llvm_ty or (reg_ty == .i64 and llvm_ty.isPointer(&o.builder)))
+                    .byval
+                else
+                    .multiple_llvm_types;
+            },
+            else => if (fits) .multiple_llvm_types else .byref,
+        };
+
         it.zig_index += 1;
-        return .multiple_llvm_types;
+        it.llvm_index += if (lowering == .multiple_llvm_types) len else 1;
+
+        if (lowering == .byref) it.byval_attr = .{};
+
+        return lowering;
     }
 
     pub fn sretIndex(it: ParamTypeIterator) ?u32 {
         return if (it.has_sret) 0 else null;
     }
 
-    pub fn errRetReturnTraceIndex(it: ParamTypeIterator) ?u32 {
+    pub fn errorReturnTraceIndex(it: ParamTypeIterator) ?u32 {
         return if (it.has_err_ret_trace)
             if (it.sretIndex() != null) 1 else 0
         else

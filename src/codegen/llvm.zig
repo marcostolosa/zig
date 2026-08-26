@@ -2335,7 +2335,7 @@ pub const Object = struct {
             .unsigned => try attributes.addRetAttr(.zeroext, &o.builder),
         };
 
-        if (it.errRetReturnTraceIndex()) |i| try attributes.addParamAttr(i, .nonnull, &o.builder);
+        if (it.errorReturnTraceIndex()) |i| try attributes.addParamAttr(i, .nonnull, &o.builder);
 
         var remaining_inreg_int = cc_info.inreg_int_params;
         var remaining_inreg_float = cc_info.inreg_float_params;
@@ -3075,7 +3075,7 @@ pub const Object = struct {
 
         var it = iterateParamTypes(o, fn_info.cc, fn_info.param_types, ret_strat);
         if (it.sretIndex() != null) try llvm_params.append(o.gpa, .ptr);
-        if (it.errRetReturnTraceIndex() != null) {
+        if (it.errorReturnTraceIndex() != null) {
             // First parameter is a pointer to `std.lang.StackTrace`.
             const llvm_ptr_ty = try o.builder.ptrType(toLlvmAddressSpace(.generic, target));
             try llvm_params.append(o.gpa, llvm_ptr_ty);

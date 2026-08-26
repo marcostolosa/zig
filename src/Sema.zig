@@ -17598,8 +17598,8 @@ fn zirIsNonNullPtr(
     assert(ptr_ty.zigTypeTag(zcu) == .pointer);
     const nullable_ty = ptr_ty.childType(zcu);
 
-    try sema.ensureLayoutResolved(nullable_ty, src, .ptr_access);
     try sema.checkNullableType(block, src, nullable_ty);
+    try sema.ensureLayoutResolved(nullable_ty, src, .ptr_access);
 
     if (try sema.resolveIsNullFromType(block, src, nullable_ty)) |is_null| {
         return .fromValue(.makeBool(!is_null));

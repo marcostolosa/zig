@@ -17598,8 +17598,8 @@ fn zirIsNonNullPtr(
     assert(ptr_ty.zigTypeTag(zcu) == .pointer);
     const nullable_ty = ptr_ty.childType(zcu);
 
-    try sema.ensureLayoutResolved(nullable_ty, src, .ptr_access);
     try sema.checkNullableType(block, src, nullable_ty);
+    try sema.ensureLayoutResolved(nullable_ty, src, .ptr_access);
 
     if (try sema.resolveIsNullFromType(block, src, nullable_ty)) |is_null| {
         return .fromValue(.makeBool(!is_null));
@@ -31218,9 +31218,11 @@ fn resolveIsNonErrVal(
     return null;
 }
 
-/// Asserts that `ty` has resolved layout.
-/// Returns `true` if `ty` is either `.null` or determined to have no possible value.
-/// If nullability can't be determined at compile-time, returns null.
+/// If `null` is the only possible value of type `ty`, returns `true`.
+/// If `null` is *not* a possible value of `ty`, returns `false`.
+/// Otherwise, if a value of type `ty` may or may not be `null`, returns `null`.
+///
+/// Asserts that the layout of `ty` is resolved.
 fn resolveIsNullFromType(
     sema: *Sema,
     block: *Block,
@@ -31275,7 +31277,7 @@ fn resolveIsNonErrFromType(
     return null;
 }
 
-/// Returns `true` iff the error set type `orig_err_set_ty` contains no errors.
+/// Returns `true` if the error set type `orig_err_set_ty` contains no errors.
 ///
 /// This is used to give comptime answers for whether `error{}!T` is an error or a payload, as well
 /// as whether `?error{}` is null. The type `error{}` cannot be NPV, as it has runtime bits, but the

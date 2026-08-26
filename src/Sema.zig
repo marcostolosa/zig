@@ -31277,7 +31277,7 @@ fn resolveIsNonErrFromType(
     return null;
 }
 
-/// Returns `true` iif the error set type `orig_err_set_ty` contains no errors.
+/// Returns `true` iff the error set type `orig_err_set_ty` contains no errors.
 ///
 /// This is used to give comptime answers for whether `error{}!T` is an error or a payload, as well
 /// as whether `?error{}` is null. The type `error{}` cannot be NPV, as it has runtime bits, but the

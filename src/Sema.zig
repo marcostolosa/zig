@@ -31218,9 +31218,9 @@ fn resolveIsNonErrVal(
     return null;
 }
 
-/// Asserts that layout of type `ty` is resolved.
-/// Returns `true` if type `ty` is either `null` or determined to have no possible value.
-/// If nullability cannot be determined during compilation, returns null.
+/// Asserts that `ty` has resolved layout.
+/// Returns `true` if `ty` is either `.null` or determined to have no possible value.
+/// If nullability can't be determined at compile-time, returns null.
 fn resolveIsNullFromType(
     sema: *Sema,
     block: *Block,

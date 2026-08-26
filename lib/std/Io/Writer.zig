@@ -221,35 +221,43 @@ pub fn writeSplatHeaderLimit(
     limit: Limit,
 ) Error!usize {
     var remaining = @backingInt(limit);
+    assert(data.len > 0);
     {
-        const copy_len = @min(header.len, w.buffer.len - w.end, remaining);
-        if (header.len - copy_len != 0) return writeSplatHeaderLimitFinish(w, header, data, splat, remaining);
+        const copy_len = @min(header.len, remaining);
+        if (w.buffer.len - w.end < copy_len) return try writeSplatHeaderLimitFinish(w, header, data, splat, remaining);
         @memcpy(w.buffer[w.end..][0..copy_len], header[0..copy_len]);
         w.end += copy_len;
         remaining -= copy_len;
     }
-    for (data[0 .. data.len - 1], 0..) |buf, i| {
-        const copy_len = @min(buf.len, w.buffer.len - w.end, remaining);
-        if (buf.len - copy_len != 0) return @backingInt(limit) - remaining +
-            try writeSplatHeaderLimitFinish(w, &.{}, data[i..], splat, remaining);
-        @memcpy(w.buffer[w.end..][0..copy_len], buf[0..copy_len]);
-        w.end += copy_len;
-        remaining -= copy_len;
-    }
-    const pattern = data[data.len - 1];
-    const splat_n = pattern.len * splat;
-    if (splat_n > @min(w.buffer.len - w.end, remaining)) {
-        const buffered_n = @backingInt(limit) - remaining;
-        const written = try writeSplatHeaderLimitFinish(w, &.{}, data[data.len - 1 ..][0..1], splat, remaining);
-        return buffered_n + written;
+
+    remaining_zero: {
+        if (remaining == 0) break :remaining_zero;
+        for (data[0 .. data.len - 1], 0..) |bytes, i| {
+            const copy_len = @min(bytes.len, remaining);
+            if (w.buffer.len - w.end < copy_len) {
+                const n = try writeSplatHeaderLimitFinish(w, &.{}, data[i..], splat, remaining);
+                return @backingInt(limit) - remaining + n;
+            }
+            @memcpy(w.buffer[w.end..][0..copy_len], bytes[0..copy_len]);
+            w.end += copy_len;
+            remaining -= copy_len;
+        }
+
+        if (remaining == 0) break :remaining_zero;
+        const pattern = data[data.len - 1];
+        for (0..splat) |i| {
+            const copy_len = @min(pattern.len, remaining);
+            if (w.buffer.len - w.end < copy_len) {
+                const remaining_splat = splat - i;
+                const n = try writeSplatHeaderLimitFinish(w, &.{}, data[data.len - 1 ..][0..1], remaining_splat, remaining);
+                return @backingInt(limit) - remaining + n;
+            }
+            @memcpy(w.buffer[w.end..][0..copy_len], pattern[0..copy_len]);
+            w.end += copy_len;
+            remaining -= copy_len;
+        }
     }
 
-    for (0..splat) |_| {
-        @memcpy(w.buffer[w.end..][0..pattern.len], pattern);
-        w.end += pattern.len;
-    }
-
-    remaining -= splat_n;
     return @backingInt(limit) - remaining;
 }
 
@@ -291,6 +299,64 @@ fn writeSplatHeaderLimitFinish(
         return w.vtable.drain(w, (&vecs)[0..i], @min(remaining / pattern.len, splat));
     }
     return w.vtable.drain(w, (&vecs)[0..i], 1);
+}
+
+const SplatHeaderTestCase = struct {
+    writer_type: enum { fixed, allocating },
+    /// When writer_type is .fixed, determines the buffer size.
+    /// When writer_type is .allocating, determines the initial capacity.
+    buf_len: usize = 100,
+    header: []const u8,
+    data: []const []const u8,
+    splat: u8,
+    limit: u8,
+    expected_res: union(enum) { written: usize, write_failed },
+    expected_buf_content: []const u8,
+};
+
+fn testWriteSplatHeaderLimit(comptime test_case: SplatHeaderTestCase) !void {
+    var buf: [test_case.buf_len]u8 = @splat(0);
+    var aw: Allocating = if (test_case.writer_type == .allocating)
+        try Allocating.initCapacity(testing.allocator, test_case.buf_len)
+    else
+        undefined;
+    defer if (test_case.writer_type == .allocating) aw.deinit();
+    var fw: Writer = if (test_case.writer_type == .fixed) .fixed(&buf) else undefined;
+    var w: *Writer = switch (test_case.writer_type) {
+        .allocating => &aw.writer,
+        .fixed => &fw,
+    };
+    const n_or_error = w.writeSplatHeaderLimit(test_case.header, test_case.data, test_case.splat, .limited(test_case.limit));
+    switch (test_case.expected_res) {
+        .written => |expected_len| {
+            const n = try n_or_error;
+            try std.testing.expectEqual(expected_len, n);
+        },
+        .write_failed => {
+            try std.testing.expectError(error.WriteFailed, n_or_error);
+        },
+    }
+    try std.testing.expectEqualStrings(test_case.expected_buf_content, w.buffered());
+}
+
+test "fixed writer writeSplatHeaderLimit" {
+    // fixed writer with buffer larger than the full data size
+    try testWriteSplatHeaderLimit(.{ .writer_type = .fixed, .header = "header is longer", .data = &.{""}, .splat = 1, .limit = 6, .expected_res = .{ .written = 6 }, .expected_buf_content = "header" });
+    try testWriteSplatHeaderLimit(.{ .writer_type = .fixed, .header = "head", .data = &.{"123456"}, .splat = 1, .limit = 5, .expected_res = .{ .written = 5 }, .expected_buf_content = "head1" });
+    try testWriteSplatHeaderLimit(.{ .writer_type = .fixed, .header = "head", .data = &.{"123"}, .splat = 1, .limit = 10, .expected_res = .{ .written = 7 }, .expected_buf_content = "head123" });
+    try testWriteSplatHeaderLimit(.{ .writer_type = .fixed, .header = "head", .data = &.{ "1", "abcdefg" }, .splat = 1, .limit = 6, .expected_res = .{ .written = 6 }, .expected_buf_content = "head1a" });
+    try testWriteSplatHeaderLimit(.{ .writer_type = .fixed, .header = "head", .data = &.{ "123", "abc" }, .splat = 2, .limit = 6, .expected_res = .{ .written = 6 }, .expected_buf_content = "head12" });
+    try testWriteSplatHeaderLimit(.{ .writer_type = .fixed, .header = "head", .data = &.{ "123", "abc" }, .splat = 2, .limit = 11, .expected_res = .{ .written = 11 }, .expected_buf_content = "head123abca" });
+    try testWriteSplatHeaderLimit(.{ .writer_type = .fixed, .header = "head", .data = &.{ "123", "a" }, .splat = 2, .limit = 10, .expected_res = .{ .written = 9 }, .expected_buf_content = "head123aa" });
+    try testWriteSplatHeaderLimit(.{ .writer_type = .fixed, .header = "head", .data = &.{ "123", "abc" }, .splat = 2, .limit = 100, .expected_res = .{ .written = 13 }, .expected_buf_content = "head123abcabc" });
+
+    // fixed writer with buffer smaller than the full data size
+    try testWriteSplatHeaderLimit(.{ .writer_type = .fixed, .header = "header is longer", .data = &.{""}, .splat = 1, .limit = 6, .expected_res = .write_failed, .expected_buf_content = "head", .buf_len = 4 });
+    try testWriteSplatHeaderLimit(.{ .writer_type = .fixed, .header = "head", .data = &.{"123456"}, .splat = 1, .limit = 8, .expected_res = .write_failed, .expected_buf_content = "head1", .buf_len = 5 });
+    try testWriteSplatHeaderLimit(.{ .writer_type = .fixed, .header = "head", .data = &.{ "123", "ab" }, .splat = 2, .limit = 100, .expected_res = .write_failed, .expected_buf_content = "head123aba", .buf_len = 10 });
+
+    // allocating writer that needs to expand capacity during splat
+    try testWriteSplatHeaderLimit(.{ .writer_type = .allocating, .buf_len = 8, .header = "hhhh", .data = &.{"PP"}, .splat = 3, .limit = 100, .expected_res = .{ .written = 10 }, .expected_buf_content = "hhhhPPPPPP" });
 }
 
 test "writeSplatHeader splatting avoids buffer aliasing temptation" {

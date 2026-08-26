@@ -7461,7 +7461,7 @@ const ParamTypeIterator = struct {
         it.offsets_buffer[len] = 8 * classes_len;
         it.types_len = len;
 
-        const lowering: Lowering = if (early_lowering) |l| l else switch (len) {
+        const lowering: Lowering = early_lowering orelse switch (len) {
             0 => unreachable,
             1 => single: {
                 if (isByRef(ty, zcu)) break :single .multiple_llvm_types;

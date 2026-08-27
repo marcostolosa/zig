@@ -181,8 +181,14 @@ pub fn writeVec(w: *Writer, data: []const []const u8) Error!usize {
 pub fn writeSplat(w: *Writer, data: []const []const u8, splat: usize) Error!usize {
     assert(data.len > 0);
     const buffer = w.buffer;
-    const count = countSplat(data, splat);
-    if (w.end + count > buffer.len) return w.vtable.drain(w, data, splat);
+    var count: usize = 0;
+    for (data[0 .. data.len - 1]) |buf| {
+        count += buf.len;
+        if (count > buffer.len - w.end) return w.vtable.drain(w, data, splat);
+    }
+    count += data[data.len - 1].len * splat;
+    if (count > buffer.len - w.end) return w.vtable.drain(w, data, splat);
+
     for (data[0 .. data.len - 1]) |bytes| {
         @memcpy(buffer[w.end..][0..bytes.len], bytes);
         w.end += bytes.len;

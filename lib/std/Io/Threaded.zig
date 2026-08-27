@@ -10955,35 +10955,40 @@ fn fileWritePositional(
 
     var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
     var iovlen: iovlen_t = 0;
-    addBuf(&iovecs, &iovlen, header);
-    for (data[0 .. data.len - 1]) |bytes| addBuf(&iovecs, &iovlen, bytes);
-    const pattern = data[data.len - 1];
-
     var splat_backup_buffer: [splat_buffer_size]u8 = undefined;
-    if (iovecs.len - iovlen != 0) switch (splat) {
-        0 => {},
-        1 => addBuf(&iovecs, &iovlen, pattern),
-        else => switch (pattern.len) {
+
+    addBuf(&iovecs, &iovlen, header);
+    for (data[0 .. data.len - 1]) |bytes| {
+        if (iovecs.len == iovlen) break;
+        addBuf(&iovecs, &iovlen, bytes);
+    } else {
+        const pattern = data[data.len - 1];
+
+        if (iovecs.len - iovlen != 0) switch (splat) {
             0 => {},
-            1 => {
-                const splat_buffer = &splat_backup_buffer;
-                const memset_len = @min(splat_buffer.len, splat);
-                const buf = splat_buffer[0..memset_len];
-                @memset(buf, pattern[0]);
-                addBuf(&iovecs, &iovlen, buf);
-                var remaining_splat = splat - buf.len;
-                while (remaining_splat > splat_buffer.len and iovecs.len - iovlen != 0) {
-                    assert(buf.len == splat_buffer.len);
-                    addBuf(&iovecs, &iovlen, splat_buffer);
-                    remaining_splat -= splat_buffer.len;
-                }
-                addBuf(&iovecs, &iovlen, splat_buffer[0..@min(remaining_splat, splat_buffer.len)]);
+            1 => addBuf(&iovecs, &iovlen, pattern),
+            else => switch (pattern.len) {
+                0 => {},
+                1 => {
+                    const splat_buffer = &splat_backup_buffer;
+                    const memset_len = @min(splat_buffer.len, splat);
+                    const buf = splat_buffer[0..memset_len];
+                    @memset(buf, pattern[0]);
+                    addBuf(&iovecs, &iovlen, buf);
+                    var remaining_splat = splat - buf.len;
+                    while (remaining_splat > splat_buffer.len and iovecs.len - iovlen != 0) {
+                        assert(buf.len == splat_buffer.len);
+                        addBuf(&iovecs, &iovlen, splat_buffer);
+                        remaining_splat -= splat_buffer.len;
+                    }
+                    addBuf(&iovecs, &iovlen, splat_buffer[0..@min(remaining_splat, splat_buffer.len)]);
+                },
+                else => for (0..@min(splat, iovecs.len - iovlen)) |_| {
+                    addBuf(&iovecs, &iovlen, pattern);
+                },
             },
-            else => for (0..@min(splat, iovecs.len - iovlen)) |_| {
-                addBuf(&iovecs, &iovlen, pattern);
-            },
-        },
-    };
+        };
+    }
 
     if (iovlen == 0) return 0;
 
@@ -11140,35 +11145,39 @@ fn fileWriteStreaming(
 
     var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
     var iovlen: iovlen_t = 0;
-    addBuf(&iovecs, &iovlen, header);
-    for (data[0 .. data.len - 1]) |bytes| addBuf(&iovecs, &iovlen, bytes);
-    const pattern = data[data.len - 1];
-
     var splat_backup_buffer: [splat_buffer_size]u8 = undefined;
-    if (iovecs.len - iovlen != 0) switch (splat) {
-        0 => {},
-        1 => addBuf(&iovecs, &iovlen, pattern),
-        else => switch (pattern.len) {
+
+    addBuf(&iovecs, &iovlen, header);
+    for (data[0 .. data.len - 1]) |bytes| {
+        if (iovecs.len - iovlen == 0) break;
+        addBuf(&iovecs, &iovlen, bytes);
+    } else {
+        const pattern = data[data.len - 1];
+        if (iovecs.len - iovlen != 0) switch (splat) {
             0 => {},
-            1 => {
-                const splat_buffer = &splat_backup_buffer;
-                const memset_len = @min(splat_buffer.len, splat);
-                const buf = splat_buffer[0..memset_len];
-                @memset(buf, pattern[0]);
-                addBuf(&iovecs, &iovlen, buf);
-                var remaining_splat = splat - buf.len;
-                while (remaining_splat > splat_buffer.len and iovecs.len - iovlen != 0) {
-                    assert(buf.len == splat_buffer.len);
-                    addBuf(&iovecs, &iovlen, splat_buffer);
-                    remaining_splat -= splat_buffer.len;
-                }
-                addBuf(&iovecs, &iovlen, splat_buffer[0..@min(remaining_splat, splat_buffer.len)]);
+            1 => addBuf(&iovecs, &iovlen, pattern),
+            else => switch (pattern.len) {
+                0 => {},
+                1 => {
+                    const splat_buffer = &splat_backup_buffer;
+                    const memset_len = @min(splat_buffer.len, splat);
+                    const buf = splat_buffer[0..memset_len];
+                    @memset(buf, pattern[0]);
+                    addBuf(&iovecs, &iovlen, buf);
+                    var remaining_splat = splat - buf.len;
+                    while (remaining_splat > splat_buffer.len and iovecs.len - iovlen != 0) {
+                        assert(buf.len == splat_buffer.len);
+                        addBuf(&iovecs, &iovlen, splat_buffer);
+                        remaining_splat -= splat_buffer.len;
+                    }
+                    addBuf(&iovecs, &iovlen, splat_buffer[0..@min(remaining_splat, splat_buffer.len)]);
+                },
+                else => for (0..@min(splat, iovecs.len - iovlen)) |_| {
+                    addBuf(&iovecs, &iovlen, pattern);
+                },
             },
-            else => for (0..@min(splat, iovecs.len - iovlen)) |_| {
-                addBuf(&iovecs, &iovlen, pattern);
-            },
-        },
-    };
+        };
+    }
 
     if (iovlen == 0) return 0;
 
@@ -13542,6 +13551,7 @@ fn netWritePosix(
     if (!have_networking) return error.NetworkDown;
 
     var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
+    var splat_backup_buffer: [splat_buffer_size]u8 = undefined;
     var msg: posix.msghdr_const = .{
         .name = null,
         .namelen = 0,
@@ -13552,34 +13562,37 @@ fn netWritePosix(
         .flags = 0,
     };
     addBuf(&iovecs, &msg.iovlen, header);
-    for (data[0 .. data.len - 1]) |bytes| addBuf(&iovecs, &msg.iovlen, bytes);
-    const pattern = data[data.len - 1];
+    for (data[0 .. data.len - 1]) |bytes| {
+        if (msg.iovlen == iovecs.len) break;
+        addBuf(&iovecs, &msg.iovlen, bytes);
+    } else {
+        const pattern = data[data.len - 1];
 
-    var splat_backup_buffer: [splat_buffer_size]u8 = undefined;
-    if (iovecs.len - msg.iovlen != 0) switch (splat) {
-        0 => {},
-        1 => addBuf(&iovecs, &msg.iovlen, pattern),
-        else => switch (pattern.len) {
+        if (iovecs.len - msg.iovlen != 0) switch (splat) {
             0 => {},
-            1 => {
-                const splat_buffer = &splat_backup_buffer;
-                const memset_len = @min(splat_buffer.len, splat);
-                const buf = splat_buffer[0..memset_len];
-                @memset(buf, pattern[0]);
-                addBuf(&iovecs, &msg.iovlen, buf);
-                var remaining_splat = splat - buf.len;
-                while (remaining_splat > splat_buffer.len and iovecs.len - msg.iovlen != 0) {
-                    assert(buf.len == splat_buffer.len);
-                    addBuf(&iovecs, &msg.iovlen, splat_buffer);
-                    remaining_splat -= splat_buffer.len;
-                }
-                addBuf(&iovecs, &msg.iovlen, splat_buffer[0..@min(remaining_splat, splat_buffer.len)]);
+            1 => addBuf(&iovecs, &msg.iovlen, pattern),
+            else => switch (pattern.len) {
+                0 => {},
+                1 => {
+                    const splat_buffer = &splat_backup_buffer;
+                    const memset_len = @min(splat_buffer.len, splat);
+                    const buf = splat_buffer[0..memset_len];
+                    @memset(buf, pattern[0]);
+                    addBuf(&iovecs, &msg.iovlen, buf);
+                    var remaining_splat = splat - buf.len;
+                    while (remaining_splat > splat_buffer.len and iovecs.len - msg.iovlen != 0) {
+                        assert(buf.len == splat_buffer.len);
+                        addBuf(&iovecs, &msg.iovlen, splat_buffer);
+                        remaining_splat -= splat_buffer.len;
+                    }
+                    addBuf(&iovecs, &msg.iovlen, splat_buffer[0..@min(remaining_splat, splat_buffer.len)]);
+                },
+                else => for (0..@min(splat, iovecs.len - msg.iovlen)) |_| {
+                    addBuf(&iovecs, &msg.iovlen, pattern);
+                },
             },
-            else => for (0..@min(splat, iovecs.len - msg.iovlen)) |_| {
-                addBuf(&iovecs, &msg.iovlen, pattern);
-            },
-        },
-    };
+        };
+    }
     const flags = posix.MSG.NOSIGNAL;
 
     const syscall: Syscall = try .start();

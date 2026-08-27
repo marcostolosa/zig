@@ -3622,13 +3622,13 @@ fn objectSectionMapIndex(
     const parent_ni = sym.ni.unwrap().?.parent(&coff.mf).unwrap().?;
     const parent_alignment = parent_ni.alignment(&coff.mf);
     if (alignment.compare(.gt, parent_alignment)) {
-        log.debug("realignParent({s}, {d}) {d}->{d}", .{ name.toSlice(coff), parent_ni, parent_alignment, alignment });
+        log.debug("realignParent({s}, {d}) {d}->{d}", .{ name.toSlice(coff), parent_ni, parent_alignment.toByteUnits(), alignment.toByteUnits() });
         try parent_ni.realign(gpa, &coff.mf, alignment);
     }
 
     const old_alignment = sym.ni.unwrap().?.alignment(&coff.mf);
     if (alignment.compare(.gt, old_alignment)) {
-        log.debug("realignObject({s}) {d}->{d}", .{ name.toSlice(coff), old_alignment, alignment });
+        log.debug("realignObject({s}) {d}->{d}", .{ name.toSlice(coff), old_alignment.toByteUnits(), alignment.toByteUnits() });
         try sym.ni.unwrap().?.realign(gpa, &coff.mf, alignment);
     }
 

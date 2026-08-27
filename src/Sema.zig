@@ -24114,12 +24114,12 @@ fn zirFieldParentPtr(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.Ins
             errdefer msg.destroy(sema.gpa);
             try sema.errNote(inst_src, msg, "parent pointer type '{f}' has alignment '{d}'", .{
                 parent_ptr_ty.fmt(zcu),
-                parent_ptr_ty.abiAlignment(zcu),
+                parent_ptr_ty.ptrAlignment(zcu).toByteUnits().?,
             });
             if (parent_ty.isTuple(zcu)) {
                 try sema.errNote(field_ptr_src, msg, "tuple field '{d}' limits alignment to '{d}'", .{
                     field_index,
-                    field_ptr_ty.ptrAlignment(zcu),
+                    hypothetical_field_ptr_ty.ptrAlignment(zcu).toByteUnits().?,
                 });
             } else {
                 try sema.errNote(parent_ty.srcLoc(zcu), msg, "{t} field '{f}' limits alignment to '{d}'", .{
@@ -24129,7 +24129,7 @@ fn zirFieldParentPtr(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.Ins
                         .@"union" => parent_ty.unionTagTypeHypothetical(zcu).enumFieldName(field_index, zcu).fmt(ip),
                         else => unreachable,
                     },
-                    field_ptr_ty.ptrAlignment(zcu),
+                    hypothetical_field_ptr_ty.ptrAlignment(zcu).toByteUnits().?,
                 });
             }
             try sema.errNote(inst_src, msg, "use @alignCast to assert pointer alignment", .{});

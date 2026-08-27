@@ -1,0 +1,21 @@
+#zig build-obj {
+--name test -fno-emit-bin
+-Mroot=test.zig
+#}
+
+#write test.zig {
+pub fn main() void {
+    const Foo = struct { a: u16, b: u8 };
+    var f: Foo = .{ .a = 0, .b = 0 };
+    const pb: *u8 = &f.b;
+    const pf: *Foo = @fieldParentPtr("b", pb);
+    _ = pf;
+}
+#}
+#update
+#check errors {
+test.zig:5:22: error: @fieldParentPtr increases pointer alignment
+test.zig:5:22: note: parent pointer type '*test.main.Foo' has alignment '2'
+test.zig:2:17: note: struct field 'b' limits alignment to '1'
+test.zig:5:22: note: use @alignCast to assert pointer alignment
+#}

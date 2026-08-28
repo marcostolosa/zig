@@ -15107,41 +15107,15 @@ fn analyzeArithmetic(
         }
     }
 
-    const resolved_type: Type, const casted_lhs: Air.Inst.Ref, const casted_rhs: Air.Inst.Ref = resolve_types: {
-        if (lhs_ty.toIntern() == rhs_ty.toIntern() and
-            (lhs_zig_ty_tag == .int or lhs_zig_ty_tag == .float))
-        {
-            // Both types are the same, just return them.
-            // This avoids the overhead of calling coerce(), even if it has a similar optimization
-            break :resolve_types .{ lhs_ty, lhs, rhs };
-        }
+    const resolved_type = try sema.resolvePeerTypes(block, src, &.{ lhs, rhs }, .{
+        .override = &.{ lhs_src, rhs_src },
+    });
 
-        // One side is typed, the other will coerce to that type.
-        if (lhs_zig_ty_tag == .int and rhs_zig_ty_tag == .comptime_int) {
-            break :resolve_types .{
-                lhs_ty,
-                lhs,
-                try sema.coerce(block, lhs_ty, rhs, rhs_src),
-            };
-        }
-        if (rhs_zig_ty_tag == .int and lhs_zig_ty_tag == .comptime_int) {
-            break :resolve_types .{
-                rhs_ty,
-                try sema.coerce(block, rhs_ty, lhs, lhs_src),
-                rhs,
-            };
-        }
-        const resolved_type = try sema.resolvePeerTypes(block, src, &.{ lhs, rhs }, .{
-            .override = &.{ lhs_src, rhs_src },
-        });
-        break :resolve_types .{
-            resolved_type,
-            try sema.coerce(block, resolved_type, lhs, lhs_src),
-            try sema.coerce(block, resolved_type, rhs, rhs_src),
-        };
-    };
+    const casted_lhs = try sema.coerce(block, resolved_type, lhs, lhs_src);
+    const casted_rhs = try sema.coerce(block, resolved_type, rhs, rhs_src);
 
-    const scalar_tag = resolved_type.scalarType(zcu).zigTypeTag(zcu);
+    const scalar_type = resolved_type.scalarType(zcu);
+    const scalar_tag = scalar_type.zigTypeTag(zcu);
 
     try sema.checkArithmeticOp(block, src, scalar_tag, lhs_zig_ty_tag, rhs_zig_ty_tag, zir_tag);
 

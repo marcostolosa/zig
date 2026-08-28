@@ -83,6 +83,26 @@ pub fn print(sc: *const ScannedConfig, w: *Writer) Writer.Error!void {
         try tf.end();
     }
 
+    {
+        var tf = try s.beginTupleField("packages", .{});
+        for (c.packages) |package| {
+            var package_field = try tf.beginStructField(.{});
+            try printStruct(sc, &package_field, Configuration.Package, package);
+            try package_field.end();
+        }
+        try tf.end();
+    }
+
+    {
+        var tf = try s.beginTupleField("package_instances", .{});
+        for (c.package_instances) |instance| {
+            var package_field = try tf.beginStructField(.{});
+            try printStruct(sc, &package_field, Configuration.Package.Instance, instance);
+            try package_field.end();
+        }
+        try tf.end();
+    }
+
     try s.end();
 }
 
@@ -100,8 +120,18 @@ fn printValue(sc: *const ScannedConfig, s: *Serializer, comptime Field: type, fi
         Configuration.String => {
             try s.value(field_value.slice(c), .{});
         },
+        Configuration.OptionalString => {
+            if (std.enums.tagName(Configuration.OptionalString, field_value)) |name| {
+                try s.ident(name);
+            } else {
+                try s.value(field_value.slice(c), .{});
+            }
+        },
         Configuration.Deps.Index => {
             try printValue(sc, s, []const Configuration.Step.Index, field_value.get(c).steps.slice);
+        },
+        Configuration.Package.Dep.List.Index => {
+            try printValue(sc, s, []const Configuration.Package.Dep, field_value.slice(c));
         },
         Configuration.MaxRss => {
             try s.value(field_value.toBytes(), .{});
@@ -124,6 +154,13 @@ fn printValue(sc: *const ScannedConfig, s: *Serializer, comptime Field: type, fi
                     try sub_struct.end();
                 },
             }
+        },
+        Configuration.Package.Instance.ExportedModules => {
+            var sub_struct = try s.beginStruct(.{});
+            for (field_value.names.slice(c), field_value.modules.slice(c)) |name, module| {
+                try sub_struct.field(name.slice(c), @backingInt(module), .{});
+            }
+            try sub_struct.end();
         },
         else => switch (@typeInfo(Field)) {
             .int => try s.int(field_value),

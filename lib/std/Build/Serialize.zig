@@ -9,9 +9,11 @@ const log = std.log;
 
 arena: Allocator,
 wc: *Configuration.Wip,
-module_map: std.array_hash_map.Auto(*std.Build.Module, Configuration.Module.Index) = .empty,
-package_map: std.array_hash_map.Auto(*std.Build, Configuration.Package.Index) = .empty,
-/// Index corresponds to `Configuration.steps` index.
+graph: *const std.Build.Graph,
+module_map: std.array_hash_map.Auto(*std.Build.Module, ModuleEntry) = .empty,
+/// Index corresponds to `Configuration.Package.Instance`.
+package_instance_map: std.array_hash_map.Auto(*std.Build, void) = .empty,
+/// Index corresponds to `Configuration.Step.Index`.
 step_map: std.array_hash_map.Auto(*Step, void) = .empty,
 
 pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !void {
@@ -19,7 +21,18 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
     const arena = graph.arena;
     const gpa = wc.gpa;
 
-    var s: Serialize = .{ .wc = wc, .arena = arena };
+    var s: Serialize = .{
+        .wc = wc,
+        .graph = graph,
+        .arena = arena,
+    };
+
+    try s.addPackageTree(b);
+
+    // Ensure the root package instance is lowered while reserving capacity
+    // for one instance per package.
+    try s.package_instance_map.ensureTotalCapacity(arena, @max(1, std.Build.package_map.kvs.len));
+    assert(try s.addPackageInstance(b) == .root);
 
     try wc.path_deps.ensureTotalCapacityPrecise(gpa, graph.configure_dependencies.items.len);
     for (
@@ -44,10 +57,10 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                 .relative => |r| try wc.addString(r.sub_path),
             },
             .pkg = switch (src.lazy_path) {
-                .src_path => |sp| .init(try s.builderToPackage(sp.owner)),
+                .src_path => |sp| .init(packageFromHash(sp.owner.pkg_hash)),
                 .generated => unreachable,
                 .cwd_relative, .relative => .none,
-                .dependency => |d| .init(try s.builderToPackage(d.dependency.builder)),
+                .dependency => |d| .init(packageFromHash(d.dependency.builder.pkg_hash)),
             },
         };
     }
@@ -63,23 +76,10 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
         while (wc.steps.items.len < s.step_map.count()) {
             const step = s.step_map.keys()[wc.steps.items.len];
 
-            // Set up any implied dependencies for this step. It's important that we do this first, so
-            // that the loop below discovers steps implied by the module graph.
-            try createModuleDependenciesForStep(step);
-
             try s.step_map.ensureUnusedCapacity(arena, step.dependencies.items.len);
             for (step.dependencies.items) |other_step| {
                 s.step_map.putAssumeCapacity(other_step, {});
             }
-
-            // Add and then de-duplicate dependencies.
-            const dep_steps = try arena.alloc(Configuration.Step.Index, step.dependencies.items.len);
-            for (dep_steps, step.dependencies.items) |*dest, src|
-                dest.* = @fromBackingInt(@intCast(s.step_map.getIndex(src).?));
-
-            const deps: Configuration.Deps.Index = try wc.addDeduped(Configuration.Deps, .{
-                .steps = .{ .slice = dep_steps },
-            });
 
             const extended = switch (step.tag) {
                 .top_level => e: {
@@ -112,6 +112,18 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                             });
                         },
                     };
+                    const root_module = try s.addModule(c.root_module);
+
+                    // Add implicit step dependencies of module graph to the compile step
+                    const modules = c.root_module.getGraph().modules;
+                    for (modules) |mod| {
+                        const entry = s.module_map.get(mod).?;
+                        const dependencies = entry.dependencies.keys();
+                        try step.dependencies.ensureUnusedCapacity(arena, dependencies.len);
+                        for (dependencies) |other_step| {
+                            step.dependencies.appendAssumeCapacity(other_step);
+                        }
+                    }
 
                     break :e try wc.addExtraErased(Configuration.Step.Compile, .{
                         .flags = .{
@@ -218,7 +230,7 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                             .generated_h = c.generated_h != .none,
                             .incremental = .init(c.incremental),
                         },
-                        .root_module = try s.addModule(c.root_module),
+                        .root_module = root_module,
                         .root_name = try wc.addString(c.name),
                         .linker_script = .{ .value = try s.addOptionalLazyPath(c.linker_script) },
                         .version_script = .{ .value = try s.addOptionalLazyPath(c.version_script) },
@@ -658,10 +670,20 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                 },
             };
 
+            const dep_steps = try arena.alloc(Configuration.Step.Index, step.dependencies.items.len);
+            try s.step_map.ensureUnusedCapacity(arena, step.dependencies.items.len);
+            for (dep_steps, step.dependencies.items) |*dest, other_step| {
+                dest.* = @fromBackingInt(@intCast(s.step_map.getOrPutAssumeCapacity(other_step).index));
+            }
+
+            const deps: Configuration.Deps.Index = try wc.addDeduped(Configuration.Deps, .{
+                .steps = .{ .slice = dep_steps },
+            });
+
             try wc.steps.ensureTotalCapacity(gpa, s.step_map.entries.capacity);
             wc.steps.appendAssumeCapacity(.{
                 .name = try wc.addString(step.name),
-                .owner = try s.builderToPackage(step.owner),
+                .owner = try s.addPackageInstance(step.owner),
                 .deps = deps,
                 .max_rss = .fromBytes(step.max_rss),
                 .extended = @fromBackingInt(@intCast(extended)),
@@ -672,6 +694,24 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
     try wc.unlazy_deps.ensureUnusedCapacity(gpa, graph.needed_lazy_dependencies.keys().len);
     for (graph.needed_lazy_dependencies.keys()) |k| {
         wc.unlazy_deps.appendAssumeCapacity(try wc.addString(k));
+    }
+
+    for (s.package_instance_map.keys()) |builder| {
+        const modules_values = try arena.alloc(Configuration.Module.Index, builder.modules.count());
+        for (modules_values, builder.modules.values()) |*dest_value, value| {
+            dest_value.* = try s.addModule(value);
+        }
+
+        try wc.package_instances.append(wc.gpa, .{
+            .package = packageFromHash(builder.pkg_hash),
+            .exported_modules = .{
+                .names = try wc.addStringList(builder.modules.keys()),
+                .modules = try wc.addDeduped(Configuration.Module.List, .{
+                    .modules = .{ .slice = modules_values },
+                }),
+            },
+            .dep_prefix = try wc.addString(builder.dep_prefix),
+        });
     }
 
     try wc.write(writer, .{
@@ -725,19 +765,52 @@ pub fn packageOptions(b: *std.Build, wc: *Configuration.Wip) Allocator.Error!voi
     }
 }
 
-fn builderToPackage(s: *Serialize, b: *std.Build) !Configuration.Package.Index {
-    if (b.pkg_hash.len == 0) return .root;
+fn packageFromHash(package_hash: []const u8) Configuration.Package.Index {
+    if (package_hash.len == 0) return .root;
+    return @fromBackingInt(@intCast(1 + std.Build.package_map.getIndex(package_hash).?));
+}
+
+fn addPackageTree(s: *Serialize, root_build: *const std.Build) Allocator.Error!void {
+    assert(root_build.isRoot());
+    const wc = s.wc;
+    try wc.packages.ensureTotalCapacityPrecise(wc.gpa, 1 + std.Build.package_map.kvs.len);
+    try s.addPackage("", root_build.root.sub_path, root_build.available_deps);
+    for (std.Build.package_map.keys(), std.Build.package_map.values()) |hash, package| {
+        try s.addPackage(hash, if (package.available) package.build_root else null, package.deps);
+    }
+}
+
+fn addPackage(
+    s: *Serialize,
+    package_hash: []const u8,
+    package_path: ?[]const u8,
+    package_deps: []const struct { []const u8, []const u8 },
+) Allocator.Error!void {
     const arena = s.arena;
     const wc = s.wc;
-    const gop = try s.package_map.getOrPut(arena, b);
-    if (!gop.found_existing) {
-        gop.value_ptr.* = try wc.addExtra(Configuration.Package, .{
-            .hash = try wc.addString(b.pkg_hash),
-            .dep_prefix = try wc.addString(b.dep_prefix),
-            .root_path = try wc.addString(try b.root.toString(arena)),
-        });
+
+    const deps = try arena.alloc(Configuration.Package.Dep, package_deps.len);
+    for (deps, package_deps) |*dest, src| {
+        const dependency_name, const dependency_hash = src;
+        dest.* = .{
+            .name = try wc.addString(dependency_name),
+            .package = packageFromHash(dependency_hash),
+        };
+        assert(dest.package != .root);
     }
-    return gop.value_ptr.*;
+
+    wc.packages.appendAssumeCapacity(.{
+        .hash = try wc.addString(package_hash),
+        .path = try wc.addOptionalString(package_path),
+        .deps = try wc.addDeduped(Configuration.Package.Dep.List, .{
+            .deps = .{ .slice = deps },
+        }),
+    });
+}
+
+fn addPackageInstance(s: *Serialize, b: *std.Build) Allocator.Error!Configuration.Package.Instance.Index {
+    const gop = try s.package_instance_map.getOrPutValue(s.arena, b, {});
+    return @fromBackingInt(@intCast(gop.index));
 }
 
 fn addOptionalLazyPathEnum(s: *Serialize, lp: ?std.Build.LazyPath) !Configuration.LazyPath.OptionalIndex {
@@ -746,7 +819,7 @@ fn addOptionalLazyPathEnum(s: *Serialize, lp: ?std.Build.LazyPath) !Configuratio
         .src_path => |src_path| i: {
             const sub_path = try wc.addString(src_path.sub_path);
             break :i try wc.addExtraErased(Configuration.LazyPath.SourcePath, .{
-                .owner = try s.builderToPackage(src_path.owner),
+                .owner = packageFromHash(src_path.owner.pkg_hash),
                 .sub_path = sub_path,
             });
         },
@@ -774,7 +847,7 @@ fn addOptionalLazyPathEnum(s: *Serialize, lp: ?std.Build.LazyPath) !Configuratio
         .dependency => |dependency| i: {
             const sub_path = try wc.addString(dependency.sub_path);
             break :i try wc.addExtraErased(Configuration.LazyPath.SourcePath, .{
-                .owner = try s.builderToPackage(dependency.dependency.builder),
+                .owner = packageFromHash(dependency.dependency.builder.pkg_hash),
                 .sub_path = sub_path,
             });
         },
@@ -1167,11 +1240,77 @@ fn initOptionalStringList(s: *Serialize, list: []const ?[]const u8) ![]const Con
     return result;
 }
 
-fn addModule(s: *Serialize, m: *std.Build.Module) !Configuration.Module.Index {
-    if (s.module_map.get(m)) |index| return index;
+const ModuleEntry = struct {
+    index: Configuration.Module.Index,
+    dependencies: std.array_hash_map.Auto(*Step, void),
+};
+
+fn addLazyPathStepDependencies(
+    s: *Serialize,
+    lazy_path: std.Build.LazyPath,
+    dependencies: *std.array_hash_map.Auto(*Step, void),
+) Allocator.Error!void {
+    switch (lazy_path) {
+        .src_path, .cwd_relative, .relative, .dependency => {},
+        .generated => |gen| {
+            const generated_owner_step = s.graph.generated_files.items[@backingInt(gen.index)];
+            try dependencies.put(s.arena, generated_owner_step, {});
+        },
+    }
+}
+
+fn addModule(s: *Serialize, m: *std.Build.Module) Allocator.Error!Configuration.Module.Index {
+    if (s.module_map.get(m)) |entry| return entry.index;
 
     const wc = s.wc;
     const arena = s.arena;
+
+    // A module carries implicit dependencies through generated lazy
+    // files on other steps, that need to be serialized as well.
+    var dependencies: std.array_hash_map.Auto(*Step, void) = .{};
+
+    {
+        if (m.root_source_file) |lp| try addLazyPathStepDependencies(s, lp, &dependencies);
+        for (m.include_dirs.items) |include_dir| switch (include_dir) {
+            .path,
+            .path_system,
+            .path_after,
+            .framework_path,
+            .framework_path_system,
+            .embed_path,
+            => |lp| try addLazyPathStepDependencies(s, lp, &dependencies),
+
+            .other_step => |other| {
+                try addLazyPathStepDependencies(s, other.getEmittedIncludeTree(), &dependencies);
+                try dependencies.put(s.arena, &other.step, {});
+            },
+
+            .config_header_step => |other| try dependencies.put(s.arena, &other.step, {}),
+        };
+        for (m.lib_paths.items) |lp| try addLazyPathStepDependencies(s, lp, &dependencies);
+        for (m.rpaths.items) |rpath| switch (rpath) {
+            .lazy_path => |lp| try addLazyPathStepDependencies(s, lp, &dependencies),
+            .special => {},
+        };
+        for (m.link_objects.items) |link_object| switch (link_object) {
+            .static_path,
+            .assembly_file,
+            => |lp| try addLazyPathStepDependencies(s, lp, &dependencies),
+            .other_step => |other| try dependencies.put(s.arena, &other.step, {}),
+            .system_lib => {},
+            .c_source_file => |source| try addLazyPathStepDependencies(s, source.file, &dependencies),
+            .c_source_files => |source_files| try addLazyPathStepDependencies(s, source_files.root, &dependencies),
+            .win32_resource_file => |rc_source| {
+                try addLazyPathStepDependencies(s, rc_source.file, &dependencies);
+                for (rc_source.include_paths) |lp| try addLazyPathStepDependencies(s, lp, &dependencies);
+            },
+        };
+    }
+
+    try s.step_map.ensureUnusedCapacity(arena, dependencies.count());
+    for (dependencies.keys()) |other_step| {
+        s.step_map.putAssumeCapacity(other_step, {});
+    }
 
     const rpaths = try arena.alloc(Configuration.Module.RPath, m.rpaths.items.len);
     for (rpaths, m.rpaths.items) |*dest, src| dest.* = switch (src) {
@@ -1203,7 +1342,7 @@ fn addModule(s: *Serialize, m: *std.Build.Module) !Configuration.Module.Index {
     const c_macros = try initStringList(s, m.c_macros.items);
     const export_symbol_names = try initStringList(s, m.export_symbol_names);
 
-    const module_index: Configuration.Module.Index = try wc.addExtra(Configuration.Module, .{
+    const module_index: Configuration.Module.Index = try wc.addDeduped(Configuration.Module, .{
         .flags = .{
             .optimize = .init(m.optimize),
             .strip = .init(m.strip),
@@ -1234,7 +1373,7 @@ fn addModule(s: *Serialize, m: *std.Build.Module) !Configuration.Module.Index {
             .link_libcpp = .init(m.link_libcpp),
             .no_builtin = .init(m.no_builtin),
         },
-        .owner = try s.builderToPackage(m.owner),
+        .owner = try s.addPackageInstance(m.owner),
         .root_source_file = try s.addOptionalLazyPathEnum(m.root_source_file),
         .import_table = .invalid,
         .resolved_target = try addOptionalResolvedTarget(wc, m.resolved_target),
@@ -1247,10 +1386,15 @@ fn addModule(s: *Serialize, m: *std.Build.Module) !Configuration.Module.Index {
         .frameworks = .{ .slice = frameworks },
     });
 
+    const module_entry: ModuleEntry = .{
+        .index = module_index,
+        .dependencies = dependencies,
+    };
+
     // The import table is the only place that modules can form dependency
-    // loops. Therefore, we populate the module indexes only after adding
+    // loops. Therefore, we populate the module entries only after adding
     // the module to module_map.
-    try s.module_map.putNoClobber(arena, m, module_index);
+    try s.module_map.putNoClobber(arena, m, module_entry);
 
     var imports = try std.MultiArrayList(Configuration.ImportTable.Import).initCapacity(arena, m.import_table.entries.len);
     imports.len = m.import_table.entries.len;
@@ -1288,56 +1432,6 @@ fn addOptionalResolvedTarget(
         .query = try wc.addTargetQuery(&resolved_target.query),
         .result = try wc.addTarget(resolved_target.result),
     }));
-}
-
-/// If the given `Step` is a `Step.Compile`, adds any dependencies for that step which
-/// are implied by the module graph rooted at `step.cast(Step.Compile).?.root_module`.
-fn createModuleDependenciesForStep(step: *Step) Allocator.Error!void {
-    const root_module = if (step.cast(Step.Compile)) |cs| root: {
-        break :root cs.root_module;
-    } else return; // not a compile step so no module dependencies
-
-    // Starting from `root_module`, discover all modules in this graph.
-    const modules = root_module.getGraph().modules;
-
-    // For each of those modules, set up the implied step dependencies.
-    for (modules) |mod| {
-        if (mod.root_source_file) |lp| lp.addStepDependencies(step);
-        for (mod.include_dirs.items) |include_dir| switch (include_dir) {
-            .path,
-            .path_system,
-            .path_after,
-            .framework_path,
-            .framework_path_system,
-            .embed_path,
-            => |lp| lp.addStepDependencies(step),
-
-            .other_step => |other| {
-                other.getEmittedIncludeTree().addStepDependencies(step);
-                step.dependOn(&other.step);
-            },
-
-            .config_header_step => |other| step.dependOn(&other.step),
-        };
-        for (mod.lib_paths.items) |lp| lp.addStepDependencies(step);
-        for (mod.rpaths.items) |rpath| switch (rpath) {
-            .lazy_path => |lp| lp.addStepDependencies(step),
-            .special => {},
-        };
-        for (mod.link_objects.items) |link_object| switch (link_object) {
-            .static_path,
-            .assembly_file,
-            => |lp| lp.addStepDependencies(step),
-            .other_step => |other| step.dependOn(&other.step),
-            .system_lib => {},
-            .c_source_file => |source| source.file.addStepDependencies(step),
-            .c_source_files => |source_files| source_files.root.addStepDependencies(step),
-            .win32_resource_file => |rc_source| {
-                rc_source.file.addStepDependencies(step);
-                for (rc_source.include_paths) |lp| lp.addStepDependencies(step);
-            },
-        };
-    }
 }
 
 fn addInstallDirDefaultNull(wc: *Configuration.Wip, install_dir: ?std.Build.InstallDir) !?Configuration.InstallDestDir {

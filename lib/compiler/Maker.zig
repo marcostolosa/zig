@@ -2281,7 +2281,7 @@ fn prepare(
                     }
                 } else {
                     log.err("{s}{s}: this step declares an upper bound of {d} bytes of memory, exceeding the available {d} bytes of memory", .{
-                        conf_step.owner.depPrefixSlice(c),
+                        conf_step.owner.ptr(c).dep_prefix.slice(c),
                         conf_step.name.slice(c),
                         max_rss,
                         maker.available_rss,
@@ -3381,7 +3381,7 @@ pub fn packagePath(
 ) Allocator.Error!Path {
     const c = &maker.scanned_config.configuration;
     const graph = maker.graph;
-    const package = package_index.get(c) orelse return .{
+    if (package_index == .root) return .{
         .root_dir = graph.build_root_directory,
         .sub_path = sub_path,
     };
@@ -3392,7 +3392,7 @@ pub fn packagePath(
     // construct a cwd relative path here.
     return .{
         .root_dir = .cwd(),
-        .sub_path = try Dir.path.join(arena, &.{ package.root_path.slice(c), sub_path }),
+        .sub_path = try Dir.path.join(arena, &.{ package_index.path(c).?, sub_path }),
     };
 }
 
@@ -4021,10 +4021,7 @@ fn confPathDepToCachePath(
         },
         .build_root => .{
             .root_dir = graph.build_root_directory,
-            .sub_path = switch (path_dep.pkg.unwrap().?) {
-                .root => sub_path,
-                else => |index| try Dir.path.join(arena, &.{ index.get(c).?.root_path.slice(c), sub_path }),
-            },
+            .sub_path = try Dir.path.join(arena, &.{ path_dep.pkg.unwrap().?.path(c).?, sub_path }),
         },
         .zig_lib => .{
             .root_dir = graph.zig_lib_directory,

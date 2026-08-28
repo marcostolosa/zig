@@ -115,7 +115,14 @@ pub const StringIndexAdapter = struct {
     }
 };
 
-pub const default_max_load_percentage = 80;
+/// The default maximum load factor for the hash table.
+/// This value was chosen to approximate a 7/8 ratio.
+pub const default_max_load_percentage = 88;
+
+/// The integer type used to store the size of the map
+pub const Size = u32;
+
+const Outer = @This();
 
 /// General purpose hash table.
 /// No order is guaranteed and any modification invalidates live iterators.
@@ -158,7 +165,8 @@ pub fn HashMap(
         pub const ValueIterator = Unmanaged.ValueIterator;
 
         /// The integer type used to store the size of the map
-        pub const Size = Unmanaged.Size;
+        /// Deprecated; use `std.hash_map.Size` instead.
+        pub const Size = Outer.Size;
         /// The type returned from getOrPut and variants
         pub const GetOrPutResult = Unmanaged.GetOrPutResult;
 
@@ -230,7 +238,7 @@ pub fn HashMap(
         }
 
         /// Return the number of items in the map.
-        pub fn count(self: Self) Size {
+        pub fn count(self: Self) Outer.Size {
             return self.unmanaged.count();
         }
 
@@ -300,20 +308,20 @@ pub fn HashMap(
 
         /// Increases capacity, guaranteeing that insertions up until the
         /// `expected_count` will not cause an allocation, and therefore cannot fail.
-        pub fn ensureTotalCapacity(self: *Self, expected_count: Size) Allocator.Error!void {
+        pub fn ensureTotalCapacity(self: *Self, expected_count: Outer.Size) Allocator.Error!void {
             return self.unmanaged.ensureTotalCapacityContext(self.allocator, expected_count, self.ctx);
         }
 
         /// Increases capacity, guaranteeing that insertions up until
         /// `additional_count` **more** items will not cause an allocation, and
         /// therefore cannot fail.
-        pub fn ensureUnusedCapacity(self: *Self, additional_count: Size) Allocator.Error!void {
+        pub fn ensureUnusedCapacity(self: *Self, additional_count: Outer.Size) Allocator.Error!void {
             return self.unmanaged.ensureUnusedCapacityContext(self.allocator, additional_count, self.ctx);
         }
 
         /// Returns the number of total elements which may be present before it is
         /// no longer guaranteed that no allocations will be performed.
-        pub fn capacity(self: Self) Size {
+        pub fn capacity(self: Self) Outer.Size {
             return self.unmanaged.capacity();
         }
 
@@ -413,8 +421,9 @@ pub fn HashMap(
 
         /// If there is an `Entry` with a matching key, it is deleted from
         /// the hash map, and this function returns true.  Otherwise this
-        /// function returns false. Note that it is not guaranteed that this
-        /// increases the unused capacity.
+        /// function returns false.
+        ///
+        /// It is not guaranteed that this increases the unused capacity.
         pub fn remove(self: *Self, key: K) bool {
             return self.unmanaged.removeContext(key, self.ctx);
         }
@@ -425,8 +434,9 @@ pub fn HashMap(
 
         /// Delete the entry with key pointed to by key_ptr from the hash map.
         /// key_ptr is assumed to be a valid pointer to a key that is present
-        /// in the hash map. Note that it is not guaranteed that this
-        /// increases the unused capacity.
+        /// in the hash map.
+        ///
+        /// It is not guaranteed that this increases the unused capacity.
         pub fn removeByPtr(self: *Self, key_ptr: *K) void {
             self.unmanaged.removeByPtr(key_ptr);
         }
@@ -487,12 +497,11 @@ pub fn HashMap(
 
 pub const HashMapUnmanaged = Custom;
 
-pub const MapSize = u32;
-
-// Note: cap the group length at 16 bytes, values larger than that give diminishing returns
-// and may end up performing *worse* because it may result in more straddling of cache line
-// boundaries.
 /// Length of a metadata group.
+///
+/// This is capped at 16 bytes because values larger than that give diminishing
+/// returns and may end up performing *worse* due to straddling of cache line
+/// boundaries.
 const group_len = @min(16, std.simd.suggestVectorLength(Metadata) orelse 16);
 
 const Vec = @Vector(group_len, u8);
@@ -560,10 +569,10 @@ const Metadata = packed struct(u8) {
 const Group = struct {
     vec: Vec,
 
-    fn load(metadata: [*]Metadata, index: MapSize) Group {
+    fn load(metadata: [*]Metadata, index: Size) Group {
         return .{ .vec = @bitCast(metadata[index..][0..group_len].*) };
     }
-    fn store(self: Group, metadata: [*]Metadata, index: MapSize) void {
+    fn store(self: Group, metadata: [*]Metadata, index: Size) void {
         metadata[index..][0..group_len].* = @bitCast(self.vec);
     }
 
@@ -620,7 +629,7 @@ const Match = struct {
     const MatchIter = struct {
         mask: uvec,
 
-        fn next(self: *MatchIter) ?MapSize {
+        fn next(self: *MatchIter) ?Size {
             if (self.mask == 0) return null;
             const idx = @ctz(self.mask);
             self.mask &= (self.mask - 1);
@@ -642,12 +651,12 @@ const Match = struct {
     }
 
     /// Return the first bit that is set.
-    fn firstSet(self: *const Match) ?MapSize {
+    fn firstSet(self: *const Match) ?Size {
         if (self.bits == 0) return null;
         return @ctz(self.bits);
     }
     /// Return whether any match was successful.
-    inline fn any(self: Match) bool {
+    fn any(self: Match) bool {
         return self.bits != 0;
     }
 };
@@ -658,11 +667,11 @@ const Match = struct {
 /// every slot of the table exactly once, guaranteeing that we'll eventually find an empty
 /// slot.
 const Probe = struct {
-    index: MapSize,
-    stride: MapSize,
-    cap_mask: MapSize,
+    index: Size,
+    stride: Size,
+    cap_mask: Size,
 
-    pub fn init(index: MapSize, cap_mask: MapSize) Probe {
+    pub fn init(index: Size, cap_mask: Size) Probe {
         return .{
             .index = index,
             .stride = 0,
@@ -675,7 +684,7 @@ const Probe = struct {
         self.index = (self.index + self.stride) & self.cap_mask;
     }
 
-    fn slot(self: Probe, offset: MapSize) MapSize {
+    fn slot(self: Probe, offset: Size) Size {
         return (self.index + offset) & self.cap_mask;
     }
     fn group(self: Probe, metadata: [*]Metadata) Group {
@@ -687,35 +696,37 @@ const Probe = struct {
 /// No order is guaranteed and any modification invalidates live iterators.
 /// It achieves good performance with quite high load factors (by default,
 /// grow is triggered at 88% full) and only one byte of overhead per element.
+///
+///
+/// Brief overview of the internals, note that these may change without constituting breaking changes:
+/// The Swiss Table design relies on SIMD operations for very fast probing; logically, the
+/// table is organized into groups of `group_len` slots, where `group_len` is the processor's
+/// SIMD size (in reality, we cap it to 16 bytes, see comment above).
+///
+/// At any given point, there are N slots, where N is a power-of-two capacity, and N+group_len-1
+/// bytes of metadata. The [N,N+group_len-1] range is mirrored metadata from the low `group_len`
+/// slots of the table as to make SIMD operation more efficient (i.e we always have `group_len`
+/// valid bytes to operate on.)
+///
+/// Each metadata byte has the following layout: |C|HHHHHHH|, where C is a 'control' bit,
+/// denoting the entry's type, and H is a 7-bit hash fragment. An entry is always either
+/// 'full' (c=0), 'empty' (c=1, H=0) or 'deleted' (c=1, H=all ones).
+///
+/// Probing is done by taking the top 57 bits of the hash and using them to select a
+/// group. Then, SIMD is leveraged to compare all the bytes of the group simultaneously for
+/// a match in the low 7 bits of the hash. If no suitable member is found, probing is done
+/// quadratically using triangular numbers, ensuring every entry is walked exactly once.
+///
+/// Resources:
+/// - https://faultlore.com/blah/hashbrown-tldr/
+/// - https://abseil.io/about/design/swisstables
+/// - https://github.com/cockroachdb/swiss/blob/main/map.go
 pub fn Custom(
     comptime K: type,
     comptime V: type,
     comptime Context: type,
     comptime max_load_percentage: u8,
 ) type {
-    // Brief Overview:
-    // The Swiss Table design relies on SIMD operations for very fast probing; logically, the
-    // table is organized into groups of `group_len` slots, where `group_len` is the processor's
-    // SIMD size (in reality, we cap it to 16 bytes, see comment above).
-    //
-    // At any given point, there are N slots, where N is a power-of-two capacity, and N+group_len-1
-    // bytes of metadata. The [N,N+group_len-1] range is mirrored metadata from the low `group_len`
-    // slots of the table as to make SIMD operation more efficient (i.e we always have `group_len`
-    // valid bytes to operate on.)
-    //
-    // Each metadata byte has the following layout: |C|HHHHHHH|, where C is a 'control' bit,
-    // denoting the entry's type, and H is a 7-bit hash fragment. An entry is always either
-    // 'full' (c=0), 'empty' (c=1, H=0) or 'deleted' (c=1, H=all ones).
-    //
-    // Probing is done by taking the top 57 bits of the hash and using them to select a
-    // group. Then, SIMD is leveraged to compare all the bytes of the group simultaneously for
-    // a match in the low 7 bits of the hash. If no suitable member is found, probing is done
-    // quadratically using triangular numbers, ensuring every entry is walked exactly once.
-    //
-    // Resources:
-    // - https://faultlore.com/blah/hashbrown-tldr/
-    // - https://abseil.io/about/design/swisstables
-    // - https://github.com/cockroachdb/swiss/blob/main/map.go
     if (max_load_percentage <= 0 or max_load_percentage >= 100)
         @compileError("max_load_percentage must be between 0 and 100.");
     return struct {
@@ -724,15 +735,15 @@ pub fn Custom(
         table: ?[*]u8 = null,
 
         /// Current number of elements in the hashmap.
-        size: Size = 0,
+        size: Outer.Size = 0,
         /// Allocated capacity.
-        capacity_: Size = 0,
+        allocated_capacity: Outer.Size = 0,
 
         // Having a countdown to grow reduces the number of instructions to
         // execute when determining if the hashmap has enough capacity already.
         /// Number of available slots before a grow is needed to satisfy the
         /// `max_load_percentage`.
-        available: Size = 0,
+        available: Outer.Size = 0,
 
         /// Used to detect memory safety violations.
         pointer_stability: std.debug.SafetyLock = .{},
@@ -741,15 +752,15 @@ pub fn Custom(
         const minimal_capacity = 8;
 
         comptime {
-            std.debug.assert(capacityToGrowth(minimal_capacity) < minimal_capacity);
-            std.debug.assert(capacityToGrowth(minimal_capacity) >= 1);
+            assert(capacityToGrowth(minimal_capacity) < minimal_capacity);
+            assert(capacityToGrowth(minimal_capacity) >= 1);
         }
 
         /// A map containing no keys or values.
         pub const empty: Self = .{
             .table = null,
             .size = 0,
-            .capacity_ = 0,
+            .allocated_capacity = 0,
             .available = 0,
         };
 
@@ -758,7 +769,8 @@ pub fn Custom(
         pub const Hash = u64;
 
         // This hashmap is specially designed for sizes that fit in a u32.
-        pub const Size = MapSize;
+        /// Deprecated; use std.hash_map.Size instead.
+        pub const Size = Outer.Size;
 
         pub const Entry = struct {
             key_ptr: *K,
@@ -778,30 +790,30 @@ pub fn Custom(
         /// ----------------------------
         /// |metadata|mirror padding|KV|
         /// ---------------------------
-        fn metadataLen(cap: Size) Size {
+        fn metadataLen(cap: Outer.Size) Outer.Size {
             return cap + group_len - 1;
         }
 
         /// Offset of the start of KV entries in the contiguous allocation.
         /// This is aligned with KV.
-        fn entriesOffset(cap: Size) Size {
-            return std.mem.alignForward(Size, metadataLen(cap), @alignOf(KV));
+        fn entriesOffset(cap: Outer.Size) Outer.Size {
+            return std.mem.alignForward(Outer.Size, metadataLen(cap), @alignOf(KV));
         }
 
         /// Total allocated length of the table.
-        fn tableLen(cap: Size) Size {
+        fn tableLen(cap: Outer.Size) Outer.Size {
             return entriesOffset(cap) + @sizeOf(KV) * cap;
         }
 
         pub const Iterator = struct {
             hm: *const Self,
-            index: Size = 0,
+            index: Outer.Size = 0,
 
             pub fn next(it: *Iterator) ?Entry {
-                std.debug.assert(it.index <= it.hm.capacity_);
+                assert(it.index <= it.hm.allocated_capacity);
                 if (it.hm.size == 0) return null;
 
-                const cap = it.hm.capacity_;
+                const cap = it.hm.allocated_capacity;
                 const entries = it.hm.entriesPtr();
                 const metadata = it.hm.metadataPtr();
 
@@ -882,44 +894,44 @@ pub fn Custom(
 
         /// The number of live elements `cap` slots may hold before a grow is
         /// required.
-        fn capacityToGrowth(cap: Size) Size {
+        fn capacityToGrowth(cap: Outer.Size) Outer.Size {
             return (cap * max_load_percentage) / 100;
         }
 
         pub fn deinit(self: *Self, allocator: Allocator) void {
             self.pointer_stability.assertUnlocked();
             if (self.table) |table| {
-                allocator.free(@as([*]align(@alignOf(KV)) u8, @alignCast(table))[0..tableLen(self.capacity_)]);
+                allocator.free(@as([*]align(@alignOf(KV)) u8, @alignCast(table))[0..tableLen(self.allocated_capacity)]);
             }
             self.* = undefined;
         }
 
-        fn capacityForSize(size: Size) Size {
+        fn capacityForSize(size: Outer.Size) Outer.Size {
             const min_cap = (@as(u64, size) * 100) / max_load_percentage + 1;
             const new_cap = std.math.ceilPowerOfTwo(u64, min_cap) catch unreachable;
-            return @max(minimal_capacity, @as(Size, @intCast(new_cap)));
+            return @max(minimal_capacity, @as(Outer.Size, @intCast(new_cap)));
         }
 
-        pub fn ensureTotalCapacity(self: *Self, allocator: Allocator, new_size: Size) Allocator.Error!void {
+        pub fn ensureTotalCapacity(self: *Self, allocator: Allocator, new_size: Outer.Size) Allocator.Error!void {
             if (@sizeOf(Context) != 0)
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call ensureTotalCapacityContext instead.");
             return ensureTotalCapacityContext(self, allocator, new_size, undefined);
         }
 
-        pub fn ensureTotalCapacityContext(self: *Self, allocator: Allocator, new_size: Size, ctx: Context) Allocator.Error!void {
+        pub fn ensureTotalCapacityContext(self: *Self, allocator: Allocator, new_size: Outer.Size, ctx: Context) Allocator.Error!void {
             self.pointer_stability.lock();
             defer self.pointer_stability.unlock();
             if (new_size > self.size)
                 try self.growIfNeeded(allocator, new_size - self.size, ctx);
         }
 
-        pub fn ensureUnusedCapacity(self: *Self, allocator: Allocator, additional_size: Size) Allocator.Error!void {
+        pub fn ensureUnusedCapacity(self: *Self, allocator: Allocator, additional_size: Outer.Size) Allocator.Error!void {
             if (@sizeOf(Context) != 0)
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call ensureUnusedCapacityContext instead.");
             return ensureUnusedCapacityContext(self, allocator, additional_size, undefined);
         }
 
-        pub fn ensureUnusedCapacityContext(self: *Self, allocator: Allocator, additional_size: Size, ctx: Context) Allocator.Error!void {
+        pub fn ensureUnusedCapacityContext(self: *Self, allocator: Allocator, additional_size: Outer.Size, ctx: Context) Allocator.Error!void {
             return ensureTotalCapacityContext(self, allocator, self.count() + additional_size, ctx);
         }
 
@@ -927,11 +939,11 @@ pub fn Custom(
             self.pointer_stability.lock();
             defer self.pointer_stability.unlock();
             if (self.table) |_| {
-                const metadata = self.metadataPtr()[0..metadataLen(self.capacity_)];
+                const metadata = self.metadataPtr()[0..metadataLen(self.allocated_capacity)];
                 @memset(metadata, Metadata.empty_data);
 
                 self.size = 0;
-                self.available = capacityToGrowth(self.capacity_);
+                self.available = capacityToGrowth(self.allocated_capacity);
             }
         }
 
@@ -939,15 +951,15 @@ pub fn Custom(
             self.pointer_stability.lock();
             defer self.pointer_stability.unlock();
             if (self.table) |table| {
-                allocator.free(@as([*]align(@alignOf(KV)) u8, @alignCast(table))[0..tableLen(self.capacity_)]);
+                allocator.free(@as([*]align(@alignOf(KV)) u8, @alignCast(table))[0..tableLen(self.allocated_capacity)]);
             }
             self.table = null;
-            self.capacity_ = 0;
+            self.allocated_capacity = 0;
             self.size = 0;
             self.available = 0;
         }
 
-        pub fn count(self: Self) Size {
+        pub fn count(self: Self) Outer.Size {
             return self.size;
         }
 
@@ -956,11 +968,11 @@ pub fn Custom(
         }
 
         fn entriesPtr(self: *const Self) [*]KV {
-            return @ptrCast(@alignCast(&self.table.?[entriesOffset(self.capacity_)]));
+            return @ptrCast(@alignCast(&self.table.?[entriesOffset(self.allocated_capacity)]));
         }
 
-        pub fn capacity(self: Self) Size {
-            return self.capacity_;
+        pub fn capacity(self: Self) Outer.Size {
+            return self.allocated_capacity;
         }
 
         pub fn iterator(self: *const Self) Iterator {
@@ -970,7 +982,7 @@ pub fn Custom(
         pub fn keyIterator(self: Self) KeyIterator {
             if (self.table) |_| {
                 return .{
-                    .len = self.capacity_,
+                    .len = self.allocated_capacity,
                     .metadata = self.metadataPtr(),
                     .items = self.entriesPtr(),
                 };
@@ -982,7 +994,7 @@ pub fn Custom(
         pub fn valueIterator(self: Self) ValueIterator {
             if (self.table) |_| {
                 return .{
-                    .len = self.capacity_,
+                    .len = self.allocated_capacity,
                     .metadata = self.metadataPtr(),
                     .items = self.entriesPtr(),
                 };
@@ -1031,7 +1043,7 @@ pub fn Custom(
 
         pub fn putAssumeCapacityNoClobberContext(self: *Self, key: K, value: V, ctx: Context) void {
             const result = self.getOrPutAssumeCapacityContext(key, ctx);
-            std.debug.assert(!result.found_existing);
+            assert(!result.found_existing);
             result.value_ptr.* = value;
         }
 
@@ -1095,7 +1107,7 @@ pub fn Custom(
             return result;
         }
 
-        fn getIndex(self: Self, key: anytype, ctx: anytype) ?Size {
+        fn getIndex(self: Self, key: anytype, ctx: anytype) ?Outer.Size {
             if (self.size == 0) {
                 @branchHint(.cold);
                 return null;
@@ -1269,7 +1281,7 @@ pub fn Custom(
         }
 
         pub fn getOrPutAssumeCapacityAdapted(self: *Self, key: anytype, ctx: anytype) GetOrPutResult {
-            std.debug.assert(self.table != null);
+            assert(self.table != null);
 
             const hash: Hash = ctx.hash(key);
             const split: SplitHash = @bitCast(hash);
@@ -1286,9 +1298,9 @@ pub fn Custom(
             };
         }
 
-        fn claimSlot(self: *Self, metadata: [*]Metadata, entries: [*]KV, slot: Size, fp: u7) GetOrPutResult {
+        fn claimSlot(self: *Self, metadata: [*]Metadata, entries: [*]KV, slot: Outer.Size, fp: u7) GetOrPutResult {
             if (metadata[slot].isEmpty()) {
-                std.debug.assert(self.available > 0);
+                assert(self.available > 0);
                 self.available -= 1;
             }
             self.setMetadata(metadata, slot, Metadata.make(fp));
@@ -1328,7 +1340,7 @@ pub fn Custom(
             return self.getIndex(key, ctx) != null;
         }
 
-        fn removeByIndex(self: *Self, idx: Size) void {
+        fn removeByIndex(self: *Self, idx: Outer.Size) void {
             const metadata = self.metadataPtr();
             if (self.canMarkEmpty(idx)) {
                 self.setMetadata(metadata, idx, Metadata.empty_data);
@@ -1342,8 +1354,9 @@ pub fn Custom(
 
         /// If there is an `Entry` with a matching key, it is deleted from
         /// the hash map, and this function returns true.  Otherwise this
-        /// function returns false. Note that it is not guaranteed that this
-        /// increases the unused capacity.
+        /// function returns false.
+        ///
+        /// It is not guaranteed that this increases the unused capacity.
         pub fn remove(self: *Self, key: K) bool {
             if (@sizeOf(Context) != 0)
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call removeContext instead.");
@@ -1371,11 +1384,11 @@ pub fn Custom(
             self.removeByIndex(@truncate(idx));
         }
 
-        fn setMetadata(self: *Self, metadata: [*]Metadata, index: Size, value: Metadata) void {
-            setMetadataWith(metadata, self.capacity_ - 1, index, value);
+        fn setMetadata(self: *Self, metadata: [*]Metadata, index: Outer.Size, value: Metadata) void {
+            setMetadataWith(metadata, self.allocated_capacity - 1, index, value);
         }
 
-        fn setMetadataWith(metadata: [*]Metadata, cap_mask: Size, index: Size, value: Metadata) void {
+        fn setMetadataWith(metadata: [*]Metadata, cap_mask: Outer.Size, index: Outer.Size, value: Metadata) void {
             const cloned = group_len - 1;
             metadata[index] = value;
             // Put cloned metadata for the cloned slots at the end of the array.
@@ -1388,17 +1401,17 @@ pub fn Custom(
             // We only rehash in place if doing so would reclaim 1/8th of the
             // usable capacity.
             // https://github.com/abseil/abseil-cpp/blob/master/absl/container/internal/raw_hash_set.cc#L1917-L1957
-            return self.capacity_ > group_len and
-                @as(u64, self.size) * 8 <= @as(u64, capacityToGrowth(self.capacity_)) * 7;
+            return self.allocated_capacity > group_len and
+                @as(u64, self.size) * 8 <= @as(u64, capacityToGrowth(self.allocated_capacity)) * 7;
         }
 
         /// Make room for `additional` more live elements, if needed.
-        fn growIfNeeded(self: *Self, allocator: Allocator, additional: Size, ctx: Context) Allocator.Error!void {
+        fn growIfNeeded(self: *Self, allocator: Allocator, additional: Outer.Size, ctx: Context) Allocator.Error!void {
             if (additional <= self.available) return;
 
             const needed = self.size + additional;
 
-            if (needed <= capacityToGrowth(self.capacity_) and self.shouldRehashInPlace()) {
+            if (needed <= capacityToGrowth(self.allocated_capacity) and self.shouldRehashInPlace()) {
                 // Try to rehash in place first.
                 self.rehash(ctx);
             } else {
@@ -1436,13 +1449,13 @@ pub fn Custom(
         }
 
         pub fn rehash(self: *Self, ctx: anytype) void {
-            const cap = self.capacity_;
+            const cap = self.allocated_capacity;
             const cap_mask = cap - 1;
             const cloned = group_len - 1;
             const metadata = self.metadataPtr();
             const entries = self.entriesPtr();
 
-            var i: Size = 0;
+            var i: Outer.Size = 0;
 
             // First, convert all deleted entries to empty, and all full entries to deleted.
             while (i < cap) : (i += group_len) {
@@ -1499,8 +1512,9 @@ pub fn Custom(
         }
 
         /// Grow the table to the desired `new_cap`.
-        noinline fn grow(self: *Self, allocator: Allocator, new_cap: Size, ctx: Context) !void {
-            const cap = self.capacity_;
+        fn grow(self: *Self, allocator: Allocator, new_cap: Outer.Size, ctx: Context) !void {
+            @branchHint(.cold);
+            const cap = self.allocated_capacity;
             const prev_size = tableLen(cap);
 
             const new_mask = new_cap - 1;
@@ -1518,7 +1532,7 @@ pub fn Custom(
             if (self.table == null) {
                 @branchHint(.unlikely);
                 self.table = new_table;
-                self.capacity_ = new_cap;
+                self.allocated_capacity = new_cap;
                 self.available = capacityToGrowth(new_cap) - self.size;
                 return;
             }
@@ -1540,18 +1554,18 @@ pub fn Custom(
 
             allocator.free(@as([*]align(@alignOf(KV)) u8, @alignCast(self.table.?))[0..prev_size]);
             self.table = new_table;
-            self.capacity_ = new_cap;
+            self.allocated_capacity = new_cap;
             self.available = capacityToGrowth(new_cap) - self.size;
         }
 
-        fn probeGroup(cap_mask: Size, start: Size, pos: Size) Size {
+        fn probeGroup(cap_mask: Outer.Size, start: Outer.Size, pos: Outer.Size) Outer.Size {
             return ((pos -% start) & cap_mask) / group_len;
         }
 
         /// empty but mask back onto real slots, so a match there can point to an
         /// occupied slot. Rescan from 0, where the load factor guarantees a
         /// vacancy before those trailing bytes.
-        fn fixVacant(metadata: [*]Metadata, slot: Size) Size {
+        fn fixVacant(metadata: [*]Metadata, slot: Outer.Size) Outer.Size {
             if (metadata[slot].isFull()) {
                 @branchHint(.unlikely);
                 return Group.load(metadata, 0).matchEmptyOrDeleted().firstSet().?;
@@ -1559,7 +1573,7 @@ pub fn Custom(
             return slot;
         }
 
-        fn findFirstNonFull(metadata: [*]Metadata, start: Size, cap_mask: Size) Size {
+        fn findFirstNonFull(metadata: [*]Metadata, start: Outer.Size, cap_mask: Outer.Size) Outer.Size {
             var probe = Probe.init(start, cap_mask);
             while (true) {
                 if (probe.group(metadata).matchEmptyOrDeleted().firstSet()) |bit|
@@ -1569,16 +1583,16 @@ pub fn Custom(
         }
 
         const Search = union(enum) {
-            found: Size,
-            vacant: Size,
+            found: Outer.Size,
+            vacant: Outer.Size,
         };
 
         /// Find the slot mapping to `key`, returns `vacant` if the slot is empty, or `found` if
         /// it exists already.
         fn findSlot(self: *const Self, key: anytype, split: SplitHash, ctx: anytype, comptime rw: std.builtin.PrefetchOptions.Rw) Search {
-            const cap_mask = self.capacity_ - 1;
+            const cap_mask = self.allocated_capacity - 1;
             var probe = Probe.init(@truncate(split.h1 & cap_mask), cap_mask);
-            var vacant: ?Size = null;
+            var vacant: ?Outer.Size = null;
             const entries = self.entriesPtr();
             const metadata = self.metadataPtr();
 
@@ -1603,12 +1617,12 @@ pub fn Custom(
         }
 
         /// Return whether `slot` can be marked empty after a deletion.
-        fn canMarkEmpty(self: *const Self, slot: Size) bool {
+        fn canMarkEmpty(self: *const Self, slot: Outer.Size) bool {
             // Safe to mark empty only if every window covering `slot` already contains an
             // empty, since probing stops in those windows regardless. That holds exactly
             // when the run of non-empty (full or deleted) slots around `slot` is shorter
             // than a group, which is what @clz and @ctz count.
-            const cap_mask = self.capacity_ - 1;
+            const cap_mask = self.allocated_capacity - 1;
             const metadata = self.metadataPtr();
             const before = Group.load(metadata, (slot -% group_len) & cap_mask).matchEmpty().bits;
             const after = Group.load(metadata, slot).matchEmpty().bits;

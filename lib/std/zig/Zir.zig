@@ -2154,6 +2154,11 @@ pub const Inst = struct {
         /// with a specific value. For instance, this is used for the capture of an `errdefer`.
         /// This should never appear in a body.
         value_placeholder,
+        /// Emitted once, in normal control-flow order, at the point an `errdefer` statement
+        /// appears lexically. Sema validates this against the enclosing function's return type.
+        /// `operand` is `src_node: Ast.Node.Offset`.
+        /// `small` is 1 if the deferred expression is exactly `unreachable`, else 0.
+        validate_errdefer,
         /// Implements the `@fieldParentPtr` builtin.
         /// `operand` is payload index to `FieldParentPtr`.
         /// `small` contains `FullPtrCastFlags`.
@@ -4425,6 +4430,7 @@ fn findTrackableInner(
                 .field_parent_ptr,
                 .std_lang_value,
                 .branch_hint,
+                .validate_errdefer,
                 .inplace_arith_result_ty,
                 .tuple_decl,
                 .dbg_empty_stmt,

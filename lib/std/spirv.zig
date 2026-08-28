@@ -262,7 +262,7 @@ pub fn imageWrite(
     );
 }
 
-pub fn setMeshOutputCounts(vertex_count: u32, primitive_count: u32) void {
+pub fn setMeshOutputs(vertex_count: u32, primitive_count: u32) void {
     asm volatile (
         \\OpSetMeshOutputsEXT %vertex_count %primitive_count
         :

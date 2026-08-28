@@ -7243,14 +7243,13 @@ fn analyzeCall(
             },
         }) orelse break :memoize;
         const memoized_call = ip.indexToKey(memoized_call_index).memoized_call;
-        const new_quota = @max(sema.branch_quota, memoized_call.branch_quota);
-        if (sema.branch_count + memoized_call.branch_count > new_quota) {
+        if (sema.branch_count + memoized_call.branch_count > sema.branch_quota) {
             // Let the call play out se we get the correct source location for the
             // "evaluation exceeded X backwards branches" error.
             break :memoize;
         }
         sema.branch_count += memoized_call.branch_count;
-        sema.branch_quota = new_quota;
+        sema.branch_quota = @max(sema.branch_quota, memoized_call.branch_quota);
         sema.quota_request = @max(sema.quota_request, memoized_call.branch_quota);
         const result = Air.internedToRef(memoized_call.result);
         if (ensure_result_used) {

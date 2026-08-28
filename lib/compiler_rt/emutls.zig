@@ -127,7 +127,6 @@ const ObjectArray = struct {
             const alignment: u29 = @truncate(control.alignment);
 
             var data = simple_allocator.advancedAlloc(alignment, size);
-            errdefer simple_allocator.free(data);
 
             if (control.default_value) |value| {
                 // default value: copy the content to newly allocated object.

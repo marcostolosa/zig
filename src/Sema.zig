@@ -1451,6 +1451,11 @@ fn analyzeBodyInner(
                         i += 1;
                         continue;
                     },
+                    .validate_errdefer => {
+                        try sema.zirValidateErrdefer(block, extended);
+                        i += 1;
+                        continue;
+                    },
                     .value_placeholder => unreachable, // never appears in a body
                     .field_parent_ptr => try sema.zirFieldParentPtr(block, extended),
                     .std_lang_value => try sema.zirStdLangValue(block, extended),
@@ -25479,6 +25484,20 @@ fn zirInplaceArithResultTy(sema: *Sema, extended: Zir.Inst.Extended.InstData) Co
         },
     };
     return Air.internedToRef(ty.toIntern());
+}
+
+fn zirValidateErrdefer(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstData) CompileError!void {
+    const is_unreachable_body = extended.small != 0;
+    if (is_unreachable_body) return; // `errdefer unreachable;` is always fine
+
+    switch (sema.fn_ret_ty.zigTypeTag(sema.pt.zcu)) {
+        .error_union, .error_set => return,
+        else => {},
+    }
+
+    const src_node: std.zig.Ast.Node.Offset = @fromBackingInt(@intCast(@as(i32, @bitCast(extended.operand))));
+    const src = block.nodeOffset(src_node);
+    return sema.fail(block, src, "errdefer in function with no error union return type", .{});
 }
 
 fn zirBranchHint(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstData) CompileError!void {

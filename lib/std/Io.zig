@@ -705,7 +705,6 @@ pub const Batch = struct {
             var tail_index = batch.unused.tail;
             defer batch.unused.tail = tail_index;
             var index = batch.submitted.head;
-            errdefer batch.submissions.head = index;
             while (index != .none) {
                 const next_index = batch.storage[index.toIndex()].submission.node.next;
                 switch (tail_index) {

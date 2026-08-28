@@ -3066,12 +3066,19 @@ fn deferStmt(
     block_arena: Allocator,
     scope_tag: Scope.Tag,
 ) InnerError!*Scope {
+    const tree = gz.astgen.tree;
+
+    if (scope_tag == .defer_error) {
+        const expr_node = tree.nodeData(node).node;
+        const is_unreachable_body = tree.nodeTag(expr_node) == .unreachable_literal;
+        _ = try gz.addExtendedNodeSmall(.validate_errdefer, node, @intFromBool(is_unreachable_body));
+    }
+
     var defer_gen = gz.makeSubBlock(scope);
     defer_gen.cur_defer_node = node.toOptional();
     defer_gen.any_defer_node = node.toOptional();
     defer defer_gen.unstack();
 
-    const tree = gz.astgen.tree;
     const expr_node = tree.nodeData(node).node;
     _ = try unusedResultExpr(&defer_gen, &defer_gen.base, expr_node);
     try checkUsed(gz, scope, &defer_gen.base);

@@ -3173,6 +3173,13 @@ fn createFoo(param: i32) !Foo {
       the verbosity and cognitive overhead of trying to make sure every exit path
       is covered. The deallocation code is always directly following the allocation code.
       </p>
+      <p>
+      Since {#syntax#}errdefer{#endsyntax#} can only ever run via an error return,
+      it is a compile error to use it inside a function whose return type is
+      neither an error union nor an error set since such an {#syntax#}errdefer{#endsyntax#}
+      could never execute. An exception is made when the deferred expression is exactly
+      {#syntax#}unreachable{#endsyntax#}, which is treated as an assertion rather than dead cleanup logic.
+      </p>
       {#header_close#}
       <p>
       A couple of other tidbits about error handling:

@@ -375,9 +375,9 @@ test "writeSplatHeader splatting avoids buffer aliasing temptation" {
     const n = try aw.writer.writeSplatHeader("header which is longer than buf ", &.{
         "1", "2", "3", "4", "5", "6", "foo", "bar", "foo",
     }, 3);
-    try testing.expectEqual(41, n);
+    try testing.expectEqual(53, n);
     try testing.expectEqualStrings(
-        "header which is longer than buf 123456foo",
+        "header which is longer than buf 123456foobarfoofoofoo",
         aw.writer.buffered(),
     );
 }

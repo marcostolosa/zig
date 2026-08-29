@@ -50,8 +50,6 @@ pub fn createEmpty(
     const io = comp.io;
     const target = &comp.root_mod.resolved_target.result;
 
-    assert(!comp.config.use_lld); // Caught by Compilation.Config.resolve
-    assert(!comp.config.use_llvm); // Caught by Compilation.Config.resolve
     assert(target.ofmt == .spirv); // Caught by Compilation.Config.resolve
     switch (target.cpu.arch) {
         .spirv32, .spirv64 => {},

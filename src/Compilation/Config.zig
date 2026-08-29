@@ -342,11 +342,6 @@ pub fn resolve(options: Options) ResolveError!Config {
             if (options.use_llvm == false) return error.ZigLacksTargetSupport;
             break :b true;
         }
-        
-        if (target.ofmt == .spirv) {
-            if (options.use_llvm == true)   return error.LlvmLacksTargetSupport;
-            break :b false;
-        }
 
         if (options.any_sanitize_thread) {
             // Thread sanitization instrumentation requires the LLVM backend.
@@ -355,6 +350,7 @@ pub fn resolve(options: Options) ResolveError!Config {
         }
 
         if (options.use_llvm) |x| break :b x;
+        if (target.ofmt == .spirv) break :b false;
 
         // If we cannot use LLVM libraries, then our own backends will be a
         // better default since the LLVM backend can only produce bitcode

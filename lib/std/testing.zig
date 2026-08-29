@@ -1322,12 +1322,24 @@ pub const ReaderIndirect = struct {
         };
     }
 
-    fn readVec(r: *Io.Reader, _: [][]u8) Io.Reader.Error!usize {
+    fn readVec(r: *Io.Reader, data: [][]u8) Io.Reader.Error!usize {
+        if (r.buffer.len == 0) {
+            const r_indirect: *ReaderIndirect = @alignCast(@fieldParentPtr("interface", r));
+            return r_indirect.in.readVec(data);
+        }
         try streamInner(r);
         return 0;
     }
 
-    fn stream(r: *Io.Reader, _: *Io.Writer, _: Io.Limit) Io.Reader.StreamError!usize {
+    fn stream(r: *Io.Reader, w: *Io.Writer, limit: Io.Limit) Io.Reader.StreamError!usize {
+        if (r.bufferedLen() == r.buffer.len) {
+            // peeking past r.buffer, a non-zero return only happens when r has
+            // no buffer (otherwise it skips unread data)
+            const r_indirect: *ReaderIndirect = @alignCast(@fieldParentPtr("interface", r));
+            const n = try r_indirect.in.stream(w, limit);
+            assert((n == 0 and r.buffer.len > 0 and limit != .nothing) or (r.buffer.len == 0));
+            return n;
+        }
         try streamInner(r);
         return 0;
     }
@@ -1360,6 +1372,29 @@ pub const ReaderIndirect = struct {
         };
     }
 };
+
+test ReaderIndirect {
+    {
+        var buf: [2]u8 = undefined;
+        var inner: Io.Reader = .fixed("abcd");
+        var indirect: ReaderIndirect = .init(&inner, &buf);
+        var reader = &indirect.interface;
+        try expectEqual('a', try reader.takeByte());
+        try expectEqualStrings("bc", try reader.peek(2));
+        try expectEqualStrings("b", try reader.peek(1));
+        try expectError(error.StreamTooLong, reader.peekDelimiterInclusive('e'));
+    }
+
+    // no buffer
+    {
+        var inner: Io.Reader = .fixed("abc");
+        var indirect: ReaderIndirect = .init(&inner, &.{});
+        var reader = &indirect.interface;
+        var out: [3]u8 = undefined;
+        try reader.readSliceAll(&out);
+        try expectEqualStrings("abc", &out);
+    }
+}
 
 /// A `Io.Writer` that writes its data to another `Io.Writer`, and only
 /// writes new data to its own buffer during `drain`.

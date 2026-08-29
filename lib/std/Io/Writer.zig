@@ -269,36 +269,43 @@ fn writeSplatHeaderLimitFinish(
     limit: usize,
 ) Error!usize {
     var remaining = limit;
+    var total: usize = 0;
     var vecs: [8][]const u8 = undefined;
     var i: usize = 0;
-    v: {
-        if (header.len != 0) {
-            const copy_len = @min(header.len, remaining);
-            vecs[i] = header[0..copy_len];
-            i += 1;
-            remaining -= copy_len;
-            if (remaining == 0) break :v;
-        }
-        for (data[0 .. data.len - 1]) |buf| {
-            if (buf.len == 0) continue;
-            const copy_len = @min(buf.len, remaining);
-            vecs[i] = buf[0..copy_len];
-            i += 1;
-            remaining -= copy_len;
-            if (remaining == 0) break :v;
-            if (vecs.len - i == 0) break :v;
-        }
-        const pattern = data[data.len - 1];
-        if (splat == 1 or remaining < pattern.len) {
-            vecs[i] = pattern[0..@min(remaining, pattern.len)];
-            i += 1;
-            break :v;
-        }
-        vecs[i] = pattern;
+    if (header.len != 0) {
+        const copy_len = @min(header.len, remaining);
+        vecs[i] = header[0..copy_len];
         i += 1;
-        return w.vtable.drain(w, (&vecs)[0..i], @min(remaining / pattern.len, splat));
+        remaining -= copy_len;
+        if (remaining == 0) {
+            return w.vtable.drain(w, (&vecs)[0..i], 1);
+        }
     }
-    return w.vtable.drain(w, (&vecs)[0..i], 1);
+    for (data[0 .. data.len - 1]) |buf| {
+        if (buf.len == 0) continue;
+        const copy_len = @min(buf.len, remaining);
+        vecs[i] = buf[0..copy_len];
+        i += 1;
+        remaining -= copy_len;
+        if (remaining == 0) {
+            return w.vtable.drain(w, (&vecs)[0..i], 1);
+        }
+        if (i == vecs.len) {
+            total += try w.vtable.drain(w, &vecs, 1);
+            i = 0;
+        }
+    }
+    const pattern = data[data.len - 1];
+    if (splat == 1 or remaining < pattern.len) {
+        vecs[i] = pattern[0..@min(remaining, pattern.len)];
+        i += 1;
+        total += try w.vtable.drain(w, (&vecs)[0..i], 1);
+        return total;
+    }
+    vecs[i] = pattern;
+    i += 1;
+    total += try w.vtable.drain(w, (&vecs)[0..i], @min(remaining / pattern.len, splat));
+    return total;
 }
 
 const SplatHeaderTestCase = struct {

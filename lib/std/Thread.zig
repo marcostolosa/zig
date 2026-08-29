@@ -75,7 +75,7 @@ pub fn setName(self: Thread, io: Io, name: []const u8) SetNameError!void {
             }
         } else {
             var buf: [32]u8 = undefined;
-            const path = try std.fmt.bufPrint(&buf, "/proc/self/task/{d}/comm", .{self.getHandle()});
+            const path = try std.mem.print(&buf, "/proc/self/task/{d}/comm", .{self.getHandle()});
 
             const file = try Io.Dir.cwd().openFile(io, path, .{ .mode = .write_only });
             defer file.close(io);
@@ -176,7 +176,7 @@ pub fn getName(self: Thread, buffer_ptr: *[max_name_len:0]u8) GetNameError!?[]co
             }
         } else {
             var buf: [32]u8 = undefined;
-            const path = try std.fmt.bufPrint(&buf, "/proc/self/task/{d}/comm", .{self.getHandle()});
+            const path = try std.mem.print(&buf, "/proc/self/task/{d}/comm", .{self.getHandle()});
 
             const io = std.Options.debug_io;
 

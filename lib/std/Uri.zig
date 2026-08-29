@@ -41,7 +41,7 @@ pub const Component = union(enum) {
         return switch (component) {
             .raw => |raw| raw,
             .percent_encoded => |percent_encoded| if (std.mem.findScalar(u8, percent_encoded, '%')) |_|
-                try std.fmt.bufPrint(buffer, "{f}", .{std.fmt.alt(component, .formatRaw)})
+                try std.mem.print(buffer, "{f}", .{std.fmt.alt(component, .formatRaw)})
             else
                 percent_encoded,
         };

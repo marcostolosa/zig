@@ -686,7 +686,7 @@ fn emitEntryPoints(
     for (linker.entry_points.items) |ep| {
         const final_id = nav_final_ids.get(ep.nav) orelse continue;
 
-        var interface: std.ArrayList(Id) = .empty;
+        var interface: std.AutoArrayHashMapUnmanaged(Id, void) = .empty;
         defer interface.deinit(gpa);
         var visited: std.AutoHashMapUnmanaged(InternPool.Nav.Index, void) = .empty;
         defer visited.deinit(gpa);
@@ -714,7 +714,7 @@ fn emitEntryPoints(
             .execution_model = exec_model,
             .entry_point = final_id,
             .name = ep.name,
-            .interface = interface.items,
+            .interface = interface.entries.items(.key),
         });
 
         switch (ep.cc) {
@@ -1001,7 +1001,7 @@ fn appendExternalObjects(
 fn collectEntryPointInterface(
     linker: *Linker,
     nav: InternPool.Nav.Index,
-    interface: *std.ArrayList(Id),
+    interface: *std.AutoArrayHashMapUnmanaged(Id, void),
     visited: *std.AutoHashMapUnmanaged(InternPool.Nav.Index, void),
     nav_final_ids: *const std.AutoHashMapUnmanaged(InternPool.Nav.Index, Id),
     uav_final_ids: *const std.AutoHashMapUnmanaged(struct { InternPool.Index, spec.StorageClass }, Id),
@@ -1017,21 +1017,21 @@ fn collectEntryPointInterface(
 
     if (mir.kind == .global) {
         if (nav_final_ids.get(nav)) |final_id| {
-            try interface.append(gpa, final_id);
+            try interface.put(gpa, final_id, {});
         }
     }
 
     for (mir.uav_refs) |ref| {
         if (ref.kind == .global) {
             if (uav_final_ids.get(.{ ref.val, ref.storage_class })) |final_id| {
-                try interface.append(gpa, final_id);
+                try interface.put(gpa, final_id, {});
             }
         }
     }
 
     for (mir.internal_globals) |local_id| {
         const global_id: Id = @fromBackingInt(@intCast(@backingInt(local_id) + id_offset));
-        try interface.append(gpa, global_id);
+        try interface.put(gpa, global_id, {});
     }
 
     for (mir.decl_deps) |dep| {

@@ -1,6 +1,7 @@
 const builtin = @import("builtin");
 
 test {
+    _ = @import("behavior/abs.zig");
     _ = @import("behavior/addrspace_and_linksection.zig");
     _ = @import("behavior/align.zig");
     _ = @import("behavior/alignof.zig");
@@ -25,13 +26,14 @@ test {
     _ = @import("behavior/const_slice_child.zig");
     _ = @import("behavior/decl_literals.zig");
     _ = @import("behavior/decltest.zig");
-    _ = @import("behavior/duplicated_test_names.zig");
     _ = @import("behavior/defer.zig");
     _ = @import("behavior/destructure.zig");
+    _ = @import("behavior/duplicated_test_names.zig");
     _ = @import("behavior/enum.zig");
     _ = @import("behavior/error.zig");
     _ = @import("behavior/eval.zig");
     _ = @import("behavior/export_builtin.zig");
+    _ = @import("behavior/extern_struct_zero_size_fields.zig");
     _ = @import("behavior/field_parent_ptr.zig");
     _ = @import("behavior/floatop.zig");
     _ = @import("behavior/fn.zig");
@@ -48,15 +50,14 @@ test {
     _ = @import("behavior/inline_switch.zig");
     _ = @import("behavior/int128.zig");
     _ = @import("behavior/int_comparison_elision.zig");
-    _ = @import("behavior/ptrfromint.zig");
     _ = @import("behavior/ir_block_deps.zig");
     _ = @import("behavior/lower_strlit_to_vector.zig");
     _ = @import("behavior/math.zig");
     _ = @import("behavior/maximum_minimum.zig");
     _ = @import("behavior/member_func.zig");
     _ = @import("behavior/memcpy.zig");
-    _ = @import("behavior/memset.zig");
     _ = @import("behavior/memmove.zig");
+    _ = @import("behavior/memset.zig");
     _ = @import("behavior/merge_error_sets.zig");
     _ = @import("behavior/muladd.zig");
     _ = @import("behavior/multiple_externs_with_conflicting_types.zig");
@@ -69,6 +70,7 @@ test {
     _ = @import("behavior/popcount.zig");
     _ = @import("behavior/prefetch.zig");
     _ = @import("behavior/ptrcast.zig");
+    _ = @import("behavior/ptrfromint.zig");
     _ = @import("behavior/pub_enum.zig");
     _ = @import("behavior/ref_var_in_if_after_if_2nd_switch_prong.zig");
     _ = @import("behavior/reflection.zig");
@@ -87,9 +89,9 @@ test {
     _ = @import("behavior/struct_contains_slice_of_itself.zig");
     _ = @import("behavior/switch.zig");
     _ = @import("behavior/switch_loop.zig");
+    _ = @import("behavior/switch_on_captured_error.zig");
     _ = @import("behavior/switch_prong_err_enum.zig");
     _ = @import("behavior/switch_prong_implicit_cast.zig");
-    _ = @import("behavior/switch_on_captured_error.zig");
     _ = @import("behavior/this.zig");
     _ = @import("behavior/threadlocal.zig");
     _ = @import("behavior/truncate.zig");
@@ -107,7 +109,8 @@ test {
     _ = @import("behavior/void.zig");
     _ = @import("behavior/while.zig");
     _ = @import("behavior/widening.zig");
-    _ = @import("behavior/abs.zig");
+    _ = @import("behavior/wrapping_arithmetic.zig");
+    _ = @import("behavior/zon.zig");
 
     _ = @import("behavior/x86_64.zig");
 

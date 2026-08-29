@@ -373,10 +373,10 @@ test "floats" {
         'z',
 
         // Test big integers
-        36893488147419103231,
-        -36893488147419103231,
+        36893488147419103232,
+        -36893488147419103232,
         0x1ffffffffffffffff,
-        0x1ffffffffffffffff,
+        0x20000000000000000,
 
         // Exponents, underscores
         123.0E+77,

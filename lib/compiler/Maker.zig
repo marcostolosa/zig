@@ -1853,6 +1853,7 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
                         process.exit(0);
                     }
                 },
+                .urls => @panic("todo mirror"),
                 .path => {},
             }
         }

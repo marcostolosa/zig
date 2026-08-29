@@ -440,7 +440,6 @@ set(ZIG_STAGE2_SOURCES
     src/link/Wasm/Object.zig
     src/link/aarch64.zig
     src/link/riscv.zig
-    src/link/table_section.zig
     src/link/tapi.zig
     src/link/tapi/Tokenizer.zig
     src/link/tapi/parse.zig

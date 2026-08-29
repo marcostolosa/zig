@@ -41,6 +41,7 @@ const std = @import("std");
 const Io = std.Io;
 const fs = std.fs;
 const log = std.log.scoped(.fetch);
+const Ast = std.zig.Ast;
 const assert = std.debug.assert;
 const ascii = std.ascii;
 const Allocator = std.mem.Allocator;
@@ -505,7 +506,7 @@ pub const Location = union(enum) {
     path_or_url: []const u8,
 
     pub const Remote = struct {
-        url: []const u8,
+        urls: std.array_hash_map.String(Ast.TokenIndex),
         /// If this is null it means the user omitted the hash field from a dependency.
         /// It will be an error but the logic should still fetch and print the discovered hash.
         hash: ?Package.Hash,
@@ -584,7 +585,7 @@ pub fn run(f: *Fetch) RunError!void {
                     ));
                 };
                 var resource: Resource = undefined;
-                try f.initResource(uri, &resource, &server_header_buffer);
+                try f.initResource(uri, f.location_tok, &resource, &server_header_buffer);
                 return f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, null, false);
             }
         },
@@ -677,13 +678,28 @@ pub fn run(f: *Fetch) RunError!void {
     }
 
     // Fetch and unpack the remote into a temporary directory.
-    const uri = std.Uri.parse(remote.url) catch |err| return f.fail(
-        f.location_tok,
-        try eb.printString("invalid URI: {t}", .{err}),
-    );
-    var resource: Resource = undefined;
-    try f.initResource(uri, &resource, &resource_buffer);
-    return f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, remote.hash, false);
+    var iter = remote.urls.iterator();
+    while (iter.next()) |entry| {
+        const url = entry.key_ptr.*;
+        const tok = entry.value_ptr.*;
+
+        const uri = std.Uri.parse(url) catch |err| return f.fail(
+            f.location_tok,
+            try eb.printString("invalid URI: {t}", .{err}),
+        );
+        var resource: Resource = undefined;
+
+        f.initResource(uri, tok, &resource, &resource_buffer) catch |err| switch (err) {
+            error.FetchFailed => {
+                std.log.warn("failed to fetch {s} from {s}", .{ f.manifest.name, url });
+                continue;
+            },
+            else => return err,
+        };
+        return f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, remote.hash, false);
+    }
+
+    return f.fail(f.location_tok, try eb.printString("failed to fetch: {s}", .{f.manifest.name}));
 }
 
 pub fn deinit(f: *Fetch) void {
@@ -948,9 +964,15 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
             var promoted_existing_to_eager = false;
             const new_fetch = &new_fetches[new_fetch_index];
             const location: Location = switch (dep.location) {
-                .url => |url| .{
+                .url, .urls => .{
                     .remote = .{
-                        .url = url,
+                        .urls = u: {
+                            if (dep.location == .url) {
+                                var hm: std.array_hash_map.String(Ast.TokenIndex) = .empty;
+                                try hm.put(parent_arena, dep.location.url, dep.location_tok);
+                                break :u hm;
+                            } else break :u dep.location.urls;
+                        },
                         .hash = h: {
                             const h = dep.hash orelse break :h null;
                             const pkg_hash: Package.Hash = .fromSlice(h);
@@ -1190,7 +1212,7 @@ const FileType = enum {
 
 const init_resource_buffer_size = git.Packet.max_data_length;
 
-fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u8) RunError!void {
+fn initResource(f: *Fetch, uri: std.Uri, uri_location_tok: Ast.TokenIndex, resource: *Resource, reader_buffer: []u8) RunError!void {
     const io = f.job_queue.io;
     const arena = f.arena.allocator();
     const eb = &f.error_bundle;
@@ -1198,7 +1220,7 @@ fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u
     if (ascii.eqlIgnoreCase(uri.scheme, "file")) {
         const path = try uri.path.toRawMaybeAlloc(arena);
         const file = f.parent_package_root.openFile(io, path, .{}) catch |err| {
-            return f.fail(f.location_tok, try eb.printString("unable to open {f}/{s}: {t}", .{
+            return f.fail(uri_location_tok, try eb.printString("unable to open {f}/{s}: {t}", .{
                 f.parent_package_root, path, err,
             }));
         };
@@ -1213,7 +1235,7 @@ fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u
     {
         resource.* = .{ .http_request = .{
             .request = http_client.request(.GET, uri, .{}) catch |err|
-                return f.fail(f.location_tok, try eb.printString("server connection failed: {t}", .{err})),
+                return f.fail(uri_location_tok, try eb.printString("server connection failed: {t}", .{err})),
             .response = undefined,
             .transfer_buffer = reader_buffer,
             .decompress_buffer = &.{},
@@ -1223,20 +1245,20 @@ fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u
         errdefer request.deinit();
 
         request.sendBodiless() catch |err|
-            return f.fail(f.location_tok, try eb.printString("HTTP request failed: {t}", .{err}));
+            return f.fail(uri_location_tok, try eb.printString("HTTP request failed: {t}", .{err}));
 
         var redirect_buffer: [8000]u8 = undefined;
         const response = &resource.http_request.response;
         response.* = request.receiveHead(&redirect_buffer) catch |err| switch (err) {
             error.ReadFailed => {
-                return f.fail(f.location_tok, try eb.printString("HTTP response read failure: {t}", .{
+                return f.fail(uri_location_tok, try eb.printString("HTTP response read failure: {t}", .{
                     request.connection.?.getReadError().?,
                 }));
             },
-            else => |e| return f.fail(f.location_tok, try eb.printString("invalid HTTP response: {t}", .{e})),
+            else => |e| return f.fail(uri_location_tok, try eb.printString("invalid HTTP response: {t}", .{e})),
         };
 
-        if (response.head.status != .ok) return f.fail(f.location_tok, try eb.printString(
+        if (response.head.status != .ok) return f.fail(uri_location_tok, try eb.printString(
             "bad HTTP response code: '{d} {s}'",
             .{ response.head.status, response.head.status.phrase() orelse "" },
         ));
@@ -1252,7 +1274,7 @@ fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u
         transport_uri.scheme = uri.scheme["git+".len..];
         var session = git.Session.init(arena, http_client, transport_uri, reader_buffer) catch |err| {
             return f.fail(
-                f.location_tok,
+                uri_location_tok,
                 try eb.printString("unable to discover remote git server capabilities: {t}", .{err}),
             );
         };
@@ -1270,10 +1292,10 @@ fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u
                 .ref_prefixes = &.{ want_ref, want_ref_head, want_ref_tag },
                 .include_peeled = true,
                 .buffer = reader_buffer,
-            }) catch |err| return f.fail(f.location_tok, try eb.printString("unable to list refs: {t}", .{err}));
+            }) catch |err| return f.fail(uri_location_tok, try eb.printString("unable to list refs: {t}", .{err}));
             defer ref_iterator.deinit();
             while (ref_iterator.next() catch |err| {
-                return f.fail(f.location_tok, try eb.printString(
+                return f.fail(uri_location_tok, try eb.printString(
                     "unable to iterate refs: {s}",
                     .{@errorName(err)},
                 ));
@@ -1285,7 +1307,7 @@ fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u
                     break :want_oid ref.peeled orelse ref.oid;
                 }
             }
-            return f.fail(f.location_tok, try eb.printString("ref not found: {s}", .{want_ref}));
+            return f.fail(uri_location_tok, try eb.printString("ref not found: {s}", .{want_ref}));
         };
         if (f.use_latest_commit) {
             f.latest_commit = want_oid;
@@ -1293,7 +1315,7 @@ fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u
             const notes_len = 1;
             try eb.addRootErrorMessage(.{
                 .msg = try eb.addString("url field is missing an explicit ref"),
-                .src_loc = try f.srcLoc(f.location_tok),
+                .src_loc = try f.srcLoc(uri_location_tok),
                 .notes_len = notes_len,
             });
             const notes_start = try eb.reserveNotes(notes_len);
@@ -1315,14 +1337,14 @@ fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u
         } };
         const fetch_stream = &resource.git.fetch_stream;
         session.fetch(fetch_stream, &.{want_oid_hex}, reader_buffer) catch |err| {
-            return f.fail(f.location_tok, try eb.printString("unable to create fetch stream: {t}", .{err}));
+            return f.fail(uri_location_tok, try eb.printString("unable to create fetch stream: {t}", .{err}));
         };
         errdefer fetch_stream.deinit(fetch_stream);
 
         return;
     }
 
-    return f.fail(f.location_tok, try eb.printString("unsupported URL scheme: {s}", .{uri.scheme}));
+    return f.fail(uri_location_tok, try eb.printString("unsupported URL scheme: {s}", .{uri.scheme}));
 }
 
 fn unpackResource(
@@ -2038,6 +2060,7 @@ pub fn depDigest(pkg_root: Path, cache_root: Directory, dep: Manifest.Dependency
 
     switch (dep.location) {
         .url => return null,
+        .urls => return null,
         .path => |rel_path| {
             var buf: [fs.max_path_bytes]u8 = undefined;
             var fba = std.heap.FixedBufferAllocator.init(&buf);

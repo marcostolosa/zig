@@ -28,6 +28,7 @@ pub const Dependency = struct {
 
     pub const Location = union(enum) {
         url: []const u8,
+        urls: std.array_hash_map.String(Ast.TokenIndex),
         path: []const u8,
     };
 };
@@ -275,6 +276,8 @@ const Parse = struct {
         };
         var has_location = false;
 
+        const url_path_missing_msg = "dependency should specify only one of 'url', 'urls', and 'path' fields.";
+
         for (struct_init.ast.fields) |field_init| {
             const name_token = ast.firstToken(field_init) - 2;
             dep.name_tok = name_token;
@@ -284,7 +287,7 @@ const Parse = struct {
             // that is desirable on a per-field basis.
             if (mem.eql(u8, field_name, "url")) {
                 if (has_location) {
-                    return fail(p, ast.nodeMainToken(field_init), "dependency should specify only one of 'url' and 'path' fields.", .{});
+                    return fail(p, ast.nodeMainToken(field_init), url_path_missing_msg, .{});
                 }
                 dep.location = .{
                     .url = parseString(p, field_init) catch |err| switch (err) {
@@ -295,9 +298,22 @@ const Parse = struct {
                 has_location = true;
                 dep.location_tok = ast.nodeMainToken(field_init);
                 dep.location_node = field_init;
+            } else if (mem.eql(u8, field_name, "urls")) {
+                if (has_location) {
+                    return fail(p, ast.nodeMainToken(field_init), url_path_missing_msg, .{});
+                }
+                dep.location = .{
+                    .urls = parseUrls(p, field_init) catch |err| switch (err) {
+                        error.ParseFailure => continue,
+                        else => |e| return e,
+                    },
+                };
+                has_location = true;
+                dep.location_tok = ast.nodeMainToken(field_init);
+                dep.location_node = field_init;
             } else if (mem.eql(u8, field_name, "path")) {
                 if (has_location) {
-                    return fail(p, ast.nodeMainToken(field_init), "dependency should specify only one of 'url' and 'path' fields.", .{});
+                    return fail(p, ast.nodeMainToken(field_init), url_path_missing_msg, .{});
                 }
                 dep.location = .{
                     .path = parseString(p, field_init) catch |err| switch (err) {
@@ -327,7 +343,7 @@ const Parse = struct {
         }
 
         if (!has_location) {
-            try appendError(p, ast.nodeMainToken(node), "dependency requires location field, one of 'url' or 'path'.", .{});
+            try appendError(p, ast.nodeMainToken(node), "dependency requires location field, one of 'url' 'urls', or 'path'.", .{});
         }
 
         return dep;
@@ -414,6 +430,27 @@ const Parse = struct {
         try parseStrLit(p, str_lit_token, &p.buf, token_bytes, 0);
         const duped = try p.arena.dupe(u8, p.buf.items);
         return duped;
+    }
+
+    fn parseUrls(p: *Parse, node: Ast.Node.Index) !std.array_hash_map.String(Ast.TokenIndex) {
+        const ast = p.ast;
+
+        var buf: [2]Ast.Node.Index = undefined;
+        const array_init = ast.fullArrayInit(&buf, node) orelse {
+            const tok = ast.nodeMainToken(node);
+            return fail(p, tok, "expected urls expression to be a list of strings", .{});
+        };
+
+        var urls: std.array_hash_map.String(Ast.TokenIndex) = .empty;
+
+        for (array_init.ast.elements) |elem_node| {
+            const url = try parseString(p, elem_node);
+            if ((try urls.getOrPutValue(p.arena, url, ast.nodeMainToken(elem_node))).found_existing) {
+                const tok = ast.nodeMainToken(elem_node);
+                return fail(p, tok, "expected urls expression to have no duplicate entries", .{});
+            }
+        }
+        return urls;
     }
 
     fn parseHash(p: *Parse, node: Ast.Node.Index) ![]const u8 {
@@ -661,6 +698,59 @@ test "basic" {
         "https://example.com/baz.tar.gz",
         manifest.dependencies.values()[0].location.url,
     );
+    try testing.expectEqualStrings(
+        "libmp3lame-3.100.1-6-67wlF_KvEwDRCT3pTpcDzi5KGntWCEoM-WtvVPEWdlk5",
+        manifest.dependencies.values()[0].hash orelse return error.TestFailed,
+    );
+
+    try testing.expect(manifest.minimum_zig_version == null);
+}
+
+test "mirrors" {
+    const gpa = testing.allocator;
+
+    const example =
+        \\.{
+        \\    .name = .foo,
+        \\    .fingerprint = 0x8c736521490b23df,
+        \\    .version = "3.2.1",
+        \\    .paths = .{""},
+        \\    .dependencies = .{
+        \\        .bar = .{
+        \\            .urls = .{
+        \\                "https://example.com/baz.tar.gz",
+        \\                "https://example.org/baz.tar.gz",
+        \\                "https://example.dev/baz.tar.gz",
+        \\            },
+        \\            .hash = "libmp3lame-3.100.1-6-67wlF_KvEwDRCT3pTpcDzi5KGntWCEoM-WtvVPEWdlk5",
+        \\        },
+        \\    },
+        \\}
+    ;
+
+    var ast = try Ast.parse(gpa, example, .{ .mode = .zon });
+    defer ast.deinit(gpa);
+
+    try testing.expect(ast.errors.len == 0);
+
+    var rng = std.Random.DefaultPrng.init(0);
+
+    var manifest = try Manifest.parse(gpa, &ast, rng.random(), .{});
+    defer manifest.deinit(gpa);
+
+    try testing.expect(manifest.errors.len == 0);
+    try testing.expect(manifest.dependencies.count() == 1);
+    try testing.expectEqualStrings("bar", manifest.dependencies.keys()[0]);
+
+    inline for (&.{
+        "https://example.com/baz.tar.gz",
+        "https://example.org/baz.tar.gz",
+        "https://example.dev/baz.tar.gz",
+    }) |url| {
+        try testing.expect(manifest.dependencies.values()[0].location.urls.contains(url));
+    }
+    try testing.expectEqual(3, manifest.dependencies.values()[0].location.urls.count());
+
     try testing.expectEqualStrings(
         "libmp3lame-3.100.1-6-67wlF_KvEwDRCT3pTpcDzi5KGntWCEoM-WtvVPEWdlk5",
         manifest.dependencies.values()[0].hash orelse return error.TestFailed,

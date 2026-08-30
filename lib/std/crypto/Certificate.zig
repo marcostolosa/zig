@@ -1128,7 +1128,7 @@ pub const rsa = struct {
             //      zero or if the octet at position emLen - hLen - sLen - 1 (the
             //      leftmost position is "position 1") does not have hexadecimal
             //      value 0x01, output "inconsistent" and stop.
-            if (dbMask[mgf_len - sLen - 2] != 0x00) {
+            if (!mem.allEqual(u8, dbMask[0 .. mgf_len - sLen - 1], 0x00)) {
                 return error.InvalidSignature;
             }
 

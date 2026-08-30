@@ -6,6 +6,7 @@ test {
     _ = @import("behavior/alignof.zig");
     _ = @import("behavior/array.zig");
     _ = @import("behavior/atomics.zig");
+    _ = @import("behavior/backing_int.zig");
     _ = @import("behavior/basic.zig");
     _ = @import("behavior/bit_shifting.zig");
     _ = @import("behavior/bitcast.zig");
@@ -78,6 +79,7 @@ test {
     _ = @import("behavior/sizeof_and_typeof.zig");
     _ = @import("behavior/slice.zig");
     _ = @import("behavior/slice_sentinel_comptime.zig");
+    _ = @import("behavior/splat.zig");
     _ = @import("behavior/src.zig");
     _ = @import("behavior/string_literals.zig");
     _ = @import("behavior/struct.zig");

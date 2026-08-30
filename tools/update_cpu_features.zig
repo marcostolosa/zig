@@ -76,7 +76,7 @@ const spirv_extra_features: []const Feature = blk: {
             .zig_name = name,
             .desc = "Enable " ++ name ++ " capability",
             .deps = &struct {
-                const extensions = spirv_spec.Capability.dependencies(@enumFromInt(value));
+                const extensions = spirv_spec.Capability.dependencies(@fromBackingInt(@intCast(value)));
                 const deps: [extensions.len][]const u8 = inner: {
                     var out: [extensions.len][]const u8 = undefined;
                     for (extensions, 0..) |ext, i| out[i] = @tagName(ext);
@@ -1347,6 +1347,13 @@ const targets = [_]ArchTarget{
         .extra_cpus = &.{
             .{
                 .llvm_name = null,
+                .zig_name = "generic_la64",
+                .features = &.{
+                    "64bit",
+                },
+            },
+            .{
+                .llvm_name = null,
                 .zig_name = "la32v1_0",
                 .features = &.{
                     "32bit",
@@ -1390,6 +1397,7 @@ const targets = [_]ArchTarget{
         },
         .omit_cpus = &.{
             "generic",
+            "generic-la64",
             "loongarch32",
             "loongarch64",
         },

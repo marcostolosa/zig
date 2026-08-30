@@ -398,7 +398,7 @@ fn start_asm_path(comp: *Compilation, arena: Allocator, basename: []const u8) ![
             try result.appendSlice("powerpc" ++ s ++ "powerpc32");
         }
     } else if (arch == .s390x) {
-        try result.appendSlice("s390" ++ s ++ "s390-64");
+        try result.appendSlice("s390");
     } else if (arch.isLoongArch()) {
         try result.appendSlice("loongarch");
     } else if (arch == .m68k) {
@@ -608,8 +608,6 @@ fn add_include_dirs_arch(
             try args.append(try path.join(arena, &[_][]const u8{ dir, "s390", nptl }));
         } else {
             try args.append("-I");
-            try args.append(try path.join(arena, &[_][]const u8{ dir, "s390" ++ s ++ "s390-64" }));
-            try args.append("-I");
             try args.append(try path.join(arena, &[_][]const u8{ dir, "s390" }));
         }
     } else if (arch.isLoongArch()) {
@@ -700,8 +698,10 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
     man.hash.add(target.abi);
     man.hash.add(target_version);
 
-    const full_abilists_path = try comp.dirs.zig_lib.join(arena, &.{abilists_path});
-    const abilists_index = try man.addFile(full_abilists_path, abilists_max_size);
+    const abilists_index = try man.addFilePath(.{
+        .root_dir = comp.dirs.zig_lib,
+        .sub_path = abilists_path,
+    }, abilists_max_size);
 
     if (try man.hit(prog_node)) {
         const digest = man.final();
@@ -1190,7 +1190,6 @@ fn buildSharedLib(
     const version: Version = .{ .major = lib.sover, .minor = 0, .patch = 0 };
     const ld_basename = path.basename(comp.getTarget().standardDynamicLinkerPath().get().?);
     const soname = if (mem.eql(u8, lib.name, "ld")) ld_basename else basename;
-    const map_file_path = try path.join(arena, &.{ bin_directory.path.?, all_map_basename });
 
     const optimize_mode = comp.compilerRtOptMode();
     const strip = comp.compilerRtStrip();
@@ -1223,7 +1222,6 @@ fn buildSharedLib(
             .omit_frame_pointer = comp.root_mod.omit_frame_pointer,
             .valgrind = false,
             .optimize_mode = optimize_mode,
-            .structured_cfg = comp.root_mod.structured_cfg,
         },
         .global = config,
         .cc_argv = &.{},
@@ -1260,7 +1258,10 @@ fn buildSharedLib(
         .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .version = version,
-        .version_script = map_file_path,
+        .version_script = .{
+            .root_dir = bin_directory,
+            .sub_path = all_map_basename,
+        },
         .soname = soname,
         .c_source_files = &c_source_files,
         .skip_linker_dependencies = true,

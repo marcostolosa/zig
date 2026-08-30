@@ -26,11 +26,11 @@ const target_util = @import("target.zig");
 const codegen = @import("codegen.zig");
 const crash_report = @import("crash_report.zig");
 
-pub const aarch64 = @import("link/aarch64.zig");
 pub const LdScript = @import("link/LdScript.zig");
 pub const Queue = @import("link/Queue.zig");
 pub const ConstPool = @import("link/ConstPool.zig");
 
+pub const aarch64 = @import("link/aarch64.zig");
 pub const loongarch = @import("link/loongarch.zig");
 
 pub const Error = Allocator.Error || Io.Cancelable || error{
@@ -386,7 +386,7 @@ pub const Diags = struct {
             });
             const notes_start = try bundle.reserveNotes(@intCast(link_err.notes.len));
             for (link_err.notes, 0..) |note, i| {
-                bundle.extra.items[notes_start + i] = @intFromEnum(try bundle.addErrorMessage(.{
+                bundle.extra.items[notes_start + i] = @backingInt(try bundle.addErrorMessage(.{
                     .msg = try note.string(bundle, base),
                 }));
             }
@@ -444,6 +444,7 @@ pub const File = struct {
         import_symbols: bool,
         import_table: bool,
         export_table: bool,
+        growable_table: bool,
         initial_memory: ?u64,
         max_memory: ?u64,
         object_host_name: ?[]const u8,
@@ -460,12 +461,14 @@ pub const File = struct {
         allow_undefined_version: bool,
         enable_new_dtags: ?bool,
         subsystem: ?std.zig.Subsystem,
-        linker_script: ?[]const u8,
-        version_script: ?[]const u8,
+        linker_script: ?Path,
+        version_script: ?Path,
         soname: ?[]const u8,
         print_gc_sections: bool,
         print_icf_sections: bool,
         print_map: bool,
+        nmagic: bool,
+        fatal_warnings: bool,
 
         /// Use a wrapper function for symbol. Any undefined reference to symbol
         /// will be resolved to __wrap_symbol. Any undefined reference to
@@ -490,7 +493,7 @@ pub const File = struct {
         /// Install name for the dylib
         install_name: ?[]const u8,
         /// Path to entitlements file
-        entitlements: ?[]const u8,
+        entitlements: ?Path,
         /// size of the __PAGEZERO segment
         pagezero_size: ?u64,
         /// Set minimum space for future expansion of the load commands
@@ -670,6 +673,7 @@ pub const File = struct {
                 });
             },
             .plan9 => unreachable,
+            .spork8 => dev.check(.spork8_linker),
         }
     }
 
@@ -747,6 +751,7 @@ pub const File = struct {
             },
             .c, .spirv => dev.checkAny(&.{ .c_linker, .spirv_linker }),
             .plan9 => unreachable,
+            .spork8 => dev.check(.spork8_linker),
         }
     }
 
@@ -786,7 +791,6 @@ pub const File = struct {
         }
     }
 
-    /// May be called before or after updateExports for any given Nav.
     /// Asserts that the ZCU is not using the LLVM backend.
     fn updateNav(base: *File, pt: Zcu.PerThread, nav_index: InternPool.Nav.Index) Error!void {
         assert(base.comp.zcu.?.llvm_object == null);
@@ -829,7 +833,6 @@ pub const File = struct {
         }
     }
 
-    /// May be called before or after updateExports for any given Decl.
     /// The active tag of `mir` is determined by the backend used for the module this function is in.
     /// Never called when LLVM is codegenning the ZCU.
     fn updateFunc(
@@ -860,7 +863,7 @@ pub const File = struct {
         {
             const ti = ti_id.resolveFull(&pt.zcu.intern_pool).?;
             const file = pt.zcu.fileByIndex(ti.file);
-            const inst = file.zir.?.instructions.get(@intFromEnum(ti.inst));
+            const inst = file.zir.?.instructions.get(@backingInt(ti.inst));
             assert(inst.tag == .declaration);
         }
 
@@ -969,15 +972,16 @@ pub const File = struct {
         }
     }
 
-    /// This is called for every exported thing. `exports` is almost always
-    /// a list of size 1, meaning that `exported` is exported once. However, it is possible
-    /// to export the same thing with multiple different symbol names (aliases).
-    /// May be called before or after updateDecl for any given Decl.
+    /// This is called once per update, before `flush`.
+    ///
+    /// `export_indices` contains the index of every export from the ZCU which should be performed
+    /// on this update. "Removal" of exports is signaled implicitly by the export being in this
+    /// slice on one update but not the next.
+    ///
     /// Never called when LLVM is codegenning the ZCU.
     pub fn updateExports(
         base: *File,
         pt: Zcu.PerThread,
-        exported: Zcu.Exported,
         export_indices: []const Zcu.Export.Index,
     ) Error!void {
         assert(base.comp.zcu.?.llvm_object == null);
@@ -990,7 +994,7 @@ pub const File = struct {
             .plan9 => unreachable,
             inline else => |tag| {
                 dev.check(tag.devFeature());
-                return @as(*tag.Type(), @fieldParentPtr("base", base)).updateExports(pt, exported, export_indices);
+                return @as(*tag.Type(), @fieldParentPtr("base", base)).updateExports(pt, export_indices);
             },
         }
     }
@@ -1023,6 +1027,7 @@ pub const File = struct {
             .spirv => unreachable,
             .wasm => unreachable,
             .plan9 => unreachable,
+            .spork8 => unreachable,
             inline else => |tag| {
                 dev.check(tag.devFeature());
                 return @as(*tag.Type(), @fieldParentPtr("base", base)).getNavVAddr(pt, nav_index, reloc_info);
@@ -1045,6 +1050,7 @@ pub const File = struct {
             .spirv => unreachable,
             .wasm => unreachable,
             .plan9 => unreachable,
+            .spork8 => unreachable,
             inline else => |tag| {
                 dev.check(tag.devFeature());
                 return @as(*tag.Type(), @fieldParentPtr("base", base)).lowerUav(pt, decl_val, decl_align);
@@ -1062,31 +1068,10 @@ pub const File = struct {
             .spirv => unreachable,
             .wasm => unreachable,
             .plan9 => unreachable,
+            .spork8 => unreachable,
             inline else => |tag| {
                 dev.check(tag.devFeature());
                 return @as(*tag.Type(), @fieldParentPtr("base", base)).getUavVAddr(decl_val, reloc_info);
-            },
-        }
-    }
-
-    /// Never called when LLVM is codegenning the ZCU.
-    pub fn deleteExport(
-        base: *File,
-        exported: Zcu.Exported,
-        name: InternPool.NullTerminatedString,
-    ) void {
-        assert(base.comp.zcu.?.llvm_object == null);
-
-        switch (base.tag) {
-            .lld => unreachable,
-            .plan9 => unreachable,
-
-            .spirv,
-            => {},
-
-            inline else => |tag| {
-                dev.check(tag.devFeature());
-                return @as(*tag.Type(), @fieldParentPtr("base", base)).deleteExport(exported, name);
             },
         }
     }
@@ -1108,6 +1093,7 @@ pub const File = struct {
             .spirv,
             .plan9,
             .lld,
+            .spork8,
             => return .unimplemented,
             inline else => |tag| {
                 dev.check(tag.devFeature());
@@ -1238,11 +1224,11 @@ pub const File = struct {
         }
 
         switch (base.tag) {
-            inline .elf2, .coff2, .wasm => |tag| {
+            inline .elf2, .coff2, .wasm, .c => |tag| {
                 dev.check(tag.devFeature());
                 try @as(*tag.Type(), @fieldParentPtr("base", base)).prelink(base.comp.link_prog_node);
             },
-            else => {},
+            else => base.comp.link_prog_node.completeOne(),
         }
 
         base.post_prelink = true;
@@ -1286,6 +1272,7 @@ pub const File = struct {
         c,
         wasm,
         spirv,
+        spork8,
         plan9,
         lld,
 
@@ -1300,6 +1287,7 @@ pub const File = struct {
                 .spirv => SpirV,
                 .lld => Lld,
                 .plan9 => comptime unreachable,
+                .spork8 => Spork8,
             };
         }
 
@@ -1313,7 +1301,10 @@ pub const File = struct {
                 .c => .c,
                 .spirv => .spirv,
                 .hex => @panic("TODO implement hex object format"),
-                .raw => @panic("TODO implement raw object format"),
+                // This may seem surprising at first, but with a little massaging, the spork8 linker
+                // could and probably should be generalized into a "raw linker" which is used to output
+                // bare machine code for any architecture for which a corresponding backend exists.
+                .raw => .spork8,
             };
         }
 
@@ -1337,7 +1328,7 @@ pub const File = struct {
         // with 0o755 permissions, but it works appropriately if the system is configured
         // more leniently. As another data point, C's fopen seems to open files with the
         // 666 mode.
-        const executable_mode: Io.File.Permissions = if (builtin.target.os.tag == .windows)
+        const executable_mode: Io.File.Permissions = if (builtin.target.os.tag == .windows or std.posix.mode_t == u0)
             .default_file
         else
             .fromMode(0o777);
@@ -1393,6 +1384,7 @@ pub const File = struct {
     pub const Lld = @import("link/Lld.zig");
     pub const C = @import("link/C.zig");
     pub const Coff2 = @import("link/Coff.zig");
+    pub const Spork8 = @import("link/Spork8.zig");
     pub const Elf = @import("link/Elf.zig");
     pub const Elf2 = @import("link/Elf2.zig");
     pub const MachO = @import("link/MachO.zig");
@@ -2127,7 +2119,7 @@ pub fn resolveInputs(
                 continue;
             },
         }
-        @compileError("unreachable");
+        comptime unreachable;
     }
 
     if (failed_libs.items.len > 0) {
@@ -2237,6 +2229,60 @@ fn resolveLibInput(
         };
         errdefer file.close(io);
         return finishResolveLibInput(io, resolved_inputs, archive_dedup, test_path, file, link_mode, name_query.query);
+    }
+
+    // In the case of OpenBSD, dynamic libraries are always versioned, without
+    // unversioned symlinks. OpenBSD patches LLD to select the highest-versioned
+    // shared library, and this code is intended to match that upstream behavior.
+    if (target.isOpenBSDLibC() and link_mode == .dynamic) versioned: {
+        const prefix = try std.fmt.allocPrint(arena, "lib{s}.so.", .{lib_name});
+
+        var dir = lib_directory.handle.openDir(io, ".", .{ .iterate = true }) catch |err| switch (err) {
+            error.NotDir, error.FileNotFound => break :versioned,
+            else => |e| fatal("unable to search for shared library '{s}.*': {s}", .{ prefix, @errorName(e) }),
+        };
+        defer dir.close(io);
+
+        var best_match_major: u32 = 0;
+        var best_match_minor: u32 = 0;
+        var best_match: ?[]const u8 = null;
+
+        var iter = dir.iterate();
+        while (iter.next(io) catch |err| {
+            fatal("unable to scan library directory '{s}'", .{@errorName(err)});
+        }) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.startsWith(u8, entry.name, prefix)) continue;
+
+            const rest = entry.name[prefix.len..];
+            var sit = std.mem.splitScalar(u8, rest, '.');
+            const major_str = sit.next() orelse continue;
+            const minor_str = sit.next() orelse continue;
+            if (sit.next() != null) continue;
+            const major = std.fmt.parseInt(u32, major_str, 10) catch continue;
+            const minor = std.fmt.parseInt(u32, minor_str, 10) catch continue;
+
+            if (major > best_match_major or (major == best_match_major and minor >= best_match_minor)) {
+                best_match_major = major;
+                best_match_minor = minor;
+                best_match = try arena.dupe(u8, entry.name);
+            }
+        }
+
+        if (best_match) |found| {
+            const test_path: Path = .{
+                .root_dir = lib_directory,
+                .sub_path = found,
+            };
+            try checked_paths.print(gpa, "\n  {f}", .{test_path});
+            switch (try resolvePathInputLib(gpa, arena, io, unresolved_inputs, resolved_inputs, ld_script_bytes, archive_dedup, target, .{
+                .path = test_path,
+                .query = name_query.query,
+            }, link_mode, color)) {
+                .no_match => {},
+                .ok => return .ok,
+            }
+        }
     }
 
     return .no_match;

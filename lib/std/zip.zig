@@ -109,7 +109,7 @@ pub const EndRecord = extern struct {
 
     /// TODO audit this logic
     pub fn findBuffer(buffer: []const u8) FindBufferError!EndRecord {
-        const pos = std.mem.lastIndexOf(u8, buffer, &end_record_sig) orelse return error.ZipNoEndRecord;
+        const pos = std.mem.findLast(u8, buffer, &end_record_sig) orelse return error.ZipNoEndRecord;
         if (pos + @sizeOf(EndRecord) > buffer.len) return error.EndOfStream;
         const record_ptr: *EndRecord = @ptrCast(buffer[pos..][0..@sizeOf(EndRecord)]);
         var record = record_ptr.*;
@@ -377,7 +377,7 @@ pub const Iterator = struct {
                 if (end > extra.len)
                     return error.ZipBadExtraFieldSize;
                 const data = extra[extra_offset + 4 .. end];
-                switch (@as(ExtraHeader, @enumFromInt(header_id))) {
+                switch (@as(ExtraHeader, @fromBackingInt(@intCast(header_id)))) {
                     .zip64_info => try readZip64FileExtents(CentralDirectoryFileHeader, header, &extents, data),
                     else => {}, // ignore
                 }
@@ -485,7 +485,7 @@ pub const Iterator = struct {
                         if (end > local_header.extra_len)
                             return error.ZipBadExtraFieldSize;
                         const data = extra[extra_offset + 4 .. end];
-                        switch (@as(ExtraHeader, @enumFromInt(header_id))) {
+                        switch (@as(ExtraHeader, @fromBackingInt(@intCast(header_id)))) {
                             .zip64_info => try readZip64FileExtents(LocalFileHeader, local_header, &extents, data),
                             else => {}, // ignore
                         }

@@ -49,7 +49,7 @@ pub const Case = struct {
     /// In order to be able to run e.g. Execution updates, this must be set
     /// to Executable.
     output_mode: std.builtin.OutputMode,
-    optimize_mode: std.builtin.OptimizeMode = .Debug,
+    optimize_mode: std.builtin.Optimize = .debug,
 
     files: std.array_list.Managed(File),
     case: ?union(enum) {
@@ -389,11 +389,12 @@ fn addFromDirInner(
             const resolved_target = b.resolveTargetQuery(target_query);
             const target = &resolved_target.result;
             for (backends) |backend| {
-                if (backend == .selfhosted and
-                    target.cpu.arch != .aarch64 and target.cpu.arch != .wasm32 and target.cpu.arch != .x86_64 and target.cpu.arch != .spirv64)
-                {
-                    // Other backends don't support new liveness format
-                    continue;
+                if (backend == .selfhosted) {
+                    switch (target.cpu.arch) {
+                        .aarch64, .wasm32, .x86_64, .spirv64, .spirv32 => {},
+                        // Other backends don't support new liveness format
+                        else => continue,
+                    }
                 }
 
                 if (backend == .selfhosted and target.cpu.arch == .aarch64) {
@@ -444,8 +445,6 @@ fn addFromDirInner(
                     const output = try manifest.trailingSplit(ctx.arena);
                     case.addCompareOutput(src, output);
                 },
-                .translate_c => @panic("c_frontend specified for compile case"),
-                .run_translated_c => @panic("c_frontend specified for compile case"),
                 .cli => @panic("TODO cli tests"),
             }
         }
@@ -491,7 +490,7 @@ pub fn lowerToBuildSteps(
 
     for (self.cases.items) |case| {
         for (options.test_filters) |test_filter| {
-            if (std.mem.indexOf(u8, case.name, test_filter)) |_| break;
+            if (std.mem.find(u8, case.name, test_filter)) |_| break;
         } else if (options.test_filters.len > 0) continue;
 
         if (case.case.? == .Error and options.skip_compile_errors) continue;
@@ -524,7 +523,7 @@ pub fn lowerToBuildSteps(
 
         if (options.test_target_filters.len > 0) {
             for (options.test_target_filters) |filter| {
-                if (std.mem.indexOf(u8, triple_txt, filter) != null) break;
+                if (std.mem.find(u8, triple_txt, filter) != null) break;
             } else continue;
         }
 
@@ -675,7 +674,7 @@ const TestManifestConfigDefaults = struct {
         if (std.mem.eql(u8, key, "backend")) {
             return "auto";
         } else if (std.mem.eql(u8, key, "target")) {
-            if (@"type" == .@"error" or @"type" == .translate_c or @"type" == .run_translated_c) {
+            if (@"type" == .@"error") {
                 return "native";
             }
             return comptime blk: {
@@ -688,7 +687,7 @@ const TestManifestConfigDefaults = struct {
                     defaults = defaults ++ arch ++ "-linux" ++ ",";
                 }
                 // macOS
-                for (&[_][]const u8{ "x86_64", "aarch64" }) |arch| {
+                for (&[_][]const u8{"aarch64"}) |arch| {
                     defaults = defaults ++ arch ++ "-macos" ++ ",";
                 }
                 // Windows
@@ -702,8 +701,6 @@ const TestManifestConfigDefaults = struct {
                 .@"error" => "Obj",
                 .run => "Exe",
                 .compile => "Obj",
-                .translate_c => "Obj",
-                .run_translated_c => "Obj",
                 .cli => @panic("TODO test harness for CLI tests"),
             };
         } else if (std.mem.eql(u8, key, "emit_asm")) {
@@ -770,8 +767,6 @@ const TestManifest = struct {
         run,
         cli,
         compile,
-        translate_c,
-        run_translated_c,
     };
 
     const TrailingIterator = struct {
@@ -840,10 +835,6 @@ const TestManifest = struct {
                 break :blk .cli;
             } else if (std.mem.eql(u8, raw, "compile")) {
                 break :blk .compile;
-            } else if (std.mem.eql(u8, raw, "translate-c")) {
-                break :blk .translate_c;
-            } else if (std.mem.eql(u8, raw, "run-translated-c")) {
-                break :blk .run_translated_c;
             } else {
                 std.log.warn("unknown test case type requested: {s}", .{raw});
                 return error.UnknownTestCaseType;

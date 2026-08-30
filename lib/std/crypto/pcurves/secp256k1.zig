@@ -51,7 +51,7 @@ pub const Secp256k1 = struct {
         };
 
         /// Compute r1 and r2 so that k = r1 + r2*lambda (mod L).
-        pub fn splitScalar(s: [32]u8, endian: std.builtin.Endian) NonCanonicalError!SplitScalar {
+        pub fn splitScalar(s: [32]u8, endian: std.lang.Endian) NonCanonicalError!SplitScalar {
             const b1_neg_s = comptime s: {
                 var buf: [32]u8 = undefined;
                 mem.writeInt(u256, &buf, 303414439467246543595250775667605759171, .little);
@@ -102,18 +102,14 @@ pub const Secp256k1 = struct {
         const y = p.y;
         const x3B = x.sq().mul(x).add(B);
         const yy = y.sq();
-        const on_curve = @intFromBool(x3B.equivalent(yy));
-        const is_identity = @intFromBool(x.equivalent(AffineCoordinates.identityElement.x)) & @intFromBool(y.equivalent(AffineCoordinates.identityElement.y));
-        if ((on_curve | is_identity) == 0) {
+        if (!x3B.equivalent(yy)) {
             return error.InvalidEncoding;
         }
-        var ret = Secp256k1{ .x = x, .y = y, .z = Fe.one };
-        ret.z.cMov(Secp256k1.identityElement.z, is_identity);
-        return ret;
+        return .{ .x = x, .y = y, .z = Fe.one };
     }
 
     /// Create a point from serialized affine coordinates.
-    pub fn fromSerializedAffineCoordinates(xs: [32]u8, ys: [32]u8, endian: std.builtin.Endian) (NonCanonicalError || EncodingError)!Secp256k1 {
+    pub fn fromSerializedAffineCoordinates(xs: [32]u8, ys: [32]u8, endian: std.lang.Endian) (NonCanonicalError || EncodingError)!Secp256k1 {
         const x = try Fe.fromBytes(xs, endian);
         const y = try Fe.fromBytes(ys, endian);
         return fromAffineCoordinates(.{ .x = x, .y = y });
@@ -427,7 +423,7 @@ pub const Secp256k1 = struct {
 
     /// Multiply an elliptic curve point by a scalar.
     /// Return error.IdentityElement if the result is the identity element.
-    pub fn mul(p: Secp256k1, s_: [32]u8, endian: std.builtin.Endian) IdentityElementError!Secp256k1 {
+    pub fn mul(p: Secp256k1, s_: [32]u8, endian: std.lang.Endian) IdentityElementError!Secp256k1 {
         const s = if (endian == .little) s_ else Fe.orderSwap(s_);
         if (p.is_base) {
             return pcMul16(&basePointPc, s, false);
@@ -439,7 +435,7 @@ pub const Secp256k1 = struct {
 
     /// Multiply an elliptic curve point by a *PUBLIC* scalar *IN VARIABLE TIME*
     /// This can be used for signature verification.
-    pub fn mulPublic(p: Secp256k1, s_: [32]u8, endian: std.builtin.Endian) (IdentityElementError || NonCanonicalError)!Secp256k1 {
+    pub fn mulPublic(p: Secp256k1, s_: [32]u8, endian: std.lang.Endian) (IdentityElementError || NonCanonicalError)!Secp256k1 {
         const s = if (endian == .little) s_ else Fe.orderSwap(s_);
         const zero = comptime scalar.Scalar.zero.toBytes(.little);
         if (mem.eql(u8, &zero, &s)) {
@@ -501,7 +497,7 @@ pub const Secp256k1 = struct {
 
     /// Double-base multiplication of public parameters - Compute (p1*s1)+(p2*s2) *IN VARIABLE TIME*
     /// This can be used for signature verification.
-    pub fn mulDoubleBasePublic(p1: Secp256k1, s1_: [32]u8, p2: Secp256k1, s2_: [32]u8, endian: std.builtin.Endian) IdentityElementError!Secp256k1 {
+    pub fn mulDoubleBasePublic(p1: Secp256k1, s1_: [32]u8, p2: Secp256k1, s2_: [32]u8, endian: std.lang.Endian) IdentityElementError!Secp256k1 {
         const s1 = if (endian == .little) s1_ else Fe.orderSwap(s1_);
         const s2 = if (endian == .little) s2_ else Fe.orderSwap(s2_);
         try p1.rejectIdentity();
@@ -560,7 +556,5 @@ pub const AffineCoordinates = struct {
 };
 
 test {
-    if (@import("builtin").zig_backend == .stage2_c) return error.SkipZigTest;
-
     _ = @import("tests/secp256k1.zig");
 }

@@ -4,7 +4,7 @@ const std = @import("std");
 const Io = std.Io;
 const Configuration = std.Build.Configuration;
 const assert = std.debug.assert;
-const OptimizeMode = std.lang.OptimizeMode;
+const OptimizeMode = std.lang.Optimize;
 
 const Step = @import("../Step.zig");
 const Maker = @import("../../Maker.zig");
@@ -49,9 +49,9 @@ pub fn make(
 
     const opt: ?OptimizeMode = switch (conf_tc.flags.optimize) {
         .debug, .default => null, // Skip since it's the default
-        .safe => .ReleaseSafe,
-        .fast => .ReleaseFast,
-        .small => .ReleaseSmall,
+        .safe => .safe,
+        .fast => .fast,
+        .small => .small,
     };
     if (opt) |o| argv.appendAssumeCapacity(try arena.print("-O{t}", .{o}));
 

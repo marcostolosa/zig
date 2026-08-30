@@ -78,6 +78,8 @@ comptime {
 
             .@"3ds",
             .wiiu,
+            .@"switch",
+            .gba,
 
             .psx,
             .psp,
@@ -140,14 +142,14 @@ fn EfiMain(handle: uefi.Handle, system_table: *uefi.tables.SystemTable) callconv
             return 0;
         },
         uefi.Status => {
-            return @intFromEnum(root.main());
+            return @backingInt(root.main());
         },
         uefi.Error!void => {
             root.main() catch |err| switch (err) {
                 error.Unexpected => @panic("EfiMain: unexpected error"),
                 else => {
                     const status = uefi.Status.fromError(@errorCast(err));
-                    return @intFromEnum(status);
+                    return @backingInt(status);
                 },
             };
 
@@ -179,7 +181,10 @@ fn _start() callconv(.naked) noreturn {
             .csky => ".cfi_undefined lr",
             .hexagon => ".cfi_undefined r31",
             .kvx => ".cfi_undefined r14",
-            .loongarch32, .loongarch64 => ".cfi_undefined 1",
+            .loongarch32, .loongarch64 => if (builtin.zig_backend == .stage2_loongarch)
+                ""
+            else
+                ".cfi_undefined 1",
             .m68k => ".cfi_undefined %%pc",
             .m88k => ".cfi_undefined %%r1",
             .microblaze, .microblazeel => "", // No CFI support.
@@ -214,6 +219,32 @@ fn _start() callconv(.naked) noreturn {
     // kernel is usually good about upholding the ABI guarantees, the same cannot be said of dynamic
     // linkers; musl's ldso, for example, opts to not align the stack when invoking the dynamic
     // linker explicitly.
+    if (builtin.zig_backend == .stage2_loongarch) {
+        // TODO: need "X" constraint support
+        asm volatile (switch (native_arch) {
+                .loongarch32 =>
+                \\ move $fp, $zero
+                \\ move $ra, $zero
+                \\ move $a0, $sp
+                \\ srli.w $sp, $sp, 4
+                \\ slli.w $sp, $sp, 4
+                \\ jirl $ra, %[posixCallMainAndExit], 0
+                ,
+                .loongarch64 =>
+                \\ move $fp, $zero
+                \\ move $ra, $zero
+                \\ move $a0, $sp
+                \\ bstrins.d $sp, $zero, 3, 0
+                \\ jirl $ra, %[posixCallMainAndExit], 0
+                ,
+                else => unreachable,
+            }
+            :
+            : [posixCallMainAndExit] "r" (&posixCallMainAndExit),
+            : .{ .r1 = true, .r4 = true, .r22 = true });
+        unreachable;
+    }
+
     asm volatile (switch (native_arch) {
             .x86_64 =>
             \\ xorl %%ebp, %%ebp
@@ -246,7 +277,7 @@ fn _start() callconv(.naked) noreturn {
             \\ mov $30, $16
             \\ ldi $1, -16
             \\ and $30, $30, $1
-            \\ jsr $26, %[posixCallMainAndExit]
+            \\ br $31, %[posixCallMainAndExit]
             ,
             .arc, .arceb =>
             // ARC v1 and v2 had a very low stack alignment requirement of 4; v3 increased it to 16.
@@ -275,14 +306,16 @@ fn _start() callconv(.naked) noreturn {
             // `_DYNAMIC` as well.
             // r8 = FP
             \\ grs t0, 1f
-            \\ 1:
+            \\1:
             \\ lrw gb, 1b@GOTPC
             \\ addu gb, t0
             \\ movi r8, 0
             \\ movi lr, 0
             \\ mov a0, sp
-            \\ andi sp, sp, -8
-            \\ jmpi %[posixCallMainAndExit]
+            \\ andni sp, sp, 7
+            \\ lrw t1, %[posixCallMainAndExit]@GOTOFF
+            \\ addu t1, gb
+            \\ jmp t1
             ,
             .hexagon =>
             // r29 = SP, r30 = FP, r31 = LR
@@ -292,7 +325,7 @@ fn _start() callconv(.naked) noreturn {
             \\ r29 = and(r29, #-8)
             \\ memw(r29 + #-8) = r29
             \\ r29 = add(r29, #-8)
-            \\ call %[posixCallMainAndExit]
+            \\ jump %[posixCallMainAndExit]
             ,
             .kvx =>
             \\ make $fp = 0
@@ -323,15 +356,17 @@ fn _start() callconv(.naked) noreturn {
             \\ l.ori r2, r0, 0
             \\ l.ori r9, r0, 0
             \\ l.ori r3, r1, 0
-            \\ l.andi r1, r1, -4
-            \\ l.jal %[posixCallMainAndExit]
+            \\ l.addi r13, r0, -4
+            \\ l.and r1, r1, r13
+            \\ l.j %[posixCallMainAndExit]
+            \\  l.nop
             ,
             .riscv32, .riscv32be, .riscv64, .riscv64be =>
             \\ li fp, 0
             \\ li ra, 0
             \\ mv a0, sp
             \\ andi sp, sp, -16
-            \\ tail %[posixCallMainAndExit]@plt
+            \\ tail %[posixCallMainAndExit]
             ,
             .m68k =>
             // Note that the - 8 is needed because pc in the jsr instruction points into the middle
@@ -353,7 +388,7 @@ fn _start() callconv(.naked) noreturn {
             \\ or %%r1, %%r0, %%r0
             \\ or %%r2, %%r31, %%r0
             \\ clr %%r31, %%r31, 4<0>
-            \\ br.n %[posixCallMainAndExit]
+            \\ br %[posixCallMainAndExit]
             ,
             .microblaze, .microblazeel =>
             // r1 = SP, r15 = LR, r19 = FP, r20 = GP
@@ -363,7 +398,7 @@ fn _start() callconv(.naked) noreturn {
             \\ addi r20, r20, _GLOBAL_OFFSET_TABLE_ + 8
             \\ ori r5, r1, 0
             \\ andi r1, r1, -4
-            \\ brlid r15, %[posixCallMainAndExit]
+            \\ bri %[posixCallMainAndExit]
             ,
             .mips, .mipsel =>
             \\ move $fp, $zero
@@ -382,7 +417,7 @@ fn _start() callconv(.naked) noreturn {
             \\ move $a0, $sp
             \\ and $sp, -8
             \\ subu $sp, $sp, 16
-            \\ jalr $t9
+            \\ jr $t9
             ,
             .mips64, .mips64el => switch (builtin.abi) {
                 .gnuabin32, .muslabin32, .abin32 =>
@@ -398,9 +433,9 @@ fn _start() callconv(.naked) noreturn {
                 \\ addu $t9, $t9, $gp
                 \\ move $ra, $zero
                 \\ move $a0, $sp
-                \\ and $sp, -8
+                \\ and $sp, -16
                 \\ subu $sp, $sp, 16
-                \\ jalr $t9
+                \\ jr $t9
                 ,
                 else =>
                 \\ move $fp, $zero
@@ -421,7 +456,7 @@ fn _start() callconv(.naked) noreturn {
                 \\ move $a0, $sp
                 \\ and $sp, -16
                 \\ dsubu $sp, $sp, 16
-                \\ jalr $t9
+                \\ jr $t9
                 ,
             },
             .powerpc, .powerpcle =>
@@ -433,7 +468,7 @@ fn _start() callconv(.naked) noreturn {
             \\ stwu 1, -16(1)
             \\ stw 0, 0(1)
             \\ li 31, 0
-            \\ mtlr 0
+            \\ mtlr 31
             \\ b %[posixCallMainAndExit]
             ,
             .powerpc64, .powerpc64le =>
@@ -446,7 +481,7 @@ fn _start() callconv(.naked) noreturn {
             \\ li 0, 0
             \\ stdu 0, -32(1)
             \\ li 31, 0
-            \\ mtlr 0
+            \\ mtlr 31
             \\ b %[posixCallMainAndExit]
             \\ nop
             ,
@@ -471,12 +506,14 @@ fn _start() callconv(.naked) noreturn {
             \\ mov r15, r4
             \\ mov #-4, r0
             \\ and r0, r15
+            \\ mova 2f, r0
             \\ mov.l 2f, r1
-            \\1:
-            \\ bsrf r1
-            \\2:
+            \\ add r0, r1
+            \\ jmp @r1
+            \\  nop
             \\ .balign 4
-            \\ .long %[posixCallMainAndExit]@PCREL - (1b + 4 - .)
+            \\1:
+            \\ .long %[posixCallMainAndExit] - .
             ,
             .sparc =>
             // argc is stored after a register window (16 registers * 4 bytes).
@@ -588,7 +625,7 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
                 else => continue,
             }
         }
-        break :init @as([*]elf.Phdr, @ptrFromInt(at_phdr))[0..at_phnum];
+        break :init @as([*]elf.ElfN.Phdr, @ptrFromInt(at_phdr))[0..at_phnum];
     };
 
     // Apply the initial relocations as early as possible in the startup process. We cannot
@@ -620,7 +657,7 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
             std.os.linux.tls.initStatic(phdrs);
         }
 
-        // The way Linux executables represent stack size is via the PT_GNU_STACK
+        // The way Linux executables represent stack size is via the PT.GNU_STACK
         // program header. However the kernel does not recognize it; it always gives 8 MiB.
         // Here we look for the stack size in our program headers and use setrlimit
         // to ask for more stack space.
@@ -644,19 +681,19 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
     std.process.exit(callMainWithArgs(argc, argv, envp));
 }
 
-fn expandStackSize(phdrs: []elf.Phdr) void {
+fn expandStackSize(phdrs: []elf.ElfN.Phdr) void {
     @disableInstrumentation();
     for (phdrs) |*phdr| {
-        switch (phdr.p_type) {
-            elf.PT_GNU_STACK => {
-                if (phdr.p_memsz == 0) break;
-                assert(phdr.p_memsz % std.heap.page_size_min == 0);
+        switch (phdr.type) {
+            .GNU_STACK => {
+                if (phdr.memsz == 0) break;
+                assert(phdr.memsz % std.heap.page_size_min == 0);
 
                 // Silently fail if we are unable to get limits.
                 const limits = std.posix.getrlimit(.STACK) catch break;
 
                 // Clamp to limits.max .
-                const wanted_stack_size = @min(phdr.p_memsz, limits.max);
+                const wanted_stack_size = @min(phdr.memsz, limits.max);
 
                 if (wanted_stack_size > limits.cur) {
                     std.posix.setrlimit(.STACK, .{
@@ -701,7 +738,7 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) cal
         .linux => {
             const at_phdr = std.c.getauxval(elf.AT_PHDR);
             const at_phnum = std.c.getauxval(elf.AT_PHNUM);
-            const phdrs = (@as([*]elf.Phdr, @ptrFromInt(at_phdr)))[0..at_phnum];
+            const phdrs = (@as([*]elf.ElfN.Phdr, @ptrFromInt(at_phdr)))[0..at_phnum];
             expandStackSize(phdrs);
         },
         .windows => {
@@ -741,8 +778,8 @@ fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
 const bad_main_ret = "expected return type of main to be 'void', '!void', 'noreturn', 'u8', or '!u8'";
 
 const use_safe_allocator = !is_wasm and switch (builtin.mode) {
-    .Debug, .ReleaseSafe => true,
-    .ReleaseFast, .ReleaseSmall => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
+    .debug, .safe => true,
+    .fast, .small => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
 };
 var safe_allocator: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
 

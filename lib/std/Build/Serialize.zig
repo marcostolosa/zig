@@ -75,7 +75,7 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
             // Add and then de-duplicate dependencies.
             const dep_steps = try arena.alloc(Configuration.Step.Index, step.dependencies.items.len);
             for (dep_steps, step.dependencies.items) |*dest, src|
-                dest.* = @enumFromInt(s.step_map.getIndex(src).?);
+                dest.* = @fromBackingInt(@intCast(s.step_map.getIndex(src).?));
 
             const deps: Configuration.Deps.Index = try wc.addDeduped(Configuration.Deps, .{
                 .steps = .{ .slice = dep_steps },
@@ -87,7 +87,7 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                 .owner = try s.builderToPackage(step.owner),
                 .deps = deps,
                 .max_rss = .fromBytes(step.max_rss),
-                .extended = @enumFromInt(switch (step.tag) {
+                .extended = @fromBackingInt(@intCast(switch (step.tag) {
                     .top_level => e: {
                         const top_level: *Step.TopLevel = @fieldParentPtr("step", step);
                         break :e try wc.addExtraErased(Configuration.Step.TopLevel, .{
@@ -133,6 +133,7 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                                 .import_symbols = c.import_symbols,
                                 .import_table = c.import_table,
                                 .export_table = c.export_table,
+                                .growable_table = c.growable_table,
                                 .shared_memory = c.shared_memory,
                                 .link_eh_frame_hdr = c.link_eh_frame_hdr,
                                 .link_emit_relocs = c.link_emit_relocs,
@@ -168,8 +169,6 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                                 .linkage = .init(c.linkage),
                             },
                             .flags3 = .{
-                                .is_linking_libc = c.is_linking_libc,
-                                .is_linking_libcpp = c.is_linking_libcpp,
                                 .version = c.version != null,
                                 .compress_debug_sections = c.compress_debug_sections,
                                 .initial_memory = c.initial_memory != null,
@@ -445,14 +444,21 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                                 },
                                 .expect_term => |t| expect_term = switch (t) {
                                     .exited => |x| .{ .status = .exited, .value = x },
-                                    .signal => |x| .{ .status = .signal, .value = @intFromEnum(x) },
-                                    .stopped => |x| .{ .status = .stopped, .value = @intFromEnum(x) },
+                                    .signal => |x| .{ .status = .signal, .value = @backingInt(x) },
+                                    .stopped => |x| .{ .status = .stopped, .value = @backingInt(x) },
                                     .unknown => |x| .{ .status = .unknown, .value = x },
                                 },
                                 .expect_stderr_snapshot => |path| expect_stderr_snapshot = try s.addLazyPath(path),
                                 .expect_stdout_snapshot => |path| expect_stdout_snapshot = try s.addLazyPath(path),
                             },
                             else => {},
+                        }
+                        const preopens = try arena.alloc(
+                            Configuration.Step.Run.Preopen,
+                            run.preopens.count(),
+                        );
+                        for (preopens, run.preopens.keys(), run.preopens.values()) |*dest, name, path| {
+                            dest.* = .{ .name = name, .path = try s.addLazyPath(path) };
                         }
 
                         break :e try wc.addExtraErased(Configuration.Step.Run, .{
@@ -482,6 +488,7 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                                 .captured_stdout = run.captured_stdout != null,
                                 .captured_stderr = run.captured_stderr != null,
                                 .environ_map = run.environ_map != null,
+                                .preopens = run.preopens.count() > 0,
                             },
                             .flags2 = .{
                                 .expect_stderr_exact = expect_stderr_exact != null,
@@ -496,8 +503,7 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                             .file_inputs = .{ .slice = try s.initLazyPathList(run.file_inputs.items) },
                             .args = .{ .slice = try s.initArgsList(run.argv.items) },
                             .cwd = .{ .value = try s.addOptionalLazyPath(run.cwd) },
-                            .preopen_names = .{ .slice = try s.initStringList(run.preopens.keys()) },
-                            .preopen_paths = .{ .slice = try s.initLazyPathList(run.preopens.values()) },
+                            .preopens = .{ .slice = preopens },
                             .captured_stdout = .{ .value = if (run.captured_stdout) |cs| .{
                                 .basename = try wc.addString(cs.basename),
                                 .generated_file = cs.generated_file,
@@ -656,7 +662,7 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                             .args = .{ .slice = args },
                         });
                     },
-                }),
+                })),
             });
         }
     }
@@ -734,7 +740,7 @@ fn builderToPackage(s: *Serialize, b: *std.Build) !Configuration.Package.Index {
 
 fn addOptionalLazyPathEnum(s: *Serialize, lp: ?std.Build.LazyPath) !Configuration.LazyPath.OptionalIndex {
     const wc = s.wc;
-    return @enumFromInt(switch (lp orelse return .none) {
+    return @fromBackingInt(@intCast(switch (lp orelse return .none) {
         .src_path => |src_path| i: {
             const sub_path = try wc.addString(src_path.sub_path);
             break :i try wc.addExtraErased(Configuration.LazyPath.SourcePath, .{
@@ -770,7 +776,7 @@ fn addOptionalLazyPathEnum(s: *Serialize, lp: ?std.Build.LazyPath) !Configuratio
                 .sub_path = sub_path,
             });
         },
-    });
+    }));
 }
 
 fn addOptionalLazyPath(s: *Serialize, lp: ?std.Build.LazyPath) !?Configuration.LazyPath.Index {
@@ -778,7 +784,7 @@ fn addOptionalLazyPath(s: *Serialize, lp: ?std.Build.LazyPath) !?Configuration.L
 }
 
 fn addLazyPath(s: *Serialize, lp: std.Build.LazyPath) !Configuration.LazyPath.Index {
-    return @enumFromInt(@intFromEnum(try addOptionalLazyPathEnum(s, lp)));
+    return @fromBackingInt(@intCast(@backingInt(try addOptionalLazyPathEnum(s, lp))));
 }
 
 fn addOptionalSemVer(s: *Serialize, sem_ver: ?std.SemanticVersion) !?Configuration.String {
@@ -1012,6 +1018,101 @@ fn initArgsList(s: *Serialize, args: []const Step.Run.Arg) ![]const Configuratio
                 .producer = .{ .value = null },
                 .generated = .{ .value = null },
             },
+            .enable_darling => |a| .{
+                .flags = .{
+                    .tag = .enable_darling,
+                    .prefix = a.enabled != null,
+                    .suffix = a.disabled != null,
+                    .basename = false,
+                    .path = false,
+                    .producer = false,
+                    .generated = false,
+                    .dep_file = false,
+                    .make_absolute = false,
+                },
+                .prefix = .{ .value = try s.addOptionalString(a.enabled) },
+                .suffix = .{ .value = try s.addOptionalString(a.disabled) },
+                .basename = .{ .value = null },
+                .path = .{ .value = null },
+                .producer = .{ .value = null },
+                .generated = .{ .value = null },
+            },
+            .enable_qemu => |a| .{
+                .flags = .{
+                    .tag = .enable_qemu,
+                    .prefix = a.enabled != null,
+                    .suffix = a.disabled != null,
+                    .basename = false,
+                    .path = false,
+                    .producer = false,
+                    .generated = false,
+                    .dep_file = false,
+                    .make_absolute = false,
+                },
+                .prefix = .{ .value = try s.addOptionalString(a.enabled) },
+                .suffix = .{ .value = try s.addOptionalString(a.disabled) },
+                .basename = .{ .value = null },
+                .path = .{ .value = null },
+                .producer = .{ .value = null },
+                .generated = .{ .value = null },
+            },
+            .enable_rosetta => |a| .{
+                .flags = .{
+                    .tag = .enable_rosetta,
+                    .prefix = a.enabled != null,
+                    .suffix = a.disabled != null,
+                    .basename = false,
+                    .path = false,
+                    .producer = false,
+                    .generated = false,
+                    .dep_file = false,
+                    .make_absolute = false,
+                },
+                .prefix = .{ .value = try s.addOptionalString(a.enabled) },
+                .suffix = .{ .value = try s.addOptionalString(a.disabled) },
+                .basename = .{ .value = null },
+                .path = .{ .value = null },
+                .producer = .{ .value = null },
+                .generated = .{ .value = null },
+            },
+            .enable_wasmtime => |a| .{
+                .flags = .{
+                    .tag = .enable_wasmtime,
+                    .prefix = a.enabled != null,
+                    .suffix = a.disabled != null,
+                    .basename = false,
+                    .path = false,
+                    .producer = false,
+                    .generated = false,
+                    .dep_file = false,
+                    .make_absolute = false,
+                },
+                .prefix = .{ .value = try s.addOptionalString(a.enabled) },
+                .suffix = .{ .value = try s.addOptionalString(a.disabled) },
+                .basename = .{ .value = null },
+                .path = .{ .value = null },
+                .producer = .{ .value = null },
+                .generated = .{ .value = null },
+            },
+            .enable_wine => |a| .{
+                .flags = .{
+                    .tag = .enable_wine,
+                    .prefix = a.enabled != null,
+                    .suffix = a.disabled != null,
+                    .basename = false,
+                    .path = false,
+                    .producer = false,
+                    .generated = false,
+                    .dep_file = false,
+                    .make_absolute = false,
+                },
+                .prefix = .{ .value = try s.addOptionalString(a.enabled) },
+                .suffix = .{ .value = try s.addOptionalString(a.disabled) },
+                .basename = .{ .value = null },
+                .path = .{ .value = null },
+                .producer = .{ .value = null },
+                .generated = .{ .value = null },
+            },
         });
     }
     return result;
@@ -1163,17 +1264,17 @@ fn addModule(s: *Serialize, m: *std.Build.Module) !Configuration.Module.Index {
 
     comptime assert(std.mem.eql(u8, @typeInfo(Configuration.Module).@"struct".field_names[2], "import_table"));
     comptime assert(@typeInfo(Configuration.Module).@"struct".field_types[2] == Configuration.ImportTable.Index);
-    assert(wc.extra.items[@intFromEnum(module_index) + 2] == @intFromEnum(Configuration.ImportTable.Index.invalid));
+    assert(wc.extra.items[@backingInt(module_index) + 2] == @backingInt(Configuration.ImportTable.Index.invalid));
     const import_table_index = try wc.addDeduped(Configuration.ImportTable, .{
         .imports = .{ .mal = imports },
     });
-    wc.extra.items[@intFromEnum(module_index) + 2] = @intFromEnum(import_table_index);
+    wc.extra.items[@backingInt(module_index) + 2] = @backingInt(import_table_index);
 
     return module_index;
 }
 
 fn stepIndex(s: *const Serialize, step: *Step) Configuration.Step.Index {
-    return @enumFromInt(s.step_map.getIndex(step).?);
+    return @fromBackingInt(@intCast(s.step_map.getIndex(step).?));
 }
 
 fn addOptionalResolvedTarget(

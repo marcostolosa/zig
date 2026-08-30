@@ -125,8 +125,6 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
             const files = files_buf[0..files_index];
 
             return comp.build_crt_file("crt0", .Obj, .@"openbsd libc Scrt0.o", prog_node, files, .{
-                // Unclear why OpenBSD does this, but we'll do the same.
-                .omit_frame_pointer = if (target.cpu.arch.isX86()) false else null,
                 .pic = true,
             });
         },
@@ -329,8 +327,10 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
     man.hash.add(target.abi);
     man.hash.add(target_version);
 
-    const full_abilists_path = try comp.dirs.zig_lib.join(arena, &.{abilists_path});
-    const abilists_index = try man.addFile(full_abilists_path, abilists_max_size);
+    const abilists_index = try man.addFilePath(.{
+        .root_dir = comp.dirs.zig_lib,
+        .sub_path = abilists_path,
+    }, abilists_max_size);
 
     if (try man.hit(prog_node)) {
         const digest = man.final();
@@ -649,7 +649,6 @@ fn buildSharedLib(
             .omit_frame_pointer = comp.root_mod.omit_frame_pointer,
             .valgrind = false,
             .optimize_mode = optimize_mode,
-            .structured_cfg = comp.root_mod.structured_cfg,
         },
         .global = config,
         .cc_argv = &.{},

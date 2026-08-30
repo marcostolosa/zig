@@ -1,6 +1,6 @@
 b: *Build,
 step: *Step,
-optimize: std.builtin.OptimizeMode,
+optimize: std.builtin.Optimize,
 target: std.Build.ResolvedTarget,
 target_desc: []const u8,
 use_llvm: bool,
@@ -8,12 +8,12 @@ use_lld: bool,
 link_libc: bool,
 test_filters: []const []const u8,
 update_step: ?*Step.UpdateSourceFiles,
-updated_snapshots: std.StringArrayHashMapUnmanaged(void),
+updated_snapshots: std.array_hash_map.String(void),
 max_rss: usize,
 
 pub fn includeTest(self: *Link, prefix: []const u8) ?Case {
     if (for (self.test_filters) |filter| {
-        if (std.mem.containsAtLeast(u8, prefix, 1, filter)) break false;
+        if (std.mem.find(u8, prefix, filter)) |_| break false;
     } else self.test_filters.len > 0) return null;
 
     return .{

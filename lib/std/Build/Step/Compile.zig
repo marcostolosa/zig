@@ -45,6 +45,7 @@ import_symbols: bool = false,
 /// (WebAssembly) import function table from the host environment
 import_table: bool = false,
 export_table: bool = false,
+growable_table: bool = false,
 initial_memory: ?u64 = null,
 max_memory: ?u64 = null,
 shared_memory: bool = false,
@@ -101,7 +102,7 @@ each_lib_rpath: ?bool = null,
 /// This option overrides the CLI argument passed to `zig build`.
 build_id: ?std.zig.BuildId = null,
 
-/// Create a .eh_frame_hdr section and a PT_GNU_EH_FRAME segment in the ELF
+/// Create a .eh_frame_hdr section and a PT.GNU_EH_FRAME segment in the ELF
 /// file.
 link_eh_frame_hdr: bool = false,
 link_emit_relocs: bool = false,
@@ -219,11 +220,6 @@ expect_errors: ?ExpectedCompileErrors = null,
 /// The maximum number of distinct errors within a compilation step Defaults to
 /// `std.math.maxInt(u16)`. Overrides the argument passed to `zig build`.
 error_limit: ?u32 = null,
-
-/// Computed during make().
-is_linking_libc: bool = false,
-/// Computed during make().
-is_linking_libcpp: bool = false,
 
 /// Enables coverage instrumentation that is only useful if you are using third
 /// party fuzzers that depend on it. Otherwise, slows down the instrumented
@@ -375,7 +371,7 @@ pub fn create(owner: *std.Build, options: Options) *Compile {
     const graph = owner.graph;
     const arena = graph.arena;
 
-    const name = owner.dupe(options.name);
+    const name = owner.graph.dupeString(options.name);
     if (mem.find(u8, name, "/") != null or mem.find(u8, name, "\\") != null) {
         panic("invalid name: '{s}'. It looks like a file path, but it is supposed to be the library or application name.", .{name});
     }
@@ -390,7 +386,7 @@ pub fn create(owner: *std.Build, options: Options) *Compile {
             @tagName(options.kind)
         else
             owner.fmt("{t} {s}", .{ options.kind, name }),
-        @tagName(options.root_module.optimize orelse .Debug),
+        @tagName(options.root_module.optimize orelse .debug),
         resolved_target.query.zigTriple(arena) catch @panic("OOM"),
     });
 
@@ -645,7 +641,7 @@ pub fn producesPdbFile(compile: *Compile) bool {
     if (target.ofmt == .c) return false;
     if (compile.use_llvm == false) return false;
     if (compile.root_module.strip == true or
-        (compile.root_module.strip == null and compile.root_module.optimize == .ReleaseSmall))
+        (compile.root_module.strip == null and compile.root_module.optimize == .small))
     {
         return false;
     }

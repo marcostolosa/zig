@@ -11,6 +11,7 @@ const File = std.Io.File;
 const Io = std.Io;
 const Dir = std.Io.Dir;
 const Path = std.Build.Cache.Path;
+const Reader = std.Io.Reader;
 const Writer = std.Io.Writer;
 const assert = std.debug.assert;
 const fatal = std.process.fatal;
@@ -19,6 +20,8 @@ const log = std.log;
 const mem = std.mem;
 const process = std.process;
 const Color = std.zig.Color;
+const Client = std.zig.Client;
+const Server = std.zig.Server;
 const EnvVar = std.zig.EnvVar;
 const default_local_zig_cache_basename = std.zig.default_local_zig_cache_basename;
 const stringToEnum = std.meta.stringToEnum;
@@ -41,6 +44,10 @@ gpa: Allocator,
 graph: *Graph,
 install_paths: InstallPaths,
 scanned_config: *const ScannedConfig,
+/// Includes an extra auto-generated placeholder Step at the end that indicates
+/// configure must be rerun. It is done this way so that the hot path of file
+/// system watching does not need to make any special cases, and to avoid more
+/// OS-specific logic in file system watching implementation.
 steps: []Step,
 generated_files: []Path,
 run_args: ?[]const []const u8,
@@ -51,9 +58,13 @@ max_rss_mutex: Io.Mutex,
 skip_oom_steps: bool,
 unit_test_timeout_ns: ?u64,
 watch: bool,
+protocol_server: ?*AvoidableServer,
+protocol_server_mutex: Io.Mutex,
 web_server: ?*AvoidableWebServer,
 /// Allocated into `gpa`.
 memory_blocked_steps: std.ArrayList(Configuration.Step.Index),
+/// Allocated into `gpa`.
+initial_steps: std.array_hash_map.Auto(Configuration.Step.Index, void),
 /// Allocated into `gpa`.
 step_stack: std.array_hash_map.Auto(Configuration.Step.Index, void),
 pkg_config: PkgConfig,
@@ -67,12 +78,13 @@ var stdio_buffer_allocation: [256]u8 = undefined;
 var stdout_writer_allocation: Io.File.Writer = undefined;
 var debug_maker_leaks: bool = false;
 
+const AvoidableServer = if (builtin.single_threaded) void else Server;
 const AvoidableWebServer = if (builtin.single_threaded) void else WebServer;
 
-const is_debug_mode = builtin.mode == .Debug;
+const is_debug_mode = builtin.mode == .debug;
 const use_safe_allocator = switch (builtin.mode) {
-    .Debug, .ReleaseSafe => true,
-    .ReleaseFast, .ReleaseSmall => false,
+    .debug, .safe => true,
+    .fast, .small => false,
 };
 
 const InstallPaths = struct {
@@ -164,12 +176,12 @@ pub fn main(init: process.Init.Minimal) !void {
 
     const cwd: Dir = .cwd();
 
-    const zig_lib_directory: Cache.Directory = .{
+    const zig_lib_directory: Cache.Directory = if (std.mem.eql(u8, zig_lib_arg, ".")) .cwd() else .{
         .path = zig_lib_arg,
         .handle = try cwd.openDir(io, zig_lib_arg, .{}),
     };
 
-    const global_cache_directory: Cache.Directory = .{
+    const global_cache_directory: Cache.Directory = if (std.mem.eql(u8, global_cache_arg, ".")) .cwd() else .{
         .path = global_cache_arg,
         .handle = try cwd.createDirPathOpen(io, global_cache_arg, .{}),
     };
@@ -213,9 +225,10 @@ pub fn main(init: process.Init.Minimal) !void {
     var skip_oom_steps = false;
     var test_timeout_ns: ?u64 = null;
     var color: Color = .settingFromEnvironment(&graph.environ_map);
-    var watch = false;
+    var watch_flag = false;
     var fuzz: ?Fuzz.Mode = null;
     var debounce_interval_ms: u16 = 50;
+    var listen: bool = false;
     var webui_listen: ?Io.net.IpAddress = null;
     var debug_pkg_config = false;
     var run_args: ?[]const []const u8 = null;
@@ -239,6 +252,12 @@ pub fn main(init: process.Init.Minimal) !void {
     if (EnvVar.ZIG_BUILD_MULTILINE_ERRORS.get(&graph.environ_map)) |str| {
         if (stringToEnum(MultilineErrors, str)) |style| {
             multiline_errors = style;
+        }
+    }
+
+    if (EnvVar.ZIG_BUILD_SUMMARY.get(&graph.environ_map)) |str| {
+        if (stringToEnum(Summary, str)) |value| {
+            summary = value;
         }
     }
 
@@ -273,9 +292,7 @@ pub fn main(init: process.Init.Minimal) !void {
                 try cached_passthru_configure.append(arena, @intCast(configure_argv.items.len));
                 configure_argv.appendAssumeCapacity(arg);
             } else if (mem.eql(u8, arg, "--color")) {
-                const next_arg = nextArgOrFatal(args, &arg_i);
-                color = stringToEnum(Color, next_arg) orelse
-                    fatalWithHint("expected [auto|on|off] found {q}", .{next_arg});
+                color = nextEnumArg(args, &arg_i, Color);
 
                 try cached_passthru_configure.append(arena, @intCast(configure_argv.items.len));
                 configure_argv.appendAssumeCapacity(try arena.print("--color={t}", .{color}));
@@ -382,25 +399,11 @@ pub fn main(init: process.Init.Minimal) !void {
             } else if (mem.eql(u8, arg, "--libc")) {
                 graph.libc_file = nextArgOrFatal(args, &arg_i);
             } else if (mem.eql(u8, arg, "--error-style")) {
-                const next_arg = nextArg(args, &arg_i) orelse
-                    fatalWithHint("expected style after {q}", .{arg});
-                error_style = stringToEnum(ErrorStyle, next_arg) orelse {
-                    fatalWithHint("expected style after {q}, found {q}", .{ arg, next_arg });
-                };
+                error_style = nextEnumArg(args, &arg_i, ErrorStyle);
             } else if (mem.eql(u8, arg, "--multiline-errors")) {
-                const next_arg = nextArg(args, &arg_i) orelse
-                    fatalWithHint("expected style after {q}", .{arg});
-                multiline_errors = stringToEnum(MultilineErrors, next_arg) orelse {
-                    fatalWithHint("expected style after {q}, found {q}", .{ arg, next_arg });
-                };
+                multiline_errors = nextEnumArg(args, &arg_i, MultilineErrors);
             } else if (mem.eql(u8, arg, "--summary")) {
-                const next_arg = nextArg(args, &arg_i) orelse
-                    fatalWithHint("expected [all|new|failures|line|none] after {q}", .{arg});
-                summary = stringToEnum(Summary, next_arg) orelse {
-                    fatalWithHint("expected [all|new|failures|line|none] after {q}, found {q}", .{
-                        arg, next_arg,
-                    });
-                };
+                summary = nextEnumArg(args, &arg_i, Summary);
             } else if (mem.cutPrefix(u8, arg, "--seed=")) |rest| {
                 graph.random_seed = parseRandomSeed(rest);
             } else if (mem.eql(u8, arg, "--build-id")) {
@@ -416,6 +419,8 @@ pub fn main(init: process.Init.Minimal) !void {
                         next_arg, err,
                     });
                 };
+            } else if (mem.eql(u8, arg, "--listen=-")) {
+                listen = true;
             } else if (mem.eql(u8, arg, "--webui")) {
                 if (webui_listen == null) webui_listen = .{ .ip6 = .loopback(0) };
             } else if (mem.startsWith(u8, arg, "--webui=")) {
@@ -435,9 +440,9 @@ pub fn main(init: process.Init.Minimal) !void {
             } else if (mem.eql(u8, arg, "--debug-pkg-config")) {
                 debug_pkg_config = true;
             } else if (mem.eql(u8, arg, "--debug-rt")) {
-                graph.debug_compiler_runtime_libs = .Debug;
+                graph.debug_compiler_runtime_libs = .debug;
             } else if (mem.cutPrefix(u8, arg, "--debug-rt=")) |rest| {
-                graph.debug_compiler_runtime_libs = stringToEnum(std.lang.OptimizeMode, rest) orelse
+                graph.debug_compiler_runtime_libs = stringToEnum(std.lang.Optimize, rest) orelse
                     fatal("unrecognized optimization mode: {s}", .{rest});
             } else if (is_debug_mode and mem.eql(u8, arg, "--debug-maker-leaks")) {
                 debug_maker_leaks = true;
@@ -453,7 +458,7 @@ pub fn main(init: process.Init.Minimal) !void {
             } else if (mem.eql(u8, arg, "--verbose-llvm-ir")) {
                 graph.verbose_llvm_ir = true;
             } else if (mem.eql(u8, arg, "--watch")) {
-                watch = true;
+                watch_flag = true;
             } else if (mem.eql(u8, arg, "--time-report")) {
                 graph.time_report = true;
                 if (webui_listen == null) webui_listen = .{ .ip6 = .loopback(0) };
@@ -553,17 +558,18 @@ pub fn main(init: process.Init.Minimal) !void {
     }
 
     const early_exit_mode = fetch_only or help_menu or steps_menu or print_configuration != .none;
-    const server_mode = !early_exit_mode and (watch or webui_listen != null or fuzz != null);
+    const server_mode = !early_exit_mode and (watch_flag or webui_listen != null or fuzz != null or listen);
 
     process.raiseFileDescriptorLimit();
 
     const cwd_path = std.zig.getResolvedCwd(io, arena) catch |err|
         fatal("resolving current directory path failed: {t}", .{err});
 
-    const build_root = try findBuildRoot(arena, io, .{
+    var build_root = try findBuildRoot(arena, io, .{
         .cwd_path = cwd_path,
         .build_file = build_file,
     });
+    defer build_root.deinit(io);
 
     graph.build_root_directory = build_root.directory;
     graph.local_cache_root = if (override_local_cache_dir) |unresolved_path| std.zig.Directories.openUnresolved(
@@ -573,7 +579,7 @@ pub fn main(init: process.Init.Minimal) !void {
         unresolved_path,
         .@"local cache",
     ) else .{
-        .path = try Dir.path.join(arena, &.{ build_root.directory.path orelse ".", default_local_zig_cache_basename }),
+        .path = try build_root.directory.join(arena, &.{default_local_zig_cache_basename}),
         .handle = try build_root.directory.handle.createDirPathOpen(io, default_local_zig_cache_basename, .{}),
     };
     graph.cache = .{
@@ -588,10 +594,12 @@ pub fn main(init: process.Init.Minimal) !void {
     graph.cache.addPrefix(graph.local_cache_root);
     graph.cache.addPrefix(global_cache_directory);
     graph.cache.addPrefix(graph.build_root_directory);
-    comptime assert(0 == @intFromEnum(std.zig.Server.Message.PathPrefix.cwd));
-    comptime assert(1 == @intFromEnum(std.zig.Server.Message.PathPrefix.zig_lib));
-    comptime assert(2 == @intFromEnum(std.zig.Server.Message.PathPrefix.local_cache));
-    comptime assert(3 == @intFromEnum(std.zig.Server.Message.PathPrefix.global_cache));
+    comptime assert(0 == @backingInt(std.zig.Server.Message.PathPrefix.cwd));
+    comptime assert(1 == @backingInt(std.zig.Server.Message.PathPrefix.zig_lib));
+    comptime assert(2 == @backingInt(std.zig.Server.Message.PathPrefix.local_cache));
+    comptime assert(3 == @backingInt(std.zig.Server.Message.PathPrefix.global_cache));
+    comptime assert(4 == @backingInt(std.zig.Server.Message.PathPrefix.build_root));
+    comptime assert(@typeInfo(std.zig.Server.Message.PathPrefix).@"enum".field_names.len == 5);
 
     graph.cache.hash.addBytes(builtin.zig_version_string);
 
@@ -630,25 +638,37 @@ pub fn main(init: process.Init.Minimal) !void {
         .sub_path = "zig-out",
     };
 
-    const install_lib_path: Path = if (override_lib_dir) |cwd_relative| .{
-        .root_dir = .cwd(),
-        .sub_path = cwd_relative,
-    } else try install_prefix_path.join(arena, "lib");
+    // These three overrides are meant to be relative to the install prefix,
+    // not current working directory, unless absolute paths are used.
+    const install_lib_path: Path = if (override_lib_dir) |lib_dir|
+        if (Dir.path.isAbsolute(lib_dir)) .{
+            .root_dir = .cwd(),
+            .sub_path = lib_dir,
+        } else try install_prefix_path.join(arena, lib_dir)
+    else
+        try install_prefix_path.join(arena, "lib");
 
-    const install_bin_path: Path = if (override_bin_dir) |cwd_relative| .{
-        .root_dir = .cwd(),
-        .sub_path = cwd_relative,
-    } else try install_prefix_path.join(arena, "bin");
+    const install_bin_path: Path = if (override_bin_dir) |bin_dir|
+        if (Dir.path.isAbsolute(bin_dir)) .{
+            .root_dir = .cwd(),
+            .sub_path = bin_dir,
+        } else try install_prefix_path.join(arena, bin_dir)
+    else
+        try install_prefix_path.join(arena, "bin");
 
-    const install_include_path: Path = if (override_include_dir) |cwd_relative| .{
-        .root_dir = .cwd(),
-        .sub_path = cwd_relative,
-    } else try install_prefix_path.join(arena, "include");
+    const install_include_path: Path = if (override_include_dir) |include_dir|
+        if (Dir.path.isAbsolute(include_dir)) .{
+            .root_dir = .cwd(),
+            .sub_path = include_dir,
+        } else try install_prefix_path.join(arena, include_dir)
+    else
+        try install_prefix_path.join(arena, "include");
 
     const now = Io.Clock.Timestamp.now(io, .awake);
 
     var web_server_allocation: AvoidableWebServer = undefined;
     const web_server: ?*AvoidableWebServer = if (webui_listen) |listen_address| ws: {
+        if (watch_flag) fatal("using '--webui' and '--watch' together is not yet supported; consider omitting '--watch' in favour of the web UI \"Rebuild\" button", .{});
         if (builtin.single_threaded) fatal("--webui is not yet supported on single-threaded hosts", .{});
         web_server_allocation = .init(.{
             .graph = &graph,
@@ -660,7 +680,31 @@ pub fn main(init: process.Init.Minimal) !void {
         break :ws &web_server_allocation;
     } else null;
 
-    while (true) {
+    var stdin_buffer: [256]u8 = undefined;
+    var stdout_buffer: [256]u8 = undefined;
+    var stdin_reader = Io.File.stdin().reader(io, &stdin_buffer);
+    var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
+
+    var protocol_server_allocation: AvoidableServer = undefined;
+    const protocol_server: ?*AvoidableServer = if (listen) s: {
+        if (builtin.single_threaded) fatal("--listen is not yet supported on single-threaded hosts", .{});
+        if (watch_flag) fatal("using '--watch' and '--listen' together is not supported", .{});
+        if (fuzz != null) fatal("using '--fuzz' and '--listen' together is not supported", .{});
+        if (step_names.items.len > 0) fatal("build steps must be provided over the protocol instead of using CLI arguments", .{});
+        protocol_server_allocation = .{
+            .in = &stdin_reader.interface,
+            .out = &stdout_writer.interface,
+        };
+        try serveBSPHandshake(&protocol_server_allocation);
+        break :s &protocol_server_allocation;
+    } else null;
+
+    configure: while (true) {
+        // Set of files that, if modified, imply that recompiling and rerunning
+        // configurer is needed.
+        var configure_source_files: Cache.Manifest.Files = .empty;
+        defer Cache.Manifest.freeFiles(gpa, &configure_source_files);
+
         // If this fails, we can still start the server and wait for user
         // to request a rebuild. If it returns error.FailedButCacheIntact
         // we can even still do file system watching and automatically
@@ -682,6 +726,7 @@ pub fn main(init: process.Init.Minimal) !void {
             .fetch_only = fetch_only,
             .print_configuration = print_configuration,
             .forks = forks.items,
+            .src_files = &configure_source_files,
         })) |scanned_config| {
             if (help_menu) {
                 scanned_config.printUsage(&graph, initStdoutWriter(io)) catch |err| switch (err) {
@@ -718,7 +763,9 @@ pub fn main(init: process.Init.Minimal) !void {
                     .include = install_include_path,
                 },
 
-                .steps = try arena.alloc(Step, scanned_config.configuration.steps.len),
+                // Extra step at the end which is the autogenerated placeholder
+                // step which indicates that we need to reconfigure.
+                .steps = try arena.alloc(Step, scanned_config.configuration.steps.len + 1),
                 .generated_files = try arena.alloc(Path, scanned_config.configuration.generated_files_len),
                 .run_args = run_args,
 
@@ -728,18 +775,27 @@ pub fn main(init: process.Init.Minimal) !void {
                 .skip_oom_steps = skip_oom_steps,
                 .unit_test_timeout_ns = test_timeout_ns,
 
-                .watch = watch,
+                .watch = watch_flag,
                 .web_server = web_server,
+                .protocol_server = protocol_server,
+                .protocol_server_mutex = .init,
                 .memory_blocked_steps = .empty,
+                .initial_steps = .empty,
                 .step_stack = .empty,
                 .pkg_config = .{ .debug = debug_pkg_config },
 
                 .error_style = error_style,
                 .multiline_errors = multiline_errors,
-                .summary = summary orelse if (watch or webui_listen != null) .new else .failures,
+                .summary = summary orelse if (listen)
+                    .none
+                else if (watch_flag or webui_listen != null)
+                    .new
+                else
+                    .failures,
             };
             defer {
                 maker.memory_blocked_steps.deinit(gpa);
+                maker.initial_steps.deinit(gpa);
                 maker.step_stack.deinit(gpa);
             }
 
@@ -748,7 +804,104 @@ pub fn main(init: process.Init.Minimal) !void {
                 maker.max_rss_is_default = true;
             }
 
-            maker.prepare(step_names.items) catch |err| switch (err) {
+            if (protocol_server) |s| {
+                try s.serveStringMessage(.bsp_configuration, try arena.print("{f}", .{scanned_config.path}));
+
+                var watch: ?Watch = null;
+                defer if (watch) |*w| w.deinit();
+
+                const Event = union(enum) {
+                    message: Reader.Error!Client.Message.Header,
+                    fs_event: if (Watch.have_impl) @typeInfo(@TypeOf(Watch.wait)).@"fn".return_type.? else noreturn,
+                };
+
+                var select_buffer: [2]Event = undefined;
+                var select: Io.Select(Event) = .init(io, &select_buffer);
+                defer select.cancelDiscard();
+
+                try select.concurrent(.message, Server.receiveMessage, .{s});
+
+                var in_debounce = false;
+                loop: switch (try select.await()) {
+                    .message => |payload| {
+                        const header: Client.Message.Header = try payload;
+                        switch (header.tag) {
+                            .exit => {
+                                cleanExit(io, &scanned_config);
+                                process.exit(0);
+                            },
+                            .bsp_build_steps => {
+                                // Cancel existing file watching
+                                select.cancelDiscard();
+                                in_debounce = false;
+
+                                const body = try s.in.takeStruct(Client.Message.BuildSteps, .little);
+                                const steps = try s.in.readSliceEndianAlloc(gpa, Configuration.Step.Index, body.step_count, .little);
+                                defer gpa.free(steps);
+                                if (body.flags.watch and !Watch.have_impl) fatal("file watching is unavailable", .{});
+
+                                try select.concurrent(.message, Server.receiveMessage, .{s});
+
+                                maker.watch = body.flags.watch;
+                                maker.prepare(steps, &configure_source_files) catch |err| switch (err) {
+                                    error.DependencyLoopDetected, error.InsufficientMemory => {
+                                        // TODO handle DependencyLoopDetected as error.FailedButCacheIntact
+                                        // and handle InsufficientMemory as error.AlreadyReported
+                                        _ = io.lockStderr(&.{}, graph.stderr_mode) catch {};
+                                        process.exit(1);
+                                    },
+                                    else => |e| return e,
+                                };
+
+                                try maker.makeSteps(main_progress_node, null);
+
+                                if (body.flags.watch) {
+                                    if (!Watch.have_impl) unreachable;
+                                    if (watch == null) watch = try .init(&maker);
+
+                                    try updateWatch(&maker, &watch.?);
+                                    try select.concurrent(.fs_event, Watch.wait, .{
+                                        &watch.?,
+                                        if (in_debounce) .{ .ms = debounce_interval_ms } else .none,
+                                    });
+                                }
+
+                                continue :loop try select.await();
+                            },
+                            else => fatal("unsupported message: {t}", .{header.tag}),
+                        }
+                    },
+                    .fs_event => |payload| {
+                        if (!Watch.have_impl) unreachable;
+                        switch (payload catch |err| switch (err) {
+                            error.MustReconfigure => {
+                                try io.sleep(.fromMilliseconds(debounce_interval_ms), .awake);
+                                continue :configure;
+                            },
+                            else => |e| fatal("file watching failed: {t}", .{e}),
+                        }) {
+                            .timeout => {
+                                assert(in_debounce);
+                                markFailedStepsDirty(&maker);
+                                try maker.makeSteps(main_progress_node, null);
+                                in_debounce = false;
+                            },
+                            .dirty => in_debounce = true,
+                            .clean => {},
+                        }
+                        try select.concurrent(.fs_event, Watch.wait, .{
+                            &watch.?,
+                            if (in_debounce) .{ .ms = debounce_interval_ms } else .none,
+                        });
+                        continue :loop try select.await();
+                    },
+                }
+            }
+
+            const initial_steps = try maker.resolveTopLevelSteps(step_names.items);
+            defer gpa.free(initial_steps);
+
+            maker.prepare(initial_steps, &configure_source_files) catch |err| switch (err) {
                 error.DependencyLoopDetected, error.InsufficientMemory => {
                     // TODO handle DependencyLoopDetected as error.FailedButCacheIntact
                     // and handle InsufficientMemory as error.AlreadyReported
@@ -759,10 +912,11 @@ pub fn main(init: process.Init.Minimal) !void {
             };
 
             var w: Watch = w: {
-                if (!watch) break :w undefined;
+                if (!watch_flag) break :w undefined;
                 if (!Watch.have_impl) fatal("--watch not yet implemented for {t}", .{native_os});
                 break :w try .init(&maker);
             };
+            defer w.deinit();
 
             if (web_server) |ws| try ws.updateConfiguration(&maker);
 
@@ -773,22 +927,11 @@ pub fn main(init: process.Init.Minimal) !void {
                     error.WriteFailed => return stderr.file_writer.err.?,
                 };
             }) {
-                if (web_server) |ws| ws.startBuild();
-
-                try maker.makeStepNames(step_names.items, main_progress_node, fuzz);
-
-                if (web_server) |ws| {
-                    if (fuzz) |mode| if (mode != .forever) fatal(
-                        "error: limited fuzzing is not implemented yet for --webui",
-                        .{},
-                    );
-
-                    ws.finishBuild(.{ .fuzz = fuzz != null });
-                }
+                try maker.makeSteps(main_progress_node, fuzz);
 
                 if (web_server) |ws| {
                     const c = &scanned_config.configuration;
-                    assert(!watch); // fatal error after CLI parsing
+                    assert(!watch_flag); // fatal error after CLI parsing
                     while (true) switch (try ws.wait()) {
                         .rebuild => {
                             for (maker.step_stack.keys()) |step_index| {
@@ -808,7 +951,7 @@ pub fn main(init: process.Init.Minimal) !void {
                 // Comptime-known guard to prevent including the logic below when `!Watch.have_impl`.
                 if (!Watch.have_impl) unreachable;
 
-                try w.update(maker.step_stack.keys());
+                try updateWatch(&maker, &w);
 
                 // Wait until a file system notification arrives. Read all such events
                 // until the buffer is empty. Then wait for a debounce interval, resetting
@@ -820,21 +963,34 @@ pub fn main(init: process.Init.Minimal) !void {
                     w.dir_count, countSubProcesses(&maker),
                 }) catch &caption_buf;
                 var debouncing_node = main_progress_node.start(caption, 0);
+                defer debouncing_node.end();
                 var in_debounce = false;
-                while (true) switch (try w.wait(if (in_debounce) .{ .ms = debounce_interval_ms } else .none)) {
-                    .timeout => {
-                        assert(in_debounce);
-                        debouncing_node.end();
-                        markFailedStepsDirty(&maker);
-                        continue :rebuild;
-                    },
-                    .dirty => if (!in_debounce) {
-                        in_debounce = true;
-                        debouncing_node.end();
-                        debouncing_node = main_progress_node.start("Debouncing (Change Detected)", 0);
-                    },
-                    .clean => {},
-                };
+                while (true) {
+                    const timeout: Watch.Timeout = if (in_debounce) .{ .ms = debounce_interval_ms } else .none;
+                    switch (w.wait(timeout) catch |err| switch (err) {
+                        error.MustReconfigure => {
+                            debouncing_node.end();
+                            debouncing_node = main_progress_node.start("Debouncing (Change Detected)", 0);
+                            try io.sleep(.fromMilliseconds(debounce_interval_ms), .awake);
+                            continue :configure;
+                        },
+                        else => |e| fatal("file watching failed: {t}", .{e}),
+                    }) {
+                        .timeout => {
+                            assert(in_debounce);
+                            debouncing_node.end();
+                            debouncing_node = .none;
+                            markFailedStepsDirty(&maker);
+                            continue :rebuild;
+                        },
+                        .dirty => if (!in_debounce) {
+                            in_debounce = true;
+                            debouncing_node.end();
+                            debouncing_node = main_progress_node.start("Debouncing (Change Detected)", 0);
+                        },
+                        .clean => {},
+                    }
+                }
             }
         } else |err| {
             const can_fs_watch = switch (err) {
@@ -849,13 +1005,25 @@ pub fn main(init: process.Init.Minimal) !void {
                 _ = io.lockStderr(&.{}, graph.stderr_mode) catch {};
                 process.exit(1);
             }
-            if (watch and can_fs_watch) {
+            if (protocol_server != null) {
+                fatal("(zig build system) TODO send error messages to client when build.zig compilation fails", .{});
+            }
+            if (watch_flag and can_fs_watch) {
                 fatal("(zig build system) TODO set up fs watching even when build.zig compilation fails", .{});
             } else {
                 fatal("(zig build system) TODO stay running and wait for user to request rebuild even when build.zig compilation fails", .{});
             }
         }
     }
+}
+
+/// Temporarily adds the reconfigure pseudostep to step_stack, calls
+/// `Watch.update`, and then pops it again.
+fn updateWatch(maker: *Maker, watch: *Watch) !void {
+    const step_stack = &maker.step_stack;
+    try step_stack.putNoClobber(maker.gpa, @fromBackingInt(@intCast(maker.steps.len - 1)), {});
+    defer _ = step_stack.pop().?;
+    try watch.update(step_stack.keys());
 }
 
 const ConfigureOptions = struct {
@@ -875,6 +1043,7 @@ const ConfigureOptions = struct {
     fetch_only: bool,
     print_configuration: PrintConfiguration,
     forks: []Fork,
+    src_files: *Cache.Manifest.Files,
 };
 
 fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
@@ -935,6 +1104,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
         graph.zig_exe, "build-exe", //
         "--cache-dir", graph.local_cache_root.path orelse ".", //
         "--global-cache-dir", graph.global_cache_root.path orelse ".", //
+        "--build-root", graph.build_root_directory.path orelse ".", //
         "--zig-lib-dir", graph.zig_lib_directory.path orelse ".", //
         "--name", configurer_exe_name, //
         "-fsingle-threaded", //
@@ -1230,15 +1400,15 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
             if (config_man) |man| {
                 if (try man.hit(compile_prog_node)) {
                     const digest = man.final();
-                    break :cp .{
-                        .{
-                            .root_dir = graph.local_cache_root,
-                            .sub_path = try arena.print("c/{s}", .{&digest}),
-                        },
-                        man.toOwnedLock(),
+                    const path: Path = .{
+                        .root_dir = graph.local_cache_root,
+                        .sub_path = try arena.print("c/{s}", .{&digest}),
                     };
+                    options.src_files.* = man.takeFiles();
+                    break :cp .{ path, man.toOwnedLock() };
                 }
             }
+            try graph.handleVerbose(null, null, build_configurer_argv.items);
             const configure_exe_path: Path = if (std.zig.buildExeSubprocess(gpa, io, .{
                 .argv = build_configurer_argv.items,
                 .cache_root = graph.local_cache_root,
@@ -1329,7 +1499,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
         if (config_man) |man| for (configuration.path_deps) |path_dep| {
             switch (path_dep.flags.mode) {
                 .directory => {}, // TODO
-                .contents => try man.addPathPost(confPathDepToCachePath(graph, &configuration, path_dep)),
+                .contents => try man.addPathPost(try confPathDepToCachePath(arena, graph, &configuration, path_dep)),
                 .metadata => {}, // TODO
             }
         };
@@ -1372,6 +1542,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                 });
             };
             man.writeManifest() catch |err| log.warn("failed to write cache manifest: {t}", .{err});
+            options.src_files.* = man.takeFiles();
             break :cp .{ final_path, man.toOwnedLock() };
         }
     };
@@ -1405,7 +1576,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
     var top_level_steps: std.array_hash_map.String(Configuration.Step.Index) = .empty;
     for (configuration.steps, 0..) |*conf_step, step_index_usize| {
         if (conf_step.owner != .root) continue;
-        const step_index: Configuration.Step.Index = @enumFromInt(step_index_usize);
+        const step_index: Configuration.Step.Index = @fromBackingInt(@intCast(step_index_usize));
         const flags = conf_step.flags(c);
         switch (flags.tag) {
             .top_level => {
@@ -1432,7 +1603,6 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
 
     const color: Color = Color.settingFromEnvironment(environ_map);
     var opt_path_or_url: ?[]const u8 = null;
-    var override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map);
     var override_local_cache_dir: ?[]const u8 = EnvVar.ZIG_LOCAL_CACHE_DIR.get(environ_map);
     var override_pkg_dir: ?[]const u8 = EnvVar.ZIG_LOCAL_PKG_DIR.get(environ_map);
     var debug_hash: bool = false;
@@ -1448,8 +1618,6 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
             if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
                 try Io.File.stdout().writeStreamingAll(io, usage_fetch);
                 return process.cleanExit(io);
-            } else if (mem.eql(u8, arg, "--global-cache-dir")) {
-                override_global_cache_dir = nextArgOrFatal(args, &arg_i);
             } else if (mem.eql(u8, arg, "--cache-dir")) {
                 override_local_cache_dir = nextArgOrFatal(args, &arg_i);
             } else if (mem.eql(u8, arg, "--pkg-dir")) {
@@ -1729,7 +1897,6 @@ const usage_fetch =
     \\
     \\Options:
     \\  -h, --help                    Print this help and exit
-    \\  --global-cache-dir [path]     Override path to global Zig cache directory
     \\  --cache-dir [path]            Override path to local cache directory
     \\  --pkg-dir [path]              Override path to local package directory
     \\  --debug-hash                  Print verbose hash information to stdout
@@ -1837,7 +2004,7 @@ fn cmdInit(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
             return process.cleanExit(io);
         },
         .minimal => {
-            Templates.writeSimpleFile(io, Package.Manifest.basename,
+            Templates.writeSimpleFile(io, Io.Dir.cwd(), Package.Manifest.basename,
                 \\.{{
                 \\    .name = .{s},
                 \\    .version = "0.0.1",
@@ -1854,7 +2021,7 @@ fn cmdInit(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
                 else => fatal("failed to create {q}: {t}", .{ Package.Manifest.basename, err }),
                 error.PathAlreadyExists => fatal("refusing to overwrite {q}", .{Package.Manifest.basename}),
             };
-            Templates.writeSimpleFile(io, default_build_zig_basename,
+            Templates.writeSimpleFile(io, Io.Dir.cwd(), default_build_zig_basename,
                 \\const std = @import("std");
                 \\
                 \\pub fn build(b: *std.Build) void {{
@@ -1990,7 +2157,13 @@ fn markFailedStepsDirty(maker: *Maker) void {
     for (all_steps) |step_index| {
         const step = maker.stepByIndex(step_index);
         switch (step.state) {
-            .dependency_failure, .failure, .skipped => _ = maker.invalidateResult(step),
+            .dependency_failure,
+            .dependency_skipped,
+            .failure,
+            .skipped,
+            => _ = maker.invalidateResult(step) catch |err| switch (err) {
+                error.MustReconfigure => unreachable,
+            },
             else => continue,
         }
     }
@@ -2016,34 +2189,68 @@ fn countSubProcesses(maker: *Maker) usize {
 }
 
 pub fn stepByIndex(maker: *const Maker, i: Configuration.Step.Index) *Step {
-    return &maker.steps[@intFromEnum(i)];
+    return &maker.steps[@backingInt(i)];
 }
 
-fn prepare(maker: *Maker, step_names: []const []const u8) !void {
+fn resolveTopLevelSteps(maker: *Maker, step_names: []const []const u8) ![]const Configuration.Step.Index {
+    const gpa = maker.gpa;
+    const c = &maker.scanned_config.configuration;
+
+    if (step_names.len == 0) {
+        return try gpa.dupe(Configuration.Step.Index, &.{c.default_step});
+    }
+
+    var result: std.array_hash_map.Auto(Configuration.Step.Index, void) = .empty;
+    defer result.deinit(gpa);
+
+    try result.ensureTotalCapacity(gpa, step_names.len);
+
+    for (0..step_names.len) |i| {
+        const step_name = step_names[step_names.len - i - 1];
+        const s = maker.scanned_config.top_level_steps.get(step_name) orelse {
+            log.info("to list available steps: zig build -l", .{});
+            fatal("no such step: {s}", .{step_name});
+        };
+        result.putAssumeCapacity(s, {});
+    }
+
+    return try gpa.dupe(Configuration.Step.Index, result.keys());
+}
+
+fn prepare(
+    maker: *Maker,
+    step_indices: []const Configuration.Step.Index,
+    configure_source_files: *const Cache.Manifest.Files,
+) !void {
     const gpa = maker.gpa;
     const graph = maker.graph;
     const arena = graph.arena;
     const seed: u32 = graph.random_seed;
+    const initial_steps = &maker.initial_steps;
     const step_stack = &maker.step_stack;
     const c = &maker.scanned_config.configuration;
 
-    for (maker.steps, 0..) |*step, step_index_usize| {
-        const step_index: Configuration.Step.Index = @enumFromInt(step_index_usize);
+    // The last element is a reserved special pseudostep which contains the
+    // watch inputs for the configurer executable.
+    for (maker.steps[0 .. maker.steps.len - 1], 0..) |*step, step_index_usize| {
+        const step_index: Configuration.Step.Index = @fromBackingInt(@intCast(step_index_usize));
         step.* = .{ .extended = .init(step_index.ptr(c).flags(c).tag) };
     }
+    {
+        const last_step = &maker.steps[maker.steps.len - 1];
+        last_step.* = .{ .extended = .init(.top_level) };
+        try last_step.setWatchInputsFromManifestFiles(maker, configure_source_files, graph.cache.prefixes());
+    }
 
-    if (step_names.len == 0) {
-        try step_stack.put(gpa, c.default_step, {});
-    } else {
-        try step_stack.ensureUnusedCapacity(gpa, step_names.len);
-        for (0..step_names.len) |i| {
-            const step_name = step_names[step_names.len - i - 1];
-            const s = maker.scanned_config.top_level_steps.get(step_name) orelse {
-                log.info("to list available steps: zig build -l", .{});
-                fatal("no such step: {s}", .{step_name});
-            };
-            step_stack.putAssumeCapacity(s, {});
-        }
+    try initial_steps.ensureUnusedCapacity(gpa, step_indices.len);
+    try step_stack.ensureUnusedCapacity(gpa, step_indices.len);
+
+    initial_steps.clearRetainingCapacity();
+    step_stack.clearRetainingCapacity();
+
+    for (step_indices) |step| {
+        initial_steps.putAssumeCapacity(step, {});
+        step_stack.putAssumeCapacity(step, {});
     }
 
     const starting_steps = try arena.dupe(Configuration.Step.Index, step_stack.keys());
@@ -2084,6 +2291,7 @@ fn prepare(maker: *Maker, step_names: []const []const u8) !void {
             }
         }
         if (any_problems) {
+            log.info("use --skip-oom-steps to proceed, skipping memory limited steps", .{});
             if (maker.max_rss_is_default) {
                 log.info("use --maxrss {d} to proceed, risking system memory exhaustion", .{max_needed});
             }
@@ -2092,9 +2300,8 @@ fn prepare(maker: *Maker, step_names: []const []const u8) !void {
     }
 }
 
-fn makeStepNames(
+fn makeSteps(
     maker: *Maker,
-    step_names: []const []const u8,
     parent_progress_node: std.Progress.Node,
     fuzz: ?Fuzz.Mode,
 ) !void {
@@ -2104,6 +2311,12 @@ fn makeStepNames(
     const step_stack = &maker.step_stack;
     const top_level_steps = &maker.scanned_config.top_level_steps;
     const c = &maker.scanned_config.configuration;
+
+    if (maker.web_server) |ws| ws.startBuild();
+
+    if (maker.protocol_server) |s| {
+        try s.serveBodylessMessage(.bsp_build_started);
+    }
 
     {
         // Collect the initial set of tasks (those with no outstanding dependencies) into a buffer,
@@ -2128,6 +2341,19 @@ fn makeStepNames(
         for (initial_set.items) |step_index| try stepReady(maker, &group, step_index, step_prog);
         // ...and `makeStep` will trigger every other step when their last dependency finishes.
         try group.await(io);
+    }
+
+    if (maker.web_server) |ws| {
+        if (fuzz) |mode| if (mode != .forever) fatal(
+            "error: limited fuzzing is not implemented yet for --webui",
+            .{},
+        );
+
+        ws.finishBuild(.{ .fuzz = fuzz != null });
+    }
+
+    if (maker.protocol_server) |s| {
+        try s.serveBodylessMessage(.bsp_build_completed);
     }
 
     assert(maker.memory_blocked_steps.items.len == 0);
@@ -2163,7 +2389,7 @@ fn makeStepNames(
             .precheck_unstarted => unreachable,
             .precheck_started => unreachable,
             .precheck_done => unreachable,
-            .dependency_failure => pending_count += 1,
+            .dependency_failure, .dependency_skipped => pending_count += 1,
             .success => success_count += 1,
             .skipped, .skipped_oom => skipped_count += 1,
             .failure => {
@@ -2282,7 +2508,7 @@ fn makeStepNames(
         defer step_stack_copy.deinit(gpa);
 
         var print_node: PrintNode = .{ .parent = null };
-        if (step_names.len == 0) {
+        if (maker.initial_steps.count() == 0) {
             print_node.last = true;
             printTreeStep(maker, c.default_step, t, &print_node, &step_stack_copy) catch |err| switch (err) {
                 error.Canceled => |e| return e,
@@ -2290,10 +2516,10 @@ fn makeStepNames(
             };
         } else {
             const last_index = if (maker.summary == .all) top_level_steps.count() else blk: {
-                var i: usize = step_names.len;
+                var i: usize = maker.initial_steps.count();
                 while (i > 0) {
                     i -= 1;
-                    const step_index = top_level_steps.get(step_names[i]).?;
+                    const step_index = maker.initial_steps.keys()[i];
                     const step = maker.stepByIndex(step_index);
                     const found = switch (maker.summary) {
                         .all, .line, .none => unreachable,
@@ -2304,8 +2530,7 @@ fn makeStepNames(
                 }
                 break :blk top_level_steps.count();
             };
-            for (step_names, 0..) |step_name, i| {
-                const step_index = top_level_steps.get(step_name).?;
+            for (maker.initial_steps.keys(), 0..) |step_index, i| {
                 print_node.last = i + 1 == last_index;
                 printTreeStep(maker, step_index, t, &print_node, &step_stack_copy) catch |err| switch (err) {
                     error.Canceled => |e| return e,
@@ -2316,7 +2541,7 @@ fn makeStepNames(
         w.writeByte('\n') catch {};
     }
 
-    if (maker.watch or maker.web_server != null) return;
+    if (maker.watch or maker.web_server != null or maker.protocol_server != null) return;
 
     const code: u8 = code: {
         if (failure_count == 0) break :code 0; // success
@@ -2391,6 +2616,15 @@ fn makeStep(
         defer step_prog_node.end();
 
         if (maker.web_server) |ws| ws.updateStepStatus(step_index, .wip);
+        if (maker.protocol_server) |s| {
+            maker.protocol_server_mutex.lockUncancelable(io);
+            defer maker.protocol_server_mutex.unlock(io);
+
+            s.serveU32Message(
+                .bsp_step_started,
+                @backingInt(step_index),
+            ) catch @panic("TODO propagate error when failing to send protocol message");
+        }
 
         const new_state: Step.State = for (deps) |dep_index| {
             const dep_make_step = maker.stepByIndex(dep_index);
@@ -2401,10 +2635,14 @@ fn makeStep(
 
                 .failure,
                 .dependency_failure,
-                .skipped_oom,
                 => break .dependency_failure,
 
-                .success, .skipped => {},
+                .dependency_skipped,
+                .skipped_oom,
+                .skipped,
+                => break .dependency_skipped,
+
+                .success => {},
             }
         } else if (Step.make(step_index, maker, step_prog_node)) state: {
             break :state .success;
@@ -2416,25 +2654,46 @@ fn makeStep(
 
         @atomicStore(Step.State, &make_step.state, new_state, .monotonic);
 
-        switch (new_state) {
+        const success = switch (new_state) {
             .precheck_unstarted => unreachable,
             .precheck_started => unreachable,
             .precheck_done => unreachable,
 
             .failure,
             .dependency_failure,
+            .dependency_skipped,
             .skipped_oom,
-            => {
-                if (maker.web_server) |ws| ws.updateStepStatus(step_index, .failure);
-                std.Progress.setStatus(.failure_working);
-            },
+            .skipped,
+            => false,
 
             .success,
-            .skipped,
-            => {
-                if (maker.web_server) |ws| ws.updateStepStatus(step_index, .success);
-            },
+            => true,
+        };
+
+        if (maker.web_server) |ws| {
+            ws.updateStepStatus(step_index, if (success) .success else .failure);
         }
+        if (maker.protocol_server != null) {
+            maker.protocol_server_mutex.lockUncancelable(io);
+            defer maker.protocol_server_mutex.unlock(io);
+
+            const status: Server.Message.BuildStepCompleted.Status = switch (new_state) {
+                .precheck_unstarted => unreachable,
+                .precheck_started => unreachable,
+                .precheck_done => unreachable,
+                .success => .success,
+                .failure, .dependency_failure => .failure,
+                .dependency_skipped, .skipped => .skipped,
+                .skipped_oom => .skipped_oom,
+            };
+            serveBuildStepCompleted(
+                maker,
+                step_index,
+                status,
+            ) catch |err| std.debug.panic("TODO propagate error when failing to send protocol message: {t}", .{err});
+        }
+
+        if (!success) std.Progress.setStatus(.failure_working);
     }
 
     // No matter the result, we want to display error/warning messages.
@@ -2467,7 +2726,7 @@ fn makeStep(
             maker.available_rss += max_rss;
             dispatch_set.ensureUnusedCapacity(gpa, maker.memory_blocked_steps.items.len) catch
                 @panic("TODO eliminate memory allocation here");
-            while (maker.memory_blocked_steps.getLast()) |candidate_index| {
+            while (maker.memory_blocked_steps.last()) |candidate_index| {
                 const candidate_max_rss = candidate_index.ptr(c).max_rss.toBytes();
                 if (maker.available_rss < candidate_max_rss) break;
                 assert(maker.memory_blocked_steps.pop() == candidate_index);
@@ -2575,6 +2834,12 @@ fn printStepStatus(maker: *Maker, step_index: Configuration.Step.Index, stderr: 
         .dependency_failure => {
             try stderr.setColor(.dim);
             try writer.writeAll(" transitive failure\n");
+            try stderr.setColor(.reset);
+        },
+
+        .dependency_skipped => {
+            try stderr.setColor(.dim);
+            try writer.writeAll(" transitive skip\n");
             try stderr.setColor(.reset);
         },
 
@@ -2824,6 +3089,7 @@ fn constructGraphAndCheckForDependencyLoop(
 
         // These don't happen until we actually run the step graph.
         .dependency_failure => unreachable,
+        .dependency_skipped => unreachable,
         .success => unreachable,
         .failure => unreachable,
         .skipped => unreachable,
@@ -2834,14 +3100,15 @@ fn constructGraphAndCheckForDependencyLoop(
 /// When file watching, prepares the step for being re-evaluated. Returns
 /// `true` if the step was newly invalidated, `false` if it was already
 /// invalidated.
-pub fn invalidateResult(maker: *Maker, step: *Step) bool {
+pub fn invalidateResult(maker: *Maker, step: *Step) error{MustReconfigure}!bool {
+    if (step == &maker.steps[maker.steps.len - 1]) return error.MustReconfigure;
     if (step.state == .precheck_done) return false;
     assert(step.pending_deps == 0);
     step.state = .precheck_done;
     step.reset(maker);
     for (step.dependants.items) |dependant_index| {
         const dependant = maker.stepByIndex(dependant_index);
-        _ = invalidateResult(maker, dependant);
+        _ = try invalidateResult(maker, dependant);
         dependant.pending_deps += 1;
     }
     return true;
@@ -2911,7 +3178,7 @@ pub fn printErrorMessages(
         try stderr.setColor(.red);
         try writer.writeAll("error:");
         try stderr.setColor(.reset);
-        if (std.mem.indexOfScalar(u8, msg, '\n') == null) {
+        if (std.mem.findScalar(u8, msg, '\n') == null) {
             try writer.print(" {s}\n", .{msg});
         } else switch (multiline_errors) {
             .indent => {
@@ -2989,6 +3256,50 @@ fn cleanTmpFiles(maker: *Maker, steps: []const Configuration.Step.Index) void {
     }
 }
 
+fn serveBSPHandshake(s: *const std.zig.Server) !void {
+    const handshake_header: Server.Message.Handshake = .{
+        .version = Server.build_system_version,
+        .flags = .{
+            .file_system_watch_supported = Watch.have_impl,
+        },
+    };
+    try s.serveMessageHeader(.{
+        .tag = .bsp_handshake,
+        .bytes_len = @sizeOf(Server.Message.Handshake),
+    });
+    try s.out.writeStruct(handshake_header, .little);
+    try s.out.flush();
+}
+
+fn serveBuildStepCompleted(
+    maker: *Maker,
+    step_index: Configuration.Step.Index,
+    status: Server.Message.BuildStepCompleted.Status,
+) !void {
+    const s: *Server = maker.protocol_server.?;
+    const step = maker.stepByIndex(step_index);
+    const error_bundle = step.result_error_bundle;
+
+    const body: Server.Message.BuildStepCompleted = .{
+        .step_index = step_index,
+        .status = status,
+        .error_bundle = .{
+            .extra_len = @intCast(error_bundle.extra.len),
+            .string_bytes_len = @intCast(error_bundle.string_bytes.len),
+        },
+    };
+    const eb_bytes_len = @sizeOf(u32) * error_bundle.extra.len + error_bundle.string_bytes.len;
+    const bytes_len = @sizeOf(Server.Message.BuildStepCompleted) + eb_bytes_len;
+    try s.serveMessageHeader(.{
+        .tag = .bsp_step_completed,
+        .bytes_len = @intCast(bytes_len),
+    });
+    try s.out.writeStruct(body, .little);
+    try s.out.writeSliceEndian(u32, error_bundle.extra, .little);
+    try s.out.writeAll(error_bundle.string_bytes);
+    try s.out.flush();
+}
+
 fn initStdoutWriter(io: Io) *Writer {
     stdout_writer_allocation = Io.File.stdout().writerStreaming(io, &stdio_buffer_allocation);
     return &stdout_writer_allocation.interface;
@@ -3059,7 +3370,7 @@ pub fn resolveLazyPathIndexAbs(
 }
 
 pub fn generatedPath(maker: *const Maker, index: Configuration.GeneratedFileIndex) *Path {
-    return &maker.generated_files[@intFromEnum(index)];
+    return &maker.generated_files[@backingInt(index)];
 }
 
 pub fn packagePath(
@@ -3074,6 +3385,7 @@ pub fn packagePath(
         .root_dir = graph.build_root_directory,
         .sub_path = sub_path,
     };
+
     // Currently, neither configurer nor Maker is aware of the standard zig
     // package path, and the root path is stored as a bare string rather than
     // relative to a known base directory. Without changing that, we must
@@ -3335,22 +3647,21 @@ inline fn debugMakerLeaks() bool {
 
 const BuildRoot = struct {
     directory: Cache.Directory,
+    close_directory: bool,
     build_zig_basename: []const u8,
-    cleanup_build_dir: ?Io.Dir,
 
     fn deinit(br: *BuildRoot, io: Io) void {
-        if (br.cleanup_build_dir) |*dir| dir.close(io);
+        if (br.close_directory) br.directory.handle.close(io);
         br.* = undefined;
     }
 };
 
 const FindBuildRootOptions = struct {
     build_file: ?[]const u8 = null,
-    cwd_path: ?[]const u8 = null,
+    cwd_path: []const u8,
 };
 
 fn findBuildRoot(arena: Allocator, io: Io, options: FindBuildRootOptions) !BuildRoot {
-    const cwd_path = options.cwd_path orelse try std.zig.getResolvedCwd(io, arena);
     const build_zig_basename = if (options.build_file) |bf|
         Dir.path.basename(bf)
     else
@@ -3364,35 +3675,41 @@ fn findBuildRoot(arena: Allocator, io: Io, options: FindBuildRootOptions) !Build
             return .{
                 .build_zig_basename = build_zig_basename,
                 .directory = .{ .path = dirname, .handle = dir },
-                .cleanup_build_dir = dir,
+                .close_directory = true,
             };
         }
 
         return .{
             .build_zig_basename = build_zig_basename,
-            .directory = .{ .path = null, .handle = Io.Dir.cwd() },
-            .cleanup_build_dir = null,
+            .directory = .cwd(),
+            .close_directory = false,
         };
     }
     // Search up parent directories until we find build.zig.
-    var dirname: []const u8 = cwd_path;
+    var dirname: ?[]const u8 = null;
     while (true) {
-        const joined_path = try Dir.path.join(arena, &[_][]const u8{ dirname, build_zig_basename });
+        const joined_path = if (dirname) |d|
+            try Dir.path.join(arena, &.{ d, build_zig_basename })
+        else
+            build_zig_basename;
         if (Io.Dir.cwd().access(io, joined_path, .{})) |_| {
-            const dir = Io.Dir.cwd().openDir(io, dirname, .{}) catch |err| {
-                fatal("unable to open directory while searching for build.zig file, {q}: {t}", .{ dirname, err });
-            };
+            const dir = if (dirname) |d|
+                Io.Dir.cwd().openDir(io, d, .{}) catch |err| {
+                    fatal("unable to open directory while searching for build.zig file, {q}: {t}", .{ d, err });
+                }
+            else
+                Io.Dir.cwd();
             return .{
                 .build_zig_basename = build_zig_basename,
                 .directory = .{
                     .path = dirname,
                     .handle = dir,
                 },
-                .cleanup_build_dir = dir,
+                .close_directory = dirname != null,
             };
         } else |err| switch (err) {
             error.FileNotFound => {
-                dirname = Dir.path.dirname(dirname) orelse {
+                dirname = Dir.path.dirname(dirname orelse options.cwd_path) orelse {
                     log.info("initialize {s} template file with \"zig init\"", .{std.zig.build_zig_basename});
                     log.info("see \"zig --help\" for more options", .{});
                     fatal("no build.zig file found, in the current directory or any parent directories", .{});
@@ -3510,10 +3827,11 @@ fn loadManifest(
             0,
         ) catch |err| switch (err) {
             error.FileNotFound => {
-                Templates.writeSimpleFile(io, Package.Manifest.basename,
+                Templates.writeSimpleFile(io, options.dir, Package.Manifest.basename,
                     \\.{{
                     \\    .name = .{s},
-                    \\    .version = "{s}",
+                    \\    .version = "0.0.1",
+                    \\    .minimum_zig_version = "{s}",
                     \\    .paths = .{{""}},
                     \\    .fingerprint = 0x{x},
                     \\}}
@@ -3530,7 +3848,7 @@ fn loadManifest(
             else => |e| fatal("unable to load {s}: {t}", .{ Package.Manifest.basename, e }),
         };
     };
-    var ast = try std.zig.Ast.parse(gpa, manifest_bytes, .zon);
+    var ast = try std.zig.Ast.parse(gpa, manifest_bytes, .{ .mode = .zon });
     errdefer ast.deinit(gpa);
 
     if (ast.errors.len > 0) {
@@ -3671,8 +3989,8 @@ const Templates = struct {
         };
     }
 
-    fn writeSimpleFile(io: Io, file_name: []const u8, comptime format: []const u8, args: anytype) !void {
-        const f = try Io.Dir.cwd().createFile(io, file_name, .{ .exclusive = true });
+    fn writeSimpleFile(io: Io, dir: Io.Dir, file_name: []const u8, comptime format: []const u8, args: anytype) !void {
+        const f = try dir.createFile(io, file_name, .{ .exclusive = true });
         defer f.close(io);
         var buf: [4096]u8 = undefined;
         var fw = f.writer(io, &buf);
@@ -3681,7 +3999,12 @@ const Templates = struct {
     }
 };
 
-fn confPathDepToCachePath(graph: *const Graph, c: *const Configuration, path_dep: Configuration.PathDep) Path {
+fn confPathDepToCachePath(
+    arena: Allocator,
+    graph: *const Graph,
+    c: *const Configuration,
+    path_dep: Configuration.PathDep,
+) Allocator.Error!Path {
     const sub_path = path_dep.sub.slice(c);
     return switch (path_dep.flags.base) {
         .cwd => .{
@@ -3697,11 +4020,11 @@ fn confPathDepToCachePath(graph: *const Graph, c: *const Configuration, path_dep
             .sub_path = sub_path,
         },
         .build_root => .{
-            .root_dir = switch (path_dep.pkg.unwrap().?) {
-                .root => graph.build_root_directory,
-                _ => @panic("TODO"),
+            .root_dir = graph.build_root_directory,
+            .sub_path = switch (path_dep.pkg.unwrap().?) {
+                .root => sub_path,
+                else => |index| try Dir.path.join(arena, &.{ index.get(c).?.root_path.slice(c), sub_path }),
             },
-            .sub_path = sub_path,
         },
         .zig_lib => .{
             .root_dir = graph.zig_lib_directory,
@@ -3713,4 +4036,26 @@ fn confPathDepToCachePath(graph: *const Graph, c: *const Configuration, path_dep
         .install_bin => @panic("TODO"),
         .install_include => @panic("TODO"),
     };
+}
+
+fn fatalEnumHint(comptime E: type, arg: []const u8, param: ?[]const u8) noreturn {
+    var buf: [100]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    for (@typeInfo(E).@"enum".field_names) |field_name| {
+        w.writeAll(field_name) catch unreachable;
+        w.writeByte('|') catch unreachable;
+    }
+    const buffered = w.buffered();
+    const enum_options_text = buffered[0 .. buffered.len - 1];
+    if (param) |p| {
+        fatalWithHint("expected [{s}] after {q}; found {q}", .{ enum_options_text, arg, p });
+    } else {
+        fatalWithHint("expected [{s}] after {q}", .{ enum_options_text, arg });
+    }
+}
+
+fn nextEnumArg(args: []const []const u8, i: *usize, comptime E: type) E {
+    const arg = args[i.* - 1];
+    const next_arg = nextArg(args, i) orelse fatalEnumHint(E, arg, null);
+    return stringToEnum(E, next_arg) orelse fatalEnumHint(E, arg, next_arg);
 }

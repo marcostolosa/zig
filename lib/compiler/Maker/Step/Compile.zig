@@ -132,7 +132,7 @@ const ModuleListContext = struct {
 
     pub fn hash(ctx: @This(), key: ModuleList) u32 {
         _ = ctx;
-        return std.hash.int(@intFromEnum(key.keys()[0]));
+        return std.hash.int(@backingInt(key.keys()[0]));
     }
 
     const Adapter = struct {
@@ -144,7 +144,7 @@ const ModuleListContext = struct {
 
         pub fn hash(ctx: @This(), key: Configuration.Module.Index) u32 {
             _ = ctx;
-            return std.hash.int(@intFromEnum(key));
+            return std.hash.int(@backingInt(key));
         }
     };
 };
@@ -215,8 +215,8 @@ fn lowerZigArgs(
     try addBool(gpa, zig_args, "-ffuzz", fuzz);
 
     {
-        var is_linking_libc = conf_comp.flags3.is_linking_libc;
-        var is_linking_libcpp = conf_comp.flags3.is_linking_libcpp;
+        var is_linking_libc = false;
+        var is_linking_libcpp = false;
 
         // Stores system libraries that have already been seen for at least one
         // module, along with any C compiler arguments that need to be passed
@@ -658,14 +658,15 @@ fn lowerZigArgs(
         zig_args.appendAssumeCapacity(libc_file);
     }
 
-    (try zig_args.addManyAsArray(gpa, 4)).* = .{
+    (try zig_args.addManyAsArray(gpa, 6)).* = .{
         "--cache-dir",        graph.local_cache_root.path orelse ".",
         "--global-cache-dir", graph.global_cache_root.path orelse ".",
+        "--build-root",       graph.build_root_directory.path orelse ".",
     };
 
     try zig_args.ensureUnusedCapacity(gpa, 1);
     if (graph.debug_compiler_runtime_libs) |mode| switch (mode) {
-        .Debug => zig_args.appendAssumeCapacity("--debug-rt"),
+        .debug => zig_args.appendAssumeCapacity("--debug-rt"),
         else => zig_args.appendAssumeCapacity(try arena.print("--debug-rt={t}", .{mode})),
     };
 
@@ -728,6 +729,7 @@ fn lowerZigArgs(
     try addBool(gpa, zig_args, "--import-symbols", conf_comp.flags.import_symbols);
     try addBool(gpa, zig_args, "--import-table", conf_comp.flags.import_table);
     try addBool(gpa, zig_args, "--export-table", conf_comp.flags.export_table);
+    try addBool(gpa, zig_args, "--growable-table", conf_comp.flags.growable_table);
     try addBool(gpa, zig_args, "--shared-memory", conf_comp.flags.shared_memory);
 
     {
@@ -1264,10 +1266,10 @@ fn appendModuleFlags(
         }
 
         switch (m.flags.optimize) {
-            .debug => zig_args.appendAssumeCapacity("-ODebug"),
-            .safe => zig_args.appendAssumeCapacity("-OReleaseSafe"),
-            .fast => zig_args.appendAssumeCapacity("-OReleaseFast"),
-            .small => zig_args.appendAssumeCapacity("-OReleaseSmall"),
+            .debug => zig_args.appendAssumeCapacity("-Odebug"),
+            .safe => zig_args.appendAssumeCapacity("-Osafe"),
+            .fast => zig_args.appendAssumeCapacity("-Ofast"),
+            .small => zig_args.appendAssumeCapacity("-Osmall"),
             .default => {},
         }
 

@@ -24,6 +24,8 @@ dylibs: std.ArrayList(File.Index) = .empty,
 
 segments: std.ArrayList(macho.segment_command_64) = .empty,
 sections: std.MultiArrayList(Section) = .{},
+/// Populated by `allocateSections`.
+header_size: ?u32 = null,
 
 resolver: SymbolResolver = .{},
 /// This table will be populated after `scanRelocs` has run.
@@ -125,7 +127,7 @@ frameworks: []const Framework,
 /// TODO: unify with soname
 install_name: ?[]const u8,
 /// Path to entitlements file.
-entitlements: ?[]const u8,
+entitlements: ?Path,
 compatibility_version: ?std.SemanticVersion,
 /// Entry name
 entry_name: ?[]const u8,
@@ -181,7 +183,7 @@ pub fn createEmpty(
             .tag = .macho,
             .comp = comp,
             .emit = emit,
-            .gc_sections = options.gc_sections orelse (optimize_mode != .Debug),
+            .gc_sections = options.gc_sections orelse (optimize_mode != .debug),
             .print_gc_sections = options.print_gc_sections,
             .stack_size = options.stack_size orelse 16777216,
             .allow_shlib_undefined = allow_shlib_undefined,
@@ -578,7 +580,7 @@ pub fn flush(
         var codesig = CodeSignature.init(self.getPageSize());
         codesig.code_directory.ident = fs.path.basename(self.base.emit.sub_path);
         if (self.entitlements) |path| codesig.addEntitlements(gpa, io, path) catch |err|
-            return diags.fail("failed to add entitlements from {s}: {t}", .{ path, err });
+            return diags.fail("failed to add entitlements from {f}: {t}", .{ path, err });
         try self.writeCodeSignaturePadding(&codesig);
         break :blk codesig;
     } else null;
@@ -990,6 +992,11 @@ fn addArchive(self: *MachO, lib: link.Input.Object, handle: File.HandleIndex, fa
     const tracy = trace(@src());
     defer tracy.end();
 
+    if (self.base.isStaticLib()) {
+        // Ignore static library inputs when generating a static library.
+        return;
+    }
+
     const gpa = self.base.comp.gpa;
 
     var archive: Archive = .{};
@@ -1068,7 +1075,7 @@ fn isHoisted(self: *MachO, install_name: []const u8) bool {
         if (mem.startsWith(u8, dirname, "/usr/lib")) return true;
         if (eatPrefix(dirname, "/System/Library/Frameworks/")) |path| {
             const basename = fs.path.basename(install_name);
-            if (mem.indexOfScalar(u8, path, '.')) |index| {
+            if (mem.findScalar(u8, path, '.')) |index| {
                 if (mem.eql(u8, basename, path[0..index])) return true;
             }
         }
@@ -1737,14 +1744,14 @@ fn initSyntheticSections(self: *MachO) !void {
                     });
                 }
             } else if (eatPrefix(name, "section$start$")) |actual_name| {
-                const sep = mem.indexOfScalar(u8, actual_name, '$').?; // TODO error rather than a panic
+                const sep = mem.findScalar(u8, actual_name, '$').?; // TODO error rather than a panic
                 const segname = actual_name[0..sep]; // TODO check segname is valid
                 const sectname = actual_name[sep + 1 ..]; // TODO check sectname is valid
                 if (self.getSectionByName(segname, sectname) == null) {
                     _ = try self.addSection(segname, sectname, .{});
                 }
             } else if (eatPrefix(name, "section$end$")) |actual_name| {
-                const sep = mem.indexOfScalar(u8, actual_name, '$').?; // TODO error rather than a panic
+                const sep = mem.findScalar(u8, actual_name, '$').?; // TODO error rather than a panic
                 const segname = actual_name[0..sep]; // TODO check segname is valid
                 const sectname = actual_name[sep + 1 ..]; // TODO check sectname is valid
                 if (self.getSectionByName(segname, sectname) == null) {
@@ -1765,7 +1772,7 @@ fn getSegmentProt(segname: []const u8) macho.vm_prot_t {
 fn getSegmentRank(segname: []const u8) u8 {
     if (mem.eql(u8, segname, "__PAGEZERO")) return 0x0;
     if (mem.eql(u8, segname, "__LINKEDIT")) return 0xf;
-    if (mem.indexOf(u8, segname, "ZIG")) |_| return 0xe;
+    if (mem.find(u8, segname, "ZIG")) |_| return 0xe;
     if (mem.startsWith(u8, segname, "__TEXT")) return 0x1;
     if (mem.startsWith(u8, segname, "__DATA_CONST")) return 0x2;
     if (mem.startsWith(u8, segname, "__DATA")) return 0x3;
@@ -2209,13 +2216,14 @@ fn initSegments(self: *MachO) !void {
 }
 
 fn allocateSections(self: *MachO) !void {
-    const headerpad = try load_commands.calcMinHeaderPadSize(self);
+    const header_size = try load_commands.calcMinHeaderSize(self);
+    self.header_size = header_size;
     var vmaddr: u64 = if (self.pagezero_seg_index) |index|
         self.segments.items[index].vmaddr + self.segments.items[index].vmsize
     else
         0;
-    vmaddr += headerpad;
-    var fileoff = headerpad;
+    vmaddr += header_size;
+    var fileoff = header_size;
     var prev_seg_id: u8 = if (self.pagezero_seg_index) |index| index + 1 else 0;
 
     const page_size = self.getPageSize();
@@ -2339,7 +2347,7 @@ fn allocateSyntheticSymbols(self: *MachO) void {
                 }
             } else if (mem.startsWith(u8, name, "section$start$")) {
                 const actual_name = name["section$start$".len..];
-                const sep = mem.indexOfScalar(u8, actual_name, '$').?; // TODO error rather than a panic
+                const sep = mem.findScalar(u8, actual_name, '$').?; // TODO error rather than a panic
                 const segname = actual_name[0..sep];
                 const sectname = actual_name[sep + 1 ..];
                 if (self.getSectionByName(segname, sectname)) |sect_id| {
@@ -2349,7 +2357,7 @@ fn allocateSyntheticSymbols(self: *MachO) void {
                 }
             } else if (mem.startsWith(u8, name, "section$end$")) {
                 const actual_name = name["section$end$".len..];
-                const sep = mem.indexOfScalar(u8, actual_name, '$').?; // TODO error rather than a panic
+                const sep = mem.findScalar(u8, actual_name, '$').?; // TODO error rather than a panic
                 const segname = actual_name[0..sep];
                 const sectname = actual_name[sep + 1 ..];
                 if (self.getSectionByName(segname, sectname)) |sect_id| {
@@ -2895,6 +2903,11 @@ fn writeLoadCommands(self: *MachO) !struct { usize, usize, u64 } {
         ncmds += 1;
     }
 
+    if (self.needsEncryptionInfo()) {
+        try load_commands.writeEncryptionInfoLC(self, &writer);
+        ncmds += 1;
+    }
+
     for (self.rpath_list) |rpath| {
         try load_commands.writeRpathLC(rpath, &writer);
         ncmds += 1;
@@ -3089,18 +3102,9 @@ pub fn updateLineNumber(self: *MachO, pt: Zcu.PerThread, ti_id: InternPool.Track
 pub fn updateExports(
     self: *MachO,
     pt: Zcu.PerThread,
-    exported: Zcu.Exported,
     export_indices: []const Zcu.Export.Index,
 ) link.Error!void {
-    return self.getZigObject().?.updateExports(self, pt, exported, export_indices);
-}
-
-pub fn deleteExport(
-    self: *MachO,
-    exported: Zcu.Exported,
-    name: InternPool.NullTerminatedString,
-) void {
-    return self.getZigObject().?.deleteExport(self, exported, name);
+    return self.getZigObject().?.updateExports(self, pt, export_indices);
 }
 
 pub fn freeNav(self: *MachO, nav: InternPool.Nav.Index) void {
@@ -4676,7 +4680,7 @@ pub const MachTask = extern struct {
         var out_port: std.c.mach_port_name_t = undefined;
         switch (getKernError(std.c.mach_port_allocate(
             self.port,
-            @intFromEnum(right),
+            @backingInt(right),
             &out_port,
         ))) {
             .SUCCESS => return .{ .port = out_port },
@@ -4694,7 +4698,7 @@ pub const MachTask = extern struct {
             self.port,
             port.port,
             port.port,
-            @intFromEnum(msg),
+            @backingInt(msg),
         ))) {
             .SUCCESS => return,
             .FAILURE => return error.PermissionDenied,
@@ -5119,12 +5123,12 @@ pub fn machTaskForSelf() MachTask {
 }
 
 pub fn getKernError(err: std.c.kern_return_t) KernE {
-    return @as(KernE, @enumFromInt(@as(u32, @truncate(@as(usize, @intCast(err))))));
+    return @as(KernE, @fromBackingInt(@intCast(@as(u32, @truncate(@as(usize, @intCast(err)))))));
 }
 
 pub fn unexpectedKernError(err: KernE) std.posix.UnexpectedError {
     if (std.options.unexpected_error_tracing) {
-        std.debug.print("unexpected error: {d}\n", .{@intFromEnum(err)});
+        std.debug.print("unexpected error: {d}\n", .{@backingInt(err)});
         std.debug.dumpCurrentStackTrace(.{});
     }
     return error.Unexpected;
@@ -5408,6 +5412,18 @@ pub fn alignPow(macho_file: *MachO, x: u32) error{AlreadyReported}!u32 {
         return diags.fail("alignment overflow", .{});
     }
     return result;
+}
+
+pub fn needsEncryptionInfo(macho_file: *MachO) bool {
+    const target = macho_file.getTarget();
+    return switch (target.os.tag) {
+        .ios,
+        .tvos,
+        .visionos,
+        .watchos,
+        => target.abi != .simulator,
+        else => false,
+    };
 }
 
 /// Branch instruction has 26 bits immediate but is 4 byte aligned.

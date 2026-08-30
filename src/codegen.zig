@@ -23,6 +23,7 @@ const Alignment = InternPool.Alignment;
 const dev = @import("dev.zig");
 
 pub const aarch64 = @import("codegen/aarch64.zig");
+pub const loongarch = @import("codegen/loongarch.zig");
 
 pub const Error = link.Error;
 
@@ -33,9 +34,11 @@ fn devFeatureForBackend(backend: std.lang.CompilerBackend) dev.Feature {
         .stage2_arm => .arm_backend,
         .stage2_c => .c_backend,
         .stage2_llvm => .llvm_backend,
+        .stage2_loongarch => .loongarch_backend,
         .stage2_powerpc => unreachable,
         .stage2_riscv64 => .riscv64_backend,
         .stage2_sparc64 => .sparc64_backend,
+        .zsf_spork8 => .spork8_backend,
         .stage2_spirv => .spirv_backend,
         .stage2_wasm => .wasm_backend,
         .stage2_x86 => .x86_backend,
@@ -51,10 +54,12 @@ fn importBackend(comptime backend: std.lang.CompilerBackend) type {
         .stage2_arm => unreachable,
         .stage2_c => @import("codegen/c.zig"),
         .stage2_llvm => @import("codegen/llvm.zig"),
+        .stage2_loongarch => loongarch,
         .stage2_powerpc => unreachable,
         .stage2_riscv64 => @import("codegen/riscv64/CodeGen.zig"),
         .stage2_sparc64 => @import("codegen/sparc64/CodeGen.zig"),
         .stage2_spirv => @import("codegen/spirv/CodeGen.zig"),
+        .zsf_spork8 => @import("codegen/spork8/CodeGen.zig"),
         .stage2_wasm => @import("codegen/wasm/CodeGen.zig"),
         .stage2_x86, .stage2_x86_64 => @import("codegen/x86_64/CodeGen.zig"),
         _ => unreachable,
@@ -71,9 +76,11 @@ pub fn legalizeFeatures(pt: Zcu.PerThread, nav_index: InternPool.Nav.Index) ?*co
         .stage2_wasm,
         .stage2_x86_64,
         .stage2_aarch64,
+        .stage2_loongarch,
         .stage2_x86,
         .stage2_riscv64,
         .stage2_sparc64,
+        .zsf_spork8,
         .stage2_spirv,
         => |backend| {
             dev.check(devFeatureForBackend(backend));
@@ -87,7 +94,7 @@ pub fn wantsLiveness(pt: Zcu.PerThread, nav_index: InternPool.Nav.Index) bool {
     const target = &zcu.navFileScope(nav_index).mod.?.resolved_target.result;
     return switch (target_util.zigBackend(target, zcu.comp.config.use_llvm)) {
         else => true,
-        .stage2_aarch64 => false,
+        .stage2_aarch64, .stage2_loongarch => false,
     };
 }
 
@@ -96,22 +103,26 @@ pub fn wantsLiveness(pt: Zcu.PerThread, nav_index: InternPool.Nav.Index) bool {
 /// union of all MIR types. The active tag is known from the backend in use; see `AnyMir.tag`.
 pub const AnyMir = union {
     aarch64: if (dev.env.supports(.aarch64_backend)) @import("codegen/aarch64/Mir.zig") else noreturn,
+    loongarch: if (dev.env.supports(.loongarch_backend)) @import("codegen/loongarch/Mir.zig") else noreturn,
     riscv64: if (dev.env.supports(.riscv64_backend)) @import("codegen/riscv64/Mir.zig") else noreturn,
     sparc64: if (dev.env.supports(.sparc64_backend)) @import("codegen/sparc64/Mir.zig") else noreturn,
     x86_64: if (dev.env.supports(.x86_64_backend)) @import("codegen/x86_64/Mir.zig") else noreturn,
     wasm: if (dev.env.supports(.wasm_backend)) @import("codegen/wasm/Mir.zig") else noreturn,
     c: if (dev.env.supports(.c_backend)) @import("codegen/c.zig").Mir else noreturn,
     spirv: if (dev.env.supports(.spirv_backend)) @import("codegen/spirv/Mir.zig") else noreturn,
+    spork8: if (dev.env.supports(.spork8_backend)) @import("codegen/spork8/Mir.zig") else noreturn,
 
     pub inline fn tag(comptime backend: std.lang.CompilerBackend) []const u8 {
         return switch (backend) {
             .stage2_aarch64 => "aarch64",
+            .stage2_loongarch => "loongarch",
             .stage2_riscv64 => "riscv64",
             .stage2_sparc64 => "sparc64",
             .stage2_x86_64 => "x86_64",
             .stage2_wasm => "wasm",
             .stage2_c => "c",
             .stage2_spirv => "spirv",
+            .zsf_spork8 => "spork8",
             else => unreachable,
         };
     }
@@ -122,12 +133,14 @@ pub const AnyMir = union {
         switch (backend) {
             else => unreachable,
             inline .stage2_aarch64,
+            .stage2_loongarch,
             .stage2_riscv64,
             .stage2_sparc64,
             .stage2_x86_64,
             .stage2_wasm,
             .stage2_c,
             .stage2_spirv,
+            .zsf_spork8,
             => |backend_ct| @field(mir, tag(backend_ct)).deinit(gpa),
         }
     }
@@ -151,11 +164,13 @@ pub fn generateFunction(
     switch (target_util.zigBackend(target, false)) {
         else => unreachable,
         inline .stage2_aarch64,
+        .stage2_loongarch,
         .stage2_riscv64,
         .stage2_sparc64,
         .stage2_x86_64,
         .stage2_wasm,
         .stage2_c,
+        .zsf_spork8,
         .stage2_spirv,
         => |backend| {
             dev.check(devFeatureForBackend(backend));
@@ -194,6 +209,7 @@ pub fn emitFunction(
     switch (target_util.zigBackend(target, zcu.comp.config.use_llvm)) {
         else => unreachable,
         inline .stage2_aarch64,
+        .stage2_loongarch,
         .stage2_riscv64,
         .stage2_sparc64,
         .stage2_x86_64,
@@ -415,7 +431,7 @@ pub fn generateSymbol(
             }
         },
         .enum_tag => |enum_tag| {
-            const int_tag_ty = ty.intTagType(zcu);
+            const int_tag_ty = ty.backingIntType(zcu);
             try generateSymbol(bin_file, pt, try pt.getCoerced(Value.fromInterned(enum_tag.int), int_tag_ty), w, reloc_parent);
         },
         .float => |float| storage: switch (float.storage) {
@@ -767,11 +783,9 @@ fn lowerNavRef(
     offset: u64,
 ) (Error || std.Io.Writer.Error)!void {
     const zcu = pt.zcu;
-    const gpa = zcu.gpa;
     const ip = &zcu.intern_pool;
     const target = &zcu.navFileScope(nav_index).mod.?.resolved_target.result;
     const ptr_width_bytes = @divExact(target.ptrBitWidth(), 8);
-    const is_obj = lf.comp.config.output_mode == .Obj;
     const nav_ty = Type.fromInterned(ip.getNav(nav_index).resolved.?.type);
 
     if (!nav_ty.isRuntimeFnOrHasRuntimeBits(zcu) and ip.getNav(nav_index).getExtern(ip) == null) {
@@ -786,34 +800,7 @@ fn lowerNavRef(
             dev.check(link.File.Tag.wasm.devFeature());
             const wasm = lf.cast(.wasm).?;
             assert(reloc_parent == .none);
-            if (nav_ty.zigTypeTag(zcu) == .@"fn") {
-                const gop = try wasm.zcu_indirect_function_set.getOrPut(gpa, nav_index);
-                if (!gop.found_existing) gop.value_ptr.* = {};
-                if (is_obj) {
-                    @panic("TODO add out_reloc for this");
-                } else {
-                    try wasm.func_table_fixups.append(gpa, .{
-                        .table_index = @enumFromInt(gop.index),
-                        .offset = @intCast(w.end),
-                    });
-                }
-            } else {
-                if (is_obj) {
-                    try wasm.out_relocs.append(gpa, .{
-                        .offset = @intCast(w.end),
-                        .pointee = .{ .symbol_index = try wasm.navSymbolIndex(nav_index) },
-                        .tag = if (ptr_width_bytes == 4) .memory_addr_i32 else .memory_addr_i64,
-                        .addend = @intCast(offset),
-                    });
-                } else {
-                    try wasm.nav_fixups.ensureUnusedCapacity(gpa, 1);
-                    wasm.nav_fixups.appendAssumeCapacity(.{
-                        .navs_exe_index = try wasm.refNavExe(nav_index),
-                        .offset = @intCast(w.end),
-                        .addend = @intCast(offset),
-                    });
-                }
-            }
+            try wasm.addNavReloc(w.end, nav_index, nav_ty, @intCast(offset));
             try w.splatByteAll(0, ptr_width_bytes);
             return;
         },
@@ -855,7 +842,7 @@ pub fn genNavRef(
             .internal => {
                 const sym_index = try zo.getOrCreateMetadataForNav(zcu, nav_index);
                 if (is_threadlocal) zo.symbol(sym_index).flags.is_tls = true;
-                return @enumFromInt(sym_index);
+                return @fromBackingInt(@intCast(sym_index));
             },
             .strong, .weak => {
                 const sym_index = try elf_file.getGlobalSymbol(nav.name.toSlice(ip), lib_name.toSlice(ip));
@@ -866,7 +853,7 @@ pub fn genNavRef(
                     .link_once => unreachable,
                 }
                 if (is_threadlocal) zo.symbol(sym_index).flags.is_tls = true;
-                return @enumFromInt(sym_index);
+                return @fromBackingInt(@intCast(sym_index));
             },
             .link_once => unreachable,
         }
@@ -878,7 +865,7 @@ pub fn genNavRef(
             .internal => {
                 const sym_index = try zo.getOrCreateMetadataForNav(macho_file, nav_index);
                 if (is_threadlocal) zo.symbols.items[sym_index].flags.tlv = true;
-                return @enumFromInt(sym_index);
+                return @fromBackingInt(@intCast(sym_index));
             },
             .strong, .weak => {
                 const sym_index = try macho_file.getGlobalSymbol(nav.name.toSlice(ip), lib_name.toSlice(ip));
@@ -889,12 +876,12 @@ pub fn genNavRef(
                     .link_once => unreachable,
                 }
                 if (is_threadlocal) zo.symbols.items[sym_index].flags.tlv = true;
-                return @enumFromInt(sym_index);
+                return @fromBackingInt(@intCast(sym_index));
             },
             .link_once => unreachable,
         }
     } else if (lf.cast(.coff2)) |coff| {
-        return @enumFromInt(@intFromEnum(try coff.navSymbol(zcu, nav_index)));
+        return @fromBackingInt(@intCast(@backingInt(try coff.navSymbol(zcu, nav_index))));
     } else {
         std.debug.panic("TODO genNavRef for '{t}'", .{lf.tag});
     }
@@ -1124,6 +1111,202 @@ pub fn fieldOffset(ptr_agg_ty: Type, ptr_field_ty: Type, field_index: u32, zcu: 
     };
 }
 
+pub const FlattenedItem = struct { offset: u64, type: ?Type };
+pub fn flattenType(items_buf: []FlattenedItem, ty: Type, zcu: *Zcu, opts: struct {
+    offset: u64 = 0,
+    allow_arrays: bool = true,
+    fn increaseOffset(opts: @This(), offset: u64) @This() {
+        return .{
+            .offset = opts.offset + offset,
+            .allow_arrays = opts.allow_arrays,
+        };
+    }
+}) ?[]FlattenedItem {
+    const ip = &zcu.intern_pool;
+    switch (ip.indexToKey(ty.toIntern())) {
+        .int_type => |int_type| {
+            if (int_type.bits == 0) return items_buf[0..0];
+            if (items_buf.len < 1) return null;
+            const items = items_buf[0..1];
+            items.* = .{.{ .offset = opts.offset, .type = ty }};
+            return items;
+        },
+        .ptr_type => |ptr_type| switch (ptr_type.flags.size) {
+            .one, .many, .c => {
+                if (items_buf.len < 1) return null;
+                const items = items_buf[0..1];
+                items.* = .{.{ .offset = opts.offset, .type = ty }};
+                return items;
+            },
+            .slice => {
+                if (items_buf.len < 2) return null;
+                const items = items_buf[0..2];
+                const ptr_field_ty = ty.slicePtrFieldType(zcu);
+                items.* = .{
+                    .{ .offset = opts.offset, .type = ptr_field_ty },
+                    .{ .offset = opts.offset + ptr_field_ty.abiSize(zcu), .type = .usize },
+                };
+                return items;
+            },
+        },
+        .array_type => |array_type| {
+            const len = array_type.lenIncludingSentinel();
+            if (len == 0) return items_buf[0..0];
+            const elem_ty: Type = .fromInterned(array_type.child);
+            const elem_items = flattenType(items_buf, elem_ty, zcu, opts) orelse return null;
+            if (elem_items.len == 0) return items_buf[0..0];
+            if (!opts.allow_arrays) return null;
+            const items_len, const items_overflow = @mulWithOverflow(elem_items.len, len);
+            if (items_overflow != 0 or items_buf.len < items_len) return null;
+            var items_index = elem_items.len;
+            const elem_size = elem_ty.abiSize(zcu);
+            var elem_offset: u64 = elem_size;
+            while (items_index != items_len) : ({
+                items_index += elem_items.len;
+                elem_offset += elem_size;
+            }) for (items_buf[items_index..][0..elem_items.len], elem_items) |*item, elem_item| {
+                item.* = .{ .offset = elem_offset + elem_item.offset, .type = elem_item.type };
+            };
+            return items_buf[0..@intCast(items_len)];
+        },
+        .vector_type => |vector_type| {
+            if (vector_type.len == 0) return items_buf[0..0];
+            if (items_buf.len < 1) return null;
+            const items = items_buf[0..1];
+            items.* = .{.{ .offset = opts.offset, .type = ty }};
+            return items;
+        },
+        .opt_type, .error_union_type => return null,
+        .simple_type => |simple_type| switch (simple_type) {
+            .f16,
+            .f32,
+            .f64,
+            .f80,
+            .f128,
+            .usize,
+            .isize,
+            .c_char,
+            .c_short,
+            .c_ushort,
+            .c_int,
+            .c_uint,
+            .c_long,
+            .c_ulong,
+            .c_longlong,
+            .c_ulonglong,
+            .c_longdouble,
+            .bool,
+            .anyerror,
+            => {
+                if (items_buf.len < 1) return null;
+                const items = items_buf[0..1];
+                items.* = .{.{ .offset = opts.offset, .type = ty }};
+                return items;
+            },
+            .anyopaque, .noreturn => return null,
+            .void,
+            .type,
+            .comptime_int,
+            .comptime_float,
+            .null,
+            .undefined,
+            .enum_literal,
+            => return items_buf[0..0],
+            .adhoc_inferred_error_set, .generic_poison => unreachable,
+        },
+        .struct_type => {
+            const loaded_struct = ip.loadStructType(ty.toIntern());
+            switch (loaded_struct.layout) {
+                .auto, .@"extern" => {},
+                .@"packed" => return flattenType(items_buf, .fromInterned(
+                    loaded_struct.packed_backing_int_type,
+                ), zcu, opts),
+            }
+            var items_len: usize = 0;
+            var offset: u64 = 0;
+            var field_it = loaded_struct.iterateRuntimeOrder(ip);
+            while (field_it.next()) |field_index| {
+                const field_ty: Type = .fromInterned(loaded_struct.field_types.get(ip)[field_index]);
+                const field_offset = loaded_struct.field_offsets.get(ip)[field_index];
+                if (field_offset - offset > 0 and
+                    (items_len == 0 or items_buf[items_len - 1].type != null))
+                {
+                    if (items_len == items_buf.len) return null;
+                    items_buf[items_len] = .{ .offset = offset, .type = null };
+                    items_len += 1;
+                }
+                items_len += (flattenType(items_buf[items_len..], field_ty, zcu, opts.increaseOffset(
+                    field_offset,
+                )) orelse return null).len;
+                offset = field_offset + field_ty.abiSize(zcu);
+            }
+            if (ty.abiSize(zcu) - offset > 0 and
+                (items_len == 0 or items_buf[items_len - 1].type != null))
+            {
+                if (items_len == items_buf.len) return null;
+                items_buf[items_len] = .{ .offset = offset, .type = null };
+                items_len += 1;
+            }
+            return items_buf[0..items_len];
+        },
+        .tuple_type => |tuple_type| {
+            if (items_buf.len < tuple_type.types.len) return null;
+            var items_len: usize = 0;
+            var offset: u64 = 0;
+            for (tuple_type.types.get(ip)) |field_ty_ip| {
+                const field_ty: Type = .fromInterned(field_ty_ip);
+                offset = field_ty.abiAlignment(zcu).forward(offset);
+                items_len += (flattenType(items_buf[items_len..], field_ty, zcu, opts.increaseOffset(
+                    offset,
+                )) orelse return null).len;
+                offset += field_ty.abiSize(zcu);
+            }
+            return items_buf[0..items_len];
+        },
+        .union_type => {
+            const loaded_union = ip.loadUnionType(ty.toIntern());
+            return switch (loaded_union.layout) {
+                .auto, .@"extern" => return null,
+                .@"packed" => return flattenType(items_buf, .fromInterned(
+                    loaded_union.packed_backing_int_type,
+                ), zcu, opts),
+            };
+        },
+        .opaque_type, .spirv_type, .func_type => return null,
+        .enum_type => return flattenType(items_buf, .fromInterned(
+            ip.loadEnumType(ty.toIntern()).int_tag_type,
+        ), zcu, opts),
+        .error_set_type, .inferred_error_set_type => {
+            if (items_buf.len < 1) return null;
+            const items = items_buf[0..1];
+            items.* = .{.{ .offset = opts.offset, .type = ty }};
+            return items;
+        },
+        .anyframe_type,
+        // values, not types
+        .undef,
+        .simple_value,
+        .@"extern",
+        .func,
+        .int,
+        .err,
+        .error_union,
+        .enum_literal,
+        .enum_tag,
+        .float,
+        .ptr,
+        .slice,
+        .opt,
+        .aggregate,
+        .un,
+        .bitpack,
+        // memoization, not types
+        .memoized_call,
+        => unreachable,
+    }
+}
+
 test {
     _ = aarch64;
+    _ = loongarch;
 }

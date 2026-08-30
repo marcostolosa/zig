@@ -163,6 +163,9 @@ pub const State = enum {
     /// be re-evaluated.
     precheck_done,
     dependency_failure,
+    /// Handled exactly the same as `dependency_failure` except communicates
+    /// that the dependency didn't fail but rather was skipped.
+    dependency_skipped,
     success,
     failure,
     /// This state indicates that the step did not complete, however, it also did not fail,
@@ -561,24 +564,26 @@ fn zigProcessUpdate(step_index: Configuration.Step.Index, maker: *Maker, zp: *Zi
     var result: ?Path = null;
     var eos_err: error{EndOfStream}!void = {};
 
-    const stdout = zp.multi_reader.fileReader(0);
+    var client: std.zig.Client = .{
+        .in = zp.multi_reader.reader(0),
+        .out = undefined,
+    };
 
     while (true) {
-        const Header = std.zig.Server.Message.Header;
-        const header = stdout.interface.takeStruct(Header, .little) catch |err| switch (err) {
-            error.EndOfStream => break,
-            error.ReadFailed => return stdout.err.?,
-        };
-        const body = stdout.interface.take(header.bytes_len) catch |err| switch (err) {
+        const header = client.receiveMessageWithMultiReader(&zp.multi_reader, .none) catch |err| switch (err) {
+            error.Timeout => unreachable,
             error.EndOfStream => |e| {
+                if (client.in.bufferedLen() == 0) break;
                 // Better to report the crash with stderr below, but we set
                 // this in case the child exits successfully while violating
                 // this protocol.
                 eos_err = e;
                 break;
             },
-            error.ReadFailed => return stdout.err.?,
+            else => |e| return e,
         };
+        const body = client.in.take(header.bytes_len) catch unreachable;
+
         switch (header.tag) {
             .zig_version => {
                 if (!std.mem.eql(u8, builtin.zig_version_string, body)) {
@@ -610,7 +615,7 @@ fn zigProcessUpdate(step_index: Configuration.Step.Index, maker: *Maker, zp: *Zi
                 const conf_step = step_index.ptr(conf);
                 var it = std.mem.splitScalar(u8, body, 0);
                 while (it.next()) |prefixed_path| {
-                    const prefix_index: std.zig.Server.Message.PathPrefix = @enumFromInt(prefixed_path[0] - 1);
+                    const prefix_index: std.zig.Server.Message.PathPrefix = @fromBackingInt(@intCast(prefixed_path[0] - 1));
                     const sub_path = try arena.dupe(u8, prefixed_path[1..]);
                     const sub_path_dirname = Dir.path.dirname(sub_path) orelse "";
                     switch (prefix_index) {
@@ -647,6 +652,13 @@ fn zigProcessUpdate(step_index: Configuration.Step.Index, maker: *Maker, zp: *Zi
                         .global_cache => {
                             const path: Path = .{
                                 .root_dir = graph.global_cache_root,
+                                .sub_path = sub_path_dirname,
+                            };
+                            try addWatchInputFromPath(s, maker, path, Dir.path.basename(sub_path));
+                        },
+                        .build_root => {
+                            const path: Path = .{
+                                .root_dir = graph.build_root_directory,
                                 .sub_path = sub_path_dirname,
                             };
                             try addWatchInputFromPath(s, maker, path, Dir.path.basename(sub_path));
@@ -776,12 +788,20 @@ pub fn writeManifestAndWatch(s: *Step, maker: *Maker, man: *Cache.Manifest) !voi
     try setWatchInputsFromManifest(s, maker, man);
 }
 
-fn setWatchInputsFromManifest(s: *Step, maker: *Maker, man: *Cache.Manifest) !void {
+pub fn setWatchInputsFromManifest(s: *Step, maker: *Maker, man: *Cache.Manifest) !void {
+    return setWatchInputsFromManifestFiles(s, maker, &man.files, man.cache.prefixes());
+}
+
+pub fn setWatchInputsFromManifestFiles(
+    s: *Step,
+    maker: *Maker,
+    files: *const Cache.Manifest.Files,
+    prefixes: []const Cache.Directory,
+) !void {
     const graph = maker.graph;
     const arena = graph.arena; // TODO don't leak into process arena
-    const prefixes = man.cache.prefixes();
     clearWatchInputs(s, maker);
-    for (man.files.keys()) |file| {
+    for (files.keys()) |file| {
         // The file path data is freed when the cache manifest is cleaned up at the end of `make`.
         const sub_path = try arena.dupe(u8, file.prefixed_path.sub_path);
         try addWatchInputFromPath(s, maker, .{

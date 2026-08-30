@@ -1579,14 +1579,9 @@ const CertificatePublicKey = struct {
                 const components = try PublicKey.parseDer(pub_key);
                 const exponent = components.exponent;
                 const modulus = components.modulus;
-                switch (modulus.len) {
-                    inline 128, 256, 384, 512 => |modulus_len| {
-                        const key: PublicKey = try .fromBytes(exponent, modulus);
-                        const sig = RsaSignature.fromBytes(modulus_len, encoded_sig);
-                        try RsaSignature.concatVerify(modulus_len, &sig, msg, key, Hash);
-                    },
-                    else => return error.TlsBadRsaSignatureBitCount,
-                }
+
+                const key: PublicKey = try .fromBytes(exponent, modulus);
+                try RsaSignature.concatVerify(encoded_sig, msg, key, Hash);
             },
             inline .ed25519 => |comptime_scheme| {
                 const Eddsa = SchemeEddsa(comptime_scheme);

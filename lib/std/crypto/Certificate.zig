@@ -842,18 +842,11 @@ fn verifyRsa(
     const pk_components = try rsa.PublicKey.parseDer(pub_key);
     const exponent = pk_components.exponent;
     const modulus = pk_components.modulus;
-    if (exponent.len > modulus.len) return error.CertificatePublicKeyInvalid;
-    if (sig.len != modulus.len) return error.CertificateSignatureInvalidLength;
 
-    switch (modulus.len) {
-        inline 128, 256, 384, 512 => |modulus_len| {
-            const public_key = rsa.PublicKey.fromBytes(exponent, modulus) catch
-                return error.CertificateSignatureInvalid;
-            rsa.PKCS1v1_5Signature.verify(modulus_len, sig[0..modulus_len], msg, public_key, Hash) catch
-                return error.CertificateSignatureInvalid;
-        },
-        else => return error.CertificateSignatureUnsupportedBitCount,
-    }
+    const public_key = rsa.PublicKey.fromBytes(exponent, modulus) catch
+        return error.CertificateSignatureInvalid;
+    rsa.PKCS1v1_5Signature.verify(sig, msg, public_key, Hash) catch
+        return error.CertificateSignatureInvalid;
 }
 
 fn verify_ecdsa(
@@ -1012,66 +1005,77 @@ test {
 
 pub const rsa = struct {
     const max_modulus_bits = 4096;
+    const max_modulus_bytes = @divCeil(max_modulus_bits, 8);
+
     const Uint = std.crypto.ff.Uint(max_modulus_bits);
     const Modulus = std.crypto.ff.Modulus(max_modulus_bits);
     const Fe = Modulus.Fe;
 
-    /// RFC 3447 8.1 RSASSA-PSS
+    /// RFC 8017 8.1 RSASSA-PSS
     pub const PSSSignature = struct {
-        pub fn fromBytes(comptime modulus_len: usize, msg: []const u8) [modulus_len]u8 {
-            var result: [modulus_len]u8 = undefined;
-            @memcpy(result[0..msg.len], msg);
-            @memset(result[msg.len..], 0);
-            return result;
-        }
-
-        pub const VerifyError = EncryptError || error{InvalidSignature};
+        pub const VerifyError = error{InvalidSignature};
 
         pub fn verify(
-            comptime modulus_len: usize,
-            sig: [modulus_len]u8,
+            sig: []const u8,
             msg: []const u8,
             public_key: PublicKey,
             comptime Hash: type,
         ) VerifyError!void {
-            try concatVerify(modulus_len, sig, &.{msg}, public_key, Hash);
+            try concatVerify(sig, &.{msg}, public_key, Hash);
         }
 
         pub fn concatVerify(
-            comptime modulus_len: usize,
-            sig: *const [modulus_len]u8,
+            sig: []const u8,
             msg: []const []const u8,
             public_key: PublicKey,
             comptime Hash: type,
         ) VerifyError!void {
             const mod_bits = public_key.n.bits();
-            const em_dec = try encrypt(modulus_len, sig, public_key);
 
-            try EMSA_PSS_VERIFY(msg, &em_dec, mod_bits - 1, Hash.digest_length, Hash);
+            // 1.   Length checking: If the length of the signature S is not k
+            //      octets, output "invalid signature" and stop.
+            const k = @divCeil(public_key.n.bits(), 8);
+            if (sig.len != k) return error.InvalidSignature;
+
+            var em_buffer: [@divCeil(max_modulus_bits - 1, 8)]u8 = undefined;
+            const em_bits = mod_bits - 1;
+            const em_len = @divCeil(em_bits, 8);
+            const em = em_buffer[0..em_len];
+            try encrypt(em, sig, public_key);
+
+            try EMSA_PSS_VERIFY(msg, em, em_bits, Hash.digest_length, Hash);
         }
 
-        fn EMSA_PSS_VERIFY(msg: []const []const u8, em: []const u8, emBit: usize, sLen: usize, comptime Hash: type) VerifyError!void {
+        fn EMSA_PSS_VERIFY(
+            msg: []const []const u8,
+            em: []const u8,
+            em_bits: usize,
+            s_len: usize,
+            comptime Hash: type,
+        ) VerifyError!void {
             // 1.   If the length of M is greater than the input limitation for
             //      the hash function (2^61 - 1 octets for SHA-1), output
             //      "inconsistent" and stop.
-            // All the cryptographic hash functions in the standard library have a limit of >= 2^61 - 1.
-            // Even then, this check is only there for paranoia. In the context of TLS certificates, emBit cannot exceed 4096.
-            if (emBit >= 1 << 61) return error.InvalidSignature;
+            //
+            // All the cryptographic hash functions in the standard library have
+            // a limit of >= 2^61 - 1. In the context of TLS certificates,
+            // em_bits cannot exceed 4096.
+            std.debug.assert(em_bits < 1 << 61);
 
             // emLen = \ceil(emBits/8)
-            const emLen = ((emBit - 1) / 8) + 1;
-            std.debug.assert(emLen == em.len);
+            const em_len = @divCeil(em_bits, 8);
+            std.debug.assert(em_len == em.len);
 
             // 2.   Let mHash = Hash(M), an octet string of length hLen.
-            var mHash: [Hash.digest_length]u8 = undefined;
+            var m_hash: [Hash.digest_length]u8 = undefined;
             {
                 var hasher: Hash = .init(.{});
                 for (msg) |part| hasher.update(part);
-                hasher.final(&mHash);
+                hasher.final(&m_hash);
             }
 
             // 3.   If emLen < hLen + sLen + 2, output "inconsistent" and stop.
-            if (emLen < Hash.digest_length + sLen + 2) {
+            if (em_len < Hash.digest_length + s_len + 2) {
                 return error.InvalidSignature;
             }
 
@@ -1081,89 +1085,74 @@ pub const rsa = struct {
                 return error.InvalidSignature;
             }
 
+            const db_len = em_len - Hash.digest_length - 1;
+
             // 5.   Let maskedDB be the leftmost emLen - hLen - 1 octets of EM,
             //      and let H be the next hLen octets.
-            const maskedDB = em[0..(emLen - Hash.digest_length - 1)];
-            const h = em[(emLen - Hash.digest_length - 1)..(emLen - 1)][0..Hash.digest_length];
+            const masked_db = em[0..db_len];
+            const h = em[(em_len - Hash.digest_length - 1)..][0..Hash.digest_length];
 
             // 6.   If the leftmost 8emLen - emBits bits of the leftmost octet in
             //      maskedDB are not all equal to zero, output "inconsistent" and
             //      stop.
-            const zero_bits = emLen * 8 - emBit;
-            var mask: u8 = maskedDB[0];
-            var i: usize = 0;
-            while (i < 8 - zero_bits) : (i += 1) {
-                mask = mask >> 1;
-            }
-            if (mask != 0) {
+            const zero_bits = em_len * 8 - em_bits;
+            const mask: u8 = if (zero_bits == 0) 0 else 0xff ^ ((@as(u8, 1) << @intCast(8 - zero_bits)) - 1);
+
+            if ((masked_db[0] & mask) != 0) {
                 return error.InvalidSignature;
             }
 
             // 7.   Let dbMask = MGF(H, emLen - hLen - 1).
-            const mgf_len = emLen - Hash.digest_length - 1;
-            var mgf_out_buf: [512]u8 = undefined;
-            if (mgf_len > mgf_out_buf.len) { // Modulus > 4096 bits
-                return error.InvalidSignature;
-            }
-            const mgf_out = mgf_out_buf[0 .. ((mgf_len - 1) / Hash.digest_length + 1) * Hash.digest_length];
-            var dbMask = try MGF1(Hash, mgf_out, h, mgf_len);
+            var db_mask_buffer: [max_modulus_bytes]u8 = undefined;
+            const db_mask = MGF1(Hash, &db_mask_buffer, h, db_len);
 
             // 8.   Let DB = maskedDB \xor dbMask.
-            i = 0;
-            while (i < dbMask.len) : (i += 1) {
-                dbMask[i] = maskedDB[i] ^ dbMask[i];
+            for (db_mask, masked_db) |*a, b| {
+                a.* ^= b;
             }
 
             // 9.   Set the leftmost 8emLen - emBits bits of the leftmost octet
             //      in DB to zero.
-            i = 0;
-            mask = 0;
-            while (i < 8 - zero_bits) : (i += 1) {
-                mask = mask << 1;
-                mask += 1;
-            }
-            dbMask[0] = dbMask[0] & mask;
+            db_mask[0] &= ~mask;
 
             // 10.  If the emLen - hLen - sLen - 2 leftmost octets of DB are not
             //      zero or if the octet at position emLen - hLen - sLen - 1 (the
             //      leftmost position is "position 1") does not have hexadecimal
             //      value 0x01, output "inconsistent" and stop.
-            if (!mem.allEqual(u8, dbMask[0 .. mgf_len - sLen - 1], 0x00)) {
-                return error.InvalidSignature;
-            }
-
-            if (dbMask[mgf_len - sLen - 1] != 0x01) {
+            if (!mem.allEqual(u8, db_mask[0 .. em_len - Hash.digest_length - s_len - 2], 0x00) or
+                db_mask[em_len - Hash.digest_length - s_len - 2] != 0x01)
+            {
                 return error.InvalidSignature;
             }
 
             // 11.  Let salt be the last sLen octets of DB.
-            const salt = dbMask[(mgf_len - sLen)..];
+            const salt = db_mask[(db_len - s_len)..];
 
             // 12.  Let
             //         M' = (0x)00 00 00 00 00 00 00 00 || mHash || salt ;
             //      M' is an octet string of length 8 + hLen + sLen with eight
             //      initial zero octets.
-            if (sLen > Hash.digest_length) { // A seed larger than the hash length would be useless
+            if (s_len > Hash.digest_length) { // A seed larger than the hash length would be useless
                 return error.InvalidSignature;
             }
             var m_p_buf: [8 + Hash.digest_length + Hash.digest_length]u8 = undefined;
-            var m_p = m_p_buf[0 .. 8 + Hash.digest_length + sLen];
+            var m_p = m_p_buf[0 .. 8 + Hash.digest_length + s_len];
             @memmove(m_p[0..8], @as(*const [8]u8, &@splat(0)));
-            @memmove(m_p[8..][0..Hash.digest_length], &mHash);
+            @memmove(m_p[8..][0..Hash.digest_length], &m_hash);
             @memmove(m_p[(8 + Hash.digest_length)..], salt);
 
-            // 13.  Let H' = Hash(M'), an octet string of length hLen.
+            // 13. Let H' = Hash(M'), an octet string of length hLen.
             var h_p: [Hash.digest_length]u8 = undefined;
             Hash.hash(m_p, &h_p, .{});
 
-            // 14.  If H = H', output "consistent".  Otherwise, output
-            //      "inconsistent".
+            // 14. If H = H', output "consistent".  Otherwise, output
+            //     "inconsistent".
             if (!std.mem.eql(u8, h, &h_p)) {
                 return error.InvalidSignature;
             }
         }
 
-        fn MGF1(comptime Hash: type, out: []u8, seed: *const [Hash.digest_length]u8, len: usize) ![]u8 {
+        fn MGF1(comptime Hash: type, out: []u8, seed: *const [Hash.digest_length]u8, len: usize) []u8 {
             var counter: u32 = 0;
             var idx: usize = 0;
             var hash = seed.* ++ @as([4]u8, undefined);
@@ -1179,69 +1168,46 @@ pub const rsa = struct {
         }
     };
 
-    /// RFC 3447 8.2 RSASSA-PKCS1-v1_5
+    /// RFC 8017 8.2 RSASSA-PKCS1-v1_5
     pub const PKCS1v1_5Signature = struct {
-        pub fn fromBytes(comptime modulus_len: usize, msg: []const u8) [modulus_len]u8 {
-            var result: [modulus_len]u8 = undefined;
-            @memcpy(result[0..msg.len], msg);
-            @memset(result[msg.len..], 0);
-            return result;
-        }
-
-        pub const VerifyError = EncryptError || error{InvalidSignature};
+        pub const VerifyError = error{InvalidSignature};
 
         pub fn verify(
-            comptime modulus_len: usize,
-            sig: *const [modulus_len]u8,
+            sig: []const u8,
             msg: []const u8,
             public_key: PublicKey,
             comptime Hash: type,
         ) VerifyError!void {
-            try concatVerify(modulus_len, sig, &.{msg}, public_key, Hash);
+            try concatVerify(sig, &.{msg}, public_key, Hash);
         }
 
         pub fn concatVerify(
-            comptime modulus_len: usize,
-            sig: *const [modulus_len]u8,
+            sig: []const u8,
             msg: []const []const u8,
             public_key: PublicKey,
             comptime Hash: type,
         ) VerifyError!void {
-            const em_dec = try encrypt(modulus_len, sig, public_key);
-            const em = try EMSA_PKCS1_V1_5_ENCODE(msg, modulus_len, Hash);
-            if (!std.mem.eql(u8, &em_dec, &em)) return error.InvalidSignature;
+            // 1. Length checking: If the length of the signature S is not k
+            //    octets, output "invalid signature" and stop.
+            const k = @divCeil(public_key.n.bits(), 8);
+            if (sig.len != k) return error.InvalidSignature;
+
+            var em_buffer: [max_modulus_bytes]u8 = undefined;
+            const em = em_buffer[0..k];
+            try encrypt(em, sig, public_key);
+
+            var em_p_buffer: [max_modulus_bytes]u8 = undefined;
+            const em_p = em_p_buffer[0..k];
+            try EMSA_PKCS1_V1_5_ENCODE(em_p, msg, Hash);
+
+            if (!std.mem.eql(u8, em, em_p)) return error.InvalidSignature;
         }
 
-        fn EMSA_PKCS1_V1_5_ENCODE(msg: []const []const u8, comptime emLen: usize, comptime Hash: type) VerifyError![emLen]u8 {
-            comptime var em_index = emLen;
-            var em: [emLen]u8 = undefined;
-
-            // 1. Apply the hash function to the message M to produce a hash value
-            //    H:
-            //
-            //       H = Hash(M).
-            //
-            //    If the hash function outputs "message too long," output "message
-            //    too long" and stop.
-            var hasher: Hash = .init(.{});
-            for (msg) |part| hasher.update(part);
-            em_index -= Hash.digest_length;
-            hasher.final(em[em_index..]);
-
-            // 2. Encode the algorithm ID for the hash function and the hash value
-            //    into an ASN.1 value of type DigestInfo (see Appendix A.2.4) with
-            //    the Distinguished Encoding Rules (DER), where the type DigestInfo
-            //    has the syntax
-            //
-            //    DigestInfo ::= SEQUENCE {
-            //        digestAlgorithm AlgorithmIdentifier,
-            //        digest OCTET STRING
-            //    }
-            //
-            //    The first field identifies the hash function and the second
-            //    contains the hash value.  Let T be the DER encoding of the
-            //    DigestInfo value (see the notes below) and let tLen be the length
-            //    in octets of T.
+        fn EMSA_PKCS1_V1_5_ENCODE(
+            em: []u8,
+            msg: []const []const u8,
+            comptime Hash: type,
+        ) !void {
             const hash_der: []const u8 = &switch (Hash) {
                 crypto.hash.Md5 => .{
                     0x30, 0x20, 0x30, 0x0C, 0x06, 0x08, 0x2A, 0x86,
@@ -1282,13 +1248,45 @@ pub const rsa = struct {
                     0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x0a, 0x05,
                     0x00, 0x04, 0x40,
                 },
-                else => comptime unreachable,
+                else => @compileError("unsupported hash"),
             };
-            em_index -= hash_der.len;
-            @memcpy(em[em_index..][0..hash_der.len], hash_der);
 
             // 3. If emLen < tLen + 11, output "intended encoded message length too
             //    short" and stop.
+            if (em.len < Hash.digest_length + hash_der.len + 11) {
+                return error.InvalidSignature;
+            }
+
+            var em_index = em.len;
+
+            // 1. Apply the hash function to the message M to produce a hash value
+            //    H:
+            //
+            //       H = Hash(M).
+            //
+            //    If the hash function outputs "message too long," output "message
+            //    too long" and stop.
+            var hasher: Hash = .init(.{});
+            for (msg) |part| hasher.update(part);
+            em_index -= Hash.digest_length;
+            hasher.final(em[em_index..][0..Hash.digest_length]);
+
+            // 2. Encode the algorithm ID for the hash function and the hash value
+            //    into an ASN.1 value of type DigestInfo (see Appendix A.2.4) with
+            //    the Distinguished Encoding Rules (DER), where the type DigestInfo
+            //    has the syntax
+            //
+            //    DigestInfo ::= SEQUENCE {
+            //        digestAlgorithm AlgorithmIdentifier,
+            //        digest OCTET STRING
+            //    }
+            //
+            //    The first field identifies the hash function and the second
+            //    contains the hash value.  Let T be the DER encoding of the
+            //    DigestInfo value (see the notes below) and let tLen be the length
+            //    in octets of T.
+            em_index -= hash_der.len;
+            @memcpy(em[em_index..][0..hash_der.len], hash_der);
 
             // 4. Generate an octet string PS consisting of emLen - tLen - 3 octets
             //    with hexadecimal value 0xff.  The length of PS will be at least 8
@@ -1303,9 +1301,6 @@ pub const rsa = struct {
             em[em_index] = 0x00;
             em[1] = 0x01;
             em[0] = 0x00;
-
-            // 6. Output EM.
-            return em;
         }
     };
 
@@ -1315,12 +1310,10 @@ pub const rsa = struct {
 
         pub const FromBytesError = error{CertificatePublicKeyInvalid};
 
+        /// Rejects moduli below 1024 bits.
         pub fn fromBytes(pub_bytes: []const u8, modulus_bytes: []const u8) FromBytesError!PublicKey {
-            // Reject modulus below 512 bits.
-            // 512-bit RSA was factored in 1999, so this limit barely means anything,
-            // but establish some limit now to ratchet in what we can.
             const _n = Modulus.fromBytes(modulus_bytes, .big) catch return error.CertificatePublicKeyInvalid;
-            if (_n.bits() < 512) return error.CertificatePublicKeyInvalid;
+            if (_n.bits() < 1024) return error.CertificatePublicKeyInvalid;
 
             // Exponent must be odd and greater than 2.
             // Also, it must be less than 2^32 to mitigate DoS attacks.
@@ -1361,13 +1354,9 @@ pub const rsa = struct {
         }
     };
 
-    const EncryptError = error{MessageTooLong};
-
-    fn encrypt(comptime modulus_len: usize, msg: *const [modulus_len]u8, public_key: PublicKey) EncryptError![modulus_len]u8 {
-        const m = Fe.fromBytes(public_key.n, msg, .big) catch return error.MessageTooLong;
-        const e = public_key.n.powPublic(m, public_key.e) catch unreachable;
-        var res: [modulus_len]u8 = undefined;
-        e.toBytes(&res, .big) catch unreachable;
-        return res;
+    fn encrypt(out: []u8, msg: []const u8, public_key: PublicKey) !void {
+        const msg_fe = Fe.fromBytes(public_key.n, msg, .big) catch return error.InvalidSignature;
+        const m = public_key.n.powPublic(msg_fe, public_key.e) catch unreachable;
+        m.toBytes(out, .big) catch return error.InvalidSignature;
     }
 };

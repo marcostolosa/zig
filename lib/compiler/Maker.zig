@@ -1216,6 +1216,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                     },
                     .recursive = true,
                     .debug_hash = false,
+                    .color = options.color,
                     .unlazy_set = unlazy_set,
                     .fork_set = fork_set,
                     .mode = options.fetch_mode,
@@ -1705,6 +1706,7 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
         .recursive = false,
         .read_only = false,
         .debug_hash = debug_hash,
+        .color = color,
         .mode = .all,
         .prog_node = root_prog_node,
     };

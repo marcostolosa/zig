@@ -48,6 +48,7 @@ export ZIG_LIB_DIR="$PWD/../lib"
 # No -fqemu and -fwasmtime here as they're covered by the x86_64-linux scripts.
 stage3-debug/bin/zig build test-modules test-c-abi \
   --maxrss ${ZSF_MAX_RSS:-0} \
+  -Dno-bin \
   -Dstatic-llvm \
   -Dskip-non-native \
   -Dskip-single-threaded \

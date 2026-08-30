@@ -58,6 +58,7 @@ stage3-debug/bin/zig build test docs \
   -fqemu \
   --libc-runtimes $HOME/deps/glibc-2.43-musl-1.2.5 \
   -fwasmtime \
+  -Dno-bin \
   -Dstatic-llvm \
   -Dskip-freebsd \
   -Dskip-netbsd \

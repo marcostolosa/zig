@@ -48,6 +48,7 @@ Write-Output "Main test suite..."
 stage3-release\bin\zig.exe build test docs `
   --maxrss $ZSF_MAX_RSS `
   --search-prefix "$PREFIX_PATH" `
+  -Dno-bin `
   -Dstatic-llvm `
   -Dskip-non-native `
   -Dskip-test-incremental `

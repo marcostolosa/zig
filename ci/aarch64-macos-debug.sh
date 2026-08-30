@@ -48,6 +48,7 @@ export ZIG_LIB_DIR="$PWD/../lib"
 
 stage3-debug/bin/zig build test docs \
   --maxrss ${ZSF_MAX_RSS:-0} \
+  -Dno-bin \
   -Denable-macos-sdk \
   -Dstatic-llvm \
   -Dskip-spirv \

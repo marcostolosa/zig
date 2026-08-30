@@ -364,7 +364,7 @@ test "fixed writer writeSplatHeaderLimit" {
 
     // allocating writer that needs to expand capacity during splat
     try testWriteSplatHeaderLimit(.{ .writer_type = .allocating, .buf_len = 8, .header = "hhhh", .data = &.{"PP"}, .splat = 3, .limit = 100, .expected_res = .{ .written = 10 }, .expected_buf_content = "hhhhPPPPPP" });
-    try testWriteSplatHeaderLimit(.{ .writer_type = .allocating, .buf_len = 2, .header = "", .data = &.{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "X", "Y", "ZZ",}, .splat = 2, .limit = 100, .expected_res = .{ .written = 16 }, .expected_buf_content = "0123456789XYZZZZ"});
+    try testWriteSplatHeaderLimit(.{ .writer_type = .allocating, .buf_len = 2, .header = "", .data = &.{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "X", "Y", "ZZ" }, .splat = 2, .limit = 100, .expected_res = .{ .written = 16 }, .expected_buf_content = "0123456789XYZZZZ" });
 }
 
 test "writeSplatHeader splatting avoids buffer aliasing temptation" {

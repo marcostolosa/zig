@@ -904,9 +904,11 @@ pub const Symbol = struct {
         weak_external_strat: WeakExternalStrat,
         _: u5 = 0,
     },
-    /// Relocations contained within this symbol
+    /// The first index of the contiguous range of location relocs for this symbol.
+    /// The list is terminated by a reloc with a different .target than this symbol.
+    /// These are relocations that have a .loc that points to this symbol.
     loc_relocs: Reloc.Index,
-    /// Relocations targeting this symbol
+    /// The tail of a linked list of relocations with a .target that points to this symbol.
     target_relocs: Reloc.Index,
     section_number: SectionNumber,
     gmi: Node.GlobalMapIndex,
@@ -1109,7 +1111,7 @@ pub const Symbol = struct {
                 assert(reloc.target == si);
                 if (reloc.sri.entry(coff, reloc.loc.get(coff).section_number)) |entry|
                     coff.targetStore(&entry.symbol_table_index, index);
-                ri = reloc.next;
+                ri = reloc.prev;
             }
         }
 
@@ -1138,7 +1140,7 @@ pub const Symbol = struct {
                 const reloc = ri.get(coff);
                 assert(reloc.target == si);
                 try reloc.apply(coff);
-                ri = reloc.next;
+                ri = reloc.prev;
             }
         }
 
@@ -1516,15 +1518,15 @@ pub const Reloc = extern struct {
         }
 
         switch (reloc.prev) {
-            .none => {
-                const target = reloc.target.get(coff);
-                assert(target.target_relocs.get(coff) == reloc);
-                target.target_relocs = reloc.next;
-            },
+            .none => {},
             else => |prev| prev.get(coff).next = reloc.next,
         }
         switch (reloc.next) {
-            .none => {},
+            .none => {
+                const target = reloc.target.get(coff);
+                assert(target.target_relocs.get(coff) == reloc);
+                target.target_relocs = reloc.prev;
+            },
             else => |next| next.get(coff).prev = reloc.prev,
         }
 
@@ -3786,8 +3788,8 @@ fn addRelocAssumeCapacity(
 
     coff.relocs.addOneAssumeCapacity().* = .{
         .type = @"type",
-        .prev = .none,
-        .next = target.target_relocs,
+        .prev = target.target_relocs,
+        .next = .none,
         .loc = loc_si,
         .target = target_si,
         .sri = sri,
@@ -3800,7 +3802,7 @@ fn addRelocAssumeCapacity(
     };
     switch (target.target_relocs) {
         .none => {},
-        else => |target_ri| target_ri.get(coff).prev = ri,
+        else => |target_ri| target_ri.get(coff).next = ri,
     }
     target.target_relocs = ri;
 }
@@ -5498,7 +5500,7 @@ fn updateNavInner(coff: *Coff, pt: Zcu.PerThread, nav_index: InternPool.Nav.Inde
             else => |e| return e,
         };
 
-        si.get(coff).extra.size = @intCast(nw.interface.end);
+        si.get(coff).setSize(coff, @intCast(nw.interface.end));
         try si.applyLocationRelocs(coff);
     }
 
@@ -6259,18 +6261,19 @@ fn aliasGlobal(coff: *Coff, gmi: Node.GlobalMapIndex, alias_si: Symbol.Index) !v
         const reloc = ri.get(coff);
         assert(reloc.target == si);
         reloc.target = alias_si;
-        if (reloc.next == .none) {
-            reloc.next = alias_sym.target_relocs;
+        if (reloc.prev == .none) {
+            reloc.prev = alias_sym.target_relocs;
             if (alias_sym.target_relocs != .none)
-                alias_sym.target_relocs.get(coff).prev = ri;
+                alias_sym.target_relocs.get(coff).next = ri;
             break;
         }
-        ri = reloc.next;
+        ri = reloc.prev;
     }
 
     const prev_target_relocs = alias_sym.target_relocs;
     if (sym.target_relocs != .none)
         alias_sym.target_relocs = sym.target_relocs;
+
     sym.target_relocs = .none;
     sym.gmi = alias_sym.gmi;
     coff.globals.values()[gmi.unwrap().?].si = alias_si;

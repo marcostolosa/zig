@@ -1,6 +1,6 @@
 const F1 = fn () callconv(.{ .spirv_kernel = .{ .x = 0, .y = 1, .z = 1 } }) void;
 const F2 = fn () callconv(.{ .spirv_task = .{ .x = 1, .y = 0, .z = 1 } }) void;
-const F3 = fn () callconv(.{ .spirv_mesh = .{ .max_vertices = 0 } }) void;
+const F3 = fn () callconv(.{ .spirv_mesh = .{ .max_vertices = 0, .x = 1, .y = 1, .z = 1 } }) void;
 const F4 = fn () callconv(.{ .spirv_fragment = .{ .pixel_centered_integer = true } }) void;
 export fn entry1() void {
     const a: F1 = undefined;

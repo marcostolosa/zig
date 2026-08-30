@@ -876,8 +876,7 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
     };
     defer file.close(io);
 
-    // Empirically, glibc 2.34 libc.so .dynstr section is 32441 bytes on my system.
-    var buffer: [8000]u8 = undefined;
+    var buffer: [4096]u8 = undefined;
     var file_reader: Io.File.Reader = .init(file, io, &buffer);
 
     return glibcVerFromSoFile(&file_reader) catch |err| switch (err) {
@@ -951,7 +950,7 @@ fn glibcVerFromDynamicLinker(io: Io, dl_path: []const u8) !std.SemanticVersion {
     var file = cwd.openFile(io, dl_path, .{}) catch return error.GLibCNotFound;
     defer file.close(io);
 
-    var buffer: [8000]u8 = undefined;
+    var buffer: [4096]u8 = undefined;
     var file_reader: Io.File.Reader = .init(file, io, &buffer);
 
     const needle = "stable release version ";

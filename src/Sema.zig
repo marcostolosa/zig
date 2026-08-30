@@ -29951,6 +29951,7 @@ fn storePtr2(
     });
 
     try sema.requireRuntimeBlock(block, src, runtime_src);
+    try sema.ensurePtrRwAllowed(block, src, ptr);
 
     const store_inst = if (is_ret)
         try block.addBinOp(.store, ptr, operand)
@@ -31073,6 +31074,88 @@ fn analyzeRef(
     return block.addTyOp(.ptr_cast, ptr_type, alloc);
 }
 
+fn ensureSpirvPtrRwAllowed(
+    sema: *Sema,
+    block: *Block,
+    src: LazySrcLoc,
+    as: std.lang.AddressSpace,
+    elem_ty: Type,
+) CompileError!void {
+    const pt = sema.pt;
+    const zcu = pt.zcu;
+    const ip = &zcu.intern_pool;
+
+    switch (elem_ty.zigTypeTag(zcu)) {
+        .int => {
+            const bits = elem_ty.bitSize(zcu);
+            const target = zcu.getTarget();
+            var it = target_util.getSpirvPtrRwFeatures(target, as, @intCast(bits)).iterator();
+            while (it.next()) |feature| {
+                if (target.cpu.has(.spirv, feature)) continue;
+                return sema.fail(
+                    block,
+                    src,
+                    "'{f}' requires feature '{t}' to be loaded/stored in address space '{t}'",
+                    .{
+                        elem_ty.fmt(pt), feature, as,
+                    },
+                );
+            }
+        },
+        .array, .vector => {
+            const arr_elem_ty = elem_ty.childType(zcu);
+            try sema.ensureSpirvPtrRwAllowed(block, src, as, arr_elem_ty);
+        },
+        .@"struct" => {
+            const struct_ty = ip.loadStructType(elem_ty.toIntern());
+
+            if (struct_ty.layout == .@"packed") {
+                try sema.ensureSpirvPtrRwAllowed(block, src, as, elem_ty.backingIntType(zcu));
+                return;
+            }
+
+            var it = struct_ty.iterateRuntimeOrder(ip);
+            while (it.next()) |field_index| {
+                const field_ty = Type.fromInterned(struct_ty.field_types.get(ip)[field_index]);
+                try sema.ensureSpirvPtrRwAllowed(block, src, as, field_ty);
+            }
+        },
+        .@"union" => {
+            const union_ty = ip.loadUnionType(elem_ty.toIntern());
+
+            if (union_ty.layout == .@"packed") {
+                try sema.ensureSpirvPtrRwAllowed(block, src, as, elem_ty.backingIntType(zcu));
+                return;
+            }
+
+            for (0..union_ty.field_types.len) |field_index| {
+                const field_ty = Type.fromInterned(union_ty.field_types.get(ip)[field_index]);
+                try sema.ensureSpirvPtrRwAllowed(block, src, as, field_ty);
+            }
+        },
+        else => return,
+    }
+}
+
+fn ensurePtrRwAllowed(
+    sema: *Sema,
+    block: *Block,
+    src: LazySrcLoc,
+    ptr: Air.Inst.Ref,
+) CompileError!void {
+    const pt = sema.pt;
+    const zcu = pt.zcu;
+
+    const target = zcu.getTarget();
+    if (!target.cpu.arch.isSpirV()) return;
+
+    const ptr_ty = sema.typeOf(ptr);
+    const info = ptr_ty.ptrInfo(zcu);
+    const elem_ty = ptr_ty.childType(zcu);
+
+    try sema.ensureSpirvPtrRwAllowed(block, src, info.flags.address_space, elem_ty);
+}
+
 fn analyzeLoad(
     sema: *Sema,
     block: *Block,
@@ -31089,6 +31172,7 @@ fn analyzeLoad(
     };
 
     try sema.ensureLayoutResolved(elem_ty, src, .ptr_access);
+    try sema.ensurePtrRwAllowed(block, src, ptr);
 
     if (elem_ty.isSpirvRuntimeArray(zcu)) {
         return sema.fail(block, src, "cannot load SPIR-V runtime array value", .{});

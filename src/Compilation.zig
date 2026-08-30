@@ -6689,8 +6689,7 @@ fn addCommonCCArgs(
                     try argv.append(arena, "-O0");
                 },
                 .safe => {
-                    // See the comment in the BuildModeFastRelease case for why we pass -O2 rather
-                    // than -O3 here.
+                    // See the comment below for why we pass -O2 rather than -O3 here.
                     try argv.append(arena, "-O2");
                 },
                 .fast => {

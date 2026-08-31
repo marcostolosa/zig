@@ -508,7 +508,7 @@ pub const Location = union(enum) {
     path_or_url: []const u8,
 
     pub const Remote = struct {
-        urls: std.array_hash_map.String(Ast.TokenIndex),
+        url: std.array_hash_map.String(Ast.TokenIndex),
         /// If this is null it means the user omitted the hash field from a dependency.
         /// It will be an error but the logic should still fetch and print the discovered hash.
         hash: ?Package.Hash,
@@ -689,7 +689,7 @@ pub fn run(f: *Fetch) RunError!void {
     }
 
     // Fetch and unpack the remote into a temporary directory.
-    var iter = remote.urls.iterator();
+    var iter = remote.url.iterator();
     while (iter.next()) |entry| {
         const url = entry.key_ptr.*;
         const tok = entry.value_ptr.*;
@@ -988,15 +988,9 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
             var promoted_existing_to_eager = false;
             const new_fetch = &new_fetches[new_fetch_index];
             const location: Location = switch (dep.location) {
-                .url, .urls => .{
+                .url => |u| .{
                     .remote = .{
-                        .urls = u: {
-                            if (dep.location == .url) {
-                                var hm: std.array_hash_map.String(Ast.TokenIndex) = .empty;
-                                try hm.put(parent_arena, dep.location.url, dep.location_tok);
-                                break :u hm;
-                            } else break :u dep.location.urls;
-                        },
+                        .url = u,
                         .hash = h: {
                             const h = dep.hash orelse break :h null;
                             const pkg_hash: Package.Hash = .fromSlice(h);
@@ -1404,7 +1398,7 @@ fn initResource(
         } };
         const fetch_stream = &resource.git.fetch_stream;
 
-        session.fetch(fetch_stream, &.{&want_oid_buf}, reader_buffer) catch |err| {
+        session.fetch(fetch_stream, &.{want_oid_hex}, reader_buffer) catch |err| {
             return sf.fail(uri_src_loc, try eb.printString("unable to create fetch stream: {t}", .{err}));
         };
         errdefer fetch_stream.deinit(fetch_stream);
@@ -2128,7 +2122,6 @@ pub fn depDigest(pkg_root: Path, cache_root: Directory, dep: Manifest.Dependency
 
     switch (dep.location) {
         .url => return null,
-        .urls => return null,
         .path => |rel_path| {
             var buf: [fs.max_path_bytes]u8 = undefined;
             var fba = std.heap.FixedBufferAllocator.init(&buf);

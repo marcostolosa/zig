@@ -34,6 +34,12 @@ const hashes = [_]Hash{
         .has_anytype_api = @as([]const comptime_int, &[_]comptime_int{ 8, 16, 32, 48, 64, 80, 96, 112, 128 }),
     },
     Hash{
+        .ty = hash.XxHash3_128,
+        .name = "xxh3_128",
+        .init_u64 = 0,
+        .has_anytype_api = @as([]const comptime_int, &[_]comptime_int{ 8, 16, 32, 48, 64, 80, 96, 112, 128 }),
+    },
+    Hash{
         .ty = hash.XxHash64,
         .name = "xxhash64",
         .init_u64 = 0,

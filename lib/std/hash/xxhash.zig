@@ -581,6 +581,28 @@ pub const XxHash3 = struct {
             }
             return avalanche(.h3, result);
         }
+
+        fn digest128(noalias self: *Accumulator, total_len: u64, noalias last_block: *const InputBlock) u128 {
+            const secret_block = self.secret[192 - block_bytes - 7 ..][0..block_bytes];
+            round(&self.state, last_block, @ptrCast(secret_block));
+
+            const lo = mergeAccs(self.state, self.secret[11..][0..block_bytes], XxHash64.prime_1 *% total_len);
+            const hi = mergeAccs(
+                self.state,
+                self.secret[192 - block_bytes - 11 ..][0..block_bytes],
+                ~(XxHash64.prime_2 *% total_len),
+            );
+            return (@as(u128, hi) << 64) | lo;
+        }
+
+        fn mergeAccs(state: Block, secret: *const [block_bytes]u8, start: u64) u64 {
+            const mixed = state ^ @as(Block, @bitCast(secret.*));
+            var result = start;
+            inline for (0..4) |i| {
+                result +%= fold(mixed[i * 2], mixed[i * 2 + 1]);
+            }
+            return avalanche(.h3, result);
+        }
     };
 
     // Public API - Oneshot
@@ -698,7 +720,7 @@ pub const XxHash3 = struct {
 
     buffered: usize = 0,
     buffer: [256]u8 = undefined,
-    total_len: usize = 0,
+    total_len: u64 = 0,
     accumulator: Accumulator,
 
     pub fn init(seed: u64) XxHash3 {
@@ -706,7 +728,7 @@ pub const XxHash3 = struct {
     }
 
     pub fn update(self: *XxHash3, input: anytype) void {
-        self.total_len += input.len;
+        self.total_len += @as(u64, input.len);
         std.debug.assert(self.buffered <= self.buffer.len);
 
         // Copy the input into the buffer if we haven't filled it up yet.
@@ -748,12 +770,12 @@ pub const XxHash3 = struct {
     }
 
     pub fn final(self: *XxHash3) u64 {
-        std.debug.assert(self.buffered <= self.total_len);
+        std.debug.assert(@as(u64, self.buffered) <= self.total_len);
         std.debug.assert(self.buffered <= self.buffer.len);
 
         // Use Oneshot hashing for smaller sizes as it doesn't use Accumulator like hashLong.
         if (self.total_len <= 240) {
-            return hash(self.accumulator.seed, self.buffer[0..self.total_len]);
+            return hash(self.accumulator.seed, self.buffer[0..@intCast(self.total_len)]);
         }
 
         // Make a copy of the Accumulator state in case `self` needs to update() / be used later.
@@ -776,9 +798,230 @@ pub const XxHash3 = struct {
     }
 };
 
+pub const XxHash3_128 = struct {
+    const Acc128 = struct { lo: u64, hi: u64 };
+
+    inline fn pack(acc: Acc128) u128 {
+        return (@as(u128, acc.hi) << 64) | acc.lo;
+    }
+
+    inline fn mul64to128(lhs: u64, rhs: u64) Acc128 {
+        const product = @as(u128, lhs) *% rhs;
+        return .{ .lo = @truncate(product), .hi = @intCast(product >> 64) };
+    }
+
+    inline fn fold(a: u64, b: u64) u64 {
+        const product = mul64to128(a, b);
+        return product.lo ^ product.hi;
+    }
+
+    inline fn mix16(seed: u64, input: []const u8, secret: []const u8) u64 {
+        return fold(
+            mem.readInt(u64, input[0..8], .little) ^ (mem.readInt(u64, secret[0..8], .little) +% seed),
+            mem.readInt(u64, input[8..16], .little) ^ (mem.readInt(u64, secret[8..16], .little) -% seed),
+        );
+    }
+
+    inline fn mix32(
+        acc: Acc128,
+        input_1: []const u8,
+        input_2: []const u8,
+        secret: []const u8,
+        seed: u64,
+    ) Acc128 {
+        const lo = acc.lo +% mix16(seed, input_1, secret);
+        const hi = acc.hi +% mix16(seed, input_2, secret[16..]);
+        return .{
+            .lo = lo ^ (mem.readInt(u64, input_2[0..8], .little) +% mem.readInt(u64, input_2[8..16], .little)),
+            .hi = hi ^ (mem.readInt(u64, input_1[0..8], .little) +% mem.readInt(u64, input_1[8..16], .little)),
+        };
+    }
+
+    inline fn finalizeMid(acc: Acc128, len: u64, seed: u64) u128 {
+        const lo = XxHash3.avalanche(.h3, acc.lo +% acc.hi);
+        const hi_mix = (acc.lo *% XxHash64.prime_1) +%
+            (acc.hi *% XxHash64.prime_4) +%
+            ((len -% seed) *% XxHash64.prime_2);
+        return pack(.{ .lo = lo, .hi = 0 -% XxHash3.avalanche(.h3, hi_mix) });
+    }
+
+    // Public API - Oneshot
+
+    pub fn hash(seed: u64, input: anytype) u128 {
+        const secret = &XxHash3.default_secret;
+        if (input.len > 240) return hashLong(seed, input);
+        if (input.len > 128) return hash240(seed, input, secret);
+        if (input.len > 16) return hash128(seed, input, secret);
+        if (input.len > 8) return hash16(seed, input, secret);
+        if (input.len > 3) return hash8(seed, input, secret);
+        if (input.len > 0) return hash3(seed, input, secret);
+
+        const flip_l = mem.readInt(u64, secret[64..72], .little) ^ mem.readInt(u64, secret[72..80], .little);
+        const flip_h = mem.readInt(u64, secret[80..88], .little) ^ mem.readInt(u64, secret[88..96], .little);
+        return pack(.{
+            .lo = XxHash3.avalanche(.h64, seed ^ flip_l),
+            .hi = XxHash3.avalanche(.h64, seed ^ flip_h),
+        });
+    }
+
+    fn hash3(seed: u64, input: anytype, noalias secret: *const [192]u8) u128 {
+        @branchHint(.unlikely);
+        std.debug.assert(input.len > 0 and input.len < 4);
+
+        const combined: u32 =
+            (@as(u32, input[0]) << 16) |
+            (@as(u32, input[input.len >> 1]) << 24) |
+            (@as(u32, input[input.len - 1]) << 0) |
+            (@as(u32, @intCast(input.len)) << 8);
+        const combined_h = rotl(u32, @byteSwap(combined), 13);
+
+        const xor_l = mem.readInt(u32, secret[0..4], .little) ^ mem.readInt(u32, secret[4..8], .little);
+        const xor_h = mem.readInt(u32, secret[8..12], .little) ^ mem.readInt(u32, secret[12..16], .little);
+        return pack(.{
+            .lo = XxHash3.avalanche(.h64, @as(u64, combined) ^ (@as(u64, xor_l) +% seed)),
+            .hi = XxHash3.avalanche(.h64, @as(u64, combined_h) ^ (@as(u64, xor_h) -% seed)),
+        });
+    }
+
+    fn hash8(seed: u64, input: anytype, noalias secret: *const [192]u8) u128 {
+        @branchHint(.cold);
+        std.debug.assert(input.len >= 4 and input.len <= 8);
+
+        const keyed_seed = seed ^ (@as(u64, @byteSwap(@as(u32, @truncate(seed)))) << 32);
+        const input_64 = @as(u64, mem.readInt(u32, input[0..4], .little)) +%
+            (@as(u64, mem.readInt(u32, input[input.len - 4 ..][0..4], .little)) << 32);
+        const bitflip = (mem.readInt(u64, secret[16..24], .little) ^ mem.readInt(u64, secret[24..32], .little)) +% keyed_seed;
+        const keyed = input_64 ^ bitflip;
+
+        var m = mul64to128(keyed, XxHash64.prime_1 +% (@as(u64, input.len) << 2));
+        m.hi +%= m.lo << 1;
+        m.lo ^= m.hi >> 3;
+        m.lo ^= m.lo >> 35;
+        m.lo *%= XxHash3.prime_mx2;
+        m.lo ^= m.lo >> 28;
+        m.hi = XxHash3.avalanche(.h3, m.hi);
+        return pack(m);
+    }
+
+    fn hash16(seed: u64, input: anytype, noalias secret: *const [192]u8) u128 {
+        @branchHint(.unlikely);
+        std.debug.assert(input.len > 8 and input.len <= 16);
+
+        const bitflip_l = (mem.readInt(u64, secret[32..40], .little) ^ mem.readInt(u64, secret[40..48], .little)) -% seed;
+        const bitflip_h = (mem.readInt(u64, secret[48..56], .little) ^ mem.readInt(u64, secret[56..64], .little)) +% seed;
+        const input_lo = mem.readInt(u64, input[0..8], .little);
+        var input_hi = mem.readInt(u64, input[input.len - 8 ..][0..8], .little);
+        var m = mul64to128(input_lo ^ input_hi ^ bitflip_l, XxHash64.prime_1);
+        m.lo +%= (@as(u64, input.len) - 1) << 54;
+        input_hi ^= bitflip_h;
+        m.hi +%= input_hi +% (@as(u64, @as(u32, @truncate(input_hi))) *% (XxHash32.prime_2 - 1));
+        m.lo ^= @byteSwap(m.hi);
+
+        var h = mul64to128(m.lo, XxHash64.prime_2);
+        h.hi +%= m.hi *% XxHash64.prime_2;
+        h.lo = XxHash3.avalanche(.h3, h.lo);
+        h.hi = XxHash3.avalanche(.h3, h.hi);
+        return pack(h);
+    }
+
+    fn hash128(seed: u64, input: anytype, noalias secret: *const [192]u8) u128 {
+        @branchHint(.unlikely);
+        std.debug.assert(input.len > 16 and input.len <= 128);
+
+        var acc = Acc128{
+            .lo = XxHash64.prime_1 *% @as(u64, input.len),
+            .hi = 0,
+        };
+        inline for (0..4) |rev| {
+            const i = 3 - rev;
+            if (input.len > i * 32) {
+                acc = mix32(acc, input[i * 16 ..], input[input.len - (i + 1) * 16 ..], secret[i * 32 ..], seed);
+            }
+        }
+        return finalizeMid(acc, input.len, seed);
+    }
+
+    fn hash240(seed: u64, input: anytype, noalias secret: *const [192]u8) u128 {
+        @branchHint(.unlikely);
+        std.debug.assert(input.len > 128 and input.len <= 240);
+
+        var acc = Acc128{
+            .lo = XxHash64.prime_1 *% @as(u64, input.len),
+            .hi = 0,
+        };
+        inline for (0..4) |i| {
+            acc = mix32(acc, input[i * 32 ..], input[i * 32 + 16 ..], secret[i * 32 ..], seed);
+        }
+
+        acc.lo = XxHash3.avalanche(.h3, acc.lo);
+        acc.hi = XxHash3.avalanche(.h3, acc.hi);
+
+        var i: usize = 160;
+        while (i <= input.len) : (i += 32) {
+            acc = mix32(acc, input[i - 32 ..], input[i - 16 ..], secret[3 + i - 160 ..], seed);
+        }
+
+        acc = mix32(acc, input[input.len - 16 ..], input[input.len - 32 ..], secret[103..], 0 -% seed);
+        return finalizeMid(acc, input.len, seed);
+    }
+
+    noinline fn hashLong(seed: u64, input: []const u8) u128 {
+        @branchHint(.unlikely);
+        std.debug.assert(input.len > 240);
+
+        const block_count = ((input.len - 1) / XxHash3.block_bytes) * XxHash3.block_bytes;
+        const last_block = input[input.len - XxHash3.block_bytes ..][0..XxHash3.block_bytes];
+
+        var acc = XxHash3.Accumulator.init(seed);
+        acc.consume(std.mem.bytesAsSlice(XxHash3.InputBlock, input[0..block_count]));
+        return acc.digest128(input.len, @ptrCast(last_block));
+    }
+
+    // Public API - Streaming
+
+    inner: XxHash3,
+
+    pub fn init(seed: u64) XxHash3_128 {
+        return .{ .inner = .init(seed) };
+    }
+
+    pub fn update(self: *XxHash3_128, input: anytype) void {
+        self.inner.update(input);
+    }
+
+    pub fn final(self: *XxHash3_128) u128 {
+        const inner = &self.inner;
+        std.debug.assert(@as(u64, inner.buffered) <= inner.total_len);
+        std.debug.assert(inner.buffered <= inner.buffer.len);
+
+        // Use Oneshot hashing for smaller sizes as it doesn't use Accumulator like hashLong.
+        if (inner.total_len <= 240) {
+            return hash(inner.accumulator.seed, inner.buffer[0..@intCast(inner.total_len)]);
+        }
+
+        // Make a copy of the Accumulator state in case `self` needs to update() / be used later.
+        var accumulator_copy = inner.accumulator;
+        var last_block_copy: [XxHash3.block_bytes]u8 = undefined;
+
+        // Digest the last block on the Accumulator copy.
+        return accumulator_copy.digest128(inner.total_len, last_block: {
+            if (inner.buffered >= XxHash3.block_bytes) {
+                const block_count = ((inner.buffered - 1) / XxHash3.block_bytes) * XxHash3.block_bytes;
+                accumulator_copy.consume(std.mem.bytesAsSlice(XxHash3.InputBlock, inner.buffer[0..block_count]));
+                break :last_block @ptrCast(inner.buffer[inner.buffered - XxHash3.block_bytes ..][0..XxHash3.block_bytes]);
+            } else {
+                const remaining = XxHash3.block_bytes - inner.buffered;
+                @memcpy(last_block_copy[0..remaining], inner.buffer[inner.buffer.len - remaining ..][0..remaining]);
+                @memcpy(last_block_copy[remaining..][0..inner.buffered], inner.buffer[0..inner.buffered]);
+                break :last_block @ptrCast(&last_block_copy);
+            }
+        });
+    }
+};
+
 const verify = @import("verify.zig");
 
-fn testExpect(comptime H: type, seed: anytype, input: []const u8, expected: u64) !void {
+fn testExpect(comptime H: type, seed: anytype, input: []const u8, expected: anytype) !void {
     try expectEqual(expected, H.hash(seed, input));
 
     var hasher = H.init(seed);
@@ -832,6 +1075,59 @@ test "xxhash3 iterative api" {
     const Test = struct {
         fn do() !void {
             try verify.iterativeApi(XxHash3);
+        }
+    };
+    try Test.do();
+    @setEvalBranchQuota(30000);
+    comptime try Test.do();
+}
+
+test "xxhash3_128" {
+    const H = XxHash3_128;
+    // Non-Seeded Tests
+    try testExpect(H, 0, "", 0x99aa06d3014798d86001c324468d497f);
+    try testExpect(H, 0, "a", 0xa96faf705af16834e6c632b61e964e1f);
+    try testExpect(H, 0, "abc", 0x06b05ab6733a618578af5f94892f3950);
+    try testExpect(H, 0, "message", 0x2225edcad9f4d19d90c59b966c25ea2a);
+    try testExpect(H, 0, "message digest", 0x34ab715d95e3b6490abfabecb8e3a424);
+    try testExpect(H, 0, "abcdefghijklmnopqrstuvwxyz", 0xdb7ca44e84843d67ebe162220154e1e6);
+    try testExpect(H, 0, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", 0x5bcb80b619500686a3c0560bd47a4ffb);
+    try testExpect(H, 0, "12345678901234567890123456789012345678901234567890123456789012345678901234567890", 0x08dd22c3ddc34ce640cb8d6ac672dcb8);
+    try testExpect(H, 0, "12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678", 0xb0c3bbc5a1c42035b2fe904f31efe28a);
+    try testExpect(H, 0, "12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890", 0xd29875c0396f83448845e0b1b57330de);
+    try testExpect(H, 0, "12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123123", 0x73e50cab4f0ba295f031f373d63c5653);
+    try testExpect(H, 0, "12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890", 0x06e0a3155909a10ef1bf601f9d868dce);
+
+    // Seeded Tests
+    try testExpect(H, 1, "", 0xd9265cc53bb2b9ae6131b78f753823cd);
+    try testExpect(H, 1, "a", 0xfdd9b77fdcaf3221d2f6d0996f37a720);
+    try testExpect(H, 1, "abc", 0x7577b06fae9ee3ed6b4467b443c76228);
+    try testExpect(H, 1, "message", 0x1062fc9bb020979d857e03ea60134439);
+    try testExpect(H, 1, "message digest", 0x3444fd1ae5a55f12e6ac832bf3909eb8);
+    try testExpect(H, 1, "abcdefghijklmnopqrstuvwxyz", 0x05ae4629ca5f802700dc0fa708b0a581);
+    try testExpect(H, 1, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", 0x8ba3647c19f0f2de4f163957ff6808ca);
+    try testExpect(H, 1, "12345678901234567890123456789012345678901234567890123456789012345678901234567890", 0xee29288d1e5ba5c19c63ae01a0b6ce05);
+    try testExpect(H, 1, "12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678", 0x5a96b9b570ccab7f220f3191c1277efb);
+    try testExpect(H, 1, "12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890", 0x32909bb7f5ba5469fbc5f9c53d21cb2f);
+    try testExpect(H, 1, "12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123123", 0x23a2641d8b4a410948682aca3b1c5c18);
+    try testExpect(H, 1, "12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890", 0x142f9e25e5b1d8ba3903c5437fc4e726);
+}
+
+test "xxhash3_128 smhasher" {
+    const Test = struct {
+        fn do() !void {
+            try expectEqual(verify.smhasher(XxHash3_128.hash), 0x5ae48e84);
+        }
+    };
+    try Test.do();
+    @setEvalBranchQuota(75000);
+    comptime try Test.do();
+}
+
+test "xxhash3_128 iterative api" {
+    const Test = struct {
+        fn do() !void {
+            try verify.iterativeApi(XxHash3_128);
         }
     };
     try Test.do();

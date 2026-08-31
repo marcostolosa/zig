@@ -32,6 +32,7 @@ pub const Wyhash = wyhash.Wyhash;
 
 const xxhash = @import("hash/xxhash.zig");
 pub const XxHash3 = xxhash.XxHash3;
+pub const XxHash3_128 = xxhash.XxHash3_128;
 pub const XxHash64 = xxhash.XxHash64;
 pub const XxHash32 = xxhash.XxHash32;
 

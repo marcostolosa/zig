@@ -76,16 +76,17 @@ the case that the package lacks a `build.zig.zon` file.
 
 #### `url`
 
-String. 
+List.
 
-When updating this field to a new URL, be sure to delete the corresponding
-`hash`, otherwise you are communicating that you expect to find the old hash at
-the new URL. If the contents of a URL change this will result in a hash mismatch
-which will prevent zig from using it.
+Each URL must evaluate to the same hash. When updating this field to a new set
+of URLs, be sure to delete the corresponding `hash`, otherwise you are
+communicating that you expect to find the old hash at the new URLs. If the
+contents of a URL change this will result in a hash mismatch which will prevent
+zig from using it.
 
 #### `hash`
 
-String. 
+String.
 
 [multihash](https://multiformats.io/multihash/)
 

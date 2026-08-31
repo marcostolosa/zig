@@ -639,7 +639,7 @@ test "basic" {
     try testing.expect(manifest.minimum_zig_version == null);
 }
 
-test "mirrors" {
+test "multiple-urls" {
     const gpa = testing.allocator;
 
     const example =

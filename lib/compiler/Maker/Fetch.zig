@@ -1021,9 +1021,9 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
             var promoted_existing_to_eager = false;
             const new_fetch = &new_fetches[new_fetch_index];
             const location: Location = switch (dep.location) {
-                .url => |u| .{
+                .url => |url| .{
                     .remote = .{
-                        .url = u,
+                        .url = url,
                         .hash = h: {
                             const h = dep.hash orelse break :h null;
                             const pkg_hash: Package.Hash = .fromSlice(h);

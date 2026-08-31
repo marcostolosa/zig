@@ -367,7 +367,7 @@ fn loadComptimePtrInner(
 
     if (ptr.byte_offset == 0) {
         if (load_ty.zigTypeTag(zcu) != .array or array_offset == 0) {
-            if (.ok == try sema.coerceInMemoryAllowed(
+            switch (try sema.coerceInMemoryAllowed(
                 block,
                 load_ty,
                 base_val.typeOf(zcu),
@@ -377,8 +377,34 @@ fn loadComptimePtrInner(
                 src,
                 null,
             )) {
-                // We already have a value which is IMC to the desired type.
-                return .{ .success = base_val };
+                .ok => |strategy| {
+                    switch (strategy) {
+                        .ptr_cast => {
+                            const load_ty_key = ip.indexToKey(load_ty.toIntern());
+                            // TODO: For now we support only casting from *T to ?*T.
+                            // This can happen when builtin function erase type (for default value) to later reify
+                            // into struct.
+                            if (load_ty_key != .opt_type) {
+                                return .{ .success = base_val };
+                            }
+
+                            const mut_payload = try sema.arena.create(MutableValue);
+                            mut_payload.* = base_val;
+                            return .{
+                                .success = .{
+                                    .opt_payload = .{
+                                        .ty = load_ty.toIntern(),
+                                        .child = mut_payload,
+                                    },
+                                },
+                            };
+                        },
+                        else => {
+                            return .{ .success = base_val };
+                        },
+                    }
+                },
+                else => {},
             }
         }
     }

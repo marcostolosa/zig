@@ -7090,7 +7090,10 @@ const ParamTypeIterator = struct {
                     it.llvm_index += 1;
                     return .slice;
                 }
-                if (isByRef(ty, zcu)) return .byref;
+                if (isByRef(ty, zcu)) {
+                    it.byval_attr = .{};
+                    return .byref;
+                }
                 return .byval;
             },
             .async => {

@@ -7916,7 +7916,7 @@ fn idleProgNode(
     return prog_node.start(name: switch (node) {
         else => |tag| @tagName(tag),
         .section => |shndx| shndx.name(elf).slice(elf),
-        .archive_input_member => |ii| std.fmt.bufPrint(&name, "{f}{f}", .{
+        .archive_input_member => |ii| std.mem.print(&name, "{f}{f}", .{
             ii.path(elf).fmtEscapeString(),
             fmtMemberString(ii.member(elf)),
         }) catch &name,

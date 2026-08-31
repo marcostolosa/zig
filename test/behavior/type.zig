@@ -311,6 +311,12 @@ test "reified struct field name from optional payload" {
     }
 }
 
+test "reified struct with default value as optional type" {
+    const T = @Struct(.auto, null, &.{"field"}, &.{?*const void}, &.{.{ .default_value_ptr = @ptrCast(&&{}) }});
+    const new_t: T = .{};
+    assert(@TypeOf(new_t.field) == ?*const void);
+}
+
 test "reified union uses @alignOf" {
     const S = struct {
         fn CreateUnion(comptime T: type) type {

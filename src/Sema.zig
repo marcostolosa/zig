@@ -18881,13 +18881,13 @@ fn finishStructInit(
         .struct_type => {
             const struct_type = ip.loadStructType(struct_ty.toIntern());
             for (0..struct_type.field_types.len) |i| {
+                const field_ty: Type = .fromInterned(struct_type.field_types.get(ip)[i]);
                 if (field_inits[i] != .none) {
                     // Coerce the init value to the field type.
                     const field_src = block.src(.{ .init_elem = .{
                         .init_node_offset = init_src.offset.node_offset.x,
                         .elem_index = @intCast(i),
                     } });
-                    const field_ty: Type = .fromInterned(struct_type.field_types.get(ip)[i]);
                     field_inits[i] = try sema.coerce(block, field_ty, field_inits[i], field_src);
                     continue;
                 }
@@ -18904,7 +18904,7 @@ fn finishStructInit(
                     break :d struct_type.field_defaults.get(ip)[i];
                 };
                 if (field_default != .none) {
-                    field_inits[i] = .fromIntern(field_default);
+                    field_inits[i] = .fromValue(try pt.getCoerced(.fromInterned(field_default), field_ty));
                     continue;
                 }
 
@@ -20312,11 +20312,13 @@ fn zirReifyStruct(
                 field_attrs_src,
                 .{ .simple = .struct_field_default_value },
             );
-            if (deref_val.canMutateComptimeVarState(zcu)) {
-                return sema.failWithContainsReferenceToComptimeVar(block, field_attrs_src, field_name, "field default value", deref_val);
+            const coerce_deref_val = try pt.getCoerced(deref_val, field_ty);
+
+            if (coerce_deref_val.canMutateComptimeVarState(zcu)) {
+                return sema.failWithContainsReferenceToComptimeVar(block, field_attrs_src, field_name, "field default value", coerce_deref_val);
             }
             any_field_defaults = true;
-            break :d deref_val.toIntern();
+            break :d coerce_deref_val.toIntern();
         };
 
         if (field_attr_comptime.toBool()) {

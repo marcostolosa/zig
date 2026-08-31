@@ -246,9 +246,7 @@ pub const Parsed = struct {
         CertificateFieldHasInvalidLength,
         CertificateFieldHasWrongDataType,
         CertificatePublicKeyInvalid,
-        CertificateSignatureInvalidLength,
         CertificateSignatureInvalid,
-        CertificateSignatureUnsupportedBitCount,
         CertificateSignatureNamedCurveUnsupported,
     };
 

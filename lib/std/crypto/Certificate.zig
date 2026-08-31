@@ -1123,25 +1123,23 @@ pub const rsa = struct {
                 return error.InvalidSignature;
             }
 
-            // 11.  Let salt be the last sLen octets of DB.
-            const salt = db_mask[(db_len - s_len)..];
-
-            // 12.  Let
-            //         M' = (0x)00 00 00 00 00 00 00 00 || mHash || salt ;
-            //      M' is an octet string of length 8 + hLen + sLen with eight
-            //      initial zero octets.
-            if (s_len > Hash.digest_length) { // A seed larger than the hash length would be useless
-                return error.InvalidSignature;
-            }
-            var m_p_buf: [8 + Hash.digest_length + Hash.digest_length]u8 = undefined;
-            var m_p = m_p_buf[0 .. 8 + Hash.digest_length + s_len];
-            @memmove(m_p[0..8], @as(*const [8]u8, &@splat(0)));
-            @memmove(m_p[8..][0..Hash.digest_length], &m_hash);
-            @memmove(m_p[(8 + Hash.digest_length)..], salt);
-
-            // 13. Let H' = Hash(M'), an octet string of length hLen.
             var h_p: [Hash.digest_length]u8 = undefined;
-            Hash.hash(m_p, &h_p, .{});
+            {
+                // 11.  Let salt be the last sLen octets of DB.
+                const salt = db_mask[(db_len - s_len)..];
+
+                // 12.  Let
+                //         M' = (0x)00 00 00 00 00 00 00 00 || mHash || salt ;
+                //      M' is an octet string of length 8 + hLen + sLen with eight
+                //      initial zero octets.
+                var hasher: Hash = .init(.{});
+                hasher.update(@as(*const [8]u8, &@splat(0)));
+                hasher.update(&m_hash);
+                hasher.update(salt);
+
+                // 13. Let H' = Hash(M'), an octet string of length hLen.
+                hasher.final(&h_p);
+            }
 
             // 14. If H = H', output "consistent".  Otherwise, output
             //     "inconsistent".

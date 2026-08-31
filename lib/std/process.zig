@@ -55,6 +55,33 @@ pub const Init = struct {
         /// Command line arguments.
         args: Args,
     };
+
+    /// Parses arguments and automatically prints help if it was requested
+    /// or the arguments were invalid. See `std.cli.parse`.
+    pub fn args(init: *const Init, comptime CliArgs: type, comptime config: std.cli.Config(CliArgs)) CliArgs {
+        const arena = init.arena.allocator();
+        const argv = init.minimal.args.toSlice(arena) catch fatal("Out of memory", .{});
+        return std.cli.parse(arena, CliArgs, config, argv) catch |err| {
+            const exit_code: u8 = switch (err) {
+                error.HelpRequested => 0,
+                error.IncorrectUsage => 1,
+                error.OutOfMemory => fatal("Out of memory", .{}),
+            };
+
+            // no need to reset it other than good practice
+            const prev = init.io.swapCancelProtection(.blocked);
+            defer _ = init.io.swapCancelProtection(prev);
+
+            var buf: [4096]u8 = undefined;
+            var stderr = init.io.lockStderr(&buf, null) catch |err2| switch (err2) {
+                error.Canceled => unreachable,
+            };
+            std.cli.printUsage(&stderr.file_writer.interface, CliArgs, config, argv[0]) catch {};
+            init.io.unlockStderr();
+
+            exit(exit_code);
+        };
+    }
 };
 
 pub const CurrentPathError = error{

@@ -2009,6 +2009,8 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
         no,
         yes: ?[]const u8,
         exact: ?[]const u8,
+        append: ?[]const u8,
+        append_exact: ?[]const u8,
     } = .no;
 
     var arg_i: usize = 0;
@@ -2033,6 +2035,14 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
                 save = .{ .exact = null };
             } else if (mem.cutPrefix(u8, arg, "--save-exact=")) |rest| {
                 save = .{ .exact = rest };
+            } else if (mem.eql(u8, arg, "--append")) {
+                save = .{ .append = null };
+            } else if (mem.cutPrefix(u8, arg, "--append=")) |rest| {
+                save = .{ .append = rest };
+            } else if (mem.eql(u8, arg, "--append-exact")) {
+                save = .{ .append_exact = null };
+            } else if (mem.cutPrefix(u8, arg, "--append-exact=")) |rest| {
+                save = .{ .append_exact = rest };
             } else {
                 fatal("unrecognized parameter: {q}", .{arg});
             }
@@ -2064,7 +2074,7 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
 
     const local_storage_ptr = switch (save) {
         .no => null,
-        .yes, .exact => ls: {
+        .yes, .exact, .append, .append_exact => ls: {
             build_root = try findBuildRoot(arena, io, .{ .cwd_path = cwd_path });
             build_root_initialized = true;
 
@@ -2159,7 +2169,7 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
             try stdout_writer_allocation.flush();
             return process.cleanExit(io);
         },
-        .yes, .exact => |name| name: {
+        .yes, .exact, .append, .append_exact => |name| name: {
             if (name) |n| break :name n;
             if (!fetch.have_manifest)
                 fatal("unable to determine name; fetched package has no build.zig.zon file", .{});
@@ -2209,14 +2219,14 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
         uri.fragment = .{ .raw = latest_commit_hex };
 
         switch (save) {
-            .yes => saved_path_or_url = try arena.print("{f}", .{uri}),
-            .no, .exact => {}, // keep the original URL
+            .yes, .append => saved_path_or_url = try arena.print("{f}", .{uri}),
+            .no, .exact, .append_exact => {}, // keep the original URL
         }
     }
 
     const new_node_init = try arena.print(
         \\.{{
-        \\            .url = "{f}",
+        \\            .url = .{{"{f}"}},
         \\            .hash = "{f}",
         \\        }}
     , .{
@@ -2239,21 +2249,69 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
     if (manifest.dependencies.get(name)) |dep| {
         if (dep.hash) |h| {
             switch (dep.location) {
-                .url => |u| {
-                    if (mem.eql(u8, h, package_hash_slice) and mem.eql(u8, u, saved_path_or_url)) {
-                        log.info("existing dependency named {q} is up-to-date", .{name});
-                        process.exit(0);
+                .url => |url| {
+                    switch (save) {
+                        .yes, .exact => {
+                            if (url.count() > 1) {
+                                log.err("cannot overwrite dependency {q} since it declares more than one url", .{name});
+                                log.info("hint: use --append instead of --save", .{});
+                                process.exit(0);
+                            }
+                            var iter = url.iterator();
+                            if (iter.next()) |u| {
+                                if (mem.eql(u8, h, package_hash_slice) and mem.eql(u8, u.key_ptr.*, saved_path_or_url)) {
+                                    log.info("existing dependency named {q} is up-to-date", .{name});
+                                    process.exit(0);
+                                }
+                            }
+                        },
+                        .append, .append_exact => {
+                            if (url.contains(saved_path_or_url)) {
+                                log.info("existing dependency named {q} already declares that url", .{name});
+                                process.exit(0);
+                            }
+
+                            if (!std.mem.eql(u8, h, package_hash_slice)) {
+                                log.err(
+                                    \\provided url resolves to a different hash
+                                    \\old: "{s}"
+                                    \\new: "{s}"
+                                , .{ h, package_hash_slice });
+                                process.exit(1);
+                            }
+                        },
+                        else => {},
                     }
                 },
-                .urls => @panic("todo mirror"),
                 .path => {},
             }
         }
 
-        const location_replace = try arena.print("{q}", .{saved_path_or_url});
+        const location_replace = blk: {
+            if (dep.location == .url) {
+                switch (save) {
+                    .append, .append_exact => {
+                        var allocating = Io.Writer.Allocating.init(arena);
+                        try allocating.writer.writeAll(".{\n");
+                        var iter = dep.location.url.iterator();
+                        while (iter.next()) |url| {
+                            try allocating.writer.print("                \"{s}\",\n", .{url.key_ptr.*});
+                        }
+                        try allocating.writer.print("                \"{s}\",\n", .{saved_path_or_url});
+                        try allocating.writer.writeAll("            }");
+
+                        break :blk try allocating.toOwnedSlice();
+                    },
+                    else => {},
+                }
+            }
+            break :blk try arena.print(".{{{q}}}", .{saved_path_or_url});
+        };
+
         const hash_replace = try arena.print("{q}", .{package_hash_slice});
 
         log.warn("overwriting existing dependency named {q}", .{name});
+
         try fixups.replace_nodes_with_string.put(gpa, dep.location_node, location_replace);
         if (dep.hash_node.unwrap()) |hash_node| {
             try fixups.replace_nodes_with_string.put(gpa, hash_node, hash_replace);
@@ -2407,6 +2465,12 @@ const usage_fetch =
     \\  --save=[name]                 Add the fetched package to build.zig.zon as name
     \\  --save-exact                  Add the fetched package to build.zig.zon, storing the URL verbatim
     \\  --save-exact=[name]           Add the fetched package to build.zig.zon as name, storing the URL verbatim
+    \\  --append                      Append the fetched package to the url list in build.zig.zon
+    \\  --append=[name]               Append the fetched package to the url list in build.zig.zon as name
+    \\  --append-exact                Append the fetched package to the url list in build.zig.zon, storing
+    \\                                the URL verbatim
+    \\  --append-exact=[name]         Append the fetched package to the url list in build.zig.zon as name,
+    \\                                storing the URL verbatim
     \\
 ;
 

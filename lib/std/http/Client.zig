@@ -236,6 +236,9 @@ pub const Connection = struct {
     host_len: u8,
     proxied: bool,
     closing: bool,
+    /// Set if this connection no longer owns its stream
+    /// as it has been upgraded into a different connection.
+    defunct: bool,
     protocol: Protocol,
 
     const Plain = struct {
@@ -268,6 +271,7 @@ pub const Connection = struct {
                     .host_len = @intCast(remote_host.bytes.len),
                     .proxied = false,
                     .closing = false,
+                    .defunct = false,
                     .protocol = .plain,
                 },
             };
@@ -331,6 +335,7 @@ pub const Connection = struct {
                     .host_len = @intCast(remote_host.bytes.len),
                     .proxied = false,
                     .closing = false,
+                    .defunct = false,
                     .protocol = .tls,
                 },
                 // TODO data race here on ca_bundle if the user sets `now` to null
@@ -418,7 +423,7 @@ pub const Connection = struct {
     /// If this is called without calling `flush` or `end`, data will be
     /// dropped unsent.
     pub fn destroy(c: *Connection, io: Io) void {
-        c.stream_reader.stream.close(io);
+        if (!c.defunct) c.stream_reader.stream.close(io);
         switch (c.protocol) {
             .tls => {
                 if (disable_tls) unreachable;
@@ -1528,6 +1533,7 @@ pub fn connectProxied(
     proxy: *Proxy,
     proxied_host: HostName,
     proxied_port: u16,
+    proxied_protocol: Protocol,
 ) !*Connection {
     const io = client.io;
     if (!proxy.supports_connect) return error.TunnelNotSupported;
@@ -1577,10 +1583,31 @@ pub fn connectProxied(
         // this connection is now a tunnel, so we can't use it for anything
         // else, it will only be released when the client is de-initialized.
         req.connection = null;
-
         connection.closing = false;
 
-        return connection;
+        // If we're already talking in TLS to the proxy,
+        // or we do not need TLS at all, then we don't need to
+        // upgrade the current connection
+        if (proxied_protocol != .tls or connection.protocol == .tls)
+            return connection;
+
+        if (disable_tls) unreachable;
+
+        const tc = Connection.Tls.create(
+            connection.client,
+            connection.host(),
+            connection.port,
+            connection.stream_reader.stream,
+        ) catch return error.TlsInitializationFailed;
+        errdefer tc.destroy();
+
+        try client.connection_pool.addUsed(client.io, &tc.connection);
+
+        // Avoid double-freeing the underlying stream
+        connection.defunct = true;
+        client.connection_pool.release(connection, client.io);
+
+        return &tc.connection;
     }) catch {
         // something went wrong with the tunnel
         proxy.supports_connect = maybe_valid;
@@ -1614,7 +1641,7 @@ pub fn connect(
     }
 
     if (proxy.supports_connect) tunnel: {
-        return connectProxied(client, proxy, host, port) catch |err| switch (err) {
+        return connectProxied(client, proxy, host, port, protocol) catch |err| switch (err) {
             error.TunnelNotSupported => break :tunnel,
             else => |e| return e,
         };

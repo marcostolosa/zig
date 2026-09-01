@@ -564,7 +564,7 @@ pub const Request = struct {
         }
 
         try out.writeAll("\r\n");
-        try out.flush(); // Important change from other impl: flush here since the WebSocket doesn't have a flush method anymore.
+        try out.flush();
 
         assert(request.server.reader.in.buffer.len >= WebSocket.control_frame_max_payload_len);
 
@@ -680,8 +680,8 @@ pub const WebSocket = struct {
     // would be equally capable of being used as a WebSocket client.  However
     // that requires entirely different reader.stream and writer.drain
     // implementations to account for masking always being from client to server.
-    // That, along with an appropriate upgrade mechanism for Request are left
-    // as an exercise for a future contributor.
+    // That, along with an appropriate code to initiate the connection / upgrade
+    // the request are left as an exercise for a future contributor.
 
     // Shared
     io: std.Io,
@@ -804,7 +804,7 @@ pub const WebSocket = struct {
     /// For the connection to be considered properly closed, the server should call messageReader until getting an
     /// error, such as error.WebSocketClosed.
     pub fn sendClose(ws: *WebSocket) void {
-        // Could take close status code and reason parameters.  Do that when there's literally any reason to do so whatsoever.
+        // Could take close status code and reason parameters.  Do that when there's literally any reason whatsoever to do so.
         const normal_closure_code: u16 = 1000;
         _ = ws.writeFrame(.close, true, std.mem.asBytes(&@byteSwap(normal_closure_code)), &.{}, 0) catch 0;
     }
@@ -870,8 +870,6 @@ pub const WebSocket = struct {
     }
 
     fn readerStream(i: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
-        _ = w;
-
         const ws: *WebSocket = @fieldParentPtr("reader", i);
         if (ws.reader_err) |_| return error.ReadFailed;
 
@@ -890,24 +888,18 @@ pub const WebSocket = struct {
             }
         }
 
-        if (i.seek == i.end) {
-            i.seek = 0;
-            i.end = 0;
-        }
-        // Caller's responsibility to make sure there's room to put new data.
-        assert(i.end != i.buffer.len);
-
         if (ws.input.bufferedLen() == 0) {
             try ws.input.fillMore();
         }
-
         const src_buffer = ws.input.buffered();
-        const copy_len: usize = limit.minInt(@min(i.buffer.len - i.end, frame.bytes_remaining, src_buffer.len));
 
-        maskedCopy(i.buffer[i.end..][0..copy_len], src_buffer[0..copy_len], frame.mask, &frame.mask_pos);
+        const dst_buffer = try w.writableSliceGreedy(1);
+        const copy_len: usize = limit.minInt(@min(dst_buffer.len, src_buffer.len, frame.bytes_remaining));
 
+        maskedCopy(dst_buffer[0..copy_len], src_buffer[0..copy_len], frame.mask, &frame.mask_pos);
+
+        w.advance(copy_len);
         ws.input.toss(copy_len);
-        i.end += copy_len;
         frame.bytes_remaining -= copy_len;
         return copy_len;
     }
@@ -945,7 +937,7 @@ pub const WebSocket = struct {
 
         try header.write(ws.output);
         try ws.output.writeAll(buffer);
-        try writeSplatAll(ws.output, data, splat);
+        if (data.len > 0) try writeSplatAllConst(ws.output, data, splat);
         if (finish) {
             try ws.output.flush();
         }
@@ -953,15 +945,13 @@ pub const WebSocket = struct {
     }
 
     // Io.Writer has this method, except that it requires data be mutable, which has its place but is unnessary and
-    // it makes it incompatible with calling from a drain function. Having to occasionally call writeAll instead of
-    // writeSplat is the tradeoff.
-    fn writeSplatAll(w: *std.Io.Writer, const_data: []const []const u8, const_splat: usize) std.Io.Writer.Error!void {
-        if (const_data.len == 0) {
-            return;
-        }
+    // it makes it incompatible with calling from a drain function. Having to occasionally call writeAll on a single
+    // element of data instead of always using writeSplat is the tradeoff.
+    fn writeSplatAllConst(w: *std.Io.Writer, const_data: []const []const u8, const_splat: usize) std.Io.Writer.Error!void {
+        assert(const_data.len > 0);
         var data = const_data;
-        var truncate: usize = 0;
         var splat = const_splat;
+        var truncate: usize = 0;
         while (data.len >= 2) {
             truncate += try w.writeSplat(data, splat);
             while (data.len >= 2 and truncate >= data[0].len) {
@@ -975,6 +965,8 @@ pub const WebSocket = struct {
         }
 
         assert(data.len == 1);
+        if (data[0].len == 0) return;
+
         while (true) {
             splat -= truncate / data[0].len;
             if (splat == 0) {

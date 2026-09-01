@@ -1318,7 +1318,7 @@ pub fn takeEnumNonexhaustive(r: *Reader, comptime Enum: type, endian: std.builti
 /// Asserts the buffer was initialized with a capacity at least `@sizeOf(Enum)`.
 ///
 /// See also:
-/// * `takeEnum`
+/// * `peekEnum`
 /// * `takeEnumNonexhaustive`
 pub fn peekEnumNonexhaustive(r: *Reader, comptime Enum: type, endian: std.builtin.Endian) Error!Enum {
     const info = @typeInfo(Enum).@"enum";

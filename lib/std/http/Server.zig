@@ -495,12 +495,20 @@ pub const Request = struct {
         extra_headers: []const http.Header = &.{},
     };
 
-    const RespondWebsocketError = ExpectContinueError || error{WebsocketProtocolViolation};
+    const RespondWebsocketError = ExpectContinueError || error{ WebsocketProtocolViolation, UnknownWebsocketVersion };
 
-    /// Requires a valid `request.head`
+    pub const supported_websocket_version = "13";
+
+    /// Requires `request.head` to still be valid.
     ///
-    /// If `error.HttpExpectationFailed` or `error.WebsocketProtocolViolation` are returned,
-    /// does not invalidate `request.head`.
+    /// If `error.HttpExpectationFailed`, `error.WebsocketProtocolViolation`,
+    /// or `error.UnknownWebsocketVersion` are returned, does not invalidate
+    /// `request.head`.
+    ///
+    /// The spec requires servers to respond with supported websocket
+    /// versions if this returns `error.UnknownWebsocketVersion`.  However
+    /// it has been 15 years with only one valid version, so this is unlikely
+    /// to ever matter.
     pub fn respondWebSocket(request: *Request, io: std.Io, options: WebSocketOptions) RespondWebsocketError!WebSocket {
         if (request.head.expect != null) return error.HttpExpectationFailed;
 
@@ -527,9 +535,7 @@ pub const Request = struct {
                     if (std.ascii.findIgnoreCase(header.value, "upgrade") == null) return error.WebsocketProtocolViolation;
                     connection = true;
                 } else if (std.ascii.eqlIgnoreCase(header.name, "sec-websocket-version")) {
-                    // The spec says the server must responded with supported version numbers, but it's
-                    // 15 years old with only one valid version.
-                    if (!std.mem.eql(u8, header.value, "13")) return error.WebsocketProtocolViolation;
+                    if (!std.mem.eql(u8, header.value, supported_websocket_version)) return error.UnknownWebsocketVersion;
                     sec_websocket_version = true;
                 }
             }
@@ -861,11 +867,8 @@ pub const WebSocket = struct {
             return error.WebsocketProtocolViolation;
         }
         const result = try ws.input.take(header.payload_len);
-        if (header.mask) |mask| {
-            for (result, 0..) |*b, i| {
-                b.* ^= mask[i % 4];
-            }
-        }
+        var mask_pos: u2 = 0;
+        if (header.mask) |mask| maskedCopy(result, result, mask, &mask_pos);
         return result;
     }
 
@@ -976,9 +979,10 @@ pub const WebSocket = struct {
             truncate += try w.writeSplat(&.{ data[0][truncate..], data[0] }, splat - 1);
         }
     }
-
     fn maskedCopy(dst: []u8, src: []const u8, mask: [4]u8, mask_pos: *u2) void {
         assert(dst.len == src.len);
+        // dst == src is valid, but partially overlapping buffers are not.
+        assert(dst.ptr == src.ptr or !std.mem.overlap(dst, src));
         var i: usize = 0;
 
         if (std.simd.suggestVectorLength(u8)) |lanes| {
@@ -1008,19 +1012,29 @@ pub const WebSocket = struct {
         const mask: [4]u8 = .{ 3, 1, 2, 3 };
 
         const src: [120]u8 = @bitCast(@as([40][3]u8, @splat(.{ 0, 100, 200 })));
-        var dst: [120]u8 = undefined;
         const expected: [120]u8 = @bitCast(@as([10][12]u8, @splat(.{
             1, 102, 203,
             3, 101, 202,
             3, 103, 201,
             2, 103, 203,
         })));
-        maskedCopy(&dst, &src, mask, &mask_pos);
 
-        try testing.expectEqualSlices(u8, &expected, &dst);
-        try testing.expectEqual(mask_pos, 1);
+        {
+            var dst: [120]u8 = undefined;
+            maskedCopy(&dst, &src, mask, &mask_pos);
+            try testing.expectEqualSlices(u8, &expected, &dst);
+            try testing.expectEqual(mask_pos, 1);
+        }
 
-        maskedCopy((&dst)[0..1], (&src)[0..1], mask, &mask_pos);
+        {
+            var dst = src;
+            maskedCopy(&dst, &dst, mask, &mask_pos);
+            try testing.expectEqualSlices(u8, &expected, &dst);
+            try testing.expectEqual(mask_pos, 1);
+        }
+
+        var dst: [1]u8 = undefined;
+        maskedCopy(&dst, (&src)[0..1], mask, &mask_pos);
         try testing.expectEqual(mask_pos, 2);
     }
 
@@ -1054,24 +1068,20 @@ pub const WebSocket = struct {
         };
         fn read(reader: *std.Io.Reader) !Header {
             const partial: Partial = @bitCast(try reader.takeInt(u16, .big));
-            var r: Header = undefined;
-            r.finish = partial.fin;
-
-            r.op_code = std.enums.fromInt(OpCode, partial.op_code) orelse return error.WebsocketProtocolViolation;
-
             if (partial.reserved != 0) {
                 @branchHint(.cold);
                 return error.WebsocketProtocolViolation;
             }
 
+            var r: Header = undefined;
+            r.finish = partial.fin;
+            r.op_code = std.enums.fromInt(OpCode, partial.op_code) orelse return error.WebsocketProtocolViolation;
             r.payload_len = switch (partial.payload_len) {
                 .u16_len => try reader.takeInt(u16, .big),
                 .u64_len => try reader.takeInt(u64, .big),
                 else => |v| @backingInt(v),
             };
-
             r.mask = if (partial.masked) (try reader.takeArray(4)).* else null;
-
             return r;
         }
 

@@ -5241,3 +5241,35 @@ test printSentinel {
     try testing.expectEqualStrings("-1=hi", s);
     try testing.expectEqual(0, s[s.len]);
 }
+
+/// Returns if two pointers/slices overlap in memory.
+pub fn overlap(a: anytype, b: anytype) bool {
+    comptime assert(@typeInfo(@TypeOf(a)).pointer.attrs.@"addrspace" == @typeInfo(@TypeOf(b)).pointer.attrs.@"addrspace");
+    const a_bytes: []const u8 = @ptrCast(a);
+    const b_bytes: []const u8 = @ptrCast(b);
+
+    const a_start: usize = @intFromPtr(a_bytes.ptr);
+    const b_start: usize = @intFromPtr(b_bytes.ptr);
+
+    const a_before_b = a_start + a_bytes.len <= b_start;
+    const b_before_a = b_start + b_bytes.len <= a_start;
+    return !(a_before_b or b_before_a);
+}
+
+test overlap {
+    const values: [4]u16 = @splat(0);
+    const slice: []const u16 = &values;
+
+    try testing.expect(overlap(slice, slice));
+    try testing.expect(overlap(slice[0..3], slice[2..]));
+    try testing.expect(overlap(slice[2..], slice[0..3]));
+    try testing.expect(overlap(slice[0..3], &slice[2]));
+    try testing.expect(overlap(slice[2..], &slice[2]));
+
+    try testing.expect(!overlap(slice[0..2], slice[2..]));
+    try testing.expect(!overlap(slice[2..], slice[0..2]));
+    try testing.expect(!overlap(slice[0..2], &slice[2]));
+
+    const bytes: []const u8 = @ptrCast(&slice[2]);
+    try testing.expect(overlap(slice, bytes));
+}

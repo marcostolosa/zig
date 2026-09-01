@@ -353,36 +353,40 @@ pub fn sendUpdate(
                 .start_timestamp = coverage_map.start_timestamp,
                 .start_n_runs = coverage_map.start_n_runs,
             };
-            var iovecs: [5][]const u8 = .{
-                @ptrCast(&header),
-                @ptrCast(coverage_map.coverage.directories.keys()),
-                @ptrCast(coverage_map.coverage.files.keys()),
-                @ptrCast(coverage_map.source_locations),
-                coverage_map.coverage.string_bytes.items,
-            };
-            try socket.writeMessageVec(&iovecs, .binary);
+
+            var buf: [1024]u8 = undefined;
+            const writer = socket.messageWriter(&buf, .binary);
+            try writer.writeAll(@ptrCast(&header));
+            try writer.writeAll(@ptrCast(coverage_map.coverage.directories.keys()));
+            try writer.writeAll(@ptrCast(coverage_map.coverage.files.keys()));
+            try writer.writeAll(@ptrCast(coverage_map.source_locations));
+            try writer.writeAll(coverage_map.coverage.string_bytes.items);
+            try socket.endWriter();
         }
 
         const header: abi.CoverageUpdateHeader = .{
             .n_runs = n_runs,
             .unique_runs = unique_runs,
         };
-        var iovecs: [2][]const u8 = .{
-            @ptrCast(&header),
-            @ptrCast(seen_pcs),
-        };
-        try socket.writeMessageVec(&iovecs, .binary);
+        {
+            var buf: [1024]u8 = undefined;
+            const writer = socket.messageWriter(&buf, .binary);
+            try writer.writeAll(@ptrCast(&header));
+            try writer.writeAll(@ptrCast(seen_pcs));
+            try socket.endWriter();
+        }
 
         prev.unique_runs = unique_runs;
     }
 
     if (prev.entry_points != coverage_map.entry_points.items.len) {
         const header: abi.EntryPointHeader = .init(@intCast(coverage_map.entry_points.items.len));
-        var iovecs: [2][]const u8 = .{
-            @ptrCast(&header),
-            @ptrCast(coverage_map.entry_points.items),
-        };
-        try socket.writeMessageVec(&iovecs, .binary);
+
+        var buf: [1024]u8 = undefined;
+        const writer = socket.messageWriter(&buf, .binary);
+        try writer.writeAll(@ptrCast(&header));
+        try writer.writeAll(@ptrCast(coverage_map.entry_points.items));
+        try socket.endWriter();
 
         prev.entry_points = coverage_map.entry_points.items.len;
     }

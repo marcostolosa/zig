@@ -1269,20 +1269,62 @@ pub const TakeEnumError = Error || error{InvalidEnumTag};
 /// it. Otherwise, returns `error.InvalidEnumTag`.
 ///
 /// Asserts the buffer was initialized with a capacity at least `@sizeOf(Enum)`.
+///
+/// See also:
+/// * `peekEnum`
+/// * `takeEnumNonexhaustive`
 pub fn takeEnum(r: *Reader, comptime Enum: type, endian: std.builtin.Endian) TakeEnumError!Enum {
     const Tag = @typeInfo(Enum).@"enum".tag_type;
     const int = try r.takeInt(Tag, endian);
     return std.enums.fromInt(Enum, int) orelse return error.InvalidEnumTag;
 }
 
+/// Reads an integer with the same size as the given enum's tag type, without
+/// advancing the seek position. If the integer matches an enum tag, casts the
+/// integer to the enum tag and returns it. Otherwise, returns
+/// `error.InvalidEnumTag`.
+///
+/// Asserts the buffer was initialized with a capacity at least `@sizeOf(Enum)`.
+///
+/// See also:
+/// * `takeEnum`
+/// * `peekEnumNonexhaustive`
+pub fn peekEnum(r: *Reader, comptime Enum: type, endian: std.builtin.Endian) TakeEnumError!Enum {
+    const Tag = @typeInfo(Enum).@"enum".tag_type;
+    const int = try r.peekInt(Tag, endian);
+    return std.enums.fromInt(Enum, int) orelse return error.InvalidEnumTag;
+}
+
 /// Reads an integer with the same size as the given nonexhaustive enum's tag type.
 ///
 /// Asserts the buffer was initialized with a capacity at least `@sizeOf(Enum)`.
+///
+/// See also:
+/// * `takeEnum`
+/// * `peekEnumNonexhaustive`
 pub fn takeEnumNonexhaustive(r: *Reader, comptime Enum: type, endian: std.builtin.Endian) Error!Enum {
     const info = @typeInfo(Enum).@"enum";
     comptime assert(info.mode != .exhaustive);
     comptime assert(@bitSizeOf(info.tag_type) == @sizeOf(info.tag_type) * 8);
     return takeEnum(r, Enum, endian) catch |err| switch (err) {
+        error.InvalidEnumTag => unreachable,
+        else => |e| return e,
+    };
+}
+
+/// Reads an integer with the same size as the given nonexhaustive enum's tag type,
+/// without advancing the seek position.
+///
+/// Asserts the buffer was initialized with a capacity at least `@sizeOf(Enum)`.
+///
+/// See also:
+/// * `takeEnum`
+/// * `takeEnumNonexhaustive`
+pub fn peekEnumNonexhaustive(r: *Reader, comptime Enum: type, endian: std.builtin.Endian) Error!Enum {
+    const info = @typeInfo(Enum).@"enum";
+    comptime assert(info.mode != .exhaustive);
+    comptime assert(@bitSizeOf(info.tag_type) == @sizeOf(info.tag_type) * 8);
+    return peekEnum(r, Enum, endian) catch |err| switch (err) {
         error.InvalidEnumTag => unreachable,
         else => |e| return e,
     };
@@ -1703,6 +1745,16 @@ test takeEnum {
     const E2 = enum(u16) { _ };
     try testing.expectEqual(E1.c, try r.takeEnum(E1, .little));
     try testing.expectEqual(@as(E2, @fromBackingInt(@intCast(0x0001))), try r.takeEnum(E2, .big));
+}
+
+test peekEnum {
+    var r: Reader = .fixed(&.{ 2, 0, 1 });
+    const E1 = enum(u8) { a, b, c };
+    const E2 = enum(u16) { _ };
+    try testing.expectEqual(E1.c, try r.peekEnum(E1, .little));
+    r.toss(1);
+    try testing.expectEqual(@as(E2, @fromBackingInt(@intCast(0x0001))), try r.peekEnum(E2, .big));
+    r.toss(2);
 }
 
 test readSliceShort {

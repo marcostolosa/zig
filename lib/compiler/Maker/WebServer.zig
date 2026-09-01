@@ -328,29 +328,23 @@ fn accept(ws: *WebServer, stream: net.Stream) void {
             error.HttpConnectionClosing => return,
             else => return log.err("failed to receive http request: {t}", .{err}),
         };
-        switch (request.upgradeRequested()) {
-            .websocket => |opt_key| {
-                const key = opt_key orelse return log.err("missing websocket key", .{});
-                var web_socket = request.respondWebSocket(.{ .key = key }) catch {
-                    return log.err("failed to respond web socket: {t}", .{connection_writer.err.?});
-                };
-                ws.serveWebSocket(&web_socket) catch |err| {
-                    log.err("failed to serve websocket: {t}", .{err});
-                    return;
-                };
-                comptime unreachable;
-            },
-            .other => |name| return log.err("unknown upgrade request: {s}", .{name}),
-            .none => {
-                ws.serveRequest(&request) catch |err| switch (err) {
-                    error.AlreadyReported => return,
-                    else => {
-                        log.err("failed to serve '{s}': {t}", .{ request.head.target, err });
-                        return;
-                    },
-                };
-            },
+        if (mem.eql(u8, request.head.target, "/websocket")) {
+            var web_socket = request.respondWebSocket(io, .{}) catch {
+                return log.err("failed to respond web socket: {t}", .{connection_writer.err.?});
+            };
+            ws.serveWebSocket(&web_socket) catch |err| {
+                log.err("failed to serve websocket: {t}", .{err});
+                return;
+            };
+            comptime unreachable;
         }
+        ws.serveRequest(&request) catch |err| switch (err) {
+            error.AlreadyReported => return,
+            else => {
+                log.err("failed to serve '{s}': {t}", .{ request.head.target, err });
+                return;
+            },
+        };
     }
 }
 
@@ -383,8 +377,12 @@ fn serveWebSocket(ws: *WebServer, sock: *http.Server.WebSocket) !noreturn {
             .timestamp = ws.now(),
             .steps_len = @intCast(all_steps.len),
         };
-        var bufs: [3][]const u8 = .{ @ptrCast(&hello_header), configured.step_names_trailing, prev_step_status_bits };
-        try sock.writeMessageVec(&bufs, .binary);
+        var buf: [1024]u8 = undefined;
+        const writer = sock.messageWriter(&buf, .binary);
+        try writer.writeAll(@ptrCast(&hello_header));
+        try writer.writeAll(configured.step_names_trailing);
+        try writer.writeAll(prev_step_status_bits);
+        try sock.endWriter();
     }
 
     var prev_fuzz: Fuzz.Previous = .init;
@@ -409,7 +407,11 @@ fn serveWebSocket(ws: *WebServer, sock: *http.Server.WebSocket) !noreturn {
                 // Temporarily unlock, then re-lock after the message is sent.
                 configured.time_report_mutex.unlock(io);
                 defer configured.time_report_mutex.lockUncancelable(io);
-                try sock.writeMessage(owned_msg, .binary);
+
+                var buf: [1024]u8 = undefined;
+                const writer = sock.messageWriter(&buf, .binary);
+                try writer.writeAll(owned_msg);
+                try sock.endWriter();
             }
         }
 
@@ -418,7 +420,11 @@ fn serveWebSocket(ws: *WebServer, sock: *http.Server.WebSocket) !noreturn {
             if (build_status != prev_build_status) {
                 prev_build_status = build_status;
                 const msg: abi.StatusUpdate = .{ .new = build_status };
-                try sock.writeMessage(@ptrCast(&msg), .binary);
+
+                var buf: [1024]u8 = undefined;
+                const writer = sock.messageWriter(&buf, .binary);
+                try writer.writeAll(@ptrCast(&msg));
+                try sock.endWriter();
             }
         }
 
@@ -439,7 +445,12 @@ fn serveWebSocket(ws: *WebServer, sock: *http.Server.WebSocket) !noreturn {
             };
             for (cur, prev, byte_idx * 4..) |cur_status, prev_status, step_idx| {
                 const msg: abi.StepUpdate = .{ .step_idx = @intCast(step_idx), .bits = .{ .status = cur_status } };
-                if (cur_status != prev_status) try sock.writeMessage(@ptrCast(&msg), .binary);
+                if (cur_status != prev_status) {
+                    var buf: [1024]u8 = undefined;
+                    const writer = sock.messageWriter(&buf, .binary);
+                    try writer.writeAll(@ptrCast(&msg));
+                    try sock.endWriter();
+                }
             }
             prev_byte.* = cur_byte;
         }
@@ -466,10 +477,13 @@ fn recvWebSocketMessages(ws: *WebServer, sock: *http.Server.WebSocket) void {
     const io = graph.io;
 
     while (true) {
-        const msg = sock.readSmallMessage() catch return;
-        if (msg.opcode != .binary) continue;
-        if (msg.data.len == 0) continue;
-        const tag: abi.ToServerTag = @fromBackingInt(@intCast(msg.data[0]));
+        var buf: [1024]u8 = undefined;
+        const opcode, const reader = sock.messageReader(&buf) catch return;
+        if (opcode != .binary) continue;
+        const tag = reader.peekEnumNonexhaustive(abi.ToServerTag, .little) catch |err| switch (err) {
+            error.EndOfStream => continue,
+            error.ReadFailed => return,
+        };
         switch (tag) {
             _ => continue,
             .rebuild => while (true) {
@@ -492,7 +506,6 @@ fn serveRequest(ws: *WebServer, req: *http.Server.Request) !void {
     // Strip an optional leading '/debug' component from the request.
     const target: []const u8, const debug: bool = target: {
         if (mem.eql(u8, req.head.target, "/debug")) break :target .{ "/", true };
-        if (mem.eql(u8, req.head.target, "/debug/")) break :target .{ "/", true };
         if (mem.startsWith(u8, req.head.target, "/debug/")) break :target .{ req.head.target["/debug".len..], true };
         break :target .{ req.head.target, false };
     };

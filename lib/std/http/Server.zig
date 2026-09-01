@@ -490,46 +490,53 @@ pub const Request = struct {
         };
     }
 
-    pub const UpgradeRequest = union(enum) {
-        websocket: ?[]const u8,
-        other: []const u8,
-        none,
-    };
-
-    /// Does not invalidate `request.head`.
-    pub fn upgradeRequested(request: *const Request) UpgradeRequest {
-        switch (request.head.version) {
-            .@"HTTP/1.0" => return .none,
-            .@"HTTP/1.1" => if (request.head.method != .GET) return .none,
-        }
-
-        var sec_websocket_key: ?[]const u8 = null;
-        var upgrade_name: ?[]const u8 = null;
-        var it = request.iterateHeaders();
-        while (it.next()) |header| {
-            if (std.ascii.eqlIgnoreCase(header.name, "sec-websocket-key")) {
-                sec_websocket_key = header.value;
-            } else if (std.ascii.eqlIgnoreCase(header.name, "upgrade")) {
-                upgrade_name = header.value;
-            }
-        }
-
-        const name = upgrade_name orelse return .none;
-        if (std.ascii.eqlIgnoreCase(name, "websocket")) return .{ .websocket = sec_websocket_key };
-        return .{ .other = name };
-    }
-
     pub const WebSocketOptions = struct {
-        /// The value from `UpgradeRequest.websocket` (sec-websocket-key header value).
-        key: []const u8,
         reason: ?[]const u8 = null,
         extra_headers: []const http.Header = &.{},
     };
 
-    /// The header is not guaranteed to be sent until `WebSocket.flush` is
-    /// called on the returned struct.
-    pub fn respondWebSocket(request: *Request, options: WebSocketOptions) ExpectContinueError!WebSocket {
+    const RespondWebsocketError = ExpectContinueError || error{WebsocketProtocolViolation};
+
+    /// Requires a valid `request.head`
+    ///
+    /// If `error.HttpExpectationFailed` or `error.WebsocketProtocolViolation` are returned,
+    /// does not invalidate `request.head`.
+    pub fn respondWebSocket(request: *Request, io: std.Io, options: WebSocketOptions) RespondWebsocketError!WebSocket {
         if (request.head.expect != null) return error.HttpExpectationFailed;
+
+        switch (request.head.version) {
+            .@"HTTP/1.0" => return error.WebsocketProtocolViolation,
+            .@"HTTP/1.1" => if (request.head.method != .GET) return error.WebsocketProtocolViolation,
+        }
+
+        const key = blk: {
+            var sec_websocket_key: ?[]const u8 = null;
+            var upgrade = false;
+            var connection = false;
+            var sec_websocket_version = false;
+
+            var it = request.iterateHeaders();
+            while (it.next()) |header| {
+                if (std.ascii.eqlIgnoreCase(header.name, "sec-websocket-key")) {
+                    if (std.base64.standard.Decoder.calcSizeForSlice(header.value) catch 0 != 16) return error.WebsocketProtocolViolation;
+                    sec_websocket_key = header.value;
+                } else if (std.ascii.eqlIgnoreCase(header.name, "upgrade")) {
+                    if (std.ascii.findIgnoreCase(header.value, "websocket") == null) return error.WebsocketProtocolViolation;
+                    upgrade = true;
+                } else if (std.ascii.eqlIgnoreCase(header.name, "connection")) {
+                    if (std.ascii.findIgnoreCase(header.value, "upgrade") == null) return error.WebsocketProtocolViolation;
+                    connection = true;
+                } else if (std.ascii.eqlIgnoreCase(header.name, "sec-websocket-version")) {
+                    // The spec says the server must responded with supported version numbers, but it's
+                    // 15 years old with only one valid version.
+                    if (!std.mem.eql(u8, header.value, "13")) return error.WebsocketProtocolViolation;
+                    sec_websocket_version = true;
+                }
+            }
+            if (!(upgrade and connection and sec_websocket_version)) return error.WebsocketProtocolViolation;
+
+            break :blk (sec_websocket_key orelse return error.WebsocketProtocolViolation);
+        };
 
         const out = request.server.out;
         const version: http.Version = .@"HTTP/1.1";
@@ -540,7 +547,7 @@ pub const Request = struct {
         assert(request.head.method == .GET);
 
         var sha1 = std.crypto.hash.Sha1.init(.{});
-        sha1.update(options.key);
+        sha1.update(key);
         sha1.update("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
         var digest: [std.crypto.hash.Sha1.digest_length]u8 = undefined;
         sha1.final(&digest);
@@ -557,11 +564,24 @@ pub const Request = struct {
         }
 
         try out.writeAll("\r\n");
+        try out.flush(); // Important change from other impl: flush here since the WebSocket doesn't have a flush method anymore.
+
+        assert(request.server.reader.in.buffer.len >= WebSocket.control_frame_max_payload_len);
 
         return .{
+            .io = io,
+            .write_lock = .init,
             .input = request.server.reader.in,
             .output = request.server.out,
-            .key = options.key,
+            .closed = false,
+            .reader = undefined,
+            .writer = undefined,
+            .reader_frame = null,
+            .writer_frame = null,
+            .reader_err = null,
+            .writer_err = null,
+            .close_status_code = 0,
+            .close_reason = "",
         };
     }
 
@@ -652,157 +672,471 @@ pub const Request = struct {
 
 /// See https://tools.ietf.org/html/rfc6455
 pub const WebSocket = struct {
-    key: []const u8,
-    input: *Reader,
-    output: *Writer,
+    // Changes to WebSocket should be tested with the autobahn testsuite, which
+    // isn't worth being added as a dependency to run in the ci.  See
+    // https://codeberg.org/ScottRedig/websocket_test/ for an example test setup.
 
-    pub const Header0 = packed struct(u8) {
-        opcode: Opcode,
-        rsv3: u1 = 0,
-        rsv2: u1 = 0,
-        rsv1: u1 = 0,
-        fin: bool,
-    };
+    // A Note for future improvement:  This type (with a few small field changes)
+    // would be equally capable of being used as a WebSocket client.  However
+    // that requires entirely different reader.stream and writer.drain
+    // implementations to account for masking always being from client to server.
+    // That, along with an appropriate upgrade mechanism for Request are left
+    // as an exercise for a future contributor.
 
-    pub const Header1 = packed struct(u8) {
-        payload_len: enum(u7) {
-            len16 = 126,
-            len64 = 127,
-            _,
-        },
-        mask: bool,
-    };
+    // Shared
+    io: std.Io,
+    write_lock: std.Io.Mutex,
+    closed: bool, // guarded by write_lock
+    output: *std.Io.Writer, // guarded by write_lock
 
-    pub const Opcode = enum(u4) {
-        continuation = 0,
-        text = 1,
-        binary = 2,
-        connection_close = 8,
-        ping = 9,
-        /// "A Pong frame MAY be sent unsolicited. This serves as a unidirectional
-        /// heartbeat. A response to an unsolicited Pong frame is not expected."
-        pong = 10,
-        _,
-    };
+    // Read thread
+    input: *std.Io.Reader,
+    reader: std.Io.Reader,
+    reader_frame: ?struct {
+        finish: bool,
+        mask: [4]u8,
+        mask_pos: u2,
+        bytes_remaining: u64,
+    },
+    reader_err: ?ReadError,
+    /// Populated after an attempted read recieves a close message.
+    close_status_code: u16,
+    /// if populated, is a view into input's buffer, invalidated by changes to input.
+    close_reason: []u8,
 
-    pub const ReadSmallTextMessageError = error{
-        ConnectionClose,
-        UnexpectedOpCode,
-        MessageOversize,
-        MissingMaskBit,
-        ReadFailed,
+    // Write thread
+    writer: std.Io.Writer,
+    writer_frame: ?struct {
+        op_code: Header.OpCode,
+    },
+    writer_err: ?WriteError,
+
+    pub const control_frame_max_payload_len = 125;
+
+    pub const ReadError = error{
+        WebsocketProtocolViolation,
+        WebSocketClosed,
         EndOfStream,
+        ReadFailed,
+        WriteFailed,
+        Canceled,
     };
 
-    pub const SmallMessage = struct {
-        /// Can be text, binary, or ping.
-        opcode: Opcode,
-        data: []u8,
+    pub const WriteError = error{
+        WriteFailed,
+        Canceled,
+        WebSocketClosed,
     };
 
-    /// Reads the next message from the WebSocket stream, failing if the
-    /// message does not fit into the input buffer. The returned memory points
-    /// into the input buffer and is invalidated on the next read.
-    pub fn readSmallMessage(ws: *WebSocket) ReadSmallTextMessageError!SmallMessage {
-        const in = ws.input;
-        while (true) {
-            const header = try in.takeArray(2);
-            const h0: Header0 = @bitCast(header[0]);
-            const h1: Header1 = @bitCast(header[1]);
+    const MessageKind = enum {
+        binary,
+        text,
+    };
 
-            switch (h0.opcode) {
-                .text, .binary, .pong, .ping => {},
-                .connection_close => return error.ConnectionClose,
-                .continuation => return error.UnexpectedOpCode,
-                _ => return error.UnexpectedOpCode,
-            }
-
-            if (!h0.fin) return error.MessageOversize;
-            if (!h1.mask) return error.MissingMaskBit;
-
-            const len: usize = switch (h1.payload_len) {
-                .len16 => try in.takeInt(u16, .big),
-                .len64 => std.math.cast(usize, try in.takeInt(u64, .big)) orelse return error.MessageOversize,
-                else => @backingInt(h1.payload_len),
-            };
-            if (len > in.buffer.len) return error.MessageOversize;
-            const mask: [4]u8 = (try in.takeArray(4)).*;
-            const payload = try in.take(len);
-
-            // Skip pongs.
-            if (h0.opcode == .pong) continue;
-
-            // The last item may contain a partial word of unused data.
-            const floored_len = (payload.len / 4) * 4;
-
-            const payload_chunks: [][4]u8 = @ptrCast(payload[0..floored_len]);
-            for (payload_chunks) |*chunk| {
-                const mask_i: u32 = @bitCast(mask);
-                const chunk_i: u32 = @bitCast(chunk.*);
-                chunk.* = @bitCast(chunk_i ^ mask_i);
-            }
-            for (payload[floored_len..], mask[0 .. payload.len - floored_len]) |*leftover, m| {
-                leftover.* ^= m;
-            }
-
-            return .{
-                .opcode = h0.opcode,
-                .data = payload,
-            };
-        }
-    }
-
-    pub fn writeMessage(ws: *WebSocket, data: []const u8, op: Opcode) Writer.Error!void {
-        var bufs: [1][]const u8 = .{data};
-        try writeMessageVecUnflushed(ws, &bufs, op);
-        try ws.output.flush();
-    }
-
-    pub fn writeMessageUnflushed(ws: *WebSocket, data: []const u8, op: Opcode) Writer.Error!void {
-        var bufs: [1][]const u8 = .{data};
-        try writeMessageVecUnflushed(ws, &bufs, op);
-    }
-
-    pub fn writeMessageVec(ws: *WebSocket, data: [][]const u8, op: Opcode) Writer.Error!void {
-        try writeMessageVecUnflushed(ws, data, op);
-        try ws.output.flush();
-    }
-
-    pub fn writeMessageVecUnflushed(ws: *WebSocket, data: [][]const u8, op: Opcode) Writer.Error!void {
-        const total_len = l: {
-            var total_len: u64 = 0;
-            for (data) |iovec| total_len += iovec.len;
-            break :l total_len;
+    /// Begins reading a new message. Invalidates previously returned readers and discards any unread
+    /// bytes in the last message.
+    ///
+    /// In a departure from Websocket's spec, this does not perform utf8 validation when MessageKind
+    /// is text.  Clients which care should validate it themselves, eg with `std.unicode.utf8ValidateSlice`.
+    pub fn messageReader(ws: *WebSocket, buffer: []u8) !struct { MessageKind, *std.Io.Reader } {
+        ws.reader = .{
+            .vtable = &.{
+                .stream = readerStream,
+            },
+            .buffer = buffer,
+            .seek = 0,
+            .end = 0,
         };
-        const out = ws.output;
-        try out.writeByte(@bitCast(@as(Header0, .{
-            .opcode = op,
-            .fin = true,
-        })));
-        switch (total_len) {
-            0...125 => try out.writeByte(@bitCast(@as(Header1, .{
-                .payload_len = @fromBackingInt(@intCast(total_len)),
-                .mask = false,
-            }))),
-            126...0xffff => {
-                try out.writeByte(@bitCast(@as(Header1, .{
-                    .payload_len = .len16,
-                    .mask = false,
-                })));
-                try out.writeInt(u16, @intCast(total_len), .big);
-            },
-            else => {
-                try out.writeByte(@bitCast(@as(Header1, .{
-                    .payload_len = .len64,
-                    .mask = false,
-                })));
-                try out.writeInt(u64, total_len, .big);
-            },
+        if (ws.reader_frame) |frame| {
+            _ = try ws.reader.discardRemaining();
+            assert(frame.finish);
+            assert(frame.bytes_remaining == 0);
+            ws.reader_frame = null;
         }
-        try out.writeVecAll(data);
+
+        const kind: MessageKind = switch (try ws.beginDataFrame()) {
+            .continuation => return error.WebsocketProtocolViolation,
+            .text => .text,
+            .binary => .binary,
+            else => unreachable,
+        };
+        return .{ kind, &ws.reader };
     }
 
-    pub fn flush(ws: *WebSocket) Writer.Error!void {
-        try ws.output.flush();
+    /// Begins writing a new message.  Caller must call `endWriter` to finalize this message before
+    /// calling messageWriter again.
+    pub fn messageWriter(ws: *WebSocket, buffer: []u8, kind: MessageKind) *std.Io.Writer {
+        assert(ws.writer_frame == null);
+        ws.writer_frame = .{
+            .op_code = switch (kind) {
+                .text => .text,
+                .binary => .binary,
+            },
+        };
+        ws.writer = .{
+            .vtable = &.{
+                .drain = drain,
+            },
+            .buffer = buffer,
+            .end = 0,
+        };
+        return &ws.writer;
+    }
+
+    /// Marks the message initiated by `messageWriter` as complete, and flushes any buffered bytes.
+    /// It is unnecessary to directly call flush on the writer returned from messageWriter, and will
+    /// likely result in a few extra bytes being sent.
+    pub fn endWriter(ws: *WebSocket) WriteError!void {
+        assert(ws.writer_err == null);
+        // Can't use flush, since it may be sending a zero byte message.
+        _ = ws.writeFrame(ws.writer_frame.?.op_code, true, ws.writer.buffer[0..ws.writer.end], &.{}, 0) catch |err| {
+            ws.writer_err = err;
+            return err;
+        };
+        ws.writer = undefined;
+        ws.writer_frame = null;
+    }
+
+    /// Tells the client the connection is closing, and no further messages will be sent.  The client is supposed to
+    /// finish sending the current message and then respond with a close itself.  So the server can still fully process
+    /// any incoming messages after it wants to close the connection.  Does not close any underlying sockets.
+    ///
+    /// For the connection to be considered properly closed, the server should call messageReader until getting an
+    /// error, such as error.WebSocketClosed.
+    pub fn sendClose(ws: *WebSocket) void {
+        // Could take close status code and reason parameters.  Do that when there's literally any reason to do so whatsoever.
+        const normal_closure_code: u16 = 1000;
+        _ = ws.writeFrame(.close, true, std.mem.asBytes(&@byteSwap(normal_closure_code)), &.{}, 0) catch 0;
+    }
+
+    fn beginDataFrame(ws: *WebSocket) !Header.OpCode {
+        while (true) {
+            const header = try Header.read(ws.input);
+            switch (header.op_code) {
+                .continuation, .text, .binary => {
+                    const mask = header.mask orelse return error.WebsocketProtocolViolation;
+
+                    ws.reader_frame = .{
+                        .finish = header.finish,
+                        .mask = mask,
+                        .mask_pos = 0,
+                        .bytes_remaining = header.payload_len,
+                    };
+
+                    return header.op_code;
+                },
+                .close => {
+                    if (!header.finish) return error.WebsocketProtocolViolation;
+                    const payload = try ws.controlFramePayload(header);
+
+                    const no_status_code = 1005;
+                    ws.close_status_code = if (payload.len >= 2) std.mem.readInt(u16, payload[0..2], .big) else no_status_code;
+
+                    if (payload.len > 2) {
+                        ws.close_reason = payload[2..];
+                    }
+                    _ = ws.writeFrame(.close, true, "", &.{}, 0) catch 0;
+                    return error.WebSocketClosed;
+                },
+                .ping => {
+                    if (!header.finish) return error.WebsocketProtocolViolation;
+                    const payload = try ws.controlFramePayload(header);
+                    _ = ws.writeFrame(.pong, true, payload, &.{}, 0) catch |err| switch (err) {
+                        error.WebSocketClosed => {}, // Even if writing is closed, should continue processing reads.
+                        else => return err,
+                    };
+                    continue;
+                },
+                .pong => {
+                    if (!header.finish) return error.WebsocketProtocolViolation;
+                    _ = try ws.controlFramePayload(header);
+                    continue;
+                },
+            }
+        }
+    }
+
+    fn controlFramePayload(ws: *WebSocket, header: Header) ![]u8 {
+        if (header.payload_len > control_frame_max_payload_len) {
+            return error.WebsocketProtocolViolation;
+        }
+        const result = try ws.input.take(header.payload_len);
+        if (header.mask) |mask| {
+            for (result, 0..) |*b, i| {
+                b.* ^= mask[i % 4];
+            }
+        }
+        return result;
+    }
+
+    fn readerStream(i: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        _ = w;
+
+        const ws: *WebSocket = @fieldParentPtr("reader", i);
+        if (ws.reader_err) |_| return error.ReadFailed;
+
+        const frame = &ws.reader_frame.?;
+        while (frame.bytes_remaining == 0) {
+            if (frame.finish) {
+                return error.EndOfStream;
+            }
+            const op_code = ws.beginDataFrame() catch |err| {
+                ws.reader_err = err;
+                return error.ReadFailed;
+            };
+            if (op_code != .continuation) {
+                ws.reader_err = error.WebsocketProtocolViolation;
+                return error.ReadFailed;
+            }
+        }
+
+        if (i.seek == i.end) {
+            i.seek = 0;
+            i.end = 0;
+        }
+        // Caller's responsibility to make sure there's room to put new data.
+        assert(i.end != i.buffer.len);
+
+        if (ws.input.bufferedLen() == 0) {
+            try ws.input.fillMore();
+        }
+
+        const src_buffer = ws.input.buffered();
+        const copy_len: usize = limit.minInt(@min(i.buffer.len - i.end, frame.bytes_remaining, src_buffer.len));
+
+        maskedCopy(i.buffer[i.end..][0..copy_len], src_buffer[0..copy_len], frame.mask, &frame.mask_pos);
+
+        ws.input.toss(copy_len);
+        i.end += copy_len;
+        frame.bytes_remaining -= copy_len;
+        return copy_len;
+    }
+
+    fn drain(i: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+        const ws: *WebSocket = @fieldParentPtr("writer", i);
+
+        const written = ws.writeFrame(ws.writer_frame.?.op_code, false, i.buffer[0..i.end], data, splat) catch |err| {
+            ws.writer_err = err;
+            return error.WriteFailed;
+        };
+        ws.writer_frame.?.op_code = .continuation;
+        i.end = 0;
+        return written;
+    }
+
+    // Returns the length of bytes written from data (with splat), does not include length from buffer.
+    fn writeFrame(ws: *WebSocket, op_code: Header.OpCode, finish: bool, buffer: []const u8, data: []const []const u8, splat: usize) !usize {
+        ws.write_lock.lock(ws.io) catch |err| return err;
+        defer ws.write_lock.unlock(ws.io);
+
+        if (ws.closed) {
+            return error.WebSocketClosed;
+        }
+        ws.closed = op_code == .close;
+
+        const data_len = if (data.len > 0) std.Io.Writer.countSplat(data, splat) else 0;
+        const payload_len = buffer.len + data_len;
+        const header: Header = .{
+            .finish = finish,
+            .op_code = op_code,
+            .payload_len = payload_len,
+            .mask = null,
+        };
+
+        try header.write(ws.output);
+        try ws.output.writeAll(buffer);
+        try writeSplatAll(ws.output, data, splat);
+        if (finish) {
+            try ws.output.flush();
+        }
+        return data_len;
+    }
+
+    // Io.Writer has this method, except that it requires data be mutable, which has its place but is unnessary and
+    // it makes it incompatible with calling from a drain function. Having to occasionally call writeAll instead of
+    // writeSplat is the tradeoff.
+    fn writeSplatAll(w: *std.Io.Writer, const_data: []const []const u8, const_splat: usize) std.Io.Writer.Error!void {
+        if (const_data.len == 0) {
+            return;
+        }
+        var data = const_data;
+        var truncate: usize = 0;
+        var splat = const_splat;
+        while (data.len >= 2) {
+            truncate += try w.writeSplat(data, splat);
+            while (data.len >= 2 and truncate >= data[0].len) {
+                truncate -= data[0].len;
+                data = data[1..];
+            }
+            if (data.len >= 2 and truncate > 0) {
+                try w.writeAll(data[0][truncate..]);
+                data = data[1..];
+            }
+        }
+
+        assert(data.len == 1);
+        while (true) {
+            splat -= truncate / data[0].len;
+            if (splat == 0) {
+                return;
+            }
+            truncate %= data[0].len;
+            truncate += try w.writeSplat(&.{ data[0][truncate..], data[0] }, splat - 1);
+        }
+    }
+
+    fn maskedCopy(dst: []u8, src: []const u8, mask: [4]u8, mask_pos: *u2) void {
+        assert(dst.len == src.len);
+        var i: usize = 0;
+
+        if (std.simd.suggestVectorLength(u8)) |lanes| {
+            while (i < dst.len and mask_pos.* != 0) {
+                dst[i] = src[i] ^ mask[mask_pos.*];
+                mask_pos.* +%= 1;
+                i += 1;
+            }
+
+            const repetition: [@divExact(lanes, 4)][4]u8 = @splat(mask);
+            const array: [lanes]u8 = @bitCast(repetition);
+            const simd_mask: @Vector(lanes, u8) = array;
+            while (i + lanes <= dst.len) : (i += lanes) {
+                const bytes: @Vector(lanes, u8) = src[i..][0..lanes].*;
+                dst[i..][0..lanes].* = bytes ^ simd_mask;
+            }
+        }
+        while (i < dst.len) {
+            dst[i] = src[i] ^ mask[mask_pos.*];
+            mask_pos.* +%= 1;
+            i += 1;
+        }
+    }
+
+    test maskedCopy {
+        var mask_pos: u2 = 1;
+        const mask: [4]u8 = .{ 3, 1, 2, 3 };
+
+        const src: [120]u8 = @bitCast(@as([40][3]u8, @splat(.{ 0, 100, 200 })));
+        var dst: [120]u8 = undefined;
+        const expected: [120]u8 = @bitCast(@as([10][12]u8, @splat(.{
+            1, 102, 203,
+            3, 101, 202,
+            3, 103, 201,
+            2, 103, 203,
+        })));
+        maskedCopy(&dst, &src, mask, &mask_pos);
+
+        try testing.expectEqualSlices(u8, &expected, &dst);
+        try testing.expectEqual(mask_pos, 1);
+
+        maskedCopy((&dst)[0..1], (&src)[0..1], mask, &mask_pos);
+        try testing.expectEqual(mask_pos, 2);
+    }
+
+    const Header = struct {
+        finish: bool,
+        op_code: OpCode,
+        payload_len: u64,
+        mask: ?[4]u8,
+
+        const OpCode = enum(u4) {
+            continuation = 0,
+            text = 1,
+            binary = 2,
+            close = 8,
+            ping = 9,
+            pong = 10,
+        };
+
+        const PayloadLen = enum(u7) {
+            u16_len = 126,
+            u64_len = 127,
+            _,
+        };
+
+        const Partial = packed struct(u16) {
+            payload_len: PayloadLen,
+            masked: bool,
+            op_code: u4,
+            reserved: u3,
+            fin: bool,
+        };
+        fn read(reader: *std.Io.Reader) !Header {
+            const partial: Partial = @bitCast(try reader.takeInt(u16, .big));
+            var r: Header = undefined;
+            r.finish = partial.fin;
+
+            r.op_code = std.enums.fromInt(OpCode, partial.op_code) orelse return error.WebsocketProtocolViolation;
+
+            if (partial.reserved != 0) {
+                @branchHint(.cold);
+                return error.WebsocketProtocolViolation;
+            }
+
+            r.payload_len = switch (partial.payload_len) {
+                .u16_len => try reader.takeInt(u16, .big),
+                .u64_len => try reader.takeInt(u64, .big),
+                else => |v| @backingInt(v),
+            };
+
+            r.mask = if (partial.masked) (try reader.takeArray(4)).* else null;
+
+            return r;
+        }
+
+        fn write(h: Header, writer: *std.Io.Writer) !void {
+            const payload_len: PayloadLen = if (h.payload_len < 126) @fromBackingInt(@intCast(h.payload_len)) else if (h.payload_len <= std.math.maxInt(u16)) .u16_len else .u64_len;
+            const p: Partial = .{
+                .payload_len = payload_len,
+                .masked = if (h.mask) |_| true else false,
+                .op_code = @backingInt(h.op_code),
+                .reserved = 0,
+                .fin = h.finish,
+            };
+            try writer.writeInt(u16, @bitCast(p), .big);
+
+            switch (payload_len) {
+                .u16_len => try writer.writeInt(u16, @intCast(h.payload_len), .big),
+                .u64_len => try writer.writeInt(u64, h.payload_len, .big),
+                else => {},
+            }
+            if (h.mask) |mask| {
+                try writer.writeAll(&mask);
+            }
+        }
+    };
+
+    fn testHeader(header_truth: Header, buffer_truth: []const u8) !void {
+        {
+            var reader: std.Io.Reader = .fixed(buffer_truth);
+            const header_result = Header.read(&reader);
+            try std.testing.expectEqualDeep(header_truth, header_result);
+            try std.testing.expectEqual(buffer_truth.len, reader.seek); // consumed whole header
+        }
+        {
+            var b: [20]u8 = undefined;
+            var writer: std.Io.Writer = .fixed(&b);
+            try header_truth.write(&writer);
+            try std.testing.expectEqualSlices(u8, buffer_truth, writer.buffered());
+        }
+    }
+
+    test Header {
+        // Finish
+        try testHeader(.{ .finish = true, .op_code = .continuation, .payload_len = 0, .mask = null }, &[_]u8{ 1 << 7, 0 });
+        // Op code
+        try testHeader(.{ .finish = false, .op_code = .text, .payload_len = 0, .mask = null }, &[_]u8{ 1, 0 });
+        // Payload len
+        try testHeader(.{ .finish = false, .op_code = .continuation, .payload_len = 125, .mask = null }, &[_]u8{ 0, 125 });
+        try testHeader(.{ .finish = false, .op_code = .continuation, .payload_len = 126, .mask = null }, &[_]u8{ 0, 126, 0, 126 });
+        try testHeader(.{ .finish = false, .op_code = .continuation, .payload_len = 65_535, .mask = null }, &[_]u8{ 0, 126, 255, 255 });
+        try testHeader(.{ .finish = false, .op_code = .continuation, .payload_len = 65_536, .mask = null }, &[_]u8{ 0, 127, 0, 0, 0, 0, 0, 1, 0, 0 });
+        // Mask
+        try testHeader(.{ .finish = false, .op_code = .continuation, .payload_len = 0, .mask = .{ 1, 2, 3, 4 } }, &[_]u8{ 0, 1 << 7, 1, 2, 3, 4 });
+        // Bit of everthing
+        try testHeader(.{ .finish = true, .op_code = .binary, .payload_len = 126, .mask = .{ 1, 2, 3, 4 } }, &[_]u8{ (1 << 7) | 2, 1 << 7 | 126, 0, 126, 1, 2, 3, 4 });
     }
 };
+
+test {
+    _ = WebSocket;
+}

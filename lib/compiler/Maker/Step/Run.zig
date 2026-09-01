@@ -971,7 +971,7 @@ const FuzzTestRunner = struct {
             i += 1;
         }) {
             const name_prefix = "f" ++ Dir.path.sep_str ++ "in";
-            in_name = std.fmt.bufPrint(&in_name_buf, name_prefix ++ "{x}", .{i}) catch unreachable;
+            in_name = std.mem.print(&in_name_buf, name_prefix ++ "{x}", .{i}) catch unreachable;
             in_f = cache_root.handle.openFile(io, in_name, .{
                 .lock = .exclusive,
                 .lock_nonblocking = true,
@@ -1727,7 +1727,7 @@ fn runCommand(
     const allow_skip = switch (conf_run.flags.stdio) {
         .check, .zig_test => conf_run.flags.skip_foreign_checks,
         else => false,
-    };
+    } or !conf_run.flags.failing_to_execute_foreign_is_an_error;
 
     var interp_argv: std.ArrayList([]const u8) = .empty;
 

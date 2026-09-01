@@ -132,6 +132,10 @@ dependencies: std.array_hash_map.Auto(InternPool.Dependee, void) = .empty,
 /// by `analyzeCall`.
 allow_memoize: bool = true,
 
+/// The largest quota requested by `@setEvalBranchQuota` within the comptime call
+/// currently being analyzed.
+quota_request: u32 = 0,
+
 /// The `BranchHint` for the current branch of runtime control flow.
 /// This state is on `Sema` so that `cold` hints can be propagated up through blocks with less special handling.
 branch_hint: ?std.lang.BranchHint = null,
@@ -4914,7 +4918,7 @@ fn zirSetEvalBranchQuota(sema: *Sema, block: *Block, inst: Zir.Inst.Index) Compi
     const src = block.nodeOffset(inst_data.src_node);
     const quota: u32 = @intCast(try sema.resolveInt(block, src, inst_data.operand, .u32, .{ .simple = .operand_setEvalBranchQuota }));
     sema.branch_quota = @max(sema.branch_quota, quota);
-    sema.allow_memoize = false;
+    sema.quota_request = @max(sema.quota_request, quota);
 }
 
 fn zirStoreNode(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!void {
@@ -7218,6 +7222,7 @@ fn analyzeCall(
                 .arg_values = memoized_arg_values,
                 .result = undefined, // ignored by hash+eql
                 .branch_count = undefined, // ignored by hash+eql
+                .branch_quota = undefined, // ignored by hash+eql
             },
         }) orelse break :memoize;
         const memoized_call = ip.indexToKey(memoized_call_index).memoized_call;
@@ -7227,6 +7232,8 @@ fn analyzeCall(
             break :memoize;
         }
         sema.branch_count += memoized_call.branch_count;
+        sema.branch_quota = @max(sema.branch_quota, memoized_call.branch_quota);
+        sema.quota_request = @max(sema.quota_request, memoized_call.branch_quota);
         const result = Air.internedToRef(memoized_call.result);
         if (ensure_result_used) {
             try sema.ensureResultUsed(block, sema.typeOf(result), call_src);
@@ -7353,6 +7360,10 @@ fn analyzeCall(
     defer sema.allow_memoize = old_allow_memoize and sema.allow_memoize;
     sema.allow_memoize = true;
 
+    const old_quota_request = sema.quota_request;
+    defer sema.quota_request = @max(old_quota_request, sema.quota_request);
+    sema.quota_request = 0;
+
     // Store the current eval branch count so we can find out how many eval branches
     // the comptime call caused.
     const old_branch_count = sema.branch_count;
@@ -7388,6 +7399,7 @@ fn analyzeCall(
                 .arg_values = memoized_arg_values,
                 .result = result_val.toIntern(),
                 .branch_count = sema.branch_count - old_branch_count,
+                .branch_quota = sema.quota_request,
             } });
         }
     }
@@ -29933,7 +29945,7 @@ fn storePtr2(
     // We're performing the store at runtime, so the pointee type must not be comptime-only.
     if (comptime_only) return sema.failWithOwnedErrorMsg(block, msg: {
         const msg = try sema.errMsg(src, "cannot store comptime-only type '{f}' at runtime", .{elem_ty.fmt(pt)});
-        errdefer msg.destroy(sema.gpa);
+        errdefer msg.destroy(zcu.gpa);
         try sema.errNote(ptr_src, msg, "operation is runtime due to this pointer", .{});
         break :msg msg;
     });
@@ -29957,10 +29969,18 @@ fn storePtr2(
 fn checkComptimeKnownStore(sema: *Sema, block: *Block, store_inst_ref: Air.Inst.Ref, store_src: LazySrcLoc) !void {
     const store_inst = store_inst_ref.toIndex().?;
     const inst_data = sema.air_instructions.items(.data)[@backingInt(store_inst)].bin_op;
-    const ptr = inst_data.lhs.toIndex() orelse return;
     const operand = inst_data.rhs;
 
     known: {
+        const ptr = inst_data.lhs.toIndex() orelse {
+            const ptr_val: Value = .fromInterned(inst_data.lhs.toInterned().?);
+            if (sema.isComptimeMutablePtr(ptr_val)) {
+                return;
+            } else {
+                break :known;
+            }
+        };
+
         const maybe_base_alloc = sema.base_allocs.get(ptr) orelse break :known;
         const maybe_comptime_alloc = sema.maybe_comptime_allocs.getPtr(maybe_base_alloc) orelse break :known;
 

@@ -457,7 +457,10 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
 
         // https://github.com/llvm/llvm-project/issues/105978
         if (result.cpu.arch.isArm() and result.abi.float() == .soft) {
-            result.cpu.features.removeFeature(@backingInt(Target.arm.Feature.vfp2));
+            var set: Target.Cpu.Feature.Set = .empty;
+            set.addFeature(@backingInt(Target.arm.Feature.vfp2));
+            set.populateDependents(&Target.arm.all_features);
+            result.cpu.features.removeFeatureSet(set);
         }
 
         if (result.cpu.arch.isXtensa() and result.abi == .call0) {

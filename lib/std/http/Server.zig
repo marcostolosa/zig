@@ -529,11 +529,9 @@ pub const Request = struct {
                     if (std.base64.standard.Decoder.calcSizeForSlice(header.value) catch 0 != 16) return error.WebsocketProtocolViolation;
                     sec_websocket_key = header.value;
                 } else if (std.ascii.eqlIgnoreCase(header.name, "upgrade")) {
-                    if (std.ascii.findIgnoreCase(header.value, "websocket") == null) return error.WebsocketProtocolViolation;
-                    upgrade = true;
+                    if (std.ascii.findIgnoreCase(header.value, "websocket")) |_| upgrade = true;
                 } else if (std.ascii.eqlIgnoreCase(header.name, "connection")) {
-                    if (std.ascii.findIgnoreCase(header.value, "upgrade") == null) return error.WebsocketProtocolViolation;
-                    connection = true;
+                    if (std.ascii.findIgnoreCase(header.value, "upgrade")) |_| connection = true;
                 } else if (std.ascii.eqlIgnoreCase(header.name, "sec-websocket-version")) {
                     if (!std.mem.eql(u8, header.value, supported_websocket_version)) return error.UnknownWebsocketVersion;
                     sec_websocket_version = true;
@@ -854,6 +852,8 @@ pub const WebSocket = struct {
                     continue;
                 },
                 .pong => {
+                    // Though this API doesn't support sending pings, remote connections are allowed
+                    // to send unsolicited pongs.
                     if (!header.finish) return error.WebsocketProtocolViolation;
                     _ = try ws.controlFramePayload(header);
                     continue;

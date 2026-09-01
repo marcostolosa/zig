@@ -981,7 +981,6 @@ pub const WebSocket = struct {
     }
     fn maskedCopy(dst: []u8, src: []const u8, mask: [4]u8, mask_pos: *u2) void {
         assert(dst.len == src.len);
-        // dst == src is valid, but partially overlapping buffers are not.
         assert(dst.ptr == src.ptr or !std.mem.overlap(dst, src));
         var i: usize = 0;
 

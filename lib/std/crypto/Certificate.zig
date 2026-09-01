@@ -1029,7 +1029,7 @@ pub const rsa = struct {
 
         pub fn verify(
             comptime modulus_len: usize,
-            sig: [modulus_len]u8,
+            sig: *const [modulus_len]u8,
             msg: []const u8,
             public_key: PublicKey,
             comptime Hash: type,
@@ -1371,3 +1371,32 @@ pub const rsa = struct {
         return res;
     }
 };
+
+test "rsa.PSSSignature.verify and concatVerify accept pointer" {
+    const HEX_LEN = 512;
+    const BYTE_LEN = 256;
+
+    const Sha256 = std.crypto.hash.sha2.Sha256;
+    const expectEqual = std.testing.expectEqual;
+    const pssVerify = rsa.PSSSignature.verify;
+    const pssConcatVerify = rsa.PSSSignature.concatVerify;
+
+    const text = "zig std pss repro";
+
+    var modulus: [BYTE_LEN]u8 = undefined;
+    const modulus_hex = "D4453E3DC1073225C7D4B7A599F1E4795709A979CE4216382FC67C7115CFD49E9400FD25431D4EDABA8C1CA5D35D7D2006B0C9B03623B366D642B704C1568DA6B088B76965290323F6DD9EA26959DA2F6BA3340599FC0A6ADD9F51189A2BE850E2EE6FEBEEDC6535C63EE46EB578638C022C1D8465013ADCEACB40C268315CED0676C8763A86C5E032FC5811DCC4D400EC4F7AE27881BB770E301422F24E894B5427340AAB10BB34E6DA5B66A6CEE246A8EFE90570F157ECC2B350BB7FEA38E1544040B1BE7021B524118C745B8BDB392AA727C63A2CA7FF3D511C8B4F550AB2BCA067EE7DBD8940F481751EBF04C509D7590672FAECB10FD7420501E64620A5";
+
+    var signature: [BYTE_LEN]u8 = undefined;
+    const signature_hex = "46818a27c06973830601f3e0228f2c0770b53e687e4a637e1bea2a088645a32290c343a9fe7ee5c6e7c6694c34a4de7772be9bc6a64118ce9a9eddf76101eba366af5f89bb4f66f9808832fc82a6981744cd48bc830c0b62a675ba27826ada52a67697ac9fb9664f436de027c14960787826c5591202b27e2de0d91b9443c728a323e15b6f552d5e979cde8464957335bdf5dd0f72aebce3dd8bc2b95fc00050f0f8c3ef79ef5f16b8af8c3657319bce89e88cb63e577c18ca34589411b7b954016f7e20f23c12eb65942556d58fbd7aa7c396819a76d25b44f14b358a3e327e01332b4acf18a4c2b195e431ae36b4e52e6426521262ca4fd9482fd9ff02a59f";
+
+    try expectEqual(@as(usize, HEX_LEN), modulus_hex.len);
+    try expectEqual(@as(usize, HEX_LEN), signature_hex.len);
+
+    _ = try std.fmt.hexToBytes(&modulus, modulus_hex);
+    _ = try std.fmt.hexToBytes(&signature, signature_hex);
+
+    const public_key = try rsa.PublicKey.fromBytes(&.{ 0x01, 0x00, 0x01 }, &modulus);
+
+    try pssVerify(BYTE_LEN, &signature, text, public_key, Sha256);
+    try pssConcatVerify(BYTE_LEN, &signature, &.{text}, public_key, Sha256);
+}

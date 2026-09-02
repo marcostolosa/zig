@@ -113,6 +113,7 @@ pub fn emitMir(emit: *Emit) Error!void {
                                 .default => true,
                                 .hidden, .protected => false,
                             },
+                            .is_dll_import = @"extern".is_dll_import,
                             .force_pcrel_direct = switch (@"extern".relocation) {
                                 .any => false,
                                 .pcrel => true,
@@ -134,40 +135,33 @@ pub fn emitMir(emit: *Emit) Error!void {
                     } },
                     .lazy_sym => |lazy_sym| .{ .symbol = .{
                         .symbol = if (emit.bin_file.cast(.elf)) |elf_file|
-                            @enumFromInt(
+                            @fromBackingInt(@intCast(
                                 elf_file.zigObjectPtr().?.getOrCreateMetadataForLazySymbol(elf_file, emit.pt, lazy_sym) catch |err|
                                     return emit.fail("{s} creating lazy symbol", .{@errorName(err)}),
-                            )
+                            ))
                         else if (emit.bin_file.cast(.elf2)) |elf|
                             try elf.lazySymbol(lazy_sym)
                         else if (emit.bin_file.cast(.macho)) |macho_file|
-                            @enumFromInt(macho_file.getZigObject().?.getOrCreateMetadataForLazySymbol(macho_file, emit.pt, lazy_sym) catch |err|
-                                return emit.fail("{s} creating lazy symbol", .{@errorName(err)}))
+                            @fromBackingInt(@intCast(macho_file.getZigObject().?.getOrCreateMetadataForLazySymbol(macho_file, emit.pt, lazy_sym) catch |err|
+                                return emit.fail("{s} creating lazy symbol", .{@errorName(err)})))
                         else if (emit.bin_file.cast(.coff2)) |coff|
-                            @enumFromInt(@intFromEnum(try coff.lazySymbol(lazy_sym)))
+                            @fromBackingInt(@intCast(@backingInt(try coff.lazySymbol(lazy_sym))))
                         else
                             return emit.fail("lazy symbols unimplemented for {s}", .{@tagName(emit.bin_file.tag)}),
                         .is_extern = false,
                     } },
                     .extern_func => |extern_func| .{ .symbol = .{
                         .symbol = if (emit.bin_file.cast(.elf)) |elf_file|
-                            @enumFromInt(try elf_file.getGlobalSymbol(extern_func.toSlice(&emit.lower.mir).?, null))
+                            @fromBackingInt(@intCast(try elf_file.getGlobalSymbol(extern_func.toSlice(&emit.lower.mir).?, null)))
                         else if (emit.bin_file.cast(.elf2)) |elf| try elf.externSymbol(.{
                             .name = extern_func.toSlice(&emit.lower.mir).?,
-                            .lib_name = switch (comp.compiler_rt_strat) {
-                                .none, .lib, .obj, .zcu => null,
-                                .dyn_lib => "compiler_rt",
-                            },
+                            .lib_name = null,
                             .type = .FUNC,
                         }) else if (emit.bin_file.cast(.macho)) |macho_file|
-                            @enumFromInt(try macho_file.getGlobalSymbol(extern_func.toSlice(&emit.lower.mir).?, null))
-                        else if (emit.bin_file.cast(.coff2)) |coff| @enumFromInt(@intFromEnum(try coff.globalSymbol(
-                            extern_func.toSlice(&emit.lower.mir).?,
-                            switch (comp.compiler_rt_strat) {
-                                .none, .lib, .obj, .zcu => null,
-                                .dyn_lib => "compiler_rt",
-                            },
-                        ))) else return emit.fail("external symbol unimplemented for {s}", .{@tagName(emit.bin_file.tag)}),
+                            @fromBackingInt(@intCast(try macho_file.getGlobalSymbol(extern_func.toSlice(&emit.lower.mir).?, null)))
+                        else if (emit.bin_file.cast(.coff2)) |coff| @fromBackingInt(@intCast(@backingInt(try coff.globalSymbol(.{
+                            .name = extern_func.toSlice(&emit.lower.mir).?,
+                        })))) else return emit.fail("external symbol unimplemented for {s}", .{@tagName(emit.bin_file.tag)}),
                         .is_extern = true,
                     } },
                 },
@@ -179,7 +173,13 @@ pub fn emitMir(emit: *Emit) Error!void {
                     switch (lowered_inst.encoding.mnemonic) {
                         .call => {
                             reloc.target = .{ .branch = target };
-                            try emit.encodeInst(lowered_inst, reloc_info);
+                            if (target.is_dll_import and emit.bin_file.cast(.coff2) != null) {
+                                try emit.encodeInst(try .new(.none, .call, &.{
+                                    .{ .mem = .initRip(.ptr, 0) },
+                                }, emit.lower.target), reloc_info);
+                            } else {
+                                try emit.encodeInst(lowered_inst, reloc_info);
+                            }
                             continue :lowered_inst;
                         },
                         else => {},
@@ -255,7 +255,25 @@ pub fn emitMir(emit: *Emit) Error!void {
                             else => unreachable,
                         }
                     } else if (emit.bin_file.cast(.coff2)) |_| {
-                        switch (lowered_inst.encoding.mnemonic) {
+                        if (target.is_dll_import) switch (lowered_inst.encoding.mnemonic) {
+                            .lea => try emit.encodeInst(try .new(.none, .mov, &.{
+                                lowered_inst.ops[0],
+                                .{ .mem = .initRip(.ptr, 0) },
+                            }, emit.lower.target), reloc_info),
+                            .mov => {
+                                try emit.encodeInst(try .new(.none, .mov, &.{
+                                    lowered_inst.ops[0],
+                                    .{ .mem = .initRip(.ptr, 0) },
+                                }, emit.lower.target), reloc_info);
+                                try emit.encodeInst(try .new(.none, .mov, &.{
+                                    lowered_inst.ops[0],
+                                    .{ .mem = .initSib(lowered_inst.ops[reloc.op_index].mem.sib.ptr_size, .{ .base = .{
+                                        .reg = lowered_inst.ops[0].reg.to64(),
+                                    } }) },
+                                }, emit.lower.target), &.{});
+                            },
+                            else => unreachable,
+                        } else switch (lowered_inst.encoding.mnemonic) {
                             .lea => try emit.encodeInst(try .new(.none, .lea, &.{
                                 lowered_inst.ops[0],
                                 .{ .mem = .initRip(.none, 0) },
@@ -291,10 +309,10 @@ pub fn emitMir(emit: *Emit) Error!void {
                                 }, emit.lower.target), &.{.{
                                     .op_index = 0,
                                     .target = .{ .branch = .{
-                                        .symbol = if (emit.bin_file.cast(.elf)) |elf_file| @enumFromInt(try elf_file.getGlobalSymbol(
+                                        .symbol = if (emit.bin_file.cast(.elf)) |elf_file| @fromBackingInt(@intCast(try elf_file.getGlobalSymbol(
                                             "__tls_get_addr",
                                             if (comp.config.link_libc) "c" else null,
-                                        )) else if (emit.bin_file.cast(.elf2)) |elf| try elf.externSymbol(.{
+                                        ))) else if (emit.bin_file.cast(.elf2)) |elf| try elf.externSymbol(.{
                                             .name = "__tls_get_addr",
                                             .lib_name = if (comp.config.link_libc) "c" else null,
                                             .type = .FUNC,
@@ -373,9 +391,9 @@ pub fn emitMir(emit: *Emit) Error!void {
                                 }, emit.lower.target), &.{.{
                                     .op_index = 1,
                                     .target = .{ .symbol = .{
-                                        .symbol = @enumFromInt(@intFromEnum(
-                                            try coff.globalSymbol("__tls_index", null),
-                                        )),
+                                        .symbol = @fromBackingInt(@intCast(@backingInt(
+                                            try coff.globalSymbol(.{ .name = "__tls_index" }),
+                                        ))),
                                         .is_extern = false,
                                     } },
                                 }});
@@ -408,9 +426,9 @@ pub fn emitMir(emit: *Emit) Error!void {
                                 }, emit.lower.target), &.{.{
                                     .op_index = 1,
                                     .target = .{ .symbol = .{
-                                        .symbol = @enumFromInt(@intFromEnum(
-                                            try coff.globalSymbol("_tls_index", null),
-                                        )),
+                                        .symbol = @fromBackingInt(@intCast(@backingInt(
+                                            try coff.globalSymbol(.{ .name = "_tls_index" }),
+                                        ))),
                                         .is_extern = false,
                                     } },
                                 }});
@@ -662,17 +680,17 @@ pub fn emitMir(emit: *Emit) Error!void {
         var table_offset = std.mem.alignForward(u32, @intCast(emit.w.end), ptr_size);
         if (emit.bin_file.cast(.elf)) |elf_file| {
             const zo = elf_file.zigObjectPtr().?;
-            const atom = zo.symbol(@intFromEnum(emit.atom_id)).atom(elf_file).?;
+            const atom = zo.symbol(@backingInt(emit.atom_id)).atom(elf_file).?;
 
             for (emit.table_relocs.items) |table_reloc| try atom.addReloc(gpa, .{
                 .r_offset = table_reloc.source_offset,
-                .r_info = @as(u64, @intFromEnum(emit.atom_id)) << 32 | @intFromEnum(std.elf.R_X86_64.@"32S"),
+                .r_info = @as(u64, @backingInt(emit.atom_id)) << 32 | @backingInt(std.elf.R_X86_64.@"32S"),
                 .r_addend = @as(i64, table_offset) + table_reloc.target_offset,
             }, zo);
             for (emit.lower.mir.table) |entry| {
                 try atom.addReloc(gpa, .{
                     .r_offset = table_offset,
-                    .r_info = @as(u64, @intFromEnum(emit.atom_id)) << 32 | @intFromEnum(std.elf.R_X86_64.@"64"),
+                    .r_info = @as(u64, @backingInt(emit.atom_id)) << 32 | @backingInt(std.elf.R_X86_64.@"64"),
                     .r_addend = emit.code_offset_mapping.items[entry],
                 }, zo);
                 table_offset += ptr_size;
@@ -725,6 +743,7 @@ const RelocInfo = struct {
         const Symbol = struct {
             symbol: link.File.SymbolId,
             is_extern: bool,
+            is_dll_import: bool = false,
             force_pcrel_direct: bool = false,
         };
     };
@@ -753,7 +772,7 @@ fn encodeInst(emit: *Emit, lowered_inst: Instruction, reloc_info: []const RelocI
                     const enc_length: u4 = if (is_mem) switch (lowered_inst.ops[op_index].mem.sib.base) {
                         .rip_inst => 4,
                         else => unreachable,
-                    } else @intCast(std.math.divCeil(u7, @intCast(op.immBitSize()), 8) catch unreachable);
+                    } else @intCast(@divCeil(op.immBitSize(), 8));
                     reloc_offset -= enc_length;
                     if (op_index == reloc.op_index) break :reloc_offset_length .{ reloc_offset, enc_length };
                     assert(!is_mem);
@@ -774,7 +793,7 @@ fn encodeInst(emit: *Emit, lowered_inst: Instruction, reloc_info: []const RelocI
         }),
         .symbol => |target| if (emit.bin_file.cast(.elf)) |elf_file| {
             const zo = elf_file.zigObjectPtr().?;
-            const atom = zo.symbol(@intFromEnum(emit.atom_id)).atom(elf_file).?;
+            const atom = zo.symbol(@backingInt(emit.atom_id)).atom(elf_file).?;
             const r_type: std.elf.R_X86_64 = if (!emit.pic)
                 .@"32S"
             else if (target.is_extern and !target.force_pcrel_direct)
@@ -783,23 +802,23 @@ fn encodeInst(emit: *Emit, lowered_inst: Instruction, reloc_info: []const RelocI
                 .PC32;
             try atom.addReloc(gpa, .{
                 .r_offset = end_offset - 4,
-                .r_info = @as(u64, @intFromEnum(target.symbol)) << 32 | @intFromEnum(r_type),
+                .r_info = @as(u64, @backingInt(target.symbol)) << 32 | @backingInt(r_type),
                 .r_addend = if (emit.pic) reloc.off - 4 else reloc.off,
             }, zo);
         } else if (emit.bin_file.cast(.macho)) |macho_file| {
             const zo = macho_file.getZigObject().?;
-            const atom = zo.symbols.items[@intFromEnum(emit.atom_id)].getAtom(macho_file).?;
+            const atom = zo.symbols.items[@backingInt(emit.atom_id)].getAtom(macho_file).?;
             try atom.addReloc(macho_file, .{
                 .tag = .@"extern",
                 .offset = end_offset - 4,
-                .target = @intFromEnum(target.symbol),
+                .target = @backingInt(target.symbol),
                 .addend = reloc.off,
                 .type = if (target.is_extern and !target.force_pcrel_direct) .got_load else .signed,
                 .meta = .{
                     .pcrel = true,
                     .has_subtractor = false,
                     .length = 2,
-                    .symbolnum = @intCast(@intFromEnum(target.symbol)),
+                    .symbolnum = @intCast(@backingInt(target.symbol)),
                 },
             });
         } else if (emit.bin_file.cast(.elf2)) |elf| try elf.addReloc(
@@ -813,19 +832,19 @@ fn encodeInst(emit: *Emit, lowered_inst: Instruction, reloc_info: []const RelocI
                 break :rt .PC32;
             } },
         ) else if (emit.bin_file.cast(.coff2)) |coff| try coff.addReloc(
-            @enumFromInt(@intFromEnum(emit.atom_id)),
+            @fromBackingInt(@intCast(@backingInt(emit.atom_id))),
             end_offset - 4,
-            @enumFromInt(@intFromEnum(target.symbol)),
-            reloc.off,
+            @fromBackingInt(@intCast(@backingInt(target.symbol))),
+            .{ .known = reloc.off },
             .{ .AMD64 = .REL32 },
         ) else unreachable,
         .branch => |target| if (emit.bin_file.cast(.elf)) |elf_file| {
             const zo = elf_file.zigObjectPtr().?;
-            const atom = zo.symbol(@intFromEnum(emit.atom_id)).atom(elf_file).?;
+            const atom = zo.symbol(@backingInt(emit.atom_id)).atom(elf_file).?;
             const r_type: std.elf.R_X86_64 = .PLT32;
             try atom.addReloc(gpa, .{
                 .r_offset = end_offset - 4,
-                .r_info = @as(u64, @intFromEnum(target.symbol)) << 32 | @intFromEnum(r_type),
+                .r_info = @as(u64, @backingInt(target.symbol)) << 32 | @backingInt(r_type),
                 .r_addend = reloc.off - 4,
             }, zo);
         } else if (emit.bin_file.cast(.elf2)) |elf| try elf.addReloc(
@@ -836,36 +855,36 @@ fn encodeInst(emit: *Emit, lowered_inst: Instruction, reloc_info: []const RelocI
             .{ .X86_64 = .PLT32 },
         ) else if (emit.bin_file.cast(.macho)) |macho_file| {
             const zo = macho_file.getZigObject().?;
-            const atom = zo.symbols.items[@intFromEnum(emit.atom_id)].getAtom(macho_file).?;
+            const atom = zo.symbols.items[@backingInt(emit.atom_id)].getAtom(macho_file).?;
             try atom.addReloc(macho_file, .{
                 .tag = .@"extern",
                 .offset = end_offset - 4,
-                .target = @intFromEnum(target.symbol),
+                .target = @backingInt(target.symbol),
                 .addend = reloc.off,
                 .type = .branch,
                 .meta = .{
                     .pcrel = true,
                     .has_subtractor = false,
                     .length = 2,
-                    .symbolnum = @intCast(@intFromEnum(target.symbol)),
+                    .symbolnum = @intCast(@backingInt(target.symbol)),
                 },
             });
         } else if (emit.bin_file.cast(.coff2)) |coff| try coff.addReloc(
-            @enumFromInt(@intFromEnum(emit.atom_id)),
+            @fromBackingInt(@intCast(@backingInt(emit.atom_id))),
             end_offset - 4,
-            @enumFromInt(@intFromEnum(target.symbol)),
-            reloc.off,
+            @fromBackingInt(@intCast(@backingInt(target.symbol))),
+            .{ .known = reloc.off },
             .{ .AMD64 = .REL32 },
         ) else return emit.fail("TODO implement {s} reloc for {s}", .{
             @tagName(reloc.target), @tagName(emit.bin_file.tag),
         }),
         .tls => |target_symbol| if (emit.bin_file.cast(.elf)) |elf_file| {
             const zo = elf_file.zigObjectPtr().?;
-            const atom = zo.symbol(@intFromEnum(emit.atom_id)).atom(elf_file).?;
+            const atom = zo.symbol(@backingInt(emit.atom_id)).atom(elf_file).?;
             const r_type: std.elf.R_X86_64 = if (emit.pic) .TLSLD else unreachable;
             try atom.addReloc(gpa, .{
                 .r_offset = end_offset - 4,
-                .r_info = @as(u64, @intFromEnum(target_symbol)) << 32 | @intFromEnum(r_type),
+                .r_info = @as(u64, @backingInt(target_symbol)) << 32 | @backingInt(r_type),
                 .r_addend = reloc.off - 4,
             }, zo);
         } else if (emit.bin_file.cast(.elf2)) |elf| try elf.addReloc(
@@ -879,11 +898,11 @@ fn encodeInst(emit: *Emit, lowered_inst: Instruction, reloc_info: []const RelocI
         }),
         .tlv => |target| if (emit.bin_file.cast(.elf)) |elf_file| {
             const zo = elf_file.zigObjectPtr().?;
-            const atom = zo.symbol(@intFromEnum(emit.atom_id)).atom(elf_file).?;
+            const atom = zo.symbol(@backingInt(emit.atom_id)).atom(elf_file).?;
             const r_type: std.elf.R_X86_64 = if (emit.pic) .DTPOFF32 else .TPOFF32;
             try atom.addReloc(gpa, .{
                 .r_offset = end_offset - 4,
-                .r_info = @as(u64, @intFromEnum(target.symbol)) << 32 | @intFromEnum(r_type),
+                .r_info = @as(u64, @backingInt(target.symbol)) << 32 | @backingInt(r_type),
                 .r_addend = reloc.off,
             }, zo);
         } else if (emit.bin_file.cast(.elf2)) |elf| try elf.addReloc(
@@ -894,25 +913,25 @@ fn encodeInst(emit: *Emit, lowered_inst: Instruction, reloc_info: []const RelocI
             .{ .X86_64 = if (emit.pic) .DTPOFF32 else .TPOFF32 },
         ) else if (emit.bin_file.cast(.macho)) |macho_file| {
             const zo = macho_file.getZigObject().?;
-            const atom = zo.symbols.items[@intFromEnum(emit.atom_id)].getAtom(macho_file).?;
+            const atom = zo.symbols.items[@backingInt(emit.atom_id)].getAtom(macho_file).?;
             try atom.addReloc(macho_file, .{
                 .tag = .@"extern",
                 .offset = end_offset - 4,
-                .target = @intFromEnum(target.symbol),
+                .target = @backingInt(target.symbol),
                 .addend = reloc.off,
                 .type = .tlv,
                 .meta = .{
                     .pcrel = true,
                     .has_subtractor = false,
                     .length = 2,
-                    .symbolnum = @intCast(@intFromEnum(target.symbol)),
+                    .symbolnum = @intCast(@backingInt(target.symbol)),
                 },
             });
         } else if (emit.bin_file.cast(.coff2)) |coff| try coff.addReloc(
-            @enumFromInt(@intFromEnum(emit.atom_id)),
+            @fromBackingInt(@intCast(@backingInt(emit.atom_id))),
             end_offset - 4,
-            @enumFromInt(@intFromEnum(target.symbol)),
-            reloc.off,
+            @fromBackingInt(@intCast(@backingInt(target.symbol))),
+            .{ .known = reloc.off },
             .{ .AMD64 = .SECREL },
         ) else return emit.fail("TODO implement {s} reloc for {s}", .{
             @tagName(reloc.target), @tagName(emit.bin_file.tag),

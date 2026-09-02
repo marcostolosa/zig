@@ -1093,23 +1093,23 @@ pub fn resolveWindows(allocator: Allocator, paths: []const []const u8) Allocator
     return result.toOwnedSlice(allocator);
 }
 
-/// This function is like a series of `cd` statements executed one after another.
+/// Simulates a series of relative directory changes on a virtual filesystem
+/// that has no symlinks.
 ///
-/// It resolves "." and ".." to the best of its ability, but will not convert relative paths to
-/// an absolute path, use Io.Dir.realpath instead.
-///
-/// ".." components may persist in the resolved path if the resolved path is relative.
+/// "." and ".." are resolved but will not make relative paths absolute. ".."
+/// components remain in the resolved path when the resolved path is relative
+/// and there are not previous components to cancel out.
 ///
 /// The result does not have a trailing path separator.
 ///
 /// This function does not perform any syscalls. Executing this series of path
-/// lookups on the actual filesystem may produce different results due to
+/// lookups on an actual filesystem may produce different results due to
 /// symlinks.
-pub fn resolvePosix(allocator: Allocator, paths: []const []const u8) Allocator.Error![]u8 {
+pub fn resolvePosix(gpa: Allocator, paths: []const []const u8) Allocator.Error![]u8 {
     assert(paths.len > 0);
 
-    var result = std.array_list.Managed(u8).init(allocator);
-    defer result.deinit();
+    var result: std.ArrayList(u8) = .empty;
+    defer result.deinit(gpa);
 
     var negative_count: usize = 0;
     var is_abs = false;
@@ -1135,23 +1135,23 @@ pub fn resolvePosix(allocator: Allocator, paths: []const []const u8) Allocator.E
                     if (ends_with_slash or result.items.len == 0) break;
                 }
             } else if (result.items.len > 0 or is_abs) {
-                try result.ensureUnusedCapacity(1 + component.len);
+                try result.ensureUnusedCapacity(gpa, 1 + component.len);
                 result.appendAssumeCapacity('/');
                 result.appendSliceAssumeCapacity(component);
             } else {
-                try result.appendSlice(component);
+                try result.appendSlice(gpa, component);
             }
         }
     }
 
     if (result.items.len == 0) {
         if (is_abs) {
-            return allocator.dupe(u8, "/");
+            return gpa.dupe(u8, "/");
         }
         if (negative_count == 0) {
-            return allocator.dupe(u8, ".");
+            return gpa.dupe(u8, ".");
         } else {
-            const real_result = try allocator.alloc(u8, 3 * negative_count - 1);
+            const real_result = try gpa.alloc(u8, 3 * negative_count - 1);
             var count = negative_count - 1;
             var i: usize = 0;
             while (count > 0) : (count -= 1) {
@@ -1164,9 +1164,9 @@ pub fn resolvePosix(allocator: Allocator, paths: []const []const u8) Allocator.E
     }
 
     if (negative_count == 0) {
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(gpa);
     } else {
-        const real_result = try allocator.alloc(u8, 3 * negative_count + result.items.len);
+        const real_result = try gpa.alloc(u8, 3 * negative_count + result.items.len);
         var count = negative_count;
         var i: usize = 0;
         while (count > 0) : (count -= 1) {
@@ -1830,7 +1830,7 @@ fn testRelativeWindows(from: []const u8, to: []const u8, expected_output: []cons
 /// pointer address range of `path`, even if it is length zero.
 pub fn extension(path: []const u8) []const u8 {
     const filename = basename(path);
-    const index = mem.lastIndexOfScalar(u8, filename, '.') orelse return path[path.len..];
+    const index = mem.findScalarLast(u8, filename, '.') orelse return path[path.len..];
     if (index == 0) return path[path.len..];
     return filename[index..];
 }
@@ -1887,8 +1887,8 @@ test extension {
 /// - "hello/world/lib"        ⇒ "lib"
 pub fn stem(path: []const u8) []const u8 {
     const filename = basename(path);
-    const index = mem.lastIndexOfScalar(u8, filename, '.') orelse return filename[0..];
-    if (index == 0) return path;
+    const index = mem.findScalarLast(u8, filename, '.') orelse return filename;
+    if (index == 0) return filename;
     return filename[0..index];
 }
 
@@ -1904,8 +1904,14 @@ test stem {
     try testStem("hello...", "hello..");
     try testStem("hello.", "hello");
     try testStem("/hello.", "hello");
+    try testStem("hello/world/.gitignore", ".gitignore");
+    try testStem("/.gitignore", ".gitignore");
     try testStem(".gitignore", ".gitignore");
+    try testStem(".gitignore/", ".gitignore");
+    try testStem("hello/world/.image.png", ".image");
+    try testStem("/.image.png", ".image");
     try testStem(".image.png", ".image");
+    try testStem(".image.png/", ".image");
     try testStem("file.ext", "file");
     try testStem("file.ext.", "file.ext");
     try testStem("a.b.c", "a.b");

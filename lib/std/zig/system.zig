@@ -104,7 +104,7 @@ pub fn getExternalExecutor(io: Io, candidate: *const std.Target, options: GetExt
                 => .{ .qemu = switch (t) {
                     .x86 => "qemu-i386",
                     .x86_64 => switch (candidate.abi) {
-                        .gnux32, .muslx32 => return bad_result,
+                        .gnux32, .muslx32, .x32 => return bad_result,
                         else => "qemu-x86_64",
                     },
                     else => "qemu-" ++ @tagName(t),
@@ -146,7 +146,7 @@ pub fn getExternalExecutor(io: Io, candidate: *const std.Target, options: GetExt
                         .powerpc64 => "qemu-ppc64",
                         .powerpc64le => "qemu-ppc64le",
                         .mips64, .mips64el => switch (candidate.abi) {
-                            .gnuabin32, .muslabin32 => if (t == .mips64el) "qemu-mipsn32el" else "qemu-mipsn32",
+                            .gnuabin32, .muslabin32, .abin32 => if (t == .mips64el) "qemu-mipsn32el" else "qemu-mipsn32",
                             else => "qemu-" ++ @tagName(t),
                         },
                         // TODO: Actually check the SuperH version.
@@ -390,13 +390,13 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
     // sets one of them, that takes precedence.
     switch (query_cpu_arch) {
         .x86_16 => {
-            cpu.features.addFeature(@intFromEnum(Target.x86.Feature.@"16bit_mode"));
+            cpu.features.addFeature(@backingInt(Target.x86.Feature.@"16bit_mode"));
         },
         .x86 => {
             if (!Target.x86.featureSetHasAny(query.cpu_features_add, .{
                 .@"16bit_mode", .@"32bit_mode",
             })) {
-                cpu.features.addFeature(@intFromEnum(Target.x86.Feature.@"32bit_mode"));
+                cpu.features.addFeature(@backingInt(Target.x86.Feature.@"32bit_mode"));
             }
         },
         .arm, .armeb => {
@@ -404,7 +404,7 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
             //     What do we do if the user specifies +thumb_mode?
         },
         .thumb, .thumbeb => {
-            cpu.features.addFeature(@intFromEnum(Target.arm.Feature.thumb_mode));
+            cpu.features.addFeature(@backingInt(Target.arm.Feature.thumb_mode));
         },
         else => {},
     }
@@ -452,16 +452,16 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
             // `-G <n>` to Clang...) We can't do the `-gpsize` hack because we can have multiple
             // concurrent LLVM emit jobs, and command line options in LLVM are shared globally. So
             // just force this feature off. Lovely stuff.
-            result.cpu.features.removeFeature(@intFromEnum(Target.hexagon.Feature.small_data));
+            result.cpu.features.removeFeature(@backingInt(Target.hexagon.Feature.small_data));
         }
 
         // https://github.com/llvm/llvm-project/issues/105978
         if (result.cpu.arch.isArm() and result.abi.float() == .soft) {
-            result.cpu.features.removeFeature(@intFromEnum(Target.arm.Feature.vfp2));
+            result.cpu.features.removeFeature(@backingInt(Target.arm.Feature.vfp2));
         }
 
         if (result.cpu.arch.isXtensa() and result.abi == .call0) {
-            result.cpu.features.removeFeature(@intFromEnum(Target.xtensa.Feature.windowed));
+            result.cpu.features.removeFeature(@backingInt(Target.xtensa.Feature.windowed));
         }
     }
 
@@ -597,23 +597,23 @@ fn abiAndDynamicLinkerFromFile(
         .ofmt = query.ofmt orelse Target.ObjectFormat.default(os.tag, cpu.arch),
         .dynamic_linker = query.dynamic_linker orelse .none,
     };
-    var rpath_offset: ?u64 = null; // Found inside PT_DYNAMIC
+    var rpath_offset: ?u64 = null; // Found inside PT.DYNAMIC
     const look_for_ld = query.dynamic_linker == null;
 
     var got_dyn_section: bool = false;
     {
         var it = header.iterateProgramHeaders(file_reader);
-        while (try it.next()) |phdr| switch (phdr.p_type) {
-            elf.PT_INTERP => {
+        while (try it.next()) |phdr| switch (phdr.type) {
+            .INTERP => {
                 got_dyn_section = true;
 
                 if (look_for_ld) {
-                    const p_filesz = phdr.p_filesz;
+                    const p_filesz = phdr.filesz;
                     if (p_filesz > result.dynamic_linker.buffer.len) return error.NameTooLong;
                     const filesz: usize = @intCast(p_filesz);
-                    try file_reader.seekTo(phdr.p_offset);
+                    try file_reader.seekTo(phdr.offset);
                     try file_reader.interface.readSliceAll(result.dynamic_linker.buffer[0..filesz]);
-                    // PT_INTERP includes a null byte in filesz.
+                    // PT.INTERP includes a null byte in filesz.
                     const len = filesz - 1;
                     // dynamic_linker.max_byte is "max", not "len".
                     // We know it will fit in u8 because we check against dynamic_linker.buffer.len above.
@@ -631,11 +631,11 @@ fn abiAndDynamicLinkerFromFile(
                 }
             },
             // We only need this for detecting glibc version.
-            elf.PT_DYNAMIC => {
+            .DYNAMIC => {
                 got_dyn_section = true;
 
                 if (builtin.target.os.tag == .linux and result.isGnuLibC() and query.glibc_version == null) {
-                    var dyn_it = header.iterateDynamicSection(file_reader, phdr.p_offset, phdr.p_filesz);
+                    var dyn_it = header.iterateDynamicSection(file_reader, phdr.offset, phdr.filesz);
                     while (try dyn_it.next()) |dyn| {
                         if (dyn.d_tag == elf.DT_RUNPATH) {
                             rpath_offset = dyn.d_val;
@@ -960,20 +960,14 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
     if (!native_target_has_ld or have_all_info or os_is_non_native or is_illumos or is_darwin) {
         return defaultAbiAndDynamicLinker(cpu, os, query);
     }
-    if (query.abi) |abi| {
-        if (abi.isMusl()) {
-            // musl implies static linking.
-            return defaultAbiAndDynamicLinker(cpu, os, query);
-        }
-    }
     // The current target's ABI cannot be relied on for this. For example, we may build the zig
     // compiler for target riscv64-linux-musl and provide a tarball for users to download.
     // A user could then run that zig compiler on riscv64-linux-gnu. This use case is well-defined
     // and supported by Zig. But that means that we must detect the system ABI here rather than
     // relying on `builtin.target`.
     const all_abis = comptime blk: {
-        assert(@intFromEnum(Target.Abi.none) == 0);
-        const field_names = std.meta.fieldNames(Target.Abi)[1..];
+        assert(@backingInt(Target.Abi.none) == 0);
+        const field_names = @typeInfo(Target.Abi).@"enum".field_names[1..];
         var array: [field_names.len]Target.Abi = undefined;
         for (field_names, 0..) |field_name, i| {
             array[i] = @field(Target.Abi, field_name);

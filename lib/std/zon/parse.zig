@@ -9,7 +9,6 @@
 //! For lower level control over parsing, see `std.zig.Zoir`.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Ast = std.zig.Ast;
 const Zoir = std.zig.Zoir;
@@ -183,7 +182,7 @@ pub const Error = union(enum) {
             location.column += node_or_offset;
             return location;
         } else {
-            const ast_node: Ast.Node.Index = @enumFromInt(node_or_offset);
+            const ast_node: Ast.Node.Index = @fromBackingInt(@intCast(node_or_offset));
             const token = ast.nodeMainToken(ast_node);
             return ast.tokenLocation(0, token);
         }
@@ -294,7 +293,7 @@ pub fn fromSliceAlloc(
 ) error{ OutOfMemory, ParseZon }!T {
     if (diag) |s| s.assertEmpty();
 
-    var ast = try std.zig.Ast.parse(gpa, source, .zon);
+    var ast = try std.zig.Ast.parse(gpa, source, .{ .mode = .zon });
     defer if (diag == null) ast.deinit(gpa);
     if (diag) |s| s.ast = ast;
 
@@ -672,7 +671,7 @@ const Parser = struct {
                 const enum_info = @typeInfo(T).@"enum";
                 comptime var kvs_list: [enum_info.field_names.len]struct { []const u8, T } = undefined;
                 inline for (enum_info.field_names, enum_info.field_values, 0..) |enum_field_name, enum_field_value, i| {
-                    kvs_list[i] = .{ enum_field_name, @enumFromInt(enum_field_value) };
+                    kvs_list[i] = .{ enum_field_name, @fromBackingInt(@intCast(enum_field_value)) };
                 }
                 const enum_tags = std.StaticStringMap(T).initComptime(kvs_list);
 
@@ -1173,7 +1172,9 @@ const Parser = struct {
 };
 
 fn intFromFloatExact(T: type, value: anytype) ?T {
-    if (value > std.math.maxInt(T) or value < std.math.minInt(T)) {
+    const max: @TypeOf(value) = @floatFromInt(std.math.maxInt(T));
+    const min: @TypeOf(value) = @floatFromInt(std.math.minInt(T));
+    if (value > max or value < min) {
         return null;
     }
 
@@ -1213,6 +1214,7 @@ fn canParseTypeInner(
         .frame,
         .@"anyframe",
         .@"opaque",
+        .spirv,
         .comptime_int,
         .comptime_float,
         .enum_literal,
@@ -1865,8 +1867,6 @@ test "std.zon tuples" {
 
 // Test sizes 0 to 3 since small sizes get parsed differently
 test "std.zon arrays and slices" {
-    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/20881
-
     const gpa = std.testing.allocator;
 
     // Literals
@@ -2137,7 +2137,7 @@ test "std.zon string literal" {
     // Passing string literal to a array
     {
         {
-            var ast = try std.zig.Ast.parse(gpa, "\"abcd\"", .zon);
+            var ast = try std.zig.Ast.parse(gpa, "\"abcd\"", .{ .mode = .zon });
             defer ast.deinit(gpa);
             var zoir = try ZonGen.generate(gpa, ast, .{ .parse_str_lits = false });
             defer zoir.deinit(gpa);
@@ -2447,6 +2447,7 @@ test "std.zon intFromFloatExact" {
     try std.testing.expectEqual(@as(u8, 10), intFromFloatExact(u8, @as(f32, 10.0)).?);
     try std.testing.expectEqual(@as(i8, -123), intFromFloatExact(i8, @as(f64, @as(f64, -123.0))).?);
     try std.testing.expectEqual(@as(i16, 45), intFromFloatExact(i16, @as(f128, @as(f128, 45.0))).?);
+    try std.testing.expectEqual(@as(u128, 67), intFromFloatExact(u128, @as(f128, @as(f128, 67.0))).?);
 
     // Out of range
     try std.testing.expectEqual(@as(?u4, null), intFromFloatExact(u4, @as(f32, 16.0)));
@@ -2488,6 +2489,10 @@ test "std.zon parse int" {
     try std.testing.expectEqual(
         @as(u65, 36893488147419103231),
         try fromSlice(u65, gpa, "368934_881_474191032_31", null, .{}),
+    );
+    try std.testing.expectEqual(
+        @as(u128, 340282366920938463463374607431768211455),
+        try fromSlice(u128, gpa, "340282366920938463463374607431768211455", null, .{}),
     );
 
     // Test big integer limits
@@ -2794,8 +2799,6 @@ test "std.zon negative char" {
 }
 
 test "std.zon parse float" {
-    if (builtin.cpu.arch == .x86) return error.SkipZigTest;
-
     const gpa = std.testing.allocator;
 
     // Test decimals
@@ -3127,7 +3130,7 @@ test "std.zon free on error" {
 }
 
 test "std.zon vector" {
-    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/15330
+    const builtin = @import("builtin");
     if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch == .s390x) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/25957
 
     const gpa = std.testing.allocator;
@@ -3526,7 +3529,7 @@ test "std.zon no alloc" {
 
     const Nested = struct { u8, u8, struct { u8, u8 } };
 
-    var ast = try std.zig.Ast.parse(gpa, ".{ 1, 2, .{ 3, 4 } }", .zon);
+    var ast = try std.zig.Ast.parse(gpa, ".{ 1, 2, .{ 3, 4 } }", .{ .mode = .zon });
     defer ast.deinit(gpa);
 
     var zoir = try ZonGen.generate(gpa, ast, .{ .parse_str_lits = false });

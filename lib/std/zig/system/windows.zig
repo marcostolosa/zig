@@ -43,7 +43,7 @@ pub fn detectRuntimeVersion() WindowsVersion {
 
     const version: u32 = @as(u32, os_ver) << 16 | @as(u16, sp_ver) << 8 | sub_ver;
 
-    return @as(WindowsVersion, @enumFromInt(version));
+    return @as(WindowsVersion, @fromBackingInt(@intCast(version)));
 }
 
 // Technically, a registry value can be as long as 1MB. However, MS recommends storing
@@ -74,7 +74,7 @@ fn getCpuInfoFromRegistry(core: usize, args: anytype) !void {
 
     const max_cpu_buf = 4;
     var next_cpu_buf: [max_cpu_buf]u8 = undefined;
-    const next_cpu = try std.fmt.bufPrint(&next_cpu_buf, "{d}", .{core});
+    const next_cpu = try std.mem.print(&next_cpu_buf, "{d}", .{core});
 
     var subkey: [max_cpu_buf + 1]u16 = undefined;
     const subkey_len = try std.unicode.utf8ToUtf16Le(&subkey, next_cpu);
@@ -188,7 +188,7 @@ fn getCpuInfoFromRegistry(core: usize, args: anytype) !void {
 }
 
 fn setFeature(comptime Feature: type, cpu: *Target.Cpu, feature: Feature, enabled: bool) void {
-    const idx = @as(Target.Cpu.Feature.Set.Index, @intFromEnum(feature));
+    const idx = @as(Target.Cpu.Feature.Set.Index, @backingInt(feature));
 
     if (enabled) cpu.features.addFeature(idx) else cpu.features.removeFeature(idx);
 }

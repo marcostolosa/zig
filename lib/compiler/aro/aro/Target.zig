@@ -104,14 +104,14 @@ pub const SubArch = enum {
 
     pub fn toFeature(sub: SubArch, arch: Cpu.Arch) ?std.Target.Cpu.Feature.Set.Index {
         if (arch.isPowerPC()) {
-            if (sub == .powerpc_spe) return @intFromEnum(std.Target.powerpc.Feature.spe);
+            if (sub == .powerpc_spe) return @backingInt(std.Target.powerpc.Feature.spe);
         } else if (arch.isMIPS32()) {
-            return @intFromEnum(std.Target.mips.Feature.mips32r6);
+            return @backingInt(std.Target.mips.Feature.mips32r6);
         } else if (arch.isMIPS64()) {
-            return @intFromEnum(std.Target.mips.Feature.mips64r6);
+            return @backingInt(std.Target.mips.Feature.mips64r6);
         } else if (arch.isSpirV()) {
             const spirv = std.Target.spirv.Feature;
-            return @intFromEnum(switch (sub) {
+            return @backingInt(switch (sub) {
                 .spirv_v10 => spirv.v1_0,
                 .spirv_v11 => spirv.v1_1,
                 .spirv_v12 => spirv.v1_2,
@@ -123,7 +123,7 @@ pub const SubArch = enum {
             });
         } else if (arch.isAARCH64()) {
             const aarch64 = std.Target.aarch64.Feature;
-            return @intFromEnum(switch (sub) {
+            return @backingInt(switch (sub) {
                 .arm_v8_1a => aarch64.v8_1a,
                 .arm_v8_2a => aarch64.v8_2a,
                 .arm_v8_3a => aarch64.v8_3a,
@@ -149,7 +149,7 @@ pub const SubArch = enum {
             });
         } else if (arch.isArm()) {
             const arm = std.Target.arm.Feature;
-            return @intFromEnum(switch (sub) {
+            return @backingInt(switch (sub) {
                 .arm_v4t => arm.v4t,
                 .arm_v5 => arm.v5t,
                 .arm_v5te => arm.v5te,
@@ -523,7 +523,10 @@ pub fn systemCompiler(target: *const Target) LangOpts.Compiler {
     // the rest for documentation as fn returns .clang
     if (target.os.tag.isDarwin() or
         target.abi.isAndroid() or
-        target.os.tag.isBSD() or
+        target.os.tag == .dragonfly or
+        target.os.tag == .freebsd or
+        target.os.tag == .netbsd or
+        target.os.tag == .openbsd or
         target.os.tag == .fuchsia or
         target.os.tag == .illumos or
         target.os.tag == .haiku or
@@ -1559,15 +1562,15 @@ pub fn ptrBitWidth(target: *const Target) u16 {
 }
 
 pub fn cCharSignedness(target: *const Target) std.builtin.Signedness {
-    return target.toZigTarget().cCharSignedness();
+    return target.toZigTarget().cCharSignedness().?;
 }
 
 pub fn cTypeBitSize(target: *const Target, c_type: std.Target.CType) u16 {
-    return target.toZigTarget().cTypeBitSize(c_type);
+    return target.toZigTarget().cTypeBitSize(c_type).?;
 }
 
 pub fn cTypeAlignment(target: *const Target, c_type: std.Target.CType) u16 {
-    return target.toZigTarget().cTypeAlignment(c_type);
+    return target.toZigTarget().cTypeAlignment(c_type).?;
 }
 
 pub fn standardDynamicLinkerPath(target: *const Target) std.Target.DynamicLinker {

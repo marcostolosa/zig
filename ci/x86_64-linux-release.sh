@@ -11,7 +11,7 @@ CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
-export PATH="$HOME/deps/wasmtime-v44.0.0-x86_64-linux:$HOME/deps/qemu-linux-x86_64-11.0.1/bin:$HOME/local/bin:$PATH"
+export PATH="$HOME/deps/wasmtime-v46.0.1-x86_64-linux:$HOME/deps/qemu-linux-x86_64-11.1.1/bin:$HOME/local/bin:$PATH"
 
 # Override the cache directories because they won't actually help other CI runs
 # which will be testing alternate versions of zig, and ultimately would just
@@ -48,6 +48,9 @@ unset CXX
 
 ninja install
 
+# Must not be set while using the other `zig cc` which has its own zig lib dir.
+export ZIG_LIB_DIR="$PWD/../lib"
+
 # Covers several things:
 # 1. building the compiler without LLVM
 # 2. 32-bit
@@ -59,14 +62,13 @@ stage3-release/bin/zig build \
 stage3-release/bin/zig build test docs \
   --maxrss ${ZSF_MAX_RSS:-0} \
   -Dlldb=$HOME/deps/lldb-zig/Release-7c1090fd46/bin/lldb \
-  -Dlibc-test-path=$HOME/deps/libc-test-f2bac77 \
+  -Dlibc-test-path=$HOME/deps/libc-test-b95fe84 \
   -fqemu \
   --libc-runtimes $HOME/deps/glibc-2.43-musl-1.2.5 \
   -fwasmtime \
   -Dstatic-llvm \
   -Dtarget=native-native-musl \
   --search-prefix "$PREFIX" \
-  --zig-lib-dir "$PWD/../lib" \
   -Denable-superhtml \
   --test-timeout 12m
 
@@ -97,6 +99,7 @@ cd ../build-new
 
 export CC="$ZIG cc -target $TARGET -mcpu=$MCPU"
 export CXX="$ZIG c++ -target $TARGET -mcpu=$MCPU"
+unset ZIG_LIB_DIR
 
 cmake .. \
   -DCMAKE_PREFIX_PATH="$PREFIX" \
@@ -115,11 +118,12 @@ unset CXX
 
 ninja install
 
+export ZIG_LIB_DIR="$PWD/../lib"
+
 stage3/bin/zig test ../test/behavior.zig
 stage3/bin/zig build -p stage4 \
   -Dstatic-llvm \
   -Dtarget=native-native-musl \
   -Dno-lib \
-  --search-prefix "$PREFIX" \
-  --zig-lib-dir "$PWD/../lib"
+  --search-prefix "$PREFIX"
 stage4/bin/zig test ../test/behavior.zig

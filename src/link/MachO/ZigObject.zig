@@ -322,10 +322,10 @@ pub fn updateArSize(self: *ZigObject) void {
     self.output_ar_state.size = self.data.items.len;
 }
 
-pub fn writeAr(self: ZigObject, ar_format: Archive.Format, writer: anytype) !void {
+pub fn writeAr(self: ZigObject, writer: anytype) !void {
     // Header
     const size = std.math.cast(usize, self.output_ar_state.size) orelse return error.Overflow;
-    try Archive.writeHeader(self.basename, size, ar_format, writer);
+    try Archive.writeHeader(self.basename, size, writer);
     // Data
     try writer.writeAll(self.data.items);
 }
@@ -560,14 +560,14 @@ pub fn flush(self: *ZigObject, macho_file: *MachO, tid: Zcu.PerThread.Id) link.E
 
     // Handle any lazy symbols that were emitted by incremental compilation.
     if (self.lazy_syms.getPtr(.anyerror_type)) |metadata| {
-        const pt: Zcu.PerThread = .activate(macho_file.base.comp.zcu.?, tid);
-        defer pt.deactivate();
+        const active = macho_file.base.comp.zcu.?.activate(tid);
+        defer active.deactivate();
 
         // Most lazy symbols can be updated on first use, but
         // anyerror needs to wait for everything to be flushed.
         if (metadata.text_state != .unused) self.updateLazySymbol(
             macho_file,
-            pt,
+            active.pt,
             .{ .kind = .code, .ty = .anyerror_type },
             metadata.text_symbol_index,
         ) catch |err| switch (err) {
@@ -576,7 +576,7 @@ pub fn flush(self: *ZigObject, macho_file: *MachO, tid: Zcu.PerThread.Id) link.E
         };
         if (metadata.const_state != .unused) self.updateLazySymbol(
             macho_file,
-            pt,
+            active.pt,
             .{ .kind = .const_data, .ty = .anyerror_type },
             metadata.const_symbol_index,
         ) catch |err| switch (err) {
@@ -590,9 +590,9 @@ pub fn flush(self: *ZigObject, macho_file: *MachO, tid: Zcu.PerThread.Id) link.E
     }
 
     if (self.dwarf) |*dwarf| {
-        const pt: Zcu.PerThread = .activate(macho_file.base.comp.zcu.?, tid);
-        defer pt.deactivate();
-        dwarf.flush(pt) catch |err| switch (err) {
+        const active = macho_file.base.comp.zcu.?.activate(tid);
+        defer active.deactivate();
+        dwarf.flush(active.pt) catch |err| switch (err) {
             error.OutOfMemory => |e| return e,
             else => |e| return diags.fail("failed to flush dwarf module: {s}", .{@errorName(e)}),
         };
@@ -632,7 +632,7 @@ pub fn getNavVAddr(
     switch (reloc_info.parent) {
         .none => unreachable,
         .atom_index => |atom_index| {
-            const parent_atom = self.symbols.items[@intFromEnum(atom_index)].getAtom(macho_file).?;
+            const parent_atom = self.symbols.items[@backingInt(atom_index)].getAtom(macho_file).?;
             try parent_atom.addReloc(macho_file, .{
                 .tag = .@"extern",
                 .offset = @intCast(reloc_info.offset),
@@ -650,7 +650,7 @@ pub fn getNavVAddr(
         .debug_output => |debug_output| switch (debug_output) {
             .dwarf => |wip_nav| try wip_nav.infoExternalReloc(.{
                 .source_off = @intCast(reloc_info.offset),
-                .target_sym = @enumFromInt(sym_index),
+                .target_sym = @fromBackingInt(@intCast(sym_index)),
                 .target_off = reloc_info.addend,
             }),
             .none => unreachable,
@@ -671,7 +671,7 @@ pub fn getUavVAddr(
     switch (reloc_info.parent) {
         .none => unreachable,
         .atom_index => |atom_index| {
-            const parent_atom = self.symbols.items[@intFromEnum(atom_index)].getAtom(macho_file).?;
+            const parent_atom = self.symbols.items[@backingInt(atom_index)].getAtom(macho_file).?;
             try parent_atom.addReloc(macho_file, .{
                 .tag = .@"extern",
                 .offset = @intCast(reloc_info.offset),
@@ -689,7 +689,7 @@ pub fn getUavVAddr(
         .debug_output => |debug_output| switch (debug_output) {
             .dwarf => |wip_nav| try wip_nav.infoExternalReloc(.{
                 .source_off = @intCast(reloc_info.offset),
-                .target_sym = @enumFromInt(sym_index),
+                .target_sym = @fromBackingInt(@intCast(sym_index)),
                 .target_off = reloc_info.addend,
             }),
             .none => unreachable,
@@ -716,12 +716,12 @@ pub fn lowerUav(
         const sym = self.symbols.items[metadata.symbol_index];
         const existing_alignment = sym.getAtom(macho_file).?.alignment;
         if (uav_alignment.order(existing_alignment).compare(.lte))
-            return @enumFromInt(metadata.symbol_index);
+            return @fromBackingInt(@intCast(metadata.symbol_index));
     }
 
     var name_buf: [32]u8 = undefined;
-    const name = std.fmt.bufPrint(&name_buf, "__anon_{d}", .{
-        @intFromEnum(uav),
+    const name = std.mem.print(&name_buf, "__anon_{d}", .{
+        @backingInt(uav),
     }) catch unreachable;
     const sym_index = self.lowerConst(
         macho_file,
@@ -737,7 +737,7 @@ pub fn lowerUav(
             .{e},
         ),
     };
-    try self.uavs.put(gpa, uav, .{ .symbol_index = @intFromEnum(sym_index) });
+    try self.uavs.put(gpa, uav, .{ .symbol_index = @backingInt(sym_index) });
     return sym_index;
 }
 
@@ -783,14 +783,14 @@ pub fn updateFunc(
     var aw: std.Io.Writer.Allocating = .init(gpa);
     defer aw.deinit();
 
-    var debug_wip_nav = if (self.dwarf) |*dwarf| try dwarf.initWipNav(pt, func.owner_nav, @enumFromInt(sym_index)) else null;
+    var debug_wip_nav = if (self.dwarf) |*dwarf| try dwarf.initWipNav(pt, func.owner_nav, @fromBackingInt(@intCast(sym_index))) else null;
     defer if (debug_wip_nav) |*wip_nav| wip_nav.deinit();
 
     codegen.emitFunction(
         &macho_file.base,
         pt,
         func_index,
-        @enumFromInt(sym_index),
+        @fromBackingInt(@intCast(sym_index)),
         mir,
         &aw.writer,
         if (debug_wip_nav) |*wip_nav| .{ .dwarf = wip_nav } else .none,
@@ -876,7 +876,7 @@ pub fn updateNav(
             const sym_index = try self.getGlobalSymbol(macho_file, name, lib_name);
             if (nav.resolved.?.@"threadlocal" and macho_file.base.comp.config.any_non_single_threaded) self.symbols.items[sym_index].flags.tlv = true;
             if (self.dwarf) |*dwarf| {
-                var debug_wip_nav = try dwarf.initWipNav(pt, nav_index, @enumFromInt(sym_index));
+                var debug_wip_nav = try dwarf.initWipNav(pt, nav_index, @fromBackingInt(@intCast(sym_index)));
                 defer debug_wip_nav.deinit();
                 dwarf.finishWipNav(pt, nav_index, &debug_wip_nav) catch |err| switch (err) {
                     error.OutOfMemory, error.Canceled, error.AlreadyReported => |e| return e,
@@ -894,7 +894,7 @@ pub fn updateNav(
         var aw: std.Io.Writer.Allocating = .init(zcu.gpa);
         defer aw.deinit();
 
-        var debug_wip_nav = if (self.dwarf) |*dwarf| try dwarf.initWipNav(pt, nav_index, @enumFromInt(sym_index)) else null;
+        var debug_wip_nav = if (self.dwarf) |*dwarf| try dwarf.initWipNav(pt, nav_index, @fromBackingInt(@intCast(sym_index))) else null;
         defer if (debug_wip_nav) |*wip_nav| wip_nav.deinit();
 
         codegen.generateSymbol(
@@ -902,7 +902,7 @@ pub fn updateNav(
             pt,
             .fromInterned(nav.resolved.?.value),
             &aw.writer,
-            .{ .atom_index = @enumFromInt(sym_index) },
+            .{ .atom_index = @fromBackingInt(@intCast(sym_index)) },
         ) catch |err| switch (err) {
             error.WriteFailed => return error.OutOfMemory,
             else => |e| return e,
@@ -946,8 +946,8 @@ fn updateNavCode(
     const target = &mod.resolved_target.result;
     const required_alignment = switch (nav.resolved.?.@"align") {
         .none => switch (mod.optimize_mode) {
-            .Debug, .ReleaseSafe, .ReleaseFast => target_util.defaultFunctionAlignment(target),
-            .ReleaseSmall => target_util.minFunctionAlignment(target),
+            .debug, .safe, .fast => target_util.defaultFunctionAlignment(target),
+            .small => target_util.minFunctionAlignment(target),
         },
         else => |a| a.maxStrict(target_util.minFunctionAlignment(target)),
     };
@@ -1172,8 +1172,8 @@ fn getNavOutputSection(
     if (nav.resolved.?.@"const") return macho_file.zig_const_sect_index.?;
     if (nav_val.isUndef(zcu))
         return switch (zcu.navFileScope(nav_index).mod.?.optimize_mode) {
-            .Debug, .ReleaseSafe => macho_file.zig_data_sect_index.?,
-            .ReleaseFast, .ReleaseSmall => macho_file.zig_bss_sect_index.?,
+            .debug, .safe => macho_file.zig_data_sect_index.?,
+            .fast, .small => macho_file.zig_bss_sect_index.?,
         };
     for (code) |byte| {
         if (byte != 0) break;
@@ -1203,7 +1203,7 @@ fn lowerConst(
         pt,
         val,
         &aw.writer,
-        .{ .atom_index = @enumFromInt(sym_index) },
+        .{ .atom_index = @fromBackingInt(@intCast(sym_index)) },
     ) catch |err| switch (err) {
         error.WriteFailed => return error.OutOfMemory,
         else => |e| return e,
@@ -1231,14 +1231,13 @@ fn lowerConst(
     const file_offset = sect.offset + atom.value;
     try macho_file.pwriteAll(code, file_offset);
 
-    return @enumFromInt(sym_index);
+    return @fromBackingInt(@intCast(sym_index));
 }
 
 pub fn updateExports(
     self: *ZigObject,
     macho_file: *MachO,
     pt: Zcu.PerThread,
-    exported: Zcu.Exported,
     export_indices: []const Zcu.Export.Index,
 ) link.Error!void {
     const tracy = trace(@src());
@@ -1246,26 +1245,60 @@ pub fn updateExports(
 
     const zcu = pt.zcu;
     const gpa = macho_file.base.comp.gpa;
-    const metadata = switch (exported) {
-        .nav => |nav| blk: {
-            _ = try self.getOrCreateMetadataForNav(macho_file, nav);
-            break :blk self.navs.getPtr(nav).?;
-        },
-        .uav => |uav| self.uavs.getPtr(uav) orelse blk: {
-            _ = try self.lowerUav(macho_file, pt, uav, .none);
-            break :blk self.uavs.getPtr(uav).?;
-        },
-    };
-    const sym_index = metadata.symbol_index;
-    const nlist_idx = self.symbols.items[sym_index].nlist_idx;
-    const nlist = self.symtab.items(.nlist)[nlist_idx];
 
-    for (export_indices) |export_idx| {
-        const exp = export_idx.ptr(zcu);
+    // Delete all existing exports first
+    for (self.navs.values()) |*metadata| {
+        for (metadata.exports.items) |nlist_index| {
+            const nlist = &self.symtab.items(.nlist)[nlist_index];
+            self.symtab.items(.size)[nlist_index] = 0;
+            _ = self.globals_lookup.remove(nlist.n_strx);
+            // TODO actually remove the export
+            // const sym_index = macho_file.globals.get(nlist.n_strx).?;
+            // const sym = &self.symbols.items[sym_index];
+            // if (sym.file == self.index) {
+            //     sym.* = .{};
+            // }
+            nlist.* = MachO.null_sym;
+        }
+        metadata.exports.clearRetainingCapacity();
+    }
+    for (self.uavs.values()) |*metadata| {
+        for (metadata.exports.items) |nlist_index| {
+            const nlist = &self.symtab.items(.nlist)[nlist_index];
+            self.symtab.items(.size)[nlist_index] = 0;
+            _ = self.globals_lookup.remove(nlist.n_strx);
+            // TODO actually remove the export
+            // const sym_index = macho_file.globals.get(nlist.n_strx).?;
+            // const sym = &self.symbols.items[sym_index];
+            // if (sym.file == self.index) {
+            //     sym.* = .{};
+            // }
+            nlist.* = MachO.null_sym;
+        }
+        metadata.exports.clearRetainingCapacity();
+    }
+
+    for (export_indices) |export_index| {
+        const exp = export_index.ptr(zcu);
+
+        const metadata = switch (exp.exported) {
+            .nav => |nav| blk: {
+                _ = try self.getOrCreateMetadataForNav(macho_file, nav);
+                break :blk self.navs.getPtr(nav).?;
+            },
+            .uav => |uav| self.uavs.getPtr(uav) orelse blk: {
+                _ = try self.lowerUav(macho_file, pt, uav, .none);
+                break :blk self.uavs.getPtr(uav).?;
+            },
+        };
+        const sym_index = metadata.symbol_index;
+        const nlist_idx = self.symbols.items[sym_index].nlist_idx;
+        const nlist = self.symtab.items(.nlist)[nlist_idx];
+
         if (exp.opts.section.unwrap()) |section_name| {
             if (!section_name.eqlSlice("__text", &zcu.intern_pool)) {
                 try zcu.failed_exports.ensureUnusedCapacity(zcu.gpa, 1);
-                zcu.failed_exports.putAssumeCapacityNoClobber(export_idx, try Zcu.ErrorMsg.create(
+                zcu.failed_exports.putAssumeCapacityNoClobber(export_index, try Zcu.ErrorMsg.create(
                     gpa,
                     exp.src,
                     "Unimplemented: ExportOptions.section",
@@ -1275,7 +1308,7 @@ pub fn updateExports(
             }
         }
         if (exp.opts.linkage == .link_once) {
-            try zcu.failed_exports.putNoClobber(zcu.gpa, export_idx, try Zcu.ErrorMsg.create(
+            try zcu.failed_exports.putNoClobber(zcu.gpa, export_index, try Zcu.ErrorMsg.create(
                 gpa,
                 exp.src,
                 "Unimplemented: GlobalLinkage.link_once",
@@ -1285,13 +1318,9 @@ pub fn updateExports(
         }
 
         const exp_name = exp.opts.name.toSlice(&zcu.intern_pool);
-        const global_nlist_index = if (metadata.@"export"(self, exp_name)) |exp_index|
-            exp_index.*
-        else blk: {
-            const global_nlist_index = try self.getGlobalSymbol(macho_file, exp_name, null);
-            try metadata.exports.append(gpa, global_nlist_index);
-            break :blk global_nlist_index;
-        };
+        const global_nlist_index = try self.getGlobalSymbol(macho_file, exp_name, null);
+        try metadata.exports.append(gpa, global_nlist_index);
+
         const global_nlist = &self.symtab.items(.nlist)[global_nlist_index];
         const atom_index = self.symtab.items(.atom)[nlist_idx];
         const global_sym = &self.symbols.items[global_nlist_index];
@@ -1353,7 +1382,7 @@ fn updateLazySymbol(
         &required_alignment,
         &aw.writer,
         .none,
-        .{ .atom_index = @enumFromInt(symbol_index) },
+        .{ .atom_index = @fromBackingInt(@intCast(symbol_index)) },
     );
     const code = aw.written();
 
@@ -1398,34 +1427,6 @@ pub fn updateLineNumber(self: *ZigObject, pt: Zcu.PerThread, ti_id: InternPool.T
             else => |e| return diags.fail("failed to update dwarf line numbers: {s}", .{@errorName(e)}),
         };
     }
-}
-
-pub fn deleteExport(
-    self: *ZigObject,
-    macho_file: *MachO,
-    exported: Zcu.Exported,
-    name: InternPool.NullTerminatedString,
-) void {
-    const zcu = macho_file.base.comp.zcu.?;
-
-    const metadata = switch (exported) {
-        .nav => |nav| self.navs.getPtr(nav),
-        .uav => |uav| self.uavs.getPtr(uav),
-    } orelse return;
-    const nlist_index = metadata.@"export"(self, name.toSlice(&zcu.intern_pool)) orelse return;
-
-    log.debug("deleting export '{f}'", .{name.fmt(&zcu.intern_pool)});
-
-    const nlist = &self.symtab.items(.nlist)[nlist_index.*];
-    self.symtab.items(.size)[nlist_index.*] = 0;
-    _ = self.globals_lookup.remove(nlist.n_strx);
-    // TODO actually remove the export
-    // const sym_index = macho_file.globals.get(nlist.n_strx).?;
-    // const sym = &self.symbols.items[sym_index];
-    // if (sym.file == self.index) {
-    //     sym.* = .{};
-    // }
-    nlist.* = MachO.null_sym;
 }
 
 pub fn getGlobalSymbol(self: *ZigObject, macho_file: *MachO, name: []const u8, lib_name: ?[]const u8) !u32 {
@@ -1722,15 +1723,6 @@ const AvMetadata = struct {
     symbol_index: Symbol.Index,
     /// A list of all exports aliases of this Av.
     exports: std.ArrayList(Symbol.Index) = .empty,
-
-    fn @"export"(m: AvMetadata, zig_object: *ZigObject, name: []const u8) ?*u32 {
-        for (m.exports.items) |*exp| {
-            const nlist = zig_object.symtab.items(.nlist)[exp.*];
-            const exp_name = zig_object.strtab.getAssumeExists(nlist.n_strx);
-            if (mem.eql(u8, name, exp_name)) return exp;
-        }
-        return null;
-    }
 };
 
 const LazySymbolMetadata = struct {
@@ -1750,11 +1742,11 @@ const TlvInitializer = struct {
     }
 };
 
-const NavTable = std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, AvMetadata);
-const UavTable = std.AutoArrayHashMapUnmanaged(InternPool.Index, AvMetadata);
-const LazySymbolTable = std.AutoArrayHashMapUnmanaged(InternPool.Index, LazySymbolMetadata);
+const NavTable = std.array_hash_map.Auto(InternPool.Nav.Index, AvMetadata);
+const UavTable = std.array_hash_map.Auto(InternPool.Index, AvMetadata);
+const LazySymbolTable = std.array_hash_map.Auto(InternPool.Index, LazySymbolMetadata);
 const RelocationTable = std.ArrayList(std.ArrayList(Relocation));
-const TlvInitializerTable = std.AutoArrayHashMapUnmanaged(Atom.Index, TlvInitializer);
+const TlvInitializerTable = std.array_hash_map.Auto(Atom.Index, TlvInitializer);
 
 const x86_64 = struct {
     fn writeTrampolineCode(source_addr: u64, target_addr: u64, buf: *[max_trampoline_len]u8) ![]u8 {

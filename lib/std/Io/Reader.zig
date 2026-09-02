@@ -174,7 +174,7 @@ pub fn stream(r: *Reader, w: *Writer, limit: Limit) StreamError!usize {
         return n;
     }
     const n = try r.vtable.stream(r, w, limit);
-    assert(n <= @intFromEnum(limit));
+    assert(n <= @backingInt(limit));
     return n;
 }
 
@@ -189,7 +189,7 @@ pub fn discard(r: *Reader, limit: Limit) Error!usize {
     } else .unlimited;
     r.seek = r.end;
     const n = try r.vtable.discard(r, remaining);
-    assert(n <= @intFromEnum(remaining));
+    assert(n <= @backingInt(remaining));
     return buffered_len + n;
 }
 
@@ -204,11 +204,11 @@ pub fn defaultDiscard(r: *Reader, limit: Limit) Error!usize {
     };
     // If `stream` wrote to `r.buffer` without going through the writer,
     // we need to discard as much of the buffered data as possible.
-    const remaining = @intFromEnum(limit) - n;
+    const remaining = @backingInt(limit) - n;
     const buffered_n_to_discard = @min(remaining, r.end - r.seek);
     n += buffered_n_to_discard;
     r.seek += buffered_n_to_discard;
-    assert(n <= @intFromEnum(limit));
+    assert(n <= @backingInt(limit));
     return n;
 }
 
@@ -287,9 +287,9 @@ pub const LimitedAllocError = Allocator.Error || ShortError || error{StreamTooLo
 /// Transfers all bytes from the current position to the end of the stream, up
 /// to `limit`, returning them as a caller-owned allocated slice.
 ///
-/// If `limit` would be exceeded, `error.StreamTooLong` is returned instead. In
-/// such case, the next byte that would be read will be the first one to exceed
-/// `limit`, and all preceeding bytes have been discarded.
+/// If `limit` is reached or exceeded, `error.StreamTooLong` is returned
+/// instead. In such case, the next byte that would be read will be the first
+/// one to exceed `limit`, and all preceeding bytes have been discarded.
 ///
 /// See also:
 /// * `appendRemaining`
@@ -400,6 +400,7 @@ pub fn appendRemainingUnlimited(r: *Reader, gpa: Allocator, list: *ArrayList(u8)
         list.* = .{
             .items = a.writer.buffer[0..a.writer.end],
             .capacity = a.writer.buffer.len,
+            .pointer_stability = .{},
         };
     }
     _ = streamRemaining(r, &a.writer) catch |err| switch (err) {
@@ -718,7 +719,7 @@ pub inline fn readSliceEndian(
     endian: std.builtin.Endian,
 ) Error!void {
     try readSliceAll(r, @ptrCast(buffer));
-    if (native_endian != endian) for (buffer) |*elem| std.mem.byteSwapAllFields(Elem, elem);
+    if (native_endian != endian) std.mem.byteSwapAllElements(Elem, buffer);
 }
 
 pub const ReadAllocError = Error || Allocator.Error;
@@ -734,8 +735,7 @@ pub inline fn readSliceEndianAlloc(
 ) ReadAllocError![]Elem {
     const dest = try allocator.alloc(Elem, len);
     errdefer allocator.free(dest);
-    try readSliceAll(r, @ptrCast(dest));
-    if (native_endian != endian) for (dest) |*elem| std.mem.byteSwapAllFields(Elem, elem);
+    try r.readSliceEndian(Elem, dest, endian);
     return dest;
 }
 
@@ -1010,17 +1010,17 @@ pub fn streamDelimiterLimit(
     delimiter: u8,
     limit: Limit,
 ) StreamDelimiterLimitError!usize {
-    var remaining = @intFromEnum(limit);
+    var remaining = @backingInt(limit);
     while (remaining != 0) {
         const available = Limit.limited(remaining).slice(r.peekGreedy(1) catch |err| switch (err) {
             error.ReadFailed => |e| return e,
-            error.EndOfStream => return @intFromEnum(limit) - remaining,
+            error.EndOfStream => return @backingInt(limit) - remaining,
         });
         if (std.mem.findScalar(u8, available, delimiter)) |delimiter_index| {
             try w.writeAll(available[0..delimiter_index]);
             r.toss(delimiter_index);
             remaining -= delimiter_index;
-            return @intFromEnum(limit) - remaining;
+            return @backingInt(limit) - remaining;
         }
         try w.writeAll(available);
         r.toss(available.len);
@@ -1081,16 +1081,16 @@ pub const DiscardDelimiterLimitError = error{
 /// Succeeds if stream ends before delimiter found. End of stream can be
 /// detected by checking if the delimiter is buffered.
 pub fn discardDelimiterLimit(r: *Reader, delimiter: u8, limit: Limit) DiscardDelimiterLimitError!usize {
-    var remaining = @intFromEnum(limit);
+    var remaining = @backingInt(limit);
     while (remaining != 0) {
         const available = Limit.limited(remaining).slice(r.peekGreedy(1) catch |err| switch (err) {
             error.ReadFailed => |e| return e,
-            error.EndOfStream => return @intFromEnum(limit) - remaining,
+            error.EndOfStream => return @backingInt(limit) - remaining,
         });
         if (std.mem.findScalar(u8, available, delimiter)) |delimiter_index| {
             r.toss(delimiter_index);
             remaining -= delimiter_index;
-            return @intFromEnum(limit) - remaining;
+            return @backingInt(limit) - remaining;
         }
         r.toss(available.len);
         remaining -= available.len;
@@ -1243,8 +1243,7 @@ pub inline fn takeStruct(r: *Reader, comptime T: type, endian: std.builtin.Endia
             .auto => @compileError("ill-defined memory layout"),
             .@"extern" => {
                 var res: T = undefined;
-                try r.readSliceAll(std.mem.asBytes(&res));
-                if (native_endian != endian) std.mem.byteSwapAllFields(T, &res);
+                try r.readSliceEndian(T, (&res)[0..1], endian);
                 return res;
             },
             .@"packed" => {
@@ -1726,7 +1725,7 @@ test takeEnum {
     const E1 = enum(u8) { a, b, c };
     const E2 = enum(u16) { _ };
     try testing.expectEqual(E1.c, try r.takeEnum(E1, .little));
-    try testing.expectEqual(@as(E2, @enumFromInt(0x0001)), try r.takeEnum(E2, .big));
+    try testing.expectEqual(@as(E2, @fromBackingInt(@intCast(0x0001))), try r.takeEnum(E2, .big));
 }
 
 test readSliceShort {

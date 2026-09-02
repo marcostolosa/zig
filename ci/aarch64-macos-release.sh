@@ -43,8 +43,11 @@ cmake .. \
 
 ninja install
 
+# Must be done after zig cc is finished.
+export ZIG_LIB_DIR="$PWD/../lib"
+
 stage3-release/bin/zig build test docs \
-  --zig-lib-dir "$PWD/../lib" \
+  --maxrss ${ZSF_MAX_RSS:-0} \
   -Denable-macos-sdk \
   -Dstatic-llvm \
   -Dskip-spirv \
@@ -63,7 +66,6 @@ stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=
 
 # Ensure that stage3 and stage4 are byte-for-byte identical.
 stage3-release/bin/zig build \
-  --maxrss ${ZSF_MAX_RSS:-0} \
   --prefix stage4-release \
   -Denable-llvm \
   -Dno-lib \

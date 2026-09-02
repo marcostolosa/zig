@@ -7,7 +7,7 @@ libc_test_src_path: std.Build.LazyPath,
 test_cases: std.ArrayList(TestCase) = .empty,
 
 pub const Options = struct {
-    optimize_modes: []const std.builtin.OptimizeMode,
+    optimize_modes: []const std.builtin.Optimize,
     test_filters: []const []const u8,
     test_target_filters: []const []const u8,
     skip_wasm: bool,
@@ -49,7 +49,7 @@ pub fn addTarget(libc: *const Libc, target: std.Build.ResolvedTarget) void {
     if (libc.options.test_target_filters.len > 0) {
         const triple_txt = target.query.zigTriple(libc.b.allocator) catch @panic("OOM");
         for (libc.options.test_target_filters) |filter| {
-            if (std.mem.indexOf(u8, triple_txt, filter)) |_| break;
+            if (std.mem.find(u8, triple_txt, filter)) |_| break;
         } else return;
     }
 
@@ -82,7 +82,7 @@ pub fn addTarget(libc: *const Libc, target: std.Build.ResolvedTarget) void {
 
             const annotated_case_name = libc.b.fmt("run libc-test {s} ({t})", .{ test_case.name, optimize });
             for (libc.options.test_filters) |test_filter| {
-                if (std.mem.indexOf(u8, annotated_case_name, test_filter)) |_| break;
+                if (std.mem.find(u8, annotated_case_name, test_filter)) |_| break;
             } else if (libc.options.test_filters.len > 0) continue;
 
             const mod = libc.b.createModule(.{

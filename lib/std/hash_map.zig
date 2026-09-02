@@ -593,8 +593,8 @@ fn Custom(
             fingerprint: FingerPrint = free,
             used: u1 = 0,
 
-            const slot_free = @as(u8, @bitCast(Metadata{ .fingerprint = free }));
-            const slot_tombstone = @as(u8, @bitCast(Metadata{ .fingerprint = tombstone }));
+            const slot_free: u8 = @bitCast(Metadata{ .fingerprint = free });
+            const slot_tombstone: u8 = @bitCast(Metadata{ .fingerprint = tombstone });
 
             pub fn isUsed(self: Metadata) bool {
                 return self.used == 1;
@@ -1518,7 +1518,7 @@ fn Custom(
             self.available = 0;
         }
 
-        /// This function is used in the debugger pretty formatters in tools/ to fetch the
+        /// This function is used in the debugger pretty formatters in lib/lldb/ to fetch the
         /// header type to facilitate fancy debug printing for this type.
         fn dbHelper(self: *Self, hdr: *Header, entry: *Entry) void {
             _ = self;

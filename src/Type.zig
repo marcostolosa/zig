@@ -170,6 +170,7 @@ pub fn classify(start_ty: Type, zcu: *const Zcu) Class {
 
         .func_type => .fully_comptime,
 
+        .spirv_type => if (cur_ty.isSpirvRuntimeArray(zcu)) .runtime else .no_possible_value,
         .opaque_type => .no_possible_value,
 
         .error_union_type => |eu| {
@@ -208,6 +209,7 @@ pub fn classify(start_ty: Type, zcu: *const Zcu) Class {
             const struct_obj = ip.loadStructType(cur_ty.toIntern());
             switch (struct_obj.layout) {
                 .auto, .@"extern" => {
+                    assert(struct_obj.want_layout);
                     zcu.assertUpToDate(.wrap(.{ .type_layout = cur_ty.toIntern() }));
                     break struct_obj.class;
                 },
@@ -221,6 +223,7 @@ pub fn classify(start_ty: Type, zcu: *const Zcu) Class {
             const union_obj = ip.loadUnionType(cur_ty.toIntern());
             switch (union_obj.layout) {
                 .auto, .@"extern" => {
+                    assert(union_obj.want_layout);
                     zcu.assertUpToDate(.wrap(.{ .type_layout = cur_ty.toIntern() }));
                     break union_obj.class;
                 },
@@ -231,8 +234,10 @@ pub fn classify(start_ty: Type, zcu: *const Zcu) Class {
             }
         },
         .enum_type => {
+            const enum_obj = ip.loadEnumType(cur_ty.toIntern());
+            assert(enum_obj.want_layout);
             zcu.assertUpToDate(.wrap(.{ .type_layout = cur_ty.toIntern() }));
-            cur_ty = .fromInterned(ip.loadEnumType(cur_ty.toIntern()).int_tag_type);
+            cur_ty = .fromInterned(enum_obj.int_tag_type);
             continue;
         },
 
@@ -323,6 +328,7 @@ pub fn isSelfComparable(ty: Type, zcu: *const Zcu, is_equality_cmp: bool) bool {
         .error_set,
         .@"fn",
         .@"opaque",
+        .spirv,
         .@"anyframe",
         .@"enum",
         .enum_literal,
@@ -383,8 +389,7 @@ pub fn ptrInfo(ty: Type, zcu: *const Zcu) InternPool.Key.PtrType {
     };
 }
 
-pub fn eql(a: Type, b: Type, zcu: *const Zcu) bool {
-    _ = zcu; // TODO: remove this parameter
+pub fn eql(a: Type, b: Type) bool {
     // The InternPool data structure hashes based on Key to make interned objects
     // unique. An Index can be treated simply as u32 value for the
     // purpose of Type/Value hashing and equality.
@@ -475,7 +480,7 @@ pub fn print(ty: Type, writer: *std.Io.Writer, pt: Zcu.PerThread, ctx: ?*Compari
                     });
                 }
                 if (info.flags.vector_index != .none) {
-                    try writer.print(":{d}", .{@intFromEnum(info.flags.vector_index)});
+                    try writer.print(":{d}", .{@backingInt(info.flags.vector_index)});
                 }
                 try writer.writeAll(") ");
             }
@@ -617,6 +622,23 @@ pub fn print(ty: Type, writer: *std.Io.Writer, pt: Zcu.PerThread, ctx: ?*Compari
             const name = ip.loadEnumType(ty.toIntern()).name;
             try writer.print("{f}", .{name.fmt(ip)});
         },
+        .spirv_type => {
+            const info = ip.loadSpirvType(ty.toIntern());
+            switch (info.flags.tag) {
+                .sampler => try writer.writeAll("@SpirvType(.sampler)"),
+                .image => try writer.writeAll("@SpirvType(.image)"),
+                .sampled_image => {
+                    try writer.writeAll("@SpirvType(.sampled_image, ");
+                    try print(Type.fromInterned(info.ty), writer, pt, ctx);
+                    try writer.writeAll(")");
+                },
+                .runtime_array => {
+                    try writer.writeAll("@SpirvType(.runtime_array, ");
+                    try print(Type.fromInterned(info.ty), writer, pt, ctx);
+                    try writer.writeAll(")");
+                },
+            }
+        },
         .func_type => |fn_info| {
             if (fn_info.is_noinline) {
                 try writer.writeAll("noinline ");
@@ -704,6 +726,14 @@ pub fn toIntern(ty: Type) InternPool.Index {
     return ty.ip_index;
 }
 
+pub fn isSpirvRuntimeArray(ty: Type, zcu: *const Zcu) bool {
+    const ip = &zcu.intern_pool;
+    return switch (ip.indexToKey(ty.toIntern())) {
+        .spirv_type => ip.loadSpirvType(ty.toIntern()).flags.tag == .runtime_array,
+        else => false,
+    };
+}
+
 pub fn toValue(self: Type) Value {
     return .fromInterned(self.toIntern());
 }
@@ -744,13 +774,14 @@ pub fn hasWellDefinedLayout(ty: Type, zcu: *const Zcu) bool {
     const ip = &zcu.intern_pool;
     return switch (ip.indexToKey(ty.toIntern())) {
         .int_type,
-        .vector_type,
         => true,
 
+        .vector_type,
         .error_union_type,
         .error_set_type,
         .inferred_error_set_type,
         .tuple_type,
+        .spirv_type,
         .opaque_type,
         .anyframe_type,
         // These are function bodies, not function pointers.
@@ -930,18 +961,33 @@ pub fn abiAlignment(ty: Type, zcu: *const Zcu) Alignment {
             if (vector_type.len == 0) return .@"1";
             switch (zcu.comp.getZigBackend()) {
                 else => {
-                    const elem_bits: u32 = @intCast(Type.fromInterned(vector_type.child).bitSize(zcu));
+                    const elem_ty: Type = .fromInterned(vector_type.child);
+                    switch (if (elem_ty.isRuntimeFloat())
+                        std.zig.target.compilerRtFloatAbi(target, elem_ty.floatBits(target))
+                    else
+                        .hard) {
+                        .hard => {},
+                        .soft => return elem_ty.abiAlignment(zcu),
+                    }
+                    const elem_bits: u32 = @intCast(elem_ty.bitSize(zcu));
                     if (elem_bits == 0) return .@"1";
                     const bytes = ((elem_bits * vector_type.len) + 7) / 8;
-                    return .fromByteUnits(std.math.ceilPowerOfTwoAssert(u32, bytes));
+                    const arch = target.cpu.arch;
+                    return .fromByteUnits(std.math.ceilPowerOfTwoAssert(
+                        u32,
+                        if (arch.isArm() or arch.isAARCH64() or arch == .s390x)
+                            @min(bytes, target.stackAlignment())
+                        else
+                            bytes,
+                    ));
                 },
-                .stage2_c, .stage2_wasm => return Type.fromInterned(vector_type.child).defaultStructFieldAlignment(.auto, zcu),
+                .stage2_c, .stage2_wasm => return Type.fromInterned(vector_type.child).abiAlignment(zcu),
                 .stage2_x86_64 => {
                     if (vector_type.child == .bool_type) {
                         if (vector_type.len > 256 and target.cpu.has(.x86, .avx512f)) return .@"64";
                         if (vector_type.len > 128 and target.cpu.has(.x86, .avx)) return .@"32";
                         if (vector_type.len > 64) return .@"16";
-                        const bytes = std.math.divCeil(u32, vector_type.len, 8) catch unreachable;
+                        const bytes = @divCeil(vector_type.len, 8);
                         return .fromByteUnits(std.math.ceilPowerOfTwoAssert(u32, bytes));
                     }
                     const elem_bytes: u32 = @intCast(Type.fromInterned(vector_type.child).abiSize(zcu));
@@ -991,19 +1037,33 @@ pub fn abiAlignment(ty: Type, zcu: *const Zcu) Alignment {
             .c_ulonglong => cTypeAlign(target, .ulonglong),
             .c_longdouble => cTypeAlign(target, .longdouble),
 
-            .f16 => .@"2",
-            .f32 => cTypeAlign(target, .float),
-            .f64 => switch (target.cTypeBitSize(.double)) {
-                64 => cTypeAlign(target, .double),
-                else => .@"8",
-            },
-            .f80 => switch (target.cTypeBitSize(.longdouble)) {
-                80 => cTypeAlign(target, .longdouble),
-                else => Type.u80.abiAlignment(zcu),
-            },
-            .f128 => switch (target.cTypeBitSize(.longdouble)) {
-                128 => cTypeAlign(target, .longdouble),
-                else => .@"16",
+            .f16 => .fromByteUnits(std.zig.target.intAlignment(target, 16)), // repr: u16
+            .f32 => if (target.cTypeBitSize(.float) == 32)
+                cTypeAlign(target, .float) // abi: c_float,
+            else
+                .fromByteUnits(std.zig.target.intAlignment(target, 32)), // repr: u32,
+            .f64 => if (target.cTypeBitSize(.double) == 64)
+                cTypeAlign(target, .double) // abi: c_double,
+            else
+                .fromByteUnits(std.zig.target.intAlignment(target, 64)), // repr: u64,
+            .f80 => if (target.cTypeBitSize(.longdouble) == 80)
+                cTypeAlign(target, .longdouble) // abi: c_longdouble,
+            else
+                .fromByteUnits(switch (std.zig.target.compilerRtFloatAbi(target, 80)) {
+                    .hard => std.zig.target.intAlignment(target, 80), // repr: u80,
+                    .soft => @max(
+                        std.zig.target.intAlignment(target, 64), // mantissa: u64,
+                        std.zig.target.intAlignment(target, 16), // exponent: u16,
+                    ),
+                }),
+            .f128 => if (target.cTypeBitSize(.longdouble) == 128)
+                cTypeAlign(target, .longdouble) // abi: c_longdouble,
+            else switch (std.zig.target.compilerRtFloatAbi(target, 128)) {
+                .hard => if (target.cpu.arch.isX86())
+                    .@"16" // abi: c___float128,
+                else
+                    .fromByteUnits(std.zig.target.intAlignment(target, 128)), // repr: u128,
+                .soft => .fromByteUnits(std.zig.target.intAlignment(target, 64)), // lo: u64, hi: u64,
             },
 
             .generic_poison => unreachable,
@@ -1038,6 +1098,7 @@ pub fn abiAlignment(ty: Type, zcu: *const Zcu) Alignment {
             }
         },
         .enum_type => Type.fromInterned(ip.loadEnumType(ty.toIntern()).int_tag_type).abiAlignment(zcu),
+        .spirv_type => if (ty.isSpirvRuntimeArray(zcu)) ty.childType(zcu).abiAlignment(zcu) else .@"1",
         .opaque_type => .@"1",
 
         // values, not types
@@ -1083,10 +1144,16 @@ pub fn abiSize(ty: Type, zcu: *const Zcu) u64 {
         .vector_type => |vec| {
             const elem_ty: Type = .fromInterned(vec.child);
             const bytes = switch (zcu.comp.getZigBackend()) {
-                else => std.math.divCeil(u64, vec.len * elem_ty.bitSize(zcu), 8) catch unreachable,
+                else => switch (if (elem_ty.isRuntimeFloat())
+                    std.zig.target.compilerRtFloatAbi(target, elem_ty.floatBits(target))
+                else
+                    .hard) {
+                    .hard => @divCeil(vec.len * elem_ty.bitSize(zcu), 8),
+                    .soft => vec.len * elem_ty.abiSize(zcu),
+                },
                 .stage2_c, .stage2_wasm => vec.len * elem_ty.abiSize(zcu),
                 .stage2_x86_64 => switch (elem_ty.toIntern()) {
-                    .bool_type => std.math.divCeil(u64, vec.len, 8) catch unreachable,
+                    .bool_type => @divCeil(vec.len, 8),
                     else => vec.len * elem_ty.abiSize(zcu),
                 },
             };
@@ -1139,25 +1206,44 @@ pub fn abiSize(ty: Type, zcu: *const Zcu) u64 {
             .anyerror, .adhoc_inferred_error_set => errorAbiSize(zcu),
             .usize, .isize => ptrAbiSize(target),
 
-            .c_char => target.cTypeByteSize(.char),
-            .c_short => target.cTypeByteSize(.short),
-            .c_ushort => target.cTypeByteSize(.ushort),
-            .c_int => target.cTypeByteSize(.int),
-            .c_uint => target.cTypeByteSize(.uint),
-            .c_long => target.cTypeByteSize(.long),
-            .c_ulong => target.cTypeByteSize(.ulong),
-            .c_longlong => target.cTypeByteSize(.longlong),
-            .c_ulonglong => target.cTypeByteSize(.ulonglong),
-            .c_longdouble => target.cTypeByteSize(.longdouble),
+            .c_char => target.cTypeByteSize(.char).?,
+            .c_short => target.cTypeByteSize(.short).?,
+            .c_ushort => target.cTypeByteSize(.ushort).?,
+            .c_int => target.cTypeByteSize(.int).?,
+            .c_uint => target.cTypeByteSize(.uint).?,
+            .c_long => target.cTypeByteSize(.long).?,
+            .c_ulong => target.cTypeByteSize(.ulong).?,
+            .c_longlong => target.cTypeByteSize(.longlong).?,
+            .c_ulonglong => target.cTypeByteSize(.ulonglong).?,
+            .c_longdouble => target.cTypeByteSize(.longdouble).?,
 
-            .f16 => 2,
-            .f32 => 4,
-            .f64 => 8,
-            .f80 => switch (target.cTypeBitSize(.longdouble)) {
-                80 => target.cTypeByteSize(.longdouble),
-                else => Type.u80.abiSize(zcu),
+            .f16 => std.zig.target.intByteSize(target, 16), // repr: u16
+            .f32 => if (target.cTypeBitSize(.float) == 32)
+                target.cTypeByteSize(.float).? // abi: c_float,
+            else
+                std.zig.target.intByteSize(target, 32), // repr: u32,
+            .f64 => if (target.cTypeBitSize(.double) == 64)
+                target.cTypeByteSize(.double).? // abi: c_double,
+            else
+                std.zig.target.intByteSize(target, 64), // repr: u64,
+            .f80 => if (target.cTypeBitSize(.longdouble) == 80)
+                target.cTypeByteSize(.longdouble).? // abi: c_longdouble,
+            else switch (std.zig.target.compilerRtFloatAbi(target, 80)) {
+                .hard => std.zig.target.intByteSize(target, 80), // repr: u80,
+                .soft => ty.abiAlignment(zcu).forward(
+                    std.zig.target.intByteSize(target, 64) + // mantissa: u64,
+                        std.zig.target.intByteSize(target, 16), // exponent: u16
+                ),
             },
-            .f128 => 16,
+            .f128 => if (target.cTypeBitSize(.longdouble) == 128)
+                target.cTypeByteSize(.longdouble).? // abi: c_longdouble,
+            else switch (std.zig.target.compilerRtFloatAbi(target, 128)) {
+                .hard => if (target.cpu.arch.isX86())
+                    16 // abi: c___float128,
+                else
+                    std.zig.target.intByteSize(target, 128), // repr: u128,
+                .soft => std.zig.target.intByteSize(target, 64) * 2, // lo: u64, hi: u64,
+            },
 
             .anyopaque => unreachable,
             .generic_poison => unreachable,
@@ -1183,6 +1269,7 @@ pub fn abiSize(ty: Type, zcu: *const Zcu) u64 {
             }
         },
         .enum_type => Type.fromInterned(ip.loadEnumType(ty.toIntern()).int_tag_type).abiSize(zcu),
+        .spirv_type => unreachable,
         .opaque_type => unreachable,
 
         // values, not types
@@ -1225,112 +1312,17 @@ pub fn errorAbiSize(zcu: *const Zcu) u64 {
 }
 
 /// Asserts that `ty` is not an opaque or comptime-only type.
-/// Once #19755 is implemented, this query will only work on types with a defined bit-level representation.
 pub fn bitSize(ty: Type, zcu: *const Zcu) u64 {
-    const target = zcu.getTarget();
-    const ip = &zcu.intern_pool;
-    assertHasLayout(ty, zcu);
-    return switch (ip.indexToKey(ty.toIntern())) {
-        .int_type => |int_type| int_type.bits,
-        .ptr_type => |ptr_type| switch (ptr_type.flags.size) {
-            .slice => target.ptrBitWidth() * 2,
-            else => target.ptrBitWidth(),
+    return switch (ty.zigTypeTag(zcu)) {
+        .void => 0,
+        .bool => 1,
+        .float => ty.floatBits(zcu.getTarget()),
+        .pointer, .optional => {
+            assert(ty.isPtrAtRuntime(zcu));
+            return zcu.getTarget().ptrBitWidth();
         },
-        .anyframe_type => target.ptrBitWidth(),
-        .array_type => |array_type| {
-            const elem_ty: Type = .fromInterned(array_type.child);
-            const len = array_type.lenIncludingSentinel();
-            return switch (zcu.comp.getZigBackend()) {
-                .stage2_x86_64 => len * elem_ty.bitSize(zcu),
-                // this case will be removed under #19755
-                else => switch (len) {
-                    0 => 0,
-                    else => (len - 1) * 8 * elem_ty.abiSize(zcu) + elem_ty.bitSize(zcu),
-                },
-            };
-        },
-        .vector_type => |vec| vec.len * Type.fromInterned(vec.child).bitSize(zcu),
-        .error_set_type, .inferred_error_set_type => zcu.errorSetBits(),
-        .func_type => unreachable,
-
-        .simple_type => |t| switch (t) {
-            .void => 0,
-            .bool => 1,
-            .anyerror, .adhoc_inferred_error_set => zcu.errorSetBits(),
-            .usize, .isize => target.ptrBitWidth(),
-
-            .c_char => target.cTypeBitSize(.char),
-            .c_short => target.cTypeBitSize(.short),
-            .c_ushort => target.cTypeBitSize(.ushort),
-            .c_int => target.cTypeBitSize(.int),
-            .c_uint => target.cTypeBitSize(.uint),
-            .c_long => target.cTypeBitSize(.long),
-            .c_ulong => target.cTypeBitSize(.ulong),
-            .c_longlong => target.cTypeBitSize(.longlong),
-            .c_ulonglong => target.cTypeBitSize(.ulonglong),
-            .c_longdouble => target.cTypeBitSize(.longdouble),
-
-            .f16 => 16,
-            .f32 => 32,
-            .f64 => 64,
-            .f80 => 80,
-            .f128 => 128,
-
-            .anyopaque => unreachable,
-            .type => unreachable,
-            .comptime_int => unreachable,
-            .comptime_float => unreachable,
-            .noreturn => unreachable,
-            .null => unreachable,
-            .undefined => unreachable,
-            .enum_literal => unreachable,
-            .generic_poison => unreachable,
-        },
-
-        .struct_type => {
-            const struct_obj = ip.loadStructType(ty.toIntern());
-            switch (struct_obj.layout) {
-                .@"packed" => return Type.fromInterned(struct_obj.packed_backing_int_type).bitSize(zcu),
-                .auto, .@"extern" => return struct_obj.size * 8, // will be `unreachable` under #19755
-            }
-        },
-        .union_type => {
-            const union_obj = ip.loadUnionType(ty.toIntern());
-            switch (union_obj.layout) {
-                .@"packed" => return Type.fromInterned(union_obj.packed_backing_int_type).bitSize(zcu),
-                .auto, .@"extern" => return union_obj.size * 8, // will be `unreachable` under #19755
-            }
-        },
-        .enum_type => Type.fromInterned(ip.loadEnumType(ty.toIntern()).int_tag_type).bitSize(zcu),
-
-        // will be `unreachable` under #19755
-        .opt_type,
-        .error_union_type,
-        .tuple_type,
-        => ty.abiSize(zcu) * 8,
-
-        .opaque_type => unreachable,
-
-        // values, not types
-        .undef,
-        .simple_value,
-        .@"extern",
-        .func,
-        .int,
-        .err,
-        .error_union,
-        .enum_literal,
-        .enum_tag,
-        .float,
-        .ptr,
-        .slice,
-        .opt,
-        .aggregate,
-        .un,
-        .bitpack,
-        // memoization, not types
-        .memoized_call,
-        => unreachable,
+        .array, .vector => ty.arrayLenIncludingSentinel(zcu) * ty.childType(zcu).bitSize(zcu),
+        else => ty.intInfo(zcu).bits,
     };
 }
 
@@ -1511,14 +1503,18 @@ pub fn nullablePtrElem(ty: Type, zcu: *const Zcu) Type {
 /// * `[]T`
 /// * `[*]T`
 /// * `[*c]T`
+/// * `@SpirvType(.{ .runtime_array = T })`
+/// * `*@SpirvType(.{ .runtime_array = T })`
 pub fn indexableElem(ty: Type, zcu: *const Zcu) Type {
     const ip = &zcu.intern_pool;
     return switch (ip.indexToKey(ty.toIntern())) {
         inline .array_type, .vector_type => |arr| .fromInterned(arr.child),
+        .spirv_type => ty.childType(zcu),
         .ptr_type => |ptr_type| switch (ptr_type.flags.size) {
             .many, .slice, .c => .fromInterned(ptr_type.child),
             .one => switch (ip.indexToKey(ptr_type.child)) {
                 inline .array_type, .vector_type => |arr| .fromInterned(arr.child),
+                .spirv_type => Type.fromInterned(ptr_type.child).childType(zcu),
                 else => unreachable,
             },
         },
@@ -1642,11 +1638,24 @@ pub fn containerLayout(ty: Type, zcu: *const Zcu) std.lang.Type.ContainerLayout 
     };
 }
 
-pub fn bitpackBackingInt(ty: Type, zcu: *const Zcu) Type {
+/// Asserts that the type is either an enum or a bitpack.
+pub fn backingIntType(ty: Type, zcu: *const Zcu) Type {
     const ip = &zcu.intern_pool;
     return switch (ip.indexToKey(ty.toIntern())) {
+        .enum_type => .fromInterned(ip.loadEnumType(ty.toIntern()).int_tag_type),
         .struct_type => .fromInterned(ip.loadStructType(ty.toIntern()).packed_backing_int_type),
         .union_type => .fromInterned(ip.loadUnionType(ty.toIntern()).packed_backing_int_type),
+        else => unreachable,
+    };
+}
+
+/// For unions, returns the *backing int* mode, not the *enum tag* mode.
+pub fn backingIntMode(ty: Type, zcu: *const Zcu) InternPool.BackingTypeMode {
+    const ip = &zcu.intern_pool;
+    return switch (ip.indexToKey(ty.toIntern())) {
+        .enum_type => ip.loadEnumType(ty.toIntern()).int_tag_mode,
+        .struct_type => ip.loadStructType(ty.toIntern()).packed_backing_mode,
+        .union_type => ip.loadUnionType(ty.toIntern()).packed_backing_mode,
         else => unreachable,
     };
 }
@@ -1782,7 +1791,7 @@ pub fn isInt(self: Type, zcu: *const Zcu) bool {
 /// Returns true if and only if the type is a fixed-width, signed integer.
 pub fn isSignedInt(ty: Type, zcu: *const Zcu) bool {
     return switch (ty.toIntern()) {
-        .c_char_type => zcu.getTarget().cCharSignedness() == .signed,
+        .c_char_type => zcu.getTarget().cCharSignedness().? == .signed,
         .isize_type, .c_short_type, .c_int_type, .c_long_type, .c_longlong_type => true,
         else => switch (zcu.intern_pool.indexToKey(ty.toIntern())) {
             .int_type => |int_type| int_type.signedness == .signed,
@@ -1794,7 +1803,7 @@ pub fn isSignedInt(ty: Type, zcu: *const Zcu) bool {
 /// Returns true if and only if the type is a fixed-width, unsigned integer.
 pub fn isUnsignedInt(ty: Type, zcu: *const Zcu) bool {
     return switch (ty.toIntern()) {
-        .c_char_type => zcu.getTarget().cCharSignedness() == .unsigned,
+        .c_char_type => zcu.getTarget().cCharSignedness().? == .unsigned,
         .usize_type, .c_ushort_type, .c_uint_type, .c_ulong_type, .c_ulonglong_type => true,
         else => switch (zcu.intern_pool.indexToKey(ty.toIntern())) {
             .int_type => |int_type| int_type.signedness == .unsigned,
@@ -1825,15 +1834,15 @@ pub fn intInfo(starting_ty: Type, zcu: *const Zcu) InternPool.Key.IntType {
         },
         .usize_type => return .{ .signedness = .unsigned, .bits = target.ptrBitWidth() },
         .isize_type => return .{ .signedness = .signed, .bits = target.ptrBitWidth() },
-        .c_char_type => return .{ .signedness = zcu.getTarget().cCharSignedness(), .bits = target.cTypeBitSize(.char) },
-        .c_short_type => return .{ .signedness = .signed, .bits = target.cTypeBitSize(.short) },
-        .c_ushort_type => return .{ .signedness = .unsigned, .bits = target.cTypeBitSize(.ushort) },
-        .c_int_type => return .{ .signedness = .signed, .bits = target.cTypeBitSize(.int) },
-        .c_uint_type => return .{ .signedness = .unsigned, .bits = target.cTypeBitSize(.uint) },
-        .c_long_type => return .{ .signedness = .signed, .bits = target.cTypeBitSize(.long) },
-        .c_ulong_type => return .{ .signedness = .unsigned, .bits = target.cTypeBitSize(.ulong) },
-        .c_longlong_type => return .{ .signedness = .signed, .bits = target.cTypeBitSize(.longlong) },
-        .c_ulonglong_type => return .{ .signedness = .unsigned, .bits = target.cTypeBitSize(.ulonglong) },
+        .c_char_type => return .{ .signedness = target.cCharSignedness().?, .bits = target.cTypeBitSize(.char).? },
+        .c_short_type => return .{ .signedness = .signed, .bits = target.cTypeBitSize(.short).? },
+        .c_ushort_type => return .{ .signedness = .unsigned, .bits = target.cTypeBitSize(.ushort).? },
+        .c_int_type => return .{ .signedness = .signed, .bits = target.cTypeBitSize(.int).? },
+        .c_uint_type => return .{ .signedness = .unsigned, .bits = target.cTypeBitSize(.uint).? },
+        .c_long_type => return .{ .signedness = .signed, .bits = target.cTypeBitSize(.long).? },
+        .c_ulong_type => return .{ .signedness = .unsigned, .bits = target.cTypeBitSize(.ulong).? },
+        .c_longlong_type => return .{ .signedness = .signed, .bits = target.cTypeBitSize(.longlong).? },
+        .c_ulonglong_type => return .{ .signedness = .unsigned, .bits = target.cTypeBitSize(.ulonglong).? },
         else => switch (ip.indexToKey(ty.toIntern())) {
             .int_type => |int_type| return int_type,
             .struct_type => {
@@ -1864,6 +1873,7 @@ pub fn intInfo(starting_ty: Type, zcu: *const Zcu) InternPool.Key.IntType {
             .func_type => unreachable,
             .simple_type => unreachable, // handled via Index enum tag above
 
+            .spirv_type => unreachable,
             .opaque_type => unreachable,
 
             // values, not types
@@ -1930,7 +1940,7 @@ pub fn floatBits(ty: Type, target: *const Target) u16 {
         .f64_type => 64,
         .f80_type => 80,
         .f128_type, .comptime_float_type => 128,
-        .c_longdouble_type => target.cTypeBitSize(.longdouble),
+        .c_longdouble_type => target.cTypeBitSize(.longdouble).?,
 
         else => unreachable,
     };
@@ -2032,6 +2042,7 @@ pub fn onePossibleValue(ty: Type, pt: Zcu.PerThread) !?Value {
         .error_set_type,
         .inferred_error_set_type,
         .opaque_type,
+        .spirv_type,
         => null,
 
         .simple_type => |t| switch (t) {
@@ -2153,11 +2164,8 @@ pub fn onePossibleValue(ty: Type, pt: Zcu.PerThread) !?Value {
                 return try pt.unionValue(ty, tag_val, payload_val);
             } else unreachable;
         },
-        .enum_type => if (try ty.intTagType(zcu).onePossibleValue(pt)) |int_tag_opv| {
-            return .fromInterned(try pt.intern(.{ .enum_tag = .{
-                .ty = ty.toIntern(),
-                .int = int_tag_opv.toIntern(),
-            } }));
+        .enum_type => if (try ty.backingIntType(zcu).onePossibleValue(pt)) |int_tag_opv| {
+            return try pt.enumValue(ty, int_tag_opv);
         } else null,
 
         // values, not types
@@ -2197,13 +2205,6 @@ pub fn isVector(ty: Type, zcu: *const Zcu) bool {
     return ty.zigTypeTag(zcu) == .vector;
 }
 
-/// Returns 0 if not a vector, otherwise returns @bitSizeOf(Element) * vector_len.
-pub fn totalVectorBits(ty: Type, zcu: *Zcu) u64 {
-    if (!ty.isVector(zcu)) return 0;
-    const v = zcu.intern_pool.indexToKey(ty.toIntern()).vector_type;
-    return v.len * Type.fromInterned(v.child).bitSize(zcu);
-}
-
 pub fn isArrayOrVector(ty: Type, zcu: *const Zcu) bool {
     return switch (ty.zigTypeTag(zcu)) {
         .array, .vector => true,
@@ -2219,10 +2220,12 @@ pub fn isIndexable(ty: Type, zcu: *const Zcu) bool {
             .one => switch (ty.childType(zcu).zigTypeTag(zcu)) {
                 .array, .vector => true,
                 .@"struct" => ty.childType(zcu).isTuple(zcu),
+                .spirv => ty.childType(zcu).isSpirvRuntimeArray(zcu),
                 else => false,
             },
         },
         .@"struct" => ty.isTuple(zcu),
+        .spirv => ty.isSpirvRuntimeArray(zcu),
         else => false,
     };
 }
@@ -2330,17 +2333,6 @@ pub fn maxIntScalar(ty: Type, pt: Zcu.PerThread, dest_ty: Type) !Value {
     try res.setTwosCompIntLimit(.max, info.signedness, info.bits);
 
     return pt.intValue_big(dest_ty, res.toConst());
-}
-
-/// Asserts the type is an enum or a union.
-pub fn intTagType(ty: Type, zcu: *const Zcu) Type {
-    const ip = &zcu.intern_pool;
-    const enum_ty: Type = switch (ip.indexToKey(ty.toIntern())) {
-        .union_type => .fromInterned(ip.loadUnionType(ty.toIntern()).enum_tag_type),
-        .enum_type => ty,
-        else => unreachable,
-    };
-    return .fromInterned(ip.loadEnumType(enum_ty.toIntern()).int_tag_type);
 }
 
 pub fn isNonexhaustiveEnum(ty: Type, zcu: *const Zcu) bool {
@@ -2473,34 +2465,6 @@ pub fn explicitFieldAlignment(ty: Type, index: usize, zcu: *const Zcu) Alignment
         },
         else => unreachable,
     };
-}
-
-/// Returns the alignment a struct field of type `field_ty` will be given if no alignment is
-/// explicitly specified. However, in an `extern struct`, a higher alignment may be available due
-/// to the struct's full layout (i.e. a field might coincidentally be more aligned).
-///
-/// Asserts that the layout of `field_ty` is resolved. Asserts that `layout` is not `.@"packed"`.
-pub fn defaultStructFieldAlignment(
-    field_ty: Type,
-    layout: std.lang.Type.ContainerLayout,
-    zcu: *const Zcu,
-) Alignment {
-    const overalign_big_int = switch (layout) {
-        .@"packed" => unreachable,
-        .auto => zcu.getTarget().ofmt == .c,
-        .@"extern" => true,
-    };
-    const abi_align = field_ty.abiAlignment(zcu);
-    assert(abi_align != .none);
-    // We check for anything over 64 here, because the C backend will lower e.g. u64 to a 128-bit
-    // integer, which has 16-byte alignment.
-    if (overalign_big_int and
-        ((field_ty.isAbiInt(zcu) and field_ty.intInfo(zcu).bits > 64) or
-            (field_ty.toIntern() == .f80_type and zcu.getTarget().cTypeBitSize(.longdouble) != 80)))
-    {
-        return abi_align.maxStrict(.@"16");
-    }
-    return abi_align;
 }
 
 pub fn structFieldDefaultValue(ty: Type, index: usize, zcu: *const Zcu) ?Value {
@@ -2719,7 +2683,7 @@ pub fn typeDeclSrcLine(ty: Type, zcu: *Zcu) ?u32 {
         .zig => file.zir.?,
         .zon => return 0,
     };
-    const inst = zir.instructions.get(@intFromEnum(info.inst));
+    const inst = zir.instructions.get(@backingInt(info.inst));
     return switch (inst.tag) {
         .struct_init, .struct_init_ref => zir.extraData(Zir.Inst.StructInit, inst.data.pl_node.payload_index).data.abs_line,
         .struct_init_anon => zir.extraData(Zir.Inst.StructInitAnon, inst.data.pl_node.payload_index).data.abs_line,
@@ -2844,6 +2808,7 @@ pub fn elemPtrType(ptr_ty: Type, index: ?u64, pt: Zcu.PerThread) Allocator.Error
         .slice, .many, .c => .fromInterned(ptr_info.child),
         .one => switch (ip.indexToKey(ptr_info.child)) {
             .array_type => |array_type| .fromInterned(array_type.child),
+            .spirv_type => Type.fromInterned(ptr_info.child).childType(zcu),
             else => unreachable,
         },
     };
@@ -3019,8 +2984,7 @@ pub fn fieldPtrType(ptr_ty: Type, field_index: u32, pt: Zcu.PerThread) Allocator
         }
         const actual_field_align = switch (field_align) {
             .none => switch (ip.indexToKey(aggregate_ty.toIntern())) {
-                .tuple_type, .union_type => field_ty.abiAlignment(zcu),
-                .struct_type => field_ty.defaultStructFieldAlignment(.auto, zcu),
+                .struct_type, .tuple_type, .union_type => field_ty.abiAlignment(zcu),
                 .ptr_type => Type.usize.abiAlignment(zcu),
                 else => unreachable,
             },
@@ -3095,6 +3059,7 @@ pub fn unpackable(ty: Type, zcu: *const Zcu) ?UnpackableReason {
 
         .noreturn,
         .@"opaque",
+        .spirv,
         .error_union,
         .error_set,
         .frame,
@@ -3114,8 +3079,11 @@ pub fn unpackable(ty: Type, zcu: *const Zcu) ?UnpackableReason {
             .one, .many, .c => .pointer,
         },
 
-        .@"enum" => switch (zcu.intern_pool.loadEnumType(ty.toIntern()).int_tag_mode) {
-            .explicit => null,
+        .@"enum" => switch (ty.backingIntMode(zcu)) {
+            .explicit => switch (ty.backingIntType(zcu).toIntern()) {
+                else => null,
+                .noreturn_type => .other,
+            },
             .auto => .{ .enum_inferred_int_tag = ty },
         },
 
@@ -3156,6 +3124,11 @@ pub fn validateExtern(ty: Type, position: ExternPosition, zcu: *const Zcu) bool 
         .frame,
         => false,
 
+        .vector => {
+            if (zcu.getTarget().cpu.arch.isSpirV()) return true;
+            return position == .param_ty or position == .ret_ty;
+        },
+
         .void => switch (position) {
             .ret_ty,
             .union_field,
@@ -3171,9 +3144,14 @@ pub fn validateExtern(ty: Type, position: ExternPosition, zcu: *const Zcu) bool 
 
         .@"opaque",
         .bool,
-        .float,
         .@"anyframe",
         => true,
+
+        .spirv => switch (position) {
+            .struct_field, .union_field => true,
+            .ret_ty, .param_ty, .element => !ty.isSpirvRuntimeArray(zcu),
+            .other => !ty.isSpirvRuntimeArray(zcu) or zcu.getTarget().cpu.has(.spirv, .runtime_descriptor_array),
+        },
 
         .pointer => {
             if (ty.isSlice(zcu)) return false;
@@ -3187,6 +3165,10 @@ pub fn validateExtern(ty: Type, position: ExternPosition, zcu: *const Zcu) bool 
             0, 8, 16, 32, 64, 128 => true,
             24, 48 => zcu.getTarget().cpu.arch == .ez80,
             else => false,
+        },
+        .float => switch (ty.floatBits(zcu.getTarget())) {
+            else => true,
+            80 => |bits| std.zig.target.compilerRtFloatAbi(zcu.getTarget(), bits) == .hard,
         },
         .@"fn" => {
             if (position != .other) return false;
@@ -3233,7 +3215,6 @@ pub fn validateExtern(ty: Type, position: ExternPosition, zcu: *const Zcu) bool 
             .other,
             => ty.childType(zcu).validateExtern(.element, zcu),
         },
-        .vector => ty.childType(zcu).validateExtern(.element, zcu),
         .optional => ty.isPtrLikeOptional(zcu),
     };
 }
@@ -3243,6 +3224,44 @@ fn validateExternCallconv(cc: std.lang.CallingConvention) bool {
         // The goal is to experiment with more integrated CPU/GPU code.
         .nvptx_kernel => true,
         else => !target_util.fnCallConvAllowsZigTypes(cc),
+    };
+}
+
+/// Returns whether `ty` is considered by Zig to have a bit-level representation, meaning it is
+/// allowed as the operand to `@bitSizeOf`. This is a superset of packable types.
+pub fn hasBitRepresentation(ty: Type, zcu: *const Zcu) bool {
+    return switch (ty.zigTypeTag(zcu)) {
+        .@"fn",
+        .noreturn,
+        .undefined,
+        .null,
+        .@"opaque",
+        .spirv,
+        .type,
+        .enum_literal,
+        .comptime_float,
+        .comptime_int,
+        .error_set,
+        .error_union,
+        .frame,
+        .@"anyframe",
+        => false,
+
+        .void,
+        .bool,
+        .int,
+        .float,
+        => true,
+
+        .@"enum" => {
+            const enum_obj = zcu.intern_pool.loadEnumType(ty.toIntern());
+            return enum_obj.int_tag_mode == .explicit and
+                enum_obj.int_tag_type != .noreturn_type;
+        },
+        .pointer, .optional => ty.isPtrAtRuntime(zcu),
+        .@"struct", .@"union" => ty.containerLayout(zcu) == .@"packed",
+
+        .array, .vector => ty.childType(zcu).hasBitRepresentation(zcu),
     };
 }
 
@@ -3261,6 +3280,7 @@ pub fn assertHasLayout(ty: Type, zcu: *const Zcu) void {
         .simple_type,
         .opaque_type,
         .error_set_type,
+        .spirv_type,
         .inferred_error_set_type,
         => {},
         .func_type => |func_type| {
@@ -3313,7 +3333,7 @@ pub fn assertHasLayout(ty: Type, zcu: *const Zcu) void {
 }
 
 /// Recursively walks the type and marks for each subtype how many times it has been seen
-fn collectSubtypes(ty: Type, pt: Zcu.PerThread, visited: *std.AutoArrayHashMapUnmanaged(Type, u16)) error{OutOfMemory}!void {
+fn collectSubtypes(ty: Type, pt: Zcu.PerThread, visited: *std.array_hash_map.Auto(Type, u16)) error{OutOfMemory}!void {
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
 
@@ -3362,6 +3382,7 @@ fn collectSubtypes(ty: Type, pt: Zcu.PerThread, visited: *std.AutoArrayHashMapUn
         .union_type,
         .opaque_type,
         .enum_type,
+        .spirv_type,
         .simple_type,
         .int_type,
         => {},
@@ -3427,8 +3448,8 @@ fn shouldDedupeType(ty: Type, ctx: *Comparison, pt: Zcu.PerThread) error{OutOfMe
 /// the subtype length and number of occurences. Placeholders are then found by
 /// iterating `type_dedupe_cache` which caches the inline/placeholder decisions.
 pub const Comparison = struct {
-    type_occurrences: std.AutoArrayHashMapUnmanaged(Type, u16),
-    type_dedupe_cache: std.AutoArrayHashMapUnmanaged(Type, DedupeEntry),
+    type_occurrences: std.array_hash_map.Auto(Type, u16),
+    type_dedupe_cache: std.array_hash_map.Auto(Type, DedupeEntry),
     placeholder_index: u8,
 
     pub const Placeholder = struct {
@@ -3605,5 +3626,5 @@ pub fn smallestUnsignedBits(max: u64) u16 {
 pub const packed_struct_layout_version = 2;
 
 fn cTypeAlign(target: *const Target, c_type: Target.CType) Alignment {
-    return Alignment.fromByteUnits(target.cTypeAlignment(c_type));
+    return .fromByteUnits(target.cTypeAlignment(c_type).?);
 }

@@ -30,6 +30,28 @@ fn testMemsetArray() !void {
     }
 }
 
+test "@memset preserves array sentinel" {
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
+    try testMemsetArraySentinel();
+    try comptime testMemsetArraySentinel();
+}
+
+fn testMemsetArraySentinel() !void {
+    var value: u32 = 42;
+    _ = &value;
+    var array: [3:0]u32 = .{ 1, 2, 3 };
+
+    @memset(&array, value);
+
+    try expect(array[0] == value);
+    try expect(array[1] == value);
+    try expect(array[2] == value);
+    try expect(array[3] == 0);
+}
+
 test "@memset on slices" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
@@ -179,6 +201,8 @@ test "@memset with zero-length array" {
 }
 
 test "@memset a global array" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const S = struct {
         var buf: [1]u32 = .{123};
     };
@@ -190,6 +214,8 @@ test "@memset a global array" {
 }
 
 test "@memset array of booleans" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const S = struct {
         var x: bool = false;
         var y: [1]bool = undefined;

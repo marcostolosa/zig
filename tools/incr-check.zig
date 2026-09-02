@@ -241,6 +241,7 @@ pub fn main(init: std.process.Init) !void {
     multi_reader.init(gpa, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
     defer multi_reader.deinit();
 
+    var update_mtime = Io.Clock.real.now(io);
     for (case.updates) |update| {
         var update_prog_node = updates_prog_node.start(update.name, 0);
         defer update_prog_node.end();
@@ -253,7 +254,8 @@ pub fn main(init: std.process.Init) !void {
         log_cur_update = &update;
         defer log_cur_update = null;
 
-        eval.write(update);
+        eval.write(update, update_mtime);
+        update_mtime = update_mtime.addDuration(.fromSeconds(5));
         try eval.requestUpdate();
         try eval.check(&multi_reader, update, update_prog_node);
     }
@@ -286,14 +288,18 @@ const Eval = struct {
     enable_darling: bool,
 
     /// Currently this function assumes the previous updates have already been written.
-    fn write(eval: *Eval, update: Case.Update) void {
+    fn write(eval: *Eval, update: Case.Update, mtime: Io.Timestamp) void {
         const io = eval.io;
         for (update.changes) |full_contents| {
-            eval.tmp_dir.writeFile(io, .{
-                .sub_path = full_contents.name,
-                .data = full_contents.bytes,
-            }) catch |err| {
-                eval.fatal("failed to update '{s}': {t}", .{ full_contents.name, err });
+            var update_file = eval.tmp_dir.createFile(io, full_contents.name, .{}) catch |err| {
+                eval.fatal("failed to create update '{s}': {t}", .{ full_contents.name, err });
+            };
+            defer update_file.close(io);
+            update_file.writeStreamingAll(io, full_contents.bytes) catch |err| {
+                eval.fatal("failed to write update '{s}': {t}", .{ full_contents.name, err });
+            };
+            update_file.setTimestamps(io, .{ .modify_timestamp = .{ .new = mtime } }) catch |err| {
+                eval.fatal("failed to set mtime for '{s}': {t}", .{ full_contents.name, err });
             };
         }
         for (update.deletes) |doomed_name| {
@@ -305,21 +311,21 @@ const Eval = struct {
 
     fn check(eval: *Eval, mr: *Io.File.MultiReader, update: Case.Update, prog_node: std.Progress.Node) !void {
         const arena = eval.arena;
-        const stdout = mr.fileReader(0);
-        const stderr = &mr.fileReader(1).interface;
-        const Header = std.zig.Server.Message.Header;
+        const stdout = mr.reader(0);
+        const stderr = mr.reader(1);
+
+        var client: std.zig.Client = .{
+            .in = stdout,
+            .out = undefined,
+        };
 
         while (true) {
-            const header = stdout.interface.takeStruct(Header, .little) catch |err| switch (err) {
+            const header = client.receiveMessageWithMultiReader(mr, .none) catch |err| switch (err) {
+                error.Timeout => unreachable,
                 error.EndOfStream => break,
-                error.ReadFailed => return stdout.err.?,
+                else => |e| return e,
             };
-            const body = stdout.interface.take(header.bytes_len) catch |err| switch (err) {
-                // If this panic triggers it might be helpful to rework this
-                // code to print the stderr from the abnormally terminated child.
-                error.EndOfStream => @panic("unexpected mid-message end of stream"),
-                error.ReadFailed => return stdout.err.?,
-            };
+            const body = client.in.take(header.bytes_len) catch unreachable;
 
             switch (header.tag) {
                 .error_bundle => {
@@ -448,7 +454,7 @@ const Eval = struct {
             const raw_filename = eb.nullTerminatedString(src.src_path);
             // We need to replace backslashes for consistency between platforms.
             const filename = name: {
-                if (std.mem.indexOfScalar(u8, raw_filename, '\\') == null) break :name raw_filename;
+                if (std.mem.findScalar(u8, raw_filename, '\\') == null) break :name raw_filename;
                 const copied = try eval.arena.dupe(u8, raw_filename);
                 std.mem.replaceScalar(u8, copied, '\\', '/');
                 break :name copied;
@@ -605,12 +611,13 @@ const Eval = struct {
 
     fn requestUpdate(eval: *Eval) !void {
         const io = eval.io;
-        const header: std.zig.Client.Message.Header = .{
-            .tag = .update,
-            .bytes_len = 0,
+
+        var w = eval.child.stdin.?.writerStreaming(io, &.{});
+        var client: std.zig.Client = .{
+            .in = undefined,
+            .out = &w.interface,
         };
-        var w = eval.child.stdin.?.writer(io, &.{});
-        w.interface.writeStruct(header, .little) catch |err| switch (err) {
+        client.serveBodylessMessage(.update) catch |err| switch (err) {
             error.WriteFailed => return w.err.?,
         };
     }
@@ -618,21 +625,22 @@ const Eval = struct {
     fn end(eval: *Eval, mr: *Io.File.MultiReader) !void {
         requestExit(eval.child, eval);
 
-        const stdout = mr.fileReader(0);
-        const Header = std.zig.Server.Message.Header;
+        var client: std.zig.Client = .{
+            .in = mr.reader(0),
+            .out = undefined,
+        };
 
         while (true) {
-            const header = stdout.interface.takeStruct(Header, .little) catch |err| switch (err) {
-                error.EndOfStream => break,
-                error.ReadFailed => return stdout.err.?,
+            const header = client.receiveMessageWithMultiReader(mr, .none) catch |err| switch (err) {
+                error.Timeout => unreachable,
+                error.EndOfStream => |e| {
+                    if (client.in.bufferedLen() == 0) break;
+                    return e;
+                },
+                else => |e| return e,
             };
-            stdout.interface.discardAll(header.bytes_len) catch |err| switch (err) {
-                error.ReadFailed => return stdout.err.?,
-                error.EndOfStream => |e| return e,
-            };
+            try client.in.discardAll(header.bytes_len);
         }
-
-        try mr.fillRemaining(.none);
 
         const stderr = mr.reader(1).buffered();
         if (stderr.len > 0) eval.fatal("unexpected stderr:\n{s}", .{stderr});
@@ -773,7 +781,7 @@ const Case = struct {
                         .backend = backend,
                     });
                 } else if (std.mem.eql(u8, key, "module")) {
-                    const split_idx = std.mem.indexOfScalar(u8, val, '=') orelse
+                    const split_idx = std.mem.findScalar(u8, val, '=') orelse
                         fatal("line {d}: module does not include file", .{line_n});
                     const name = val[0..split_idx];
                     const file = val[split_idx + 1 ..];
@@ -899,12 +907,12 @@ fn requestExit(child: *std.process.Child, eval: *Eval) void {
     if (child.stdin == null) return;
     const io = eval.io;
 
-    const header: std.zig.Client.Message.Header = .{
-        .tag = .exit,
-        .bytes_len = 0,
+    var w = eval.child.stdin.?.writerStreaming(io, &.{});
+    var client: std.zig.Client = .{
+        .in = undefined,
+        .out = &w.interface,
     };
-    var w = eval.child.stdin.?.writer(io, &.{});
-    w.interface.writeStruct(header, .little) catch |err| switch (err) {
+    client.serveBodylessMessage(.exit) catch |err| switch (err) {
         error.WriteFailed => switch (w.err.?) {
             error.BrokenPipe => {},
             else => |e| eval.fatal("failed to send exit: {t}", .{e}),
@@ -979,7 +987,7 @@ fn rand64(io: Io) u64 {
 fn parseTargetQueryAndBackend(input_str: []const u8, err_prefix: []const u8) struct { std.Target.Query, Backend } {
     const fatal = std.process.fatal;
 
-    const split_idx = std.mem.lastIndexOfScalar(u8, input_str, '-') orelse
+    const split_idx = std.mem.findScalarLast(u8, input_str, '-') orelse
         fatal("{s}target does not include backend", .{err_prefix});
 
     const query = input_str[0..split_idx];

@@ -198,6 +198,8 @@ pub const IpAddress = union(enum) {
     }
 
     pub const ListenError = error{
+        /// The address is protected and the current user does not have permission to bind it.
+        AccessDenied,
         /// The address is already taken. Can occur when bound port is 0 but
         /// all ephemeral ports are already in use.
         AddressInUse,
@@ -254,6 +256,8 @@ pub const IpAddress = union(enum) {
     }
 
     pub const BindError = error{
+        /// The address is protected and the current user does not have permission to bind it.
+        AccessDenied,
         /// The address is already taken. Can occur when bound port is 0 but
         /// all ephemeral ports are already in use.
         AddressInUse,
@@ -576,7 +580,7 @@ pub const Ip6Address = struct {
                         const name = text[text_i..];
                         if (name.len == 0) return .incomplete;
                         interface_name_text = name;
-                        text_i = @intCast(text.len);
+                        text_i = std.math.cast(u8, text.len) orelse return .{ .overflow = text.len };
                         continue :state .end;
                     },
                     else => return .{ .invalid_byte = text_i },
@@ -592,11 +596,7 @@ pub const Ip6Address = struct {
                         if (remaining != 0) return .incomplete;
                     }
 
-                    // Workaround that can be removed when this proposal is
-                    // implemented https://github.com/ziglang/zig/issues/19755
-                    if ((comptime @import("builtin").cpu.arch.endian()) != .big) {
-                        for (&parts) |*part| part.* = @byteSwap(part.*);
-                    }
+                    for (&parts) |*part| part.* = @byteSwap(part.*);
 
                     return .{ .success = .{
                         .bytes = @bitCast(parts),
@@ -905,6 +905,7 @@ pub const UnixAddress = struct {
         ReadOnlyFileSystem,
         WouldBlock,
         NetworkDown,
+        ConnectionRefused,
     } || Io.Cancelable || Io.UnexpectedError;
 
     pub fn connect(ua: *const UnixAddress, io: Io) ConnectError!Stream {
@@ -1080,59 +1081,80 @@ pub const Socket = struct {
 
     /// Leaves `address` in a valid state.
     pub fn close(s: *const Socket, io: Io) void {
-        io.vtable.netClose(io.userdata, (&s.handle)[0..1]);
+        io.vtable.netClose(io.userdata, s[0..1]);
     }
 
     pub fn closeMany(io: Io, sockets: []const Socket) void {
         io.vtable.netClose(io.userdata, sockets);
     }
 
-    pub const SendError = error{
-        /// The socket type requires that message be sent atomically, and the
-        /// size of the message to be sent made this impossible. The message
-        /// was not transmitted, or was partially transmitted.
-        MessageOversize,
-        /// The output queue for a network interface was full. This generally indicates that the
-        /// interface has stopped sending, but may be caused by transient congestion. (Normally,
-        /// this does not occur in Linux. Packets are just silently dropped when a device queue
-        /// overflows.)
-        ///
-        /// This is also caused when there is not enough kernel memory available.
-        SystemResources,
-        /// No route to network.
-        NetworkUnreachable,
-        /// Network reached but no route to host.
-        HostUnreachable,
-        /// The local network interface used to reach the destination is offline.
-        NetworkDown,
-        /// The destination address is not listening. Can still occur for
-        /// connectionless messages.
-        ConnectionRefused,
-        /// Operating system or protocol does not support the address family.
-        AddressFamilyUnsupported,
-        /// Another TCP Fast Open is already in progress.
-        FastOpenAlreadyInProgress,
-        /// Network session was unexpectedly closed by recipient.
-        ConnectionResetByPeer,
-        /// Local end has been shut down on a connection-oriented socket, or
-        /// the socket was never connected.
-        SocketUnconnected,
-        /// An attempt was made to send to a network/broadcast address as
-        /// though it was a unicast address.
-        AccessDenied,
-    } || Io.UnexpectedError || Io.Cancelable;
+    pub const SendError = Io.Operation.NetSend.Error || Io.Cancelable;
 
     /// Transfers `data` to `dest`, connectionless, in one packet.
     pub fn send(s: *const Socket, io: Io, dest: *const IpAddress, data: []const u8) SendError!void {
         var message: OutgoingMessage = .{ .address = dest, .data_ptr = data.ptr, .data_len = data.len };
-        const err, const n = io.vtable.netSend(io.userdata, s.handle, (&message)[0..1], .{});
-        if (n != 1) return err.?;
+        const maybe_err, const count = (try io.operate(.{ .net_send = .{
+            .socket_handle = s.handle,
+            .messages = (&message)[0..1],
+            .flags = .{},
+        } })).net_send;
+        if (maybe_err) |err| {
+            assert(count == 0);
+            return err;
+        } else {
+            assert(count == 1);
+        }
         if (message.data_len != data.len) return error.MessageOversize;
     }
 
+    pub const SendTimeoutError = SendError || Io.Timeout.Error || Io.ConcurrentError;
+
+    pub fn sendTimeout(
+        s: *const Socket,
+        io: Io,
+        dest: *const IpAddress,
+        data: []const u8,
+        timeout: Io.Timeout,
+    ) SendTimeoutError!void {
+        var message: OutgoingMessage = .{ .address = dest, .data_ptr = data.ptr, .data_len = data.len };
+        const maybe_err, const count = (try io.operateTimeout(.{ .net_send = .{
+            .socket_handle = s.handle,
+            .messages = (&message)[0..1],
+            .flags = .{},
+        } }, timeout)).net_send;
+        if (maybe_err) |err| return err;
+        assert(1 == count);
+        if (message.data_len != data.len) return error.MessageOversize;
+    }
+
+    /// Deprecated; use `sendManyTimeout` with a timeout of `.none`.
+    ///
+    /// If this function returns an error, some (but not all) of `messages` may
+    /// still have been sent. This condition is not reported by this function,
+    /// but is reported by `sendManyTimeout`.
     pub fn sendMany(s: *const Socket, io: Io, messages: []OutgoingMessage, flags: SendFlags) SendError!void {
-        const err, const n = io.vtable.netSend(io.userdata, s.handle, messages, flags);
-        if (n != messages.len) return err.?;
+        const result = try io.operate(.{ .net_send = .{
+            .socket_handle = s.handle,
+            .messages = messages,
+            .flags = flags,
+        } });
+        const maybe_send_err, _ = result.net_send;
+        return maybe_send_err orelse {};
+    }
+
+    pub fn sendManyTimeout(
+        s: *const Socket,
+        io: Io,
+        messages: []OutgoingMessage,
+        flags: SendFlags,
+        timeout: Io.Timeout,
+    ) struct { ?SendTimeoutError, usize } {
+        const result = io.operateTimeout(.{ .net_send = .{
+            .socket_handle = s.handle,
+            .messages = messages,
+            .flags = flags,
+        } }, timeout) catch |err| return .{ err, 0 };
+        return result.net_send;
     }
 
     pub const ReceiveError = Io.Operation.NetReceive.Error || Io.Cancelable;
@@ -1257,7 +1279,7 @@ pub const Stream = struct {
     }
 
     pub fn close(s: *const Stream, io: Io) void {
-        io.vtable.netClose(io.userdata, (&s.socket.handle)[0..1]);
+        io.vtable.netClose(io.userdata, (&s.socket)[0..1]);
     }
 
     pub fn shutdown(s: *const Stream, io: Io, how: ShutdownHow) ShutdownError!void {
@@ -1326,37 +1348,19 @@ pub const Stream = struct {
         err: ?Error = null,
         write_file_err: ?WriteFileError = null,
 
-        pub const Error = error{
-            /// Another TCP Fast Open is already in progress.
-            FastOpenAlreadyInProgress,
-            /// Network session was unexpectedly closed by recipient.
-            ConnectionResetByPeer,
-            /// The output queue for a network interface was full. This generally indicates that the
-            /// interface has stopped sending, but may be caused by transient congestion. (Normally,
-            /// this does not occur in Linux. Packets are just silently dropped when a device queue
-            /// overflows.)
-            ///
-            /// This is also caused when there is not enough kernel memory available.
-            SystemResources,
-            /// No route to network.
-            NetworkUnreachable,
-            /// Network reached but no route to host.
-            HostUnreachable,
-            /// The local network interface used to reach the destination is down.
-            NetworkDown,
-            /// The destination address is not listening.
-            ConnectionRefused,
-            /// The passed address didn't have the correct address family in its sa_family field.
-            AddressFamilyUnsupported,
-            /// Local end has been shut down on a connection-oriented socket, or
-            /// the socket was never connected.
-            SocketUnconnected,
-            SocketNotBound,
-        } || Io.UnexpectedError || Io.Cancelable;
+        pub const Error = Io.Operation.NetWrite.Error || Io.Cancelable;
 
-        pub const WriteFileError = error{
-            NetworkDown,
-        } || Io.Cancelable || Io.UnexpectedError;
+        pub const WriteFileError = Error || error{
+            /// The `Io` implementation cannot offer a more efficient
+            /// file-to-socket path; the caller should fall back to read-based
+            /// copying. See `Io.Writer.sendFile`.
+            Unimplemented,
+            /// Reached the end of the file being read.
+            EndOfStream,
+            /// The source `File.Reader` failed; detailed diagnostics are found
+            /// on that struct.
+            ReadFailed,
+        };
 
         pub fn init(stream: Stream, io: Io, buffer: []u8) Writer {
             return .{
@@ -1377,7 +1381,16 @@ pub const Stream = struct {
             const io = w.io;
             const buffered = io_w.buffered();
             const handle = w.stream.socket.handle;
-            const n = io.vtable.netWrite(io.userdata, handle, buffered, data, splat) catch |err| {
+            const result = io.operate(.{ .net_write = .{
+                .socket_handle = handle,
+                .header = buffered,
+                .data = data,
+                .splat = splat,
+            } }) catch |err| {
+                w.err = err;
+                return error.WriteFailed;
+            };
+            const n = result.net_write catch |err| {
                 w.err = err;
                 return error.WriteFailed;
             };
@@ -1385,10 +1398,25 @@ pub const Stream = struct {
         }
 
         fn sendFile(io_w: *Io.Writer, file_reader: *Io.File.Reader, limit: Io.Limit) Io.Writer.FileError!usize {
-            _ = io_w;
-            _ = file_reader;
-            _ = limit;
-            return error.Unimplemented; // TODO
+            const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
+            const io = w.io;
+            const header = io_w.buffered();
+            const handle = w.stream.socket.handle;
+            const n = io.vtable.netWriteFile(io.userdata, handle, header, file_reader, limit) catch |err| switch (err) {
+                error.Canceled => {
+                    w.err = error.Canceled;
+                    return error.WriteFailed;
+                },
+                error.EndOfStream,
+                error.Unimplemented,
+                error.ReadFailed,
+                => |e| return e,
+                else => |e| {
+                    w.write_file_err = e;
+                    return error.WriteFailed;
+                },
+            };
+            return io_w.consume(n);
         }
     };
 
@@ -1476,7 +1504,7 @@ fn testIp6ParseTransform(expected: []const u8, input: []const u8) !void {
         },
     };
     var buffer: [100]u8 = undefined;
-    const result = try std.fmt.bufPrint(&buffer, "{f}", .{ua});
+    const result = try std.mem.print(&buffer, "{f}", .{ua});
     try std.testing.expectEqualStrings(expected, result);
 }
 

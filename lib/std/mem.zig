@@ -3888,16 +3888,31 @@ pub fn swap(comptime T: type, noalias a: *T, noalias b: *T) void {
         const tmp = a.*;
         a.* = b.*;
         b.* = tmp;
-    } else {
-        // Swapping in streaming nature from start to end instead of swapping
-        // everything in one step allows easier optimizations and less stack usage.
-        const a_bytes: []align(@alignOf(T)) u8 = @ptrCast(a);
-        const b_bytes: []align(@alignOf(T)) u8 = @ptrCast(b);
-        for (a_bytes, b_bytes) |*ab, *bb| {
+
+        return;
+    }
+
+    const a_bytes = std.mem.asBytes(a);
+    const b_bytes = std.mem.asBytes(b);
+
+    const l = a_bytes.len;
+
+    comptime var copy_size = if (std.math.isPowerOfTwo(@sizeOf(usize))) @sizeOf(usize) else 1;
+    comptime var remaining = l;
+    inline while (remaining > 0) {
+        const n = remaining / copy_size;
+        for (0..n) |i| {
+            const at = l - remaining + i * copy_size;
+            const ab = a_bytes[at..][0..copy_size];
+            const bb = b_bytes[at..][0..copy_size];
+
             const tmp = ab.*;
             ab.* = bb.*;
             bb.* = tmp;
         }
+
+        remaining -= n * copy_size;
+        copy_size /= 2;
     }
 }
 

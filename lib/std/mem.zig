@@ -2061,13 +2061,14 @@ test "comptime read/write int" {
 ///
 /// See also `writeFloat`.
 pub inline fn readFloat(comptime T: type, buffer: *const [@divExact(@typeInfo(T).float.bits, 8)]u8, endian: Endian) T {
-    const value: T = @bitCast(buffer.*);
-
-    if (endian == native_endian) {
-        return value;
+    // Zig's logical bit order aligns with a little-endian byte array, so when reading in big-endian
+    // we must `@byteSwap` the float after we `@bitCast` to it.
+    const little_val: T = @bitCast(buffer.*);
+    if (endian == .little) {
+        return little_val;
     } else {
         const IntT = @Int(.unsigned, @typeInfo(T).float.bits);
-        return @bitCast(@byteSwap(@as(IntT, @bitCast(value))));
+        return @bitCast(@byteSwap(@as(IntT, @bitCast(little_val))));
     }
 }
 
@@ -2297,7 +2298,10 @@ test writeVarPackedInt {
 pub inline fn writeFloat(comptime T: type, buffer: *[@divExact(@typeInfo(T).float.bits, 8)]u8, value: T, endian: Endian) void {
     const IntT = @Int(.unsigned, @typeInfo(T).float.bits);
     const int_value: IntT = @bitCast(value);
-    buffer.* = @bitCast(if (endian == native_endian) int_value else @byteSwap(int_value));
+    buffer.* = switch (endian) {
+        .little => @bitCast(int_value),
+        .big => @bitCast(@byteSwap(int_value)),
+    };
 }
 
 test writeFloat {

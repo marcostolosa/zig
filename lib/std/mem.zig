@@ -3892,19 +3892,18 @@ pub fn swap(comptime T: type, noalias a: *T, noalias b: *T) void {
         return;
     }
 
-    const a_bytes = std.mem.asBytes(a);
-    const b_bytes = std.mem.asBytes(b);
+    const a_bytes = asBytes(a);
+    const b_bytes = asBytes(b);
 
-    const l = a_bytes.len;
-
-    comptime var copy_size = if (std.math.isPowerOfTwo(@sizeOf(usize))) @sizeOf(usize) else 1;
-    comptime var remaining = l;
+    comptime var copy_size = if (math.isPowerOfTwo(@sizeOf(usize))) @sizeOf(usize) else 1;
+    comptime var remaining = @sizeOf(T);
     inline while (remaining > 0) {
         const n = remaining / copy_size;
+        const Chunk = *align(@min(@alignOf(T), copy_size)) [copy_size]u8;
         for (0..n) |i| {
-            const at = l - remaining + i * copy_size;
-            const ab = a_bytes[at..][0..copy_size];
-            const bb = b_bytes[at..][0..copy_size];
+            const at = @sizeOf(T) - remaining + i * copy_size;
+            const ab: Chunk = @alignCast(a_bytes[at..][0..copy_size]);
+            const bb: Chunk = @alignCast(b_bytes[at..][0..copy_size]);
 
             const tmp = ab.*;
             ab.* = bb.*;

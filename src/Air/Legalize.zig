@@ -218,6 +218,11 @@ pub const Feature = enum {
     /// Converts `loop_switch_br` and `switch_dispatch` to a `loop` and a `switch_br`.
     expand_loop_switch_br,
 
+    /// Replace `try` and `try_cold` with an explicit `cond_br` with an `is_err` as the condition.
+    expand_try,
+    /// Replace `try_ptr` and `try_ptr_cold` with an explicit `cond_br` with an `is_err_ptr` as the condition.
+    expand_try_ptr,
+
     /// Replace all arithmetic operations on 16-bit floating-point types with calls to soft-float
     /// routines in compiler_rt, including `fptrunc`/`fpext`/`float_from_int`/`int_from_float`
     /// where the operand or target type is a 16-bit floating-point type. This feature implies:
@@ -823,12 +828,28 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
                     continue :inst l.replaceInst(inst, .block, try l.switchDispatchBlockPayload(inst));
                 }
             },
-            .@"try", .try_cold => {
+            .@"try", .try_cold => |air_tag| {
+                if (l.features.has(.expand_try)) {
+                    continue :inst l.replaceInst(inst, .block, try l.tryBlockPayload(inst, switch (air_tag) {
+                        .@"try" => .unlikely,
+                        .try_cold => .cold,
+                        else => unreachable,
+                    }));
+                }
+
                 const pl_op = l.air_instructions.items(.data)[@backingInt(inst)].pl_op;
                 const extra = l.extraData(Air.Try, pl_op.payload);
                 try l.legalizeBody(extra.end, extra.data.body_len);
             },
-            .try_ptr, .try_ptr_cold => {
+            .try_ptr, .try_ptr_cold => |air_tag| {
+                if (l.features.has(.expand_try_ptr)) {
+                    continue :inst l.replaceInst(inst, .block, try l.tryPtrBlockPayload(inst, switch (air_tag) {
+                        .try_ptr => .unlikely,
+                        .try_ptr_cold => .cold,
+                        else => unreachable,
+                    }));
+                }
+
                 const ty_pl = l.air_instructions.items(.data)[@backingInt(inst)].ty_pl;
                 const extra = l.extraData(Air.TryPtr, ty_pl.payload);
                 try l.legalizeBody(extra.end, extra.data.body_len);
@@ -3248,6 +3269,99 @@ fn sliceElemPtrBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.I
     main_block.addBr(l, orig_inst, result);
     return .{ .ty_pl = .{
         .ty = elem_ptr_ty,
+        .payload = try l.addBlockBody(main_block.body()),
+    } };
+}
+
+fn tryBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index, error_hint: std.lang.BranchHint) Error!Air.Inst.Data {
+    const pt = l.pt;
+    const zcu = pt.zcu;
+
+    const orig_pl_op = l.air_instructions.items(.data)[@backingInt(orig_inst)].pl_op;
+    const orig_extra = l.extraData(Air.Try, orig_pl_op.payload);
+    const payload_ty = l.typeOf(orig_pl_op.operand).errorUnionPayload(zcu);
+
+    var inst_buf: [4]Air.Inst.Index = undefined;
+    try l.air_instructions.ensureUnusedCapacity(zcu.gpa, inst_buf.len);
+
+    var main_block: Block = .init(&inst_buf);
+
+    const is_err_inst = main_block.addUnOp(l, .is_err, orig_pl_op.operand);
+    const condbr_inst = main_block.add(l, .{
+        .tag = .cond_br,
+        .data = .{ .pl_op = .{
+            .operand = is_err_inst.toRef(),
+            .payload = undefined,
+        } },
+    });
+
+    var else_block: Block = .init(main_block.stealRemainingCapacity());
+
+    const payload: Air.Inst.Ref = if (try payload_ty.onePossibleValue(pt)) |opv| payload: {
+        _ = else_block.stealCapacity(1);
+        break :payload .fromValue(opv);
+    } else else_block.addTyOp(l, .unwrap_errunion_payload, payload_ty, orig_pl_op.operand).toRef();
+
+    else_block.addBr(l, orig_inst, payload);
+
+    const else_body = else_block.body();
+
+    try l.air_extra.ensureUnusedCapacity(l.pt.zcu.gpa, 3 + orig_extra.data.body_len + else_body.len);
+    l.air_instructions.items(.data)[@backingInt(condbr_inst)].pl_op.payload = @intCast(l.air_extra.items.len);
+    l.air_extra.appendSliceAssumeCapacity(&.{
+        @intCast(orig_extra.data.body_len),
+        @intCast(else_body.len),
+        @backingInt(Air.CondBr.BranchHints{ .true = error_hint }),
+    });
+    l.air_extra.appendSliceAssumeCapacity(l.air_extra.items[orig_extra.end..][0..orig_extra.data.body_len]);
+    l.air_extra.appendSliceAssumeCapacity(@ptrCast(else_body));
+
+    return .{ .ty_pl = .{
+        .ty = payload_ty,
+        .payload = try l.addBlockBody(main_block.body()),
+    } };
+}
+
+fn tryPtrBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index, error_hint: std.lang.BranchHint) Error!Air.Inst.Data {
+    const pt = l.pt;
+    const zcu = pt.zcu;
+
+    const orig_ty_pl = l.air_instructions.items(.data)[@backingInt(orig_inst)].ty_pl;
+    const orig_extra = l.extraData(Air.TryPtr, orig_ty_pl.payload);
+
+    var inst_buf: [4]Air.Inst.Index = undefined;
+    try l.air_instructions.ensureUnusedCapacity(zcu.gpa, inst_buf.len);
+
+    var main_block: Block = .init(&inst_buf);
+
+    const is_err_ptr_inst = main_block.addUnOp(l, .is_err_ptr, orig_extra.data.ptr);
+    const condbr_inst = main_block.add(l, .{
+        .tag = .cond_br,
+        .data = .{ .pl_op = .{
+            .operand = is_err_ptr_inst.toRef(),
+            .payload = undefined,
+        } },
+    });
+
+    var else_block: Block = .init(main_block.stealRemainingCapacity());
+
+    const errunion_payload_inst = else_block.addTyOp(l, .unwrap_errunion_payload_ptr, orig_ty_pl.ty, orig_extra.data.ptr);
+    else_block.addBr(l, orig_inst, errunion_payload_inst.toRef());
+
+    const else_body = else_block.body();
+
+    try l.air_extra.ensureUnusedCapacity(l.pt.zcu.gpa, 3 + orig_extra.data.body_len + else_body.len);
+    l.air_instructions.items(.data)[@backingInt(condbr_inst)].pl_op.payload = @intCast(l.air_extra.items.len);
+    l.air_extra.appendSliceAssumeCapacity(&.{
+        @intCast(orig_extra.data.body_len),
+        @intCast(else_body.len),
+        @backingInt(Air.CondBr.BranchHints{ .true = error_hint }),
+    });
+    l.air_extra.appendSliceAssumeCapacity(l.air_extra.items[orig_extra.end..][0..orig_extra.data.body_len]);
+    l.air_extra.appendSliceAssumeCapacity(@ptrCast(else_body));
+
+    return .{ .ty_pl = .{
+        .ty = orig_ty_pl.ty,
         .payload = try l.addBlockBody(main_block.body()),
     } };
 }

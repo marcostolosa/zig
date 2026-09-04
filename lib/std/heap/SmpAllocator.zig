@@ -38,16 +38,21 @@ const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 const PageAllocator = std.heap.PageAllocator;
 
+/// Number of CPU cores available. 0 indicates the allocator is uninitialized.
 cpu_count: u32,
-threads: [max_thread_count]Thread,
+threads: [*]Thread,
 
-var global: SmpAllocator = .{
-    .threads = @splat(.{}),
+var fallback_threads: [thread_count_fallback]Thread = @splat(.{});
+
+pub var global: SmpAllocator = .{
+    .threads = &fallback_threads,
     .cpu_count = 0,
 };
+var init_lock: std.atomic.Mutex = .unlocked;
 threadlocal var thread_index: u32 = 0;
 
-const max_thread_count = 128;
+/// Thread fallback used if CPU count detection fails.
+const thread_count_fallback = 128;
 const slab_len: usize = @max(std.heap.page_size_max, 64 * 1024);
 /// Because of storing free list pointers, the minimum size class is 3.
 const min_class = math.log2(@sizeOf(usize));
@@ -72,6 +77,41 @@ const Thread = struct {
     frees: [size_class_count]usize = @splat(0),
 
     fn lock() *Thread {
+        var cpu_count = @atomicLoad(u32, &global.cpu_count, .acquire);
+
+        if (cpu_count == 0) {
+            @branchHint(.unlikely); // will only be true on first lock call
+            while (!init_lock.tryLock()) std.atomic.spinLoopHint();
+            defer init_lock.unlock();
+
+            // accessing cpu_count here non-atomically is safe, since we hold the init lock
+            cpu_count = global.cpu_count;
+
+            // double-check the initialization state
+            if (cpu_count == 0) {
+                var final_threads: [*]Thread = &fallback_threads;
+
+                const detected_cores: u32 = @intCast(std.Thread.getCpuCount() catch thread_count_fallback);
+                if (detected_cores > thread_count_fallback) {
+                    const n = detected_cores * @sizeOf(Thread);
+
+                    if (PageAllocator.map(n, .of(Thread))) |bytes| {
+                        final_threads = @ptrCast(@alignCast(bytes));
+                        @memset(final_threads[0..detected_cores], .{});
+                        cpu_count = detected_cores;
+                    } else {
+                        // when alloc fails, fall back to static thread array
+                        cpu_count = thread_count_fallback;
+                    }
+                } else {
+                    cpu_count = detected_cores;
+                }
+
+                global.threads = final_threads;
+                @atomicStore(u32, &global.cpu_count, cpu_count, .release);
+            }
+        }
+
         var index = thread_index;
         {
             const t = &global.threads[index];
@@ -80,7 +120,7 @@ const Thread = struct {
                 return t;
             }
         }
-        const cpu_count = getCpuCount();
+
         assert(cpu_count != 0);
         while (true) {
             index = (index + 1) % cpu_count;
@@ -98,10 +138,7 @@ const Thread = struct {
 };
 
 fn getCpuCount() u32 {
-    const cpu_count = @atomicLoad(u32, &global.cpu_count, .unordered);
-    if (cpu_count != 0) return cpu_count;
-    const n: u32 = @min(std.Thread.getCpuCount() catch max_thread_count, max_thread_count);
-    return if (@cmpxchgStrong(u32, &global.cpu_count, 0, n, .monotonic, .monotonic)) |other| other else n;
+    return @atomicLoad(u32, &global.cpu_count, .unordered);
 }
 
 pub const vtable: Allocator.VTable = .{

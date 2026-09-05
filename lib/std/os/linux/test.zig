@@ -444,3 +444,51 @@ test "timerfd" {
 test {
     _ = linux.IoUring;
 }
+
+test "open_how initialization" {
+    const flags: linux.O = .{ .CREAT = true, .TRUNC = true };
+    const mode: linux.mode_t = 0o644;
+    const resolve: linux.RESOLVE = .{ .BENEATH = true };
+    const how = linux.open_how.init(flags, mode, resolve);
+
+    try std.testing.expectEqual(@as(u64, @as(u32, @bitCast(flags))), how.flags);
+    try std.testing.expectEqual(@as(u64, @as(u32, @bitCast(mode))), how.mode);
+    try std.testing.expectEqual(@backingInt(resolve), how.resolve);
+}
+
+test "mount_attr initialization" {
+    const set_flags: linux.MOUNT_ATTR = .{
+        .NOSYMFOLLOW = true,
+        .ATIME = linux.MOUNT_ATTR__ATIME.NOATIME,
+    };
+
+    const clr_flags: linux.MOUNT_ATTR = .{
+        .ATIME = linux.MOUNT_ATTR__ATIME.ATIME,
+    };
+
+    const propagation: linux.MOUNT_PROPAGATION = linux.MOUNT_PROPAGATION.SHARED;
+    const userns_fd: linux.fd_t = -1;
+
+    const attr1 = linux.mount_attr.init(.{
+        .set = set_flags,
+        .clr = clr_flags,
+        .propagation = propagation,
+        .userns_fd = userns_fd,
+    });
+
+    try std.testing.expectEqual(@as(u64, @as(u32, @bitCast(set_flags))), attr1.attr_set);
+    try std.testing.expectEqual(@as(u64, @as(u32, @bitCast(clr_flags))), attr1.attr_clr);
+    try std.testing.expectEqual(@as(u64, @backingInt(propagation)), attr1.propagation);
+    try std.testing.expectEqual(@as(u64, @as(u32, @bitCast(userns_fd))), attr1.userns_fd);
+
+    const attr2 = linux.mount_attr.init(.{
+        .set = set_flags,
+        .clr = clr_flags,
+        .userns_fd = userns_fd,
+    });
+
+    try std.testing.expectEqual(@as(u64, @as(u32, @bitCast(set_flags))), attr2.attr_set);
+    try std.testing.expectEqual(@as(u64, @as(u32, @bitCast(clr_flags))), attr2.attr_clr);
+    try std.testing.expectEqual(@as(u64, 0), attr2.propagation);
+    try std.testing.expectEqual(@as(u64, @as(u32, @bitCast(userns_fd))), attr2.userns_fd);
+}

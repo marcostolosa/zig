@@ -490,7 +490,7 @@ fn testString(expected: []const u8, input: []const u8, options: StringOptions) !
 }
 
 fn fuzzString(options: StringOptions, smith: *std.testing.Smith) !void {
-    var arena: std.heap.ArenaAllocator = .init(std.heap.smp_allocator);
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 

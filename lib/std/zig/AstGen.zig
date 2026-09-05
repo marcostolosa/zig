@@ -6217,6 +6217,11 @@ fn ifExpr(
         if (if_full.error_token) |_| {
             const cond_ri: ResultInfo = .{ .rl = if (payload_is_ref) .ref else .none, .ctx = .error_handling_expr };
             const err_union = try expr(&block_scope, &block_scope.base, cond_ri, if_full.ast.cond_expr);
+
+            if (if_full.payload_token == null) {
+                _ = try block_scope.addUnNode(.ensure_err_union_payload_void, err_union, node);
+            }
+
             const tag: Zir.Inst.Tag = if (payload_is_ref) .is_non_err_ptr else .is_non_err;
             break :c .{
                 .inst = err_union,
@@ -6279,7 +6284,6 @@ fn ifExpr(
                 try then_scope.addDbgVar(.dbg_var_val, ident_name, payload_inst);
                 break :s &payload_val_scope.base;
             } else {
-                _ = try then_scope.addUnNode(.ensure_err_union_payload_void, cond.inst, node);
                 break :s &then_scope.base;
             }
         } else if (if_full.payload_token) |payload_token| {
@@ -6479,6 +6483,11 @@ fn whileExpr(
         if (while_full.error_token) |_| {
             const cond_ri: ResultInfo = .{ .rl = if (payload_is_ref) .ref else .none };
             const err_union = try fullBodyExpr(&cond_scope, &cond_scope.base, cond_ri, while_full.ast.cond_expr, .normal);
+
+            if (while_full.payload_token == null) {
+                _ = try cond_scope.addUnNode(.ensure_err_union_payload_void, err_union, node);
+            }
+
             const tag: Zir.Inst.Tag = if (payload_is_ref) .is_non_err_ptr else .is_non_err;
             break :c .{
                 .inst = err_union,
@@ -6549,7 +6558,6 @@ fn whileExpr(
                 dbg_var_inst = payload_inst.toRef();
                 break :s &payload_val_scope.base;
             } else {
-                _ = try then_scope.addUnNode(.ensure_err_union_payload_void, cond.inst, node);
                 break :s &then_scope.base;
             }
         } else if (while_full.payload_token) |payload_token| {

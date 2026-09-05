@@ -1,0 +1,17 @@
+#zig build-obj {
+--name test -fno-emit-bin
+-Mroot=test.zig
+#}
+
+#write test.zig {
+export fn foo() void {
+    while (@as(error{A}!usize, error.A)) {
+        unreachable;
+    } else |_| {}
+}
+#}
+#update
+#check errors {
+test.zig:2:5: error: error union payload is ignored
+test.zig:2:5: note: payload value can be explicitly ignored with '|_|'
+#}

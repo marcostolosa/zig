@@ -40,12 +40,10 @@ const PageAllocator = std.heap.PageAllocator;
 
 /// Number of CPU cores available. 0 indicates the allocator is uninitialized.
 cpu_count: u32,
-threads: [*]Thread,
-
-var fallback_threads: [thread_count_fallback]Thread = @splat(.{});
+threads: ?[*]Thread,
 
 pub var global: SmpAllocator = .{
-    .threads = &fallback_threads,
+    .threads = null,
     .cpu_count = 0,
 };
 var init_lock: std.atomic.Mutex = .unlocked;
@@ -76,7 +74,7 @@ const Thread = struct {
     /// For each size class, points to the freed pointer.
     frees: [size_class_count]usize = @splat(0),
 
-    fn lock() *Thread {
+    fn lock() ?*Thread {
         var cpu_count = @atomicLoad(u32, &global.cpu_count, .acquire);
 
         if (cpu_count == 0) {
@@ -89,23 +87,10 @@ const Thread = struct {
 
             // double-check the initialization state
             if (cpu_count == 0) {
-                var final_threads: [*]Thread = &fallback_threads;
-
-                const detected_cores: u32 = @intCast(std.Thread.getCpuCount() catch thread_count_fallback);
-                if (detected_cores > thread_count_fallback) {
-                    const n = detected_cores * @sizeOf(Thread);
-
-                    if (PageAllocator.map(n, .of(Thread))) |bytes| {
-                        final_threads = @ptrCast(@alignCast(bytes));
-                        @memset(final_threads[0..detected_cores], .{});
-                        cpu_count = detected_cores;
-                    } else {
-                        // when alloc fails, fall back to static thread array
-                        cpu_count = thread_count_fallback;
-                    }
-                } else {
-                    cpu_count = detected_cores;
-                }
+                cpu_count = @intCast(std.Thread.getCpuCount() catch thread_count_fallback);
+                const bytes = PageAllocator.map(cpu_count * @sizeOf(Thread), .of(Thread)) orelse return null;
+                var final_threads: [*]Thread = @ptrCast(@alignCast(bytes));
+                @memset(final_threads[0..cpu_count], .{});
 
                 global.threads = final_threads;
                 @atomicStore(u32, &global.cpu_count, cpu_count, .release);
@@ -114,7 +99,7 @@ const Thread = struct {
 
         var index = thread_index;
         {
-            const t = &global.threads[index];
+            const t = &global.threads.?[index];
             if (t.mutex.tryLock()) {
                 @branchHint(.likely);
                 return t;
@@ -124,7 +109,7 @@ const Thread = struct {
         assert(cpu_count != 0);
         while (true) {
             index = (index + 1) % cpu_count;
-            const t = &global.threads[index];
+            const t = &global.threads.?[index];
             if (t.mutex.tryLock()) {
                 thread_index = index;
                 return t;
@@ -165,7 +150,7 @@ fn alloc(context: *anyopaque, len: usize, alignment: Alignment, ra: usize) ?[*]u
     assert(slab_len % slot_size == 0);
     var search_count: u8 = 0;
 
-    var t = Thread.lock();
+    var t = Thread.lock() orelse return null;
 
     outer: while (true) {
         const top_free_ptr = t.frees[class];
@@ -200,7 +185,7 @@ fn alloc(context: *anyopaque, len: usize, alignment: Alignment, ra: usize) ?[*]u
         var index = thread_index;
         while (true) {
             index = (index + 1) % cpu_count;
-            t = &global.threads[index];
+            t = &global.threads.?[index];
             if (t.mutex.tryLock()) {
                 thread_index = index;
                 search_count += 1;
@@ -245,7 +230,7 @@ fn free(context: *anyopaque, memory: []u8, alignment: Alignment, ra: usize) void
 
     const node: *usize = @ptrCast(@alignCast(memory.ptr));
 
-    const t = Thread.lock();
+    const t = Thread.lock() orelse return; // or instead `.?` ?
     defer t.unlock();
 
     node.* = t.frees[class];

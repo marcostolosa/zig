@@ -380,8 +380,6 @@ fn writeCodepoint(
         ' ', '!', '#'...'&', '('...'[', ']'...'~' => try self.writer.writeByte(@intCast(codepoint)),
         // Unprintable ASCII
         0x00...0x08, 0x0B, 0x0C, 0x0E...0x1F, 0x7F => try self.writer.print("\\x{x:0>2}", .{codepoint}),
-        // Unprintable Extended ASCII
-        0x80...0xFF => try self.writer.print("\\x{x:0>2}", .{codepoint}),
         // ASCII with special escapes
         '\n' => try self.writer.writeAll("\\n"),
         '\r' => try self.writer.writeAll("\\r"),
@@ -394,7 +392,7 @@ fn writeCodepoint(
         // Surrogates can only be written with an escape
         0xD800...0xDFFF => try self.writer.print("\\u{{{x}}}", .{codepoint}),
         // Other valid codepoints
-        0x100...0xD7FF, 0xE000...0x10FFFF => if (options.escape_non_ascii) {
+        0x80...0xD7FF, 0xE000...0x10FFFF => if (options.escape_non_ascii) {
             try self.writer.print("\\u{{{x}}}", .{codepoint});
         } else {
             var buf: [7]u8 = undefined;
@@ -432,22 +430,31 @@ pub fn string(self: *Serializer, val: []const u8, options: StringOptions) Writer
         // Flush pending raw bytes
         try self.writer.writeAll(val[start..i]);
         // Handle the special character
-        if (std.unicode.utf8ByteSequenceLength(byte)) |ulen| {
-            // Decode UTF-8 sequence and write the codepoint
-            const codepoint = std.unicode.utf8Decode(val[i..][0..ulen]) catch unreachable;
-            // InvalidCodepoint cannot occur from valid UTF-8
-            self.writeCodepoint(codepoint, .{
+        const encoded: ?struct { codepoint: u21, ulen: u3 } = encoded: {
+            const ulen = std.unicode.utf8ByteSequenceLength(byte) catch |err| {
+                assert(err == error.Utf8InvalidStartByte);
+                // ASCII character that needs escaping
+                break :encoded null;
+            };
+            if (val[i..].len < ulen) {
+                // Truncated UTF-8 sequence
+                break :encoded null;
+            }
+            const codepoint = std.unicode.utf8Decode(val[i..][0..ulen]) catch {
+                // Utf8DecodeError codepoint error
+                break :encoded null;
+            };
+            break :encoded .{ .codepoint = codepoint, .ulen = ulen };
+        };
+
+        if (encoded) |rune| {
+            self.writeCodepoint(rune.codepoint, .{
                 .escape_non_ascii = options.escape_non_ascii,
                 .quote_style = .double,
             }) catch unreachable;
-            i += ulen;
-        } else |err| {
-            assert(err == error.Utf8InvalidStartByte);
-            // ASCII character that needs escaping
-            self.writeCodepoint(byte, .{
-                .escape_non_ascii = options.escape_non_ascii,
-                .quote_style = .double,
-            }) catch unreachable; // InvalidCodepoint cannot occur for valid ASCII values
+            i += rune.ulen;
+        } else {
+            try self.writer.print("\\x{x:0>2}", .{byte});
             i += 1;
         }
         start = i;
@@ -458,33 +465,48 @@ pub fn string(self: *Serializer, val: []const u8, options: StringOptions) Writer
 }
 
 test string {
+    try testString("\"foobar\"", "foobar", .{});
+    try testString("\"€\"", "€", .{});
+    try testString("\"\\u{20ac}\"", "€", .{ .escape_non_ascii = true });
+
+    try testString("\"ÿ\"", "ÿ", .{});
+    try testString("\"\\u{ff}\"", "ÿ", .{ .escape_non_ascii = true });
+    try testString("\"\xff\"", &.{0xff}, .{});
+    try testString("\"\\xff\"", &.{0xff}, .{ .escape_non_ascii = true });
+    try testString("\"ÿ\"", &.{ 0xc3, 0xbf }, .{});
+    try testString("\"\\u{ff}\"", &.{ 0xc3, 0xbf }, .{ .escape_non_ascii = true });
+
+    try std.testing.fuzz(StringOptions{}, fuzzString, .{});
+    try std.testing.fuzz(StringOptions{ .escape_non_ascii = true }, fuzzString, .{});
+}
+
+fn testString(expected: []const u8, input: []const u8, options: StringOptions) !void {
     var allocating: Writer.Allocating = .init(std.testing.allocator);
     defer allocating.deinit();
     var s: Serializer = .{ .writer = &allocating.writer };
 
-    try s.string("foobar", .{});
-    try std.testing.expectEqualStrings("\"foobar\"", allocating.written());
-    allocating.clearRetainingCapacity();
+    try s.string(input, options);
+    try std.testing.expectEqualSlices(u8, expected, allocating.written());
+}
 
-    try s.string("€", .{});
-    try std.testing.expectEqualStrings("\"€\"", allocating.written());
-    allocating.clearRetainingCapacity();
+fn fuzzString(options: StringOptions, smith: *std.testing.Smith) !void {
+    var arena: std.heap.ArenaAllocator = .init(std.heap.smp_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
-    try s.string("€", .{ .escape_non_ascii = true });
-    try std.testing.expectEqualStrings("\"\\u{20ac}\"", allocating.written());
-    allocating.clearRetainingCapacity();
+    var allocating: Writer.Allocating = .init(allocator);
+    defer allocating.deinit();
+    var s: Serializer = .{ .writer = &allocating.writer };
 
-    try s.string(&.{0xff}, .{});
-    try std.testing.expectEqualStrings("\"\xff\"", allocating.written());
-    allocating.clearRetainingCapacity();
+    const input = try allocator.alloc(u8, smith.valueRangeAtMost(u32, 0, 0x100));
+    smith.bytes(input);
+    try s.string(input, options);
 
-    try s.string("ÿ", .{});
-    try std.testing.expectEqualStrings("\"ÿ\"", allocating.written());
-    allocating.clearRetainingCapacity();
-
-    try s.string("ÿ", .{ .escape_non_ascii = true });
-    try std.testing.expectEqualStrings("\"\\xff\"", allocating.written());
-    allocating.clearRetainingCapacity();
+    const encoded = try allocator.dupeSentinel(u8, allocating.written(), 0);
+    defer allocator.free(encoded);
+    const actual = try std.zon.parse.fromSliceAlloc([]const u8, allocator, encoded, null, .{});
+    defer std.zon.parse.free(allocator, actual);
+    try std.testing.expectEqualSlices(u8, input, actual);
 }
 
 /// Options for formatting multiline strings.

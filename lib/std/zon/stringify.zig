@@ -701,7 +701,7 @@ test "std.zon stringify strings" {
 
     // Minimal case
     try s.string("abc⚡ÿ\n", .{ .escape_non_ascii = true });
-    try std.testing.expectEqualStrings("\"abc\\u{26a1}\\xff\\n\"", aw.written());
+    try std.testing.expectEqualStrings("\"abc\\u{26a1}\\u{ff}\\n\"", aw.written());
     aw.clearRetainingCapacity();
 
     try s.tuple("abc⚡ÿ\n", .{});

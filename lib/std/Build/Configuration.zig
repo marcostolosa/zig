@@ -567,6 +567,8 @@ pub const Step = extern struct {
     pub const Run = struct {
         flags: @This().Flags,
         flags2: Flags2,
+        /// Starts with the args for the main process,
+        /// followed by a concatenation of all response file definitions and their respective args.
         args: Storage.LengthPrefixedList(Arg.Index),
         cwd: Storage.FlagOptional(.flags, .cwd, LazyPath.Index),
         preopens: Storage.FlagLengthPrefixedList(.flags, .preopens, Preopen),
@@ -612,7 +614,8 @@ pub const Step = extern struct {
                 generated: bool,
                 dep_file: bool,
                 make_absolute: bool,
-                _: u20 = 0,
+                response_file_definition: bool,
+                _: u19 = 0,
             };
 
             pub const Tag = enum(u4) {
@@ -625,6 +628,9 @@ pub const Step = extern struct {
                 file_content,
                 output_file,
                 output_directory,
+                /// `response_file_definition` marks the start of a new response file definition,
+                /// otherwise this arg references a response file.
+                response_file,
                 passthru,
                 /// `prefix` contains the enabled string.
                 /// `suffix` contains the disabled string.

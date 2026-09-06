@@ -49,8 +49,11 @@ pub fn make(
     var argv_list: std.ArrayList([]const u8) = .empty;
     defer argv_list.deinit(gpa);
 
-    var output_placeholders: std.ArrayList(IndexedOutput) = .empty;
+    var output_placeholders: std.ArrayList(ArgIndices) = .empty;
     defer output_placeholders.deinit(gpa);
+
+    var response_files: std.ArrayList(ArgIndices) = .empty;
+    defer response_files.deinit(gpa);
 
     var man = graph.cache.obtain();
     defer man.deinit();
@@ -157,10 +160,19 @@ pub fn make(
                 man.hash.addBytesZ(suffix);
                 _ = try man.addInputPath(file_path, .{});
             },
-            .output_file, .output_directory => {
+            .output_file, .output_directory, .response_file => |tag| if (arg.flags.response_file_definition) {
+                assert(tag == .response_file);
+                if (response_files.items.len == 0 and conf_run.flags.test_runner_mode) {
+                    try appendTestRunnerModeArgs(arena, run_index, maker, &argv_list, gpa);
+                }
+                try response_files.append(gpa, .{
+                    .index = @intCast(argv_list.items.len),
+                    .arg_index = arg_index,
+                });
+            } else {
                 const prefix = if (arg.prefix.value) |p| p.slice(conf) else "";
                 const suffix = if (arg.suffix.value) |p| p.slice(conf) else "";
-                const basename = arg.basename.value.?.slice(conf);
+                const basename = if (arg.basename.value) |p| p.slice(conf) else "";
 
                 man.hash.add(arg.flags.make_absolute);
                 man.hash.addBytesZ(prefix);
@@ -169,7 +181,16 @@ pub fn make(
                 man.hash.add(arg.flags.dep_file);
 
                 any_dep_files = any_dep_files or arg.flags.dep_file;
-                any_output_args = true;
+                switch (tag) {
+                    .output_file, .output_directory => {
+                        assert(basename.len != 0);
+                        any_output_args = true;
+                    },
+                    .response_file => {
+                        assert(basename.len == 0);
+                    },
+                    else => unreachable,
+                }
 
                 // Add a placeholder into the argument list because we need the
                 // manifest hash to be updated with all arguments before the
@@ -196,13 +217,8 @@ pub fn make(
     }
 
     man.hash.add(conf_run.flags.test_runner_mode);
-    if (conf_run.flags.test_runner_mode) {
-        const cache_dir_string = try convertPathArg(arena, run_index, maker, .{ .root_dir = cache_root }, false);
-
-        try argv_list.ensureUnusedCapacity(gpa, 3);
-        argv_list.appendAssumeCapacity(try arena.print("--cache-dir={s}", .{cache_dir_string}));
-        argv_list.appendAssumeCapacity(try arena.print("--seed=0x{x}", .{graph.random_seed}));
-        argv_list.appendAssumeCapacity("--listen=-");
+    if (response_files.items.len == 0 and conf_run.flags.test_runner_mode) {
+        try appendTestRunnerModeArgs(arena, run_index, maker, &argv_list, gpa);
     }
 
     switch (conf_run.stdin.u) {
@@ -263,18 +279,28 @@ pub fn make(
         // Cache hit; skip running command.
         const digest = man.hitDigestHex();
         try populateGeneratedStdIo(maker, &conf_run, &digest);
-        try populateGeneratedPaths(maker, output_placeholders.items, &digest);
+        try populateGeneratedPaths(maker, output_placeholders.items, response_files.items, &digest);
         step.result_cached = true;
         return;
     }
+
+    argv_list.lockPointers();
+    defer argv_list.unlockPointers();
+
+    const all_argv: [][]const u8 = argv_list.items;
+    const command_argv = if (response_files.items.len != 0)
+        all_argv[0..response_files.items[0].index]
+    else
+        all_argv;
 
     if (!any_dep_files) {
         // We already know the final output paths; use them directly.
         const digest = if (has_side_effects) man.hash.final() else man.missDigestHex();
         const output_dir_path = "o" ++ Dir.path.sep_str ++ &digest;
         try populateGeneratedStdIo(maker, &conf_run, &digest);
-        try populateGeneratedPathsCreateDirs(arena, run_index, maker, output_dir_path, output_placeholders.items, argv_list.items);
-        try runCommand(arena, run, run_index, maker, progress_node, argv_list.items, has_side_effects, output_dir_path, null);
+        try populateGeneratedPathsCreateDirs(arena, run_index, maker, output_dir_path, output_placeholders.items, response_files.items, all_argv);
+        try writeResponseFiles();
+        try runCommand(arena, run, run_index, maker, progress_node, command_argv, has_side_effects, output_dir_path, null);
         if (!has_side_effects) try step.finalizeManifestAndWatch(maker, &man);
         return;
     }
@@ -284,8 +310,9 @@ pub fn make(
     io.random(@ptrCast(&rand_int));
     const tmp_dir_path = "tmp" ++ Dir.path.sep_str ++ std.fmt.hex(rand_int);
 
-    try populateGeneratedPathsCreateDirs(arena, run_index, maker, tmp_dir_path, output_placeholders.items, argv_list.items);
-    try runCommand(arena, run, run_index, maker, progress_node, argv_list.items, has_side_effects, tmp_dir_path, null);
+    try populateGeneratedPathsCreateDirs(arena, run_index, maker, tmp_dir_path, output_placeholders.items, response_files.items, all_argv);
+    try writeResponseFiles();
+    try runCommand(arena, run, run_index, maker, progress_node, command_argv, has_side_effects, tmp_dir_path, null);
 
     for (output_placeholders.items) |placeholder| {
         const arg = placeholder.arg_index.get(conf);
@@ -363,7 +390,7 @@ pub fn make(
     if (!has_side_effects) try step.finalizeManifestAndWatch(maker, &man);
 
     try populateGeneratedStdIo(maker, &conf_run, &digest);
-    try populateGeneratedPaths(maker, output_placeholders.items, &digest);
+    try populateGeneratedPaths(maker, output_placeholders.items, response_files.items, &digest);
 
     // The utility functions that spawn the child process must unconditionally allocate
     // the failed command because at that point it is not known whether the step will
@@ -399,6 +426,23 @@ fn thirdPartyToggle(
             argv_list.appendAssumeCapacity(slice);
         }
     }
+}
+
+fn appendTestRunnerModeArgs(
+    arena: Allocator,
+    run_index: Configuration.Step.Index,
+    maker: *Maker,
+    argv_list: *std.ArrayList([]const u8),
+    argv_list_allocator: Allocator,
+) !void {
+    const graph = maker.graph;
+    const cache_root = graph.local_cache_root;
+    const cache_dir_string = try convertPathArg(arena, run_index, maker, .{ .root_dir = cache_root }, false);
+
+    try argv_list.ensureUnusedCapacity(argv_list_allocator, 3);
+    argv_list.appendAssumeCapacity(try arena.print("--cache-dir={s}", .{cache_dir_string}));
+    argv_list.appendAssumeCapacity(try arena.print("--seed=0x{x}", .{graph.random_seed}));
+    argv_list.appendAssumeCapacity("--listen=-");
 }
 
 /// Reads stdout of a Zig test process until a termination condition is reached:
@@ -1488,7 +1532,7 @@ fn evalGeneric(
     };
 }
 
-const IndexedOutput = struct {
+const ArgIndices = struct {
     index: u32,
     arg_index: Configuration.Step.Run.Arg.Index,
 };
@@ -1507,7 +1551,6 @@ pub fn rerunInFuzzMode(
     const conf = &maker.scanned_config.configuration;
     const conf_step = run_index.ptr(conf);
     const conf_run = conf_step.extended.get(conf.extra).run;
-    const cache_root = graph.local_cache_root;
 
     var arena_allocator: std.heap.ArenaAllocator = .init(gpa);
     defer arena_allocator.deinit();
@@ -1583,6 +1626,7 @@ pub fn rerunInFuzzMode(
             },
             .output_file => unreachable,
             .output_directory => unreachable,
+            .response_file => unreachable,
             .passthru => unreachable,
             .enable_darling => thirdPartyToggle(null, &argv_list, conf, graph.enable_darling, arg.prefix.value, arg.suffix.value),
             .enable_qemu => thirdPartyToggle(null, &argv_list, conf, graph.enable_qemu, arg.prefix.value, arg.suffix.value),
@@ -1593,12 +1637,7 @@ pub fn rerunInFuzzMode(
     }
 
     if (conf_run.flags.test_runner_mode) {
-        const cache_dir_string = try convertPathArg(arena, run_index, maker, .{ .root_dir = cache_root }, false);
-
-        try argv_list.ensureUnusedCapacity(gpa, 3);
-        argv_list.appendAssumeCapacity(try arena.print("--cache-dir={s}", .{cache_dir_string}));
-        argv_list.appendAssumeCapacity(try arena.print("--seed=0x{x}", .{graph.random_seed}));
-        argv_list.appendAssumeCapacity("--listen=-");
+        try appendTestRunnerModeArgs(arena, run_index, maker, &argv_list, gpa);
     }
 
     step.clearFailedCommand(gpa);
@@ -1614,13 +1653,24 @@ pub fn rerunInFuzzMode(
 
 fn populateGeneratedPaths(
     maker: *Maker,
-    output_placeholders: []const IndexedOutput,
+    output_placeholders: []const ArgIndices,
+    response_files: []const ArgIndices,
     digest: *const Cache.HexDigest,
 ) !void {
     const conf = &maker.scanned_config.configuration;
 
+    for (response_files) |indices| {
+        const rsp = indices.arg_index.get(conf);
+        assert(rsp.flags.tag == .response_file);
+        assert(rsp.flags.response_file_definition);
+        _ = try maker.setGeneratedPath(rsp.generated.value.?, .local_cache, &.{
+            "o", digest, rsp.basename.value.?.slice(conf),
+        });
+    }
+
     for (output_placeholders) |placeholder| {
         const arg = placeholder.arg_index.get(conf);
+        if (arg.flags.tag == .response_file) continue;
         _ = try maker.setGeneratedPath(arg.generated.value.?, .local_cache, &.{
             "o", digest, arg.basename.value.?.slice(conf),
         });
@@ -1632,8 +1682,9 @@ fn populateGeneratedPathsCreateDirs(
     run_index: Configuration.Step.Index,
     maker: *Maker,
     output_dir_path: []const u8,
-    output_placeholders: []const IndexedOutput,
-    argv: [][]const u8,
+    output_placeholders: []const ArgIndices,
+    response_files: []const ArgIndices,
+    all_argv: [][]const u8,
 ) !void {
     const step = maker.stepByIndex(run_index);
     const conf = &maker.scanned_config.configuration;
@@ -1641,28 +1692,52 @@ fn populateGeneratedPathsCreateDirs(
     const io = graph.io;
     const cache_root = graph.local_cache_root;
 
-    for (output_placeholders) |placeholder| {
-        const arg = placeholder.arg_index.get(conf);
-        const prefix = if (arg.prefix.value) |p| p.slice(conf) else "";
-        const suffix = if (arg.suffix.value) |p| p.slice(conf) else "";
-        const basename = arg.basename.value.?.slice(conf);
+    for (response_files) |indices| {
+        const rsp = indices.arg_index.get(conf);
+        assert(rsp.flags.tag == .response_file);
+        assert(rsp.flags.response_file_definition);
 
-        const generated_path = try maker.setGeneratedPath(arg.generated.value.?, .local_cache, &.{
+        const basename = rsp.basename.value.?.slice(conf);
+        const generated_path = try maker.setGeneratedPath(rsp.generated.value.?, .local_cache, &.{
             output_dir_path, basename,
         });
         const create_path: Path = .{
             .root_dir = cache_root,
-            .sub_path = switch (arg.flags.tag) {
-                .output_file => Dir.path.dirname(generated_path.sub_path).?,
-                .output_directory => generated_path.sub_path,
-                else => unreachable,
-            },
+            .sub_path = Dir.path.dirname(generated_path.sub_path).?,
         };
         create_path.root_dir.handle.createDirPath(io, create_path.sub_path) catch |err|
             return step.fail(maker, "unable to make path {f}: {t}", .{ create_path, err });
+    }
+
+    for (output_placeholders) |placeholder| {
+        const arg = placeholder.arg_index.get(conf);
+        const prefix = if (arg.prefix.value) |p| p.slice(conf) else "";
+        const suffix = if (arg.suffix.value) |p| p.slice(conf) else "";
+
+        const generated_path: Path = switch (arg.flags.tag) {
+            .output_file, .output_directory => |tag| p: {
+                const basename = arg.basename.value.?.slice(conf);
+                const generated_path = try maker.setGeneratedPath(arg.generated.value.?, .local_cache, &.{
+                    output_dir_path, basename,
+                });
+                const create_path: Path = .{
+                    .root_dir = cache_root,
+                    .sub_path = switch (tag) {
+                        .output_file => Dir.path.dirname(generated_path.sub_path).?,
+                        .output_directory => generated_path.sub_path,
+                        else => unreachable,
+                    },
+                };
+                create_path.root_dir.handle.createDirPath(io, create_path.sub_path) catch |err|
+                    return step.fail(maker, "unable to make path {f}: {t}", .{ create_path, err });
+                break :p generated_path;
+            },
+            .response_file => maker.generatedPath(arg.generated.value.?),
+            else => unreachable,
+        };
 
         const arg_output_path = try convertPathArg(arena, run_index, maker, generated_path, arg.flags.make_absolute);
-        argv[placeholder.index] = try mem.concat(arena, u8, &.{ prefix, arg_output_path, suffix });
+        all_argv[placeholder.index] = try mem.concat(arena, u8, &.{ prefix, arg_output_path, suffix });
     }
 }
 
@@ -1684,6 +1759,10 @@ fn populateGeneratedStdIo(
             "o", digest, captured.basename.slice(conf),
         });
     }
+}
+
+fn writeResponseFiles() !void {
+    // TODO
 }
 
 fn formatTerm(term: ?process.Child.Term, w: *std.Io.Writer) std.Io.Writer.Error!void {

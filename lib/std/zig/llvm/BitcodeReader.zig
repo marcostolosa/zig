@@ -10,7 +10,7 @@ keep_names: bool,
 bit_buffer: u32,
 bit_offset: u5,
 stack: std.ArrayList(State),
-block_info: std.AutoHashMapUnmanaged(u32, Block.Info),
+block_info: std.hash_map.Auto(u32, Block.Info),
 
 pub const Item = union(enum) {
     start_block: Block,
@@ -29,7 +29,7 @@ pub const Block = struct {
 
     const Info = struct {
         block_name: []const u8,
-        record_names: std.AutoHashMapUnmanaged(u32, []const u8),
+        record_names: std.hash_map.Auto(u32, []const u8),
         abbrevs: Abbrev.Store,
 
         const default: Info = .{

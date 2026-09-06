@@ -40,7 +40,7 @@ tomb_bits: []usize,
 ///    bits of operands.
 ///    The main tomb bits are still used and the extra ones are starting with the lsb of the
 ///    value here.
-special: std.AutoHashMapUnmanaged(Air.Inst.Index, u32),
+special: std.hash_map.Auto(Air.Inst.Index, u32),
 /// Auxiliary data. The way this data is interpreted is determined contextually.
 extra: []const u32,
 
@@ -97,10 +97,10 @@ fn LivenessPassData(comptime pass: LivenessPass) type {
             /// body and which we are currently within. Also includes `loop`s which are the target
             /// of a `repeat` instruction, and `loop_switch_br`s which are the target of a
             /// `switch_dispatch` instruction.
-            breaks: std.AutoHashMapUnmanaged(Air.Inst.Index, void) = .empty,
+            breaks: std.hash_map.Auto(Air.Inst.Index, void) = .empty,
 
             /// The set of operands for which we have seen at least one usage but not their birth.
-            live_set: std.AutoHashMapUnmanaged(Air.Inst.Index, void) = .empty,
+            live_set: std.hash_map.Auto(Air.Inst.Index, void) = .empty,
 
             fn deinit(self: *@This(), gpa: Allocator) void {
                 self.breaks.deinit(gpa);
@@ -110,11 +110,11 @@ fn LivenessPassData(comptime pass: LivenessPass) type {
 
         .main_analysis => struct {
             /// Every `block` and `loop` currently under analysis.
-            block_scopes: std.AutoHashMapUnmanaged(Air.Inst.Index, BlockScope) = .empty,
+            block_scopes: std.hash_map.Auto(Air.Inst.Index, BlockScope) = .empty,
 
             /// The set of instructions currently alive in the current control
             /// flow branch.
-            live_set: std.AutoHashMapUnmanaged(Air.Inst.Index, void) = .empty,
+            live_set: std.hash_map.Auto(Air.Inst.Index, void) = .empty,
 
             /// The extra data initialized by the `loop_analysis` pass for this pass to consume.
             /// Owned by this struct during this pass.
@@ -123,7 +123,7 @@ fn LivenessPassData(comptime pass: LivenessPass) type {
             const BlockScope = struct {
                 /// If this is a `block`, these instructions are alive upon a `br` to this block.
                 /// If this is a `loop`, these instructions are alive upon a `repeat` to this block.
-                live_set: std.AutoHashMapUnmanaged(Air.Inst.Index, void),
+                live_set: std.hash_map.Auto(Air.Inst.Index, void),
             };
 
             fn deinit(self: *@This(), gpa: Allocator) void {
@@ -347,7 +347,7 @@ const Analysis = struct {
     air: Air,
     intern_pool: *InternPool,
     tomb_bits: []usize,
-    special: std.AutoHashMapUnmanaged(Air.Inst.Index, u32),
+    special: std.hash_map.Auto(Air.Inst.Index, u32),
     extra: std.ArrayList(u32),
 
     fn addExtra(a: *Analysis, extra: anytype) Allocator.Error!u32 {
@@ -1044,8 +1044,8 @@ fn writeLoopInfo(
     a: *Analysis,
     data: *LivenessPassData(.loop_analysis),
     inst: Air.Inst.Index,
-    old_breaks: std.AutoHashMapUnmanaged(Air.Inst.Index, void),
-    old_live: std.AutoHashMapUnmanaged(Air.Inst.Index, void),
+    old_breaks: std.hash_map.Auto(Air.Inst.Index, void),
+    old_live: std.hash_map.Auto(Air.Inst.Index, void),
 ) !void {
     const gpa = a.gpa;
 
@@ -1306,10 +1306,10 @@ fn analyzeInstSwitchBr(
 
     switch (pass) {
         .loop_analysis => {
-            var old_breaks: std.AutoHashMapUnmanaged(Air.Inst.Index, void) = .empty;
+            var old_breaks: std.hash_map.Auto(Air.Inst.Index, void) = .empty;
             defer old_breaks.deinit(gpa);
 
-            var old_live: std.AutoHashMapUnmanaged(Air.Inst.Index, void) = .empty;
+            var old_live: std.hash_map.Auto(Air.Inst.Index, void) = .empty;
             defer old_live.deinit(gpa);
 
             if (is_dispatch_loop) {
@@ -1346,10 +1346,10 @@ fn analyzeInstSwitchBr(
             // This is, all in all, just a messier version of the `cond_br` logic. If you're trying
             // to understand it, I encourage looking at `analyzeInstCondBr` first.
 
-            const DeathSet = std.AutoHashMapUnmanaged(Air.Inst.Index, void);
+            const DeathSet = std.hash_map.Auto(Air.Inst.Index, void);
             const DeathList = std.ArrayList(Air.Inst.Index);
 
-            var case_live_sets = try gpa.alloc(std.AutoHashMapUnmanaged(Air.Inst.Index, void), ncases + 1); // +1 for else
+            var case_live_sets = try gpa.alloc(std.hash_map.Auto(Air.Inst.Index, void), ncases + 1); // +1 for else
             defer gpa.free(case_live_sets);
 
             @memset(case_live_sets, .{});
@@ -1551,12 +1551,12 @@ fn AnalyzeBigOperands(comptime pass: LivenessPass) type {
     };
 }
 
-fn fmtInstSet(set: *const std.AutoHashMapUnmanaged(Air.Inst.Index, void)) FmtInstSet {
+fn fmtInstSet(set: *const std.hash_map.Auto(Air.Inst.Index, void)) FmtInstSet {
     return .{ .set = set };
 }
 
 const FmtInstSet = struct {
-    set: *const std.AutoHashMapUnmanaged(Air.Inst.Index, void),
+    set: *const std.hash_map.Auto(Air.Inst.Index, void),
 
     pub fn format(val: FmtInstSet, w: *Writer) Writer.Error!void {
         if (val.set.count() == 0) {

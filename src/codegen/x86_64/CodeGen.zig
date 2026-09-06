@@ -139,7 +139,7 @@ reused_operands: std.bit_set.Static(Air.Liveness.bpi - 1) = undefined,
 inst_tracking: InstTrackingMap = .empty,
 
 // Key is the block instruction
-blocks: std.AutoHashMapUnmanaged(Air.Inst.Index, BlockData) = .empty,
+blocks: std.hash_map.Auto(Air.Inst.Index, BlockData) = .empty,
 
 register_manager: RegisterManager = .{},
 
@@ -150,13 +150,13 @@ frame_allocs: std.MultiArrayList(FrameAlloc) = .empty,
 free_frame_indices: std.array_hash_map.Auto(FrameIndex, void) = .empty,
 frame_locs: std.MultiArrayList(Mir.FrameLoc) = .empty,
 
-loops: std.AutoHashMapUnmanaged(Air.Inst.Index, struct {
+loops: std.hash_map.Auto(Air.Inst.Index, struct {
     /// The state to restore before branching.
     state: State,
     /// The branch target.
     target: Mir.Inst.Index,
 }) = .empty,
-loop_switches: std.AutoHashMapUnmanaged(Air.Inst.Index, struct {
+loop_switches: std.hash_map.Auto(Air.Inst.Index, struct {
     start: u31,
     len: u11,
     min: Value,
@@ -177826,7 +177826,7 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
             return name.len > 0;
         }
     };
-    var labels: std.StringHashMap(Label) = .empty;
+    var labels: std.hash_map.String(Label) = .empty;
     defer {
         var label_it = labels.valueIterator();
         while (label_it.next()) |label| label.pending_relocs.deinit(self.gpa);

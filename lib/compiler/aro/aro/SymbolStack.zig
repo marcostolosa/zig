@@ -41,8 +41,8 @@ scopes: std.ArrayList(Scope) = .empty,
 active_len: usize = 0,
 
 const Scope = struct {
-    vars: std.AutoHashMapUnmanaged(StringId, Symbol) = .empty,
-    tags: std.AutoHashMapUnmanaged(StringId, Symbol) = .empty,
+    vars: std.hash_map.Auto(StringId, Symbol) = .empty,
+    tags: std.hash_map.Auto(StringId, Symbol) = .empty,
 
     fn deinit(self: *Scope, allocator: Allocator) void {
         self.vars.deinit(allocator);

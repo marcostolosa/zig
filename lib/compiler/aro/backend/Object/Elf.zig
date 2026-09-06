@@ -37,9 +37,9 @@ const Elf = @This();
 
 obj: Object,
 /// The keys are owned by the Codegen.tree
-sections: std.StringHashMap(*Section) = .empty,
-local_symbols: std.StringHashMap(*Symbol) = .empty,
-global_symbols: std.StringHashMap(*Symbol) = .empty,
+sections: std.hash_map.String(*Section) = .empty,
+local_symbols: std.hash_map.String(*Symbol) = .empty,
+global_symbols: std.hash_map.String(*Symbol) = .empty,
 unnamed_symbol_mangle: u32 = 0,
 strtab_len: u64 = strtab_default.len,
 arena: std.heap.ArenaAllocator,

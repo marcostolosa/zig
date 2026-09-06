@@ -3401,7 +3401,7 @@ pub fn mapOldZirToNew(
     gpa: Allocator,
     old_zir: Zir,
     new_zir: Zir,
-    inst_map: *std.AutoHashMapUnmanaged(Zir.Inst.Index, Zir.Inst.Index),
+    inst_map: *std.hash_map.Auto(Zir.Inst.Index, Zir.Inst.Index),
 ) Allocator.Error!void {
     // Contain ZIR indexes of namespace declaration instructions, e.g. struct_decl, union_decl, etc.
     // Not `declaration`, as this does not create a namespace.
@@ -3516,13 +3516,13 @@ pub fn mapOldZirToNew(
         }
 
         // Maps decl name to `declaration` instruction.
-        var named_decls: std.StringHashMap(Zir.Inst.Index) = .empty;
+        var named_decls: std.hash_map.String(Zir.Inst.Index) = .empty;
         defer named_decls.deinit(gpa);
         // Maps test name to `declaration` instruction.
-        var named_tests: std.StringHashMap(Zir.Inst.Index) = .empty;
+        var named_tests: std.hash_map.String(Zir.Inst.Index) = .empty;
         defer named_tests.deinit(gpa);
         // Maps test name to `declaration` instruction.
-        var named_decltests: std.StringHashMap(Zir.Inst.Index) = .empty;
+        var named_decltests: std.hash_map.String(Zir.Inst.Index) = .empty;
         defer named_decltests.deinit(gpa);
         // All unnamed tests, in order, for a best-effort match.
         var unnamed_tests: std.ArrayList(Zir.Inst.Index) = .empty;
@@ -5130,7 +5130,7 @@ pub fn populateReferenceTrace(
 
     const all_references = try zcu.resolveReferences();
 
-    var seen: std.AutoHashMapUnmanaged(InternPool.AnalUnit, void) = .empty;
+    var seen: std.hash_map.Auto(InternPool.AnalUnit, void) = .empty;
     defer seen.deinit(gpa);
 
     var referenced_by = root;

@@ -248,7 +248,7 @@ pub fn DebugAllocator(comptime config: Config) type {
                 collectStackTrace(ret_addr, stack_addresses);
             }
         };
-        const LargeAllocTable = std.AutoHashMapUnmanaged(usize, LargeAlloc);
+        const LargeAllocTable = std.hash_map.Auto(usize, LargeAlloc);
 
         /// Bucket: In memory, in order:
         /// * BucketHeader

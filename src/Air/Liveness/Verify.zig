@@ -5,8 +5,8 @@ zcu: *Zcu,
 air: Air,
 liveness: Liveness,
 live: LiveMap = .{},
-blocks: std.AutoHashMapUnmanaged(Air.Inst.Index, LiveMap) = .empty,
-loops: std.AutoHashMapUnmanaged(Air.Inst.Index, LiveMap) = .empty,
+blocks: std.hash_map.Auto(Air.Inst.Index, LiveMap) = .empty,
+loops: std.hash_map.Auto(Air.Inst.Index, LiveMap) = .empty,
 intern_pool: *const InternPool,
 
 pub const Error = error{ LivenessInvalid, OutOfMemory };
@@ -36,7 +36,7 @@ pub fn verify(self: *Verify) Error!void {
     assert(self.loops.count() == 0);
 }
 
-const LiveMap = std.AutoHashMapUnmanaged(Air.Inst.Index, void);
+const LiveMap = std.hash_map.Auto(Air.Inst.Index, void);
 
 fn verifyBody(self: *Verify, body: []const Air.Inst.Index) Error!void {
     const ip = self.intern_pool;

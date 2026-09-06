@@ -1,5 +1,4 @@
 const std = @import("std.zig");
-const StringHashMap = std.StringHashMapManaged;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const testing = std.testing;
@@ -9,7 +8,7 @@ const testing = std.testing;
 pub const BufMap = struct {
     hash_map: BufMapHashMap,
 
-    const BufMapHashMap = StringHashMap([]const u8);
+    const BufMapHashMap = std.hash_map.StringManaged([]const u8);
 
     /// Create a BufMap backed by a specific allocator.
     /// That allocator will be used for both backing allocations

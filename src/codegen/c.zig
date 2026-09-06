@@ -477,8 +477,8 @@ pub fn isMangledIdent(ident: []const u8, solo: bool) bool {
 pub const Function = struct {
     air: Air,
     liveness: Air.Liveness,
-    value_map: std.AutoHashMap(Air.Inst.Ref, CValue),
-    blocks: std.AutoHashMapUnmanaged(Air.Inst.Index, BlockData) = .empty,
+    value_map: std.AutoHashMapManaged(Air.Inst.Ref, CValue),
+    blocks: std.hash_map.Auto(Air.Inst.Index, BlockData) = .empty,
     next_arg_index: u32 = 0,
     next_block_index: u32 = 0,
     dg: DeclGen,
@@ -504,7 +504,7 @@ pub const Function = struct {
     allocs: std.array_hash_map.Auto(LocalIndex, bool) = .empty,
     /// Maps from `loop_switch_br` instructions to the allocated local used
     /// for the switch cond. Dispatches should set this local to the new cond.
-    loop_switch_conds: std.AutoHashMapUnmanaged(Air.Inst.Index, LocalIndex) = .empty,
+    loop_switch_conds: std.hash_map.Auto(Air.Inst.Index, LocalIndex) = .empty,
 
     const indent_width = 1;
     const indent_char = ' ';

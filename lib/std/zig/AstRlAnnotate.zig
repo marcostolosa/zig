@@ -17,7 +17,6 @@ const std = @import("std");
 const AstRlAnnotate = @This();
 const Ast = std.zig.Ast;
 const Allocator = std.mem.Allocator;
-const AutoHashMapUnmanaged = std.AutoHashMapUnmanaged;
 const BuiltinFn = std.zig.BuiltinFn;
 const assert = std.debug.assert;
 
@@ -36,7 +35,7 @@ tree: *const Ast,
 /// * return: the return expression consumes the result location
 nodes_need_rl: RlNeededSet = .{},
 
-pub const RlNeededSet = AutoHashMapUnmanaged(Ast.Node.Index, void);
+pub const RlNeededSet = std.hash_map.Auto(Ast.Node.Index, void);
 
 const ResultInfo = packed struct {
     /// Do we have a known result type?

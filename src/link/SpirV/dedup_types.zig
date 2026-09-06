@@ -51,7 +51,7 @@ pub fn run(parser: *BinaryModule.Parser, binary: *BinaryModule) !void {
         canonical_map.deinit(gpa);
     }
 
-    var id_remap: std.AutoHashMapUnmanaged(Id, Id) = .empty;
+    var id_remap: std.hash_map.Auto(Id, Id) = .empty;
     defer id_remap.deinit(gpa);
 
     var id_offsets: std.ArrayList(u16) = .empty;
@@ -132,7 +132,7 @@ pub fn run(parser: *BinaryModule.Parser, binary: *BinaryModule) !void {
     defer new_words.deinit(gpa);
     try new_words.ensureTotalCapacity(gpa, binary.instructions.len);
 
-    var emitted_annotations: std.AutoHashMapUnmanaged(u64, void) = .empty;
+    var emitted_annotations: std.hash_map.Auto(u64, void) = .empty;
     defer emitted_annotations.deinit(gpa);
 
     var new_functions_offset: ?usize = null;

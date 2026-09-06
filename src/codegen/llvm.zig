@@ -112,7 +112,7 @@ pub const Object = struct {
     debug_enums: std.ArrayList(Builder.Metadata),
     debug_globals: std.ArrayList(Builder.Metadata),
 
-    debug_file_map: std.AutoHashMapUnmanaged(Zcu.File.Index, Builder.Metadata),
+    debug_file_map: std.hash_map.Auto(Zcu.File.Index, Builder.Metadata),
 
     /// Keyed on `link.ConstPool.Index`.
     debug_types: std.ArrayList(Builder.Metadata),
@@ -123,18 +123,18 @@ pub const Object = struct {
 
     zcu: *Zcu,
     /// Maps a `Nav` to the corresponding LLVM global.
-    nav_map: std.AutoHashMapUnmanaged(InternPool.Nav.Index, Builder.Global.Index),
+    nav_map: std.hash_map.Auto(InternPool.Nav.Index, Builder.Global.Index),
     /// Same as `nav_map` but for UAVs (which are always global constants).
-    uav_map: std.AutoHashMapUnmanaged(struct {
+    uav_map: std.hash_map.Auto(struct {
         val: InternPool.Index,
         @"addrspace": std.lang.AddressSpace,
     }, Builder.Variable.Index),
     /// Same as `uav_map` but for llvm values not originating from the frontend.
-    const_map: std.AutoHashMapUnmanaged(Builder.Constant, Builder.Variable.Index),
+    const_map: std.hash_map.Auto(Builder.Constant, Builder.Variable.Index),
     /// Maps enum types to their corresponding LLVM functions for implementing the `tag_name` instruction.
-    enum_tag_name_map: std.AutoHashMapUnmanaged(InternPool.Index, Builder.Function.Index),
+    enum_tag_name_map: std.hash_map.Auto(InternPool.Index, Builder.Function.Index),
     /// Serves the same purpose as `enum_tag_name_map` but for the `is_named_enum_value` instruction.
-    named_enum_map: std.AutoHashMapUnmanaged(InternPool.Index, Builder.Function.Index),
+    named_enum_map: std.hash_map.Auto(InternPool.Index, Builder.Function.Index),
     /// Maps Zig types to LLVM types. The table memory is backed by the GPA of
     /// the compiler.
     /// TODO when InternPool garbage collection is implemented, this map needs
@@ -156,7 +156,7 @@ pub const Object = struct {
 
     pub const Ptr = if (@import("../dev.zig").env.supports(.llvm_backend)) *Object else noreturn;
 
-    const TypeMap = std.AutoHashMapUnmanaged(InternPool.Index, Builder.Type);
+    const TypeMap = std.hash_map.Auto(InternPool.Index, Builder.Type);
 
     pub fn create(arena: Allocator, zcu: *Zcu) !Ptr {
         const comp = zcu.comp;

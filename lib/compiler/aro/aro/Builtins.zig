@@ -71,7 +71,7 @@ pub const Expanded = struct {
 
 const Builtins = @This();
 
-_name_to_type_map: std.StringHashMap(Expanded) = .empty,
+_name_to_type_map: std.hash_map.String(Expanded) = .empty,
 
 pub fn deinit(b: *Builtins, gpa: std.mem.Allocator) void {
     b._name_to_type_map.deinit(gpa);

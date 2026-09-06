@@ -2226,10 +2226,10 @@ test writeVarPackedInt {
     try testing.expectEqual(T{ .a = 1, .b = value, .c = 4 }, st);
 }
 
-/// Deprecated: use `byteSwap` instead.
+/// Deprecated; use `byteSwap` instead.
 pub const byteSwapAllFields = byteSwap;
 
-/// Deprecated: use `byteSwapAligned` instead.
+/// Deprecated; use `byteSwapAligned` instead.
 pub const byteSwapAllFieldsAligned = byteSwapAligned;
 
 /// Reverses the byte order.

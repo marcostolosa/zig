@@ -531,7 +531,7 @@ pub fn lowerToBuildSteps(
             continue;
 
         const writefiles = b.addWriteFiles();
-        var file_sources = std.StringHashMap(std.Build.LazyPath).empty;
+        var file_sources = std.StringHashMapUnmanaged(std.Build.LazyPath).empty;
         defer file_sources.deinit(arena);
         const first_file = case.files.items[0];
         const root_source_file = writefiles.add(first_file.path, first_file.src);
@@ -726,7 +726,7 @@ const TestManifestConfigDefaults = struct {
 /// build test
 const TestManifest = struct {
     type: Type,
-    config_map: std.StringHashMapManaged([]const u8),
+    config_map: std.hash_map.StringManaged([]const u8),
     trailing_bytes: []const u8 = "",
 
     const valid_keys = std.StaticStringMap(void).initComptime(.{
@@ -825,7 +825,7 @@ const TestManifest = struct {
 
         var manifest: TestManifest = .{
             .type = tt,
-            .config_map = std.StringHashMapManaged([]const u8).init(arena),
+            .config_map = .init(arena),
         };
 
         // Any subsequent line until a blank comment line is key=value(s) pair

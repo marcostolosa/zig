@@ -782,7 +782,7 @@ fn loadZirZoirCache(
 
 const UpdatedFile = struct {
     file: *Zcu.File,
-    inst_map: std.AutoHashMapUnmanaged(Zir.Inst.Index, Zir.Inst.Index),
+    inst_map: std.hash_map.Auto(Zir.Inst.Index, Zir.Inst.Index),
 };
 
 fn cleanupUpdatedFiles(gpa: Allocator, updated_files: *std.array_hash_map.Auto(Zcu.File.Index, UpdatedFile)) void {
@@ -3046,7 +3046,7 @@ pub fn scanNamespace(
     // For incremental updates, `scanDecl` wants to look up existing decls by their ZIR index rather
     // than their name. We'll build an efficient mapping now, then discard the current `decls`.
     // We map to the `AnalUnit`, since not every declaration has a `Nav`.
-    var existing_by_inst: std.AutoHashMapUnmanaged(InternPool.TrackedInst.Index, InternPool.AnalUnit) = .empty;
+    var existing_by_inst: std.hash_map.Auto(InternPool.TrackedInst.Index, InternPool.AnalUnit) = .empty;
     defer existing_by_inst.deinit(gpa);
 
     try existing_by_inst.ensureTotalCapacity(gpa, @intCast(
@@ -3074,7 +3074,7 @@ pub fn scanNamespace(
         _ = zcu.test_functions.swapRemove(nav);
     }
 
-    var seen_decls: std.AutoHashMapUnmanaged(InternPool.NullTerminatedString, void) = .empty;
+    var seen_decls: std.hash_map.Auto(InternPool.NullTerminatedString, void) = .empty;
     defer seen_decls.deinit(gpa);
 
     namespace.pub_decls.clearRetainingCapacity();
@@ -3101,8 +3101,8 @@ pub fn scanNamespace(
 const ScanDeclIter = struct {
     pt: Zcu.PerThread,
     namespace_index: Zcu.Namespace.Index,
-    seen_decls: *std.AutoHashMapUnmanaged(InternPool.NullTerminatedString, void),
-    existing_by_inst: *const std.AutoHashMapUnmanaged(InternPool.TrackedInst.Index, InternPool.AnalUnit),
+    seen_decls: *std.hash_map.Auto(InternPool.NullTerminatedString, void),
+    existing_by_inst: *const std.hash_map.Auto(InternPool.TrackedInst.Index, InternPool.AnalUnit),
     /// Decl scanning is run in two passes, so that we can detect when a generated
     /// name would clash with an explicit name and use a different one.
     pass: enum { named, unnamed },

@@ -109,7 +109,7 @@ avl: ?u64,
 vtype: ?bits.VType,
 
 // Key is the block instruction
-blocks: std.AutoHashMapUnmanaged(Air.Inst.Index, BlockData) = .empty,
+blocks: std.hash_map.Auto(Air.Inst.Index, BlockData) = .empty,
 register_manager: RegisterManager = .{},
 
 const_tracking: ConstTrackingMap = .{},
@@ -119,7 +119,7 @@ frame_allocs: std.MultiArrayList(FrameAlloc) = .{},
 free_frame_indices: std.array_hash_map.Auto(FrameIndex, void) = .empty,
 frame_locs: std.MultiArrayList(Mir.FrameLoc) = .{},
 
-loops: std.AutoHashMapUnmanaged(Air.Inst.Index, struct {
+loops: std.hash_map.Auto(Air.Inst.Index, struct {
     /// The state to restore before branching.
     state: State,
     /// The branch target.
@@ -6043,7 +6043,7 @@ fn airAsm(func: *Func, inst: Air.Inst.Index) !void {
         });
         args.deinit();
     }
-    var arg_map = std.StringHashMap(u8).empty;
+    var arg_map = std.hash_map.String(u8).empty;
     try arg_map.ensureTotalCapacity(func.gpa, @intCast(outputs.len + inputs.len));
     defer arg_map.deinit(func.gpa);
 
@@ -6183,7 +6183,7 @@ fn airAsm(func: *Func, inst: Air.Inst.Index) !void {
             return name.len > 0;
         }
     };
-    var labels: std.StringHashMap(Label) = .empty;
+    var labels: std.hash_map.String(Label) = .empty;
     defer {
         var label_it = labels.valueIterator();
         while (label_it.next()) |label| label.pending_relocs.deinit(func.gpa);

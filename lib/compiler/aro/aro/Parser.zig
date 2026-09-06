@@ -129,7 +129,7 @@ attr_application_buf: std.ArrayList(Attribute) = .empty,
 /// Items are removed if the type is subsequently completed with a definition.
 /// We only store the first tentative definition that uses a given type because this map is only used
 /// for issuing an error message, and correcting the first error for a type will fix all of them for that type.
-tentative_defs: std.AutoHashMapUnmanaged(StringId, TokenIndex) = .empty,
+tentative_defs: std.hash_map.Auto(StringId, TokenIndex) = .empty,
 
 // configuration and miscellaneous info
 no_eval: bool = false,

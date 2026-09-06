@@ -507,7 +507,7 @@ const Object = struct {
 /// freed by the caller at any point after inserting it into the cache. Any
 /// objects remaining in the cache will be freed when the cache itself is freed.
 const ObjectCache = struct {
-    objects: std.AutoHashMapUnmanaged(u64, CacheEntry) = .empty,
+    objects: std.hash_map.Auto(u64, CacheEntry) = .empty,
     lru_nodes: std.DoublyLinkedList = .{},
     lru_nodes_len: usize = 0,
     byte_size: usize = 0,
@@ -1279,7 +1279,7 @@ pub fn indexPack(
 ) !void {
     try pack.seekTo(0);
 
-    var index_entries: std.AutoHashMapUnmanaged(Oid, IndexEntry) = .empty;
+    var index_entries: std.hash_map.Auto(Oid, IndexEntry) = .empty;
     defer index_entries.deinit(allocator);
     var pending_deltas: std.ArrayList(IndexEntry) = .empty;
     defer pending_deltas.deinit(allocator);
@@ -1375,7 +1375,7 @@ fn indexPackFirstPass(
     allocator: Allocator,
     format: Oid.Format,
     pack: *Io.File.Reader,
-    index_entries: *std.AutoHashMapUnmanaged(Oid, IndexEntry),
+    index_entries: *std.hash_map.Auto(Oid, IndexEntry),
     pending_deltas: *std.ArrayList(IndexEntry),
 ) !Oid {
     var flate_buffer: [std.compress.flate.max_window_len]u8 = undefined;
@@ -1429,7 +1429,7 @@ fn indexPackHashDelta(
     format: Oid.Format,
     pack: *Io.File.Reader,
     delta: IndexEntry,
-    index_entries: std.AutoHashMapUnmanaged(Oid, IndexEntry),
+    index_entries: std.hash_map.Auto(Oid, IndexEntry),
     cache: *ObjectCache,
 ) !?Oid {
     // Figure out the chain of deltas to resolve

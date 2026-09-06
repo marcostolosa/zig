@@ -250,9 +250,9 @@ add_expansion_nl: u32 = 0,
 include_depth: u8 = 0,
 counter: u32 = 0,
 expansion_source_loc: Source.Location = undefined,
-poisoned_identifiers: std.StringHashMap(void) = .empty,
+poisoned_identifiers: std.hash_map.String(void) = .empty,
 /// Map from Source.Id to macro name in the `#ifndef` condition which guards the source, if any
-include_guards: std.AutoHashMapUnmanaged(Source.Id, []const u8) = .empty,
+include_guards: std.hash_map.Auto(Source.Id, []const u8) = .empty,
 
 /// Store `keyword_define` and `keyword_undef` tokens.
 /// Used to implement preprocessor debug dump options
@@ -273,7 +273,7 @@ hideset: Hideset,
 
 /// Epoch used for __DATE__, __TIME__, and possibly __TIMESTAMP__
 source_epoch: SourceEpoch,
-m_times: std.AutoHashMapUnmanaged(Source.Id, u64) = .empty,
+m_times: std.hash_map.Auto(Source.Id, u64) = .empty,
 
 /// The dependency file tracking all includes and embeds.
 dep_file: ?*DepFile = null,

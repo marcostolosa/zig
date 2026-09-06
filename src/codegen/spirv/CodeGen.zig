@@ -12,14 +12,14 @@ base_line: u32,
 next_result_id: Word = 1,
 decls: std.ArrayList(Decl) = .empty,
 decl_deps: std.ArrayList(Decl.Index) = .empty,
-nav_link: std.AutoHashMapUnmanaged(InternPool.Nav.Index, Decl.Index) = .empty,
-uav_link: std.AutoHashMapUnmanaged(struct { InternPool.Index, spec.StorageClass }, Decl.Index) = .empty,
+nav_link: std.hash_map.Auto(InternPool.Nav.Index, Decl.Index) = .empty,
+uav_link: std.hash_map.Auto(struct { InternPool.Index, spec.StorageClass }, Decl.Index) = .empty,
 entry_points: std.array_hash_map.Auto(Id, EntryPoint) = .empty,
 error_buffer: ?Decl.Index = null,
 struct_types: std.array_hash_map.Custom(StructType, Id, StructType.HashContext, true) = .empty,
 /// SPIR-V ids of OpVariables whose pointee is a Block struct
-block_var_ids: std.AutoHashMapUnmanaged(Id, void) = .empty,
-builtins: std.AutoHashMapUnmanaged(struct { spec.BuiltIn, spec.StorageClass }, Decl.Index) = .empty,
+block_var_ids: std.hash_map.Auto(Id, void) = .empty,
+builtins: std.hash_map.Auto(struct { spec.BuiltIn, spec.StorageClass }, Decl.Index) = .empty,
 sections: struct {
     // Module layout, according to SPIR-V Spec section 2.4, "Logical Layout of a Module".
     extended_instruction_set: Section = .{},
@@ -40,17 +40,17 @@ next_arg_index: u32 = 0,
 /// Caches the limb extractions for composite integer values so repeated
 /// arithmetic on the same operand doesn't re-emit `OpCompositeExtract` per
 /// limb per use. Slices are owned by `cg.arena`.
-composite_limbs: std.AutoHashMapUnmanaged(Id, []const Id) = .empty,
+composite_limbs: std.hash_map.Auto(Id, []const Id) = .empty,
 block_stack: std.ArrayList(*Block) = .empty,
 block_label: Id = .none,
 /// Whether the current block has been terminated by a terminator
 /// instruction (e.g. OpKill from inline assembly). When true, no further
 /// branch instructions should be emitted for the current block.
 block_terminated: bool = false,
-block_results: std.AutoHashMapUnmanaged(Air.Inst.Index, Id) = .empty,
-inst_results: std.AutoHashMapUnmanaged(Air.Inst.Index, Id) = .empty,
-tracked_allocas: std.AutoHashMapUnmanaged(Id, ?Id) = .empty,
-loop_switches: std.AutoHashMapUnmanaged(Air.Inst.Index, LoopSwitch) = .empty,
+block_results: std.hash_map.Auto(Air.Inst.Index, Id) = .empty,
+inst_results: std.hash_map.Auto(Air.Inst.Index, Id) = .empty,
+tracked_allocas: std.hash_map.Auto(Id, ?Id) = .empty,
+loop_switches: std.hash_map.Auto(Air.Inst.Index, LoopSwitch) = .empty,
 id_scratch: std.ArrayList(Id) = .empty,
 
 fn hasInt64(target: *const std.Target) bool {

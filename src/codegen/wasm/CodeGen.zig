@@ -149,7 +149,7 @@ blocks: std.array_hash_map.Auto(Air.Inst.Index, struct {
     value: WValue,
 }) = .{},
 /// Maps `loop` instructions to their label. `br` to here repeats the loop.
-loops: std.AutoHashMapUnmanaged(Air.Inst.Index, u32) = .empty,
+loops: std.hash_map.Auto(Air.Inst.Index, u32) = .empty,
 /// The index the next local generated will have
 /// NOTE: arguments share the index with locals therefore the first variable
 /// will have the index that comes after the last argument's index

@@ -44,7 +44,7 @@ const Fmt = struct {
     total_tokens: u64,
     total_nodes: u64,
 
-    const SeenMap = std.AutoHashMap(Io.File.INode, void);
+    const SeenMap = std.AutoHashMapManaged(Io.File.INode, void);
 };
 
 pub fn run(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !void {

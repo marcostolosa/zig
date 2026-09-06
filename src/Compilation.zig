@@ -235,7 +235,7 @@ openbsd_so_files: ?openbsd.BuiltSharedObjects = null,
 /// For example `Scrt1.o` and `libc_nonshared.a`. These are populated after building libc from source,
 /// The set of needed CRT (C runtime) files differs depending on the target and compilation settings.
 /// The key is the basename, and the value is the absolute path to the completed build artifact.
-crt_files: std.StringHashMap(CrtFile) = .empty,
+crt_files: std.hash_map.String(CrtFile) = .empty,
 
 /// How many lines of reference trace should be included per compile error.
 /// Null means only show snippet on first error.
@@ -7197,7 +7197,7 @@ pub fn crtFileAsString(comp: *Compilation, arena: Allocator, basename: []const u
     return path.toString(arena);
 }
 
-fn crtFilePath(crt_files: *std.StringHashMap(CrtFile), basename: []const u8) Allocator.Error!?Cache.Path {
+fn crtFilePath(crt_files: *std.hash_map.String(CrtFile), basename: []const u8) Allocator.Error!?Cache.Path {
     const crt_file = crt_files.get(basename) orelse return null;
     return crt_file.full_object_path;
 }
@@ -7628,7 +7628,7 @@ fn getCrtPathsInner(
     target: *const std.Target,
     config: Config,
     libc_installation: ?*const LibCInstallation,
-    crt_files: *std.StringHashMap(CrtFile),
+    crt_files: *std.hash_map.String(CrtFile),
 ) error{ OutOfMemory, LibCInstallationMissingCrtDir }!LibCInstallation.CrtPaths {
     const basenames = LibCInstallation.CrtBasenames.get(.{
         .target = target,

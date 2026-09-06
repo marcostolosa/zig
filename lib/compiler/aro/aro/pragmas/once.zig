@@ -17,7 +17,7 @@ pragma: Pragma = .{
     .preprocessorHandler = preprocessorHandler,
     .preserveTokens = preserveTokens,
 },
-pragma_once: std.AutoHashMapUnmanaged(Source.Id, void) = .empty,
+pragma_once: std.hash_map.Auto(Source.Id, void) = .empty,
 preprocess_count: u32 = 0,
 
 pub fn init(allocator: mem.Allocator) !*Pragma {

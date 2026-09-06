@@ -1,5 +1,4 @@
 const std = @import("std.zig");
-const StringHashMap = std.StringHashMapManaged;
 const mem = @import("mem.zig");
 const Allocator = mem.Allocator;
 const testing = std.testing;
@@ -10,7 +9,7 @@ const testing = std.testing;
 pub const BufSet = struct {
     hash_map: BufSetHashMap,
 
-    const BufSetHashMap = StringHashMap(void);
+    const BufSetHashMap = std.hash_map.StringManaged(void);
     pub const Iterator = BufSetHashMap.KeyIterator;
 
     /// Create a BufSet using an allocator.  The allocator will

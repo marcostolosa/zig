@@ -9,7 +9,7 @@ pub fn run(parser: *BinaryModule.Parser, binary: *BinaryModule) !void {
     const gpa = parser.gpa;
 
     // map result-id → index in id_offsets for preamble instructions and function headers
-    var id_to_index: std.AutoHashMapUnmanaged(ResultId, u32) = .empty;
+    var id_to_index: std.hash_map.Auto(ResultId, u32) = .empty;
     defer id_to_index.deinit(gpa);
 
     // for each indexed instruction, its offset in the binary
@@ -188,7 +188,7 @@ fn markAlive(
     binary: BinaryModule,
     inst: BinaryModule.Instruction,
     alive: *std.bit_set.Dynamic,
-    id_to_index: *const std.AutoHashMapUnmanaged(ResultId, u32),
+    id_to_index: *const std.hash_map.Auto(ResultId, u32),
     code_offsets: *const std.ArrayList(usize),
     id_offset_buf: *std.ArrayList(u16),
 ) !void {

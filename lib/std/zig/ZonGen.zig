@@ -421,7 +421,7 @@ fn expr(zg: *ZonGen, node: Ast.Node.Index, dest_node: Zoir.Node.Index) Allocator
             var bfa_buf: [256]u8 = undefined;
             var bfa_state: std.heap.BufferFirstAllocator = .init(&bfa_buf, gpa);
             const bfa = bfa_state.allocator();
-            var field_names: std.AutoHashMapUnmanaged(Zoir.NullTerminatedString, Ast.TokenIndex) = .empty;
+            var field_names: std.hash_map.Auto(Zoir.NullTerminatedString, Ast.TokenIndex) = .empty;
             defer field_names.deinit(bfa);
 
             var reported_any_duplicate = false;

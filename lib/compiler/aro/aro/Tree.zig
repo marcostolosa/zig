@@ -108,7 +108,7 @@ pub const TokenWithExpansionLocs = struct {
 };
 
 pub const TokenIndex = u32;
-pub const ValueMap = std.AutoHashMapUnmanaged(Node.Index, Value);
+pub const ValueMap = std.hash_map.Auto(Node.Index, Value);
 
 const Tree = @This();
 

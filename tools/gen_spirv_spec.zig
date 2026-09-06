@@ -372,7 +372,7 @@ fn renderExtension(
         \\
     );
 
-    var seen_extensions: std.StringHashMap(void) = .empty;
+    var seen_extensions: std.hash_map.String(void) = .empty;
     defer seen_extensions.deinit(arena);
 
     for (kinds) |kind| {

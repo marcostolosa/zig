@@ -82,7 +82,7 @@ comptime_break_inst: Zir.Inst.Index = undefined,
 /// They are created when an break_inline passes through a runtime condition, because
 /// Sema must convert comptime control flow to runtime control flow, which means
 /// breaking from a block.
-post_hoc_blocks: std.AutoHashMapUnmanaged(Air.Inst.Index, *LabeledBlock) = .empty,
+post_hoc_blocks: std.hash_map.Auto(Air.Inst.Index, *LabeledBlock) = .empty,
 /// Populated with the last compile error created.
 err: ?*Zcu.ErrorMsg = null,
 
@@ -93,7 +93,7 @@ unresolved_inferred_allocs: std.array_hash_map.Auto(Air.Inst.Index, InferredAllo
 /// Links every pointer derived from a base `alloc` back to that `alloc`. Used
 /// to detect comptime-known `const`s.
 /// TODO: ZIR liveness analysis would allow us to remove elements from this map.
-base_allocs: std.AutoHashMapUnmanaged(Air.Inst.Index, Air.Inst.Index) = .empty,
+base_allocs: std.hash_map.Auto(Air.Inst.Index, Air.Inst.Index) = .empty,
 
 /// Runtime `alloc`s are placed in this map to track all comptime-known writes
 /// before the corresponding `make_ptr_const` instruction.
@@ -104,7 +104,7 @@ base_allocs: std.AutoHashMapUnmanaged(Air.Inst.Index, Air.Inst.Index) = .empty,
 /// is comptime-known, and all stores to the pointer must be applied at comptime
 /// to determine the comptime value.
 /// Backed by gpa.
-maybe_comptime_allocs: std.AutoHashMapUnmanaged(Air.Inst.Index, MaybeComptimeAlloc) = .empty,
+maybe_comptime_allocs: std.hash_map.Auto(Air.Inst.Index, MaybeComptimeAlloc) = .empty,
 
 /// Comptime-mutable allocs, and any comptime allocs which reference it, are
 /// stored as elements of this array.
@@ -3536,8 +3536,8 @@ fn resolveComptimeKnownAllocPtr(sema: *Sema, block: *Block, alloc: Air.Inst.Ref,
     } });
 
     // Maps from pointers into the runtime allocs, to comptime-mutable pointers into the comptime alloc
-    var ptr_mapping = std.AutoHashMap(Air.Inst.Index, InternPool.Index).init(sema.arena);
-    try ptr_mapping.ensureTotalCapacity(@intCast(stores.len));
+    var ptr_mapping = std.hash_map.Auto(Air.Inst.Index, InternPool.Index).empty;
+    try ptr_mapping.ensureTotalCapacity(sema.arena, @intCast(stores.len));
     ptr_mapping.putAssumeCapacity(alloc_inst, alloc_ptr);
 
     // Whilst constructing our mapping, we will also initialize optional and error union payloads when
@@ -11046,8 +11046,8 @@ const ValidatedSwitchBlock = struct {
 
     const Seen = struct {
         enum_fields: []?LazySrcLoc,
-        errors: std.AutoHashMapUnmanaged(InternPool.NullTerminatedString, LazySrcLoc),
-        sparse_values: std.AutoHashMapUnmanaged(InternPool.Index, LazySrcLoc),
+        errors: std.hash_map.Auto(InternPool.NullTerminatedString, LazySrcLoc),
+        sparse_values: std.hash_map.Auto(InternPool.Index, LazySrcLoc),
         ranges: RangeSet,
         true_src: ?LazySrcLoc,
         false_src: ?LazySrcLoc,
@@ -17204,8 +17204,8 @@ fn typeInfoDecls(
     var decl_vals = std.array_list.Managed(InternPool.Index).init(gpa);
     defer decl_vals.deinit();
 
-    var seen_namespaces = std.AutoHashMap(*Namespace, void).init(gpa);
-    defer seen_namespaces.deinit();
+    var seen_namespaces = std.hash_map.Auto(*Namespace, void).empty;
+    defer seen_namespaces.deinit(gpa);
 
     try sema.typeInfoNamespaceDecls(opt_namespace, &decl_vals, &seen_namespaces);
 
@@ -17240,7 +17240,7 @@ fn typeInfoNamespaceDecls(
     sema: *Sema,
     opt_namespace_index: InternPool.OptionalNamespaceIndex,
     decl_vals: *std.array_list.Managed(InternPool.Index),
-    seen_namespaces: *std.AutoHashMap(*Namespace, void),
+    seen_namespaces: *std.hash_map.Auto(*Namespace, void),
 ) !void {
     const pt = sema.pt;
     const zcu = pt.zcu;
@@ -17257,7 +17257,7 @@ fn typeInfoNamespaceDecls(
     };
     const namespace = zcu.namespacePtr(namespace_index);
 
-    const gop = try seen_namespaces.getOrPut(namespace);
+    const gop = try seen_namespaces.getOrPut(sema.gpa, namespace);
     if (gop.found_existing) return;
 
     for (namespace.pub_decls.keys()) |nav| {

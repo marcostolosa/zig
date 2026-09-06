@@ -325,10 +325,10 @@ fn mergeFragments(linker: *Linker, gpa: Allocator, arena: Allocator) error{OutOf
 
     var next_id: Word = 1;
 
-    var nav_final_ids: std.AutoHashMapUnmanaged(InternPool.Nav.Index, Id) = .empty;
+    var nav_final_ids: std.hash_map.Auto(InternPool.Nav.Index, Id) = .empty;
     defer nav_final_ids.deinit(gpa);
 
-    var uav_final_ids: std.AutoHashMapUnmanaged(struct { InternPool.Index, spec.StorageClass }, Id) = .empty;
+    var uav_final_ids: std.hash_map.Auto(struct { InternPool.Index, spec.StorageClass }, Id) = .empty;
     defer uav_final_ids.deinit(gpa);
 
     var frag_infos: std.ArrayList(FragmentInfo) = .empty;
@@ -512,13 +512,13 @@ fn mergeZigFragments(
     parser: *BinaryModule.Parser,
     sections: *Sections,
     frag_infos: []const FragmentInfo,
-    nav_final_ids: *const std.AutoHashMapUnmanaged(InternPool.Nav.Index, Id),
-    uav_final_ids: *const std.AutoHashMapUnmanaged(struct { InternPool.Index, spec.StorageClass }, Id),
+    nav_final_ids: *const std.hash_map.Auto(InternPool.Nav.Index, Id),
+    uav_final_ids: *const std.hash_map.Auto(struct { InternPool.Index, spec.StorageClass }, Id),
     resolved_ids: *const std.array_hash_map.Auto(Id, void),
     maybe_ip: ?*InternPool,
 ) error{OutOfMemory}!void {
     for (linker.fragments.values(), frag_infos) |*mir, frag_info| {
-        var id_remap: std.AutoHashMapUnmanaged(Id, Id) = .empty;
+        var id_remap: std.hash_map.Auto(Id, Id) = .empty;
         defer id_remap.deinit(gpa);
 
         var resolved_local_ids: std.array_hash_map.Auto(Id, void) = .empty;
@@ -563,7 +563,7 @@ fn remapFilteredInsts(
     dest: *Section,
     words: []const Word,
     id_offset: Word,
-    id_remap: *const std.AutoHashMapUnmanaged(Id, Id),
+    id_remap: *const std.hash_map.Auto(Id, Id),
     parser: *BinaryModule.Parser,
     skip_ids: *const std.array_hash_map.Auto(Id, void),
     mode: FilterMode,
@@ -606,7 +606,7 @@ fn emitPreamble(
     memory_model: *Section,
 ) !void {
     var caps: std.EnumSet(spec.Capability) = .empty;
-    var exts: std.StringHashMap(void) = .empty;
+    var exts: std.hash_map.String(void) = .empty;
     defer exts.deinit(gpa);
 
     switch (target.os.tag) {
@@ -679,8 +679,8 @@ fn emitEntryPoints(
     target: *const std.Target,
     entry_points_section: *Section,
     execution_modes_section: *Section,
-    nav_final_ids: *const std.AutoHashMapUnmanaged(InternPool.Nav.Index, Id),
-    uav_final_ids: *const std.AutoHashMapUnmanaged(struct { InternPool.Index, spec.StorageClass }, Id),
+    nav_final_ids: *const std.hash_map.Auto(InternPool.Nav.Index, Id),
+    uav_final_ids: *const std.hash_map.Auto(struct { InternPool.Index, spec.StorageClass }, Id),
     frag_infos: *const std.ArrayList(FragmentInfo),
 ) error{OutOfMemory}!void {
     for (linker.entry_points.items) |ep| {
@@ -688,7 +688,7 @@ fn emitEntryPoints(
 
         var interface: std.ArrayList(Id) = .empty;
         defer interface.deinit(gpa);
-        var visited: std.AutoHashMapUnmanaged(InternPool.Nav.Index, void) = .empty;
+        var visited: std.hash_map.Auto(InternPool.Nav.Index, void) = .empty;
         defer visited.deinit(gpa);
         try collectEntryPointInterface(linker, ep.nav, &interface, &visited, nav_final_ids, uav_final_ids, frag_infos, gpa);
 
@@ -901,7 +901,7 @@ fn appendExternalObjects(
         }
     }
 
-    var per_obj_remaps = try gpa.alloc(std.AutoHashMapUnmanaged(Id, Id), linker.external_objects.items.len);
+    var per_obj_remaps = try gpa.alloc(std.hash_map.Auto(Id, Id), linker.external_objects.items.len);
     defer {
         for (per_obj_remaps) |*m| m.deinit(gpa);
         gpa.free(per_obj_remaps);
@@ -1006,9 +1006,9 @@ fn collectEntryPointInterface(
     linker: *Linker,
     nav: InternPool.Nav.Index,
     interface: *std.ArrayList(Id),
-    visited: *std.AutoHashMapUnmanaged(InternPool.Nav.Index, void),
-    nav_final_ids: *const std.AutoHashMapUnmanaged(InternPool.Nav.Index, Id),
-    uav_final_ids: *const std.AutoHashMapUnmanaged(struct { InternPool.Index, spec.StorageClass }, Id),
+    visited: *std.hash_map.Auto(InternPool.Nav.Index, void),
+    nav_final_ids: *const std.hash_map.Auto(InternPool.Nav.Index, Id),
+    uav_final_ids: *const std.hash_map.Auto(struct { InternPool.Index, spec.StorageClass }, Id),
     frag_infos: *const std.ArrayList(FragmentInfo),
     gpa: Allocator,
 ) error{OutOfMemory}!void {
@@ -1048,7 +1048,7 @@ fn remapAndAppend(
     dest: *Section,
     words: []const Word,
     id_offset: Word,
-    id_remap: *const std.AutoHashMapUnmanaged(Id, Id),
+    id_remap: *const std.hash_map.Auto(Id, Id),
     parser: *BinaryModule.Parser,
 ) error{OutOfMemory}!void {
     if (words.len == 0) return;
@@ -1067,7 +1067,7 @@ fn remapAndAppendInst(
     words: []const Word,
     inst: BinaryModule.Instruction,
     id_offset: Word,
-    id_remap: *const std.AutoHashMapUnmanaged(Id, Id),
+    id_remap: *const std.hash_map.Auto(Id, Id),
     parser: *BinaryModule.Parser,
 ) error{OutOfMemory}!void {
     const inst_words = words[inst.offset..][0..((words[inst.offset] >> 16))];
@@ -1101,7 +1101,7 @@ fn remapOperand(
     inst_slice: []Word,
     offset: usize,
     id_offset: Word,
-    id_remap: *const std.AutoHashMapUnmanaged(Id, Id),
+    id_remap: *const std.hash_map.Auto(Id, Id),
 ) usize {
     switch (cat) {
         .id => {
@@ -1162,7 +1162,7 @@ fn remapCompositeOperand(
     inst_slice: []Word,
     offset: usize,
     id_offset: Word,
-    id_remap: *const std.AutoHashMapUnmanaged(Id, Id),
+    id_remap: *const std.hash_map.Auto(Id, Id),
 ) void {
     switch (kind) {
         .pair_literal_integer_id_ref => {
@@ -1205,7 +1205,7 @@ fn operandLiteralWordCount(kind: spec.OperandKind, inst: BinaryModule.Instructio
     };
 }
 
-fn remapSingleId(word: *Word, id_offset: Word, id_remap: *const std.AutoHashMapUnmanaged(Id, Id)) void {
+fn remapSingleId(word: *Word, id_offset: Word, id_remap: *const std.hash_map.Auto(Id, Id)) void {
     const id: Id = @fromBackingInt(@intCast(word.*));
     if (id == .none) return;
     if (id_remap.get(id)) |final_id| {

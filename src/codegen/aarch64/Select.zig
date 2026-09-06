@@ -43,7 +43,7 @@ stack_align: InternPool.Alignment,
 
 // Value Tracking
 live_registers: LiveRegisters,
-live_values: std.AutoHashMapUnmanaged(Air.Inst.Index, Value.Index),
+live_values: std.hash_map.Auto(Air.Inst.Index, Value.Index),
 values: std.ArrayList(Value),
 
 pub const LiveRegisters = std.enums.EnumArray(Register.Alias, Value.Index);
@@ -11265,7 +11265,7 @@ fn dumpValuesInner(isel: *Select, which: WhichValues) !void {
         };
     }
 
-    var reverse_live_registers: std.AutoHashMapUnmanaged(Value.Index, Register.Alias) = .empty;
+    var reverse_live_registers: std.hash_map.Auto(Value.Index, Register.Alias) = .empty;
     defer reverse_live_registers.deinit(gpa);
     {
         try reverse_live_registers.ensureTotalCapacity(gpa, @typeInfo(Register.Alias).@"enum".field_names.len);

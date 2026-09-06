@@ -18,11 +18,11 @@ id_bound: u32,
 instructions: []const Word,
 
 /// Maps OpExtInstImport result-ids to their InstructionSet.
-ext_inst_map: std.AutoHashMapUnmanaged(ResultId, InstructionSet),
+ext_inst_map: std.hash_map.Auto(ResultId, InstructionSet),
 
 /// Width of arithmetic types (OpTypeInt/OpTypeFloat). Needed to correctly
 /// parse operands of Op(Spec)Constant and OpSwitch.
-arith_type_width: std.AutoHashMapUnmanaged(ResultId, u16),
+arith_type_width: std.hash_map.Auto(ResultId, u16),
 
 functions_start: usize,
 
@@ -72,7 +72,7 @@ pub const Instruction = struct {
 
 pub const Parser = struct {
     gpa: Allocator,
-    opcode_table: std.AutoHashMapUnmanaged(u32, u16) = .empty,
+    opcode_table: std.hash_map.Auto(u32, u16) = .empty,
 
     pub fn init(gpa: Allocator) !Parser {
         var parser = Parser{ .gpa = gpa };

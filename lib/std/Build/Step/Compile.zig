@@ -8,7 +8,6 @@ const mem = std.mem;
 const fs = std.fs;
 const assert = std.debug.assert;
 const panic = std.debug.panic;
-const StringHashMap = std.StringHashMap;
 const Allocator = std.mem.Allocator;
 const Step = std.Build.Step;
 const LazyPath = std.Build.LazyPath;

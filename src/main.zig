@@ -4054,7 +4054,7 @@ fn createModule(
             // If this returns null, we let it fall through to the case below which will
             // run the full parse function and do proper error handling.
             if (std.Target.Query.parseCpuArch(target_parse_options)) |cpu_arch| {
-                var llvm_to_zig_name = std.StringHashMap([]const u8).empty;
+                var llvm_to_zig_name = std.hash_map.String([]const u8).empty;
                 defer llvm_to_zig_name.deinit(gpa);
 
                 for (cpu_arch.allFeaturesList()) |feature| {
@@ -5791,7 +5791,7 @@ fn cmdChangelist(arena: Allocator, io: Io, args: []const []const u8, environ_map
         process.exit(1);
     }
 
-    var inst_map: std.AutoHashMapUnmanaged(Zir.Inst.Index, Zir.Inst.Index) = .empty;
+    var inst_map: std.hash_map.Auto(Zir.Inst.Index, Zir.Inst.Index) = .empty;
     try Zcu.mapOldZirToNew(arena, old_zir, new_zir, &inst_map);
 
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
@@ -5961,7 +5961,7 @@ fn parseSubsystem(arg: []const u8) !std.zig.Subsystem {
 /// Silently ignore superfluous search dirs.
 /// Warn when a dir is added to multiple searchlists.
 const ClangSearchSanitizer = struct {
-    map: std.StringHashMap(Membership) = .empty,
+    map: std.hash_map.String(Membership) = .empty,
 
     fn reset(self: *@This()) void {
         self.map.clearRetainingCapacity();

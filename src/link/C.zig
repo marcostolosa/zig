@@ -1050,7 +1050,7 @@ pub fn flush(c: *C, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std.Prog
     };
     f.appendBufAssumeCapacity(asm_aw.written());
 
-    var export_names: std.AutoHashMapUnmanaged(InternPool.NullTerminatedString, void) = .empty;
+    var export_names: std.hash_map.Auto(InternPool.NullTerminatedString, void) = .empty;
     defer export_names.deinit(gpa);
     try export_names.ensureTotalCapacity(gpa, @intCast(zcu.single_exports.count()));
     for (zcu.single_exports.values()) |export_index| {

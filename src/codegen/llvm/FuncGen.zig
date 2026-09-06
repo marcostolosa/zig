@@ -21,7 +21,7 @@ prev_dbg_column: u32,
 
 /// This stores the LLVM values used in a function, such that they can be referred to
 /// in other instructions. This table is cleared before every function is generated.
-func_inst_table: std.AutoHashMapUnmanaged(Air.Inst.Ref, Builder.Value),
+func_inst_table: std.hash_map.Auto(Air.Inst.Ref, Builder.Value),
 
 /// If the return type is sret, this is the result pointer. Otherwise null.
 /// Note that this can disagree with isByRef for the return type in the case
@@ -42,17 +42,17 @@ arg_inline_index: u32,
 err_ret_trace: Builder.Value,
 
 /// This data structure is used to implement breaking to blocks.
-blocks: std.AutoHashMapUnmanaged(Air.Inst.Index, struct {
+blocks: std.hash_map.Auto(Air.Inst.Index, struct {
     parent_bb: Builder.Function.Block.Index,
     breaks: *BreakList,
 }),
 
 /// Maps `loop` instructions to the bb to branch to to repeat the loop.
-loops: std.AutoHashMapUnmanaged(Air.Inst.Index, Builder.Function.Block.Index),
+loops: std.hash_map.Auto(Air.Inst.Index, Builder.Function.Block.Index),
 
 /// Maps `loop_switch_br` instructions to the information required to lower
 /// dispatches (`switch_dispatch` instructions).
-switch_dispatch_info: std.AutoHashMapUnmanaged(Air.Inst.Index, SwitchDispatchInfo),
+switch_dispatch_info: std.hash_map.Auto(Air.Inst.Index, SwitchDispatchInfo),
 
 sync_scope: Builder.SyncScope,
 

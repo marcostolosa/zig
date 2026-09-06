@@ -34,7 +34,7 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
 
-/// Deprecated: use `Static`.
+/// Deprecated; use `Static`.
 pub const StaticBitSet = Static;
 
 /// Returns the optimal static bit set type for the specified number
@@ -50,7 +50,7 @@ pub fn Static(comptime size: usize) type {
     }
 }
 
-/// Deprecated: use `Integer`.
+/// Deprecated; use `Integer`.
 pub const IntegerBitSet = Integer;
 
 /// A bit set with static size, which is backed by a single integer.
@@ -321,7 +321,7 @@ pub fn Integer(comptime size: u16) type {
     };
 }
 
-/// Deprecated: use `Array`.
+/// Deprecated; use `Array`.
 pub const ArrayBitSet = Array;
 
 /// A bit set with static size, which is backed by an array of usize.
@@ -672,7 +672,7 @@ pub fn Array(comptime MaskIntType: type, comptime size: usize) type {
     };
 }
 
-/// Deprecated: use `Dynamic`.
+/// Deprecated; use `Dynamic`.
 pub const DynamicBitSetUnmanaged = Dynamic;
 
 /// A bit set with runtime-known size, backed by an allocated slice
@@ -1078,7 +1078,7 @@ pub const Dynamic = struct {
     }
 };
 
-/// Deprecated: use `DynamicManaged` or `Dynamic` (will need to update callsites).
+/// Deprecated; use `DynamicManaged` or `Dynamic` (will need to update callsites).
 pub const DynamicBitSet = DynamicManaged;
 
 /// A bit set with runtime-known size, backed by an allocated slice

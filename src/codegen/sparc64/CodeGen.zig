@@ -91,12 +91,12 @@ reused_operands: std.bit_set.Static(Air.Liveness.bpi - 1) = undefined,
 branch_stack: *std.array_list.Managed(Branch),
 
 // Key is the block instruction
-blocks: std.AutoHashMapUnmanaged(Air.Inst.Index, BlockData) = .empty,
+blocks: std.hash_map.Auto(Air.Inst.Index, BlockData) = .empty,
 
 register_manager: RegisterManager = .{},
 
 /// Maps offset to what is stored there.
-stack: std.AutoHashMapUnmanaged(u32, StackAllocation) = .empty,
+stack: std.hash_map.Auto(u32, StackAllocation) = .empty,
 
 /// Tracks the current instruction allocated to the condition flags
 condition_flags_inst: ?Air.Inst.Index = null,

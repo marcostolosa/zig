@@ -1,5 +1,7 @@
-pub const AutoHashMap = hash_map.AutoHashMap;
-pub const AutoHashMapUnmanaged = hash_map.AutoHashMapUnmanaged;
+/// Deprecated; convert to `std.hash_map.Auto` or use `std.hash_map.AutoManaged`.
+pub const AutoHashMap = hash_map.AutoManaged;
+/// Deprecated; use `hash_map.Auto`.
+pub const AutoHashMapUnmanaged = hash_map.Auto;
 pub const BitStack = @import("BitStack.zig");
 pub const Build = @import("Build.zig");
 pub const BufMap = @import("buf_map.zig").BufMap;
@@ -9,15 +11,17 @@ pub const StaticStringMapWithEql = static_string_map.StaticStringMapWithEql;
 pub const Deque = @import("deque.zig").Deque;
 pub const DoublyLinkedList = @import("DoublyLinkedList.zig");
 pub const DynLib = @import("dynamic_library.zig").DynLib;
-/// Deprecated: use `bit_set.DynamicManaged`.
+/// Deprecated; use `bit_set.DynamicManaged`.
 pub const DynamicBitSet = bit_set.DynamicBitSet;
-/// Deprecated: use `bit_set.Dynamic`.
+/// Deprecated; use `bit_set.Dynamic`.
 pub const DynamicBitSetUnmanaged = bit_set.DynamicBitSetUnmanaged;
 pub const EnumArray = enums.EnumArray;
 pub const EnumMap = enums.EnumMap;
 pub const EnumSet = enums.EnumSet;
-pub const HashMap = hash_map.HashMap;
-pub const HashMapUnmanaged = hash_map.HashMapUnmanaged;
+/// Deprecated; conver use `array_hash_map.CustomManaged`.
+pub const HashMap = hash_map.CustomManaged;
+/// Deprecated; use `array_hash_map.Custom`.
+pub const HashMapUnmanaged = hash_map.Custom;
 pub const Io = @import("Io.zig");
 pub const MultiArrayList = @import("multi_array_list.zig").MultiArrayList;
 pub const PriorityQueue = @import("priority_queue.zig").PriorityQueue;
@@ -26,13 +30,12 @@ pub const Progress = @import("Progress.zig");
 pub const Random = @import("Random.zig");
 pub const SemanticVersion = @import("SemanticVersion.zig");
 pub const SinglyLinkedList = @import("SinglyLinkedList.zig");
-/// Deprecated: use `bit_set.Static`.
+/// Deprecated; use `bit_set.Static`.
 pub const StaticBitSet = bit_set.StaticBitSet;
-pub const StringHashMap = hash_map.StringHashMapUnmanaged;
-/// Deprecated; use `StringHashMap`.
-pub const StringHashMapUnmanaged = StringHashMap;
-/// Deprecated; convert to `StringHashMap`.
-pub const StringHashMapManaged = hash_map.StringHashMap;
+/// Deprecated; use `hash_map.String`.
+pub const StringHashMap = hash_map.String;
+/// Deprecated; use `hash_map.String`.
+pub const StringHashMapUnmanaged = hash_map.String;
 pub const Target = @import("Target.zig");
 pub const Thread = @import("Thread.zig");
 pub const Treap = @import("treap.zig").Treap;

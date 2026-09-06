@@ -13,7 +13,7 @@ step: Step,
 generated_file: Configuration.GeneratedFileIndex,
 contents: std.ArrayList(u8) = .empty,
 args: std.ArrayList(Arg) = .empty,
-encountered_types: std.StringHashMap(void),
+encountered_types: std.hash_map.String(void),
 
 pub const base_tag: Step.Tag = .options;
 

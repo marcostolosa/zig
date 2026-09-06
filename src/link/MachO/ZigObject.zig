@@ -11,7 +11,7 @@ symbols_extra: std.ArrayList(u32) = .empty,
 globals: std.ArrayList(MachO.SymbolResolver.Index) = .empty,
 /// Maps string index (so name) into nlist index for the global symbol defined within this
 /// module.
-globals_lookup: std.AutoHashMapUnmanaged(u32, u32) = .empty,
+globals_lookup: std.hash_map.Auto(u32, u32) = .empty,
 atoms: std.ArrayList(Atom) = .empty,
 atoms_indexes: std.ArrayList(Atom.Index) = .empty,
 atoms_extra: std.ArrayList(u32) = .empty,

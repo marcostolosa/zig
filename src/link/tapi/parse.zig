@@ -193,7 +193,7 @@ pub const Tree = struct {
     allocator: Allocator,
     source: []const u8,
     tokens: []Token,
-    line_cols: std.AutoHashMap(TokenIndex, LineCol),
+    line_cols: std.AutoHashMapManaged(TokenIndex, LineCol),
     docs: std.ArrayList(*Node) = .empty,
 
     pub fn init(allocator: Allocator) Tree {
@@ -201,7 +201,7 @@ pub const Tree = struct {
             .allocator = allocator,
             .source = undefined,
             .tokens = undefined,
-            .line_cols = std.AutoHashMap(TokenIndex, LineCol).init(allocator),
+            .line_cols = .init(allocator),
         };
     }
 
@@ -292,7 +292,7 @@ const Parser = struct {
     allocator: Allocator,
     tree: *Tree,
     token_it: *TokenIterator,
-    line_cols: *const std.AutoHashMap(TokenIndex, LineCol),
+    line_cols: *const std.AutoHashMapManaged(TokenIndex, LineCol),
 
     fn value(self: *Parser) ParseError!?*Node {
         self.eatCommentsAndSpace(&.{});

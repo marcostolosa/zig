@@ -204,7 +204,7 @@ fn lowerExprAnonResTy(self: *LowerZon, node: Zoir.Node.Index) CompileError!Inter
 ///
 /// Rules out nested optionals, error sets, etc.
 fn checkType(self: *LowerZon, ty: Type) !void {
-    var visited: std.AutoHashMapUnmanaged(InternPool.Index, void) = .empty;
+    var visited: std.hash_map.Auto(InternPool.Index, void) = .empty;
     try self.checkTypeInner(ty, null, &visited);
 }
 
@@ -216,7 +216,7 @@ fn checkTypeInner(
     /// which a type can be self-referential, so must be tracked to avoid loops. Tracking more types
     /// consumes memory unnecessarily, and would be complicated by optionals.
     /// Allocated into `self.sema.arena`.
-    visited: *std.AutoHashMapUnmanaged(InternPool.Index, void),
+    visited: *std.hash_map.Auto(InternPool.Index, void),
 ) !void {
     const sema = self.sema;
     const pt = sema.pt;

@@ -4069,7 +4069,7 @@ pub fn findTrackable(zir: Zir, gpa: Allocator, contents: *DeclContents, decl_ins
 
     // `defer` instructions duplicate the same body arbitrarily many times, but we only want to traverse
     // their contents once per defer. So, we store the extra index of the body here to deduplicate.
-    var found_defers: std.AutoHashMapUnmanaged(u32, void) = .empty;
+    var found_defers: std.hash_map.Auto(u32, void) = .empty;
     defer found_defers.deinit(gpa);
 
     if (decl.type_body) |b| try zir.findTrackableBody(gpa, contents, &found_defers, b);
@@ -4089,7 +4089,7 @@ pub fn findTrackableFields(
 ) Allocator.Error!void {
     contents.clear();
 
-    var found_defers: std.AutoHashMapUnmanaged(u32, void) = .empty;
+    var found_defers: std.hash_map.Auto(u32, void) = .empty;
     defer found_defers.deinit(gpa);
 
     assert(zir.instructions.items(.tag)[@backingInt(type_decl_inst)] == .extended);
@@ -4128,7 +4128,7 @@ fn findTrackableInner(
     zir: Zir,
     gpa: Allocator,
     contents: *DeclContents,
-    defers: *std.AutoHashMapUnmanaged(u32, void),
+    defers: *std.hash_map.Auto(u32, void),
     inst: Inst.Index,
 ) Allocator.Error!void {
     comptime assert(Zir.inst_tracking_version == 0);
@@ -4647,7 +4647,7 @@ fn findTrackableBody(
     zir: Zir,
     gpa: Allocator,
     contents: *DeclContents,
-    defers: *std.AutoHashMapUnmanaged(u32, void),
+    defers: *std.hash_map.Auto(u32, void),
     body: []const Inst.Index,
 ) Allocator.Error!void {
     for (body) |member| {

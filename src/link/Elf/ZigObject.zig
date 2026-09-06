@@ -15,7 +15,7 @@ symbols_extra: std.ArrayList(u32) = .empty,
 symbols_resolver: std.ArrayList(Elf.SymbolResolver.Index) = .empty,
 local_symbols: std.ArrayList(Symbol.Index) = .empty,
 global_symbols: std.ArrayList(Symbol.Index) = .empty,
-globals_lookup: std.AutoHashMapUnmanaged(u32, Symbol.Index) = .empty,
+globals_lookup: std.hash_map.Auto(u32, Symbol.Index) = .empty,
 
 atoms: std.ArrayList(Atom) = .empty,
 atoms_indexes: std.ArrayList(Atom.Index) = .empty,

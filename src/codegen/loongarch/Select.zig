@@ -44,7 +44,7 @@ layout_relocs: std.ArrayList(usize) = .empty,
 
 // Value Tracking
 live_registers: LiveRegisters = .initFill(.free),
-live_values: std.AutoHashMapUnmanaged(Air.Inst.Index, Value.Index) = .empty,
+live_values: std.hash_map.Auto(Air.Inst.Index, Value.Index) = .empty,
 values: std.ArrayList(Value) = .empty,
 value_types: std.ArrayList(ZigType) = .empty,
 
@@ -5073,7 +5073,7 @@ fn dumpValuesInner(isel: *Select, which: WhichValues) !void {
         };
     }
 
-    var reverse_live_registers: std.AutoHashMapUnmanaged(Value.Index, Register) = .empty;
+    var reverse_live_registers: std.hash_map.Auto(Value.Index, Register) = .empty;
     defer reverse_live_registers.deinit(gpa);
     {
         try reverse_live_registers.ensureTotalCapacity(gpa, @typeInfo(Register).@"enum".field_names.len);

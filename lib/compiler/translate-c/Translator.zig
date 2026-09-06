@@ -143,7 +143,7 @@ compound_assign_dummy: ?ZigNode = null,
 
 /// Set of variables whose initializers are currently being translated.
 /// Used to detect self-referential initializers.
-wip_var_inits: std.AutoHashMapUnmanaged(Node.Index, void) = .empty,
+wip_var_inits: std.hash_map.Auto(Node.Index, void) = .empty,
 
 pub fn getMangle(t: *Translator) u32 {
     t.mangle_count += 1;

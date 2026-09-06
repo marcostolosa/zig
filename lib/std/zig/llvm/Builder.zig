@@ -27,7 +27,7 @@ string_bytes: std.ArrayList(u8),
 
 types: std.array_hash_map.Auto(String, Type),
 next_unnamed_type: String,
-next_unique_type_id: std.AutoHashMapUnmanaged(String, u32),
+next_unique_type_id: std.hash_map.Auto(String, u32),
 type_map: std.array_hash_map.Auto(void, void),
 type_items: std.ArrayList(Type.Item),
 type_extra: std.ArrayList(u32),
@@ -42,7 +42,7 @@ function_attributes_set: std.array_hash_map.Auto(FunctionAttributes, void),
 globals: std.array_hash_map.Auto(StrtabString, Global),
 next_unnamed_global: StrtabString,
 next_replaced_global: StrtabString,
-next_unique_global_id: std.AutoHashMapUnmanaged(StrtabString, u32),
+next_unique_global_id: std.hash_map.Auto(StrtabString, u32),
 aliases: std.ArrayList(Alias),
 variables: std.ArrayList(Variable),
 functions: std.ArrayList(Function),
@@ -1605,7 +1605,7 @@ pub const Type = enum(u32) {
         return .{ .data = .{ .type = self, .builder = builder, .mode = mode } };
     }
 
-    const IsSizedVisited = std.AutoHashMapUnmanaged(Type, void);
+    const IsSizedVisited = std.hash_map.Auto(Type, void);
     fn isSizedVisited(
         self: Type,
         visited: *IsSizedVisited,
@@ -5200,7 +5200,7 @@ pub const Function = struct {
     names: [*]const String = &[0]String{},
     value_indices: [*]const u32 = &[0]u32{},
     strip: bool,
-    debug_locations: std.AutoHashMapUnmanaged(Instruction.Index, DebugLocation) = .empty,
+    debug_locations: std.hash_map.Auto(Instruction.Index, DebugLocation) = .empty,
     debug_values: []const Instruction.Index = &.{},
     extra: []const u32 = &.{},
 
@@ -7435,7 +7435,7 @@ pub const WipFunction = struct {
         const value_indices = try gpa.alloc(u32, final_instructions_len);
         errdefer gpa.free(value_indices);
 
-        var debug_locations: std.AutoHashMapUnmanaged(Instruction.Index, DebugLocation) = .empty;
+        var debug_locations: std.hash_map.Auto(Instruction.Index, DebugLocation) = .empty;
         errdefer debug_locations.deinit(gpa);
         try debug_locations.ensureUnusedCapacity(gpa, @intCast(self.debug_locations.count()));
 
@@ -7526,7 +7526,7 @@ pub const WipFunction = struct {
 
         var wip_name: struct {
             next_name: String = @fromBackingInt(0),
-            next_unique_name: std.AutoHashMap(String, String),
+            next_unique_name: std.AutoHashMapManaged(String, String),
             builder: *Builder,
 
             fn map(wip_name: *@This(), name: String, sep: []const u8) Allocator.Error!String {
@@ -7562,7 +7562,7 @@ pub const WipFunction = struct {
                 }
             }
         } = .{
-            .next_unique_name = std.AutoHashMap(String, String).init(gpa),
+            .next_unique_name = .init(gpa),
             .builder = self.builder,
         };
         defer wip_name.next_unique_name.deinit();

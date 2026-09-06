@@ -60,7 +60,7 @@ pub fn AutoContext(comptime K: type) type {
 /// Builtin hashmap for strings as keys.
 /// Key memory is managed by the caller.  Keys and values
 /// will not automatically be freed.
-/// Deprecated; convert to `StringHashMapUnmanaged`.
+/// Deprecated; convert to `String`.
 pub fn StringManaged(comptime V: type) type {
     return CustomManaged([]const u8, V, StringContext, default_max_load_percentage);
 }
@@ -119,15 +119,16 @@ pub const StringIndexAdapter = struct {
 pub const default_max_load_percentage = 80;
 
 /// Deprecated; convert to `Custom` or use `CustomManaged`.
-// pub const HashMap = CustomManaged;
+pub const HashMap = CustomManaged;
+/// Deprecated; convert to `Custom`
 /// General purpose hash table.
 /// No order is guaranteed and any modification invalidates live iterators.
 /// It provides fast operations (lookup, insertion, deletion) with quite high
 /// load factors (up to 80% by default) for low memory usage.
 /// For a hash map that can be initialized directly that does not store an Allocator
-/// field, see `HashMapUnmanaged`.
+/// field, see `Custom`.
 /// If iterating over the table entries is a strong usecase and needs to be fast,
-/// prefer the alternative `std.ArrayHashMap`.
+/// prefer the alternative `std.array_hash_map`.
 /// Context must be a struct type with two member functions:
 ///   hash(self, K) u64
 ///   eql(self, K, K) bool
@@ -494,8 +495,8 @@ pub fn CustomManaged(
     };
 }
 
-// deprecated use Custom
-// pub const HashMapUnmanaged = Custom;
+/// Deprecated; use `Custom`.
+pub const HashMapUnmanaged = Custom;
 /// A HashMap based on open addressing and linear probing.
 /// A lookup or modification typically incurs only 2 cache misses.
 /// No order is guaranteed and any modification invalidates live iterators.

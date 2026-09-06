@@ -3689,7 +3689,7 @@ fn resolveComptimeKnownAllocPtr(sema: *Sema, block: *Block, alloc: Air.Inst.Ref,
                 break :ptr (try parent_ptr_val.ptrElem(idx, pt)).toIntern();
             },
         };
-        try ptr_mapping.put(air_ptr, new_ptr);
+        try ptr_mapping.put(sema.arena, air_ptr, new_ptr);
     }
 
     // We have a correlation between AIR pointers and decl pointers. Perform all stores at comptime.

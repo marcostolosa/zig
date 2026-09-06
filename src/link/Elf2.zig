@@ -3613,7 +3613,7 @@ fn stringExisting(elf: *Elf, comptime section: StringSection, key: []const u8) S
 }
 
 const StringTable = struct {
-    map: std.HashMapUnmanaged(u32, void, StringTable.Context, std.hash_map.default_max_load_percentage),
+    map: std.hash_map.Custom(u32, void, StringTable.Context, std.hash_map.default_max_load_percentage),
 
     const Context = struct {
         slice: []const u8,

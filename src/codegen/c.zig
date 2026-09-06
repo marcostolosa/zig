@@ -477,7 +477,7 @@ pub fn isMangledIdent(ident: []const u8, solo: bool) bool {
 pub const Function = struct {
     air: Air,
     liveness: Air.Liveness,
-    value_map: std.AutoHashMapManaged(Air.Inst.Ref, CValue),
+    value_map: std.hash_map.AutoManaged(Air.Inst.Ref, CValue),
     blocks: std.hash_map.Auto(Air.Inst.Index, BlockData) = .empty,
     next_arg_index: u32 = 0,
     next_block_index: u32 = 0,

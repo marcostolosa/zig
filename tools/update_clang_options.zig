@@ -658,7 +658,7 @@ pub fn main(init: std.process.Init) !void {
     const llvm_src_root = args[2];
     if (std.mem.startsWith(u8, llvm_src_root, "-")) printUsageAndExit(args[0]);
 
-    var llvm_to_zig_cpu_features = std.StringHashMapManaged([]const u8).init(arena);
+    var llvm_to_zig_cpu_features = std.hash_map.StringManaged([]const u8).init(arena);
 
     inline for (@typeInfo(cpu_targets).@"struct".decl_names) |decl_name| {
         const Feature = @field(cpu_targets, decl_name).Feature;

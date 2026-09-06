@@ -531,7 +531,7 @@ pub fn lowerToBuildSteps(
             continue;
 
         const writefiles = b.addWriteFiles();
-        var file_sources = std.StringHashMapUnmanaged(std.Build.LazyPath).empty;
+        var file_sources = std.hash_map.String(std.Build.LazyPath).empty;
         defer file_sources.deinit(arena);
         const first_file = case.files.items[0];
         const root_source_file = writefiles.add(first_file.path, first_file.src);

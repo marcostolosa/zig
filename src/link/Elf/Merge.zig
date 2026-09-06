@@ -8,7 +8,7 @@ pub const Section = struct {
     flags: u64 = 0,
     output_section_index: u32 = 0,
     bytes: std.ArrayList(u8) = .empty,
-    table: std.HashMapUnmanaged(
+    table: std.hash_map.Custom(
         String,
         Subsection.Index,
         IndexContext,

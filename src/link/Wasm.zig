@@ -2503,7 +2503,7 @@ const PreloadedStrings = struct {
 pub const String = enum(u32) {
     _,
 
-    const Table = std.HashMapUnmanaged(String, void, TableContext, std.hash_map.default_max_load_percentage);
+    const Table = std.hash_map.Custom(String, void, TableContext, std.hash_map.default_max_load_percentage);
 
     const TableContext = struct {
         bytes: []const u8,

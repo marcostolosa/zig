@@ -22,7 +22,7 @@ pub const YamlError = error{
 } || ParseError || std.fmt.ParseIntError;
 
 pub const List = []Value;
-pub const Map = std.StringHashMapManaged(Value);
+pub const Map = std.hash_map.StringManaged(Value);
 
 pub const Value = union(enum) {
     empty,
@@ -154,7 +154,7 @@ pub const Value = union(enum) {
         } else if (node.cast(Node.Map)) |map| {
             // TODO use ContextAdapted HashMap and do not duplicate keys, intern
             // in a contiguous string buffer.
-            var out_map = std.StringHashMapManaged(Value).init(arena);
+            var out_map = std.hash_map.StringManaged(Value).init(arena);
             try out_map.ensureUnusedCapacity(math.cast(u32, map.values.items.len) orelse return error.Overflow);
 
             for (map.values.items) |entry| {

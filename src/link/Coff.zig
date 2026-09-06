@@ -53,7 +53,7 @@ input_section_pending_index: u32,
 inputs_complete: bool,
 exports_complete: bool,
 pending_special_symbol: SpecialSymbol,
-strings: std.HashMapUnmanaged(
+strings: std.hash_map.Custom(
     u32,
     void,
     std.hash_map.StringIndexContext,

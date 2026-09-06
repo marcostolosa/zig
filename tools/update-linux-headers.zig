@@ -137,9 +137,9 @@ const Contents = struct {
     }
 };
 
-const HashToContents = std.StringHashMapManaged(Contents);
+const HashToContents = std.hash_map.StringManaged(Contents);
 const TargetToHash = std.array_hash_map.Custom(DestTarget, []const u8, DestTarget.HashContext, true);
-const PathTable = std.StringHashMapManaged(*TargetToHash);
+const PathTable = std.hash_map.StringManaged(*TargetToHash);
 
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();

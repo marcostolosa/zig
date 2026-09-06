@@ -20,7 +20,7 @@ const der = Certificate.der;
 const base64 = std.base64.standard.decoderWithIgnore(" \t\r\n");
 
 /// The key is the contents slice of the subject.
-map: std.HashMapUnmanaged(der.Element.Slice, u32, MapContext, std.hash_map.default_max_load_percentage),
+map: std.hash_map.Custom(der.Element.Slice, u32, MapContext, std.hash_map.default_max_load_percentage),
 bytes: std.ArrayList(u8),
 
 pub const empty: Bundle = .{ .map = .empty, .bytes = .empty };

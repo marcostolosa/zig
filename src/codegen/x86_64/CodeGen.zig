@@ -121,7 +121,7 @@ mir_instructions: std.MultiArrayList(Mir.Inst) = .empty,
 /// MIR extra data
 mir_extra: std.ArrayList(u32) = .empty,
 mir_string_bytes: std.ArrayList(u8) = .empty,
-mir_strings: std.HashMapUnmanaged(
+mir_strings: std.hash_map.Custom(
     u32,
     void,
     std.hash_map.StringIndexContext,
@@ -177588,7 +177588,7 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
         });
         self.gpa.free(args);
     }
-    var arg_map: std.StringHashMapUnmanaged(u8) = .empty;
+    var arg_map: std.hash_map.String(u8) = .empty;
     try arg_map.ensureTotalCapacity(self.gpa, @intCast(outputs.len + inputs.len));
     defer arg_map.deinit(self.gpa);
 

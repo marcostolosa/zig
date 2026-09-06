@@ -348,7 +348,7 @@ const Node = union(enum) {
 const Toc = struct {
     nodes: []Node,
     toc: []u8,
-    urls: std.StringHashMapManaged(Token),
+    urls: std.hash_map.StringManaged(Token),
 };
 
 const Action = enum {
@@ -357,7 +357,7 @@ const Action = enum {
 };
 
 fn genToc(gpa: Allocator, tokenizer: *Tokenizer) !Toc {
-    var urls = std.StringHashMapManaged(Token).init(gpa);
+    var urls = std.hash_map.StringManaged(Token).init(gpa);
     errdefer urls.deinit();
 
     var header_stack_size: usize = 0;

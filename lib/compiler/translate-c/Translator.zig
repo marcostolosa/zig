@@ -108,11 +108,11 @@ mangle_count: u32 = 0,
 /// Table of declarations for enum, struct, union and typedef types.
 type_decls: std.array_hash_map.Auto(Node.Index, []const u8) = .empty,
 /// Table of record decls that have been demoted to opaques.
-opaque_demotes: std.HashMapUnmanaged(QualType, void, QualTypeHashContext, std.hash_map.default_max_load_percentage) = .empty,
+opaque_demotes: std.hash_map.Custom(QualType, void, QualTypeHashContext, std.hash_map.default_max_load_percentage) = .empty,
 /// Table of unnamed enums and records that are child types of typedefs.
-unnamed_typedefs: std.HashMapUnmanaged(QualType, []const u8, QualTypeHashContext, std.hash_map.default_max_load_percentage) = .empty,
+unnamed_typedefs: std.hash_map.Custom(QualType, []const u8, QualTypeHashContext, std.hash_map.default_max_load_percentage) = .empty,
 /// Table of anonymous record to generated field names.
-anonymous_record_field_names: std.HashMapUnmanaged(
+anonymous_record_field_names: std.hash_map.Custom(
     AnonymousRecordFieldNames.Key,
     []const u8,
     AnonymousRecordFieldNames.Context,

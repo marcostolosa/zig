@@ -39,7 +39,7 @@ source_column: u32 = 0,
 /// Used for temporary allocations; freed after AstGen is complete.
 /// The resulting ZIR code has no references to anything in this arena.
 arena: Allocator,
-string_table: std.HashMapUnmanaged(u32, void, StringIndexContext, std.hash_map.default_max_load_percentage) = .empty,
+string_table: std.hash_map.Custom(u32, void, StringIndexContext, std.hash_map.default_max_load_percentage) = .empty,
 compile_errors: ArrayList(Zir.Inst.CompileErrors.Item) = .empty,
 /// The topmost block of the current function.
 fn_block: ?*GenZir = null,

@@ -62,8 +62,8 @@ pub const Wip = struct {
     next_generated_file_index: u32 = 0,
     cache_poison: bool = false,
 
-    const DedupeTable = std.HashMapUnmanaged(ExtraSlice, void, ExtraSlice.Context, std.hash_map.default_max_load_percentage);
-    const TargetsTable = std.HashMapUnmanaged(TargetQuery.Index, void, TargetsTableContext, std.hash_map.default_max_load_percentage);
+    const DedupeTable = std.hash_map.Custom(ExtraSlice, void, ExtraSlice.Context, std.hash_map.default_max_load_percentage);
+    const TargetsTable = std.hash_map.Custom(TargetQuery.Index, void, TargetsTableContext, std.hash_map.default_max_load_percentage);
 
     const ExtraSlice = struct {
         index: u32,
@@ -100,7 +100,7 @@ pub const Wip = struct {
         }
     };
 
-    const StringTable = std.HashMapUnmanaged(String, void, StringTableContext, std.hash_map.default_max_load_percentage);
+    const StringTable = std.hash_map.Custom(String, void, StringTableContext, std.hash_map.default_max_load_percentage);
     const StringTableContext = struct {
         bytes: []const u8,
 

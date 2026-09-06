@@ -1,5 +1,5 @@
 source: []const u8,
-args: std.StringHashMapUnmanaged(Operand) = .empty,
+args: std.hash_map.String(Operand) = .empty,
 
 pub const Operand = union(enum) {
     register: Register,

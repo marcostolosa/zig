@@ -193,7 +193,7 @@ pub const Line = struct {
 pub const Str = struct {
     ni: link.MappedFile.Node.Index.Optional,
     offset: usize,
-    map: std.HashMapUnmanaged(usize, void, Context, std.hash_map.default_max_load_percentage),
+    map: std.hash_map.Custom(usize, void, Context, std.hash_map.default_max_load_percentage),
 
     fn get(
         s: *Str,

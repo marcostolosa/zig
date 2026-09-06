@@ -1045,7 +1045,7 @@ pub fn rvaRelocationTypeIndicator(target: std.coff.IMAGE.FILE.MACHINE) ?u16 {
 
 const StringTable = struct {
     data: std.ArrayList(u8) = .empty,
-    map: std.HashMapUnmanaged(u32, void, std.hash_map.StringIndexContext, std.hash_map.default_max_load_percentage) = .empty,
+    map: std.hash_map.Custom(u32, void, std.hash_map.StringIndexContext, std.hash_map.default_max_load_percentage) = .empty,
 
     pub fn deinit(self: *StringTable, allocator: Allocator) void {
         self.data.deinit(allocator);

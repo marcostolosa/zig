@@ -18,7 +18,7 @@ pub const DynamicBitSetUnmanaged = bit_set.DynamicBitSetUnmanaged;
 pub const EnumArray = enums.EnumArray;
 pub const EnumMap = enums.EnumMap;
 pub const EnumSet = enums.EnumSet;
-/// Deprecated; conver use `array_hash_map.CustomManaged`.
+/// Deprecated; convert to `hash_map.Custom` or use `array_hash_map.CustomManaged`.
 pub const HashMap = hash_map.CustomManaged;
 /// Deprecated; use `array_hash_map.Custom`.
 pub const HashMapUnmanaged = hash_map.Custom;

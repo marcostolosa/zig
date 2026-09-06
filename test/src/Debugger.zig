@@ -2002,7 +2002,7 @@ pub fn addTests(db: *Debugger) void {
                 \\        return lhs == rhs;
                 \\    }
                 \\};
-                \\const Map = std.HashMapUnmanaged(u32, u32, Context, 63);
+                \\const Map = std.hash_map.Custom(u32, u32, Context, 63);
                 \\fn testHashMap(map: Map) void {
                 \\    _ = map;
                 \\}

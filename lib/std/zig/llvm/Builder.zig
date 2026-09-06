@@ -7526,7 +7526,7 @@ pub const WipFunction = struct {
 
         var wip_name: struct {
             next_name: String = @fromBackingInt(0),
-            next_unique_name: std.AutoHashMapManaged(String, String),
+            next_unique_name: std.hash_map.AutoManaged(String, String),
             builder: *Builder,
 
             fn map(wip_name: *@This(), name: String, sep: []const u8) Allocator.Error!String {

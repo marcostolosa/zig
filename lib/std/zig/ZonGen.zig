@@ -20,7 +20,7 @@ nodes: std.MultiArrayList(Zoir.Node.Repr),
 extra: std.ArrayList(u32),
 limbs: std.ArrayList(std.math.big.Limb),
 string_bytes: std.ArrayList(u8),
-string_table: std.HashMapUnmanaged(u32, void, StringIndexContext, std.hash_map.default_max_load_percentage),
+string_table: std.hash_map.Custom(u32, void, StringIndexContext, std.hash_map.default_max_load_percentage),
 
 compile_errors: std.ArrayList(Zoir.CompileError),
 error_notes: std.ArrayList(Zoir.CompileError.Note),

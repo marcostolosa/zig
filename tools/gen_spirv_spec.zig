@@ -11,7 +11,7 @@ const OperandKind = g.OperandKind;
 const Enumerant = g.Enumerant;
 const Operand = g.Operand;
 
-const ExtendedStructSet = std.StringHashMapManaged(void);
+const ExtendedStructSet = std.hash_map.StringManaged(void);
 
 const allowed_vendors = [_][]const u8{
     "KHR",

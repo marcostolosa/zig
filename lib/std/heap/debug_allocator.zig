@@ -76,7 +76,7 @@
 //! unchanged. Otherwise, the request is rejected.
 //!
 //! Large objects are allocated directly using the backing allocator. Metadata
-//! is stored separately in a `std.HashMap` using the backing allocator.
+//! is stored separately in a `std.hash_map.Auto` using the backing allocator.
 //!
 //! Resizing and remapping are forwarded directly to the backing allocator,
 //! except where such operations would change the category from large to small.

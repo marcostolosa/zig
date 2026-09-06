@@ -681,6 +681,7 @@ pub var elf_aux_maybe: ?[*]std.elf.Auxv = null;
 const extern_getauxval = switch (builtin.zig_backend) {
     // Calling extern functions is not yet supported with these backends
     .stage2_arm,
+    .stage2_loongarch,
     .stage2_powerpc,
     .stage2_riscv64,
     .stage2_sparc64,
@@ -2135,7 +2136,10 @@ pub fn flock(fd: fd_t, operation: i32) usize {
     return syscall2(.flock, @as(u32, @bitCast(fd)), @as(u32, @bitCast(operation)));
 }
 
-pub const Elf_Symndx = if (native_arch == .s390x) u64 else u32;
+pub const Elf_Symndx = switch (native_arch) {
+    .alpha, .s390x => u64,
+    else => u32,
+};
 
 // We must follow the C calling convention when we call into the VDSO
 const VdsoClockGettime = *align(1) const fn (clockid_t, *timespec) callconv(.c) usize;
@@ -3252,6 +3256,44 @@ pub const Sysinfo = switch (native_abi) {
 
 pub fn sysinfo(info: *Sysinfo) usize {
     return syscall1(.sysinfo, @intFromPtr(info));
+}
+
+const VdsoSysRiscvHwprobe = *align(1) const fn (
+    pairs: [*]riscv_hwprobe,
+    pair_count: usize,
+    cpusetsize: usize,
+    cpus: ?[*]cpu_set_t,
+    flags: u32,
+) callconv(.c) usize;
+var vdso_sys_riscv_hwprobe: ?VdsoSysRiscvHwprobe = &init_vdso_sys_riscv_hwprobe;
+
+fn init_vdso_sys_riscv_hwprobe(
+    pairs: [*]riscv_hwprobe,
+    pair_count: usize,
+    cpusetsize: usize,
+    cpus: ?[*]cpu_set_t,
+    flags: u32,
+) callconv(.c) usize {
+    const ptr: ?VdsoSysRiscvHwprobe = @ptrFromInt(vdso.lookup(VDSO.HWPROBE_VER, VDSO.HWPROBE_SYM));
+    @atomicStore(?VdsoSysRiscvHwprobe, &vdso_sys_riscv_hwprobe, ptr, .monotonic);
+    if (ptr) |f| return f(pairs, pair_count, cpusetsize, cpus, flags);
+    return @bitCast(-@as(isize, @backingInt(E.NOSYS)));
+}
+
+pub fn sys_riscv_hwprobe(
+    pairs: [*]riscv_hwprobe,
+    pair_count: usize,
+    cpusetsize: usize,
+    cpus: ?[*]cpu_set_t,
+    flags: u32,
+) usize {
+    if (VDSO != void) {
+        const ptr = @atomicLoad(?VdsoSysRiscvHwprobe, &vdso_sys_riscv_hwprobe, .unordered);
+        if (ptr) |f| {
+            if (f(pairs, pair_count, cpusetsize, cpus, flags) == 0) return 0;
+        }
+    }
+    return syscall5(.riscv_hwprobe, @intFromPtr(pairs), pair_count, cpusetsize, @intFromPtr(cpus), flags);
 }
 
 pub const E = switch (native_arch) {
@@ -8105,7 +8147,7 @@ pub const nfds_t = usize;
 pub const pollfd = extern struct {
     fd: fd_t,
     events: i16,
-    revents: i16,
+    revents: i16 = undefined,
 };
 
 pub const POLL = struct {
@@ -10915,4 +10957,128 @@ pub const cmsghdr = extern struct {
     len: usize,
     level: i32,
     type: i32,
+};
+
+pub const riscv_hwprobe = extern struct {
+    key: i64,
+    value: u64,
+};
+
+pub const RISCV_HWPROBE = struct {
+    pub const KEY = struct {
+        pub const MVENDORID = 0;
+        pub const MARCHID = 1;
+        pub const MIMPID = 2;
+        pub const BASE_BEHAVIOR = 3;
+        pub const IMA_EXT_0 = 4;
+        pub const CPUPERF_0 = 5;
+        pub const ZICBOZ_BLOCK_SIZE = 6;
+        pub const HIGHEST_VIRT_ADDRESS = 7;
+        pub const TIME_CSR_FREQ = 8;
+        pub const MISALIGNED_SCALAR_PERF = 9;
+        pub const MISALIGNED_VECTOR_PERF = 10;
+        pub const VENDOR_EXT_THEAD_0 = 11;
+        pub const ZICBOM_BLOCK_SIZE = 12;
+        pub const VENDOR_EXT_SIFIVE_0 = 13;
+        pub const VENDOR_EXT_MIPS_0 = 14;
+        pub const ZICBOP_BLOCK_SIZE = 15;
+        pub const IMA_EXT_1 = 16;
+    };
+
+    pub const FLAGS_WHICH_CPUS = 1 << 0;
+
+    pub const BASE_BEHAVIOR_IMA = 1 << 0;
+
+    pub const IMA_EXT_0 = struct {
+        pub const IMA_FD = 1 << 0;
+        pub const IMA_C = 1 << 1;
+        pub const IMA_V = 1 << 2;
+        pub const EXT_ZBA = 1 << 3;
+        pub const EXT_ZBB = 1 << 4;
+        pub const EXT_ZBS = 1 << 5;
+        pub const EXT_ZICBOZ = 1 << 6;
+        pub const EXT_ZBC = 1 << 7;
+        pub const EXT_ZBKB = 1 << 8;
+        pub const EXT_ZBKC = 1 << 9;
+        pub const EXT_ZBKX = 1 << 10;
+        pub const EXT_ZKND = 1 << 11;
+        pub const EXT_ZKNE = 1 << 12;
+        pub const EXT_ZKNH = 1 << 13;
+        pub const EXT_ZKSED = 1 << 14;
+        pub const EXT_ZKSH = 1 << 15;
+        pub const EXT_ZKT = 1 << 16;
+        pub const EXT_ZVBB = 1 << 17;
+        pub const EXT_ZVBC = 1 << 18;
+        pub const EXT_ZVKB = 1 << 19;
+        pub const EXT_ZVKG = 1 << 20;
+        pub const EXT_ZVKNED = 1 << 21;
+        pub const EXT_ZVKNHA = 1 << 22;
+        pub const EXT_ZVKNHB = 1 << 23;
+        pub const EXT_ZVKSED = 1 << 24;
+        pub const EXT_ZVKSH = 1 << 25;
+        pub const EXT_ZVKT = 1 << 26;
+        pub const EXT_ZFH = 1 << 27;
+        pub const EXT_ZFHMIN = 1 << 28;
+        pub const EXT_ZIHINTNTL = 1 << 29;
+        pub const EXT_ZVFH = 1 << 30;
+        pub const EXT_ZVFHMIN = 1 << 31;
+        pub const EXT_ZFA = 1 << 32;
+        pub const EXT_ZTSO = 1 << 33;
+        pub const EXT_ZACAS = 1 << 34;
+        pub const EXT_ZICOND = 1 << 35;
+        pub const EXT_ZIHINTPAUSE = 1 << 36;
+        pub const EXT_ZVE32X = 1 << 37;
+        pub const EXT_ZVE32F = 1 << 38;
+        pub const EXT_ZVE64X = 1 << 39;
+        pub const EXT_ZVE64F = 1 << 40;
+        pub const EXT_ZVE64D = 1 << 41;
+        pub const EXT_ZIMOP = 1 << 42;
+        pub const EXT_ZCA = 1 << 43;
+        pub const EXT_ZCB = 1 << 44;
+        pub const EXT_ZCD = 1 << 45;
+        pub const EXT_ZCF = 1 << 46;
+        pub const EXT_ZCMOP = 1 << 47;
+        pub const EXT_ZAWRS = 1 << 48;
+        pub const EXT_SUPM = 1 << 49;
+        pub const EXT_ZICNTR = 1 << 50;
+        pub const EXT_ZIHPM = 1 << 51;
+        pub const EXT_ZFBFMIN = 1 << 52;
+        pub const EXT_ZVFBFMIN = 1 << 53;
+        pub const EXT_ZVFBFWMA = 1 << 54;
+        pub const EXT_ZICBOM = 1 << 55;
+        pub const EXT_ZAAMO = 1 << 56;
+        pub const EXT_ZALRSC = 1 << 57;
+        pub const EXT_ZABHA = 1 << 58;
+        pub const EXT_ZALASR = 1 << 59;
+        pub const EXT_ZICBOP = 1 << 60;
+        pub const EXT_ZILSD = 1 << 61;
+        pub const EXT_ZCLSD = 1 << 62;
+        pub const EXT_ZICFILP = 1 << 63;
+    };
+
+    pub const IMA_EXT_1_EXT_ZICFISS = 1 << 0;
+
+    pub const MISALIGNED_SCALAR = struct {
+        pub const UNKNOWN = 0;
+        pub const EMULATED = 1;
+        pub const SLOW = 2;
+        pub const FAST = 3;
+        pub const UNSUPPORTED = 4;
+    };
+
+    pub const MISALIGNED_VECTOR = struct {
+        pub const UNKNOWN = 0;
+        pub const SLOW = 2;
+        pub const FAST = 3;
+        pub const UNSUPPORTED = 4;
+    };
+
+    pub const MIPS_VENDOR_EXT_XMIPSEXECTL = 1 << 0;
+
+    pub const SIFIVE_VENDOR_EXT = struct {
+        pub const XSFVQMACCDOD = 1 << 0;
+        pub const XSFVQMACCQOQ = 1 << 1;
+        pub const XSFVFNRCLIPXFQF = 1 << 2;
+        pub const XSFVFWMACCQQQ = 1 << 3;
+    };
 };

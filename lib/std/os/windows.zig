@@ -3955,7 +3955,7 @@ pub fn unexpectedStatus(status: NTSTATUS) UnexpectedError {
 
 pub fn statusBug(status: NTSTATUS) UnexpectedError {
     switch (builtin.mode) {
-        .Debug => std.debug.panic("programmer bug caused syscall status: 0x{x} ({s})", .{
+        .debug => std.debug.panic("programmer bug caused syscall status: 0x{x} ({s})", .{
             @backingInt(status),
             std.enums.tagName(NTSTATUS, status) orelse "<unnamed>",
         }),
@@ -3965,7 +3965,7 @@ pub fn statusBug(status: NTSTATUS) UnexpectedError {
 
 pub fn errorBug(err: Win32Error) UnexpectedError {
     switch (builtin.mode) {
-        .Debug => std.debug.panic("programmer bug caused syscall error: 0x{x} ({s})", .{
+        .debug => std.debug.panic("programmer bug caused syscall error: 0x{x} ({s})", .{
             @backingInt(err),
             std.enums.tagName(Win32Error, err) orelse "<unnamed>",
         }),
@@ -5006,7 +5006,7 @@ pub const TEB = extern struct {
 };
 
 comptime {
-    // XXX: Without this check we cannot use `std.Io.Writer` on 16-bit platforms. `std.fmt.bufPrint` will hit the unreachable in `PEB.GdiHandleBuffer` without this guard.
+    // XXX: Without this check we cannot use `std.Io.Writer` on 16-bit platforms. `std.mem.print` will hit the unreachable in `PEB.GdiHandleBuffer` without this guard.
     if (builtin.os.tag == .windows) {
         // Offsets taken from WinDbg info and Geoff Chappell[1] (RIP)
         // [1]: https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/api/pebteb/teb/index.htm

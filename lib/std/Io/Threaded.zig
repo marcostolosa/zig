@@ -1946,10 +1946,6 @@ pub fn io(t: *Threaded) Io {
                 .windows => netShutdownWindows,
                 else => netShutdownPosix,
             },
-            .netWrite = switch (native_os) {
-                .windows => netWriteWindows,
-                else => netWritePosix,
-            },
             .netWriteFile = netWriteFile,
             .netInterfaceNameResolve = netInterfaceNameResolve,
             .netInterfaceName = netInterfaceName,
@@ -2586,6 +2582,15 @@ fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Oper
                 else => |e| e,
             },
         },
+        .net_write => |o| return .{
+            .net_write = (if (is_windows)
+                netWriteWindows(o.socket_handle, o.header, o.data, o.splat)
+            else
+                netWritePosix(o.socket_handle, o.header, o.data, o.splat)) catch |err| switch (err) {
+                error.Canceled => |e| return e,
+                else => |e| e,
+            },
+        },
     }
 }
 
@@ -2613,7 +2618,6 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         poll_buffer[poll_len] = .{
                             .fd = o.file.handle,
                             .events = posix.POLL.IN | posix.POLL.ERR,
-                            .revents = 0,
                         };
                         poll_len += 1;
                     },
@@ -2621,7 +2625,6 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         poll_buffer[poll_len] = .{
                             .fd = o.file.handle,
                             .events = posix.POLL.OUT | posix.POLL.ERR,
-                            .revents = 0,
                         };
                         poll_len += 1;
                     },
@@ -2629,7 +2632,6 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         poll_buffer[poll_len] = .{
                             .fd = o.file.handle,
                             .events = posix.POLL.OUT | posix.POLL.IN | posix.POLL.ERR,
-                            .revents = 0,
                         };
                         poll_len += 1;
                     },
@@ -2637,7 +2639,6 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         poll_buffer[poll_len] = .{
                             .fd = o.socket_handle,
                             .events = posix.POLL.IN | posix.POLL.ERR,
-                            .revents = 0,
                         };
                         poll_len += 1;
                     },
@@ -2645,7 +2646,6 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         poll_buffer[poll_len] = .{
                             .fd = o.socket_handle,
                             .events = posix.POLL.OUT | posix.POLL.ERR,
-                            .revents = 0,
                         };
                         poll_len += 1;
                     },
@@ -2653,7 +2653,13 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         poll_buffer[poll_len] = .{
                             .fd = o.socket_handle,
                             .events = posix.POLL.IN | posix.POLL.ERR,
-                            .revents = 0,
+                        };
+                        poll_len += 1;
+                    },
+                    .net_write => |o| {
+                        poll_buffer[poll_len] = .{
+                            .fd = o.socket_handle,
+                            .events = posix.POLL.OUT | posix.POLL.ERR,
                         };
                         poll_len += 1;
                     },
@@ -2798,7 +2804,6 @@ fn batchAwaitConcurrent(userdata: ?*anyopaque, b: *Io.Batch, timeout: Io.Timeout
             storage.slice[len] = .{
                 .fd = fd,
                 .events = events,
-                .revents = 0,
             };
             storage.len = len + 1;
         }
@@ -2864,6 +2869,7 @@ fn batchAwaitConcurrent(userdata: ?*anyopaque, b: *Io.Batch, timeout: Io.Timeout
                     b.completed.tail = index;
                 },
                 .net_read => |o| try poll_storage.add(o.socket_handle, posix.POLL.IN | posix.POLL.ERR),
+                .net_write => |o| try poll_storage.add(o.socket_handle, posix.POLL.OUT | posix.POLL.ERR),
             }
             index = submission.node.next;
         }
@@ -3061,6 +3067,7 @@ fn batchApc(
                 .net_receive => unreachable,
                 .net_send => unreachable,
                 .net_read => unreachable,
+                .net_write => unreachable,
             };
             storage.* = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
         },
@@ -3281,6 +3288,16 @@ fn batchDrainSubmittedWindows(t: *Threaded, b: *Io.Batch, concurrency: bool) (Io
                 if (concurrency) return error.ConcurrencyUnavailable;
                 batchCompleteBlockingWindows(b, operation_userdata, .{
                     .net_read = netRead(o.socket_handle, o.data) catch |err| switch (err) {
+                        error.Canceled => |e| return e,
+                        else => |e| e,
+                    },
+                });
+            },
+            .net_write => |*o| {
+                // TODO integrate with overlapped I/O or equivalent to avoid this error
+                if (concurrency) return error.ConcurrencyUnavailable;
+                batchCompleteBlockingWindows(b, operation_userdata, .{
+                    .net_write = netWriteWindows(o.socket_handle, o.header, o.data, o.splat) catch |err| switch (err) {
                         error.Canceled => |e| return e,
                         else => |e| e,
                     },
@@ -7050,7 +7067,7 @@ fn realPathPosix(fd: posix.fd_t, out_buffer: []u8) File.RealPathError!usize {
         .linux, .serenity, .illumos => {
             var procfs_buf: ["/proc/self/path/-2147483648\x00".len]u8 = undefined;
             const template = if (native_os == .illumos) "/proc/self/path/{d}" else "/proc/self/fd/{d}";
-            const proc_path = std.fmt.bufPrintSentinel(&procfs_buf, template, .{fd}, 0) catch unreachable;
+            const proc_path = std.mem.printSentinel(&procfs_buf, template, .{fd}, 0) catch unreachable;
             const syscall: Syscall = try .start();
             while (true) {
                 const rc = posix.system.readlink(proc_path, out_buffer.ptr, out_buffer.len);
@@ -7138,7 +7155,7 @@ fn fileHardLink(
         error.FileNotFound => {
             if (options.follow_symlinks) return error.FileNotFound;
             var proc_buf: ["/proc/self/fd/-2147483648\x00".len]u8 = undefined;
-            const proc_path = std.fmt.bufPrintSentinel(&proc_buf, "/proc/self/fd/{d}", .{file.handle}, 0) catch
+            const proc_path = std.mem.printSentinel(&proc_buf, "/proc/self/fd/{d}", .{file.handle}, 0) catch
                 unreachable;
             return linkat(posix.AT.FDCWD, proc_path, new_dir.handle, new_sub_path_posix, posix.AT.SYMLINK_FOLLOW);
         },
@@ -8616,7 +8633,7 @@ fn fchmodatFallback(
         return error.OperationUnsupported;
 
     var procfs_buf: ["/proc/self/fd/-2147483648\x00".len]u8 = undefined;
-    const proc_path = std.fmt.bufPrintSentinel(&procfs_buf, "/proc/self/fd/{d}", .{path_fd}, 0) catch unreachable;
+    const proc_path = std.mem.printSentinel(&procfs_buf, "/proc/self/fd/{d}", .{path_fd}, 0) catch unreachable;
     const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.chmod(proc_path, mode))) {
@@ -10616,7 +10633,7 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) process.Execut
                 var it = std.mem.tokenizeScalar(u8, PATH, ':');
                 it: while (it.next()) |dir| {
                     var resolved_path_buf: [std.c.PATH_MAX]u8 = undefined;
-                    const resolved_path = std.fmt.bufPrintSentinel(&resolved_path_buf, "{s}/{s}", .{
+                    const resolved_path = std.mem.printSentinel(&resolved_path_buf, "{s}/{s}", .{
                         dir, argv0,
                     }, 0) catch continue;
 
@@ -12858,6 +12875,7 @@ fn netReadPosix(fd: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usi
                         .NOMEM => return error.SystemResources,
                         .NOTCONN => return error.SocketUnconnected,
                         .CONNRESET => return error.ConnectionResetByPeer,
+                        .TIMEDOUT => return error.ConnectionTimedOut,
                         .NOTCAPABLE => return error.AccessDenied,
                         else => |err| return posix.unexpectedErrno(err),
                     }
@@ -12889,6 +12907,7 @@ fn netReadPosix(fd: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usi
                     .NOMEM => return error.SystemResources,
                     .NOTCONN => return error.SocketUnconnected,
                     .CONNRESET => return error.ConnectionResetByPeer,
+                    .TIMEDOUT => return error.ConnectionTimedOut,
                     .PIPE => return error.SocketUnconnected,
                     .NETDOWN => return error.NetworkDown,
                     else => |err| return posix.unexpectedErrno(err),
@@ -12920,7 +12939,8 @@ fn netReadWindows(socket_handle: net.Socket.Handle, data: [][]u8) net.Stream.Rea
         .SUCCESS => return iosb.Information,
         .CANCELLED => unreachable,
         .INSUFFICIENT_RESOURCES => return error.SystemResources,
-        .CONNECTION_RESET => return error.ConnectionResetByPeer,
+        .CONNECTION_RESET, .REMOTE_DISCONNECT => return error.ConnectionResetByPeer,
+        .IO_TIMEOUT => return error.ConnectionTimedOut,
         else => |status| return windows.unexpectedStatus(status),
     }
 }
@@ -13052,6 +13072,7 @@ fn netSendOnePosix(
             .HOSTUNREACH => return syscall.fail(error.HostUnreachable),
             .NETUNREACH => return syscall.fail(error.NetworkUnreachable),
             .NOTCONN => return syscall.fail(error.SocketUnconnected),
+            .TIMEDOUT => return syscall.fail(error.ConnectionTimedOut),
             .NETDOWN => return syscall.fail(error.NetworkDown),
             .BADF => |err| return syscall.errnoBug(err), // File descriptor used after closed.
             .DESTADDRREQ => |err| return syscall.errnoBug(err),
@@ -13123,6 +13144,7 @@ fn netSendManyPosix(
             .HOSTUNREACH => return syscall.fail(error.HostUnreachable),
             .NETUNREACH => return syscall.fail(error.NetworkUnreachable),
             .NOTCONN => return syscall.fail(error.SocketUnconnected),
+            .TIMEDOUT => return syscall.fail(error.ConnectionTimedOut),
             .NETDOWN => return syscall.fail(error.NetworkDown),
 
             .BADF => |err| return syscall.errnoBug(err), // File descriptor used after closed.
@@ -13203,6 +13225,7 @@ fn netReceivePosix(
             .MSGSIZE => return syscall.fail(error.MessageOversize),
             .PIPE => return syscall.fail(error.SocketUnconnected),
             .CONNRESET => return syscall.fail(error.ConnectionResetByPeer),
+            .TIMEDOUT => return syscall.fail(error.ConnectionTimedOut),
             .NETDOWN => return syscall.fail(error.NetworkDown),
             .AGAIN => return syscall.fail(error.WouldBlock),
             .BADF => |err| return syscall.errnoBug(err),
@@ -13283,15 +13306,12 @@ fn netReceiveOneWindows(
 }
 
 fn netWritePosix(
-    userdata: ?*anyopaque,
     fd: net.Socket.Handle,
     header: []const u8,
     data: []const []const u8,
     splat: usize,
 ) net.Stream.Writer.Error!usize {
     if (!have_networking) return error.NetworkDown;
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
 
     var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
     var msg: posix.msghdr_const = .{
@@ -13368,6 +13388,7 @@ fn netWritePosix(
                     .HOSTUNREACH => return error.HostUnreachable,
                     .NETUNREACH => return error.NetworkUnreachable,
                     .NOTCONN => return error.SocketUnconnected,
+                    .TIMEDOUT => return error.ConnectionTimedOut,
                     .NETDOWN => return error.NetworkDown,
                     else => |err| return posix.unexpectedErrno(err),
                 }
@@ -13377,15 +13398,12 @@ fn netWritePosix(
 }
 
 fn netWriteWindows(
-    userdata: ?*anyopaque,
     handle: net.Socket.Handle,
     header: []const u8,
     data: []const []const u8,
     splat: usize,
 ) net.Stream.Writer.Error!usize {
     if (!have_networking) return error.NetworkDown;
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
 
     var iovecs: [max_iovecs_len]windows.AFD.WSABUF(.@"const") = undefined;
     var len: u32 = 0;
@@ -13431,7 +13449,8 @@ fn netWriteWindows(
         .SUCCESS => return iosb.Information,
         .CANCELLED => unreachable,
         .INSUFFICIENT_RESOURCES => return error.SystemResources,
-        .CONNECTION_RESET => return error.ConnectionResetByPeer,
+        .CONNECTION_RESET, .REMOTE_DISCONNECT => return error.ConnectionResetByPeer,
+        .IO_TIMEOUT => return error.ConnectionTimedOut,
         else => |status| return windows.unexpectedStatus(status),
     }
 }
@@ -13957,6 +13976,7 @@ fn netLookupFallible(
             .DNS_ERROR_INVALID_NAME_CHAR,
             .DNS_ERROR_RECORD_DOES_NOT_EXIST,
             => return error.UnknownHostName,
+            .TIMEOUT => return error.NameServerFailure,
             else => |err| return windows.unexpectedError(err),
         }
     }
@@ -13982,7 +14002,7 @@ fn netLookupFallible(
         const name_c = name_buffer[0..name.len :0];
 
         var port_buffer: [8]u8 = undefined;
-        const port_c = std.fmt.bufPrintSentinel(&port_buffer, "{d}", .{options.port}, 0) catch unreachable;
+        const port_c = std.mem.printSentinel(&port_buffer, "{d}", .{options.port}, 0) catch unreachable;
 
         const family: i32 = if (options.family) |f| switch (f) {
             .ip4 => posix.AF.INET,
@@ -16954,7 +16974,7 @@ test argvToCommandLineWindows {
         ,
         \\-O
         ,
-        \\ReleaseSafe
+        \\safe
         ,
         \\--
         ,
@@ -16963,7 +16983,7 @@ test argvToCommandLineWindows {
         \\--eval=new Regex("Dwayne \"The Rock\" Johnson")
         ,
     },
-        \\"C:\Program Files\zig\zig.exe" run .\src\main.zig -target x86_64-windows-gnu -O ReleaseSafe -- --emoji=🗿 "--eval=new Regex(\"Dwayne \\\"The Rock\\\" Johnson\")"
+        \\"C:\Program Files\zig\zig.exe" run .\src\main.zig -target x86_64-windows-gnu -O safe -- --emoji=🗿 "--eval=new Regex(\"Dwayne \\\"The Rock\\\" Johnson\")"
     );
 
     try t(&.{}, "");

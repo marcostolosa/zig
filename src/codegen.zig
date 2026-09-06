@@ -23,6 +23,7 @@ const Alignment = InternPool.Alignment;
 const dev = @import("dev.zig");
 
 pub const aarch64 = @import("codegen/aarch64.zig");
+pub const loongarch = @import("codegen/loongarch.zig");
 
 pub const Error = link.Error;
 
@@ -33,9 +34,11 @@ fn devFeatureForBackend(backend: std.lang.CompilerBackend) dev.Feature {
         .stage2_arm => .arm_backend,
         .stage2_c => .c_backend,
         .stage2_llvm => .llvm_backend,
+        .stage2_loongarch => .loongarch_backend,
         .stage2_powerpc => unreachable,
         .stage2_riscv64 => .riscv64_backend,
         .stage2_sparc64 => .sparc64_backend,
+        .zsf_spork8 => .spork8_backend,
         .stage2_spirv => .spirv_backend,
         .stage2_wasm => .wasm_backend,
         .stage2_x86 => .x86_backend,
@@ -51,10 +54,12 @@ fn importBackend(comptime backend: std.lang.CompilerBackend) type {
         .stage2_arm => unreachable,
         .stage2_c => @import("codegen/c.zig"),
         .stage2_llvm => @import("codegen/llvm.zig"),
+        .stage2_loongarch => loongarch,
         .stage2_powerpc => unreachable,
         .stage2_riscv64 => @import("codegen/riscv64/CodeGen.zig"),
         .stage2_sparc64 => @import("codegen/sparc64/CodeGen.zig"),
         .stage2_spirv => @import("codegen/spirv/CodeGen.zig"),
+        .zsf_spork8 => @import("codegen/spork8/CodeGen.zig"),
         .stage2_wasm => @import("codegen/wasm/CodeGen.zig"),
         .stage2_x86, .stage2_x86_64 => @import("codegen/x86_64/CodeGen.zig"),
         _ => unreachable,
@@ -71,9 +76,11 @@ pub fn legalizeFeatures(pt: Zcu.PerThread, nav_index: InternPool.Nav.Index) ?*co
         .stage2_wasm,
         .stage2_x86_64,
         .stage2_aarch64,
+        .stage2_loongarch,
         .stage2_x86,
         .stage2_riscv64,
         .stage2_sparc64,
+        .zsf_spork8,
         .stage2_spirv,
         => |backend| {
             dev.check(devFeatureForBackend(backend));
@@ -87,7 +94,7 @@ pub fn wantsLiveness(pt: Zcu.PerThread, nav_index: InternPool.Nav.Index) bool {
     const target = &zcu.navFileScope(nav_index).mod.?.resolved_target.result;
     return switch (target_util.zigBackend(target, zcu.comp.config.use_llvm)) {
         else => true,
-        .stage2_aarch64 => false,
+        .stage2_aarch64, .stage2_loongarch => false,
     };
 }
 
@@ -96,22 +103,26 @@ pub fn wantsLiveness(pt: Zcu.PerThread, nav_index: InternPool.Nav.Index) bool {
 /// union of all MIR types. The active tag is known from the backend in use; see `AnyMir.tag`.
 pub const AnyMir = union {
     aarch64: if (dev.env.supports(.aarch64_backend)) @import("codegen/aarch64/Mir.zig") else noreturn,
+    loongarch: if (dev.env.supports(.loongarch_backend)) @import("codegen/loongarch/Mir.zig") else noreturn,
     riscv64: if (dev.env.supports(.riscv64_backend)) @import("codegen/riscv64/Mir.zig") else noreturn,
     sparc64: if (dev.env.supports(.sparc64_backend)) @import("codegen/sparc64/Mir.zig") else noreturn,
     x86_64: if (dev.env.supports(.x86_64_backend)) @import("codegen/x86_64/Mir.zig") else noreturn,
     wasm: if (dev.env.supports(.wasm_backend)) @import("codegen/wasm/Mir.zig") else noreturn,
     c: if (dev.env.supports(.c_backend)) @import("codegen/c.zig").Mir else noreturn,
     spirv: if (dev.env.supports(.spirv_backend)) @import("codegen/spirv/Mir.zig") else noreturn,
+    spork8: if (dev.env.supports(.spork8_backend)) @import("codegen/spork8/Mir.zig") else noreturn,
 
     pub inline fn tag(comptime backend: std.lang.CompilerBackend) []const u8 {
         return switch (backend) {
             .stage2_aarch64 => "aarch64",
+            .stage2_loongarch => "loongarch",
             .stage2_riscv64 => "riscv64",
             .stage2_sparc64 => "sparc64",
             .stage2_x86_64 => "x86_64",
             .stage2_wasm => "wasm",
             .stage2_c => "c",
             .stage2_spirv => "spirv",
+            .zsf_spork8 => "spork8",
             else => unreachable,
         };
     }
@@ -122,12 +133,14 @@ pub const AnyMir = union {
         switch (backend) {
             else => unreachable,
             inline .stage2_aarch64,
+            .stage2_loongarch,
             .stage2_riscv64,
             .stage2_sparc64,
             .stage2_x86_64,
             .stage2_wasm,
             .stage2_c,
             .stage2_spirv,
+            .zsf_spork8,
             => |backend_ct| @field(mir, tag(backend_ct)).deinit(gpa),
         }
     }
@@ -151,11 +164,13 @@ pub fn generateFunction(
     switch (target_util.zigBackend(target, false)) {
         else => unreachable,
         inline .stage2_aarch64,
+        .stage2_loongarch,
         .stage2_riscv64,
         .stage2_sparc64,
         .stage2_x86_64,
         .stage2_wasm,
         .stage2_c,
+        .zsf_spork8,
         .stage2_spirv,
         => |backend| {
             dev.check(devFeatureForBackend(backend));
@@ -181,7 +196,7 @@ pub fn emitFunction(
     any_mir: *const AnyMir,
     w: *std.Io.Writer,
     debug_output: link.File.DebugInfoOutput,
-) (Error || std.Io.Writer.Error)!void {
+) link.EmitError!void {
     const zcu = pt.zcu;
     const func = zcu.funcInfo(func_index);
     const target = &zcu.navFileScope(func.owner_nav).mod.?.resolved_target.result;
@@ -194,6 +209,7 @@ pub fn emitFunction(
     switch (target_util.zigBackend(target, zcu.comp.config.use_llvm)) {
         else => unreachable,
         inline .stage2_aarch64,
+        .stage2_loongarch,
         .stage2_riscv64,
         .stage2_sparc64,
         .stage2_x86_64,
@@ -212,7 +228,7 @@ pub fn generateLazyFunction(
     atom_id: link.File.AtomId,
     w: *std.Io.Writer,
     debug_output: link.File.DebugInfoOutput,
-) (Error || std.Io.Writer.Error)!void {
+) link.EmitError!void {
     const zcu = pt.zcu;
     const target = if (Type.fromInterned(lazy_sym.ty).typeDeclInstAllowGeneratedTag(zcu)) |inst_index|
         &zcu.fileByIndex(inst_index.resolveFile(&zcu.intern_pool)).mod.?.resolved_target.result
@@ -236,7 +252,7 @@ pub fn generateLazySymbol(
     w: *std.Io.Writer,
     debug_output: link.File.DebugInfoOutput,
     reloc_parent: link.File.RelocInfo.Parent,
-) (Error || std.Io.Writer.Error)!void {
+) link.EmitError!void {
     const tracy = trace(@src());
     defer tracy.end();
     tracy.addTextFmt("{t}, {f}", .{ lazy_sym.kind, Type.fromInterned(lazy_sym.ty).fmt(pt) });
@@ -298,7 +314,7 @@ pub fn generateSymbol(
     val: Value,
     w: *std.Io.Writer,
     reloc_parent: link.File.RelocInfo.Parent,
-) (Error || std.Io.Writer.Error)!void {
+) link.EmitError!void {
     const tracy = trace(@src());
     defer tracy.end();
 
@@ -649,7 +665,7 @@ fn lowerPtr(
     w: *std.Io.Writer,
     reloc_parent: link.File.RelocInfo.Parent,
     prev_offset: u64,
-) (Error || std.Io.Writer.Error)!void {
+) link.EmitError!void {
     const zcu = pt.zcu;
     const ptr = zcu.intern_pool.indexToKey(ptr_val).ptr;
     const offset: u64 = prev_offset + ptr.byte_offset;
@@ -707,7 +723,7 @@ fn lowerUavRef(
     w: *std.Io.Writer,
     reloc_parent: link.File.RelocInfo.Parent,
     offset: u64,
-) (Error || std.Io.Writer.Error)!void {
+) link.EmitError!void {
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
     const comp = lf.comp;
@@ -728,7 +744,6 @@ fn lowerUavRef(
         .c => unreachable,
         .spirv => unreachable,
         .wasm => {
-            dev.check(link.File.Tag.wasm.devFeature());
             const wasm = lf.cast(.wasm).?;
             assert(reloc_parent == .none);
             try wasm.addUavReloc(w.end, uav.val, uav.orig_ty, @intCast(offset));
@@ -765,7 +780,7 @@ fn lowerNavRef(
     w: *std.Io.Writer,
     reloc_parent: link.File.RelocInfo.Parent,
     offset: u64,
-) (Error || std.Io.Writer.Error)!void {
+) link.EmitError!void {
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
     const target = &zcu.navFileScope(nav_index).mod.?.resolved_target.result;
@@ -781,7 +796,6 @@ fn lowerNavRef(
         .c => unreachable,
         .spirv => unreachable,
         .wasm => {
-            dev.check(link.File.Tag.wasm.devFeature());
             const wasm = lf.cast(.wasm).?;
             assert(reloc_parent == .none);
             try wasm.addNavReloc(w.end, nav_index, nav_ty, @intCast(offset));
@@ -1292,4 +1306,5 @@ pub fn flattenType(items_buf: []FlattenedItem, ty: Type, zcu: *Zcu, opts: struct
 
 test {
     _ = aarch64;
+    _ = loongarch;
 }

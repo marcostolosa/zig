@@ -128,6 +128,9 @@ pub fn legalizeFeatures(_: *const std.Target) *const Air.Legalize.Features {
         .expand_add_safe,
         .expand_sub_safe,
         .expand_mul_safe,
+
+        .expand_array_splat,
+        .expand_array_to_vector,
     });
 }
 
@@ -237,10 +240,7 @@ pub fn generate(
     };
     defer cg.deinit();
 
-    cg.genNav(true) catch |err| switch (err) {
-        error.AlreadyReported => return error.AlreadyReported,
-        error.OutOfMemory => return error.OutOfMemory,
-    };
+    try cg.genNav(true);
 
     return cg.serializeToMir(gpa);
 }
@@ -267,10 +267,7 @@ pub fn generateNav(
     };
     defer cg.deinit();
 
-    cg.genNav(false) catch |err| switch (err) {
-        error.AlreadyReported => return error.AlreadyReported,
-        error.OutOfMemory => return error.OutOfMemory,
-    };
+    try cg.genNav(false);
 
     return cg.serializeToMir(gpa);
 }
@@ -614,7 +611,8 @@ pub fn structType(
 
 /// Returns the layout-decorated variant of `ty` for use inside a Vulkan/OpenGL
 /// interface block. Vulkan forbids nested Block decorations, so recursive calls
-/// always pass `false`.
+/// pass `false`, except through an array, whose elements are each a
+/// block of their own.
 ///
 /// This is distinct from `resolveType` because SPIR-V forbids such decorations
 /// on the pointee of a Function-scope variable.
@@ -692,26 +690,30 @@ pub fn layoutType(cg: *CodeGen, ty: Type, is_block_root: bool) Error!Id {
         },
         .array => id: {
             const elem_ty = ty.childType(zcu);
-            const elem_ty_id = try cg.layoutType(elem_ty, false);
+            const elem_ty_id = try cg.layoutType(elem_ty, is_block_root);
             const total_len = std.math.cast(u32, ty.arrayLenIncludingSentinel(zcu)) orelse
                 return cg.fail("array type of {} elements is too large", .{ty.arrayLenIncludingSentinel(zcu)});
             const id = try cg.arrayType(try cg.constInt(.u32, total_len), elem_ty_id);
-            if (elem_ty.hasRuntimeBits(zcu)) try cg.decorate(id, .{
-                .array_stride = .{ .array_stride = @intCast(elem_ty.abiSize(zcu)) },
-            });
+            if (!is_block_root and elem_ty.hasRuntimeBits(zcu)) {
+                try cg.decorate(id, .{
+                    .array_stride = .{ .array_stride = @intCast(elem_ty.abiSize(zcu)) },
+                });
+            }
             break :id id;
         },
         .spirv => if (ty.isSpirvRuntimeArray(zcu)) id: {
             const elem_ty = ty.childType(zcu);
-            const elem_ty_id = try cg.layoutType(elem_ty, false);
+            const elem_ty_id = try cg.layoutType(elem_ty, is_block_root);
             const id = cg.allocId();
             try cg.sections.globals.emit(gpa, .OpTypeRuntimeArray, .{
                 .id_result = id,
                 .element_type = elem_ty_id,
             });
-            if (elem_ty.hasRuntimeBits(zcu)) try cg.decorate(id, .{
-                .array_stride = .{ .array_stride = @intCast(elem_ty.abiSize(zcu)) },
-            });
+            if (!is_block_root and elem_ty.hasRuntimeBits(zcu)) {
+                try cg.decorate(id, .{
+                    .array_stride = .{ .array_stride = @intCast(elem_ty.abiSize(zcu)) },
+                });
+            }
             break :id id;
         } else return cg.resolveType(ty, .indirect),
         else => return cg.resolveType(ty, .indirect),
@@ -846,7 +848,7 @@ pub fn storageClass(cg: *const CodeGen, as: std.lang.AddressSpace) spec.StorageC
     };
 }
 
-const Error = error{ AlreadyReported, OutOfMemory };
+const Error = codegen.Error;
 
 pub fn genNav(cg: *CodeGen, do_codegen: bool) Error!void {
     const gpa = cg.gpa;
@@ -952,11 +954,18 @@ pub fn genNav(cg: *CodeGen, do_codegen: bool) Error!void {
             switch (target.os.tag) {
                 .vulkan, .opengl => {
                     switch (storage_class) {
-                        .uniform, .push_constant, .storage_buffer, .physical_storage_buffer => {
+                        .uniform,
+                        .push_constant,
+                        .storage_buffer,
+                        .physical_storage_buffer,
+                        => {
                             if (ty.hasRuntimeBits(zcu)) {
-                                try cg.decorate(ptr_ty_id, .{
-                                    .array_stride = .{ .array_stride = @intCast(ty.abiSize(zcu)) },
-                                });
+                                if (!ty.isSpirvRuntimeArray(zcu)) {
+                                    try cg.decorate(
+                                        ptr_ty_id,
+                                        .{ .array_stride = .{ .array_stride = @intCast(ty.abiSize(zcu)) } },
+                                    );
+                                }
                                 if (!cg.needsLayout(as, ty)) try cg.decorateLayout(ty, ty_id);
                             }
                             if (key.is_const and storage_class == .storage_buffer) {
@@ -1960,13 +1969,8 @@ fn derivePtr(cg: *CodeGen, derivation: Value.PointerDeriveStep) !Id {
 
             const nav_ty_id = try cg.resolveType(nav_ty, .indirect);
             const decl_ptr_ty_id = try cg.ptrType(nav_ty_id, storage_class);
-            switch (nav_ty.zigTypeTag(zcu)) {
-                .@"struct", .@"union" => {
-                    if (cg.needsLayout(nav.resolved.?.@"addrspace", nav_ty)) {
-                        try cg.block_var_ids.put(gpa, spv_decl.result_id, {});
-                    }
-                },
-                else => {},
+            if (cg.needsLayout(nav.resolved.?.@"addrspace", nav_ty)) {
+                try cg.block_var_ids.put(gpa, spv_decl.result_id, {});
             }
             if (decl_ptr_ty_id == ty_id) return spv_decl.result_id;
             switch (target.os.tag) {
@@ -2044,6 +2048,13 @@ fn derivePtr(cg: *CodeGen, derivation: Value.PointerDeriveStep) !Id {
                 while (cur.toIntern() != dst_child.toIntern()) {
                     switch (cur.zigTypeTag(zcu)) {
                         .array => {
+                            if (dst_child.zigTypeTag(zcu) == .array and
+                                dst_child.childType(zcu).toIntern() == cur.childType(zcu).toIntern() and
+                                dst_child.arrayLenIncludingSentinel(zcu) <= cur.arrayLenIncludingSentinel(zcu))
+                            {
+                                cur = dst_child;
+                                break;
+                            }
                             cur = cur.childType(zcu);
                             depth += 1;
                         },
@@ -2083,7 +2094,7 @@ fn derivePtr(cg: *CodeGen, derivation: Value.PointerDeriveStep) !Id {
                 }
             }
 
-            return cg.fail("cannot perform pointer cast: '{f}' to '{f}'", .{
+            return cg.fail("cannot cast pointer '{f}' to '{f}'", .{
                 parent_ptr_ty.fmt(pt),
                 oac.new_ptr_ty.fmt(pt),
             });
@@ -4429,6 +4440,7 @@ fn genInst(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
             .not              => try cg.airNot(inst),
 
             .array_to_slice => try cg.airArrayToSlice(inst),
+            .array_to_vector => unreachable, // legalize .expand_array_to_vector
             .slice          => try cg.airSlice(inst),
             .aggregate_init => try cg.airAggregateInit(inst),
             .memcpy         => return cg.airMemcpy(inst),
@@ -6025,7 +6037,13 @@ fn bitCast(
             while (cur.toIntern() != dst_child.toIntern()) : (try indices.append(gpa, 0)) {
                 cur = switch (cur.zigTypeTag(zcu)) {
                     .array, .vector => cur.childType(zcu),
-                    .@"struct" => cur.fieldType(0, zcu),
+                    .@"struct" => field: {
+                        for (0..cur.structFieldCount(zcu)) |i| {
+                            const field_ty = cur.fieldType(i, zcu);
+                            if (field_ty.hasRuntimeBits(zcu) and cur.structFieldOffset(i, zcu) == 0) break :field field_ty;
+                        }
+                        unreachable;
+                    },
                     else => unreachable,
                 };
             }
@@ -6735,9 +6753,11 @@ fn ptrElemPtr(cg: *CodeGen, ptr_ty: Type, ptr_id: Id, index_id: Id) !Id {
     const zcu = cg.zcu;
     // Construct new pointer type for the resulting pointer
     const as = ptr_ty.ptrAddressSpace(zcu);
-    const elem_ty_id = try cg.pointeeType(as, ptr_ty.indexableElem(zcu), false);
+    const is_single_ptr = ptr_ty.isSinglePointer(zcu);
+    const elem_is_block = cg.block_var_ids.contains(ptr_id);
+    const elem_ty_id = try cg.pointeeType(as, ptr_ty.indexableElem(zcu), elem_is_block);
     const elem_ptr_ty_id = try cg.ptrType(elem_ty_id, cg.storageClass(as));
-    if (ptr_ty.isSinglePointer(zcu)) {
+    if (is_single_ptr) {
         // Pointer-to-array. In this case, the resulting pointer is not of the same type
         // as the ptr_ty (we want a *T, not a *[N]T), and hence we need to use accessChain.
         return cg.accessChainId(elem_ptr_ty_id, ptr_id, &.{index_id});
@@ -7061,7 +7081,7 @@ fn airFieldParentPtr(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
     const ty_pl = cg.air.instructions.items(.data)[@backingInt(inst)].ty_pl;
     const extra = cg.air.extraData(Air.FieldParentPtr, ty_pl.payload).data;
 
-    const parent_ptr_ty = ty_pl.ty.toType();
+    const parent_ptr_ty = ty_pl.ty;
     const parent_ty = parent_ptr_ty.childType(zcu);
     const result_ty_id = try cg.resolveType(parent_ptr_ty, .indirect);
 
@@ -8820,6 +8840,7 @@ fn airAssembly(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
                     notes[i] = try Zcu.ErrorMsg.init(zcu.gpa, src_loc, "{s}", .{ass.errors.items[i].msg});
                 }
 
+                msg.notes = notes;
                 break :msg msg;
             };
             return zcu.codegenFailMsg(cg.owner_nav, msg);

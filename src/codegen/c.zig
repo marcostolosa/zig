@@ -6,7 +6,7 @@ const log = std.log.scoped(.c);
 const Allocator = mem.Allocator;
 const Writer = std.Io.Writer;
 
-const dev = @import("../dev.zig");
+const codegen = @import("../codegen.zig");
 const link = @import("../link.zig");
 const Zcu = @import("../Zcu.zig");
 const Module = @import("../Module.zig");
@@ -24,7 +24,7 @@ const BigIntLimb = std.math.big.Limb;
 const BigInt = std.math.big.int;
 
 pub fn legalizeFeatures(_: *const std.Target) ?*const Air.Legalize.Features {
-    return comptime switch (dev.env.supports(.legalize)) {
+    return comptime switch (@import("../dev.zig").env.supports(.legalize)) {
         inline false, true => |supports_legalize| &.init(.{
             // we don't currently ask zig1 to use safe optimization modes
             .expand_bit_cast_safe = supports_legalize,
@@ -39,6 +39,8 @@ pub fn legalizeFeatures(_: *const std.Target) ?*const Air.Legalize.Features {
             .expand_packed_store = true,
             .expand_packed_agg_field_val = true,
             .expand_packed_aggregate_init = true,
+            .expand_array_splat = true,
+            .expand_array_to_vector = true,
 
             .scalarize_bit_cast_array = true,
             .scalarize_bit_cast_vector_non_elementwise = true,
@@ -84,7 +86,7 @@ pub const Mir = struct {
     }
 };
 
-pub const Error = Writer.Error || Allocator.Error || error{AlreadyReported};
+pub const Error = codegen.Error || Writer.Error;
 
 pub const CType = @import("c/type.zig").CType;
 
@@ -2172,11 +2174,11 @@ pub fn genTagNameFn(
     }
 
     if (!zcu.comp.config.root_strip) try w.print("/* @tagName({f}) */\n", .{
-        loaded_enum.name.fmt(ip),
+        loaded_enum.fqn.fmt(ip),
     });
     try w.print("static {s} zig_tagName_{f}__{d}({s} tag) {{\n", .{
         slice_const_u8_sentinel_0_type_name,
-        fmtIdentUnsolo(loaded_enum.name.toSlice(ip)),
+        fmtIdentUnsolo(loaded_enum.fqn.toSlice(ip)),
         @backingInt(enum_ty.toIntern()),
         enum_type_name,
     });
@@ -2249,7 +2251,7 @@ pub fn generate(
     func_index: InternPool.Index,
     air: *const Air,
     liveness: *const ?Air.Liveness,
-) @import("../codegen.zig").Error!Mir {
+) codegen.Error!Mir {
     const zcu = pt.zcu;
     const gpa = zcu.gpa;
 
@@ -2870,6 +2872,7 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
             .store_safe       => try airStore(f, inst, true),
             .struct_field_ptr => try airStructFieldPtr(f, inst),
             .array_to_slice   => try airArrayToSlice(f, inst),
+            .array_to_vector  => unreachable, // legalize .expand_array_to_vector
             .cmpxchg_weak     => try airCmpxchg(f, inst, "weak"),
             .cmpxchg_strong   => try airCmpxchg(f, inst, "strong"),
             .atomic_rmw       => try airAtomicRmw(f, inst),
@@ -3411,7 +3414,7 @@ fn airIntCast(f: *Function, inst: Air.Inst.Index, operation: []const u8, info: B
     const zcu = pt.zcu;
     const ty_op = f.air.instructions.items(.data)[@backingInt(inst)].ty_op;
 
-    const inst_ty = ty_op.ty.toType();
+    const inst_ty = ty_op.ty;
     const inst_scalar_ty = inst_ty.scalarType(zcu);
     const operand_ty = f.typeOf(ty_op.operand);
     const operand_scalar_ty = operand_ty.scalarType(zcu);
@@ -6663,7 +6666,7 @@ fn airTagName(f: *Function, inst: Air.Inst.Index) !CValue {
     try f.writeCValue(w, local, .other);
     try f.need_tag_name_funcs.put(gpa, enum_ty.toIntern(), {});
     try w.print(" = zig_tagName_{f}__{d}(", .{
-        fmtIdentUnsolo(enum_ty.containerTypeName(ip).toSlice(ip)),
+        fmtIdentUnsolo(enum_ty.containerTypeName(ip).fqn.toSlice(ip)),
         @backingInt(enum_ty.toIntern()),
     });
     try f.writeCValue(w, operand, .other);
@@ -7217,7 +7220,7 @@ fn airMulAdd(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airRuntimeNavPtr(f: *Function, inst: Air.Inst.Index) !CValue {
     const ty_nav = f.air.instructions.items(.data)[@backingInt(inst)].ty_nav;
     const w = &f.code.writer;
-    const local = try f.allocLocal(inst, .fromInterned(ty_nav.ty));
+    const local = try f.allocLocal(inst, ty_nav.ty);
     try f.writeCValue(w, local, .other);
     try w.writeAll(" = ");
     try f.dg.renderNav(w, ty_nav.nav, .other);
@@ -7259,7 +7262,7 @@ fn airCVaArg(f: *Function, inst: Air.Inst.Index) !CValue {
     try w.writeAll(" = va_arg(*(va_list *)");
     try f.writeCValue(w, va_list, .other);
     try w.writeAll(", ");
-    try f.renderType(w, ty_op.ty.toType());
+    try f.renderType(w, ty_op.ty);
     try w.writeAll(");");
     try f.newline();
     return local;
@@ -7464,7 +7467,7 @@ const StringLiteral = struct {
             },
             else => {
                 var buf: [4]u8 = undefined;
-                const printed = std.fmt.bufPrint(&buf, "\\{o:0>3}", .{c}) catch unreachable;
+                const printed = std.mem.print(&buf, "\\{o:0>3}", .{c}) catch unreachable;
                 try w.writeAll(printed);
                 return printed.len;
             },
@@ -7486,7 +7489,7 @@ const StringLiteral = struct {
         } else {
             if (!sl.first) try sl.w.writeByte(',');
             var buf: [6]u8 = undefined;
-            const printed = std.fmt.bufPrint(&buf, "'\\x{x}'", .{c}) catch unreachable;
+            const printed = std.mem.print(&buf, "'\\x{x}'", .{c}) catch unreachable;
             try sl.w.writeAll(printed);
             sl.cur_len += printed.len;
             sl.first = false;

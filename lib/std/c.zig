@@ -1330,8 +1330,16 @@ pub const IOV_MAX = switch (native_os) {
 };
 pub const CTL = switch (native_os) {
     .freebsd => struct {
+        pub const SYSCTL = 0;
         pub const KERN = 1;
+        pub const VM = 2;
+        pub const VFS = 3;
+        pub const NET = 4;
         pub const DEBUG = 5;
+        pub const HW = 6;
+        pub const MACHDEP = 7;
+        pub const USER = 8;
+        pub const P1003_1B = 9;
     },
     .netbsd => struct {
         pub const KERN = 1;
@@ -1363,6 +1371,72 @@ pub const CTL = switch (native_os) {
 
         pub const DDB = 9;
         pub const VFS = 10;
+    },
+    else => void,
+};
+pub const CPU = switch (native_os) {
+    .openbsd => switch (native_arch) {
+        .aarch64, .aarch64_be => struct {
+            pub const COMPATIBLE = 1;
+            pub const ID_AA64ISAR0 = 2;
+            pub const ID_AA64ISAR1 = 3;
+            pub const ID_AA64ISAR2 = 4;
+            pub const ID_AA64MMFR0 = 5;
+            pub const ID_AA64MMFR1 = 6;
+            pub const ID_AA64MMFR2 = 7;
+            pub const AA64PFR0 = 8;
+            pub const AA64PFR1 = 9;
+            pub const AA64SMFR0 = 10;
+            pub const AA64ZFR0 = 11;
+            pub const LIDACTION = 12;
+            pub const LED_BLINK = 13;
+        },
+        else => void,
+    },
+    else => void,
+};
+pub const HW = switch (native_os) {
+    .freebsd => struct {
+        pub const MACHINE = 1;
+        pub const MODEL = 2;
+        pub const NCPU = 3;
+        pub const BYTEORDER = 4;
+        pub const PHYSMEM = 5;
+        pub const USERMEM = 6;
+        pub const PAGESIZE = 7;
+        pub const DISKNAMES = 8;
+        pub const DISKSTATS = 9;
+        pub const FLOATINGPT = 10;
+        pub const MACHINE_ARCH = 11;
+        pub const REALMEM = 12;
+    },
+    .openbsd => struct {
+        pub const MACHINE = 1;
+        pub const MODEL = 2;
+        pub const NCPU = 3;
+        pub const BYTEORDER = 4;
+        pub const PHYSMEM = 5;
+        pub const USERMEM = 6;
+        pub const PAGESIZE = 7;
+        pub const DISKNAMES = 8;
+        pub const DISKSTATS = 9;
+        pub const DISKCOUNT = 10;
+        pub const SENSORS = 11;
+        pub const CPUSPEED = 12;
+        pub const SETPERF = 13;
+        pub const VENDOR = 14;
+        pub const PRODUCT = 15;
+        pub const VERSION = 16;
+        pub const SERIALNO = 17;
+        pub const UUID = 18;
+        pub const PHYSMEM64 = 19;
+        pub const USERMEM64 = 20;
+        pub const NCPUFOUND = 21;
+        pub const ALLOWPOWERDOWN = 22;
+        pub const PERFPOLICY = 23;
+        pub const SMT = 24;
+        pub const NCPUONLINE = 25;
+        pub const POWER = 26;
     },
     else => void,
 };
@@ -4303,12 +4377,12 @@ pub const pollfd = switch (native_os) {
     .serenity => extern struct {
         fd: fd_t,
         events: c_short,
-        revents: c_short,
+        revents: c_short = undefined,
     },
     else => extern struct {
         fd: fd_t,
         events: i16,
-        revents: i16,
+        revents: i16 = undefined,
     },
 };
 pub const rlim_t = switch (native_os) {
@@ -5997,8 +6071,14 @@ pub const SOCK = switch (native_os) {
 pub const TCP = switch (native_os) {
     .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => darwin.TCP,
     .linux => linux.TCP,
+    .freebsd => freebsd.TCP,
+    .netbsd => netbsd.TCP,
+    .openbsd => openbsd.TCP,
+    .dragonfly => dragonfly.TCP,
     .emscripten => emscripten.TCP,
     .windows => ws2_32.TCP,
+    .illumos => illumos.TCP,
+    .haiku => haiku.TCP,
     // https://github.com/SerenityOS/serenity/blob/61ac554a3403838f79ca746bd1c65ded6f97d124/Kernel/API/POSIX/netinet/tcp.h#L13-L14
     .serenity => struct {
         pub const NODELAY = 10;
@@ -6614,6 +6694,7 @@ pub const IP = switch (native_os) {
     .illumos => illumos.IP,
     .haiku => haiku.IP,
     .serenity => serenity.IP,
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => darwin.IP,
     else => void,
 };
 pub const IPV6 = switch (native_os) {
@@ -6625,6 +6706,7 @@ pub const IPV6 = switch (native_os) {
     .illumos => illumos.IPV6,
     .haiku => haiku.IPV6,
     .serenity => serenity.IPV6,
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => darwin.IPV6,
     else => void,
 };
 pub const IPTOS = switch (native_os) {
@@ -6636,6 +6718,7 @@ pub const IPTOS = switch (native_os) {
     .illumos => illumos.IPTOS,
     .haiku => haiku.IPTOS,
     .serenity => serenity.IPTOS,
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => darwin.IPTOS,
     else => void,
 };
 pub const SOL = switch (native_os) {
@@ -11295,7 +11378,6 @@ pub const writev_pos = haiku.writev_pos;
 
 pub const AUTH = openbsd.AUTH;
 pub const BI = openbsd.BI;
-pub const HW = openbsd.HW;
 pub const PTHREAD_STACK_MIN = openbsd.PTHREAD_STACK_MIN;
 pub const TCFLUSH = openbsd.TCFLUSH;
 pub const TCIO = openbsd.TCIO;

@@ -235,7 +235,6 @@ pub const VTable = struct {
     netListenUnix: *const fn (?*anyopaque, *const net.UnixAddress, net.UnixAddress.ListenOptions) net.UnixAddress.ListenError!net.Socket.Handle,
     netConnectUnix: *const fn (?*anyopaque, *const net.UnixAddress) net.UnixAddress.ConnectError!net.Socket.Handle,
     netSocketCreatePair: *const fn (?*anyopaque, net.Socket.CreatePairOptions) net.Socket.CreatePairError![2]net.Socket,
-    netWrite: *const fn (?*anyopaque, dest: net.Socket.Handle, header: []const u8, data: []const []const u8, splat: usize) net.Stream.Writer.Error!usize,
     netWriteFile: *const fn (?*anyopaque, net.Socket.Handle, header: []const u8, *Io.File.Reader, Io.Limit) net.Stream.Writer.WriteFileError!usize,
     netClose: *const fn (?*anyopaque, sockets: []const net.Socket) void,
     netShutdown: *const fn (?*anyopaque, handle: net.Socket.Handle, how: net.ShutdownHow) net.ShutdownError!void,
@@ -253,6 +252,7 @@ pub const Operation = union(enum) {
     net_receive: NetReceive,
     net_send: NetSend,
     net_read: NetRead,
+    net_write: NetWrite,
 
     pub const Tag = @typeInfo(Operation).@"union".tag_type.?;
 
@@ -373,6 +373,9 @@ pub const Operation = union(enum) {
             /// the OS where it was queued up to be reported at the next call
             /// to send or receive on the bound socket.
             PortUnreachable,
+            /// The remote peer did not respond to ongoing communication, causing the
+            /// OS to abort the connection.
+            ConnectionTimedOut,
         } || Io.UnexpectedError;
 
         pub const Result = struct { ?net.Socket.ReceiveError, usize };
@@ -416,6 +419,9 @@ pub const Operation = union(enum) {
             /// An attempt was made to send to a network/broadcast address as
             /// though it was a unicast address.
             AccessDenied,
+            /// The remote peer did not respond to ongoing communication, causing the
+            /// OS to abort the connection.
+            ConnectionTimedOut,
         } || Io.UnexpectedError;
 
         pub const Result = struct { ?net.Socket.SendError, usize };
@@ -429,10 +435,52 @@ pub const Operation = union(enum) {
             SystemResources,
             ConnectionResetByPeer,
             SocketUnconnected,
-            /// The file descriptor does not hold the required rights to read
-            /// from it.
+            /// File descriptor does not hold the required rights to read from it.
             AccessDenied,
             NetworkDown,
+            /// The remote peer did not respond to ongoing communication, causing the
+            /// OS to abort the connection.
+            ConnectionTimedOut,
+        } || Io.UnexpectedError;
+
+        pub const Result = Error!usize;
+    };
+
+    pub const NetWrite = struct {
+        socket_handle: net.Socket.Handle,
+        header: []const u8 = &.{},
+        data: []const []const u8,
+        splat: usize = 1,
+
+        pub const Error = error{
+            /// Another TCP Fast Open is already in progress.
+            FastOpenAlreadyInProgress,
+            /// Network session was unexpectedly closed by recipient.
+            ConnectionResetByPeer,
+            /// The output queue for a network interface was full. This generally indicates that the
+            /// interface has stopped sending, but may be caused by transient congestion. (Normally,
+            /// this does not occur in Linux. Packets are just silently dropped when a device queue
+            /// overflows.)
+            ///
+            /// This is also caused when there is not enough kernel memory available.
+            SystemResources,
+            /// No route to network.
+            NetworkUnreachable,
+            /// Network reached but no route to host.
+            HostUnreachable,
+            /// The local network interface used to reach the destination is down.
+            NetworkDown,
+            /// The destination address is not listening.
+            ConnectionRefused,
+            /// The passed address didn't have the correct address family in its sa_family field.
+            AddressFamilyUnsupported,
+            /// Local end has been shut down on a connection-oriented socket, or
+            /// the socket was never connected.
+            SocketUnconnected,
+            /// The remote peer did not respond to ongoing communication, causing the
+            /// OS to abort the connection.
+            ConnectionTimedOut,
+            SocketNotBound,
         } || Io.UnexpectedError;
 
         pub const Result = Error!usize;
@@ -1778,9 +1826,10 @@ pub const Condition = struct {
 
             epoch = cond.epoch.load(.acquire); // `.acquire` to ensure ordered before `state` laod
 
-            // Even on error, try to consume a pending signal first. Otherwise a race might
-            // cause a signal to get stuck in the state with no corresponding waiter.
-            {
+            // We were woken normally, so try to consume a pending signal. A signal takes
+            // priority over an expired deadline, so this is checked before the deadline
+            // below. On error we safely remove ourselves as a waiter and propagate the error.
+            if (result) |_| {
                 var prev_state = cond.state.load(.monotonic);
                 while (prev_state.signals > 0) {
                     prev_state = cond.state.cmpxchgWeak(prev_state, .{
@@ -1791,22 +1840,19 @@ pub const Condition = struct {
                         return;
                     };
                 }
+            } else |err| {
+                cond.deregister(io);
+                return err;
             }
 
-            // There are no more signals available; this was a spurious wakeup or an error. If it
-            // was an error, we will remove ourselves as a waiter and return that error. If a
-            // timeout was specified and the deadline has passed, we remove ourselves as a waiter
-            // and return `error.Timeout`. Otherwise, we'll loop back to the futex wait.
-            result catch |err| {
-                const prev_state = cond.state.fetchSub(.{ .waiters = 1, .signals = 0 }, .monotonic);
-                assert(prev_state.waiters > 0); // underflow caused by illegal state
-                return err;
-            };
+            // There are no signals available and no error; if a timeout was specified and
+            // the deadline has passed, remove ourselves as a waiter and return
+            // `error.Timeout`. Otherwise, this was a spurious wakeup: loop back to the
+            // futex wait.
             switch (deadline) {
                 .none => {},
                 .deadline => |d| if (d.untilNow(io).raw.nanoseconds >= 0) {
-                    const prev_state = cond.state.fetchSub(.{ .waiters = 1, .signals = 0 }, .monotonic);
-                    assert(prev_state.waiters > 0); // underflow caused by illegal state
+                    cond.deregister(io);
                     return error.Timeout;
                 },
                 .duration => unreachable,
@@ -1850,6 +1896,24 @@ pub const Condition = struct {
 
             // There are no more signals available; this was a spurious wakeup,
             // so we'll loop back to the futex wait.
+        }
+    }
+
+    fn deregister(cond: *Condition, io: Io) void {
+        var prev_state = cond.state.load(.monotonic);
+        while (true) {
+            const new_signals = @min(prev_state.signals, prev_state.waiters - 1);
+            prev_state = cond.state.cmpxchgWeak(prev_state, .{
+                .waiters = prev_state.waiters - 1,
+                .signals = new_signals,
+            }, .monotonic, .monotonic) orelse {
+                if (prev_state.signals > 0 and prev_state.signals < prev_state.waiters) {
+                    // We kept a signal we are not consuming; wake a remaining waiter for it.
+                    _ = cond.epoch.fetchAdd(1, .release);
+                    io.futexWake(u32, &cond.epoch.raw, 1);
+                }
+                return;
+            };
         }
     }
 
@@ -2755,7 +2819,6 @@ pub const failing: std.Io = .{
         .netListenUnix = failingNetListenUnix,
         .netConnectUnix = failingNetConnectUnix,
         .netSocketCreatePair = failingNetSocketCreatePair,
-        .netWrite = failingNetWrite,
         .netWriteFile = failingNetWriteFile,
         .netClose = unreachableNetClose,
         .netShutdown = failingNetShutdown,
@@ -2904,6 +2967,7 @@ pub fn failingOperate(userdata: ?*anyopaque, operation: Operation) Cancelable!Op
         .net_receive => .{ .net_receive = .{ error.NetworkDown, 0 } },
         .net_send => .{ .net_send = .{ error.NetworkDown, 0 } },
         .net_read => .{ .net_read = error.NetworkDown },
+        .net_write => .{ .net_write = error.NetworkDown },
     };
 }
 
@@ -3497,15 +3561,6 @@ pub fn failingNetSocketCreatePair(userdata: ?*anyopaque, options: net.Socket.Cre
     _ = userdata;
     _ = options;
     return error.OperationUnsupported;
-}
-
-pub fn failingNetWrite(userdata: ?*anyopaque, dest: net.Socket.Handle, header: []const u8, data: []const []const u8, splat: usize) net.Stream.Writer.Error!usize {
-    _ = userdata;
-    _ = dest;
-    _ = header;
-    _ = data;
-    _ = splat;
-    return error.NetworkDown;
 }
 
 pub fn failingNetWriteFile(userdata: ?*anyopaque, handle: net.Socket.Handle, header: []const u8, file_reader: *Io.File.Reader, limit: Io.Limit) net.Stream.Writer.WriteFileError!usize {

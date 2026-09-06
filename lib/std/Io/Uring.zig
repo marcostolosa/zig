@@ -778,7 +778,6 @@ pub fn io(ev: *Evented) Io {
             .netListenUnix = netListenUnixUnavailable,
             .netConnectUnix = netConnectUnixUnavailable,
             .netSocketCreatePair = netSocketCreatePairUnavailable,
-            .netWrite = netWriteUnavailable,
             .netWriteFile = netWriteFileUnavailable,
             .netClose = netClose,
             .netShutdown = netShutdown,
@@ -2118,6 +2117,7 @@ fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Oper
                 break :r error.NetworkDown; // TODO
             },
         },
+        .net_write => @panic("TODO implement net_write operation"),
     };
 }
 
@@ -2413,6 +2413,10 @@ fn batchDrainSubmitted(
                 _ = o;
                 @panic("TODO implement batchDrainSubmitted for net_read");
             },
+            .net_write => |o| {
+                _ = o;
+                @panic("TODO implement batchDrainSubmitted for net_write");
+            },
         })) |result| {
             switch (batch.completed.tail) {
                 .none => batch.completed.head = index,
@@ -2516,6 +2520,7 @@ fn batchDrainReady(batch: *Io.Batch) Io.Timeout.Error!void {
                 .net_receive => @panic("TODO"),
                 .net_send => @panic("TODO"),
                 .net_read => @panic("TODO"),
+                .net_write => @panic("TODO"),
             })) |result| {
                 switch (batch.completed.tail) {
                     .none => batch.completed.head = index,
@@ -5147,26 +5152,11 @@ fn netReceive(
             .PIPE => return .{ error.SocketUnconnected, message_i },
             .OPNOTSUPP => |err| return .{ errnoBug(err), message_i },
             .CONNRESET => return .{ error.ConnectionResetByPeer, message_i },
+            .TIMEDOUT => return .{ error.ConnectionTimedOut, message_i },
             .NETDOWN => return .{ error.NetworkDown, message_i },
             else => |err| return .{ unexpectedErrno(err), message_i },
         }
     }
-}
-
-fn netWriteUnavailable(
-    userdata: ?*anyopaque,
-    handle: net.Socket.Handle,
-    header: []const u8,
-    data: []const []const u8,
-    splat: usize,
-) net.Stream.Writer.Error!usize {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = handle;
-    _ = header;
-    _ = data;
-    _ = splat;
-    return error.NetworkDown;
 }
 
 fn netWriteFileUnavailable(
@@ -5803,7 +5793,7 @@ fn realPath(
 ) File.RealPathError!usize {
     _ = ev;
     var procfs_buf: [std.fmt.count("/proc/self/fd/{d}\x00", .{std.math.minInt(fd_t)})]u8 = undefined;
-    const proc_path = std.fmt.bufPrintSentinel(&procfs_buf, "/proc/self/fd/{d}", .{fd}, 0) catch
+    const proc_path = std.mem.printSentinel(&procfs_buf, "/proc/self/fd/{d}", .{fd}, 0) catch
         unreachable;
     while (true) {
         try sync.cancel_region.await(.nothing);

@@ -658,14 +658,15 @@ fn lowerZigArgs(
         zig_args.appendAssumeCapacity(libc_file);
     }
 
-    (try zig_args.addManyAsArray(gpa, 4)).* = .{
+    (try zig_args.addManyAsArray(gpa, 6)).* = .{
         "--cache-dir",        graph.local_cache_root.path orelse ".",
         "--global-cache-dir", graph.global_cache_root.path orelse ".",
+        "--build-root",       graph.build_root_directory.path orelse ".",
     };
 
     try zig_args.ensureUnusedCapacity(gpa, 1);
     if (graph.debug_compiler_runtime_libs) |mode| switch (mode) {
-        .Debug => zig_args.appendAssumeCapacity("--debug-rt"),
+        .debug => zig_args.appendAssumeCapacity("--debug-rt"),
         else => zig_args.appendAssumeCapacity(try arena.print("--debug-rt={t}", .{mode})),
     };
 
@@ -728,6 +729,7 @@ fn lowerZigArgs(
     try addBool(gpa, zig_args, "--import-symbols", conf_comp.flags.import_symbols);
     try addBool(gpa, zig_args, "--import-table", conf_comp.flags.import_table);
     try addBool(gpa, zig_args, "--export-table", conf_comp.flags.export_table);
+    try addBool(gpa, zig_args, "--growable-table", conf_comp.flags.growable_table);
     try addBool(gpa, zig_args, "--shared-memory", conf_comp.flags.shared_memory);
 
     {
@@ -890,7 +892,7 @@ fn lowerZigArgs(
         var args_hash: [Sha256.digest_length]u8 = undefined;
         Sha256.hash(args, &args_hash, .{});
         var args_hex_hash: [Sha256.digest_length * 2]u8 = undefined;
-        _ = std.fmt.bufPrint(&args_hex_hash, "{x}", .{&args_hash}) catch unreachable;
+        _ = std.mem.print(&args_hex_hash, "{x}", .{&args_hash}) catch unreachable;
 
         const args_file = "args" ++ Dir.path.sep_str ++ args_hex_hash;
         local_cache_root.handle.access(io, args_file, .{}) catch {
@@ -1264,10 +1266,10 @@ fn appendModuleFlags(
         }
 
         switch (m.flags.optimize) {
-            .debug => zig_args.appendAssumeCapacity("-ODebug"),
-            .safe => zig_args.appendAssumeCapacity("-OReleaseSafe"),
-            .fast => zig_args.appendAssumeCapacity("-OReleaseFast"),
-            .small => zig_args.appendAssumeCapacity("-OReleaseSmall"),
+            .debug => zig_args.appendAssumeCapacity("-Odebug"),
+            .safe => zig_args.appendAssumeCapacity("-Osafe"),
+            .fast => zig_args.appendAssumeCapacity("-Ofast"),
+            .small => zig_args.appendAssumeCapacity("-Osmall"),
             .default => {},
         }
 

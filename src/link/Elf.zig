@@ -1677,30 +1677,19 @@ pub fn updateContainerType(
     ty: InternPool.Index,
     success: bool,
 ) link.Error!void {
-    return self.zigObjectPtr().?.updateContainerType(pt, ty, success) catch |err| switch (err) {
-        error.OutOfMemory => |e| return e,
-    };
+    try self.zigObjectPtr().?.updateContainerType(pt, ty, success);
 }
 
 pub fn updateExports(
     self: *Elf,
     pt: Zcu.PerThread,
-    exported: Zcu.Exported,
     export_indices: []const Zcu.Export.Index,
 ) link.Error!void {
-    return self.zigObjectPtr().?.updateExports(self, pt, exported, export_indices);
+    return self.zigObjectPtr().?.updateExports(self, pt, export_indices);
 }
 
-pub fn updateLineNumber(self: *Elf, pt: Zcu.PerThread, ti_id: InternPool.TrackedInst.Index) link.Error!void {
-    return self.zigObjectPtr().?.updateLineNumber(pt, ti_id);
-}
-
-pub fn deleteExport(
-    self: *Elf,
-    exported: Zcu.Exported,
-    name: InternPool.NullTerminatedString,
-) void {
-    return self.zigObjectPtr().?.deleteExport(self, exported, name);
+pub fn updateLineNumber(self: *Elf, pt: Zcu.PerThread, inst: InternPool.TrackedInst.Index, line: u32) link.Error!void {
+    return self.zigObjectPtr().?.updateLineNumber(pt, inst, line);
 }
 
 fn checkDuplicates(self: *Elf) !void {
@@ -4421,7 +4410,6 @@ const Path = std.Build.Cache.Path;
 const Stat = std.Build.Cache.File.Stat;
 
 const codegen = @import("../codegen.zig");
-const dev = @import("../dev.zig");
 const eh_frame = @import("Elf/eh_frame.zig");
 const gc = @import("Elf/gc.zig");
 const musl = @import("../libs/musl.zig");

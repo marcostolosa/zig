@@ -78,6 +78,8 @@ pub fn legalizeFeatures(_: *const std.Target) *const Air.Legalize.Features {
         .expand_packed_store,
         .expand_packed_agg_field_val,
         .expand_packed_aggregate_init,
+        .expand_array_splat,
+        .expand_array_to_vector,
     });
 }
 
@@ -1070,20 +1072,12 @@ pub fn generate(
         );
     }
 
-    function.gen(&file.zir.?, func_zir.inst, func.comptime_args, call_info.air_arg_count) catch |err| switch (err) {
+    function.gen(&file.zir.?, func_zir.inst, &func, call_info.air_arg_count) catch |err| switch (err) {
         error.OutOfRegisters => return function.fail("ran out of registers (Zig compiler bug)", .{}),
         else => |e| return e,
     };
 
-    // Drop them off at the rbrace.
-    if (!mod.strip) _ = try function.addInst(.{
-        .tag = .pseudo,
-        .ops = .pseudo_dbg_line_line_column,
-        .data = .{ .line_column = .{
-            .line = func.rbrace_line,
-            .column = func.rbrace_column,
-        } },
-    });
+    if (!mod.strip) _ = try function.asmPseudo(.pseudo_dbg_end_none);
 
     try function.mir_extra.shrinkToLen(gpa);
     try function.mir_string_bytes.shrinkToLen(gpa);
@@ -1118,7 +1112,7 @@ pub fn generateLazy(
     atom_id: link.File.AtomId,
     w: *std.Io.Writer,
     debug_output: link.File.DebugInfoOutput,
-) codegen.Error!void {
+) link.EmitError!void {
     const gpa = pt.zcu.gpa;
     // This function is for generating global code, so we use the root module.
     const mod = pt.zcu.comp.root_mod;
@@ -1226,18 +1220,18 @@ fn formatWipMir(data: FormatWipMirData, w: *Writer) Writer.Error!void {
         switch (mir_inst.ops) {
             else => unreachable,
             .pseudo_dbg_prologue_end_none,
-            .pseudo_dbg_epilogue_begin_none,
             .pseudo_dbg_enter_block_none,
             .pseudo_dbg_leave_block_none,
+            .pseudo_dbg_end_none,
             .pseudo_dbg_arg_none,
             .pseudo_dbg_var_args_none,
             .pseudo_dbg_var_none,
             .pseudo_dead_none,
             => {},
-            .pseudo_dbg_line_stmt_line_column, .pseudo_dbg_line_line_column => try w.print(
-                " {[line]d}, {[column]d}",
-                mir_inst.data.line_column,
-            ),
+            .pseudo_dbg_line_stmt_line_column,
+            .pseudo_dbg_line_line_column,
+            .pseudo_dbg_epilogue_begin_line_column,
+            => try w.print(" {[line]d}, {[column]d}", mir_inst.data.line_column),
             .pseudo_dbg_enter_inline_func, .pseudo_dbg_leave_inline_func => try w.print(" {f}", .{
                 ip.getNav(ip.indexToKey(mir_inst.data.ip_index).func.owner_nav).name.fmt(ip),
             }),
@@ -2067,7 +2061,7 @@ fn gen(
     self: *CodeGen,
     zir: *const std.zig.Zir,
     func_zir_inst: std.zig.Zir.Inst.Index,
-    comptime_args: InternPool.Index.Slice,
+    func: *const InternPool.Key.Func,
     air_arg_count: u32,
 ) InnerError!void {
     const pt = self.pt;
@@ -2148,7 +2142,7 @@ fn gen(
 
         if (!self.mod.strip) try self.asmPseudo(.pseudo_dbg_prologue_end_none);
 
-        try self.genMainBody(zir, func_zir_inst, comptime_args, air_arg_count);
+        try self.genMainBody(zir, func_zir_inst, func.comptime_args, air_arg_count);
 
         const epilogue = if (self.epilogue_relocs.items.len > 0) epilogue: {
             var last_inst: Mir.Inst.Index = @intCast(self.mir_instructions.len - 1);
@@ -2163,7 +2157,14 @@ fn gen(
             }
             for (self.epilogue_relocs.items) |epilogue_reloc| self.performReloc(epilogue_reloc);
 
-            if (!self.mod.strip) try self.asmPseudo(.pseudo_dbg_epilogue_begin_none);
+            if (!self.mod.strip) _ = try self.addInst(.{
+                .tag = .pseudo,
+                .ops = .pseudo_dbg_epilogue_begin_line_column,
+                .data = .{ .line_column = .{
+                    .line = func.rbrace_line,
+                    .column = func.rbrace_column,
+                } },
+            });
             const backpatch_stack_dealloc = try self.asmPlaceholder();
             const backpatch_pop_callee_preserved_regs = try self.asmPlaceholder();
             try self.asmRegister(.{ ._, .pop }, .rbp);
@@ -2281,11 +2282,7 @@ fn gen(
                 .data = .{ .reg_list = frame_layout.save_reg_list },
             });
         }
-    } else {
-        if (!self.mod.strip) try self.asmPseudo(.pseudo_dbg_prologue_end_none);
-        try self.genMainBody(zir, func_zir_inst, comptime_args, air_arg_count);
-        if (!self.mod.strip) try self.asmPseudo(.pseudo_dbg_epilogue_begin_none);
-    }
+    } else try self.genMainBody(zir, func_zir_inst, func.comptime_args, air_arg_count);
 }
 
 fn genMainBody(
@@ -43353,7 +43350,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 var ops = try cg.tempsFromOperands(inst, .{ bin_op.lhs, bin_op.rhs });
                 try ops[0].toSlicePtr(cg);
                 var res: [1]Temp = undefined;
-                if (!hack_around_sema_opv_bugs or ty_pl.ty.toType().childType(zcu).hasRuntimeBits(zcu)) cg.select(&res, &.{ty_pl.ty.toType()}, &ops, comptime &.{ .{
+                if (!hack_around_sema_opv_bugs or ty_pl.ty.childType(zcu).hasRuntimeBits(zcu)) cg.select(&res, &.{ty_pl.ty}, &ops, comptime &.{ .{
                     .patterns = &.{
                         .{ .src = .{ .to_gpr, .simm32, .none } },
                     },
@@ -43467,7 +43464,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 var ops = try cg.tempsFromOperands(inst, .{ bin_op.lhs, bin_op.rhs });
                 try ops[0].toSlicePtr(cg);
                 var res: [1]Temp = undefined;
-                if (!hack_around_sema_opv_bugs or ty_pl.ty.toType().childType(zcu).hasRuntimeBits(zcu)) cg.select(&res, &.{ty_pl.ty.toType()}, &ops, comptime &.{ .{
+                if (!hack_around_sema_opv_bugs or ty_pl.ty.childType(zcu).hasRuntimeBits(zcu)) cg.select(&res, &.{ty_pl.ty}, &ops, comptime &.{ .{
                     .patterns = &.{
                         .{ .src = .{ .to_gpr, .simm32, .none } },
                     },
@@ -52207,7 +52204,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const bin_op = cg.air.extraData(Air.Bin, ty_pl.payload).data;
                 var ops = try cg.tempsFromOperands(inst, .{ bin_op.lhs, bin_op.rhs });
                 var res: [2]Temp = undefined;
-                cg.select(&res, &.{ ty_pl.ty.toType(), .u1 }, &ops, comptime &.{ .{
+                cg.select(&res, &.{ ty_pl.ty, .u1 }, &ops, comptime &.{ .{
                     .src_constraints = .{ .{ .exact_signed_int = 8 }, .{ .exact_signed_int = 8 }, .any },
                     .patterns = &.{
                         .{ .src = .{ .to_mut_gpr, .imm8, .none } },
@@ -53043,7 +53040,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 } }) catch |err| switch (err) {
                     error.SelectFailed => return cg.fail("failed to select {s} {f} {f} {f}", .{
                         @tagName(air_tag),
-                        ty_pl.ty.toType().fmt(pt),
+                        ty_pl.ty.fmt(pt),
                         ops[0].tracking(cg),
                         ops[1].tracking(cg),
                     }),
@@ -53057,7 +53054,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const bin_op = cg.air.extraData(Air.Bin, ty_pl.payload).data;
                 var ops = try cg.tempsFromOperands(inst, .{ bin_op.lhs, bin_op.rhs });
                 var res: [2]Temp = undefined;
-                cg.select(&res, &.{ ty_pl.ty.toType(), .u1 }, &ops, comptime &.{ .{
+                cg.select(&res, &.{ ty_pl.ty, .u1 }, &ops, comptime &.{ .{
                     .src_constraints = .{ .{ .exact_signed_int = 8 }, .{ .exact_signed_int = 8 }, .any },
                     .patterns = &.{
                         .{ .src = .{ .to_mut_gpr, .imm8, .none } },
@@ -53948,7 +53945,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 } }) catch |err| switch (err) {
                     error.SelectFailed => return cg.fail("failed to select {s} {f} {f} {f}", .{
                         @tagName(air_tag),
-                        ty_pl.ty.toType().fmt(pt),
+                        ty_pl.ty.fmt(pt),
                         ops[0].tracking(cg),
                         ops[1].tracking(cg),
                     }),
@@ -53962,7 +53959,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const bin_op = cg.air.extraData(Air.Bin, ty_pl.payload).data;
                 var ops = try cg.tempsFromOperands(inst, .{ bin_op.lhs, bin_op.rhs });
                 var res: [2]Temp = undefined;
-                cg.select(&res, &.{ ty_pl.ty.toType(), .u1 }, &ops, comptime &.{ .{
+                cg.select(&res, &.{ ty_pl.ty, .u1 }, &ops, comptime &.{ .{
                     .src_constraints = .{ .{ .exact_signed_int = 8 }, .{ .exact_signed_int = 8 }, .any },
                     .patterns = &.{
                         .{ .src = .{ .{ .to_reg = .al }, .mem, .none } },
@@ -57545,7 +57542,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 } }) catch |err| switch (err) {
                     error.SelectFailed => return cg.fail("failed to select {s} {f} {f} {f}", .{
                         @tagName(air_tag),
-                        ty_pl.ty.toType().fmt(pt),
+                        ty_pl.ty.fmt(pt),
                         ops[0].tracking(cg),
                         ops[1].tracking(cg),
                     }),
@@ -57559,7 +57556,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const bin_op = cg.air.extraData(Air.Bin, ty_pl.payload).data;
                 var ops = try cg.tempsFromOperands(inst, .{ bin_op.lhs, bin_op.rhs });
                 var res: [2]Temp = undefined;
-                cg.select(&res, &.{ ty_pl.ty.toType(), .u1 }, &ops, comptime &.{ .{
+                cg.select(&res, &.{ ty_pl.ty, .u1 }, &ops, comptime &.{ .{
                     .src_constraints = .{ .{ .exact_signed_int = 8 }, .{ .unsigned_int = .byte }, .any },
                     .patterns = &.{
                         .{ .src = .{ .mut_mem, .{ .imm = 1 }, .none } },
@@ -60890,7 +60887,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 } }) catch |err| switch (err) {
                     error.SelectFailed => return cg.fail("failed to select {s} {f} {f} {f}", .{
                         @tagName(air_tag),
-                        ty_pl.ty.toType().fmt(pt),
+                        ty_pl.ty.fmt(pt),
                         ops[0].tracking(cg),
                         ops[1].tracking(cg),
                     }),
@@ -65658,7 +65655,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 var res: [1]Temp = undefined;
-                cg.select(&res, &.{ty_op.ty.toType()}, &ops, comptime &.{ .{
+                cg.select(&res, &.{ty_op.ty}, &ops, comptime &.{ .{
                     .src_constraints = .{ .{ .bool_vec = .byte }, .any, .any },
                     .patterns = &.{
                         .{ .src = .{ .mut_mem, .none, .none } },
@@ -67431,7 +67428,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 } }) catch |err| switch (err) {
                     error.SelectFailed => return cg.fail("failed to select {s} {f} {f}", .{
                         @tagName(air_tag),
-                        ty_op.ty.toType().fmt(pt),
+                        ty_op.ty.fmt(pt),
                         ops[0].tracking(cg),
                     }),
                     else => |e| return e,
@@ -67498,7 +67495,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 var res: [1]Temp = undefined;
-                cg.select(&res, &.{ty_op.ty.toType()}, &ops, comptime &.{ .{
+                cg.select(&res, &.{ty_op.ty}, &ops, comptime &.{ .{
                     .required_features = .{ .slow_incdec, null, null, null },
                     .src_constraints = .{ .{ .exact_signed_int = 1 }, .any, .any },
                     .patterns = &.{
@@ -70603,7 +70600,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 var res: [1]Temp = undefined;
-                cg.select(&res, &.{ty_op.ty.toType()}, &ops, comptime &.{ .{
+                cg.select(&res, &.{ty_op.ty}, &ops, comptime &.{ .{
                     .required_features = .{ .slow_incdec, null, null, null },
                     .src_constraints = .{ .{ .exact_signed_int = 1 }, .any, .any },
                     .patterns = &.{
@@ -71000,7 +70997,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 var res: [1]Temp = undefined;
-                cg.select(&res, &.{ty_op.ty.toType()}, &ops, comptime &.{ .{
+                cg.select(&res, &.{ty_op.ty}, &ops, comptime &.{ .{
                     .src_constraints = .{ .{ .exact_signed_int = 1 }, .any, .any },
                     .patterns = &.{
                         .{ .src = .{ .mut_mem, .none, .none } },
@@ -71888,7 +71885,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 var res: [1]Temp = undefined;
-                cg.select(&res, &.{ty_op.ty.toType()}, &ops, comptime &.{ .{
+                cg.select(&res, &.{ty_op.ty}, &ops, comptime &.{ .{
                     .src_constraints = .{ .{ .exact_int = 8 }, .any, .any },
                     .patterns = &.{
                         .{ .src = .{ .mut_mem, .none, .none } },
@@ -72526,7 +72523,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 } }) catch |err| switch (err) {
                     error.SelectFailed => return cg.fail("failed to select {s} {f} {f}", .{
                         @tagName(air_tag),
-                        ty_op.ty.toType().fmt(pt),
+                        ty_op.ty.fmt(pt),
                         ops[0].tracking(cg),
                     }),
                     else => |e| return e,
@@ -72537,7 +72534,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 var res: [1]Temp = undefined;
-                cg.select(&res, &.{ty_op.ty.toType()}, &ops, comptime &.{ .{
+                cg.select(&res, &.{ty_op.ty}, &ops, comptime &.{ .{
                     .src_constraints = .{ .{ .exact_int = 1 }, .any, .any },
                     .patterns = &.{
                         .{ .src = .{ .mut_mem, .none, .none } },
@@ -75628,7 +75625,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 } }) catch |err| switch (err) {
                     error.SelectFailed => return cg.fail("failed to select {s} {f} {f}", .{
                         @tagName(air_tag),
-                        ty_op.ty.toType().fmt(pt),
+                        ty_op.ty.fmt(pt),
                         ops[0].tracking(cg),
                     }),
                     else => |e| return e,
@@ -77551,7 +77548,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 var res: [1]Temp = undefined;
-                cg.select(&res, &.{ty_op.ty.toType()}, &ops, comptime &.{ .{
+                cg.select(&res, &.{ty_op.ty}, &ops, comptime &.{ .{
                     .required_features = .{ .cmov, null, null, null },
                     .src_constraints = .{ .{ .int = .byte }, .any, .any },
                     .patterns = &.{
@@ -82070,7 +82067,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .lt, .lte => {},
                             .gt, .gte => std.mem.swap(Temp, &ops[0], &ops[1]),
                         }
-                        break :err cg.select(&res, &.{ty_pl.ty.toType()}, &ops, switch (@as(Condition, switch (cmp_op) {
+                        break :err cg.select(&res, &.{ty_pl.ty}, &ops, switch (@as(Condition, switch (cmp_op) {
                             else => unreachable,
                             .lt, .gt => .l,
                             .lte, .gte => .le,
@@ -84586,7 +84583,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             } },
                         });
                     },
-                    .eq, .neq => |cmp_op| cg.select(&res, &.{ty_pl.ty.toType()}, &ops, switch (@as(Condition, switch (cmp_op) {
+                    .eq, .neq => |cmp_op| cg.select(&res, &.{ty_pl.ty}, &ops, switch (@as(Condition, switch (cmp_op) {
                         else => unreachable,
                         .eq => .e,
                         .neq => .ne,
@@ -89363,7 +89360,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
             },
             .load => {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
-                const val_ty = ty_op.ty.toType();
+                const val_ty = ty_op.ty;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 var res: [1]Temp = undefined;
                 cg.select(&res, &.{val_ty}, &ops, comptime &.{ .{
@@ -89692,7 +89689,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 var res: [1]Temp = undefined;
-                cg.select(&res, &.{ty_op.ty.toType()}, &ops, comptime &.{ .{
+                cg.select(&res, &.{ty_op.ty}, &ops, comptime &.{ .{
                     .required_features = .{ .f16c, null, null, null },
                     .src_constraints = .{ .{ .scalar_float = .{ .of = .dword, .is = .dword } }, .any, .any },
                     .dst_constraints = .{ .{ .scalar_float = .{ .of = .word, .is = .word } }, .any },
@@ -91705,7 +91702,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 } }) catch |err| switch (err) {
                     error.SelectFailed => return cg.fail("failed to select {s} {f} {f} {f}", .{
                         @tagName(air_tag),
-                        ty_op.ty.toType().fmt(pt),
+                        ty_op.ty.fmt(pt),
                         cg.typeOf(ty_op.operand).fmt(pt),
                         ops[0].tracking(cg),
                     }),
@@ -91717,7 +91714,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 var res: [1]Temp = undefined;
-                cg.select(&res, &.{ty_op.ty.toType()}, &ops, comptime &.{ .{
+                cg.select(&res, &.{ty_op.ty}, &ops, comptime &.{ .{
                     .required_features = .{ .f16c, null, null, null },
                     .src_constraints = .{ .{ .scalar_float = .{ .of = .word, .is = .word } }, .any, .any },
                     .dst_constraints = .{ .{ .scalar_float = .{ .of = .dword, .is = .dword } }, .any },
@@ -93380,7 +93377,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 } }) catch |err| switch (err) {
                     error.SelectFailed => return cg.fail("failed to select {s} {f} {f} {f}", .{
                         @tagName(air_tag),
-                        ty_op.ty.toType().fmt(pt),
+                        ty_op.ty.fmt(pt),
                         cg.typeOf(ty_op.operand).fmt(pt),
                         ops[0].tracking(cg),
                     }),
@@ -93390,7 +93387,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
             },
             .int_cast => |air_tag| {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
-                const dst_ty = ty_op.ty.toType();
+                const dst_ty = ty_op.ty;
                 const src_ty = cg.typeOf(ty_op.operand);
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 var res: [1]Temp = undefined;
@@ -98151,7 +98148,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 var res: [1]Temp = undefined;
-                cg.select(&res, &.{ty_op.ty.toType()}, &ops, comptime &.{ .{
+                cg.select(&res, &.{ty_op.ty}, &ops, comptime &.{ .{
                     .src_constraints = .{ .{ .signed_int = .gpr }, .any, .any },
                     .dst_constraints = .{ .{ .exact_signed_int = 1 }, .any },
                     .patterns = &.{
@@ -103804,7 +103801,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 } }) catch |err| switch (err) {
                     error.SelectFailed => return cg.fail("failed to select {s} {f} {f} {f}", .{
                         @tagName(air_tag),
-                        ty_op.ty.toType().fmt(pt),
+                        ty_op.ty.fmt(pt),
                         cg.typeOf(ty_op.operand).fmt(pt),
                         ops[0].tracking(cg),
                     }),
@@ -103815,10 +103812,10 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
             .optional_payload => {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
-                const pl = if (!hack_around_sema_opv_bugs or ty_op.ty.toType().hasRuntimeBits(zcu))
-                    try ops[0].read(ty_op.ty.toType(), .{}, cg)
+                const pl = if (!hack_around_sema_opv_bugs or ty_op.ty.hasRuntimeBits(zcu))
+                    try ops[0].read(ty_op.ty, .{}, cg)
                 else
-                    try cg.tempInit(ty_op.ty.toType(), .none);
+                    try cg.tempInit(ty_op.ty, .none);
                 try pl.finish(inst, &.{ty_op.operand}, &ops, cg);
             },
             .optional_payload_ptr => {
@@ -103843,7 +103840,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
             },
             .wrap_optional => {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
-                const opt_ty = ty_op.ty.toType();
+                const opt_ty = ty_op.ty;
                 const opt_pl_ty = cg.typeOf(ty_op.operand);
                 const opt_pl_abi_size: u31 = @intCast(opt_pl_ty.abiSize(zcu));
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
@@ -103858,7 +103855,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
             },
             .unwrap_errunion_payload => {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
-                const eu_pl_ty = ty_op.ty.toType();
+                const eu_pl_ty = ty_op.ty;
                 const eu_pl_off: i32 = @intCast(codegen.errUnionPayloadOffset(eu_pl_ty, zcu));
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 const pl = if (!hack_around_sema_opv_bugs or eu_pl_ty.hasRuntimeBits(zcu))
@@ -103870,7 +103867,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
             .unwrap_errunion_err => {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 const eu_ty = cg.typeOf(ty_op.operand);
-                const eu_err_ty = ty_op.ty.toType();
+                const eu_err_ty = ty_op.ty;
                 const eu_pl_ty = eu_ty.errorUnionPayload(zcu);
                 const eu_err_off: i32 = @intCast(codegen.errUnionErrorOffset(eu_pl_ty, zcu));
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
@@ -103889,7 +103886,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
             .unwrap_errunion_err_ptr => {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 const eu_ty = cg.typeOf(ty_op.operand).childType(zcu);
-                const eu_err_ty = ty_op.ty.toType();
+                const eu_err_ty = ty_op.ty;
                 const eu_pl_ty = eu_ty.errorUnionPayload(zcu);
                 const eu_err_off: i32 = @intCast(codegen.errUnionErrorOffset(eu_pl_ty, zcu));
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
@@ -103914,7 +103911,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
             },
             .wrap_errunion_payload => {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
-                const eu_ty = ty_op.ty.toType();
+                const eu_ty = ty_op.ty;
                 const eu_err_ty = eu_ty.errorUnionSet(zcu);
                 const eu_pl_ty = cg.typeOf(ty_op.operand);
                 const eu_err_off: u31 = @intCast(codegen.errUnionErrorOffset(eu_pl_ty, zcu));
@@ -103929,7 +103926,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
             },
             .wrap_errunion_err => {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
-                const eu_ty = ty_op.ty.toType();
+                const eu_ty = ty_op.ty;
                 const eu_pl_ty = eu_ty.errorUnionPayload(zcu);
                 const eu_err_off: u31 = @intCast(codegen.errUnionErrorOffset(eu_pl_ty, zcu));
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
@@ -103943,7 +103940,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 var ops = try cg.tempsFromOperands(inst, .{struct_field.struct_operand});
                 try ops[0].toOffset(@intCast(codegen.fieldOffset(
                     cg.typeOf(struct_field.struct_operand),
-                    ty_pl.ty.toType(),
+                    ty_pl.ty,
                     struct_field.field_index,
                     zcu,
                 )), cg);
@@ -103958,7 +103955,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 try ops[0].toOffset(@intCast(codegen.fieldOffset(
                     cg.typeOf(ty_op.operand),
-                    ty_op.ty.toType(),
+                    ty_op.ty,
                     switch (air_tag) {
                         else => unreachable,
                         .struct_field_ptr_index_0 => 0,
@@ -103974,7 +103971,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_pl = air_datas[@backingInt(inst)].ty_pl;
                 const struct_field = cg.air.extraData(Air.StructField, ty_pl.payload).data;
                 const agg_ty = cg.typeOf(struct_field.struct_operand);
-                const field_ty = ty_pl.ty.toType();
+                const field_ty = ty_pl.ty;
                 const field_off: u31 = switch (agg_ty.containerLayout(zcu)) {
                     .auto, .@"extern" => @intCast(agg_ty.structFieldOffset(struct_field.field_index, zcu)),
                     .@"packed" => unreachable,
@@ -104003,7 +104000,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 const union_layout = union_ty.unionGetLayout(zcu);
                 assert(union_layout.tag_size > 0);
-                const res = try ops[0].read(ty_op.ty.toType(), .{
+                const res = try ops[0].read(ty_op.ty, .{
                     .disp = @intCast(union_layout.tagOffset()),
                 }, cg);
                 try res.finish(inst, &.{ty_op.operand}, &ops, cg);
@@ -104363,7 +104360,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const bin_op = cg.air.extraData(Air.Bin, ty_pl.payload).data;
                 var ops = try cg.tempsFromOperands(inst, .{ bin_op.lhs, bin_op.rhs });
                 try ops[0].toSlicePtr(cg);
-                const dst_ty = ty_pl.ty.toType();
+                const dst_ty = ty_pl.ty;
                 zero_offset: {
                     const elem_size = dst_ty.childType(zcu).abiSize(zcu);
                     if (hack_around_sema_opv_bugs and elem_size == 0) break :zero_offset;
@@ -104405,6 +104402,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }
                 try ops[0].finish(inst, &.{ bin_op.lhs, bin_op.rhs }, &ops, cg);
             },
+            .array_to_vector => unreachable, // legalize .expand_array_to_vector
             .array_to_slice => {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
@@ -104418,7 +104416,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 var res: [1]Temp = undefined;
-                cg.select(&res, &.{ty_op.ty.toType()}, &ops, comptime &.{ .{
+                cg.select(&res, &.{ty_op.ty}, &ops, comptime &.{ .{
                     .required_features = .{ .f16c, null, null, null },
                     .src_constraints = .{ .{ .float = .word }, .any, .any },
                     .dst_constraints = .{ .{ .int = .dword }, .any },
@@ -115173,7 +115171,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 } }) catch |err| switch (err) {
                     error.SelectFailed => return cg.fail("failed to select {s} {f} {f} {f}", .{
                         @tagName(air_tag),
-                        ty_op.ty.toType().fmt(pt),
+                        ty_op.ty.fmt(pt),
                         cg.typeOf(ty_op.operand).fmt(pt),
                         ops[0].tracking(cg),
                     }),
@@ -115187,7 +115185,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 var res: [1]Temp = undefined;
-                cg.select(&res, &.{ty_op.ty.toType()}, &ops, comptime &.{ .{
+                cg.select(&res, &.{ty_op.ty}, &ops, comptime &.{ .{
                     .required_features = .{ .f16c, null, null, null },
                     .src_constraints = .{ .{ .signed_int = .byte }, .any, .any },
                     .dst_constraints = .{ .{ .float = .word }, .any },
@@ -127064,7 +127062,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 } }) catch |err| switch (err) {
                     error.SelectFailed => return cg.fail("failed to select {s} {f} {f} {f}", .{
                         @tagName(air_tag),
-                        ty_op.ty.toType().fmt(pt),
+                        ty_op.ty.fmt(pt),
                         cg.typeOf(ty_op.operand).fmt(pt),
                         ops[0].tracking(cg),
                     }),
@@ -168980,7 +168978,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
                 var ops = try cg.tempsFromOperands(inst, .{ty_op.operand});
                 var res: [1]Temp = undefined;
-                cg.select(&res, &.{ty_op.ty.toType()}, &ops, comptime &.{ .{
+                cg.select(&res, &.{ty_op.ty}, &ops, comptime &.{ .{
                     .dst_constraints = .{ .{ .bool_vec = .qword }, .any },
                     .src_constraints = .{ .bool, .any, .any },
                     .patterns = &.{
@@ -170809,7 +170807,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 } }) catch |err| switch (err) {
                     error.SelectFailed => return cg.fail("failed to select {s} {f} {f}", .{
                         @tagName(air_tag),
-                        ty_op.ty.toType().fmt(pt),
+                        ty_op.ty.fmt(pt),
                         ops[0].tracking(cg),
                     }),
                     else => |e| return e,
@@ -171331,7 +171329,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
             },
             .error_set_has_value => |air_tag| {
                 const ty_op = air_datas[@backingInt(inst)].ty_op;
-                var ops = try cg.tempsFromOperands(inst, .{ty_op.operand}) ++ .{try cg.tempInit(ty_op.ty.toType(), .none)};
+                var ops = try cg.tempsFromOperands(inst, .{ty_op.operand}) ++ .{try cg.tempInit(ty_op.ty, .none)};
                 var res: [1]Temp = undefined;
                 cg.select(&res, &.{.bool}, &ops, comptime &.{ .{
                     .required_features = .{ .avx, null, null, null },
@@ -171413,7 +171411,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 } }) catch |err| switch (err) {
                     error.SelectFailed => return cg.fail("failed to select {s} {f} {f}", .{
                         @tagName(air_tag),
-                        ty_op.ty.toType().fmt(pt),
+                        ty_op.ty.fmt(pt),
                         ops[0].tracking(cg),
                     }),
                     else => |e| return e,
@@ -171423,7 +171421,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
             },
             .aggregate_init => |air_tag| fallback: {
                 const ty_pl = air_datas[@backingInt(inst)].ty_pl;
-                const agg_ty = ty_pl.ty.toType();
+                const agg_ty = ty_pl.ty;
                 if (agg_ty.isVector(zcu) and agg_ty.childType(zcu).toIntern() == .bool_type) {
                     break :fallback try cg.airAggregateInitBoolVec(inst);
                 }
@@ -171494,7 +171492,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
             .union_init => {
                 const ty_pl = air_datas[@backingInt(inst)].ty_pl;
                 const union_init = cg.air.extraData(Air.UnionInit, ty_pl.payload).data;
-                const union_ty = ty_pl.ty.toType();
+                const union_ty = ty_pl.ty;
                 var ops = try cg.tempsFromOperands(inst, .{union_init.init});
                 var res = try cg.tempAllocMem(union_ty);
                 const union_layout = union_ty.unionGetLayout(zcu);
@@ -172946,7 +172944,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const field_parent_ptr = cg.air.extraData(Air.FieldParentPtr, ty_pl.payload).data;
                 var ops = try cg.tempsFromOperands(inst, .{field_parent_ptr.field_ptr});
                 try ops[0].toOffset(-@as(i32, @intCast(codegen.fieldOffset(
-                    ty_pl.ty.toType(),
+                    ty_pl.ty,
                     cg.typeOf(field_parent_ptr.field_ptr),
                     field_parent_ptr.field_index,
                     zcu,
@@ -173069,7 +173067,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
             },
             .save_err_return_trace_index => {
                 const ty_pl = air_datas[@backingInt(inst)].ty_pl;
-                const agg_ty = ty_pl.ty.toType();
+                const agg_ty = ty_pl.ty;
                 assert(agg_ty.containerLayout(zcu) != .@"packed");
                 var ert: Temp = .{ .index = err_ret_trace_index };
                 var res = try ert.load(.usize, .{ .disp = @intCast(agg_ty.structFieldOffset(ty_pl.payload, zcu)) }, cg);
@@ -173113,7 +173111,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     else => unreachable,
                 };
 
-                var res = try cg.tempInit(.fromInterned(ty_nav.ty), .{ .lea_nav = ty_nav.nav });
+                var res = try cg.tempInit(ty_nav.ty, .{ .lea_nav = ty_nav.nav });
                 if (is_threadlocal) while (try res.toRegClass(true, .general_purpose, cg)) {};
                 try res.finish(inst, &.{}, &.{}, cg);
             },
@@ -178191,7 +178189,7 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
             inline for (@typeInfo(encoder.Instruction.Mnemonic).@"enum".field_names) |mnem_name|
                 max_mnem_len = @max(mnem_name.len, max_mnem_len);
             var intel_mnem_buf: [max_mnem_len + 1]u8 = undefined;
-            const intel_mnem_str = std.fmt.bufPrint(&intel_mnem_buf, "{s}{c}", .{
+            const intel_mnem_str = std.mem.print(&intel_mnem_buf, "{s}{c}", .{
                 @tagName(mnem_tag),
                 @as(u8, switch (mnem_size.size) {
                     .byte => 'b',
@@ -182174,7 +182172,7 @@ fn resolveCallingConventionValues(
     return result;
 }
 
-fn fail(cg: *CodeGen, comptime format: []const u8, args: anytype) error{ OutOfMemory, AlreadyReported } {
+fn fail(cg: *CodeGen, comptime format: []const u8, args: anytype) codegen.Error {
     @branchHint(.cold);
     const zcu = cg.pt.zcu;
     return switch (cg.owner) {

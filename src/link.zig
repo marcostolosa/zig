@@ -26,9 +26,10 @@ const target_util = @import("target.zig");
 const codegen = @import("codegen.zig");
 const crash_report = @import("crash_report.zig");
 
-pub const LdScript = @import("link/LdScript.zig");
-pub const Queue = @import("link/Queue.zig");
 pub const ConstPool = @import("link/ConstPool.zig");
+pub const LdScript = @import("link/LdScript.zig");
+pub const MappedFile = @import("link/MappedFile.zig");
+pub const Queue = @import("link/Queue.zig");
 
 pub const aarch64 = @import("link/aarch64.zig");
 pub const loongarch = @import("link/loongarch.zig");
@@ -38,6 +39,7 @@ pub const Error = Allocator.Error || Io.Cancelable || error{
     /// instance in `Compilation.link_diags`.
     AlreadyReported,
 };
+pub const EmitError = Error || Io.Writer.Error;
 
 pub const Diags = struct {
     /// Stored here so that function definitions can distinguish between
@@ -95,7 +97,6 @@ pub const Diags = struct {
             return switch (msg.source_location) {
                 .none => try bundle.addString(msg.msg),
                 .wasm => |sl| {
-                    dev.check(.wasm_linker);
                     const wasm = base.?.cast(.wasm).?;
                     return sl.string(msg.msg, bundle, wasm);
                 },
@@ -394,8 +395,6 @@ pub const Diags = struct {
     }
 };
 
-pub const producer_string = if (builtin.is_test) "zig test" else "zig " ++ build_options.version;
-
 pub const File = struct {
     tag: Tag,
 
@@ -444,6 +443,7 @@ pub const File = struct {
         import_symbols: bool,
         import_table: bool,
         export_table: bool,
+        growable_table: bool,
         initial_memory: ?u64,
         max_memory: ?u64,
         object_host_name: ?[]const u8,
@@ -460,12 +460,14 @@ pub const File = struct {
         allow_undefined_version: bool,
         enable_new_dtags: ?bool,
         subsystem: ?std.zig.Subsystem,
-        linker_script: ?[]const u8,
-        version_script: ?[]const u8,
+        linker_script: ?Path,
+        version_script: ?Path,
         soname: ?[]const u8,
         print_gc_sections: bool,
         print_icf_sections: bool,
         print_map: bool,
+        nmagic: bool,
+        fatal_warnings: bool,
 
         /// Use a wrapper function for symbol. Any undefined reference to symbol
         /// will be resolved to __wrap_symbol. Any undefined reference to
@@ -490,7 +492,7 @@ pub const File = struct {
         /// Install name for the dylib
         install_name: ?[]const u8,
         /// Path to entitlements file
-        entitlements: ?[]const u8,
+        entitlements: ?Path,
         /// size of the __PAGEZERO segment
         pagezero_size: ?u64,
         /// Set minimum space for future expansion of the load commands
@@ -650,7 +652,6 @@ pub const File = struct {
                 base.file = try emit.root_dir.handle.openFile(io, emit.sub_path, .{ .mode = .read_write });
             },
             .elf2, .coff2 => if (base.file == null) {
-                dev.checkAny(&.{ .elf2_linker, .coff2_linker });
                 const mf = if (base.cast(.elf2)) |elf|
                     &elf.mf
                 else if (base.cast(.coff2)) |coff|
@@ -670,6 +671,7 @@ pub const File = struct {
                 });
             },
             .plan9 => unreachable,
+            .spork8 => dev.check(.spork8_linker),
         }
     }
 
@@ -747,11 +749,14 @@ pub const File = struct {
             },
             .c, .spirv => dev.checkAny(&.{ .c_linker, .spirv_linker }),
             .plan9 => unreachable,
+            .spork8 => dev.check(.spork8_linker),
         }
     }
 
     pub const DebugInfoOutput = union(enum) {
         dwarf: *Dwarf.WipNav,
+        eh_frame: *Dwarf2.WipNav,
+        dwarf2: *Dwarf2.WipNav.Debug,
         none,
     };
     pub const UpdateDebugInfoError = Dwarf.UpdateError;
@@ -786,10 +791,31 @@ pub const File = struct {
         }
     }
 
-    /// May be called before or after updateExports for any given Nav.
+    /// When there is a ZCU, this is called exactly once per update, to indicate that all per-file
+    /// state (e.g. `Zcu.alive_files`) has been populated by the frontend, so can now be safely
+    /// accessed by the linker.
+    ///
+    /// This call occurs before any call to any of these functions:
+    /// * `updateNav`
+    /// * `updateFunc`
+    /// * `updateContainerType`
+    /// * `updateLineNumber`
+    ///
+    /// Asserts that the ZCU is not using the LLVM backend.
+    fn zcuFilesReady(base: *File, zcu: *Zcu) Error!void {
+        assert(zcu.llvm_object == null);
+        switch (base.tag) {
+            else => {},
+            inline .elf2 => |tag| {
+                dev.check(tag.devFeature());
+                return @as(*tag.Type(), @fieldParentPtr("base", base)).zcuFilesReady(zcu);
+            },
+        }
+    }
+
     /// Asserts that the ZCU is not using the LLVM backend.
     fn updateNav(base: *File, pt: Zcu.PerThread, nav_index: InternPool.Nav.Index) Error!void {
-        assert(base.comp.zcu.?.llvm_object == null);
+        assert(pt.zcu.llvm_object == null);
         const nav = pt.zcu.intern_pool.getNav(nav_index);
         assert(nav.resolved.?.value != .none);
 
@@ -805,31 +831,17 @@ pub const File = struct {
 
     /// Never called when LLVM is codegenning the ZCU.
     fn updateContainerType(base: *File, pt: Zcu.PerThread, ty: InternPool.Index, success: bool) Error!void {
-        assert(base.comp.zcu.?.llvm_object == null);
+        assert(pt.zcu.llvm_object == null);
         switch (base.tag) {
             .lld => unreachable,
             else => {},
-            inline .elf, .c => |tag| {
+            inline .elf, .elf2, .c, .coff2 => |tag| {
                 dev.check(tag.devFeature());
                 return @as(*tag.Type(), @fieldParentPtr("base", base)).updateContainerType(pt, ty, success);
             },
         }
     }
 
-    /// Never called when LLVM is codegenning the ZCU.
-    fn clearContainerType(base: *File, pt: Zcu.PerThread, ty: InternPool.Index) Error!void {
-        assert(base.comp.zcu.?.llvm_object == null);
-        switch (base.tag) {
-            .lld => unreachable,
-            else => {},
-            inline .elf => |tag| {
-                dev.check(tag.devFeature());
-                return @as(*tag.Type(), @fieldParentPtr("base", base)).clearContainerType(pt, ty);
-            },
-        }
-    }
-
-    /// May be called before or after updateExports for any given Decl.
     /// The active tag of `mir` is determined by the backend used for the module this function is in.
     /// Never called when LLVM is codegenning the ZCU.
     fn updateFunc(
@@ -841,7 +853,7 @@ pub const File = struct {
         /// take ownership of an embedded slice and replace it with `&.{}` in `mir`.
         mir: *codegen.AnyMir,
     ) Error!void {
-        assert(base.comp.zcu.?.llvm_object == null);
+        assert(pt.zcu.llvm_object == null);
         switch (base.tag) {
             .lld => unreachable,
             .plan9 => unreachable,
@@ -855,23 +867,49 @@ pub const File = struct {
     /// On an incremental update, fixup the line number of all `Nav`s at the given `TrackedInst`, because
     /// its line number has changed. The ZIR instruction `ti_id` has tag `.declaration`.
     /// Never called when LLVM is codegenning the ZCU.
-    fn updateLineNumber(base: *File, pt: Zcu.PerThread, ti_id: InternPool.TrackedInst.Index) Error!void {
-        assert(base.comp.zcu.?.llvm_object == null);
+    fn updateLineNumber(base: *File, pt: Zcu.PerThread, ti_id: InternPool.TrackedInst.Index, line: u32) Error!void {
+        assert(pt.zcu.llvm_object == null);
         {
             const ti = ti_id.resolveFull(&pt.zcu.intern_pool).?;
             const file = pt.zcu.fileByIndex(ti.file);
             const inst = file.zir.?.instructions.get(@backingInt(ti.inst));
-            assert(inst.tag == .declaration);
+            switch (inst.tag) {
+                .declaration => {},
+                .extended => switch (inst.data.extended.opcode) {
+                    .struct_decl,
+                    .union_decl,
+                    .enum_decl,
+                    .opaque_decl,
+                    .reify_enum,
+                    .reify_struct,
+                    .reify_union,
+                    => {},
+                    else => unreachable,
+                },
+                else => unreachable,
+            }
         }
-
         switch (base.tag) {
             .lld => unreachable,
-            .spirv => {},
             .plan9 => unreachable,
-            .elf2, .coff2 => {},
+            .spirv => {},
+            .coff2 => {},
             inline else => |tag| {
                 dev.check(tag.devFeature());
-                return @as(*tag.Type(), @fieldParentPtr("base", base)).updateLineNumber(pt, ti_id);
+                return @as(*tag.Type(), @fieldParentPtr("base", base)).updateLineNumber(pt, ti_id, line);
+            },
+        }
+    }
+
+    fn lostTracking(base: *File, pt: Zcu.PerThread, ti_id: InternPool.TrackedInst.Index) Error!void {
+        assert(base.comp.zcu.?.llvm_object == null);
+        switch (base.tag) {
+            .lld => unreachable,
+            .plan9 => unreachable,
+            else => {},
+            inline .elf2 => |tag| {
+                dev.check(tag.devFeature());
+                return @as(*tag.Type(), @fieldParentPtr("base", base)).lostTracking(pt, ti_id);
             },
         }
     }
@@ -969,18 +1007,19 @@ pub const File = struct {
         }
     }
 
-    /// This is called for every exported thing. `exports` is almost always
-    /// a list of size 1, meaning that `exported` is exported once. However, it is possible
-    /// to export the same thing with multiple different symbol names (aliases).
-    /// May be called before or after updateDecl for any given Decl.
+    /// This is called once per update, before `flush`.
+    ///
+    /// `export_indices` contains the index of every export from the ZCU which should be performed
+    /// on this update. "Removal" of exports is signaled implicitly by the export being in this
+    /// slice on one update but not the next.
+    ///
     /// Never called when LLVM is codegenning the ZCU.
     pub fn updateExports(
         base: *File,
         pt: Zcu.PerThread,
-        exported: Zcu.Exported,
         export_indices: []const Zcu.Export.Index,
     ) Error!void {
-        assert(base.comp.zcu.?.llvm_object == null);
+        assert(pt.zcu.llvm_object == null);
 
         crash_report.LinkerOp.start(base, pt.tid);
         defer crash_report.LinkerOp.stop(base, pt.tid);
@@ -990,7 +1029,7 @@ pub const File = struct {
             .plan9 => unreachable,
             inline else => |tag| {
                 dev.check(tag.devFeature());
-                return @as(*tag.Type(), @fieldParentPtr("base", base)).updateExports(pt, exported, export_indices);
+                return @as(*tag.Type(), @fieldParentPtr("base", base)).updateExports(pt, export_indices);
             },
         }
     }
@@ -1015,7 +1054,7 @@ pub const File = struct {
     /// the block/atom.
     /// Never called when LLVM is codegenning the ZCU.
     pub fn getNavVAddr(base: *File, pt: Zcu.PerThread, nav_index: InternPool.Nav.Index, reloc_info: RelocInfo) Error!u64 {
-        assert(base.comp.zcu.?.llvm_object == null);
+        assert(pt.zcu.llvm_object == null);
 
         switch (base.tag) {
             .lld => unreachable,
@@ -1023,6 +1062,7 @@ pub const File = struct {
             .spirv => unreachable,
             .wasm => unreachable,
             .plan9 => unreachable,
+            .spork8 => unreachable,
             inline else => |tag| {
                 dev.check(tag.devFeature());
                 return @as(*tag.Type(), @fieldParentPtr("base", base)).getNavVAddr(pt, nav_index, reloc_info);
@@ -1037,7 +1077,7 @@ pub const File = struct {
         decl_val: InternPool.Index,
         decl_align: InternPool.Alignment,
     ) Error!SymbolId {
-        assert(base.comp.zcu.?.llvm_object == null);
+        assert(pt.zcu.llvm_object == null);
 
         switch (base.tag) {
             .lld => unreachable,
@@ -1045,6 +1085,7 @@ pub const File = struct {
             .spirv => unreachable,
             .wasm => unreachable,
             .plan9 => unreachable,
+            .spork8 => unreachable,
             inline else => |tag| {
                 dev.check(tag.devFeature());
                 return @as(*tag.Type(), @fieldParentPtr("base", base)).lowerUav(pt, decl_val, decl_align);
@@ -1062,31 +1103,10 @@ pub const File = struct {
             .spirv => unreachable,
             .wasm => unreachable,
             .plan9 => unreachable,
+            .spork8 => unreachable,
             inline else => |tag| {
                 dev.check(tag.devFeature());
                 return @as(*tag.Type(), @fieldParentPtr("base", base)).getUavVAddr(decl_val, reloc_info);
-            },
-        }
-    }
-
-    /// Never called when LLVM is codegenning the ZCU.
-    pub fn deleteExport(
-        base: *File,
-        exported: Zcu.Exported,
-        name: InternPool.NullTerminatedString,
-    ) void {
-        assert(base.comp.zcu.?.llvm_object == null);
-
-        switch (base.tag) {
-            .lld => unreachable,
-            .plan9 => unreachable,
-
-            .spirv,
-            => {},
-
-            inline else => |tag| {
-                dev.check(tag.devFeature());
-                return @as(*tag.Type(), @fieldParentPtr("base", base)).deleteExport(exported, name);
             },
         }
     }
@@ -1108,6 +1128,7 @@ pub const File = struct {
             .spirv,
             .plan9,
             .lld,
+            .spork8,
             => return .unimplemented,
             inline else => |tag| {
                 dev.check(tag.devFeature());
@@ -1286,6 +1307,7 @@ pub const File = struct {
         c,
         wasm,
         spirv,
+        spork8,
         plan9,
         lld,
 
@@ -1300,6 +1322,7 @@ pub const File = struct {
                 .spirv => SpirV,
                 .lld => Lld,
                 .plan9 => comptime unreachable,
+                .spork8 => Spork8,
             };
         }
 
@@ -1313,11 +1336,14 @@ pub const File = struct {
                 .c => .c,
                 .spirv => .spirv,
                 .hex => @panic("TODO implement hex object format"),
-                .raw => @panic("TODO implement raw object format"),
+                // This may seem surprising at first, but with a little massaging, the spork8 linker
+                // could and probably should be generalized into a "raw linker" which is used to output
+                // bare machine code for any architecture for which a corresponding backend exists.
+                .raw => .spork8,
             };
         }
 
-        pub fn devFeature(tag: Tag) dev.Feature {
+        fn devFeature(tag: Tag) dev.Feature {
             return @field(dev.Feature, @tagName(tag) ++ "_linker");
         }
     };
@@ -1337,7 +1363,7 @@ pub const File = struct {
         // with 0o755 permissions, but it works appropriately if the system is configured
         // more leniently. As another data point, C's fopen seems to open files with the
         // 666 mode.
-        const executable_mode: Io.File.Permissions = if (builtin.target.os.tag == .windows)
+        const executable_mode: Io.File.Permissions = if (builtin.target.os.tag == .windows or std.posix.mode_t == u0)
             .default_file
         else
             .fromMode(0o777);
@@ -1393,12 +1419,14 @@ pub const File = struct {
     pub const Lld = @import("link/Lld.zig");
     pub const C = @import("link/C.zig");
     pub const Coff2 = @import("link/Coff.zig");
+    pub const Spork8 = @import("link/Spork8.zig");
     pub const Elf = @import("link/Elf.zig");
     pub const Elf2 = @import("link/Elf2.zig");
     pub const MachO = @import("link/MachO.zig");
     pub const SpirV = @import("link/SpirV.zig");
     pub const Wasm = @import("link/Wasm.zig");
     pub const Dwarf = @import("link/Dwarf.zig");
+    pub const Dwarf2 = @import("link/Dwarf2.zig");
 };
 
 pub const PrelinkTask = union(enum) {
@@ -1421,6 +1449,9 @@ pub const PrelinkTask = union(enum) {
     load_dso: Path,
 };
 pub const ZcuTask = union(enum) {
+    /// Sent once per update, as the very first `ZcuTask` in the update. Indicates that all per-file
+    /// state (e.g. `Zcu.alive_files`) is populated so can now be safely accessed by the linker.
+    files_ready,
     /// Write the constant value for a Decl to the output file.
     link_nav: InternPool.Nav.Index,
     /// Write the machine code for a function to the output file.
@@ -1432,7 +1463,11 @@ pub const ZcuTask = union(enum) {
         ty: InternPool.Index,
         success: bool,
     },
-    debug_update_line_number: InternPool.TrackedInst.Index,
+    debug_update_line_number: struct {
+        inst: InternPool.TrackedInst.Index,
+        line: u32,
+    },
+    lost_tracking: InternPool.TrackedInst.Index,
 };
 
 pub fn doPrelinkTask(comp: *Compilation, task: PrelinkTask) void {
@@ -1624,6 +1659,16 @@ pub fn doZcuTask(comp: *Compilation, tid: Zcu.PerThread.Id, task: ZcuTask) void 
     var timer = comp.startTimer();
 
     const maybe_nav: ?InternPool.Nav.Index = switch (task) {
+        .files_ready => {
+            if (zcu.llvm_object != null) return;
+            const lf = comp.bin_file orelse return;
+            lf.zcuFilesReady(zcu) catch |err| switch (err) {
+                error.Canceled => io.recancel(),
+                error.AlreadyReported => return,
+                error.OutOfMemory => return diags.setAllocFailure(),
+            };
+            return;
+        },
         .link_nav => |nav_index| nav: {
             const fqn_slice = ip.getNav(nav_index).fqn.toSlice(ip);
             const nav_prog_node = comp.link_prog_node.start(fqn_slice, 0);
@@ -1669,32 +1714,40 @@ pub fn doZcuTask(comp: *Compilation, tid: Zcu.PerThread.Id, task: ZcuTask) void 
             break :nav ip.indexToKey(func).func.owner_nav;
         },
         .debug_update_container_type => |container_update| nav: {
-            const name = Type.fromInterned(container_update.ty).containerTypeName(ip).toSlice(ip);
-            const ty_prog_node = comp.link_prog_node.start(name, 0);
+            const fqn = Type.fromInterned(container_update.ty).containerTypeName(ip).fqn.toSlice(ip);
+            const ty_prog_node = comp.link_prog_node.start(fqn, 0);
             defer ty_prog_node.end();
-            if (zcu.llvm_object) |llvm_object| {
-                llvm_object.updateContainerType(pt, container_update.ty, container_update.success) catch |err| switch (err) {
-                    error.OutOfMemory => diags.setAllocFailure(),
-                };
-            } else {
+            (if (zcu.llvm_object) |llvm_object|
+                llvm_object.updateContainerType(pt, container_update.ty, container_update.success)
+            else if (comp.bin_file) |lf|
+                lf.updateContainerType(pt, container_update.ty, container_update.success)) catch |err| switch (err) {
+                error.OutOfMemory => diags.setAllocFailure(),
+                error.Canceled => io.recancel(),
+                error.AlreadyReported => {},
+            };
+            break :nav null;
+        },
+        .debug_update_line_number => |line_update| nav: {
+            const nav_prog_node = comp.link_prog_node.start("Update line number", 0);
+            defer nav_prog_node.end();
+            if (pt.zcu.llvm_object == null) {
                 if (comp.bin_file) |lf| {
-                    lf.updateContainerType(pt, container_update.ty, container_update.success) catch |err| switch (err) {
+                    lf.updateLineNumber(pt, line_update.inst, line_update.line) catch |err| switch (err) {
                         error.OutOfMemory => diags.setAllocFailure(),
-                        error.Canceled => io.recancel(),
-                        error.AlreadyReported => {},
+                        else => |e| log.err("update line number failed: {s}", .{@errorName(e)}),
                     };
                 }
             }
             break :nav null;
         },
-        .debug_update_line_number => |ti| nav: {
-            const nav_prog_node = comp.link_prog_node.start("Update line number", 0);
+        .lost_tracking => |ti| nav: {
+            const nav_prog_node = comp.link_prog_node.start("Lost tracking", 0);
             defer nav_prog_node.end();
             if (pt.zcu.llvm_object == null) {
                 if (comp.bin_file) |lf| {
-                    lf.updateLineNumber(pt, ti) catch |err| switch (err) {
+                    lf.lostTracking(pt, ti) catch |err| switch (err) {
                         error.OutOfMemory => diags.setAllocFailure(),
-                        else => |e| log.err("update line number failed: {s}", .{@errorName(e)}),
+                        else => |e| log.err("lost tracking failed: {s}", .{@errorName(e)}),
                     };
                 }
             }

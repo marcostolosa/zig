@@ -12,9 +12,12 @@ const Io = std.Io;
 
 pub const NativePaths = @import("system/NativePaths.zig");
 
-pub const windows = @import("system/windows.zig");
 pub const darwin = @import("system/darwin.zig");
+pub const freebsd = @import("system/freebsd.zig");
 pub const linux = @import("system/linux.zig");
+pub const netbsd = @import("system/netbsd.zig");
+pub const openbsd = @import("system/openbsd.zig");
+pub const windows = @import("system/windows.zig");
 
 pub const Executor = union(enum) {
     native,
@@ -543,14 +546,16 @@ fn detectNativeCpuAndFeatures(io: Io, cpu_arch: Target.Cpu.Arch, os: Target.Os, 
     }
 
     switch (builtin.os.tag) {
+        .freebsd => return freebsd.detectNativeCpuAndFeatures(),
         .linux => return linux.detectNativeCpuAndFeatures(io),
         .macos => return darwin.macos.detectNativeCpuAndFeatures(),
+        .netbsd => return netbsd.detectNativeCpuAndFeatures(),
+        .openbsd => return openbsd.detectNativeCpuAndFeatures(),
         .windows => return windows.detectNativeCpuAndFeatures(),
         else => {},
     }
 
     // This architecture does not have CPU model & feature detection yet.
-    // See https://github.com/ziglang/zig/issues/4591
     return null;
 }
 
@@ -960,12 +965,6 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
     if (!native_target_has_ld or have_all_info or os_is_non_native or is_illumos or is_darwin) {
         return defaultAbiAndDynamicLinker(cpu, os, query);
     }
-    if (query.abi) |abi| {
-        if (abi.isMusl()) {
-            // musl implies static linking.
-            return defaultAbiAndDynamicLinker(cpu, os, query);
-        }
-    }
     // The current target's ABI cannot be relied on for this. For example, we may build the zig
     // compiler for target riscv64-linux-musl and provide a tarball for users to download.
     // A user could then run that zig compiler on riscv64-linux-gnu. This use case is well-defined
@@ -1204,6 +1203,9 @@ test {
     _ = NativePaths;
 
     _ = darwin;
+    _ = freebsd;
     _ = linux;
+    _ = netbsd;
+    _ = openbsd;
     _ = windows;
 }

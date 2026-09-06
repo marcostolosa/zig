@@ -946,14 +946,11 @@ pub fn getNavVAddr(
                 .r_addend = reloc_info.addend,
             }, self);
         },
-        .debug_output => |debug_output| switch (debug_output) {
-            .dwarf => |wip_nav| try wip_nav.infoExternalReloc(.{
-                .source_off = @intCast(reloc_info.offset),
-                .target_sym = @fromBackingInt(@intCast(this_sym_index)),
-                .target_off = reloc_info.addend,
-            }),
-            .none => unreachable,
-        },
+        .debug_output => |debug_output| try debug_output.dwarf.infoExternalReloc(.{
+            .source_off = @intCast(reloc_info.offset),
+            .target_sym = @fromBackingInt(@intCast(this_sym_index)),
+            .target_off = reloc_info.addend,
+        }),
     }
     return @intCast(vaddr);
 }
@@ -978,14 +975,11 @@ pub fn getUavVAddr(
                 .r_addend = reloc_info.addend,
             }, self);
         },
-        .debug_output => |debug_output| switch (debug_output) {
-            .dwarf => |wip_nav| try wip_nav.infoExternalReloc(.{
-                .source_off = @intCast(reloc_info.offset),
-                .target_sym = @fromBackingInt(@intCast(sym_index)),
-                .target_off = reloc_info.addend,
-            }),
-            .none => unreachable,
-        },
+        .debug_output => |debug_output| try debug_output.dwarf.infoExternalReloc(.{
+            .source_off = @intCast(reloc_info.offset),
+            .target_sym = @fromBackingInt(@intCast(sym_index)),
+            .target_off = reloc_info.addend,
+        }),
     }
     return @intCast(vaddr);
 }
@@ -1026,7 +1020,7 @@ pub fn lowerUav(
     };
 
     var name_buf: [32]u8 = undefined;
-    const name = std.fmt.bufPrint(&name_buf, "__anon_{d}", .{
+    const name = std.mem.print(&name_buf, "__anon_{d}", .{
         @backingInt(uav),
     }) catch unreachable;
     const sym_index = self.lowerConst(
@@ -1857,7 +1851,6 @@ pub fn updateExports(
     self: *ZigObject,
     elf_file: *Elf,
     pt: Zcu.PerThread,
-    exported: Zcu.Exported,
     export_indices: []const Zcu.Export.Index,
 ) link.Error!void {
     const tracy = trace(@src());
@@ -1865,27 +1858,49 @@ pub fn updateExports(
 
     const zcu = pt.zcu;
     const gpa = elf_file.base.comp.gpa;
-    const metadata = switch (exported) {
-        .nav => |nav| blk: {
-            _ = try self.getOrCreateMetadataForNav(zcu, nav);
-            break :blk self.navs.getPtr(nav).?;
-        },
-        .uav => |uav| self.uavs.getPtr(uav) orelse blk: {
-            _ = try self.lowerUav(elf_file, pt, uav, .none);
-            break :blk self.uavs.getPtr(uav).?;
-        },
-    };
-    const sym_index = metadata.symbol_index;
-    const esym_index = self.symbol(sym_index).esym_index;
-    const esym = self.symtab.items(.elf_sym)[esym_index];
-    const esym_shndx = self.symtab.items(.shndx)[esym_index];
 
-    for (export_indices) |export_idx| {
-        const exp = export_idx.ptr(zcu);
+    // Delete all existing exports first
+    for (self.navs.values()) |*metadata| {
+        for (metadata.exports.items) |sym_index| {
+            const esym_index = self.symbol(sym_index).esym_index;
+            const esym = &self.symtab.items(.elf_sym)[esym_index];
+            _ = self.globals_lookup.remove(esym.st_name);
+            esym.* = Elf.null_sym;
+            self.symtab.items(.shndx)[esym_index] = elf.SHN_UNDEF;
+        }
+        metadata.exports.clearRetainingCapacity();
+    }
+    for (self.uavs.values()) |*metadata| {
+        for (metadata.exports.items) |sym_index| {
+            const esym_index = self.symbol(sym_index).esym_index;
+            const esym = &self.symtab.items(.elf_sym)[esym_index];
+            _ = self.globals_lookup.remove(esym.st_name);
+            esym.* = Elf.null_sym;
+            self.symtab.items(.shndx)[esym_index] = elf.SHN_UNDEF;
+        }
+        metadata.exports.clearRetainingCapacity();
+    }
+
+    for (export_indices) |export_index| {
+        const exp = export_index.ptr(zcu);
+        const metadata = switch (exp.exported) {
+            .nav => |nav| blk: {
+                _ = try self.getOrCreateMetadataForNav(zcu, nav);
+                break :blk self.navs.getPtr(nav).?;
+            },
+            .uav => |uav| self.uavs.getPtr(uav) orelse blk: {
+                _ = try self.lowerUav(elf_file, pt, uav, .none);
+                break :blk self.uavs.getPtr(uav).?;
+            },
+        };
+        const sym_index = metadata.symbol_index;
+        const esym_index = self.symbol(sym_index).esym_index;
+        const esym = self.symtab.items(.elf_sym)[esym_index];
+        const esym_shndx = self.symtab.items(.shndx)[esym_index];
         if (exp.opts.section.unwrap()) |section_name| {
             if (!section_name.eqlSlice(".text", &zcu.intern_pool)) {
-                try zcu.failed_exports.ensureUnusedCapacity(zcu.gpa, 1);
-                zcu.failed_exports.putAssumeCapacityNoClobber(export_idx, try Zcu.ErrorMsg.create(
+                try zcu.failed_exports.ensureUnusedCapacity(gpa, 1);
+                zcu.failed_exports.putAssumeCapacityNoClobber(export_index, try Zcu.ErrorMsg.create(
                     gpa,
                     exp.src,
                     "Unimplemented: ExportOptions.section",
@@ -1899,8 +1914,8 @@ pub fn updateExports(
             .strong => elf.STB_GLOBAL,
             .weak => elf.STB_WEAK,
             .link_once => {
-                try zcu.failed_exports.ensureUnusedCapacity(zcu.gpa, 1);
-                zcu.failed_exports.putAssumeCapacityNoClobber(export_idx, try Zcu.ErrorMsg.create(
+                try zcu.failed_exports.ensureUnusedCapacity(gpa, 1);
+                zcu.failed_exports.putAssumeCapacityNoClobber(export_index, try Zcu.ErrorMsg.create(
                     gpa,
                     exp.src,
                     "Unimplemented: GlobalLinkage.LinkOnce",
@@ -1912,13 +1927,8 @@ pub fn updateExports(
         const stt_bits: u8 = @as(u4, @truncate(esym.st_info));
         const exp_name = exp.opts.name.toSlice(&zcu.intern_pool);
         const name_off = try self.strtab.insert(gpa, exp_name);
-        const global_sym_index = if (metadata.@"export"(self, exp_name)) |exp_index|
-            exp_index.*
-        else blk: {
-            const global_sym_index = try self.getGlobalSymbol(elf_file, exp_name, null);
-            try metadata.exports.append(gpa, global_sym_index);
-            break :blk global_sym_index;
-        };
+        const global_sym_index = try self.getGlobalSymbol(elf_file, exp_name, null);
+        try metadata.exports.append(gpa, global_sym_index);
 
         const value = self.symbol(sym_index).value;
         const global_sym = self.symbol(global_sym_index);
@@ -1936,36 +1946,15 @@ pub fn updateExports(
     }
 }
 
-pub fn updateLineNumber(self: *ZigObject, pt: Zcu.PerThread, ti_id: InternPool.TrackedInst.Index) link.Error!void {
+pub fn updateLineNumber(self: *ZigObject, pt: Zcu.PerThread, ti_id: InternPool.TrackedInst.Index, line: u32) link.Error!void {
     if (self.dwarf) |*dwarf| {
         const comp = dwarf.bin_file.comp;
         const diags = &comp.link_diags;
-        dwarf.updateLineNumber(pt.zcu, ti_id) catch |err| switch (err) {
+        dwarf.updateLineNumber(pt.zcu, ti_id, line) catch |err| switch (err) {
             error.OutOfMemory, error.Canceled, error.AlreadyReported => |e| return e,
             else => |e| return diags.fail("failed to update dwarf line numbers: {s}", .{@errorName(e)}),
         };
     }
-}
-
-pub fn deleteExport(
-    self: *ZigObject,
-    elf_file: *Elf,
-    exported: Zcu.Exported,
-    name: InternPool.NullTerminatedString,
-) void {
-    const metadata = switch (exported) {
-        .nav => |nav| self.navs.getPtr(nav),
-        .uav => |uav| self.uavs.getPtr(uav),
-    } orelse return;
-    const zcu = elf_file.base.comp.zcu.?;
-    const exp_name = name.toSlice(&zcu.intern_pool);
-    const sym_index = metadata.@"export"(self, exp_name) orelse return;
-    log.debug("deleting export '{s}'", .{exp_name});
-    const esym_index = self.symbol(sym_index.*).esym_index;
-    const esym = &self.symtab.items(.elf_sym)[esym_index];
-    _ = self.globals_lookup.remove(esym.st_name);
-    esym.* = Elf.null_sym;
-    self.symtab.items(.shndx)[esym_index] = elf.SHN_UNDEF;
 }
 
 pub fn getGlobalSymbol(self: *ZigObject, elf_file: *Elf, name: []const u8, lib_name: ?[]const u8) !u32 {
@@ -2362,14 +2351,6 @@ const AvMetadata = struct {
     exports: std.ArrayList(Symbol.Index) = .empty,
     /// Set to true if the AV has been initialized and allocated.
     allocated: bool = false,
-
-    fn @"export"(m: AvMetadata, zig_object: *ZigObject, name: []const u8) ?*u32 {
-        for (m.exports.items) |*exp| {
-            const exp_name = zig_object.getString(zig_object.symbol(exp.*).name_offset);
-            if (mem.eql(u8, name, exp_name)) return exp;
-        }
-        return null;
-    }
 };
 
 fn checkNavAllocated(pt: Zcu.PerThread, index: InternPool.Nav.Index, meta: AvMetadata) void {
@@ -2415,6 +2396,7 @@ const TlsTable = std.array_hash_map.Auto(Atom.Index, void);
 
 const x86_64 = struct {
     fn writeTrampolineCode(source_addr: i64, target_addr: i64, buf: *[max_trampoline_len]u8) ![]u8 {
+        dev.checkAny(&.{ .llvm_backend, .x86_64_backend });
         const disp = @as(i64, @intCast(target_addr)) - source_addr - 5;
         var bytes = [_]u8{
             0xe9, 0x00, 0x00, 0x00, 0x00, // jmp rel32
@@ -2430,6 +2412,7 @@ const assert = std.debug.assert;
 const build_options = @import("build_options");
 const builtin = @import("builtin");
 const codegen = @import("../../codegen.zig");
+const dev = @import("../../dev.zig");
 const elf = std.elf;
 const link = @import("../../link.zig");
 const log = std.log.scoped(.link);

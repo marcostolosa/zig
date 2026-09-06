@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
 const mem = std.mem;
-const OptimizeMode = std.builtin.OptimizeMode;
+const OptimizeMode = std.builtin.Optimize;
 const Step = std.Build.Step;
 
 // Cases
@@ -21,11 +21,12 @@ pub const LinkContext = @import("src/Link.zig");
 const ModuleTestTarget = struct {
     linkage: ?std.builtin.LinkMode = null,
     target: std.Target.Query = .{},
-    optimize_mode: std.builtin.OptimizeMode = .debug,
+    optimize_mode: std.builtin.Optimize = .debug,
     link_libc: ?bool = null,
     single_threaded: ?bool = null,
     use_llvm: ?bool = null,
     use_lld: ?bool = null,
+    new_linker: ?bool = null,
     pic: ?bool = null,
     strip: ?bool = null,
     function_sections: ?bool = null,
@@ -1288,6 +1289,34 @@ const module_test_targets = blk: {
             },
             .link_libc = true,
         },
+        .{
+            .target = .{
+                .cpu_arch = .x86_64,
+                .os_tag = .linux,
+            },
+            .new_linker = true,
+            .skip_modules = &.{ "compiler-rt", "behavior" }, // '@export' with '.internal' linkage
+        },
+        .{
+            .target = .{
+                .cpu_arch = .x86_64,
+                .os_tag = .linux,
+                .abi = .musl,
+            },
+            .link_libc = true,
+            .new_linker = true,
+            .skip_modules = &.{ "compiler-rt", "behavior" }, // '@export' with '.internal' linkage
+        },
+        .{
+            .target = .{
+                .cpu_arch = .x86_64,
+                .os_tag = .linux,
+                .abi = .gnu,
+            },
+            .link_libc = true,
+            .new_linker = true,
+            .skip_modules = &.{ "compiler-rt", "behavior" }, // '@export' with '.internal' linkage
+        },
 
         // Darwin Targets
 
@@ -2133,7 +2162,7 @@ const c_abi_targets = blk: {
 
 const LinkTarget = struct {
     target: std.Target.Query = .{},
-    optimize_mode: std.builtin.OptimizeMode = .debug,
+    optimize_mode: std.builtin.Optimize = .debug,
     link_libc: bool = false,
     use_llvm: bool = false,
     use_lld: bool = false,
@@ -2221,24 +2250,95 @@ const link_targets = blk: {
     };
 };
 
-/// Unlike `test_targets` and `c_abi_targets`, these targets are just simple strings which we pass
-/// directly to `incr-check`. They include the target triple and the compiler backend.
+const IncrementalTarget = struct {
+    target: std.Target.Query,
+    backend: enum { selfhosted, llvm, cbe },
+};
+
+/// These are passed to `incr-check` as `<target>-<backend>` strings.
 ///
 /// If only one specific test is failing on a target, instead of entirely disabling the target here,
 /// you can skip the target for that specific test only by adding a line like this to the manifest:
 ///   #skip_target=x86_64-linux-selfhosted
-const incremental_targets: []const []const u8 = &.{
+const incremental_targets = &[_]IncrementalTarget{
     // Avoid adding more CBE or LLVM targets without good reason: they're a lot slower than others
     // to run due to the output (C source code or LLVM IR) being built non-incrementally (by Clang
     // or LLVM). We just have a couple here to make sure that it works.
-    "x86_64-linux-cbe",
-    "x86_64-linux-llvm",
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+        },
+        .backend = .cbe,
+    },
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+        },
+        .backend = .llvm,
+    },
 
-    "x86_64-linux-selfhosted",
-    // https://codeberg.org/ziglang/zig/issues/31773
-    //"x86_64-windows-selfhosted",
-    // https://codeberg.org/ziglang/zig/issues/31810
-    //"wasm32-wasi-selfhosted",
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+        },
+        .backend = .selfhosted,
+    },
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .windows,
+        },
+        .backend = .selfhosted,
+    },
+    .{
+        .target = .{
+            .cpu_arch = .wasm32,
+            .os_tag = .wasi,
+        },
+        .backend = .selfhosted,
+    },
+};
+
+const debugger_matrix: []const DebuggerContext.TestTarget = &.{
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .none,
+        },
+        .pic = false,
+        .linker = .old,
+    },
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .none,
+        },
+        .pic = true,
+        .linker = .old,
+    },
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .none,
+        },
+        .pic = false,
+        .linker = .new,
+    },
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .none,
+        },
+        .pic = true,
+        .linker = .new,
+    },
 };
 
 fn compatible32bitArch(host: *const std.Target) ?std.Target.Cpu.Arch {
@@ -2545,7 +2645,7 @@ pub fn addCliTests(b: *std.Build) *Step {
         // This is intended to be the exact CLI usage used by godbolt.org.
         const run = b.addSystemCommand(&.{ b.graph.zig_exe, "build-obj", "--cache-dir" });
         run.addDirectoryArg(tmp_path);
-        run.addArgs(&.{ "--name", "example", "-fno-emit-bin", "-fno-emit-h", "-fstrip", "-OReleaseFast" });
+        run.addArgs(&.{ "--name", "example", "-fno-emit-bin", "-fno-emit-h", "-fstrip", "-Ofast" });
         run.addFileArg(example_zig);
         const example_s = run.addPrefixedOutputFileArg("-femit-asm=", "example.s");
 
@@ -2734,6 +2834,10 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
 
         const target = &resolved_target.result;
 
+        if (target.cpu.arch.isAarch64() and target.os.tag == .openbsd and target.ofmt == .c) {
+            continue; // https://codeberg.org/ziglang/zig/issues/36766
+        }
+
         if (std.mem.eql(u8, options.name, "libc")) {
             // The libc API tests obviously need to link libc. So for test
             // target entries where we wouldn't link libc by default, skip the
@@ -2821,6 +2925,7 @@ fn addOneModuleTest(
         .zig_lib_dir = b.path("lib"),
     });
     these_tests.linkage = test_target.linkage;
+    these_tests.use_new_linker = test_target.new_linker;
     // https://codeberg.org/ziglang/zig/issues/31701
     if (!(mem.eql(u8, options.name, "compiler-rt") or mem.eql(u8, options.name, "libc"))) {
         if (options.no_builtin) these_tests.root_module.no_builtin = true;
@@ -2847,7 +2952,11 @@ fn addOneModuleTest(
         "-selfhosted"
     else
         "";
-    const use_lld = if (test_target.use_lld == false) "-no-lld" else "";
+    const linker_suffix: []const u8 = s: {
+        if (test_target.new_linker == true) break :s "-new-linker";
+        if (test_target.use_lld == false) break :s "-no-lld";
+        break :s "";
+    };
     const linkage_name = if (test_target.linkage) |linkage| switch (linkage) {
         inline else => |t| "-" ++ @tagName(t),
     } else "";
@@ -2863,7 +2972,7 @@ fn addOneModuleTest(
         libc_suffix,
         single_threaded_suffix,
         backend_suffix,
-        use_lld,
+        linker_suffix,
         linkage_name,
         use_pic,
     });
@@ -3008,9 +3117,18 @@ pub fn wouldUseLlvm(use_llvm: ?bool, query: std.Target.Query, optimize_mode: Opt
     switch (cpu_arch) {
         .x86_64 => {
             if (std.Target.ptrBitWidth_arch_abi(cpu_arch, query.abi orelse .none) != 64) return true;
-            if (os_tag.isBSD() or os_tag == .illumos) return true;
+            if (os_tag == .illumos) return true;
+            switch (os_tag) {
+                .dragonfly,
+                .freebsd,
+                .netbsd,
+                .openbsd,
+                => return true,
+                else => {},
+            }
             return switch (ofmt) {
-                .elf, .macho => return false,
+                .elf => return false,
+                .macho => return true, // https://codeberg.org/ziglang/zig/issues/35267
                 else => return true,
             };
         },
@@ -3122,8 +3240,14 @@ const LinkTestOptions = struct {
     test_filters: []const []const u8,
     optimize_modes: []const OptimizeMode,
     skip_non_native: bool,
+    skip_freebsd: bool,
+    skip_netbsd: bool,
+    skip_openbsd: bool,
     skip_windows: bool,
+    skip_darwin: bool,
+    skip_linux: bool,
     skip_llvm: bool,
+    skip_libc: bool,
     max_rss: usize,
 };
 
@@ -3136,12 +3260,21 @@ pub fn addLinkTests(b: *std.Build, options: LinkTestOptions) *Step {
     ) orelse false;
 
     for (link_targets) |link_target| {
-        if (options.skip_non_native and !link_target.target.isNative()) continue;
-        if (options.skip_windows and link_target.target.os_tag == .windows) continue;
-
         const resolved_target = b.resolveTargetQuery(link_target.target);
-        const triple_txt = resolved_target.query.zigTriple(b.allocator) catch @panic("OOM");
+
+        if (options.skip_non_native and !isNative(&resolved_target, &b.graph.host.result))
+            continue;
+
         const target = &resolved_target.result;
+
+        if (options.skip_freebsd and target.os.tag == .freebsd) continue;
+        if (options.skip_netbsd and target.os.tag == .netbsd) continue;
+        if (options.skip_openbsd and target.os.tag == .openbsd) continue;
+        if (options.skip_windows and target.os.tag == .windows) continue;
+        if (options.skip_darwin and target.os.tag.isDarwin()) continue;
+        if (options.skip_linux and target.os.tag == .linux) continue;
+
+        const triple_txt = resolved_target.query.zigTriple(b.allocator) catch @panic("OOM");
 
         if (options.test_target_filters.len > 0) {
             for (options.test_target_filters) |filter| {
@@ -3149,9 +3282,15 @@ pub fn addLinkTests(b: *std.Build, options: LinkTestOptions) *Step {
             } else continue;
         }
 
+        if (options.skip_libc and (link_target.link_libc == true or std.os.targetRequiresLibC(target)))
+            continue;
+
+        // We can't provide MSVC libc when cross-compiling.
+        if (target.abi == .msvc and link_target.link_libc == true and builtin.os.tag != .windows)
+            continue;
+
         for (options.optimize_modes) |optimize_mode| {
             if (link_target.optimize_mode != optimize_mode) continue;
-            if (link_target.link_libc and target.abi == .msvc and b.graph.host.result.os.tag != .windows) continue;
             const would_use_llvm = wouldUseLlvm(link_target.use_llvm, link_target.target, optimize_mode);
             if (options.skip_llvm and would_use_llvm) continue;
 
@@ -3226,29 +3365,31 @@ pub fn addDebuggerTests(b: *std.Build, options: DebuggerContext.Options) ?*Step 
         .b = b,
         .options = options,
         .root_step = step,
+        .test_matrix = debugger_matrix,
     };
-    context.addTestsForTarget(&.{
-        .resolved = b.resolveTargetQuery(.{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .none,
-        }),
-        .pic = false,
-        .test_name_suffix = "x86_64-linux",
-    });
-    context.addTestsForTarget(&.{
-        .resolved = b.resolveTargetQuery(.{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .none,
-        }),
-        .pic = true,
-        .test_name_suffix = "x86_64-linux-pic",
-    });
+    context.addTests();
     return step;
 }
 
-pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []const []const u8) !void {
+const IncrementalTestOptions = struct {
+    test_filters: []const []const u8,
+    test_target_filters: []const []const u8,
+    skip_non_native: bool,
+    skip_wasm: bool,
+    skip_freebsd: bool,
+    skip_netbsd: bool,
+    skip_openbsd: bool,
+    skip_windows: bool,
+    skip_darwin: bool,
+    skip_linux: bool,
+    skip_llvm: bool,
+};
+
+pub fn addIncrementalTests(
+    b: *std.Build,
+    test_step: *Step,
+    options: IncrementalTestOptions,
+) !void {
     const io = b.graph.io;
 
     const incr_check = b.addExecutable(.{
@@ -3269,9 +3410,9 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []cons
     while (try it.next(io)) |entry| {
         if (std.mem.endsWith(u8, entry.basename, ".swp")) continue;
 
-        for (test_filters) |test_filter| {
+        for (options.test_filters) |test_filter| {
             if (std.mem.find(u8, entry.path, test_filter)) |_| break;
-        } else if (test_filters.len > 0) continue;
+        } else if (options.test_filters.len > 0) continue;
 
         switch (entry.kind) {
             .file => {},
@@ -3282,7 +3423,36 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []cons
         }
         b.dependOnFileContents(b.path(b.pathJoin(&.{ "test", "incremental", entry.path })));
 
-        for (incremental_targets) |target_str| {
+        for (incremental_targets) |test_target| {
+            const resolved_target = b.resolveTargetQuery(test_target.target);
+
+            if (options.skip_non_native and !isNative(&resolved_target, &b.graph.host.result))
+                continue;
+
+            const target = &resolved_target.result;
+
+            if (options.skip_wasm and target.cpu.arch.isWasm()) continue;
+
+            if (options.skip_freebsd and target.os.tag == .freebsd) continue;
+            if (options.skip_netbsd and target.os.tag == .netbsd) continue;
+            if (options.skip_openbsd and target.os.tag == .openbsd) continue;
+            if (options.skip_windows and target.os.tag == .windows) continue;
+            if (options.skip_darwin and target.os.tag.isDarwin()) continue;
+            if (options.skip_linux and target.os.tag == .linux) continue;
+
+            if (options.skip_llvm and test_target.backend == .llvm) continue;
+
+            const target_str = b.fmt("{s}-{t}", .{
+                resolved_target.query.zigTriple(b.allocator) catch @panic("OOM"),
+                test_target.backend,
+            });
+
+            if (options.test_target_filters.len > 0) {
+                for (options.test_target_filters) |filter| {
+                    if (std.mem.find(u8, target_str, filter) != null) break;
+                } else continue;
+            }
+
             const run = b.addRunArtifact(incr_check);
             run.setName(b.fmt("incr-check {s} '{s}'", .{ target_str, entry.basename }));
 

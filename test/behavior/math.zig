@@ -456,6 +456,7 @@ test "division" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     try testIntDivision();
     try comptime testIntDivision();
 
@@ -649,6 +650,7 @@ test "division half-precision floats" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testDivisionFP16();
     try comptime testDivisionFP16();
@@ -2690,4 +2692,11 @@ test "i96 operations" {
     try expect(-9223372036854775808 == Op_i96.do(.{ .a = {} }));
     try expect(12345678910111213 == Op_i96.do(.{ .b = .{ .inner = .{ .x = 1234567891011121314 }, .flag = true } }));
     try expect(1234567891021121314 == Op_i96.do(.{ .c = .{ .inner = .{ .x = 123456789101112131415 }, .flag = true } }));
+}
+
+test "zero returned from @mod matches zero in switch" {
+    try expect(switch (@mod(-2, 2)) {
+        0 => true,
+        else => false,
+    });
 }

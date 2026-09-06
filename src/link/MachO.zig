@@ -127,7 +127,7 @@ frameworks: []const Framework,
 /// TODO: unify with soname
 install_name: ?[]const u8,
 /// Path to entitlements file.
-entitlements: ?[]const u8,
+entitlements: ?Path,
 compatibility_version: ?std.SemanticVersion,
 /// Entry name
 entry_name: ?[]const u8,
@@ -580,7 +580,7 @@ pub fn flush(
         var codesig = CodeSignature.init(self.getPageSize());
         codesig.code_directory.ident = fs.path.basename(self.base.emit.sub_path);
         if (self.entitlements) |path| codesig.addEntitlements(gpa, io, path) catch |err|
-            return diags.fail("failed to add entitlements from {s}: {t}", .{ path, err });
+            return diags.fail("failed to add entitlements from {f}: {t}", .{ path, err });
         try self.writeCodeSignaturePadding(&codesig);
         break :blk codesig;
     } else null;
@@ -3095,25 +3095,16 @@ pub fn updateNav(self: *MachO, pt: Zcu.PerThread, nav: InternPool.Nav.Index) lin
     return self.getZigObject().?.updateNav(self, pt, nav);
 }
 
-pub fn updateLineNumber(self: *MachO, pt: Zcu.PerThread, ti_id: InternPool.TrackedInst.Index) link.Error!void {
-    return self.getZigObject().?.updateLineNumber(pt, ti_id);
+pub fn updateLineNumber(self: *MachO, pt: Zcu.PerThread, inst: InternPool.TrackedInst.Index, line: u32) link.Error!void {
+    return self.getZigObject().?.updateLineNumber(pt, inst, line);
 }
 
 pub fn updateExports(
     self: *MachO,
     pt: Zcu.PerThread,
-    exported: Zcu.Exported,
     export_indices: []const Zcu.Export.Index,
 ) link.Error!void {
-    return self.getZigObject().?.updateExports(self, pt, exported, export_indices);
-}
-
-pub fn deleteExport(
-    self: *MachO,
-    exported: Zcu.Exported,
-    name: InternPool.NullTerminatedString,
-) void {
-    return self.getZigObject().?.deleteExport(self, exported, name);
+    return self.getZigObject().?.updateExports(self, pt, export_indices);
 }
 
 pub fn freeNav(self: *MachO, nav: InternPool.Nav.Index) void {
@@ -5512,4 +5503,3 @@ const Value = @import("../Value.zig");
 const UnwindInfo = @import("MachO/UnwindInfo.zig");
 const WeakBind = bind.WeakBind;
 const ZigObject = @import("MachO/ZigObject.zig");
-const dev = @import("../dev.zig");

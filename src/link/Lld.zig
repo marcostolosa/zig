@@ -75,11 +75,13 @@ pub const Elf = struct {
     entry_name: ?[]const u8,
     hash_style: HashStyle,
     image_base: u64,
-    linker_script: ?[]const u8,
-    version_script: ?[]const u8,
+    linker_script: ?Cache.Path,
+    version_script: ?Cache.Path,
     sort_section: ?SortSection,
     print_icf_sections: bool,
     print_map: bool,
+    nmagic: bool,
+    fatal_warnings: bool,
     emit_relocs: bool,
     z_nodelete: bool,
     z_notext: bool,
@@ -135,6 +137,8 @@ pub const Elf = struct {
             .sort_section = options.sort_section,
             .print_icf_sections = options.print_icf_sections,
             .print_map = options.print_map,
+            .nmagic = options.nmagic,
+            .fatal_warnings = options.fatal_warnings,
             .emit_relocs = options.emit_relocs,
             .z_nodelete = options.z_nodelete,
             .z_notext = options.z_notext,
@@ -162,6 +166,8 @@ const Wasm = struct {
     import_table: bool,
     /// When true, will export the function table to the host environment.
     export_table: bool,
+    /// When true, remove maximum size from function table, allowing table to grow.
+    growable_table: bool,
     /// When defined, sets the initial memory size of the memory.
     initial_memory: ?u64,
     /// When defined, sets the maximum memory size of the memory.
@@ -186,6 +192,7 @@ const Wasm = struct {
             },
             .import_table = options.import_table,
             .export_table = options.export_table,
+            .growable_table = options.growable_table,
             .initial_memory = options.initial_memory,
             .max_memory = options.max_memory,
             .global_base = options.global_base,
@@ -337,7 +344,7 @@ fn linkAsArchive(lld: *Lld, arena: Allocator) link.Error!void {
     const llvm_bindings = @import("../codegen/llvm/bindings.zig");
     const llvm = @import("../codegen/llvm.zig");
     const target = &comp.root_mod.resolved_target.result;
-    llvm.initializeLLVMTarget(target.cpu.arch);
+    llvm.initializeLLVMTarget(comp.io, target.cpu.arch);
     var err_file_index: usize = undefined;
     var err_msg: [*:0]u8 = undefined;
     if (llvm_bindings.WriteArchive(
@@ -923,7 +930,7 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
 
         if (elf.linker_script) |linker_script| {
             try argv.append("-T");
-            try argv.append(linker_script);
+            try argv.append(try linker_script.toString(arena));
         }
 
         if (elf.sort_section) |how| {
@@ -945,6 +952,14 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
 
         if (elf.print_map) {
             try argv.append("--print-map");
+        }
+
+        if (elf.nmagic) {
+            try argv.append("--nmagic");
+        }
+
+        if (elf.fatal_warnings) {
+            try argv.append("--fatal-warnings");
         }
 
         if (comp.link_eh_frame_hdr) {
@@ -1071,7 +1086,7 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
             }
             if (elf.version_script) |version_script| {
                 try argv.append("-version-script");
-                try argv.append(version_script);
+                try argv.append(try version_script.toString(arena));
             }
             if (elf.allow_undefined_version) {
                 try argv.append("--undefined-version");
@@ -1451,6 +1466,10 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
         if (wasm.export_table) {
             assert(!wasm.import_table);
             try argv.append("--export-table");
+        }
+
+        if (wasm.growable_table) {
+            try argv.append("--growable-table");
         }
 
         // For wasm-ld we only need to specify '--no-gc-sections' when the user explicitly

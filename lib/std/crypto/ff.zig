@@ -472,6 +472,21 @@ fn Fe_(comptime bits: comptime_int) type {
             return fe;
         }
 
+        /// Decodes and reduces a byte string whose value is below 2^m.bits().
+        pub fn fromBytesReduced(m: Modulus(bits), bytes: []const u8, comptime endian: Endian) OverflowError!Self {
+            var fe = Self{ .v = FeUint.zero };
+            const m_limbs_count = m.limbs_count();
+            const fe_limbs = fe.v.limbs()[0..m_limbs_count];
+            var acc = decodeBytes(fe_limbs, bytes, endian);
+
+            acc |= math.shr(Limb, fe_limbs[m_limbs_count - 1], t_bits - m.leading);
+            if (!ct.eql(acc, 0)) return error.Overflow;
+            fe.v.limbs_len = m_limbs_count;
+
+            _ = fe.v.conditionalSubWithOverflow(ct.limbsCmpGeq(fe.v, m.v), m.v);
+            return fe;
+        }
+
         /// Converts the field element to a byte string.
         /// Returns an error if the element is in Montgomery form.
         pub fn toBytes(self: Self, bytes: []u8, comptime endian: Endian) (OverflowError || RepresentationError)!void {

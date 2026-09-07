@@ -601,6 +601,12 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
 
         const FeUint = Fe.FeUint;
 
+        pub const Options = struct {
+            /// Accept even moduli and treat their parity as public.
+            /// Disabled by default: with even moduli, we can't use Montgomery form, so multiplication is slower.
+            allow_even: bool = false,
+        };
+
         /// The neutral element.
         zero: Fe,
 
@@ -698,15 +704,51 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
         /// Creates a new modulus from a primitive value.
         /// The modulus must be odd and larger than 2.
         pub fn fromPrimitive(comptime T: type, x: T) (InvalidModulusError || OverflowError)!Self {
-            comptime assert(@bitSizeOf(T) <= max_bits); // Primitive type is larger than the modulus type.
-            const v = try FeUint.fromPrimitive(T, x);
-            return try Self.fromUint(v);
+            return fromPrimitiveWithOptions(T, x, .{});
         }
 
         /// Creates a new modulus from a byte string.
         pub fn fromBytes(bytes: []const u8, comptime endian: Endian) (InvalidModulusError || OverflowError)!Self {
+            return fromBytesWithOptions(bytes, endian, .{});
+        }
+
+        /// Creates a new modulus from a Uint value, with options.
+        pub fn fromUintWithOptions(v_: FeUint, options: Options) InvalidModulusError!Self {
+            if (v_.isOdd()) return fromUint(v_);
+            if (!options.allow_even) return error.EvenModulus;
+
+            const v = v_.normalize();
+            if (v.limbs_len < 2 and v.limbsConst()[0] < 2) {
+                return error.ModulusTooSmall;
+            }
+            const hi = v.limbsConst()[v.limbs_len - 1];
+
+            var m = initWithoutRR(v, @clz(hi) - carry_bits, 0);
+            m.rr = m.zero;
+
+            return m;
+        }
+
+        /// Creates a new big integer from a primitive type, with options.
+        pub fn fromPrimitiveWithOptions(comptime T: type, x: T, options: Options) (InvalidModulusError || OverflowError)!Self {
+            comptime assert(@bitSizeOf(T) <= max_bits);
+            const v = try FeUint.fromPrimitive(T, x);
+            return try Self.fromUintWithOptions(v, options);
+        }
+
+        /// Creates a new big integer from a byte array, with options.
+        pub fn fromBytesWithOptions(bytes: []const u8, comptime endian: Endian, options: Options) (InvalidModulusError || OverflowError)!Self {
             const v = try FeUint.fromBytes(bytes, endian);
-            return try Self.fromUint(v);
+            return try Self.fromUintWithOptions(v, options);
+        }
+
+        const ProductUint = Uint(2 * FeUint.capacity_bits);
+
+        fn fullProduct(a: []const Limb, b: []const Limb) ProductUint {
+            var out = ProductUint.zero;
+            out.limbs_len = a.len + b.len;
+            mulAddWide(out.limbs(), a, b);
+            return out;
         }
 
         /// Serializes the modulus to a byte string.
@@ -867,8 +909,9 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
         }
 
         /// Converts a field element to the Montgomery form.
+        /// Rejects even moduli, which have no Montgomery form.
         pub fn toMontgomery(self: Self, x: *Fe) RepresentationError!void {
-            if (x.montgomery) {
+            if (x.montgomery or !self.v.isOdd()) {
                 return error.UnexpectedRepresentation;
             }
             self.shrink(x) catch unreachable;
@@ -877,8 +920,9 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
         }
 
         /// Takes a field element out of the Montgomery form.
+        /// Rejects even moduli, which have no Montgomery form.
         pub fn fromMontgomery(self: Self, x: *Fe) RepresentationError!void {
-            if (!x.montgomery) {
+            if (!x.montgomery or !self.v.isOdd()) {
                 return error.UnexpectedRepresentation;
             }
             self.shrink(x) catch unreachable;
@@ -985,25 +1029,36 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
             return d;
         }
 
+        fn plainMul(self: Self, x: Fe, y: Fe) Fe {
+            assert(x.limbs_count() == self.limbs_count());
+            assert(y.limbs_count() == self.limbs_count());
+            return self.reduce(fullProduct(x.v.limbsConst(), y.v.limbsConst()));
+        }
+
         // Set `public` to `false` for secret exponents.
         fn powWithEncodedExponentInternal(self: Self, x: Fe, e: []const u8, endian: Endian, comptime public: bool) NullExponentError!Fe {
             var acc: u8 = 0;
             for (e) |b| acc |= b;
             if (acc == 0) return error.NullExponent;
 
+            // Modulus parity is public; even moduli need plain arithmetic.
+            if (!self.v.isOdd()) {
+                return self.powLadder(x, e, endian, public, false);
+            }
+
             var x_m = x;
             if (!x.montgomery) {
                 self.toMontgomery(&x_m) catch unreachable;
             }
-            var out = self.powLadder(x_m, e, endian, public);
+            var out = self.powLadder(x_m, e, endian, public, true);
             if (!x.montgomery) {
                 self.fromMontgomery(&out) catch unreachable;
             }
             return out;
         }
 
-        // `x` and the result use Montgomery form; the exponent must be nonzero.
-        fn powLadder(self: Self, x: Fe, e: []const u8, endian: Endian, comptime public: bool) Fe {
+        // `x` and the result use the representation selected by `montgomery`; the exponent must be nonzero.
+        fn powLadder(self: Self, x: Fe, e: []const u8, endian: Endian, comptime public: bool, comptime montgomery: bool) Fe {
             if (public and
                 (e.len < 3 or (e.len == 3 and e[if (endian == .big) 0 else 2] <= 0b1111)))
             {
@@ -1016,9 +1071,9 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
                 var j = math.log2_int(u32, e_int);
                 while (j > 0) {
                     j -= 1;
-                    out = self.montgomerySq(out);
+                    out = if (montgomery) self.montgomerySq(out) else self.plainMul(out, out);
                     if ((e_int >> j) & 1 != 0) {
-                        out = self.montgomeryMul(out, x);
+                        out = if (montgomery) self.montgomeryMul(out, x) else self.plainMul(out, x);
                     }
                 }
                 return out;
@@ -1026,18 +1081,20 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
 
             var pc: [15]Fe = [1]Fe{x} ++ @as([14]Fe, @splat(self.zero));
             for (1..pc.len) |i| {
-                pc[i] = self.montgomeryMul(pc[i - 1], pc[0]);
+                pc[i] = if (montgomery) self.montgomeryMul(pc[i - 1], pc[0]) else self.plainMul(pc[i - 1], pc[0]);
             }
             var out = self.one();
-            self.toMontgomery(&out) catch unreachable;
+            if (montgomery) {
+                self.toMontgomery(&out) catch unreachable;
+            }
 
             var t0 = self.zero;
-            t0.montgomery = true;
+            t0.montgomery = montgomery;
             for (0..e.len) |s| {
                 const b = e[if (endian == .big) s else e.len - 1 - s];
                 for ([_]u3{ 4, 0 }) |j| {
                     for (0..4) |_| {
-                        out = self.montgomerySq(out);
+                        out = if (montgomery) self.montgomerySq(out) else self.plainMul(out, out);
                     }
                     const k = (b >> j) & 0b1111;
                     if (public or std.options.side_channels_mitigations == .none) {
@@ -1048,7 +1105,7 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
                             t0.v.cmov(ct.eql(k, @truncate(i + 1)), t.v);
                         }
                     }
-                    const t1 = self.montgomeryMul(out, t0);
+                    const t1 = if (montgomery) self.montgomeryMul(out, t0) else self.plainMul(out, t0);
                     if (public) {
                         @memcpy(out.v.limbs(), t1.v.limbsConst());
                     } else {
@@ -1062,6 +1119,9 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
         /// Multiplies two field elements.
         /// Result preserves the first operand's form.
         pub fn mul(self: Self, x: Fe, y: Fe) Fe {
+            if (!self.v.isOdd()) {
+                return self.plainMul(x, y);
+            }
             if (x.montgomery) {
                 const y_ = if (!y.montgomery) blk: {
                     var yy = y;
@@ -1086,6 +1146,9 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
 
         /// Squares a field element.
         pub fn sq(self: Self, x: Fe) Fe {
+            if (!self.v.isOdd()) {
+                return self.plainMul(x, x);
+            }
             if (x.montgomery) {
                 return self.montgomerySq(x);
             } else {

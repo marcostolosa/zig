@@ -1525,7 +1525,9 @@ pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connecti
 }
 
 /// Connect to `proxied_host:proxied_port` using the specified proxy with HTTP
-/// CONNECT. This will reuse a connection if one is already open.
+/// CONNECT. This will reuse an open connection unless `proxy.protocol` is
+/// different from `proxied_protocol`, for example when creating a HTTPS
+/// connection through an HTTP proxy.
 ///
 /// This function is threadsafe.
 pub fn connectProxied(

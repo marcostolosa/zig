@@ -751,6 +751,26 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
             return out;
         }
 
+        /// Creates an odd modulus from the product of two integers.
+        pub fn fromProduct(a: FeUint, b: FeUint) (InvalidModulusError || OverflowError)!Self {
+            return fromProductWithOptions(a, b, .{});
+        }
+
+        /// Creates a modulus from the product of two integers, with options (set `allow_even` to `true` to allow the product to be even)
+        pub fn fromProductWithOptions(a: FeUint, b: FeUint, options: Options) (InvalidModulusError || OverflowError)!Self {
+            const product = fullProduct(a.limbsConst(), b.limbsConst());
+
+            if (orLimbs(product.limbs_buffer[FeUint.max_limbs_count..]) != 0) {
+                return error.Overflow;
+            }
+
+            const v = FeUint{
+                .limbs_buffer = product.limbs_buffer[0..FeUint.max_limbs_count].*,
+                .limbs_len = FeUint.max_limbs_count,
+            };
+            return try Self.fromUintWithOptions(v, options);
+        }
+
         /// Serializes the modulus to a byte string.
         pub fn toBytes(self: Self, bytes: []u8, comptime endian: Endian) OverflowError!void {
             return self.v.toBytes(bytes, endian);
@@ -1662,6 +1682,32 @@ test "field element constants and subOne" {
         if (montgomery) try m.fromMontgomery(&four);
         try testing.expectEqual(4, try four.toPrimitive(u8));
     }
+}
+
+test "modulus from a product" {
+    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+
+    const M = Modulus(256);
+    const U = Uint(256);
+    const one = try U.fromPrimitive(u8, 1);
+    const a = (try U.fromPrimitive(u32, 65537)).normalize();
+    const b = try U.fromPrimitive(u256, (1 << 200) + 12345);
+    const m = try M.fromProduct(a, b);
+    try testing.expectEqual(65537 * ((1 << 200) + 12345), try m.toUint().toPrimitive(u256));
+    try testing.expect((try M.fromProduct(b, a)).v.eql(m.v));
+    try testing.expectError(error.EvenModulus, M.fromProduct(U.zero, a));
+    try testing.expectError(error.ModulusTooSmall, M.fromProduct(one, one));
+    const two = try U.fromPrimitive(u8, 2);
+    try testing.expectError(error.EvenModulus, M.fromProduct(a, two));
+    try testing.expectEqual(2 * 65537, try (try M.fromProductWithOptions(a, two, .{ .allow_even = true })).toUint().toPrimitive(u32));
+    try testing.expectError(error.ModulusTooSmall, M.fromProductWithOptions(U.zero, a, .{ .allow_even = true }));
+
+    const full = try U.fromBytes(&maxUintBytes(U), .big);
+    try testing.expect((try M.fromProduct(full, one)).toUint().eql(full));
+    try testing.expectError(error.Overflow, M.fromProduct(full, a));
+    try testing.expectError(error.Overflow, M.fromProduct(a, full));
+    const power = try U.fromPrimitive(u256, 1 << 160);
+    try testing.expectError(error.Overflow, M.fromProductWithOptions(power, power, .{ .allow_even = true }));
 }
 
 test "even modulus arithmetic" {

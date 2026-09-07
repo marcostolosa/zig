@@ -985,103 +985,76 @@ pub fn Modulus(comptime max_bits: comptime_int) type {
             return d;
         }
 
-        // Returns x^e (mod m), with the exponent provided as a byte string.
-        // `public` must be set to `false` if the exponent it secret.
+        // Set `public` to `false` for secret exponents.
         fn powWithEncodedExponentInternal(self: Self, x: Fe, e: []const u8, endian: Endian, comptime public: bool) NullExponentError!Fe {
             var acc: u8 = 0;
             for (e) |b| acc |= b;
             if (acc == 0) return error.NullExponent;
 
-            const was_montgomery = x.montgomery;
+            var x_m = x;
+            if (!x.montgomery) {
+                self.toMontgomery(&x_m) catch unreachable;
+            }
+            var out = self.powLadder(x_m, e, endian, public);
+            if (!x.montgomery) {
+                self.fromMontgomery(&out) catch unreachable;
+            }
+            return out;
+        }
 
-            var out = self.one();
-            self.toMontgomery(&out) catch unreachable;
-
+        // `x` and the result use Montgomery form; the exponent must be nonzero.
+        fn powLadder(self: Self, x: Fe, e: []const u8, endian: Endian, comptime public: bool) Fe {
             if (public and
                 (e.len < 3 or (e.len == 3 and e[if (endian == .big) 0 else 2] <= 0b1111)))
             {
                 // Do not use a precomputation table for short, public exponents
-                var x_m = x;
-                if (!x.montgomery) {
-                    self.toMontgomery(&x_m) catch unreachable;
+                var e_int: u32 = 0;
+                for (0..e.len) |i| {
+                    e_int = (e_int << 8) | e[if (endian == .big) i else e.len - 1 - i];
                 }
-                var s = switch (endian) {
-                    .big => 0,
-                    .little => e.len - 1,
-                };
-                while (true) {
-                    const b = e[s];
-                    var j: u3 = 7;
-                    while (true) : (j -= 1) {
-                        out = self.montgomerySq(out);
-                        const k: u1 = @truncate(b >> j);
-                        if (k != 0) {
-                            const t = self.montgomeryMul(out, x_m);
-                            @memcpy(out.v.limbs(), t.v.limbsConst());
-                        }
-                        if (j == 0) break;
-                    }
-                    switch (endian) {
-                        .big => {
-                            s += 1;
-                            if (s == e.len) break;
-                        },
-                        .little => {
-                            if (s == 0) break;
-                            s -= 1;
-                        },
+                var out = x;
+                var j = math.log2_int(u32, e_int);
+                while (j > 0) {
+                    j -= 1;
+                    out = self.montgomerySq(out);
+                    if ((e_int >> j) & 1 != 0) {
+                        out = self.montgomeryMul(out, x);
                     }
                 }
-            } else {
-                // Use a precomputation table for large exponents
-                var pc: [15]Fe = [1]Fe{x} ++ @as([14]Fe, @splat(self.zero));
-                if (!x.montgomery) {
-                    self.toMontgomery(&pc[0]) catch unreachable;
-                }
-                for (1..pc.len) |i| {
-                    pc[i] = self.montgomeryMul(pc[i - 1], pc[0]);
-                }
-                var t0 = self.zero;
-                var s = switch (endian) {
-                    .big => 0,
-                    .little => e.len - 1,
-                };
-                while (true) {
-                    const b = e[s];
-                    for ([_]u3{ 4, 0 }) |j| {
-                        for (0..4) |_| {
-                            out = self.montgomerySq(out);
-                        }
-                        const k = (b >> j) & 0b1111;
-                        if (public or std.options.side_channels_mitigations == .none) {
-                            if (k == 0) continue;
-                            t0 = pc[k - 1];
-                        } else {
-                            for (pc, 0..) |t, i| {
-                                t0.v.cmov(ct.eql(k, @as(u8, @truncate(i + 1))), t.v);
-                            }
-                        }
-                        const t1 = self.montgomeryMul(out, t0);
-                        if (public) {
-                            @memcpy(out.v.limbs(), t1.v.limbsConst());
-                        } else {
-                            out.v.cmov(!ct.eql(k, 0), t1.v);
-                        }
-                    }
-                    switch (endian) {
-                        .big => {
-                            s += 1;
-                            if (s == e.len) break;
-                        },
-                        .little => {
-                            if (s == 0) break;
-                            s -= 1;
-                        },
-                    }
-                }
+                return out;
             }
-            if (!was_montgomery) {
-                self.fromMontgomery(&out) catch unreachable;
+
+            var pc: [15]Fe = [1]Fe{x} ++ @as([14]Fe, @splat(self.zero));
+            for (1..pc.len) |i| {
+                pc[i] = self.montgomeryMul(pc[i - 1], pc[0]);
+            }
+            var out = self.one();
+            self.toMontgomery(&out) catch unreachable;
+
+            var t0 = self.zero;
+            t0.montgomery = true;
+            for (0..e.len) |s| {
+                const b = e[if (endian == .big) s else e.len - 1 - s];
+                for ([_]u3{ 4, 0 }) |j| {
+                    for (0..4) |_| {
+                        out = self.montgomerySq(out);
+                    }
+                    const k = (b >> j) & 0b1111;
+                    if (public or std.options.side_channels_mitigations == .none) {
+                        if (k == 0) continue;
+                        t0 = pc[k - 1];
+                    } else {
+                        for (pc, 0..) |t, i| {
+                            t0.v.cmov(ct.eql(k, @truncate(i + 1)), t.v);
+                        }
+                    }
+                    const t1 = self.montgomeryMul(out, t0);
+                    if (public) {
+                        @memcpy(out.v.limbs(), t1.v.limbsConst());
+                    } else {
+                        out.v.cmov(!ct.eql(k, 0), t1.v);
+                    }
+                }
             }
             return out;
         }

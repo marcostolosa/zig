@@ -1663,3 +1663,30 @@ test "field element constants and subOne" {
         try testing.expectEqual(4, try four.toPrimitive(u8));
     }
 }
+
+test "even modulus arithmetic" {
+    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+
+    const M = Modulus(256);
+    const opts: M.Options = .{ .allow_even = true };
+    try testing.expectError(error.ModulusTooSmall, M.fromPrimitiveWithOptions(u8, 0, opts));
+
+    const m2 = try M.fromPrimitiveWithOptions(u8, 2, opts);
+    var one = m2.one();
+    try testing.expect(m2.isOne(m2.mul(one, one)));
+    try testing.expectError(error.UnexpectedRepresentation, m2.toMontgomery(&one));
+    one.montgomery = true;
+    try testing.expectError(error.UnexpectedRepresentation, m2.fromMontgomery(&one));
+
+    const m = try M.fromPrimitiveWithOptions(u256, ((1 << 127) - 1) * 2, opts);
+    const x = try M.Fe.fromPrimitive(u256, m, (1 << 126) + 12345);
+    const e = [_]u8{ 0x0f, 0xff, 0xff };
+    const expected: u256 = 13725650424532690062485077506887663427;
+    try testing.expectEqual(expected, try (try m.powWithEncodedPublicExponent(x, &e, .big)).toPrimitive(u256));
+    try testing.expectEqual(expected, try (try m.powWithEncodedExponent(x, &e, .big)).toPrimitive(u256));
+
+    var cap = maxUintBytes(Uint(256));
+    cap[cap.len - 1] = 0xfe;
+    const mc = try M.fromBytesWithOptions(&cap, .big, opts);
+    try testing.expect(mc.isOne(mc.sq(mc.subOne(mc.zero))));
+}

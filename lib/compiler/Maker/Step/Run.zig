@@ -299,7 +299,7 @@ pub fn make(
         const output_dir_path = "o" ++ Dir.path.sep_str ++ &digest;
         try populateGeneratedStdIo(maker, &conf_run, &digest);
         try populateGeneratedPathsCreateDirs(arena, run_index, maker, output_dir_path, output_placeholders.items, response_files.items, all_argv);
-        try writeResponseFiles();
+        try writeResponseFiles(run_index, maker, response_files.items, all_argv);
         try runCommand(arena, run, run_index, maker, progress_node, command_argv, has_side_effects, output_dir_path, null);
         if (!has_side_effects) try step.finalizeManifestAndWatch(maker, &man);
         return;
@@ -311,7 +311,7 @@ pub fn make(
     const tmp_dir_path = "tmp" ++ Dir.path.sep_str ++ std.fmt.hex(rand_int);
 
     try populateGeneratedPathsCreateDirs(arena, run_index, maker, tmp_dir_path, output_placeholders.items, response_files.items, all_argv);
-    try writeResponseFiles();
+    try writeResponseFiles(run_index, maker, response_files.items, all_argv);
     try runCommand(arena, run, run_index, maker, progress_node, command_argv, has_side_effects, tmp_dir_path, null);
 
     for (output_placeholders.items) |placeholder| {
@@ -1761,8 +1761,74 @@ fn populateGeneratedStdIo(
     }
 }
 
-fn writeResponseFiles() !void {
-    // TODO
+fn writeResponseFiles(
+    run_index: Configuration.Step.Index,
+    maker: *Maker,
+    response_files: []const ArgIndices,
+    all_argv: []const []const u8,
+) !void {
+    const step = maker.stepByIndex(run_index);
+    const conf = &maker.scanned_config.configuration;
+    const graph = maker.graph;
+    const gpa = maker.gpa;
+    const io = graph.io;
+
+    var aw: Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+
+    for (response_files, 0..) |indices, i| {
+        const rsp = indices.arg_index.get(conf);
+        assert(rsp.flags.tag == .response_file);
+        assert(rsp.flags.response_file_definition);
+
+        const rsp_argv = if (i != response_files.len - 1)
+            all_argv[indices.index..response_files[response_files.len - 1].index]
+        else
+            all_argv[indices.index..];
+
+        aw.clearRetainingCapacity();
+        renderResponseFile(&aw.writer, rsp_argv) catch return error.OutOfMemory;
+
+        const output_path = maker.generatedPath(rsp.generated.value.?);
+        output_path.root_dir.handle.writeFile(io, .{
+            .sub_path = output_path.sub_path,
+            .data = aw.written(),
+        }) catch |err| return step.fail(maker, "unable to write file {f}: {t}", .{ output_path, err });
+    }
+}
+
+fn renderResponseFile(w: *Io.Writer, argv: []const []const u8) Io.Writer.Error!void {
+    // For programs that strictly follow Windows/MSVC rules, sequences of backslashes
+    // must only be escaped when immediately followed by a quote (real or escaped):
+    //
+    //     \a\"b\\c\\"d\    ->    "\a\\\"b\\c\\\\\"d\\"
+    //
+    // However, certain programs like GCC and Clang instead follow POSIX shell-like rules,
+    // under which backslashes must always be escaped no matter what:
+    //
+    //     \a\"b\\c\\"d\    ->    "\\a\\\"b\\\\c\\\\\"d\\"
+    //
+    // For maximum portability, we employ the following escaping strategy,
+    // which is compatible with both rulesets:
+    //
+    //     \a\"b\\c\\"d\    ->    ""\\"a"\\"\"b"\\""\\"c"\\""\\"\"d"\\""
+    //
+    for (argv, 0..) |arg, i| {
+        if (i != 0) try w.writeByte(' ');
+        var start: usize = 0;
+        try w.writeByte('"');
+        while (mem.findAnyPos(u8, arg, start, "\\\"")) |end| {
+            try w.writeAll(arg[start..end]);
+            try w.writeAll(switch (arg[end]) {
+                '\\' => "\"\\\\\"",
+                '\"' => "\\\"",
+                else => unreachable,
+            });
+            start = end + 1;
+        }
+        try w.writeAll(arg[start..]);
+        try w.writeByte('"');
+    }
 }
 
 fn formatTerm(term: ?process.Child.Term, w: *std.Io.Writer) std.Io.Writer.Error!void {

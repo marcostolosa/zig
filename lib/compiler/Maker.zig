@@ -1844,16 +1844,19 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
             }
         }
 
-        const location_replace = try arena.print("{q}", .{saved_path_or_url});
-        const hash_replace = try arena.print("{q}", .{package_hash_slice});
+        const node_replace = if (dep.lazy) try arena.print(
+            \\.{{
+            \\            .url = "{f}",
+            \\            .hash = "{f}",
+            \\        }}
+        , .{
+            std.zig.fmtString(saved_path_or_url),
+            std.zig.fmtString(package_hash_slice),
+        }) else new_node_init;
 
         log.warn("overwriting existing dependency named {q}", .{name});
-        try fixups.replace_nodes_with_string.put(gpa, dep.location_node, location_replace);
-        if (dep.hash_node.unwrap()) |hash_node| {
-            try fixups.replace_nodes_with_string.put(gpa, hash_node, hash_replace);
-        } else {
-            // https://github.com/ziglang/zig/issues/21690
-        }
+
+        try fixups.replace_nodes_with_string.put(gpa, dep.node, node_replace);
     } else if (manifest.dependencies.count() > 0) {
         // Add fixup for adding another dependency.
         const deps = manifest.dependencies.values();

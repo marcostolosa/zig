@@ -27597,8 +27597,8 @@ fn tupleField(
     }
 
     if (field_index >= field_count) {
-        return sema.fail(block, field_index_src, "index {d} outside tuple of length {d}", .{
-            field_index, field_count,
+        return sema.fail(block, field_index_src, "index {d} out of bounds of tuple '{f}'", .{
+            field_index, tuple_ty.fmt(pt),
         });
     }
 

@@ -140,7 +140,7 @@ pub fn addExe(
         .files = .init(ctx.arena),
         .case = null,
         .output_mode = .Exe,
-        .deps = std.array_list.Managed(DepModule).init(ctx.arena),
+        .deps = .init(ctx.arena),
     }) catch @panic("out of memory");
     return &ctx.cases.items[ctx.cases.items.len - 1];
 }
@@ -159,7 +159,7 @@ pub fn exeFromCompiledC(ctx: *Cases, name: []const u8, target_query: std.Target.
         .files = .init(ctx.arena),
         .case = null,
         .output_mode = .Exe,
-        .deps = std.array_list.Managed(DepModule).init(ctx.arena),
+        .deps = .init(ctx.arena),
         .link_libc = true,
     }) catch @panic("out of memory");
     return &ctx.cases.items[ctx.cases.items.len - 1];
@@ -189,7 +189,7 @@ pub fn addObjLlvm(ctx: *Cases, name: []const u8, target: std.Build.ResolvedTarge
         .files = .init(ctx.arena),
         .case = null,
         .output_mode = .Obj,
-        .deps = std.array_list.Managed(DepModule).init(ctx.arena),
+        .deps = .init(ctx.arena),
         .backend = .llvm,
         .emit_bin = can_emit_bin,
         .emit_asm = can_emit_asm,
@@ -208,7 +208,7 @@ pub fn addObj(
         .files = .init(ctx.arena),
         .case = null,
         .output_mode = .Obj,
-        .deps = std.array_list.Managed(DepModule).init(ctx.arena),
+        .deps = .init(ctx.arena),
     }) catch @panic("out of memory");
     return &ctx.cases.items[ctx.cases.items.len - 1];
 }
@@ -225,7 +225,7 @@ pub fn addTest(
         .case = null,
         .output_mode = .Exe,
         .is_test = true,
-        .deps = std.array_list.Managed(DepModule).init(ctx.arena),
+        .deps = .init(ctx.arena),
     }) catch @panic("out of memory");
     return &ctx.cases.items[ctx.cases.items.len - 1];
 }
@@ -250,7 +250,7 @@ pub fn addC(ctx: *Cases, name: []const u8, target: std.Build.ResolvedTarget) *Ca
         .files = .init(ctx.arena),
         .case = null,
         .output_mode = .Obj,
-        .deps = std.array_list.Managed(DepModule).init(ctx.arena),
+        .deps = .init(ctx.arena),
     }) catch @panic("out of memory");
     return &ctx.cases.items[ctx.cases.items.len - 1];
 }
@@ -423,7 +423,7 @@ fn addFromDirInner(
                     .link_libc = link_libc,
                     .pic = pic,
                     .pie = pie,
-                    .deps = std.array_list.Managed(DepModule).init(ctx.cases.allocator),
+                    .deps = .init(ctx.cases.allocator),
                     .imports = imports,
                     .target = resolved_target,
                 });

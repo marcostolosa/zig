@@ -1848,6 +1848,7 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
             \\.{{
             \\            .url = "{f}",
             \\            .hash = "{f}",
+            \\            .lazy = true
             \\        }}
         , .{
             std.zig.fmtString(saved_path_or_url),

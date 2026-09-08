@@ -953,7 +953,8 @@ fn buildCall(
             .byref => {
                 const param_index = it.zig_index - 1;
                 const param_ty: Type = .fromInterned(fn_info.param_types[param_index]);
-                try o.addByRefParamAttrs(&attributes, it.llvm_index - 1, it.byval_attr, param_ty);
+                const byval_attr = it.byval_attr orelse if (opts.modifier == .always_tail) Object.Byval{} else null;
+                try o.addByRefParamAttrs(&attributes, it.llvm_index - 1, byval_attr, param_ty);
             },
             .byref_mut => try attributes.addParamAttr(it.llvm_index - 1, .noundef, &o.builder),
             // No attributes needed for these.
@@ -7090,10 +7091,7 @@ const ParamTypeIterator = struct {
                     it.llvm_index += 1;
                     return .slice;
                 }
-                if (isByRef(ty, zcu)) {
-                    it.byval_attr = .{};
-                    return .byref;
-                }
+                if (isByRef(ty, zcu)) return .byref;
                 return .byval;
             },
             .async => {

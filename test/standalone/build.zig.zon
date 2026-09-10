@@ -193,6 +193,9 @@
         .run_args = .{
             .path = "run_args",
         },
+        .run_response_files = .{
+            .path = "run_response_files",
+        },
     },
     .paths = .{
         "build.zig",

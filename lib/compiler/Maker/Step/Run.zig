@@ -346,7 +346,7 @@ pub fn make(
                     };
                 }
             },
-            .output_directory => continue,
+            .output_directory, .response_file => continue,
             else => unreachable,
         }
     }

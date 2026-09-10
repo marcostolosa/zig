@@ -601,6 +601,61 @@ const riscv = struct {
         return (value & mask) == mask;
     }
 
+    fn detectCpuModel(
+        mvendorid: u64,
+        marchid: u64,
+        mimpid: u64,
+        arch: Target.Cpu.Arch,
+    ) ?*const Target.Cpu.Model {
+        _ = mimpid; // If needed for later implementations.
+
+        return switch (mvendorid) {
+            0x029 => switch (marchid) { // Microchip
+                else => null,
+            },
+            0x127 => switch (marchid) { // MIPS
+                else => null,
+            },
+            0x31E => switch (marchid) { // AndesTech
+                0x8000000000008A45 => &Target.riscv.cpu.andes_ax45,
+                else => null,
+            },
+            0x489 => switch (marchid) { // Sifive
+                0x8000000000000007 => &Target.riscv.cpu.sifive_7_series,
+                0x8000000000000008 => &Target.riscv.cpu.sifive_p550,
+
+                // TODO(alexrp): rename to sifive_p870_d after LLVM 23 upgrade, ref #30893
+                0x8000000000000109 => &Target.riscv.cpu.sifive_p870,
+                else => null,
+            },
+            0x5B7 => switch (marchid) { // T-Head
+                else => null,
+            },
+            0x61F => switch (marchid) { // Veyron
+                else => null,
+            },
+            0x710 => switch (marchid) { // SpacemiT
+                0x8000000041000002 => &Target.riscv.cpu.spacemit_a100,
+                0x8000000058000001 => &Target.riscv.cpu.spacemit_x60,
+                0x8000000058000002 => &Target.riscv.cpu.spacemit_x100,
+                else => null,
+            },
+            0x7A1 => switch (marchid) { // Tenstorrent
+                else => null,
+            },
+            else => switch (marchid) { // Opensource
+                0x1 => switch (arch) { // Rocket
+                    .riscv32 => &Target.riscv.cpu.rocket_rv32,
+                    .riscv64 => &Target.riscv.cpu.rocket_rv64,
+                    else => unreachable,
+                },
+                0x8 => &Target.riscv.cpu.syntacore_scr1_base,
+                0x1B => &Target.riscv.cpu.rp2350_hazard3,
+                else => null,
+            },
+        };
+    }
+
     pub fn detectNativeCpuAndFeatures(io: Io, arch: Target.Cpu.Arch) ?Target.Cpu {
         var file = Io.Dir.openFileAbsolute(io, "/proc/cpuinfo", .{}) catch return null;
         defer file.close(io);
@@ -620,9 +675,35 @@ const riscv = struct {
             .{ .key = RISCV_HWPROBE.KEY.VENDOR_EXT_MIPS_0, .value = 0 },
             .{ .key = RISCV_HWPROBE.KEY.VENDOR_EXT_SIFIVE_0, .value = 0 },
             .{ .key = RISCV_HWPROBE.KEY.IMA_EXT_1, .value = 0 },
+            .{ .key = RISCV_HWPROBE.KEY.MVENDORID, .value = 0 },
+            .{ .key = RISCV_HWPROBE.KEY.MARCHID, .value = 0 },
+            .{ .key = RISCV_HWPROBE.KEY.MIMPID, .value = 0 },
         };
 
-        const rc = std.os.linux.sys_riscv_hwprobe(&probes, probes.len, 0, null, 0);
+        var cpu_index: c_uint = 0;
+        const getcpu_rc = std.os.linux.syscall2(.getcpu, @intFromPtr(&cpu_index), 0);
+
+        // Only EFAULT is possible with getcpu call
+        assert(std.os.linux.errno(getcpu_rc) == .SUCCESS);
+
+        var cpu_set = std.mem.zeroes(std.os.linux.cpu_set_t);
+
+        const word_bits = @bitSizeOf(usize);
+        const word_index = cpu_index / word_bits;
+
+        if (word_index < cpu_set.len) {
+            const shift: std.math.Log2Int(usize) = @intCast(cpu_index % word_bits);
+            cpu_set[word_index] |= (@as(usize, 1) << shift);
+        }
+
+        const rc = std.os.linux.sys_riscv_hwprobe(
+            &probes,
+            probes.len,
+            @sizeOf(std.os.linux.cpu_set_t),
+            @ptrCast(&cpu_set),
+            0,
+        );
+
         if (std.os.linux.errno(rc) == .NOSYS) {
             // Even if SYS_riscv_hwprobe is unavailable, we should still return
             // the model if we managed to detect it.
@@ -633,13 +714,38 @@ const riscv = struct {
             return cpu;
         }
 
-        var cpu: Target.Cpu = maybe_cpu orelse cpu: {
-            const model = Target.Cpu.Model.generic(arch);
-            break :cpu .{
-                .arch = arch,
-                .model = model,
-                .features = model.features,
+        var mvendorid: u64 = 0;
+        var marchid: u64 = 0;
+        var mimpid: u64 = 0;
+
+        for (probes) |probe| {
+            switch (probe.key) {
+                RISCV_HWPROBE.KEY.MVENDORID => mvendorid = probe.value,
+                RISCV_HWPROBE.KEY.MARCHID => marchid = probe.value,
+                RISCV_HWPROBE.KEY.MIMPID => mimpid = probe.value,
+                else => {},
+            }
+        }
+
+        var cpu: Target.Cpu = cpu: {
+            if (detectCpuModel(mvendorid, marchid, mimpid, arch)) |model| {
+                break :cpu .{
+                    .arch = arch,
+                    .model = model,
+                    .features = model.features,
+                };
+            }
+
+            const fallback = maybe_cpu orelse blk: {
+                const model = Target.Cpu.Model.generic(arch);
+                break :blk Target.Cpu{
+                    .arch = arch,
+                    .model = model,
+                    .features = model.features,
+                };
             };
+
+            break :cpu fallback;
         };
 
         var ima_support = false;
@@ -743,6 +849,10 @@ const riscv = struct {
                 RISCV_HWPROBE.KEY.IMA_EXT_1 => {
                     setFeature(&cpu, .experimental_zicfiss, ima_support and set(value, RISCV_HWPROBE.IMA_EXT_1_EXT_ZICFISS));
                 },
+                RISCV_HWPROBE.KEY.MVENDORID,
+                RISCV_HWPROBE.KEY.MARCHID,
+                RISCV_HWPROBE.KEY.MIMPID,
+                => {},
                 else => unreachable,
             }
         }

@@ -32,8 +32,8 @@ pub const SemanticVersion = @import("SemanticVersion.zig");
 pub const SinglyLinkedList = @import("SinglyLinkedList.zig");
 /// Deprecated; use `bit_set.Static`.
 pub const StaticBitSet = bit_set.StaticBitSet;
-/// Deprecated; use `hash_map.String`.
-pub const StringHashMap = hash_map.String;
+/// Deprecated; convert to `hash_map.String` or use `std.hash_map.StringManaged`.
+pub const StringHashMap = hash_map.StringManaged;
 /// Deprecated; use `hash_map.String`.
 pub const StringHashMapUnmanaged = hash_map.String;
 pub const Target = @import("Target.zig");

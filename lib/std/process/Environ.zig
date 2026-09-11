@@ -198,6 +198,15 @@ pub const Map = struct {
             while (entry[entry_i] != 0 and entry[entry_i] != '=') : (entry_i += 1) {}
             const key = entry[0..entry_i];
 
+            // It is possible for a POSIX environment to contain bad entries that begin with '='.
+            // This can happen if the user has somehow managed to set a variable with an empty name,
+            // or if the calling process has intentionally crafted a bad environment.
+            // Some WASI runtimes like Wasmtime, when run from Windows,
+            // may also inherit special environment variables that start with '='.
+            // To prevent these situations from resulting in a program crash on startup,
+            // which may be difficult for end users to diagnose, we skip such bad entries.
+            if (key.len == 0) continue;
+
             var end_i: usize = entry_i;
             while (entry[end_i] != 0) : (end_i += 1) {}
             const value = entry[entry_i + 1 .. end_i];
@@ -1023,6 +1032,25 @@ test "Map.putPosixBlock" {
 
     try testing.expectEqualDeep(&[_][]const u8{ "FOO", "A", "ZIG_PROGRESS" }, map2.keys());
     try testing.expectEqualDeep(&[_][]const u8{ "BAR", "", "unchanged" }, map2.values());
+}
+
+test "Map.putPosixBlock skips bad entries" {
+    const envp: [*:null]const ?[*:0]const u8 = &.{
+        "FOO=BAR",
+        "A=",
+        "=bad",
+        "=",
+        "",
+        "ZIG_PROGRESS=unchanged",
+    };
+
+    var map: Map = .init(testing.allocator);
+    defer map.deinit();
+
+    try map.putPosixBlock(envp);
+
+    try testing.expectEqualDeep(&[_][]const u8{ "FOO", "A", "ZIG_PROGRESS" }, map.keys());
+    try testing.expectEqualDeep(&[_][]const u8{ "BAR", "", "unchanged" }, map.values());
 }
 
 test "Map.putWindowsBlock" {

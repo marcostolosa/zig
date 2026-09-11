@@ -740,11 +740,21 @@ pub inline fn readSliceEndianAlloc(
 }
 
 /// Shortcut for calling `readSliceAll` with a buffer provided by `allocator`.
-pub fn readAlloc(r: *Reader, allocator: Allocator, len: usize) ReadAllocError![]u8 {
+pub fn readAllocAll(r: *Reader, allocator: Allocator, len: usize) ReadAllocError![]u8 {
     const dest = try allocator.alloc(u8, len);
     errdefer allocator.free(dest);
     try readSliceAll(r, dest);
     return dest;
+}
+
+/// Shortcut for calling `readSliceShort` with a buffer provided by `allocator`,
+/// shrinking allocation if stream reached the end.
+pub fn readAllocShort(r: *Reader, allocator: Allocator, len: usize) ReadAllocError![]u8 {
+    const dest = try allocator.alloc(u8, len);
+    errdefer allocator.free(dest);
+    const n = try readSliceShort(r, dest);
+    if (n == dest.len) return dest;
+    return try allocator.realloc(dest, n);
 }
 
 pub const DelimiterError = error{

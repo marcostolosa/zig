@@ -32,6 +32,13 @@ pub const Block = switch (native_os) {
     else => PosixBlock,
 };
 
+pub const BlockCapacity = enum(usize) {
+    empty = std.math.maxInt(usize) - 1,
+    /// The block has an unknown capacity or is otherwise not managed by the user.
+    unknown = std.math.maxInt(usize),
+    _,
+};
+
 pub const GlobalBlock = struct {
     use_global: bool,
 
@@ -46,53 +53,55 @@ pub const GlobalBlock = struct {
 };
 
 pub const PosixBlock = struct {
-    slice: [:null]const ?[*:0]const u8,
+    /// If linking libc and this points to `envp` forwarded from libc startup code,
+    /// its contents may be modified by calls to libc functions that modify the environment.
+    ptr: [*:null]const ?[*:0]const u8,
+    capacity: BlockCapacity,
 
-    pub const empty: PosixBlock = .{ .slice = &.{} };
+    pub const empty: PosixBlock = .{ .ptr = &.{}, .capacity = .empty };
 
     pub fn deinit(block: PosixBlock, gpa: Allocator) void {
-        for (block.slice) |entry| gpa.free(mem.span(entry.?));
-        gpa.free(block.slice);
+        switch (block.capacity) {
+            .empty => {},
+            .unknown => unreachable,
+            else => {
+                const slice = block.ptr[0..@backingInt(block.capacity) :null];
+                for (slice) |maybe_entry| if (maybe_entry) |entry| gpa.free(mem.span(entry));
+                gpa.free(slice);
+            },
+        }
     }
 
     pub fn isEmpty(block: PosixBlock) bool {
-        return block.slice.len == 0;
-    }
-
-    pub const View = struct {
-        slice: []const [*:0]const u8,
-
-        pub fn isEmpty(v: View) bool {
-            return v.slice.len == 0;
-        }
-    };
-    pub fn view(block: PosixBlock) View {
-        return .{ .slice = @ptrCast(block.slice) };
+        return block.ptr[0] == null;
     }
 };
 
 pub const WindowsBlock = struct {
-    slice: [:0]const u16,
+    ptr: [*:0]const u16,
+    capacity: BlockCapacity,
 
-    pub const empty: WindowsBlock = .{ .slice = &.{0} };
+    pub const empty: WindowsBlock = .{
+        // An empty environment is a special case that requires a redundant
+        // NUL terminator. CreateProcess will read the second code unit even
+        // though theoretically the first should be enough to recognize that the
+        // environment is empty (see https://nullprogram.com/blog/2023/08/23/)
+        .ptr = &.{0},
+        .capacity = .empty,
+    };
 
     pub fn deinit(block: WindowsBlock, gpa: Allocator) void {
-        gpa.free(block.slice);
+        switch (block.capacity) {
+            .empty => {},
+            .unknown => unreachable,
+            else => {
+                gpa.free(block.ptr[0..@backingInt(block.capacity) :0]);
+            },
+        }
     }
 
     pub fn isEmpty(block: WindowsBlock) bool {
-        return block.slice[0] == 0;
-    }
-
-    pub const View = struct {
-        ptr: [*:0]const u16,
-
-        pub fn isEmpty(v: View) bool {
-            return v.ptr[0] == 0;
-        }
-    };
-    pub fn view(block: WindowsBlock) View {
-        return .{ .ptr = block.slice.ptr };
+        return block.ptr[0] == 0;
     }
 };
 
@@ -182,8 +191,9 @@ pub const Map = struct {
         return map.array_hash_map.values();
     }
 
-    pub fn putPosixBlock(map: *Map, view: PosixBlock.View) Allocator.Error!void {
-        for (view.slice) |entry| {
+    pub fn putPosixBlock(map: *Map, block_ptr: [*:null]const ?[*:0]const u8) Allocator.Error!void {
+        var i: usize = 0;
+        while (block_ptr[i]) |entry| : (i += 1) {
             var entry_i: usize = 0;
             while (entry[entry_i] != 0 and entry[entry_i] != '=') : (entry_i += 1) {}
             const key = entry[0..entry_i];
@@ -196,27 +206,27 @@ pub const Map = struct {
         }
     }
 
-    pub fn putWindowsBlock(map: *Map, view: WindowsBlock.View) Allocator.Error!void {
+    pub fn putWindowsBlock(map: *Map, block_ptr: [*:0]const u16) Allocator.Error!void {
         var i: usize = 0;
-        while (view.ptr[i] != 0) {
+        while (block_ptr[i] != 0) {
             const key_start = i;
 
             // There are some special environment variables that start with =,
             // so we need a special case to not treat = as a key/value separator
             // if it's the first character.
             // https://devblogs.microsoft.com/oldnewthing/20100506-00/?p=14133
-            if (view.ptr[key_start] == '=') i += 1;
+            if (block_ptr[key_start] == '=') i += 1;
 
-            while (view.ptr[i] != 0 and view.ptr[i] != '=') : (i += 1) {}
-            const key_w = view.ptr[key_start..i];
+            while (block_ptr[i] != 0 and block_ptr[i] != '=') : (i += 1) {}
+            const key_w = block_ptr[key_start..i];
             const key = try unicode.wtf16LeToWtf8Alloc(map.allocator, key_w);
             errdefer map.allocator.free(key);
 
-            if (view.ptr[i] == '=') i += 1;
+            if (block_ptr[i] == '=') i += 1;
 
             const value_start = i;
-            while (view.ptr[i] != 0) : (i += 1) {}
-            const value_w = view.ptr[value_start..i];
+            while (block_ptr[i] != 0) : (i += 1) {}
+            const value_w = block_ptr[value_start..i];
             const value = try unicode.wtf16LeToWtf8Alloc(map.allocator, value_w);
             errdefer map.allocator.free(value);
 
@@ -407,7 +417,7 @@ pub const Map = struct {
         var envp_len: usize = 0;
         errdefer {
             envp[envp_len] = null;
-            PosixBlock.deinit(.{ .slice = envp[0..envp_len :null] }, gpa);
+            PosixBlock.deinit(.{ .ptr = envp.ptr, .capacity = @fromBackingInt(envp.len) }, gpa);
         }
 
         if (zig_progress_action == .add) {
@@ -434,7 +444,7 @@ pub const Map = struct {
         }
 
         assert(envp_len == envp.len);
-        return .{ .slice = envp };
+        return .{ .ptr = envp.ptr, .capacity = @fromBackingInt(envp.len) };
     }
 
     /// Caller owns result.
@@ -491,7 +501,8 @@ pub const Map = struct {
             if (i >= 2) break;
         } else unreachable;
         const reallocated = try gpa.realloc(block, i);
-        return .{ .slice = reallocated[0 .. i - 1 :0] };
+        const with_sentinel = reallocated[0..(reallocated.len - 1) :0];
+        return .{ .ptr = with_sentinel.ptr, .capacity = @fromBackingInt(with_sentinel.len) };
     }
 };
 
@@ -512,7 +523,7 @@ pub fn createMap(env: Environ, allocator: Allocator) CreateMapError!Map {
         const peb = std.os.windows.peb();
         assert(std.os.windows.ntdll.RtlEnterCriticalSection(peb.FastPebLock) == .SUCCESS);
         defer assert(std.os.windows.ntdll.RtlLeaveCriticalSection(peb.FastPebLock) == .SUCCESS);
-        try map.putWindowsBlock(.{ .ptr = peb.ProcessParameters.Environment });
+        try map.putWindowsBlock(peb.ProcessParameters.Environment);
     } else if (native_os == .wasi and !builtin.link_libc) empty: {
         if (!env.block.use_global) break :empty;
 
@@ -528,18 +539,18 @@ pub fn createMap(env: Environ, allocator: Allocator) CreateMapError!Map {
             return map;
         }
 
-        const environ = try allocator.alloc([*:0]u8, environ_count);
+        const environ = try allocator.allocSentinel(?[*:0]u8, environ_count, null);
         defer allocator.free(environ);
         const environ_buf = try allocator.alloc(u8, environ_buf_size);
         defer allocator.free(environ_buf);
 
-        const environ_get_ret = std.os.wasi.environ_get(environ.ptr, environ_buf.ptr);
+        const environ_get_ret = std.os.wasi.environ_get(@ptrCast(environ.ptr), environ_buf.ptr);
         if (environ_get_ret != .SUCCESS) {
             return posix.unexpectedErrno(environ_get_ret);
         }
 
-        try map.putPosixBlock(.{ .slice = environ });
-    } else try map.putPosixBlock(env.block.view());
+        try map.putPosixBlock(environ.ptr);
+    } else try map.putPosixBlock(env.block.ptr);
     return map;
 }
 
@@ -629,7 +640,8 @@ pub inline fn containsUnemptyConstant(environ: Environ, comptime key: []const u8
 /// * `createMap`
 pub fn getPosix(environ: Environ, key: []const u8) ?[:0]const u8 {
     if (mem.findScalar(u8, key, '=') != null) return null;
-    for (environ.block.view().slice) |entry| {
+    var i: usize = 0;
+    while (environ.block.ptr[i]) |entry| : (i += 1) {
         var entry_i: usize = 0;
         while (entry[entry_i] != 0) : (entry_i += 1) {
             if (entry_i == key.len) break;
@@ -732,9 +744,16 @@ pub fn createPosixBlock(
     gpa: Allocator,
     options: CreatePosixBlockOptions,
 ) Allocator.Error!PosixBlock {
-    const contains_zig_progress = for (existing.block.view().slice) |entry| {
-        if (mem.eql(u8, mem.sliceTo(entry, '='), "ZIG_PROGRESS")) break true;
-    } else false;
+    const contains_zig_progress: bool, const existing_slice: []const [*:0]const u8 = slice: {
+        var len: usize = 0;
+        while (existing.block.ptr[len]) |entry| : (len += 1) {
+            if (mem.eql(u8, mem.sliceTo(entry, '='), "ZIG_PROGRESS")) {
+                len += mem.len(existing.block.ptr + len);
+                break :slice .{ true, @ptrCast(existing.block.ptr[0..len]) };
+            }
+        }
+        break :slice .{ false, @ptrCast(existing.block.ptr[0..len]) };
+    };
 
     const ZigProgressAction = enum { nothing, edit, delete, add };
     const zig_progress_action: ZigProgressAction = action: {
@@ -748,7 +767,7 @@ pub fn createPosixBlock(
     };
 
     const envp = try gpa.allocSentinel(?[*:0]u8, len: {
-        var len: usize = existing.block.slice.len;
+        var len: usize = existing_slice.len;
         switch (zig_progress_action) {
             .add => len += 1,
             .delete => len -= 1,
@@ -759,15 +778,14 @@ pub fn createPosixBlock(
     var envp_len: usize = 0;
     errdefer {
         envp[envp_len] = null;
-        PosixBlock.deinit(.{ .slice = envp[0..envp_len :null] }, gpa);
+        PosixBlock.deinit(.{ .ptr = envp.ptr, .capacity = @fromBackingInt(envp.len) }, gpa);
     }
     if (zig_progress_action == .add) {
         envp[envp_len] = try std.fmt.allocPrintSentinel(gpa, "ZIG_PROGRESS={d}", .{options.zig_progress_fd.?}, 0);
         envp_len += 1;
     }
 
-    var existing_index: usize = 0;
-    while (existing.block.slice[existing_index]) |entry| : (existing_index += 1) {
+    for (existing_slice) |entry| {
         if (mem.eql(u8, mem.sliceTo(entry, '='), "ZIG_PROGRESS")) switch (zig_progress_action) {
             .add => unreachable,
             .delete => continue,
@@ -783,7 +801,7 @@ pub fn createPosixBlock(
     }
 
     assert(envp_len == envp.len);
-    return .{ .slice = envp };
+    return .{ .ptr = envp.ptr, .capacity = @fromBackingInt(envp.len) };
 }
 
 pub const CreateWindowsBlockOptions = struct {
@@ -800,9 +818,7 @@ pub fn createWindowsBlock(
     gpa: Allocator,
     options: CreateWindowsBlockOptions,
 ) Allocator.Error!WindowsBlock {
-    if (!existing.block.use_global) return .{
-        .slice = try gpa.dupeSentinel(u16, WindowsBlock.empty.slice, 0),
-    };
+    if (!existing.block.use_global) return .empty;
     const peb = std.os.windows.peb();
     assert(std.os.windows.ntdll.RtlEnterCriticalSection(peb.FastPebLock) == .SUCCESS);
     defer assert(std.os.windows.ntdll.RtlLeaveCriticalSection(peb.FastPebLock) == .SUCCESS);
@@ -861,7 +877,8 @@ pub fn createWindowsBlock(
         if (i >= 2) break;
     } else unreachable;
     assert(i == block.len);
-    return .{ .slice = block[0 .. i - 1 :0] };
+    const with_sentinel = block[0..(block.len - 1) :0];
+    return .{ .ptr = with_sentinel.ptr, .capacity = @fromBackingInt(with_sentinel.len) };
 }
 
 test "Map.createPosixBlock" {
@@ -879,7 +896,9 @@ test "Map.createPosixBlock" {
     const block = try envmap.createPosixBlock(gpa, .{});
     defer block.deinit(gpa);
 
-    try testing.expectEqual(@as(usize, 5), block.slice.len);
+    const block_slice: []const [*:0]const u8 = @ptrCast(block.ptr[0..@backingInt(block.capacity)]);
+
+    try testing.expectEqual(@as(usize, 5), block_slice.len);
 
     for (&[_][]const u8{
         "HOME=/home/ifreund",
@@ -887,7 +906,7 @@ test "Map.createPosixBlock" {
         "DISPLAY=:1",
         "DEBUGINFOD_URLS= ",
         "XCURSOR_SIZE=24",
-    }, block.slice) |expected, actual| try testing.expectEqualStrings(expected, mem.span(actual.?));
+    }, block_slice) |expected, actual| try testing.expectEqualStrings(expected, mem.span(actual));
 }
 
 test Map {
@@ -1000,7 +1019,7 @@ test "Map.putPosixBlock" {
 
     var map2: Map = .init(gpa);
     defer map2.deinit();
-    try map2.putPosixBlock(block.view());
+    try map2.putPosixBlock(block.ptr);
 
     try testing.expectEqualDeep(&[_][]const u8{ "FOO", "A", "ZIG_PROGRESS" }, map2.keys());
     try testing.expectEqualDeep(&[_][]const u8{ "BAR", "", "unchanged" }, map2.values());
@@ -1024,7 +1043,7 @@ test "Map.putWindowsBlock" {
 
     var map2: Map = .init(gpa);
     defer map2.deinit();
-    try map2.putWindowsBlock(block.view());
+    try map2.putWindowsBlock(block.ptr);
 
     try testing.expectEqualDeep(&[_][]const u8{ "FOO", "A", "=B", "ZIG_PROGRESS" }, map2.keys());
     try testing.expectEqualDeep(&[_][]const u8{ "BAR", "", "", "unchanged" }, map2.values());

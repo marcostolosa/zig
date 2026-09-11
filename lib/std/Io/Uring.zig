@@ -4500,7 +4500,7 @@ fn setUpChild(sync: *CancelRegion.Sync, options: struct {
     dev_null_fd: fd_t,
     prog_pipe: fd_t,
     argv_buf: [:null]?[*:0]const u8,
-    env_block: process.Environ.Block,
+    env_block: process.Environ.PosixBlock,
     PATH: []const u8,
     spawn: process.SpawnOptions,
 }) ForkBailError {
@@ -4679,7 +4679,7 @@ pub fn execvPath(
     env_block: process.Environ.PosixBlock,
 ) process.ReplaceError {
     try sync.cancel_region.await(.nothing);
-    switch (linux.errno(linux.execve(path, child_argv, env_block.slice.ptr))) {
+    switch (linux.errno(linux.execve(path, child_argv, env_block.ptr))) {
         .FAULT => |err| return errnoBug(err), // Bad pointer parameter.
         .@"2BIG" => return error.SystemResources,
         .MFILE => return error.ProcessFdQuotaExceeded,

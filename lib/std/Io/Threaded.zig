@@ -311,8 +311,8 @@ pub const Environ = struct {
                 comptime assert(@sizeOf(String) == 0);
             }
         } else {
-            for (environ.process_environ.block.slice) |opt_entry| {
-                const entry = opt_entry.?;
+            var i: usize = 0;
+            while (environ.process_environ.block.ptr[i]) |entry| : (i += 1) {
                 var entry_i: usize = 0;
                 while (entry[entry_i] != 0 and entry[entry_i] != '=') : (entry_i += 1) {}
                 const key = entry[0..entry_i];
@@ -16532,7 +16532,7 @@ fn windowsCreateProcess(
             null,
             .TRUE,
             flags,
-            if (env_block) |block| block.slice.ptr else null,
+            if (env_block) |block| block.ptr else null,
             cwd_ptr,
             lpStartupInfo,
             lpProcessInformation,
@@ -17081,7 +17081,7 @@ pub fn posixExecvPath(
     env_block: process.Environ.PosixBlock,
 ) process.ReplaceError {
     try Thread.checkCancel();
-    switch (posix.errno(posix.system.execve(path, child_argv, env_block.slice.ptr))) {
+    switch (posix.errno(posix.system.execve(path, child_argv, env_block.ptr))) {
         .FAULT => |err| return errnoBug(err), // Bad pointer parameter.
         .@"2BIG" => return error.SystemResources,
         .MFILE => return error.ProcessFdQuotaExceeded,

@@ -604,13 +604,12 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
     const argc = argc_argv_ptr[0];
     const argv: [*][*:0]u8 = @ptrCast(argc_argv_ptr + 1);
 
-    const envp_optional: [*:null]?[*:0]u8 = @ptrCast(@alignCast(argv + argc + 1));
+    const envp: [*:null]?[*:0]u8 = @ptrCast(@alignCast(argv + argc + 1));
     var envp_count: usize = 0;
-    while (envp_optional[envp_count]) |_| : (envp_count += 1) {}
-    const envp = envp_optional[0..envp_count :null];
+    while (envp[envp_count] != null) : (envp_count += 1) {}
 
     // Find the beginning of the auxiliary vector
-    const auxv: [*]elf.Auxv = @ptrCast(@alignCast(envp.ptr + envp_count + 1));
+    const auxv: [*]elf.Auxv = @ptrCast(@alignCast(envp + envp_count + 1));
 
     var at_hwcap: usize = 0;
     const phdrs = init: {
@@ -717,8 +716,8 @@ fn expandStackSize(phdrs: []elf.ElfN.Phdr) void {
     }
 }
 
-inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [:null]?[*:0]u8) u8 {
-    const env_block: std.process.Environ.Block = .{ .slice = envp };
+inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [*:null]?[*:0]u8) u8 {
+    const env_block: std.process.Environ.PosixBlock = .{ .ptr = envp, .capacity = .unknown };
     if (std.Options.debug_threaded_io) |t| {
         if (@sizeOf(std.Io.Threaded.Argv0) != 0) t.argv0.value = argv[0];
         t.environ = .{ .process_environ = .{ .block = env_block } };
@@ -730,10 +729,6 @@ inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [:null]?[*:0]u8)
 }
 
 fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) callconv(.c) c_int {
-    var env_count: usize = 0;
-    while (c_envp[env_count] != null) : (env_count += 1) {}
-    const envp = c_envp[0..env_count :null];
-
     switch (builtin.os.tag) {
         .linux => {
             const at_phdr = std.c.getauxval(elf.AT.PHDR);
@@ -751,21 +746,15 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) cal
         else => {},
     }
 
-    return callMainWithArgs(@as(usize, @intCast(c_argc)), @as([*][*:0]u8, @ptrCast(c_argv)), @ptrCast(envp));
+    return callMainWithArgs(@intCast(c_argc), @ptrCast(c_argv), @ptrCast(c_envp));
 }
 
 fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
     const argv = @as([*][*:0]u8, @ptrCast(c_argv))[0..@intCast(c_argc)];
-    const environ: [:null]?[*:0]u8 = switch (builtin.os.tag) {
-        .wasi, .emscripten => environ: {
-            const c_environ = std.c.environ;
-            var env_count: usize = 0;
-            while (c_environ[env_count] != null) : (env_count += 1) {}
-            break :environ c_environ[0..env_count :null];
-        },
-        else => &.{},
+    const env_block: std.process.Environ.PosixBlock = switch (builtin.os.tag) {
+        .wasi, .emscripten => .{ .ptr = std.c.environ, .capacity = .unknown },
+        else => .empty,
     };
-    const env_block: std.process.Environ.Block = .{ .slice = environ };
     if (std.Options.debug_threaded_io) |t| {
         if (@sizeOf(std.Io.Threaded.Argv0) != 0) t.argv0.value = argv[0];
         t.environ = .{ .process_environ = .{ .block = env_block } };

@@ -4327,7 +4327,7 @@ fn setUpChild(ev: *Evented, options: struct {
     dev_null_fd: c.fd_t,
     prog_pipe: c.fd_t,
     argv_buf: [:null]?[*:0]const u8,
-    env_block: process.Environ.Block,
+    env_block: process.Environ.PosixBlock,
     PATH: []const u8,
     spawn: process.SpawnOptions,
 }) ForkBailError {
@@ -4544,7 +4544,7 @@ fn execvPath(
     env_block: process.Environ.PosixBlock,
 ) process.ReplaceError {
     _ = ev;
-    switch (c.errno(c.execve(path, child_argv, env_block.slice.ptr))) {
+    switch (c.errno(c.execve(path, child_argv, env_block.ptr))) {
         .FAULT => |err| return errnoBug(err), // Bad pointer parameter.
         .@"2BIG" => return error.SystemResources,
         .MFILE => return error.ProcessFdQuotaExceeded,

@@ -836,6 +836,7 @@ pub fn Custom(
             return self.cloneContext(gpa, undefined);
         }
         pub fn cloneContext(self: Self, gpa: Allocator, ctx: Context) Oom!Self {
+            _ = ctx;
             var other: Self = .{};
             other.entries = try self.entries.clone(gpa);
             errdefer other.entries.deinit(gpa);
@@ -843,9 +844,11 @@ pub fn Custom(
             if (self.index_header) |header| {
                 // TODO: I'm pretty sure this could be memcpy'd instead of
                 // doing all this work.
-                const new_header = try IndexHeader.alloc(gpa, header.bit_index);
-                other.insertAllEntriesIntoNewHeader(if (store_hash) {} else ctx, new_header);
-                other.index_header = new_header;
+                // const new_header = try IndexHeader.alloc(gpa, header.bit_index);
+                // other.insertAllEntriesIntoNewHeader(if (store_hash) {} else ctx, new_header);
+                // other.index_header = new_header;
+
+                other.index_header = try header.clone(gpa);
             }
             return other;
         }
@@ -1705,6 +1708,15 @@ const IndexHeader = struct {
         const ptr: [*]align(@alignOf(IndexHeader)) u8 = @ptrCast(header);
         const slice = ptr[0 .. @sizeOf(IndexHeader) + header.length() * index_size];
         gpa.free(slice);
+    }
+    /// clone the memory to a new mem location.
+    fn clone(header: *IndexHeader, gpa: Allocator) Allocator.Error!*IndexHeader {
+        const index_size = hash_map.capacityIndexSize(header.bit_index);
+        const nbytes = @sizeOf(IndexHeader) + header.length() * index_size;
+        const new_bytes = try gpa.alignedAlloc(u8, .of(IndexHeader), nbytes);
+        const old_bytes : [*]align(@alignOf(IndexHeader)) u8 = @ptrCast(header);
+        @memcpy(new_bytes, old_bytes[0..nbytes]);
+        return @ptrCast(@alignCast(new_bytes.ptr));
     }
 
     /// Puts an IndexHeader into the state that it would be in after being freshly allocated.

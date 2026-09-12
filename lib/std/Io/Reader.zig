@@ -1786,7 +1786,7 @@ test readAllocShort {
     defer testing.allocator.free(s1);
     try testing.expectEqualStrings("Hello", s1);
 
-    const s2 = try r.readAllocShort(testing.allocator, 4);
+    const s2 = try r.readAllocShort(testing.allocator, 10);
     defer testing.allocator.free(s2);
     try testing.expectEqualStrings("Fren", s2);
 

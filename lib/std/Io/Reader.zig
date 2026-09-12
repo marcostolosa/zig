@@ -1754,6 +1754,47 @@ test "readSliceShort with indirect reader" {
     try testing.expectEqual(0, try ri.interface.readSliceShort(&buf));
 }
 
+test readAllocAll {
+    const allocator = testing.allocator;
+    var r: Reader = .fixed("HelloFren");
+
+    const s1 = try r.readAllocAll(allocator, 5);
+    defer allocator.free(s1);
+    try testing.expectEqualStrings("Hello", s1);
+
+    const s2 = try r.readAllocAll(allocator, 4);
+    defer allocator.free(s2);
+    try testing.expectEqualStrings("Fren", s2);
+}
+
+test "readAllocAll with buffer bigger than content" {
+    const allocator = testing.allocator;
+    var r: Reader = .fixed("HelloFren");
+
+    const s1 = try r.readAllocAll(allocator, 5);
+    defer allocator.free(s1);
+    try testing.expectEqualStrings("Hello", s1);
+
+    const res = r.readAllocAll(allocator, 10);
+    try testing.expectError(Error.EndOfStream, res);
+}
+
+test readAllocShort {
+    var r: Reader = .fixed("HelloFren");
+
+    const s1 = try r.readAllocShort(testing.allocator, 5);
+    defer testing.allocator.free(s1);
+    try testing.expectEqualStrings("Hello", s1);
+
+    const s2 = try r.readAllocShort(testing.allocator, 4);
+    defer testing.allocator.free(s2);
+    try testing.expectEqualStrings("Fren", s2);
+
+    const s3 = try r.readAllocShort(testing.allocator, 10);
+    defer testing.allocator.free(s3);
+    try testing.expectEqual(0, s3.len);
+}
+
 test readVec {
     var r: Reader = .fixed(std.ascii.letters);
     var flat_buffer: [52]u8 = undefined;

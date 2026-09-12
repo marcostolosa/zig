@@ -739,6 +739,9 @@ pub inline fn readSliceEndianAlloc(
     return dest;
 }
 
+/// Deprecated; use readAllocAll. to be removed after 0.17.
+pub const readAlloc = readAllocAll;
+
 /// Shortcut for calling `readSliceAll` with a buffer provided by `allocator`.
 pub fn readAllocAll(r: *Reader, allocator: Allocator, len: usize) ReadAllocError![]u8 {
     const dest = try allocator.alloc(u8, len);

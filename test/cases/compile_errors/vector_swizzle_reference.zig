@@ -6,4 +6,4 @@ export fn entry() void {
 
 // error
 //
-// :4:14: error: cannot assign to or take reference of swizzle on '@Vector(4, i32)'
+// :4:14: error: cannot assign to or take a pointer to swizzle on '@Vector(4, i32)'

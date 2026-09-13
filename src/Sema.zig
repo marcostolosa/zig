@@ -26683,7 +26683,7 @@ fn fieldPtr(
                     return sema.fail(
                         block,
                         field_name_src,
-                        "cannot assign to or take reference of swizzle on '{f}'",
+                        "cannot assign to or take a pointer to swizzle on '{f}'",
                         .{object_ty.fmt(pt)},
                     );
                 }

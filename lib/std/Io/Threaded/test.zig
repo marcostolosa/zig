@@ -616,10 +616,10 @@ test "localHostName buffer edge" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    const expected = Io.net.HostName.getLocalHostName(io, &buffer_expected) catch return error.TestUnexpectedResult;
+    const expected = try Io.net.HostName.getLocalHostName(io, &buffer_expected);
 
     {
-        const barely_fits = Io.net.HostName.getLocalHostName(io, buffer_test[0..expected.len]) catch return error.TestUnexpectedResult;
+        const barely_fits = try Io.net.HostName.getLocalHostName(io, buffer_test[0..expected.len]);
         try testing.expectEqualStrings(expected, barely_fits);
     }
 

@@ -2592,7 +2592,7 @@ fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Oper
             },
         },
         .net_local_host_name => |o| return .{
-            .net_local_host_name = netLocalHostName(t, o.buffer) catch |err| switch (err) {
+            .net_local_host_name = netLocalHostName(o.buffer) catch |err| switch (err) {
                 error.Canceled => |e| return e,
                 else => |e| e,
             },
@@ -3331,7 +3331,7 @@ fn batchDrainSubmittedWindows(t: *Threaded, b: *Io.Batch, concurrency: bool) (Io
             .net_local_host_name => |o| {
                 if (concurrency) return error.ConcurrencyUnavailable;
                 batchCompleteBlockingWindows(b, operation_userdata, .{
-                    .net_local_host_name = netLocalHostName(t, o.buffer) catch |err| switch (err) {
+                    .net_local_host_name = netLocalHostName(o.buffer) catch |err| switch (err) {
                         error.Canceled => |e| return e,
                         else => |e| e,
                     },
@@ -19289,95 +19289,96 @@ pub fn closeFd(fd: posix.fd_t) void {
     }
 }
 
-pub fn netLocalHostName(userdata: ?*anyopaque, buffer: []u8) net.HostName.LocalHostNameError![]u8 {
-    _ = userdata;
-    const syscall: Syscall = try .start();
+pub fn netLocalHostName(buffer: []u8) net.HostName.LocalHostNameError![]u8 {
     switch (native_os) {
         .linux => {
-            const namespace = if (builtin.link_libc) std.c else std.os.linux;
-            var uts: namespace.utsname = undefined;
-            switch (std.posix.errno(namespace.uname(&uts))) {
-                .SUCCESS => {},
-                else => |e| return syscall.unexpectedErrno(e),
-            }
+            const uts = uts: {
+                const syscall: Syscall = try .start();
+                const namespace = if (builtin.link_libc) std.c else std.os.linux;
+                var uts: namespace.utsname = undefined;
+                switch (std.posix.errno(namespace.uname(&uts))) {
+                    .SUCCESS => syscall.finish(),
+                    else => |e| return syscall.unexpectedErrno(e),
+                }
+                break :uts uts;
+            };
 
-            try syscall.checkCancel();
             const computer_name_os = std.mem.span(uts.nodename[0..].ptr);
-            if (buffer.len < computer_name_os.len) return syscall.fail(net.HostName.LocalHostNameError.BufferTooSmall);
+            if (buffer.len < computer_name_os.len) return net.HostName.LocalHostNameError.BufferTooSmall;
             @memcpy(buffer[0..computer_name_os.len], computer_name_os);
 
-            try syscall.checkCancel();
             const result = buffer[0..computer_name_os.len];
-            syscall.finish();
             return result;
         },
-        .wasi => return syscall.fail(net.HostName.LocalHostNameError.OperationUnsupported),
+        .wasi => return net.HostName.LocalHostNameError.OperationUnsupported,
         .windows => {
             const path = std.unicode.wtf8ToWtf16LeStringLiteral("\\Registry\\Machine\\System\\CurrentControlSet\\Control\\ComputerName\\ActiveComputerName");
             const object = std.unicode.wtf8ToWtf16LeStringLiteral("ComputerName");
 
             var key: windows.HANDLE = undefined;
-            switch (windows.ntdll.NtOpenKeyEx(&key, windows.ACCESS_MASK.Specific.Key.READ, &.{
-                .ObjectName = @constCast(&windows.UNICODE_STRING.init(path)),
-            }, .{})) {
-                .SUCCESS => {},
-                .OBJECT_PATH_SYNTAX_BAD, .OBJECT_NAME_NOT_FOUND => |e| return syscall.ntstatusBug(e),
-                else => return syscall.fail(net.HostName.LocalHostNameError.LocalHostNameNotFound),
+            {
+                const syscall: Syscall = try .start();
+                switch (windows.ntdll.NtOpenKeyEx(&key, windows.ACCESS_MASK.Specific.Key.READ, &.{
+                    .ObjectName = @constCast(&windows.UNICODE_STRING.init(path)),
+                }, .{})) {
+                    .SUCCESS => syscall.finish(),
+                    .OBJECT_PATH_SYNTAX_BAD => |e| return syscall.ntstatusBug(e),
+                    else => return syscall.fail(net.HostName.LocalHostNameError.LocalHostNameNotFound),
+                }
             }
             defer windows.CloseHandle(key);
-            try syscall.checkCancel();
 
             const buffer_len = @sizeOf(windows.KEY.VALUE.PARTIAL_INFORMATION) + 2 * (net.HostName.max_len + 1);
             var buffer_raw: [buffer_len]u8 align(@alignOf(windows.KEY.VALUE.PARTIAL_INFORMATION)) = undefined;
             var result_length: windows.ULONG = 0;
-            switch (windows.ntdll.NtQueryValueKey(
-                key,
-                &windows.UNICODE_STRING.init(object),
-                .Partial,
-                &buffer_raw,
-                buffer_len,
-                &result_length,
-            )) {
-                .SUCCESS => {},
-                .BUFFER_TOO_SMALL, .BUFFER_OVERFLOW => return syscall.fail(net.HostName.LocalHostNameError.BufferTooSmall),
-                .OBJECT_NAME_NOT_FOUND => return syscall.fail(net.HostName.LocalHostNameError.LocalHostNameNotFound),
-                else => |e| return syscall.unexpectedNtstatus(e),
+            {
+                const syscall: Syscall = try .start();
+                switch (windows.ntdll.NtQueryValueKey(
+                    key,
+                    &windows.UNICODE_STRING.init(object),
+                    .Partial,
+                    &buffer_raw,
+                    buffer_len,
+                    &result_length,
+                )) {
+                    .SUCCESS => syscall.finish(),
+                    .BUFFER_TOO_SMALL, .BUFFER_OVERFLOW => return syscall.fail(net.HostName.LocalHostNameError.BufferTooSmall),
+                    .OBJECT_NAME_NOT_FOUND => return syscall.fail(net.HostName.LocalHostNameError.LocalHostNameNotFound),
+                    else => |e| return syscall.unexpectedNtstatus(e),
+                }
             }
 
-            try syscall.checkCancel();
             const info: *windows.KEY.VALUE.PARTIAL_INFORMATION = @ptrCast(&buffer_raw);
-            if (info.Type != .SZ) return syscall.fail(net.HostName.LocalHostNameError.ReceivedUnexpectedData);
+            if (info.Type != .SZ) return net.HostName.LocalHostNameError.ReceivedUnexpectedData;
 
             const result_wtf16Z: [*:0]const u16 = @ptrCast(@alignCast(info.data().ptr));
             const result_wtf16 = std.mem.span(result_wtf16Z);
             // while Microsoft enforces ASCII-only for the ComputerName in its tools (UI, CLI etc.),
             // this can be circumvented if somebody changes the ComputerName in the registry directly
             const len = std.unicode.calcWtf8Len(result_wtf16);
-            if (len > buffer.len) return syscall.fail(net.HostName.LocalHostNameError.BufferTooSmall);
+            if (len > buffer.len) return net.HostName.LocalHostNameError.BufferTooSmall;
             const index = std.unicode.wtf16LeToWtf8(buffer, result_wtf16);
 
-            try syscall.checkCancel();
             const result_wtf8 = buffer[0..index];
-            syscall.finish();
             return result_wtf8;
         },
         else => {
             // assumes that all other operating systems have a gethostname function in their libc
             var hostname_buffer: [net.HostName.max_len + 1]u8 = @splat(0);
-            switch (std.c.errno(std.c.gethostname(&hostname_buffer, hostname_buffer.len))) {
-                .SUCCESS => {},
-                .NAMETOOLONG => return syscall.fail(net.HostName.LocalHostNameError.BufferTooSmall),
-                else => |e| return syscall.unexpectedErrno(e),
+            {
+                const syscall: Syscall = try .start();
+                switch (std.c.errno(std.c.gethostname(&hostname_buffer, hostname_buffer.len))) {
+                    .SUCCESS => syscall.finish(),
+                    .NAMETOOLONG => return syscall.fail(net.HostName.LocalHostNameError.BufferTooSmall),
+                    else => |e| return syscall.unexpectedErrno(e),
+                }
             }
 
-            try syscall.checkCancel();
-            const index = std.mem.findScalar(u8, &hostname_buffer, 0) orelse return syscall.fail(net.HostName.LocalHostNameError.BufferTooSmall);
+            const index = std.mem.findScalar(u8, &hostname_buffer, 0) orelse return net.HostName.LocalHostNameError.BufferTooSmall;
 
-            try syscall.checkCancel();
-            if (buffer.len < index) return syscall.fail(net.HostName.LocalHostNameError.BufferTooSmall);
+            if (buffer.len < index) return net.HostName.LocalHostNameError.BufferTooSmall;
             const result = buffer[0..index];
             @memcpy(result, hostname_buffer[0..index]);
-            syscall.finish();
             return result;
         },
     }

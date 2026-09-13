@@ -1827,3 +1827,173 @@ test "bitcast vector to array of smaller vectors" {
     const input: u8x64 = @bitCast([2]u8x32{ @splat(1), @splat(2) });
     try S.doTheTest(input);
 }
+
+test "len field access" {
+    const S = struct {
+        fn doTheTest() !void {
+            var a = @Vector(0, i32){};
+            _ = &a;
+            var b = @Vector(8, i32){ 1, 2, 3, 4, 5, 6, 7, 8 };
+            _ = &b;
+            try expectEqual(a.len, 0);
+            try expectEqual(b.len, 8);
+        }
+    };
+    try S.doTheTest();
+    try comptime S.doTheTest();
+}
+
+test "single component usage" {
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
+    const S = struct {
+        fn doTheTest() !void {
+            var vec = @Vector(4, i32){ 1, 2, 3, 4 };
+            vec.x = 5;
+            vec.g = 6;
+            try expectEqual(vec.x, 5);
+            try expectEqual(vec.y, 6);
+            try expectEqual(vec.z, 3);
+            try expectEqual(vec.w, 4);
+            try expectEqual(vec.r, 5);
+            try expectEqual(vec.g, 6);
+            try expectEqual(vec.b, 3);
+            try expectEqual(vec.a, 4);
+        }
+    };
+
+    try S.doTheTest();
+    try comptime S.doTheTest();
+}
+
+test "single component referencing" {
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
+    const S = struct {
+        fn doTheTest() !void {
+            var vec = @Vector(4, i32){ 1, 2, 3, 4 };
+            const comp = &vec.x;
+            comp.* = 5;
+            try expectEqual(vec.r, 5);
+            try expectEqual(comp.*, 5);
+        }
+    };
+
+    try S.doTheTest();
+    try comptime S.doTheTest();
+}
+
+test "swizzle usage" {
+    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    const S = struct {
+        fn doTheTest() !void {
+            var a = @Vector(2, i32){ 1, 2 };
+            _ = &a;
+            var b = @Vector(4, i32){ 1, 2, 3, 4 };
+            _ = &b;
+            try expectEqual(a.rg, @Vector(2, i32){ 1, 2 });
+            try expectEqual(b.xyzw, @Vector(4, i32){ 1, 2, 3, 4 });
+            try expectEqual(b.wx, @Vector(2, i32){ 4, 1 });
+            try expectEqual(a.gggg, @Vector(4, i32){ 2, 2, 2, 2 });
+        }
+    };
+
+    try S.doTheTest();
+    try comptime S.doTheTest();
+}
+
+test "component field types" {
+    try expect(@FieldType(@Vector(4, f32), "x") == f32);
+    try expect(@FieldType(@Vector(4, f32), "a") == f32);
+    try expect(@FieldType(@Vector(1, u8), "x") == u8);
+    try expect(@FieldType(@Vector(2, *const u8), "y") == *const u8);
+}
+
+test "component access on various element types" {
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    const S = struct {
+        fn doTheTest() !void {
+            var bools = @Vector(4, bool){ true, false, true, false };
+            _ = &bools;
+            try expectEqual(bools.x, true);
+            try expectEqual(bools.b, true);
+
+            var zero_bit = @Vector(4, u0){ 0, 0, 0, 0 };
+            _ = &zero_bit;
+            try expectEqual(zero_bit.w, 0);
+
+            var one = @Vector(1, u8){7};
+            _ = &one;
+            try expectEqual(one.x, 7);
+            try expectEqual(one.r, 7);
+        }
+    };
+
+    try S.doTheTest();
+    try comptime S.doTheTest();
+}
+
+test "component access through a pointer to a vector" {
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    const S = struct {
+        fn doTheTest() !void {
+            var vec = @Vector(4, i32){ 1, 2, 3, 4 };
+            const ptr = &vec;
+            try expectEqual(ptr.x, 1);
+            try expectEqual(ptr.a, 4);
+            try expectEqual(ptr.len, 4);
+
+            ptr.y = 9;
+            try expectEqual(vec.y, 9);
+
+            try expectEqual(@field(vec, "z"), 3);
+            try expectEqual(vec.w, 4);
+        }
+    };
+
+    try S.doTheTest();
+    try comptime S.doTheTest();
+}
+
+test "swizzle in result locations" {
+    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    const V2 = @Vector(2, i32);
+    const S = struct {
+        fn takes(v: V2) i32 {
+            return v[0] + v[1];
+        }
+        fn returns(v: @Vector(4, i32)) V2 {
+            return v.zw;
+        }
+        fn doTheTest() !void {
+            var v = @Vector(4, i32){ 1, 2, 3, 4 };
+            _ = &v;
+
+            try expectEqual(takes(v.xy), 3);
+            try expectEqual(returns(v), V2{ 3, 4 });
+
+            const Holder = struct { pair: V2 };
+            const holder = Holder{ .pair = v.yx };
+            try expectEqual(holder.pair, V2{ 2, 1 });
+            const arr = [_]V2{ v.xy, v.zw };
+            try expectEqual(arr[1], V2{ 3, 4 });
+
+            try expectEqual(v.xy + v.zw, V2{ 4, 6 });
+            try expectEqual(@field(v, "yx"), V2{ 2, 1 });
+            try expectEqual(v.wz, V2{ 4, 3 });
+        }
+    };
+
+    try S.doTheTest();
+    try comptime S.doTheTest();
+}

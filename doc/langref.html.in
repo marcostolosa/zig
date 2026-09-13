@@ -1944,6 +1944,14 @@ or
       arrays with comptime-known length.
       </p>
       <p>
+      Vectors one to four elements in length can have their elements accessed by name, using either spatial
+      ({#syntax#}x{#endsyntax#}, {#syntax#}y{#endsyntax#}, {#syntax#}z{#endsyntax#}, {#syntax#}w{#endsyntax#})
+      or color ({#syntax#}r{#endsyntax#}, {#syntax#}g{#endsyntax#}, {#syntax#}b{#endsyntax#}, {#syntax#}a{#endsyntax#})
+      component names. Spatial and color component names alias the same components. A named component behaves
+      the same as one accessed by index: it can be assigned to, and its address can be taken. Vectors of any
+      length also have a {#syntax#}len{#endsyntax#} field, exactly as {#link|Arrays#} do.
+      </p>
+      <p>
       For rearranging elements within and between vectors, Zig provides the {#link|@shuffle#} and {#link|@select#} functions.
       </p>
       <p>
@@ -1955,6 +1963,16 @@ or
       result in compiler crashes on current versions of Zig.
       </p>
       {#code|test_vector.zig#}
+
+      <p>
+      Naming more than one element at once creates a new vector with those elements in the order given.
+      This is called a swizzle, or swizzling. Elements may be repeated, and the result may be longer than the source: if
+      {#syntax#}a{#endsyntax#} has two elements, {#syntax#}a.yxyx{#endsyntax#} has four. A swizzle can only name entirely
+      spatial components or entirely color components, and may name at most four elements; use {#link|@shuffle#}
+      to build anything longer. Unlike a single named element, a swizzle produces a new value, so it cannot be
+      assigned to and its address cannot be taken.
+      </p>
+      {#code|test_vector_swizzling.zig#}
 
       <p>
       TODO talk about C ABI interop<br>

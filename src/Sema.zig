@@ -2567,6 +2567,14 @@ fn typeSupportsFieldAccess(zcu: *const Zcu, ty: Type, field_name: InternPool.Nul
     const ip = &zcu.intern_pool;
     switch (ty.zigTypeTag(zcu)) {
         .array => return field_name.eqlSlice("len", ip),
+        .vector => {
+            if (field_name.eqlSlice("len", ip)) return true;
+            var buf: [4]u8 = undefined;
+            return switch (parseVectorComponents(field_name.toSlice(ip), ty.vectorLen(zcu), &buf)) {
+                .ok => true,
+                else => false,
+            };
+        },
         .pointer => {
             const ptr_info = ty.ptrInfo(zcu);
             if (ptr_info.flags.size == .slice) {
@@ -19496,6 +19504,8 @@ fn addConstantMaybeRef(sema: *Sema, val: Value, is_ref: bool) !Air.Inst.Ref {
 }
 
 fn zirFieldTypeRef(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.Inst.Ref {
+    const zcu = sema.pt.zcu;
+    const ip = &zcu.intern_pool;
     const inst_data = sema.code.instructions.items(.data)[@backingInt(inst)].pl_node;
     const extra = sema.code.extraData(Zir.Inst.FieldTypeRef, inst_data.payload_index).data;
     const ty_src = block.builtinCallArgSrc(inst_data.src_node, 0);
@@ -19503,6 +19513,14 @@ fn zirFieldTypeRef(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileErro
     const aggregate_ty = try sema.resolveType(block, ty_src, extra.container_type);
     const field_name = try sema.resolveConstStringIntern(block, field_src, extra.field_name, .{ .simple = .field_name });
     try sema.ensureLayoutResolved(aggregate_ty, ty_src, .field_queried);
+    if (aggregate_ty.zigTypeTag(zcu) == .vector and !field_name.eqlSlice("len", ip)) {
+        var indices_buf: [4]u8 = undefined;
+        const indices = try sema.vectorComponentIndices(block, ty_src, field_name, field_src, aggregate_ty, &indices_buf);
+        if (indices.len != 1) return sema.fail(block, field_src, "swizzle '{f}' does not name a single component", .{
+            field_name.fmt(ip),
+        });
+        return Air.internedToRef(aggregate_ty.childType(zcu).toIntern());
+    }
     return sema.fieldType(block, aggregate_ty, field_name, field_src, ty_src);
 }
 
@@ -26239,6 +26257,17 @@ fn fieldPtrLoad(
             return fieldVal(sema, block, src, object, field_name, field_name_src);
         }
     }
+
+    const is_pointer_to = pointee_ty.isSinglePointer(zcu);
+    const inner_ty = if (is_pointer_to)
+        pointee_ty.childType(zcu)
+    else
+        pointee_ty;
+    if (inner_ty.zigTypeTag(zcu) == .vector and field_name.length(ip) > 1 and !field_name.eqlSlice("len", ip)) {
+        const vector = try sema.analyzeLoad(block, src, object_ptr, src);
+        return sema.fieldVal(block, src, vector, field_name, field_name_src);
+    }
+
     const field_ptr = try sema.fieldPtr(block, src, object_ptr, field_name, field_name_src, false);
     return analyzeLoad(sema, block, src, field_ptr, field_name_src);
 }
@@ -26298,6 +26327,31 @@ fn fieldVal(
                     "no member named '{f}' in '{f}'",
                     .{ field_name.fmt(ip), object_ty.fmt(pt) },
                 );
+            }
+        },
+        .vector => {
+            if (field_name.eqlSlice("len", ip)) {
+                return Air.internedToRef((try pt.intValue(.usize, inner_ty.vectorLen(zcu))).toIntern());
+            } else {
+                var indices_buf: [4]u8 = undefined;
+                const indices = try sema.vectorComponentIndices(block, src, field_name, field_name_src, inner_ty, &indices_buf);
+                if (indices.len == 1) {
+                    return sema.elemVal(block, src, object, Air.internedToRef((try pt.intValue(.usize, indices[0])).toIntern()), field_name_src, false);
+                } else {
+                    const vector = if (is_pointer_to)
+                        try sema.analyzeLoad(block, src, object, object_src)
+                    else
+                        object;
+                    const mask_ty = try pt.vectorType(.{ .len = @intCast(indices.len), .child = .i32_type });
+                    var ip_indices_buf: [4]InternPool.Index = undefined;
+                    const ip_indices = ip_indices_buf[0..indices.len];
+                    for (ip_indices, indices) |*ip_ind, ind| {
+                        ip_ind.* = (try pt.intValue(.i32, ind)).toIntern();
+                    }
+                    const mask_value = Value.fromInterned(try pt.intern(.{ .aggregate = .{ .ty = mask_ty.toIntern(), .storage = .{ .elems = ip_indices } } }));
+
+                    return sema.analyzeShuffle(block, src, src, field_name_src, inner_ty.childType(zcu), vector, vector, mask_value, @intCast(indices.len));
+                }
             }
         },
         .pointer => {
@@ -26396,6 +26450,7 @@ fn fieldVal(
                     errdefer msg.destroy(sema.gpa);
                     if (child_type.isSlice(zcu)) try sema.errNote(src, msg, "slice values have 'len' and 'ptr' members", .{});
                     if (child_type.zigTypeTag(zcu) == .array) try sema.errNote(src, msg, "array values have 'len' member", .{});
+                    if (child_type.zigTypeTag(zcu) == .vector) try sema.errNote(src, msg, "vector values have 'len' member", .{});
                     break :msg msg;
                 }),
             }
@@ -26611,6 +26666,29 @@ fn fieldPtr(
                 );
             }
         },
+        .vector => {
+            if (field_name.eqlSlice("len", ip)) {
+                const int_val = try pt.intValue(.usize, inner_ty.vectorLen(zcu));
+                return uavRef(sema, int_val);
+            } else {
+                var indices_buf: [4]u8 = undefined;
+                const indices = try sema.vectorComponentIndices(block, src, field_name, field_name_src, inner_ty, &indices_buf);
+                if (indices.len == 1) {
+                    const inner_ptr = if (is_pointer_to)
+                        try sema.analyzeLoad(block, src, object_ptr, object_ptr_src)
+                    else
+                        object_ptr;
+                    return sema.elemPtr(block, src, inner_ptr, Air.internedToRef((try pt.intValue(.usize, indices[0])).toIntern()), field_name_src, initializing, false);
+                } else {
+                    return sema.fail(
+                        block,
+                        field_name_src,
+                        "cannot assign to or take reference of swizzle on '{f}'",
+                        .{object_ty.fmt(pt)},
+                    );
+                }
+            }
+        },
         .pointer => if (inner_ty.isSlice(zcu)) {
             const inner_ptr = if (is_pointer_to)
                 try sema.analyzeLoad(block, src, object_ptr, object_ptr_src)
@@ -26814,6 +26892,17 @@ fn fieldCallBind(
                 if (enum_obj.nameIndex(ip, field_name) == null) break :find_field;
                 const field_ptr = try unionFieldPtr(sema, block, src, object_ptr, field_name, field_name_src, concrete_ty, false);
                 return .{ .direct = try sema.analyzeLoad(block, src, field_ptr, src) };
+            },
+            .vector => if (!field_name.eqlSlice("len", ip)) {
+                var indices_buf: [4]u8 = undefined;
+                switch (parseVectorComponents(field_name.toSlice(ip), concrete_ty.vectorLen(zcu), &indices_buf)) {
+                    .ok => |indices| if (indices.len == 1) {
+                        const index_ref = Air.internedToRef((try pt.intValue(.usize, indices[0])).toIntern());
+                        const elem_ptr = try sema.elemPtr(block, src, object_ptr, index_ref, field_name_src, false, false);
+                        return .{ .direct = try sema.analyzeLoad(block, src, elem_ptr, src) };
+                    },
+                    else => {},
+                }
             },
             .type => {
                 const namespace = try sema.analyzeLoad(block, src, object_ptr, src);
@@ -27335,6 +27424,113 @@ fn unionFieldVal(
     if (try field_ty.onePossibleValue(pt)) |opv| return .fromValue(opv);
 
     return block.addStructFieldVal(union_byval, field_index, field_ty);
+}
+
+const ParseVectorComponentsResult = union(enum) { ok: []const u8, unknown_name, unsupported_vector, too_long, mixed_sets, out_of_bounds: u8 };
+/// Classifies `name` as a vector component or swizzle without emitting diagnostics.
+/// `buf` is populated regardless of the outcome.
+fn parseVectorComponents(
+    name: [:0]const u8,
+    vector_len: u32,
+    buf: *[4]u8,
+) ParseVectorComponentsResult {
+    assert(!std.mem.eql(u8, name, "len"));
+    const illegal_char = 1;
+    const spatial_char = 2;
+    const color_char = 4;
+    var char_types: u8 = 0;
+    const indices = buf[0..@min(name.len, 4)];
+    var chars: [4]u8 = undefined;
+    for (name, 0..) |c, i| {
+        char_types |= switch (c) {
+            'x', 'y', 'z', 'w' => spatial_char,
+            'r', 'g', 'b', 'a' => color_char,
+            else => illegal_char,
+        };
+        if (i < 4) {
+            chars[i] = c;
+            indices[i] = switch (c) {
+                'x', 'r' => 0,
+                'y', 'g' => 1,
+                'z', 'b' => 2,
+                'w', 'a' => 3,
+                else => 0,
+            };
+        }
+    }
+    if (char_types & illegal_char != 0 or name.len == 0)
+        return .unknown_name;
+    if (vector_len == 0 or vector_len > 4)
+        return .unsupported_vector;
+    if (name.len > 4)
+        return .too_long;
+    if (char_types & spatial_char != 0 and char_types & color_char != 0)
+        return .mixed_sets;
+
+    for (indices, 0..) |idx, i| {
+        if (idx >= vector_len)
+            return .{ .out_of_bounds = chars[i] };
+    }
+    return .{ .ok = indices };
+}
+/// Returns the index mask for indexing or shuffling. Returned slice borrows from `indices_buf`
+/// Returns the index mask for indexing or shuffling. Returned slice borrows from `indices_buf`
+fn vectorComponentIndices(
+    sema: *Sema,
+    block: *Block,
+    src: LazySrcLoc,
+    field_name: InternPool.NullTerminatedString,
+    field_name_src: LazySrcLoc,
+    vector_ty: Type,
+    indices_buf: *[4]u8,
+) CompileError![]const u8 {
+    const pt = sema.pt;
+    const zcu = pt.zcu;
+    const ip = &zcu.intern_pool;
+    assert(!field_name.eqlSlice("len", ip));
+    const field_len = field_name.length(ip);
+    const vec_len = vector_ty.vectorLen(zcu);
+    switch (parseVectorComponents(field_name.toSlice(ip), vec_len, indices_buf)) {
+        .ok => |indices| return indices,
+        .unknown_name => return sema.fail(
+            block,
+            field_name_src,
+            "no member named '{f}' in '{f}'",
+            .{ field_name.fmt(ip), vector_ty.fmt(pt) },
+        ),
+        .unsupported_vector => return sema.failWithOwnedErrorMsg(block, msg: {
+            const msg = if (field_len == 1)
+                try sema.errMsg(src, "component access not available on '{f}'", .{vector_ty.fmt(pt)})
+            else
+                try sema.errMsg(src, "swizzling not available on '{f}'", .{vector_ty.fmt(pt)});
+            errdefer msg.destroy(sema.gpa);
+            if (vec_len == 0) break :msg msg;
+            try sema.errNote(src, msg, "vectors longer than four elements have no component names", .{});
+            if (field_len == 1)
+                try sema.errNote(src, msg, "use '[{d}]' to access this element", .{indices_buf[0]})
+            else
+                try sema.errNote(src, msg, "use @shuffle instead", .{});
+            break :msg msg;
+        }),
+        .too_long => return sema.failWithOwnedErrorMsg(block, msg: {
+            const msg = try sema.errMsg(field_name_src, "swizzle on '{f}' cannot be longer than four components", .{vector_ty.fmt(pt)});
+            errdefer msg.destroy(sema.gpa);
+            try sema.errNote(field_name_src, msg, "use @shuffle instead", .{});
+            break :msg msg;
+        }),
+        .mixed_sets => return sema.failWithOwnedErrorMsg(block, msg: {
+            const msg = try sema.errMsg(field_name_src, "swizzle on '{f}' cannot mix spatial and color components", .{vector_ty.fmt(pt)});
+            errdefer msg.destroy(sema.gpa);
+            try sema.errNote(field_name_src, msg, "component names must come entirely from 'xyzw' or entirely from 'rgba'", .{});
+            break :msg msg;
+        }),
+        .out_of_bounds => |bad_char| return sema.fail(
+            block,
+            field_name_src,
+            "component '{c}' is out of bounds on '{f}'",
+            .{ bad_char, vector_ty.fmt(pt) },
+        ),
+    }
 }
 
 fn elemPtr(

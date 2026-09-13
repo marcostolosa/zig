@@ -6,14 +6,19 @@ test "Basic vector usage" {
     const a = @Vector(4, i32){ 1, 2, 3, 4 };
     const b = @Vector(4, i32){ 5, 6, 7, 8 };
 
+    // The len field stores the number of elements.
+    try expectEqual(4, a.len);
+
     // Math operations take place element-wise.
     const c = a + b;
 
     // Individual vector elements can be accessed using array indexing syntax.
     try expectEqual(6, c[0]);
     try expectEqual(8, c[1]);
-    try expectEqual(10, c[2]);
-    try expectEqual(12, c[3]);
+    // Or by naming component fields. This is only available for vectors between
+    // 1 and 4 in length, inclusive
+    try expectEqual(10, c.z); // from 'xyzw'
+    try expectEqual(12, c.a); // from 'rgba'
 }
 
 test "Conversion between vectors, arrays, and slices" {

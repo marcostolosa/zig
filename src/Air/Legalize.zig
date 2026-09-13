@@ -3074,8 +3074,7 @@ fn arrayToSliceBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.I
     const ptr_ty = slice_ty.slicePtrFieldType(zcu);
 
     const array_ptr_ty = l.typeOf(orig_ty_op.operand);
-    const array_ty: Type = .fromInterned(array_ptr_ty.ptrInfo(zcu).child);
-    const len: usize = @intCast(array_ty.arrayLen(zcu));
+    const len = array_ptr_ty.childType(zcu).arrayLen(zcu);
 
     var inst_buf: [3]Air.Inst.Index = undefined;
     var main_block: Block = .init(&inst_buf);

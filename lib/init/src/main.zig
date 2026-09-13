@@ -16,7 +16,7 @@ pub fn main(init: std.process.Init) !void {
         std.log.info("arg: {s}", .{arg});
     }
 
-    // In order to do I/O operations need an `Io` instance.
+    // In order to do I/O operations, you need an `Io` instance.
     const io = init.io;
 
     // Stdout is for the actual output of your application, for example if you

@@ -1855,6 +1855,7 @@ test "single component usage" {
             try expectEqual(vec.y, 6);
             try expectEqual(vec.z, 3);
             try expectEqual(vec.w, 4);
+
             try expectEqual(vec.r, 5);
             try expectEqual(vec.g, 6);
             try expectEqual(vec.b, 3);

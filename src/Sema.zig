@@ -19504,7 +19504,8 @@ fn addConstantMaybeRef(sema: *Sema, val: Value, is_ref: bool) !Air.Inst.Ref {
 }
 
 fn zirFieldTypeRef(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.Inst.Ref {
-    const zcu = sema.pt.zcu;
+    const pt = sema.pt;
+    const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
     const inst_data = sema.code.instructions.items(.data)[@backingInt(inst)].pl_node;
     const extra = sema.code.extraData(Zir.Inst.FieldTypeRef, inst_data.payload_index).data;
@@ -19513,7 +19514,13 @@ fn zirFieldTypeRef(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileErro
     const aggregate_ty = try sema.resolveType(block, ty_src, extra.container_type);
     const field_name = try sema.resolveConstStringIntern(block, field_src, extra.field_name, .{ .simple = .field_name });
     try sema.ensureLayoutResolved(aggregate_ty, ty_src, .field_queried);
-    if (aggregate_ty.zigTypeTag(zcu) == .vector and !field_name.eqlSlice("len", ip)) {
+    if (aggregate_ty.zigTypeTag(zcu) == .vector) {
+        if (field_name.eqlSlice("len", ip)) return sema.failWithOwnedErrorMsg(block, msg: {
+            const msg = try sema.errMsg(field_src, "'len' is not a component of '{f}'", .{aggregate_ty.fmt(pt)});
+            errdefer msg.destroy(sema.gpa);
+            try sema.errNote(field_src, msg, "vector components are named 'x', 'y', 'z', 'w' or 'r', 'g', 'b', 'a'", .{});
+            break :msg msg;
+        });
         var indices_buf: [4]u8 = undefined;
         const indices = try sema.vectorComponentIndices(block, ty_src, field_name, field_src, aggregate_ty, &indices_buf);
         if (indices.len != 1) return sema.fail(block, field_src, "swizzle '{f}' does not name a single component", .{
@@ -27435,18 +27442,19 @@ fn parseVectorComponents(
     buf: *[4]u8,
 ) ParseVectorComponentsResult {
     assert(!std.mem.eql(u8, name, "len"));
-    const illegal_char = 1;
-    const spatial_char = 2;
-    const color_char = 4;
-    var char_types: u8 = 0;
+    var char_types: packed struct {
+        illegal: bool = false,
+        spatial: bool = false,
+        color: bool = false,
+    } = .{};
     const indices = buf[0..@min(name.len, 4)];
     var chars: [4]u8 = undefined;
     for (name, 0..) |c, i| {
-        char_types |= switch (c) {
-            'x', 'y', 'z', 'w' => spatial_char,
-            'r', 'g', 'b', 'a' => color_char,
-            else => illegal_char,
-        };
+        switch (c) {
+            'x', 'y', 'z', 'w' => char_types.spatial = true,
+            'r', 'g', 'b', 'a' => char_types.color = true,
+            else => char_types.illegal = true,
+        }
         if (i < 4) {
             chars[i] = c;
             indices[i] = switch (c) {
@@ -27458,13 +27466,13 @@ fn parseVectorComponents(
             };
         }
     }
-    if (char_types & illegal_char != 0 or name.len == 0)
+    if (char_types.illegal or name.len == 0)
         return .unknown_name;
     if (vector_len == 0 or vector_len > 4)
         return .unsupported_vector;
     if (name.len > 4)
         return .too_long;
-    if (char_types & spatial_char != 0 and char_types & color_char != 0)
+    if (char_types.spatial and char_types.color)
         return .mixed_sets;
 
     for (indices, 0..) |idx, i| {

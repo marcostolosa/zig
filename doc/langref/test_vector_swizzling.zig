@@ -19,6 +19,12 @@ test "Vector Swizzling" {
     try expectEqual(1, c.y);
     try expectEqual(2, c.z);
     try expectEqual(3, c.w);
+
+    // referencing a swizzle creates a pointer to a constant copy
+    const ptr: *const @Vector(2, i32) = &a.bg;
+
+    try expectEqual(3, ptr.x);
+    try expectEqual(2, ptr.y);
 }
 
 // test

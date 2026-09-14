@@ -1991,3 +1991,27 @@ test "swizzle in result locations" {
     try S.doTheTest();
     try comptime S.doTheTest();
 }
+
+test "swizzle referencing" {
+    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    const Vec = @Vector(2, i32);
+    const S = struct {
+        fn doTheTest() !void {
+            var v = @Vector(4, i32){ 1, 2, 3, 4 };
+            _ = &v;
+            const p = &v.yx;
+            try expect(@TypeOf(p) == *const Vec);
+            try expectEqual(p.*, Vec{ 2, 1 });
+            v.x = 99;
+            try expectEqual(p.*, Vec{ 2, 1 });
+            try expectEqual(v.x, 99);
+        }
+    };
+
+    try S.doTheTest();
+    try comptime S.doTheTest();
+}

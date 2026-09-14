@@ -1969,8 +1969,8 @@ or
       This is called a swizzle, or swizzling. Elements may be repeated, and the result may be longer than the source: if
       {#syntax#}a{#endsyntax#} has two elements, {#syntax#}a.yxyx{#endsyntax#} has four. A swizzle can only name entirely
       spatial components or entirely color components, and may name at most four elements; use {#link|@shuffle#}
-      to build anything longer. Unlike a single named element, a swizzle produces a new value, so it cannot be
-      assigned to and its address cannot be taken.
+      to build anything longer. Unlike a single named element, a swizzle is a constant value and cannot be assigned to.
+      A swizzle can be referenced, resulting in a pointer to a constant copy.
       </p>
       {#code|test_vector_swizzling.zig#}
 

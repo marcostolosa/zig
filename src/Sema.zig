@@ -26248,16 +26248,6 @@ fn fieldPtrLoad(
         }
     }
 
-    const is_pointer_to = pointee_ty.isSinglePointer(zcu);
-    const inner_ty = if (is_pointer_to)
-        pointee_ty.childType(zcu)
-    else
-        pointee_ty;
-    if (inner_ty.zigTypeTag(zcu) == .vector and field_name.length(ip) > 1 and !field_name.eqlSlice("len", ip)) {
-        const vector = try sema.analyzeLoad(block, src, object_ptr, src);
-        return sema.fieldVal(block, src, vector, field_name, field_name_src);
-    }
-
     const field_ptr = try sema.fieldPtr(block, src, object_ptr, field_name, field_name_src, false);
     return analyzeLoad(sema, block, src, field_ptr, field_name_src);
 }
@@ -26663,19 +26653,16 @@ fn fieldPtr(
             } else {
                 var indices_buf: [4]u8 = undefined;
                 const indices = try sema.vectorComponentIndices(block, src, field_name, field_name_src, inner_ty, &indices_buf);
+                const inner_ptr = if (is_pointer_to)
+                    try sema.analyzeLoad(block, src, object_ptr, object_ptr_src)
+                else
+                    object_ptr;
                 if (indices.len == 1) {
-                    const inner_ptr = if (is_pointer_to)
-                        try sema.analyzeLoad(block, src, object_ptr, object_ptr_src)
-                    else
-                        object_ptr;
                     return sema.elemPtr(block, src, inner_ptr, Air.internedToRef((try pt.intValue(.usize, indices[0])).toIntern()), field_name_src, initializing, false);
                 } else {
-                    return sema.fail(
-                        block,
-                        field_name_src,
-                        "cannot assign to or take a pointer to swizzle on '{f}'",
-                        .{object_ty.fmt(pt)},
-                    );
+                    const vector = try sema.analyzeLoad(block, src, inner_ptr, object_ptr_src);
+                    const swizzled = try sema.fieldVal(block, src, vector, field_name, field_name_src);
+                    return sema.analyzeRef(block, src, swizzled, .none);
                 }
             }
         },

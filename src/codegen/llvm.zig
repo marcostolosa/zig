@@ -10,7 +10,6 @@ const build_options = @import("build_options");
 const Air = @import("../Air.zig");
 const codegen = @import("../codegen.zig");
 const Compilation = @import("../Compilation.zig");
-const dev = @import("../dev.zig");
 const InternPool = @import("../InternPool.zig");
 const link = @import("../link.zig");
 const Module = @import("../Module.zig");
@@ -155,12 +154,11 @@ pub const Object = struct {
     /// Values for `@llvm.used`.
     used: std.ArrayList(Builder.Constant),
 
-    pub const Ptr = if (dev.env.supports(.llvm_backend)) *Object else noreturn;
+    pub const Ptr = if (@import("../dev.zig").env.supports(.llvm_backend)) *Object else noreturn;
 
     const TypeMap = std.AutoHashMapUnmanaged(InternPool.Index, Builder.Type);
 
     pub fn create(arena: Allocator, zcu: *Zcu) !Ptr {
-        dev.check(.llvm_backend);
         const comp = zcu.comp;
         const gpa = comp.gpa;
         const target = zcu.getTarget();
@@ -348,7 +346,7 @@ pub const Object = struct {
         lto: std.zig.LtoMode,
     };
 
-    pub fn emit(o: *Object, pt: Zcu.PerThread, options: EmitOptions) error{ AlreadyReported, OutOfMemory }!void {
+    pub fn emit(o: *Object, pt: Zcu.PerThread, options: EmitOptions) link.Error!void {
         const zcu = o.zcu;
         const comp = zcu.comp;
         const io = comp.io;
@@ -397,7 +395,7 @@ pub const Object = struct {
         }
 
         {
-            var module_flags = try std.array_list.Managed(Builder.Metadata).initCapacity(o.gpa, 8);
+            var module_flags = try std.array_list.Managed(Builder.Metadata).initCapacity(o.gpa, 11);
             defer module_flags.deinit();
 
             const behavior_error = try o.builder.metadataConstant(try o.builder.intConst(.i32, 1));
@@ -491,6 +489,20 @@ pub const Object = struct {
                     behavior_max,
                     (try o.builder.metadataString("RegCallv4")).toMetadata(),
                     try o.builder.metadataConstant(.@"1"),
+                }));
+            }
+
+            // The frontend should eventually offer options to control these.
+            if (target.cpu.arch.isAarch64() and target.os.tag == .openbsd) {
+                module_flags.appendAssumeCapacity(try o.builder.metadataTuple(&.{
+                    behavior_min,
+                    (try o.builder.metadataString("branch-target-enforcement")).toMetadata(),
+                    try o.builder.metadataConstant(try o.builder.intConst(.i32, 2)),
+                }));
+                module_flags.appendAssumeCapacity(try o.builder.metadataTuple(&.{
+                    behavior_min,
+                    (try o.builder.metadataString("sign-return-address")).toMetadata(),
+                    try o.builder.metadataConstant(try o.builder.intConst(.i32, 2)),
                 }));
             }
 
@@ -1141,7 +1153,7 @@ pub const Object = struct {
         }
     }
 
-    fn flushTypePool(o: *Object, pt: Zcu.PerThread) Allocator.Error!void {
+    fn flushTypePool(o: *Object, pt: Zcu.PerThread) link.Error!void {
         try o.type_pool.flushPending(pt, .{ .llvm = o });
     }
 
@@ -1304,7 +1316,7 @@ pub const Object = struct {
         }, &o.builder);
     }
 
-    pub fn updateContainerType(o: *Object, pt: Zcu.PerThread, ty: InternPool.Index, success: bool) Allocator.Error!void {
+    pub fn updateContainerType(o: *Object, pt: Zcu.PerThread, ty: InternPool.Index, success: bool) link.Error!void {
         _ = o.type_map.remove(ty);
         try o.type_pool.updateContainerType(pt, .{ .llvm = o }, ty, success);
         if (o.named_enum_map.get(ty)) |llvm_function| {
@@ -1431,7 +1443,7 @@ pub const Object = struct {
 
     pub fn getDebugType(o: *Object, pt: Zcu.PerThread, ty: Type) Allocator.Error!Builder.Metadata {
         assert(!o.builder.strip);
-        const index = try o.type_pool.get(pt, .{ .llvm = o }, ty.toIntern());
+        const index = o.type_pool.get(pt, .{ .llvm = o }, ty.toIntern()) catch |err| return @errorCast(err);
         return o.debug_types.items[@backingInt(index)];
     }
 
@@ -2230,6 +2242,22 @@ pub const Object = struct {
             // above, this should be revisited if `softfp` support is added.
             try attributes.addFnAttr(.noimplicitfloat, &o.builder);
         }
+
+        // The frontend should eventually offer options to control these.
+        if (target.cpu.arch.isAarch64() and target.os.tag == .openbsd) {
+            try attributes.addFnAttr(.{ .string = .{
+                .kind = try o.builder.string("branch-target-enforcement"),
+                .value = try o.builder.string(""),
+            } }, &o.builder);
+            try attributes.addFnAttr(.{ .string = .{
+                .kind = try o.builder.string("sign-return-address"),
+                .value = try o.builder.string("non-leaf"),
+            } }, &o.builder);
+            try attributes.addFnAttr(.{ .string = .{
+                .kind = try o.builder.string("sign-return-address-key"),
+                .value = try o.builder.string("a_key"),
+            } }, &o.builder);
+        }
     }
 
     pub fn addCallingConventionFnAttributes(
@@ -2893,7 +2921,7 @@ pub const Object = struct {
                         }
                     }
 
-                    const ty = try o.builder.opaqueType(try o.builder.string(t.containerTypeName(ip).toSlice(ip)));
+                    const ty = try o.builder.opaqueType(try o.builder.string(t.containerTypeName(ip).fqn.toSlice(ip)));
                     try o.type_map.put(o.gpa, t.toIntern(), ty);
 
                     o.builder.namedTypeSetBody(
@@ -2983,7 +3011,7 @@ pub const Object = struct {
                     };
 
                     if (layout.tag_size == 0) {
-                        const ty = try o.builder.opaqueType(try o.builder.string(t.containerTypeName(ip).toSlice(ip)));
+                        const ty = try o.builder.opaqueType(try o.builder.string(t.containerTypeName(ip).fqn.toSlice(ip)));
                         try o.type_map.put(o.gpa, t.toIntern(), ty);
 
                         o.builder.namedTypeSetBody(
@@ -3011,7 +3039,7 @@ pub const Object = struct {
                         llvm_fields_len += 1;
                     }
 
-                    const ty = try o.builder.opaqueType(try o.builder.string(t.containerTypeName(ip).toSlice(ip)));
+                    const ty = try o.builder.opaqueType(try o.builder.string(t.containerTypeName(ip).fqn.toSlice(ip)));
                     try o.type_map.put(o.gpa, t.toIntern(), ty);
 
                     o.builder.namedTypeSetBody(
@@ -4026,7 +4054,7 @@ pub const Object = struct {
             // Dummy function type; `updateEnumTagNameFunction` will replace it with the correct type.
             // TODO: change the builder API so we don't need to do this.
             try o.builder.fnType(.void, &.{}, .normal),
-            try o.builder.strtabStringFmt("__zig_tag_name_{f}", .{enum_ty.containerTypeName(ip).fmt(ip)}),
+            try o.builder.strtabStringFmt("__zig_tag_name_{f}", .{enum_ty.containerTypeName(ip).fqn.fmt(ip)}),
             toLlvmAddressSpace(.generic, zcu.getTarget()),
         );
         gop.value_ptr.* = llvm_function;
@@ -4108,7 +4136,7 @@ pub const Object = struct {
     }
 
     pub fn lazyAbiAlignment(o: *Object, pt: Zcu.PerThread, ty: Type) Allocator.Error!Builder.Alignment.Lazy {
-        const index = try o.type_pool.get(pt, .{ .llvm = o }, ty.toIntern());
+        const index = o.type_pool.get(pt, .{ .llvm = o }, ty.toIntern()) catch |err| return @errorCast(err);
         return o.lazy_abi_aligns.items[@backingInt(index)];
     }
 
@@ -4123,7 +4151,7 @@ pub const Object = struct {
             // Dummy function type; `updateIsNamedEnumValue` will replace it with the correct type.
             // TODO: change the builder API so we don't need to do this.
             try o.builder.fnType(.void, &.{}, .normal),
-            try o.builder.strtabStringFmt("__zig_is_named_enum_value_{f}", .{enum_ty.containerTypeName(ip).fmt(ip)}),
+            try o.builder.strtabStringFmt("__zig_is_named_enum_value_{f}", .{enum_ty.containerTypeName(ip).fqn.fmt(ip)}),
             toLlvmAddressSpace(.generic, zcu.getTarget()),
         );
         gop.value_ptr.* = llvm_function;

@@ -2286,20 +2286,58 @@ const incremental_targets = &[_]IncrementalTarget{
         },
         .backend = .selfhosted,
     },
-    // https://codeberg.org/ziglang/zig/issues/31773
-    // .{
-    //     .target = .{
-    //         .cpu_arch = .x86_64,
-    //         .os_tag = .windows,
-    //     },
-    //     .backend = .selfhosted,
-    // },
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .windows,
+        },
+        .backend = .selfhosted,
+    },
     .{
         .target = .{
             .cpu_arch = .wasm32,
             .os_tag = .wasi,
         },
         .backend = .selfhosted,
+    },
+};
+
+const debugger_matrix: []const DebuggerContext.TestTarget = &.{
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .none,
+        },
+        .pic = false,
+        .linker = .old,
+    },
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .none,
+        },
+        .pic = true,
+        .linker = .old,
+    },
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .none,
+        },
+        .pic = false,
+        .linker = .new,
+    },
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .none,
+        },
+        .pic = true,
+        .linker = .new,
     },
 };
 
@@ -2795,6 +2833,10 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
             continue;
 
         const target = &resolved_target.result;
+
+        if (target.cpu.arch.isAarch64() and target.os.tag == .openbsd and target.ofmt == .c) {
+            continue; // https://codeberg.org/ziglang/zig/issues/36766
+        }
 
         if (std.mem.eql(u8, options.name, "libc")) {
             // The libc API tests obviously need to link libc. So for test
@@ -3323,25 +3365,9 @@ pub fn addDebuggerTests(b: *std.Build, options: DebuggerContext.Options) ?*Step 
         .b = b,
         .options = options,
         .root_step = step,
+        .test_matrix = debugger_matrix,
     };
-    context.addTestsForTarget(&.{
-        .resolved = b.resolveTargetQuery(.{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .none,
-        }),
-        .pic = false,
-        .test_name_suffix = "x86_64-linux",
-    });
-    context.addTestsForTarget(&.{
-        .resolved = b.resolveTargetQuery(.{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .none,
-        }),
-        .pic = true,
-        .test_name_suffix = "x86_64-linux-pic",
-    });
+    context.addTests();
     return step;
 }
 
@@ -3416,15 +3442,16 @@ pub fn addIncrementalTests(
 
             if (options.skip_llvm and test_target.backend == .llvm) continue;
 
-            const triple_txt = resolved_target.query.zigTriple(b.allocator) catch @panic("OOM");
+            const target_str = b.fmt("{s}-{t}", .{
+                resolved_target.query.zigTriple(b.allocator) catch @panic("OOM"),
+                test_target.backend,
+            });
 
             if (options.test_target_filters.len > 0) {
                 for (options.test_target_filters) |filter| {
-                    if (std.mem.find(u8, triple_txt, filter) != null) break;
+                    if (std.mem.find(u8, target_str, filter) != null) break;
                 } else continue;
             }
-
-            const target_str = b.fmt("{s}-{t}", .{ triple_txt, test_target.backend });
 
             const run = b.addRunArtifact(incr_check);
             run.setName(b.fmt("incr-check {s} '{s}'", .{ target_str, entry.basename }));

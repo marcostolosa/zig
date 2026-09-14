@@ -12,9 +12,12 @@ const Io = std.Io;
 
 pub const NativePaths = @import("system/NativePaths.zig");
 
-pub const windows = @import("system/windows.zig");
 pub const darwin = @import("system/darwin.zig");
+pub const freebsd = @import("system/freebsd.zig");
 pub const linux = @import("system/linux.zig");
+pub const netbsd = @import("system/netbsd.zig");
+pub const openbsd = @import("system/openbsd.zig");
+pub const windows = @import("system/windows.zig");
 
 pub const Executor = union(enum) {
     native,
@@ -543,14 +546,16 @@ fn detectNativeCpuAndFeatures(io: Io, cpu_arch: Target.Cpu.Arch, os: Target.Os, 
     }
 
     switch (builtin.os.tag) {
+        .freebsd => return freebsd.detectNativeCpuAndFeatures(),
         .linux => return linux.detectNativeCpuAndFeatures(io),
         .macos => return darwin.macos.detectNativeCpuAndFeatures(),
+        .netbsd => return netbsd.detectNativeCpuAndFeatures(),
+        .openbsd => return openbsd.detectNativeCpuAndFeatures(),
         .windows => return windows.detectNativeCpuAndFeatures(),
         else => {},
     }
 
     // This architecture does not have CPU model & feature detection yet.
-    // See https://github.com/ziglang/zig/issues/4591
     return null;
 }
 
@@ -1198,6 +1203,9 @@ test {
     _ = NativePaths;
 
     _ = darwin;
+    _ = freebsd;
     _ = linux;
+    _ = netbsd;
+    _ = openbsd;
     _ = windows;
 }

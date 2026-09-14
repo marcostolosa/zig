@@ -109,6 +109,20 @@ pub const Class = enum(u3) {
     /// Then, aggregates containing fully-comptime types may themselves be either fully-comptime or
     /// partially-comptime; see the doc comment on `.partially_comptime` for details.
     fully_comptime,
+
+    pub fn hasRuntimeBits(class: Class) bool {
+        return switch (class) {
+            .no_possible_value, .one_possible_value, .fully_comptime => false,
+            .runtime, .partially_comptime => true,
+        };
+    }
+
+    pub fn comptimeOnly(class: Class) bool {
+        return switch (class) {
+            .no_possible_value, .one_possible_value, .runtime => false,
+            .partially_comptime, .fully_comptime => true,
+        };
+    }
 };
 
 /// Returns the `Class` for the type `ty`. Asserts that the layout of `ty` is resolved.
@@ -209,6 +223,7 @@ pub fn classify(start_ty: Type, zcu: *const Zcu) Class {
             const struct_obj = ip.loadStructType(cur_ty.toIntern());
             switch (struct_obj.layout) {
                 .auto, .@"extern" => {
+                    assert(struct_obj.want_layout);
                     zcu.assertUpToDate(.wrap(.{ .type_layout = cur_ty.toIntern() }));
                     break struct_obj.class;
                 },
@@ -222,6 +237,7 @@ pub fn classify(start_ty: Type, zcu: *const Zcu) Class {
             const union_obj = ip.loadUnionType(cur_ty.toIntern());
             switch (union_obj.layout) {
                 .auto, .@"extern" => {
+                    assert(union_obj.want_layout);
                     zcu.assertUpToDate(.wrap(.{ .type_layout = cur_ty.toIntern() }));
                     break union_obj.class;
                 },
@@ -232,8 +248,10 @@ pub fn classify(start_ty: Type, zcu: *const Zcu) Class {
             }
         },
         .enum_type => {
+            const enum_obj = ip.loadEnumType(cur_ty.toIntern());
+            assert(enum_obj.want_layout);
             zcu.assertUpToDate(.wrap(.{ .type_layout = cur_ty.toIntern() }));
-            cur_ty = .fromInterned(ip.loadEnumType(cur_ty.toIntern()).int_tag_type);
+            cur_ty = .fromInterned(enum_obj.int_tag_type);
             continue;
         },
 
@@ -589,8 +607,8 @@ pub fn print(ty: Type, writer: *std.Io.Writer, pt: Zcu.PerThread, ctx: ?*Compari
             .generic_poison => unreachable,
         },
         .struct_type => {
-            const name = ip.loadStructType(ty.toIntern()).name;
-            try writer.print("{f}", .{name.fmt(ip)});
+            const fqn = ip.loadStructType(ty.toIntern()).fqn;
+            try writer.print("{f}", .{fqn.fmt(ip)});
         },
         .tuple_type => |tuple| {
             if (tuple.types.len == 0) {
@@ -607,16 +625,16 @@ pub fn print(ty: Type, writer: *std.Io.Writer, pt: Zcu.PerThread, ctx: ?*Compari
         },
 
         .union_type => {
-            const name = ip.loadUnionType(ty.toIntern()).name;
-            try writer.print("{f}", .{name.fmt(ip)});
+            const fqn = ip.loadUnionType(ty.toIntern()).fqn;
+            try writer.print("{f}", .{fqn.fmt(ip)});
         },
         .opaque_type => {
-            const name = ip.loadOpaqueType(ty.toIntern()).name;
-            try writer.print("{f}", .{name.fmt(ip)});
+            const fqn = ip.loadOpaqueType(ty.toIntern()).fqn;
+            try writer.print("{f}", .{fqn.fmt(ip)});
         },
         .enum_type => {
-            const name = ip.loadEnumType(ty.toIntern()).name;
-            try writer.print("{f}", .{name.fmt(ip)});
+            const fqn = ip.loadEnumType(ty.toIntern()).fqn;
+            try writer.print("{f}", .{fqn.fmt(ip)});
         },
         .spirv_type => {
             const info = ip.loadSpirvType(ty.toIntern());
@@ -757,10 +775,7 @@ pub fn toValue(self: Type) Value {
 ///
 /// * All other types contain some runtime state, so have runtime bits and a non-zero ABI size.
 pub fn hasRuntimeBits(ty: Type, zcu: *const Zcu) bool {
-    return switch (ty.classify(zcu)) {
-        .no_possible_value, .one_possible_value, .fully_comptime => false,
-        .runtime, .partially_comptime => true,
-    };
+    return ty.classify(zcu).hasRuntimeBits();
 }
 
 /// Returns `true` iff the memory layout of `ty` is defined by the Zig language specification.
@@ -2191,10 +2206,7 @@ pub fn onePossibleValue(ty: Type, pt: Zcu.PerThread) !?Value {
 pub fn comptimeOnly(ty: Type, zcu: *const Zcu) bool {
     if (ty.toIntern() == .generic_poison_type) return false;
     if (ty.zigTypeTag(zcu) == .error_union and ty.errorUnionPayload(zcu).toIntern() == .generic_poison_type) return false;
-    return switch (ty.classify(zcu)) {
-        .no_possible_value, .one_possible_value, .runtime => false,
-        .partially_comptime, .fully_comptime => true,
-    };
+    return ty.classify(zcu).comptimeOnly();
 }
 
 pub fn isVector(ty: Type, zcu: *const Zcu) bool {
@@ -2681,8 +2693,8 @@ pub fn typeDeclSrcLine(ty: Type, zcu: *Zcu) ?u32 {
     };
     const inst = zir.instructions.get(@backingInt(info.inst));
     return switch (inst.tag) {
-        .struct_init, .struct_init_ref => zir.extraData(Zir.Inst.StructInit, inst.data.pl_node.payload_index).data.abs_line,
-        .struct_init_anon => zir.extraData(Zir.Inst.StructInitAnon, inst.data.pl_node.payload_index).data.abs_line,
+        .struct_init, .struct_init_ref => zir.extraData(Zir.Inst.StructInit, inst.data.pl_node.payload_index).data.src_line,
+        .struct_init_anon => zir.extraData(Zir.Inst.StructInitAnon, inst.data.pl_node.payload_index).data.src_line,
         .extended => switch (inst.data.extended.opcode) {
             .struct_decl => zir.getStructDecl(info.inst).src_line,
             .union_decl => zir.getUnionDecl(info.inst).src_line,
@@ -3008,14 +3020,29 @@ pub fn fieldPtrType(ptr_ty: Type, field_index: u32, pt: Zcu.PerThread) Allocator
     return pt.ptrType(field_ptr_info);
 }
 
-pub fn containerTypeName(ty: Type, ip: *const InternPool) InternPool.NullTerminatedString {
-    return switch (ip.indexToKey(ty.toIntern())) {
-        .struct_type => ip.loadStructType(ty.toIntern()).name,
-        .union_type => ip.loadUnionType(ty.toIntern()).name,
-        .enum_type => ip.loadEnumType(ty.toIntern()).name,
-        .opaque_type => ip.loadOpaqueType(ty.toIntern()).name,
+pub fn containerTypeName(ty: Type, ip: *const InternPool) struct {
+    name: InternPool.NullTerminatedString,
+    fqn: InternPool.NullTerminatedString,
+} {
+    switch (ip.indexToKey(ty.toIntern())) {
+        .struct_type => {
+            const loaded_struct = ip.loadStructType(ty.toIntern());
+            return .{ .name = loaded_struct.name, .fqn = loaded_struct.fqn };
+        },
+        .union_type => {
+            const loaded_union = ip.loadUnionType(ty.toIntern());
+            return .{ .name = loaded_union.name, .fqn = loaded_union.fqn };
+        },
+        .enum_type => {
+            const loaded_enum = ip.loadEnumType(ty.toIntern());
+            return .{ .name = loaded_enum.name, .fqn = loaded_enum.fqn };
+        },
+        .opaque_type => {
+            const loaded_opaque = ip.loadOpaqueType(ty.toIntern());
+            return .{ .name = loaded_opaque.name, .fqn = loaded_opaque.fqn };
+        },
         else => unreachable,
-    };
+    }
 }
 
 pub fn destructurable(ty: Type, zcu: *const Zcu) bool {

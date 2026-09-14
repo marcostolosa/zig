@@ -578,7 +578,7 @@ pub fn build(b: *std.Build) !void {
         .skip_linux = skip_linux,
         .skip_llvm = skip_llvm,
         .skip_libc = skip_libc,
-        .max_rss = 9_300_000_000,
+        .max_rss = 9_600_000_000,
     }));
 
     test_modules_step.dependOn(tests.addModuleTests(b, .{
@@ -649,7 +649,7 @@ pub fn build(b: *std.Build) !void {
         .skip_darwin = skip_darwin,
         .skip_linux = skip_linux,
         .skip_llvm = skip_llvm,
-        .max_rss = 3_300_000_000,
+        .max_rss = 4_300_000_000,
     }));
     test_step.dependOn(tests.addLinkTests(b, .{
         .test_target_filters = test_target_filters,
@@ -798,7 +798,7 @@ pub fn build(b: *std.Build) !void {
         .test_filters = test_filters,
         .test_target_filters = test_target_filters,
         .skip_wasm = skip_wasm,
-        .max_rss = 3_500_000_000,
+        .max_rss = 4_300_000_000,
     })) |test_libc_nsz_step| test_step.dependOn(test_libc_nsz_step);
 }
 

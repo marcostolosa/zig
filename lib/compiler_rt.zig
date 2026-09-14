@@ -170,7 +170,7 @@ comptime {
             symbol(&memset, "memset");
         }
         _ = @import("compiler_rt/memmove.zig");
-        symbol(&memcmp, "memcmp");
+        if (!builtin.link_libc) symbol(&memcmp, "memcmp");
         symbol(&bcmp, "bcmp");
         _ = @import("compiler_rt/ssp.zig");
         symbol(&strlen, "strlen");

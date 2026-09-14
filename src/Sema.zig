@@ -19504,9 +19504,6 @@ fn addConstantMaybeRef(sema: *Sema, val: Value, is_ref: bool) !Air.Inst.Ref {
 }
 
 fn zirFieldTypeRef(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.Inst.Ref {
-    const pt = sema.pt;
-    const zcu = pt.zcu;
-    const ip = &zcu.intern_pool;
     const inst_data = sema.code.instructions.items(.data)[@backingInt(inst)].pl_node;
     const extra = sema.code.extraData(Zir.Inst.FieldTypeRef, inst_data.payload_index).data;
     const ty_src = block.builtinCallArgSrc(inst_data.src_node, 0);
@@ -19514,20 +19511,6 @@ fn zirFieldTypeRef(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileErro
     const aggregate_ty = try sema.resolveType(block, ty_src, extra.container_type);
     const field_name = try sema.resolveConstStringIntern(block, field_src, extra.field_name, .{ .simple = .field_name });
     try sema.ensureLayoutResolved(aggregate_ty, ty_src, .field_queried);
-    if (aggregate_ty.zigTypeTag(zcu) == .vector) {
-        if (field_name.eqlSlice("len", ip)) return sema.failWithOwnedErrorMsg(block, msg: {
-            const msg = try sema.errMsg(field_src, "'len' is not a component of '{f}'", .{aggregate_ty.fmt(pt)});
-            errdefer msg.destroy(sema.gpa);
-            try sema.errNote(field_src, msg, "vector components are named 'x', 'y', 'z', 'w' or 'r', 'g', 'b', 'a'", .{});
-            break :msg msg;
-        });
-        var indices_buf: [4]u8 = undefined;
-        const indices = try sema.vectorComponentIndices(block, ty_src, field_name, field_src, aggregate_ty, &indices_buf);
-        if (indices.len != 1) return sema.fail(block, field_src, "swizzle '{f}' does not name a single component", .{
-            field_name.fmt(ip),
-        });
-        return Air.internedToRef(aggregate_ty.childType(zcu).toIntern());
-    }
     return sema.fieldType(block, aggregate_ty, field_name, field_src, ty_src);
 }
 

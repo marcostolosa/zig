@@ -1907,13 +1907,6 @@ test "swizzle usage" {
     try comptime S.doTheTest();
 }
 
-test "component field types" {
-    try expect(@FieldType(@Vector(4, f32), "x") == f32);
-    try expect(@FieldType(@Vector(4, f32), "a") == f32);
-    try expect(@FieldType(@Vector(1, u8), "x") == u8);
-    try expect(@FieldType(@Vector(2, *const u8), "y") == *const u8);
-}
-
 test "component access on various element types" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO

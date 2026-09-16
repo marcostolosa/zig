@@ -120,6 +120,55 @@ fn testIp4ParseAndRender(text: []const u8) !void {
     try testing.expectEqualStrings(text, without_port);
 }
 
+test "Ip4Address.fromAny with IPv4 address" {
+    try testIp4AddressFromAny("0.0.0.0", 0);
+    try testIp4AddressFromAny("255.255.255.255", 80);
+    try testIp4AddressFromAny("1.2.3.4", 443);
+    try testIp4AddressFromAny("123.255.0.91", 8080);
+    try testIp4AddressFromAny("127.0.0.1", 65535);
+}
+
+fn testIp4AddressFromAny(ip4_text: []const u8, port: u16) !void {
+    const valid_ip4_addr = try net.IpAddress.parseIp4(ip4_text, port);
+    const expected = valid_ip4_addr.ip4;
+
+    const result = net.Ip4Address.fromAny(valid_ip4_addr).?;
+
+    try testing.expectEqual(expected, result);
+}
+
+test "Ip4Address.fromAny with IPv4-mapped IPv6 address" {
+    try testIp4AddressFromAnyMapped("::ffff:0.0.0.0", "0.0.0.0", 0);
+    try testIp4AddressFromAnyMapped("::ffff:255.255.255.255", "255.255.255.255", 80);
+    try testIp4AddressFromAnyMapped("::ffff:1.2.3.4", "1.2.3.4", 443);
+    try testIp4AddressFromAnyMapped("::ffff:123.255.0.91", "123.255.0.91", 8080);
+    try testIp4AddressFromAnyMapped("::ffff:127.0.0.1", "127.0.0.1", 65535);
+}
+
+fn testIp4AddressFromAnyMapped(ip6_text: []const u8, ip4_text: []const u8, port: u16) !void {
+    const valid_ip6_addr = try net.IpAddress.parseIp6(ip6_text, port);
+    const valid_ip4_addr = try net.IpAddress.parseIp4(ip4_text, port);
+    const expected = valid_ip4_addr.ip4;
+
+    const result = net.Ip4Address.fromAny(valid_ip6_addr).?;
+
+    try testing.expectEqual(expected, result);
+}
+
+test "Ip4Address.fromAny returns null for non-mapped IPv6 address" {
+    try testIp4AddressFromAnyNull("2001:db8::1", 0);
+    try testIp4AddressFromAnyNull("::1", 8080);
+}
+
+fn testIp4AddressFromAnyNull(ip6_text: []const u8, port: u16) !void {
+    const invalid_ip6_addr = try net.IpAddress.parseIp6(ip6_text, port);
+    const expected = null;
+
+    const result = net.Ip4Address.fromAny(invalid_ip6_addr);
+
+    try testing.expectEqual(expected, result);
+}
+
 test "resolve DNS" {
     const io = testing.io;
 

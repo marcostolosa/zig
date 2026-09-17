@@ -1652,6 +1652,7 @@ pub const Module = struct {
     rpaths: Storage.UnionList(.flags, .rpaths, RPath),
     link_objects: Storage.UnionList(.flags, .link_objects, LinkObject),
     frameworks: Storage.FlagLengthPrefixedList(.flags, .frameworks, Framework),
+    patchable_function_entry: u32,
 
     pub const Optimize = enum(u3) {
         debug,
@@ -1872,12 +1873,11 @@ pub const PathDep = extern struct {
     pkg: Package.OptionalIndex,
 
     pub const Flags = packed struct(u32) {
-        mode: Mode,
+        is_directory: bool,
+        metadata_only: bool,
         base: LazyPath.Relative.Base,
-        _: u16 = 0,
+        _: u22 = 0,
     };
-
-    pub const Mode = enum(u8) { directory, contents, metadata };
 };
 
 pub const InstallDestDir = enum(u32) {

@@ -892,7 +892,7 @@ fn lowerZigArgs(
         var args_hash: [Sha256.digest_length]u8 = undefined;
         Sha256.hash(args, &args_hash, .{});
         var args_hex_hash: [Sha256.digest_length * 2]u8 = undefined;
-        _ = std.fmt.bufPrint(&args_hex_hash, "{x}", .{&args_hash}) catch unreachable;
+        _ = std.mem.print(&args_hex_hash, "{x}", .{&args_hash}) catch unreachable;
 
         const args_file = "args" ++ Dir.path.sep_str ++ args_hex_hash;
         local_cache_root.handle.access(io, args_file, .{}) catch {
@@ -1277,6 +1277,14 @@ fn appendModuleFlags(
             zig_args.appendAssumeCapacity("-mcmodel");
             zig_args.appendAssumeCapacity(@tagName(m.flags.code_model));
         }
+    }
+
+    if (m.patchable_function_entry > 0) {
+        const count = m.patchable_function_entry;
+        try zig_args.append(
+            gpa,
+            try arena.print("-fpatchable-function-entry={d}", .{count}),
+        );
     }
 
     if (m.resolved_target.get(conf)) |resolved_target| {

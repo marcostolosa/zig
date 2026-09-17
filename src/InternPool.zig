@@ -2596,6 +2596,7 @@ pub const Key = union(enum) {
         arg_values: []const Index,
         result: Index,
         branch_count: u32,
+        branch_quota: u32,
     };
 
     pub fn hash32(key: Key, ip: *const InternPool) u32 {
@@ -3206,9 +3207,10 @@ pub const LoadedStructType = struct {
     captures: CaptureValue.Slice,
     is_reified: bool,
 
-    // TODO: the non-fqn will be needed by the new dwarf structure
     /// The name of this struct type.
     name: NullTerminatedString,
+    /// The fully-qualified name of this struct type.
+    fqn: NullTerminatedString,
     /// If this is a declared type with the `.parent` name strategy, this is the `Nav` it was named after.
     /// Otherwise, or if this is a file's root struct type, this is `.none`.
     name_nav: Nav.Index.Optional,
@@ -3389,9 +3391,10 @@ pub const LoadedUnionType = struct {
     captures: CaptureValue.Slice,
     is_reified: bool,
 
-    // TODO: the non-fqn will be needed by the new dwarf structure
     /// The name of this union type.
     name: NullTerminatedString,
+    /// The fully-qualified name of this union type.
+    fqn: NullTerminatedString,
     /// If this is a declared type with the `.parent` name strategy, this is the `Nav` it was named after.
     /// Otherwise, this is `.none`.
     name_nav: Nav.Index.Optional,
@@ -3456,9 +3459,10 @@ pub const LoadedEnumType = struct {
     owner_union: Index,
     is_reified: bool,
 
-    // TODO: the non-fqn will be needed by the new dwarf structure
     /// The name of this enum type.
     name: NullTerminatedString,
+    /// The fully-qualified name of this enum type.
+    fqn: NullTerminatedString,
     /// If this is a declared type with the `.parent` name strategy, this is the `Nav` it was named after.
     /// Otherwise, this is `.none`.
     name_nav: Nav.Index.Optional,
@@ -3518,9 +3522,10 @@ pub const LoadedOpaqueType = struct {
     zir_index: TrackedInst.Index,
     captures: CaptureValue.Slice,
 
-    // TODO: the non-fqn will be needed by the new dwarf structure
     /// The name of this opaque type.
     name: NullTerminatedString,
+    /// The fully-qualified name of this opaque type.
+    fqn: NullTerminatedString,
     /// If this is a declared type with the `.parent` name strategy, this is the `Nav` it was named after.
     /// Otherwise, this is `.none`.
     name_nav: Nav.Index.Optional,
@@ -3606,6 +3611,7 @@ pub fn loadStructType(ip: *const InternPool, index: Index) LoadedStructType {
                 .captures = captures,
                 .is_reified = extra.data.flags.any_captures == .reified,
                 .name = extra.data.name,
+                .fqn = extra.data.fqn,
                 .name_nav = extra.data.name_nav,
                 .namespace = extra.data.namespace,
                 .layout = switch (extra.data.flags.layout) {
@@ -3669,6 +3675,7 @@ pub fn loadStructType(ip: *const InternPool, index: Index) LoadedStructType {
         .captures = captures,
         .is_reified = extra.data.bits.captures_len == .reified,
         .name = extra.data.name,
+        .fqn = extra.data.fqn,
         .name_nav = extra.data.name_nav,
         .namespace = extra.data.namespace,
         .layout = .@"packed",
@@ -3744,6 +3751,7 @@ pub fn loadUnionType(ip: *const InternPool, index: Index) LoadedUnionType {
                 .captures = captures,
                 .is_reified = extra.data.flags.any_captures == .reified,
                 .name = extra.data.name,
+                .fqn = extra.data.fqn,
                 .name_nav = extra.data.name_nav,
                 .namespace = extra.data.namespace,
                 .layout = switch (extra.data.flags.layout) {
@@ -3799,6 +3807,7 @@ pub fn loadUnionType(ip: *const InternPool, index: Index) LoadedUnionType {
         .captures = captures,
         .is_reified = extra.data.bits.captures_len == .reified,
         .name = extra.data.name,
+        .fqn = extra.data.fqn,
         .name_nav = extra.data.name_nav,
         .namespace = extra.data.namespace,
         .layout = .@"packed",
@@ -3879,6 +3888,7 @@ pub fn loadEnumType(ip: *const InternPool, index: Index) LoadedEnumType {
         .is_reified = extra.data.bits.captures_len == .reified,
         .owner_union = owner_union,
         .name = extra.data.name,
+        .fqn = extra.data.fqn,
         .name_nav = extra.data.name_nav,
         .namespace = extra.data.namespace,
         .int_tag_type = extra.data.int_tag_type,
@@ -3905,6 +3915,7 @@ pub fn loadOpaqueType(ip: *const InternPool, index: Index) LoadedOpaqueType {
             .len = extra.data.captures_len,
         },
         .name = extra.data.name,
+        .fqn = extra.data.fqn,
         .name_nav = extra.data.name_nav,
         .namespace = extra.data.namespace,
     };
@@ -5186,7 +5197,7 @@ pub const Tag = enum(u8) {
                 param_comptime_bits: ?[]u32,
                 param_noalias_bits: ?[]u32,
                 spirv_kernel_options: ?extern struct { x: u32, y: u32, z: u32 },
-                spirv_mesh_options: ?extern struct { max_primitives: u32, max_vertices: u32 },
+                spirv_mesh_options: ?extern struct { max_primitives: u32, max_vertices: u32, x: u32, y: u32, z: u32 },
                 param_types: []Index,
             },
             .config = .{
@@ -5537,6 +5548,7 @@ pub const Tag = enum(u8) {
         zir_index: TrackedInst.Index,
 
         name: NullTerminatedString,
+        fqn: NullTerminatedString,
         name_nav: Nav.Index.Optional,
         namespace: NamespaceIndex,
 
@@ -5579,6 +5591,7 @@ pub const Tag = enum(u8) {
         bits: Bits,
 
         name: NullTerminatedString,
+        fqn: NullTerminatedString,
         name_nav: Nav.Index.Optional,
         namespace: NamespaceIndex,
 
@@ -5613,6 +5626,7 @@ pub const Tag = enum(u8) {
         zir_index: TrackedInst.Index,
 
         name: NullTerminatedString,
+        fqn: NullTerminatedString,
         name_nav: Nav.Index.Optional,
         namespace: NamespaceIndex,
         /// The enum that provides the list of field names and values.
@@ -5672,6 +5686,7 @@ pub const Tag = enum(u8) {
         bits: Bits,
 
         name: NullTerminatedString,
+        fqn: NullTerminatedString,
         name_nav: Nav.Index.Optional,
         namespace: NamespaceIndex,
 
@@ -5707,6 +5722,7 @@ pub const Tag = enum(u8) {
         bits: Bits,
 
         name: NullTerminatedString,
+        fqn: NullTerminatedString,
         name_nav: Nav.Index.Optional,
         namespace: NamespaceIndex,
 
@@ -5734,6 +5750,7 @@ pub const Tag = enum(u8) {
         captures_len: u32,
 
         name: NullTerminatedString,
+        fqn: NullTerminatedString,
         name_nav: Nav.Index.Optional,
         namespace: NamespaceIndex,
     };
@@ -6272,6 +6289,7 @@ pub const MemoizedCall = struct {
     args_len: u32,
     result: Index,
     branch_count: u32,
+    branch_quota: u32,
 };
 
 pub fn init(ip: *InternPool, gpa: Allocator, io: Io, available_threads: usize) !void {
@@ -6913,6 +6931,7 @@ pub fn indexToKey(ip: *const InternPool, index: Index) Key {
                 .arg_values = @ptrCast(extra_list.view().items(.@"0")[extra.end..][0..extra.data.args_len]),
                 .result = extra.data.result,
                 .branch_count = extra.data.branch_count,
+                .branch_quota = extra.data.branch_quota,
             } };
         },
     };
@@ -7992,6 +8011,7 @@ pub fn get(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.PerThread.Id, key: 
                     .args_len = @intCast(memoized_call.arg_values.len),
                     .result = memoized_call.result,
                     .branch_count = memoized_call.branch_count,
+                    .branch_quota = memoized_call.branch_quota,
                 }),
             });
             extra.appendSliceAssumeCapacity(.{@ptrCast(memoized_call.arg_values)});
@@ -8059,6 +8079,7 @@ pub fn getDeclaredStructType(
                     .want_layout = false,
                 },
                 .name = undefined, // set by `finish`
+                .fqn = undefined, // set by `finish`
                 .name_nav = undefined, // set by `finish`
                 .namespace = undefined, // set by `finish`
                 .backing_int_type = .none,
@@ -8082,6 +8103,7 @@ pub fn getDeclaredStructType(
                 .index = gop.put(),
                 .tid = tid,
                 .type_name_index = extra_index + std.meta.fieldIndex(Tag.TypeStructPacked, "name").?,
+                .type_fqn_index = extra_index + std.meta.fieldIndex(Tag.TypeStructPacked, "fqn").?,
                 .name_nav_index = extra_index + std.meta.fieldIndex(Tag.TypeStructPacked, "name_nav").?,
                 .namespace_index = extra_index + std.meta.fieldIndex(Tag.TypeStructPacked, "namespace").?,
                 .field_names = undefined,
@@ -8107,6 +8129,7 @@ pub fn getDeclaredStructType(
     const extra_index = addExtraAssumeCapacity(extra, Tag.TypeStruct{
         .zir_index = ini.zir_index,
         .name = undefined, // set by `finish`
+        .fqn = undefined, // set by `finish`
         .name_nav = undefined, // set by `finish`
         .namespace = undefined, // set by `finish`
         .fields_len = ini.fields_len,
@@ -8150,6 +8173,7 @@ pub fn getDeclaredStructType(
         .index = gop.put(),
         .tid = tid,
         .type_name_index = extra_index + std.meta.fieldIndex(Tag.TypeStruct, "name").?,
+        .type_fqn_index = extra_index + std.meta.fieldIndex(Tag.TypeStruct, "fqn").?,
         .name_nav_index = extra_index + std.meta.fieldIndex(Tag.TypeStruct, "name_nav").?,
         .namespace_index = extra_index + std.meta.fieldIndex(Tag.TypeStruct, "namespace").?,
         .field_names = undefined,
@@ -8203,6 +8227,7 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
                     .want_layout = false,
                 },
                 .name = undefined, // set by `finish`
+                .fqn = undefined, // set by `finish`
                 .name_nav = undefined, // set by `finish`
                 .namespace = undefined, // set by `finish`
                 .backing_int_type = ini.packed_backing_int_type,
@@ -8229,6 +8254,7 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
                 .index = gop.put(),
                 .tid = tid,
                 .type_name_index = extra_index + std.meta.fieldIndex(Tag.TypeStructPacked, "name").?,
+                .type_fqn_index = extra_index + std.meta.fieldIndex(Tag.TypeStructPacked, "fqn").?,
                 .name_nav_index = extra_index + std.meta.fieldIndex(Tag.TypeStructPacked, "name_nav").?,
                 .namespace_index = extra_index + std.meta.fieldIndex(Tag.TypeStructPacked, "namespace").?,
                 .field_names = .{ .tid = tid, .start = field_names_start, .len = ini.fields_len },
@@ -8256,6 +8282,7 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
     const extra_index = addExtraAssumeCapacity(extra, Tag.TypeStruct{
         .zir_index = ini.zir_index,
         .name = undefined, // set by `finish`
+        .fqn = undefined, // set by `finish`
         .name_nav = undefined, // set by `finish`
         .namespace = undefined, // set by `finish`
         .fields_len = ini.fields_len,
@@ -8301,6 +8328,7 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
         .index = gop.put(),
         .tid = tid,
         .type_name_index = extra_index + std.meta.fieldIndex(Tag.TypeStruct, "name").?,
+        .type_fqn_index = extra_index + std.meta.fieldIndex(Tag.TypeStruct, "fqn").?,
         .name_nav_index = extra_index + std.meta.fieldIndex(Tag.TypeStruct, "name_nav").?,
         .namespace_index = extra_index + std.meta.fieldIndex(Tag.TypeStruct, "namespace").?,
         .field_names = .{ .tid = tid, .start = field_names_start, .len = ini.fields_len },
@@ -8374,6 +8402,7 @@ pub fn getDeclaredUnionType(
                     .want_layout = false,
                 },
                 .name = undefined, // set by `finish`
+                .fqn = undefined, // set by `finish`
                 .name_nav = undefined, // set by `finish`
                 .namespace = undefined, // set by `finish`
                 .backing_int_type = .none,
@@ -8393,6 +8422,7 @@ pub fn getDeclaredUnionType(
                 .index = gop.put(),
                 .tid = tid,
                 .type_name_index = extra_index + std.meta.fieldIndex(Tag.TypeUnionPacked, "name").?,
+                .type_fqn_index = extra_index + std.meta.fieldIndex(Tag.TypeUnionPacked, "fqn").?,
                 .name_nav_index = extra_index + std.meta.fieldIndex(Tag.TypeUnionPacked, "name_nav").?,
                 .namespace_index = extra_index + std.meta.fieldIndex(Tag.TypeUnionPacked, "namespace").?,
                 .field_names = undefined,
@@ -8413,6 +8443,7 @@ pub fn getDeclaredUnionType(
     const extra_index = addExtraAssumeCapacity(extra, Tag.TypeUnion{
         .zir_index = ini.zir_index,
         .name = undefined, // set by `finish`
+        .fqn = undefined, // set by `finish`
         .name_nav = undefined, // set by `finish`
         .namespace = undefined, // set by `finish`
         .enum_tag_type = .none,
@@ -8447,6 +8478,7 @@ pub fn getDeclaredUnionType(
         .index = gop.put(),
         .tid = tid,
         .type_name_index = extra_index + std.meta.fieldIndex(Tag.TypeUnion, "name").?,
+        .type_fqn_index = extra_index + std.meta.fieldIndex(Tag.TypeUnion, "fqn").?,
         .name_nav_index = extra_index + std.meta.fieldIndex(Tag.TypeUnion, "name_nav").?,
         .namespace_index = extra_index + std.meta.fieldIndex(Tag.TypeUnion, "namespace").?,
         .field_names = undefined,
@@ -8497,6 +8529,7 @@ pub fn getReifiedUnionType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Per
                     .want_layout = false,
                 },
                 .name = undefined, // set by `finish`
+                .fqn = undefined, // set by `finish`
                 .name_nav = undefined, // set by `finish`
                 .namespace = undefined, // set by `finish`
                 .backing_int_type = ini.packed_backing_int_type,
@@ -8519,6 +8552,7 @@ pub fn getReifiedUnionType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Per
                 .index = gop.put(),
                 .tid = tid,
                 .type_name_index = extra_index + std.meta.fieldIndex(Tag.TypeUnionPacked, "name").?,
+                .type_fqn_index = extra_index + std.meta.fieldIndex(Tag.TypeUnionPacked, "fqn").?,
                 .name_nav_index = extra_index + std.meta.fieldIndex(Tag.TypeUnionPacked, "name_nav").?,
                 .namespace_index = extra_index + std.meta.fieldIndex(Tag.TypeUnionPacked, "namespace").?,
                 .field_names = .{ .tid = tid, .start = field_names_start, .len = ini.fields_len },
@@ -8539,6 +8573,7 @@ pub fn getReifiedUnionType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Per
     const extra_index = addExtraAssumeCapacity(extra, Tag.TypeUnion{
         .zir_index = ini.zir_index,
         .name = undefined, // set by `finish`
+        .fqn = undefined, // set by `finish`
         .name_nav = undefined, // set by `finish`
         .namespace = undefined, // set by `finish`
         .enum_tag_type = ini.enum_tag_type,
@@ -8574,6 +8609,7 @@ pub fn getReifiedUnionType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Per
         .index = gop.put(),
         .tid = tid,
         .type_name_index = extra_index + std.meta.fieldIndex(Tag.TypeUnion, "name").?,
+        .type_fqn_index = extra_index + std.meta.fieldIndex(Tag.TypeUnion, "fqn").?,
         .name_nav_index = extra_index + std.meta.fieldIndex(Tag.TypeUnion, "name_nav").?,
         .namespace_index = extra_index + std.meta.fieldIndex(Tag.TypeUnion, "namespace").?,
         .field_names = .{ .tid = tid, .start = field_names_start, .len = ini.fields_len },
@@ -8650,6 +8686,7 @@ pub fn getDeclaredEnumType(
             .want_layout = false,
         },
         .name = undefined, // set by `finish`
+        .fqn = undefined, // set by `finish`
         .name_nav = undefined, // set by `finish`
         .namespace = undefined, // set by `finish`
         .int_tag_type = .none,
@@ -8669,6 +8706,7 @@ pub fn getDeclaredEnumType(
         .index = gop.put(),
         .tid = tid,
         .type_name_index = extra_index + std.meta.fieldIndex(Tag.TypeEnum, "name").?,
+        .type_fqn_index = extra_index + std.meta.fieldIndex(Tag.TypeEnum, "fqn").?,
         .name_nav_index = extra_index + std.meta.fieldIndex(Tag.TypeEnum, "name_nav").?,
         .namespace_index = extra_index + std.meta.fieldIndex(Tag.TypeEnum, "namespace").?,
         .field_names = undefined,
@@ -8725,6 +8763,7 @@ pub fn getReifiedEnumType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.PerT
             .want_layout = false,
         },
         .name = undefined, // set by `finish`
+        .fqn = undefined, // set by `finish`
         .name_nav = undefined, // set by `finish`
         .namespace = undefined, // set by `finish`
         .int_tag_type = ini.int_tag_type,
@@ -8746,6 +8785,7 @@ pub fn getReifiedEnumType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.PerT
         .index = gop.put(),
         .tid = tid,
         .type_name_index = extra_index + std.meta.fieldIndex(Tag.TypeEnum, "name").?,
+        .type_fqn_index = extra_index + std.meta.fieldIndex(Tag.TypeEnum, "fqn").?,
         .name_nav_index = extra_index + std.meta.fieldIndex(Tag.TypeEnum, "name_nav").?,
         .namespace_index = extra_index + std.meta.fieldIndex(Tag.TypeEnum, "namespace").?,
         .field_names = .{ .tid = tid, .start = field_names_start, .len = ini.fields_len },
@@ -8824,6 +8864,7 @@ pub fn getGeneratedEnumTagType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu
             .want_layout = false,
         },
         .name = undefined, // set by `finish`
+        .fqn = undefined, // set by `finish`
         .name_nav = undefined, // set by `finish`
         .namespace = undefined, // set by `finish`
         .int_tag_type = .none,
@@ -8845,6 +8886,7 @@ pub fn getGeneratedEnumTagType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu
         .index = gop.put(),
         .tid = tid,
         .type_name_index = extra_index + std.meta.fieldIndex(Tag.TypeEnum, "name").?,
+        .type_fqn_index = extra_index + std.meta.fieldIndex(Tag.TypeEnum, "fqn").?,
         .name_nav_index = extra_index + std.meta.fieldIndex(Tag.TypeEnum, "name_nav").?,
         .namespace_index = extra_index + std.meta.fieldIndex(Tag.TypeEnum, "namespace").?,
         .field_names = undefined,
@@ -8876,6 +8918,7 @@ pub fn getDeclaredOpaqueType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.P
         .zir_index = ini.zir_index,
         .captures_len = @intCast(ini.captures.len),
         .name = undefined, // set by `finish`
+        .fqn = undefined, // set by `finish`
         .name_nav = undefined, // set by `finish`
         .namespace = undefined, // set by `finish`
     });
@@ -8888,6 +8931,7 @@ pub fn getDeclaredOpaqueType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.P
         .index = gop.put(),
         .tid = tid,
         .type_name_index = extra_index + std.meta.fieldIndex(Tag.TypeOpaque, "name").?,
+        .type_fqn_index = extra_index + std.meta.fieldIndex(Tag.TypeOpaque, "fqn").?,
         .name_nav_index = extra_index + std.meta.fieldIndex(Tag.TypeOpaque, "name_nav").?,
         .namespace_index = extra_index + std.meta.fieldIndex(Tag.TypeOpaque, "namespace").?,
         .field_names = undefined,
@@ -8902,6 +8946,7 @@ pub const WipContainerType = struct {
     index: Index,
     tid: Zcu.PerThread.Id,
     type_name_index: u32,
+    type_fqn_index: u32,
     name_nav_index: u32,
     namespace_index: u32,
 
@@ -8919,6 +8964,7 @@ pub const WipContainerType = struct {
         wip: WipContainerType,
         ip: *InternPool,
         type_name: NullTerminatedString,
+        type_fqn: NullTerminatedString,
         /// This should be the `Nav` we are named after if we use the `.parent` name strategy; `.none` otherwise.
         /// This is also `.none` if we use `.parent` because we are the root struct type for a file.
         name_nav: Nav.Index.Optional,
@@ -8926,6 +8972,7 @@ pub const WipContainerType = struct {
         const extra = ip.getLocalShared(wip.tid).extra.acquire();
         const extra_items = extra.view().items(.@"0");
         extra_items[wip.type_name_index] = @backingInt(type_name);
+        extra_items[wip.type_fqn_index] = @backingInt(type_fqn);
         extra_items[wip.name_nav_index] = @backingInt(name_nav);
     }
 
@@ -9093,6 +9140,9 @@ pub fn getFuncType(
         .spirv_mesh => |mesh| extra.appendSliceAssumeCapacity(.{&.{
             mesh.max_primitives,
             mesh.max_vertices,
+            mesh.x,
+            mesh.y,
+            mesh.z,
         }}),
         else => {},
     };
@@ -9496,6 +9546,7 @@ pub const GetFuncInstanceKey = struct {
     is_noinline: bool,
     generic_owner: Index,
     inferred_error_set: bool,
+    anon_name_counter: *u32,
 };
 
 pub fn getFuncInstance(
@@ -9573,6 +9624,7 @@ pub fn getFuncInstance(
         generic_owner,
         func_index,
         func_extra_index,
+        arg.anon_name_counter,
     );
     return gop.put();
 }
@@ -9724,6 +9776,7 @@ fn getFuncInstanceIes(
         generic_owner,
         func_index,
         func_extra_index,
+        arg.anon_name_counter,
     );
 
     func_gop.putFinal(func_index);
@@ -9742,14 +9795,16 @@ fn finishFuncInstance(
     generic_owner: Index,
     func_index: Index,
     func_extra_index: u32,
+    anon_name_counter: *u32,
 ) Allocator.Error!void {
     const fn_owner_nav = ip.getNav(ip.funcDeclInfo(generic_owner).owner_nav);
     const fn_namespace = fn_owner_nav.analysis.?.namespace;
 
     // TODO: improve this name
-    const nav_name = try ip.getOrPutStringFmt(gpa, io, tid, "{f}__anon_{d}", .{
-        fn_owner_nav.name.fmt(ip), @backingInt(func_index),
+    const nav_name = try ip.getOrPutStringFmt(gpa, io, tid, "{f}__func_{d}", .{
+        fn_owner_nav.name.fmt(ip), anon_name_counter.*,
     }, .no_embedded_nulls);
+    anon_name_counter.* += 1;
     const nav_fqn = try ip.namespacePtr(fn_namespace).internFullyQualifiedName(ip, gpa, io, tid, nav_name);
     const nav_index = try ip.createNav(gpa, io, tid, nav_name, nav_fqn, .{
         .type = ip.typeOf(func_index),
@@ -11377,7 +11432,7 @@ pub fn getOrPutStringFmt(
     const len: u32 = @intCast(std.fmt.count(format_z, args));
     const string_bytes = ip.getLocal(tid).getMutableStringBytes(gpa, io);
     const slice = try string_bytes.addManyAsSlice(len);
-    assert((std.fmt.bufPrint(slice[0], format_z, args) catch unreachable).len == len);
+    assert((std.mem.print(slice[0], format_z, args) catch unreachable).len == len);
     return ip.getOrPutTrailingString(gpa, io, tid, len, embedded_nulls);
 }
 
@@ -12580,10 +12635,10 @@ const PackedCallingConvention = packed struct(u18) {
         };
     }
 
-    fn extraLen(cc: PackedCallingConvention) u2 {
+    fn extraLen(cc: PackedCallingConvention) u3 {
         return switch (cc.tag) {
             .spirv_kernel, .spirv_task => 3,
-            .spirv_mesh => 2,
+            .spirv_mesh => 5,
             else => 0,
         };
     }
@@ -12639,6 +12694,9 @@ const PackedCallingConvention = packed struct(u18) {
                         .stage_output = @fromBackingInt(@intCast(cc.extra)),
                         .max_primitives = trailing[0],
                         .max_vertices = trailing[1],
+                        .x = trailing[2],
+                        .y = trailing[3],
+                        .z = trailing[4],
                     },
                     else => comptime unreachable,
                 },

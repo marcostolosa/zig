@@ -34,7 +34,8 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                     .cwd_relative => .cwd,
                     .relative => |r| r.base,
                 },
-                .mode = src.mode,
+                .is_directory = src.is_directory,
+                .metadata_only = src.metadata_only,
             },
             .sub = switch (src.lazy_path) {
                 .src_path => |sp| try wc.addString(sp.sub_path),
@@ -1243,6 +1244,7 @@ fn addModule(s: *Serialize, m: *std.Build.Module) !Configuration.Module.Index {
         .rpaths = .init(rpaths),
         .link_objects = .init(link_objects),
         .frameworks = .{ .slice = frameworks },
+        .patchable_function_entry = m.patchable_function_entry,
     });
 
     // The import table is the only place that modules can form dependency

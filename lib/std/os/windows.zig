@@ -3645,14 +3645,12 @@ pub fn teb() *TEB {
 }
 
 pub fn peb() *PEB {
-    if (builtin.zig_backend == .stage2_c) switch (native_arch) {
-        .x86, .x86_64 => return @ptrCast(@alignCast(struct {
-            /// This is a workaround for the C backend until zig has the ability to put
-            /// C code in inline assembly.
-            extern fn zig_windows_peb() callconv(.c) *anyopaque;
-        }.zig_windows_peb())),
-        else => {},
-    } else switch (native_arch) {
+    if (builtin.zig_backend == .stage2_c) return @ptrCast(@alignCast(struct {
+        /// This is a workaround for the C backend until zig has the ability to put
+        /// C code in inline assembly.
+        extern fn zig_windows_peb() callconv(.c) *anyopaque;
+    }.zig_windows_peb()));
+    switch (native_arch) {
         .aarch64 => {
             comptime assert(@offsetOf(TEB, "ProcessEnvironmentBlock") == 0x60);
             return asm (
@@ -5006,7 +5004,7 @@ pub const TEB = extern struct {
 };
 
 comptime {
-    // XXX: Without this check we cannot use `std.Io.Writer` on 16-bit platforms. `std.fmt.bufPrint` will hit the unreachable in `PEB.GdiHandleBuffer` without this guard.
+    // XXX: Without this check we cannot use `std.Io.Writer` on 16-bit platforms. `std.mem.print` will hit the unreachable in `PEB.GdiHandleBuffer` without this guard.
     if (builtin.os.tag == .windows) {
         // Offsets taken from WinDbg info and Geoff Chappell[1] (RIP)
         // [1]: https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/api/pebteb/teb/index.htm

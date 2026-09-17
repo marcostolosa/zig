@@ -319,7 +319,7 @@ pub fn addCompile(
 pub fn addFromDir(ctx: *Cases, dir: Io.Dir, path_from_root: []const u8, b: *std.Build) void {
     var current_file: []const u8 = "none";
     ctx.addFromDirInner(dir, path_from_root, &current_file, b) catch |err| {
-        std.debug.panicExtra(@returnAddress(), "test harness failed to process file {q}: {t}\n", .{
+        std.debug.panicExtra(@returnAddress(), "test harness failed to process file {q}: {t}", .{
             current_file, err,
         });
     };
@@ -348,7 +348,7 @@ fn addFromDirInner(
                 try filenames.append(ctx.arena, try ctx.arena.dupe(u8, entry.path));
             },
             .directory => {
-                b.dependOnDirectory(b.path(b.pathJoin(&.{ path_from_root, entry.path })));
+                b.dependOnDirectoryContents(b.path(b.pathJoin(&.{ path_from_root, entry.path })));
             },
             else => continue,
         }
@@ -677,25 +677,7 @@ const TestManifestConfigDefaults = struct {
             if (@"type" == .@"error") {
                 return "native";
             }
-            return comptime blk: {
-                var defaults: []const u8 = "";
-                // TODO should we only return "mainstream" targets by default here?
-                // TODO we should also specify ABIs explicitly as the backends are
-                // getting more and more complete
-                // Linux
-                for (&[_][]const u8{ "x86_64", "arm", "aarch64" }) |arch| {
-                    defaults = defaults ++ arch ++ "-linux" ++ ",";
-                }
-                // macOS
-                for (&[_][]const u8{"aarch64"}) |arch| {
-                    defaults = defaults ++ arch ++ "-macos" ++ ",";
-                }
-                // Windows
-                defaults = defaults ++ "x86_64-windows" ++ ",";
-                // Wasm
-                defaults = defaults ++ "wasm32-wasi";
-                break :blk defaults;
-            };
+            return "native,wasm32-wasi";
         } else if (std.mem.eql(u8, key, "output_mode")) {
             return switch (@"type") {
                 .@"error" => "Obj",

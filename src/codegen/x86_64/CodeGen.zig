@@ -821,7 +821,8 @@ const InstTracking = struct {
         target: InstTracking,
     ) !void {
         const ty = function.typeOfIndex(inst);
-        if ((self.long == .none or self.long == .reserved_frame) and target.long == .load_frame)
+        if ((self.long == .none or self.long == .reserved_frame) and
+            target.long == .load_frame and target.short != .load_frame)
             try function.genCopy(ty, target.long, self.short, .{});
         try function.genCopy(ty, target.short, self.short, .{});
     }
@@ -1072,20 +1073,12 @@ pub fn generate(
         );
     }
 
-    function.gen(&file.zir.?, func_zir.inst, func.comptime_args, call_info.air_arg_count) catch |err| switch (err) {
+    function.gen(&file.zir.?, func_zir.inst, &func, call_info.air_arg_count) catch |err| switch (err) {
         error.OutOfRegisters => return function.fail("ran out of registers (Zig compiler bug)", .{}),
         else => |e| return e,
     };
 
-    // Drop them off at the rbrace.
-    if (!mod.strip) _ = try function.addInst(.{
-        .tag = .pseudo,
-        .ops = .pseudo_dbg_line_line_column,
-        .data = .{ .line_column = .{
-            .line = func.rbrace_line,
-            .column = func.rbrace_column,
-        } },
-    });
+    if (!mod.strip) _ = try function.asmPseudo(.pseudo_dbg_end_none);
 
     try function.mir_extra.shrinkToLen(gpa);
     try function.mir_string_bytes.shrinkToLen(gpa);
@@ -1120,7 +1113,7 @@ pub fn generateLazy(
     atom_id: link.File.AtomId,
     w: *std.Io.Writer,
     debug_output: link.File.DebugInfoOutput,
-) codegen.Error!void {
+) link.EmitError!void {
     const gpa = pt.zcu.gpa;
     // This function is for generating global code, so we use the root module.
     const mod = pt.zcu.comp.root_mod;
@@ -1228,18 +1221,18 @@ fn formatWipMir(data: FormatWipMirData, w: *Writer) Writer.Error!void {
         switch (mir_inst.ops) {
             else => unreachable,
             .pseudo_dbg_prologue_end_none,
-            .pseudo_dbg_epilogue_begin_none,
             .pseudo_dbg_enter_block_none,
             .pseudo_dbg_leave_block_none,
+            .pseudo_dbg_end_none,
             .pseudo_dbg_arg_none,
             .pseudo_dbg_var_args_none,
             .pseudo_dbg_var_none,
             .pseudo_dead_none,
             => {},
-            .pseudo_dbg_line_stmt_line_column, .pseudo_dbg_line_line_column => try w.print(
-                " {[line]d}, {[column]d}",
-                mir_inst.data.line_column,
-            ),
+            .pseudo_dbg_line_stmt_line_column,
+            .pseudo_dbg_line_line_column,
+            .pseudo_dbg_epilogue_begin_line_column,
+            => try w.print(" {[line]d}, {[column]d}", mir_inst.data.line_column),
             .pseudo_dbg_enter_inline_func, .pseudo_dbg_leave_inline_func => try w.print(" {f}", .{
                 ip.getNav(ip.indexToKey(mir_inst.data.ip_index).func.owner_nav).name.fmt(ip),
             }),
@@ -2069,12 +2062,17 @@ fn gen(
     self: *CodeGen,
     zir: *const std.zig.Zir,
     func_zir_inst: std.zig.Zir.Inst.Index,
-    comptime_args: InternPool.Index.Slice,
+    func: *const InternPool.Key.Func,
     air_arg_count: u32,
 ) InnerError!void {
     const pt = self.pt;
     const zcu = pt.zcu;
     const fn_info = zcu.typeToFunc(self.fn_type).?;
+
+    for (0..self.mod.patchable_function_entry) |_| {
+        try self.asmOpOnly(.{ ._, .nop });
+    }
+
     if (fn_info.cc != .naked) {
         try self.asmRegister(.{ ._, .push }, .rbp);
         try self.asmPseudoImmediate(.pseudo_cfi_adjust_cfa_offset_i_s, .s(8));
@@ -2150,7 +2148,7 @@ fn gen(
 
         if (!self.mod.strip) try self.asmPseudo(.pseudo_dbg_prologue_end_none);
 
-        try self.genMainBody(zir, func_zir_inst, comptime_args, air_arg_count);
+        try self.genMainBody(zir, func_zir_inst, func.comptime_args, air_arg_count);
 
         const epilogue = if (self.epilogue_relocs.items.len > 0) epilogue: {
             var last_inst: Mir.Inst.Index = @intCast(self.mir_instructions.len - 1);
@@ -2165,7 +2163,14 @@ fn gen(
             }
             for (self.epilogue_relocs.items) |epilogue_reloc| self.performReloc(epilogue_reloc);
 
-            if (!self.mod.strip) try self.asmPseudo(.pseudo_dbg_epilogue_begin_none);
+            if (!self.mod.strip) _ = try self.addInst(.{
+                .tag = .pseudo,
+                .ops = .pseudo_dbg_epilogue_begin_line_column,
+                .data = .{ .line_column = .{
+                    .line = func.rbrace_line,
+                    .column = func.rbrace_column,
+                } },
+            });
             const backpatch_stack_dealloc = try self.asmPlaceholder();
             const backpatch_pop_callee_preserved_regs = try self.asmPlaceholder();
             try self.asmRegister(.{ ._, .pop }, .rbp);
@@ -2283,11 +2288,7 @@ fn gen(
                 .data = .{ .reg_list = frame_layout.save_reg_list },
             });
         }
-    } else {
-        if (!self.mod.strip) try self.asmPseudo(.pseudo_dbg_prologue_end_none);
-        try self.genMainBody(zir, func_zir_inst, comptime_args, air_arg_count);
-        if (!self.mod.strip) try self.asmPseudo(.pseudo_dbg_epilogue_begin_none);
-    }
+    } else try self.genMainBody(zir, func_zir_inst, func.comptime_args, air_arg_count);
 }
 
 fn genMainBody(
@@ -174277,8 +174278,9 @@ fn restoreState(self: *CodeGen, state: State, deaths: []const Air.Inst.Index, co
         if (opts.emit_instructions and current_maybe_inst != target_maybe_inst) {
             if (current_maybe_inst) |current_inst|
                 try self.inst_tracking.getPtr(current_inst).?.spill(self, current_inst);
-            if (target_maybe_inst) |target_inst|
-                try self.inst_tracking.getPtr(target_inst).?.materialize(self, target_inst, reg_tracking);
+            if (target_maybe_inst) |target_inst| for (reg_tracking.getRegs()) |source_reg| {
+                if (RegisterManager.indexOfRegIntoTracked(source_reg).? > reg_index) break;
+            } else try self.inst_tracking.getPtr(target_inst).?.materialize(self, target_inst, reg_tracking);
         }
         if (opts.update_tracking) {
             if (current_maybe_inst) |current_inst| {
@@ -178194,7 +178196,7 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
             inline for (@typeInfo(encoder.Instruction.Mnemonic).@"enum".field_names) |mnem_name|
                 max_mnem_len = @max(mnem_name.len, max_mnem_len);
             var intel_mnem_buf: [max_mnem_len + 1]u8 = undefined;
-            const intel_mnem_str = std.fmt.bufPrint(&intel_mnem_buf, "{s}{c}", .{
+            const intel_mnem_str = std.mem.print(&intel_mnem_buf, "{s}{c}", .{
                 @tagName(mnem_tag),
                 @as(u8, switch (mnem_size.size) {
                     .byte => 'b',
@@ -182177,7 +182179,7 @@ fn resolveCallingConventionValues(
     return result;
 }
 
-fn fail(cg: *CodeGen, comptime format: []const u8, args: anytype) error{ OutOfMemory, AlreadyReported } {
+fn fail(cg: *CodeGen, comptime format: []const u8, args: anytype) codegen.Error {
     @branchHint(.cold);
     const zcu = cg.pt.zcu;
     return switch (cg.owner) {

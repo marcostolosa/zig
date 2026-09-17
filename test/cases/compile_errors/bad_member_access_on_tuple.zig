@@ -4,4 +4,4 @@ comptime {
 
 // error
 //
-// :2:21: error: struct '@TypeOf(.{})' has no member named 'is_optional'
+// :2:21: error: struct '@TypeOf(.{})' has no declaration named 'is_optional'

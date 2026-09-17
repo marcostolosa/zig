@@ -4757,12 +4757,21 @@ fn failWithBadMemberAccess(
     if (agg_ty.typeDeclInst(zcu)) |inst| {
         const inst_index = inst.resolve(ip) orelse return sema.failTransitive(.{ .lost_tracking = inst });
         if (inst_index == .main_struct_inst) {
-            return sema.fail(block, field_src, "root source file struct '{f}' has no member named '{f}'", .{
+            return sema.fail(block, field_src, "root source file struct '{f}' has no declaration named '{f}'", .{
                 agg_ty.fmt(pt), field_name.fmt(ip),
             });
         }
     }
 
+    switch (agg_ty.zigTypeTag(zcu)) {
+        .@"struct", .@"opaque" => {
+            return sema.fail(block, field_src, "{s} '{f}' has no declaration named '{f}'", .{
+                kw_name, agg_ty.fmt(pt), field_name.fmt(ip),
+            });
+        },
+        .@"enum", .@"union" => {},
+        else => unreachable,
+    }
     return sema.fail(block, field_src, "{s} '{f}' has no member named '{f}'", .{
         kw_name, agg_ty.fmt(pt), field_name.fmt(ip),
     });

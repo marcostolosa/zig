@@ -5,5 +5,5 @@ export fn entry() usize {
 
 // error
 //
-// :1:29: error: root source file struct 'builtin' has no member named 'bogus'
+// :1:29: error: root source file struct 'builtin' has no declaration named 'bogus'
 // note: struct declared here

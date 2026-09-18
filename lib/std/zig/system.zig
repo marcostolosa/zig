@@ -485,8 +485,7 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
                 }
 
                 if (@field(result_ver_range, @tagName(t)).glibc.order(@field(abi_ver_range, @tagName(t)).glibc) == .lt and
-                    query.glibc_version == null and
-                    @field(result_ver_range, @tagName(t)).glibc.order(@field(os.version_range, @tagName(t)).glibc) == .eq)
+                    query.glibc_version == null)
                 {
                     @field(result_ver_range, @tagName(t)).glibc = @field(abi_ver_range, @tagName(t)).glibc;
                 }

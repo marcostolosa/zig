@@ -498,7 +498,7 @@ fn isValidScheme(scheme: []const u8) bool {
 
 /// sub-delims  = "!" / "$" / "&" / "'" / "(" / ")"
 ///             / "*" / "+" / "," / ";" / "="
-fn isSubLimit(c: u8) bool {
+fn isSubDelims(c: u8) bool {
     return switch (c) {
         '!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=' => true,
         else => false,
@@ -514,7 +514,7 @@ fn isUnreserved(c: u8) bool {
 }
 
 fn isUserChar(c: u8) bool {
-    return isUnreserved(c) or isSubLimit(c);
+    return isUnreserved(c) or isSubDelims(c);
 }
 
 fn isPasswordChar(c: u8) bool {

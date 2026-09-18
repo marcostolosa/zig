@@ -690,7 +690,6 @@ pub const WebSocket = struct {
         ConnectionClose,
         UnexpectedOpCode,
         MessageOversize,
-        MissingMaskBit,
         ReadFailed,
         EndOfStream,
     };
@@ -719,7 +718,6 @@ pub const WebSocket = struct {
             }
 
             if (!h0.fin) return error.MessageOversize;
-            if (!h1.mask) return error.MissingMaskBit;
 
             const len: usize = switch (h1.payload_len) {
                 .len16 => try in.takeInt(u16, .big),
@@ -727,23 +725,25 @@ pub const WebSocket = struct {
                 else => @backingInt(h1.payload_len),
             };
             if (len > in.buffer.len) return error.MessageOversize;
-            const mask: [4]u8 = (try in.takeArray(4)).*;
+            const mask: [4]u8 = if (h1.mask) (try in.takeArray(4)).* else undefined;
             const payload = try in.take(len);
 
             // Skip pongs.
             if (h0.opcode == .pong) continue;
 
-            // The last item may contain a partial word of unused data.
-            const floored_len = (payload.len / 4) * 4;
+            if (h1.mask) {
+                // The last item may contain a partial word of unused data.
+                const floored_len = (payload.len / 4) * 4;
 
-            const payload_chunks: [][4]u8 = @ptrCast(payload[0..floored_len]);
-            for (payload_chunks) |*chunk| {
-                const mask_i: u32 = @bitCast(mask);
-                const chunk_i: u32 = @bitCast(chunk.*);
-                chunk.* = @bitCast(chunk_i ^ mask_i);
-            }
-            for (payload[floored_len..], mask[0 .. payload.len - floored_len]) |*leftover, m| {
-                leftover.* ^= m;
+                const payload_chunks: [][4]u8 = @ptrCast(payload[0..floored_len]);
+                for (payload_chunks) |*chunk| {
+                    const mask_i: u32 = @bitCast(mask);
+                    const chunk_i: u32 = @bitCast(chunk.*);
+                    chunk.* = @bitCast(chunk_i ^ mask_i);
+                }
+                for (payload[floored_len..], mask[0 .. payload.len - floored_len]) |*leftover, m| {
+                    leftover.* ^= m;
+                }
             }
 
             return .{

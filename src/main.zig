@@ -107,6 +107,7 @@ const normal_usage =
     \\
     \\  env              Print lib path, std path, cache directory, and version
     \\  help             Print this help and exit
+    \\  cache-cat        Print a zig-cache manifest file as zon
     \\  std              View standard library documentation in a browser
     \\  libc             Display native libc paths file or validate one
     \\  targets          List available compilation targets
@@ -242,6 +243,10 @@ const Cmd = enum {
     ar,
 
     build,
+    @"cache-cat",
+    fetch,
+    init,
+    libc,
 
     clang,
     @"-cc1",
@@ -258,10 +263,7 @@ const Cmd = enum {
     fmt,
     objcopy,
     objdump,
-    fetch,
-    libc,
     std,
-    init,
     targets,
     version,
     env,
@@ -351,7 +353,7 @@ fn mainArgs(
             dev.check(.ar_command);
             return process.exit(try llvmArMain(arena, args));
         },
-        .build, .fetch, .init, .libc => {
+        .build, .fetch, .init, .libc, .@"cache-cat" => {
             return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
                 .cmd_name = "maker",
                 .root_src_path = "Maker.zig",
@@ -567,35 +569,36 @@ const compile_usage =
     \\  --build-root [path]       Override path to project source files
     \\
     \\Global Compile Options:
-    \\  --name [name]             Compilation unit name (not a file path)
-    \\  -M[name][=src]            Create a module based on the current per-module settings.
-    \\                            The first module is the main module.
-    \\                            "std" can be configured by omitting src
-    \\                            After a -M argument, per-module settings are reset.
-    \\  --libc [file]             Provide a file which specifies libc paths
-    \\  -x [language]             Treat subsequent input files as having type <language>
-    \\  --error-limit [num]       Set the maximum amount of distinct error values
-    \\  -fllvm                    Force using LLVM as the codegen backend
-    \\  -fno-llvm                 Prevent using LLVM as the codegen backend
-    \\  -flibllvm                 Force using the LLVM API in the codegen backend
-    \\  -fno-libllvm              Prevent using the LLVM API in the codegen backend
-    \\  -fclang                   Force using Clang as the C/C++ compilation backend
-    \\  -fno-clang                Prevent using Clang as the C/C++ compilation backend
-    \\  -fPIE                     Force-enable Position Independent Executable
-    \\  -fno-PIE                  Force-disable Position Independent Executable
-    \\  -flto                     Force-enable Link Time Optimization (requires LLVM extensions)
-    \\  -fno-lto                  Force-disable Link Time Optimization
-    \\  -fdll-export-fns          Mark exported functions as DLL exports (Windows)
-    \\  -fno-dll-export-fns       Force-disable marking exported functions as DLL exports
-    \\  -freference-trace[=num]   Show num lines of reference trace per compile error
-    \\  -fno-reference-trace      Disable reference trace
-    \\  -ffunction-sections       Places each function in a separate section
-    \\  -fno-function-sections    All functions go into same section
-    \\  -fdata-sections           Places each data in a separate section
-    \\  -fno-data-sections        All data go into same section
-    \\  -mexec-model=[value]      (WASI) Execution model
-    \\  -municode                 (Windows) Use wmain/wWinMain as entry point
-    \\  --time-report             Send timing diagnostics to '--listen' clients
+    \\  --name [name]                    Compilation unit name (not a file path)
+    \\  -M[name][=src]                   Create a module based on the current per-module settings.
+    \\                                   The first module is the main module.
+    \\                                   "std" can be configured by omitting src
+    \\                                   After a -M argument, per-module settings are reset.
+    \\  --libc [file]                    Provide a file which specifies libc paths
+    \\  -x [language]                    Treat subsequent input files as having type <language>
+    \\  --error-limit [num]              Set the maximum amount of distinct error values
+    \\  -fllvm                           Force using LLVM as the codegen backend
+    \\  -fno-llvm                        Prevent using LLVM as the codegen backend
+    \\  -flibllvm                        Force using the LLVM API in the codegen backend
+    \\  -fno-libllvm                     Prevent using the LLVM API in the codegen backend
+    \\  -fclang                          Force using Clang as the C/C++ compilation backend
+    \\  -fno-clang                       Prevent using Clang as the C/C++ compilation backend
+    \\  -fPIE                            Force-enable Position Independent Executable
+    \\  -fno-PIE                         Force-disable Position Independent Executable
+    \\  -flto                            Force-enable Link Time Optimization (requires LLVM extensions)
+    \\  -fno-lto                         Force-disable Link Time Optimization
+    \\  -fdll-export-fns                 Mark exported functions as DLL exports (Windows)
+    \\  -fno-dll-export-fns              Force-disable marking exported functions as DLL exports
+    \\  -freference-trace[=num]          Show num lines of reference trace per compile error
+    \\  -fno-reference-trace             Disable reference trace
+    \\  -ffunction-sections              Places each function in a separate section
+    \\  -fno-function-sections           All functions go into same section
+    \\  -fdata-sections                  Places each data in a separate section
+    \\  -fno-data-sections               All data go into same section
+    \\  -fpatchable-function-entry=[num] Add num NOPs of padding in function prologues
+    \\  -mexec-model=[value]             (WASI) Execution model
+    \\  -municode                        (Windows) Use wmain/wWinMain as entry point
+    \\  --time-report                    Send timing diagnostics to '--listen' clients
     \\
     \\Per-Module Compile Options:
     \\  --dep [[import=]name]     Add an entry to the next module's import table
@@ -1705,6 +1708,10 @@ fn buildOutputType(
                     } else if (mem.cutPrefix(u8, arg, "-fopt-bisect-limit=")) |next_arg| {
                         llvm_opt_bisect_limit = std.fmt.parseInt(c_int, next_arg, 0) catch |err|
                             fatal("unable to parse {q}: {t}", .{ arg, err });
+                    } else if (mem.cutPrefix(u8, arg, "-fpatchable-function-entry=")) |num| {
+                        mod_opts.patchable_function_entry = std.fmt.parseUnsigned(u16, num, 10) catch |err| {
+                            fatal("unable to parse patchable-function-entry count {q}: {t}", .{ num, err });
+                        };
                     } else if (mem.eql(u8, arg, "--eh-frame-hdr")) {
                         link_eh_frame_hdr = true;
                     } else if (mem.eql(u8, arg, "--no-eh-frame-hdr")) {
@@ -2174,6 +2181,14 @@ fn buildOutputType(
                         },
                     } else {
                         mod_opts.unwind_tables = .sync;
+                    },
+                    .patchable_function_entry => {
+                        mod_opts.patchable_function_entry =
+                            std.fmt.parseUnsigned(u16, it.only_arg, 10) catch |err| {
+                                fatal("unable to parse patchable function entry count {q}: {t}", .{
+                                    it.only_arg, err,
+                                });
+                            };
                     },
                     .nostdlib => {
                         create_module.opts.ensure_libc_on_non_freestanding = false;
@@ -3255,6 +3270,7 @@ fn buildOutputType(
     };
 
     const cwd_path = try std.zig.getResolvedCwd(io, arena);
+    std.log.debug("cwd_path={s}", .{cwd_path});
 
     // This `init` calls `fatal` on error.
     var dirs: std.zig.Directories = .init(arena, io, .{
@@ -4325,6 +4341,7 @@ fn createModule(
         error.StackCheckUnsupportedByTarget => fatal("unable to create module {q}: the selected target does not support stack checking", .{name}),
         error.StackProtectorUnsupportedByTarget => fatal("unable to create module {q}: the selected target does not support stack protection", .{name}),
         error.StackProtectorUnavailableWithoutLibC => fatal("unable to create module {q}: enabling stack protection requires libc", .{name}),
+        error.PatchableFunctionEntryUnsupportedByBackend => fatal("unable to create module {q}: patchable function entries are unsupported by the selected backend", .{name}),
         error.OutOfMemory => |e| return e,
     };
     cli_mod.resolved = mod;
@@ -4862,8 +4879,14 @@ fn cmdTranslateC(
     Compilation.cache_helpers.hashCSource(&man, c_source_file) catch |err|
         fatal("unable to process {q}: {t}", .{ c_source_file.src_path, err });
 
-    const result: Compilation.TranslateCResult = if (try man.hit(prog_node)) .{
-        .digest = man.finalBin(),
+    var diag: Cache.Manifest.CheckDiagnostic = undefined;
+    const status = man.check(&diag, prog_node) catch |err| switch (err) {
+        error.OutOfMemory, error.Canceled => |e| return e,
+        error.CacheCheckFailed => fatal("translate-c checking cache failed: {f}", .{diag.fmt(&man)}),
+    };
+    std.log.debug("translate-c cache {f}", .{status.fmt(&man)});
+    const result: Compilation.TranslateCResult = if (status == .hit) .{
+        .digest = man.hitDigest(),
         .cache_hit = true,
         .errors = std.zig.ErrorBundle.empty,
     } else result: {
@@ -4890,7 +4913,7 @@ fn cmdTranslateC(
             }
         }
 
-        man.writeManifest() catch |err| warn("failed to write cache manifest: {t}", .{err});
+        man.finalize() catch |err| warn("failed to write cache manifest: {t}", .{err});
         break :result result;
     };
 

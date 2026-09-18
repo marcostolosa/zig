@@ -18,14 +18,7 @@ fn setFeature(cpu: *std.Target.Cpu, feature: std.Target.loongarch.Feature, enabl
     if (enabled) cpu.features.addFeature(idx) else cpu.features.removeFeature(idx);
 }
 
-pub fn detectNativeCpuAndFeatures(
-    arch: std.Target.Cpu.Arch,
-    os: std.Target.Os,
-    query: std.Target.Query,
-) ?std.Target.Cpu {
-    _ = os;
-    _ = query;
-
+pub fn detectNativeCpuAndFeatures(arch: std.Target.Cpu.Arch) ?std.Target.Cpu {
     const variant: Variant = @fromBackingInt(@intCast(cpucfg(1) & 0b11));
 
     var cpu: std.Target.Cpu = .{
@@ -94,21 +87,9 @@ pub fn detectNativeCpuAndFeatures(
     return cpu;
 }
 
-/// This is a workaround for the C backend until zig has the ability to put
-/// C code in inline assembly.
-extern fn zig_loongarch_cpucfg(word: u32, result: *u32) callconv(.c) void;
-
 fn cpucfg(word: u32) u32 {
-    var result: u32 = undefined;
-
-    if (builtin.zig_backend == .stage2_c) {
-        zig_loongarch_cpucfg(word, &result);
-    } else {
-        asm ("cpucfg %[result], %[word]"
-            : [result] "=r" (result),
-            : [word] "r" (word),
-        );
-    }
-
-    return result;
+    return asm ("cpucfg %[result], %[word]"
+        : [result] "=r" (-> u32),
+        : [word] "r" (word),
+    );
 }

@@ -710,6 +710,16 @@ pub const Ip6Address = struct {
                 .port = port,
                 .interface = i: {
                     const text = p.interface_name orelse break :i .none;
+
+                    // Numeric zone (e.g. %3) is already an interface index, only names need OS lookup.
+                    for (text) |c| {
+                        if (!std.ascii.isDigit(c)) break;
+                    } else {
+                        const idx = std.fmt.parseInt(u32, text, 10) catch return error.InterfaceNotFound;
+                        if (idx == 0) return error.InterfaceNotFound;
+                        break :i .{ .index = idx };
+                    }
+
                     const name: Interface.Name = try .fromSlice(text);
                     break :i try name.resolve(io);
                 },

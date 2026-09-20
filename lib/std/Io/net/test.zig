@@ -97,6 +97,22 @@ test "oversized IPv6 scope id" {
     try testing.expectError(error.ParseFailed, net.IpAddress.resolveIp6(testing.io, "ff01::fb%" ++ &long_scope, 0));
 }
 
+fn testResolveIndex(expected: u32, input: []const u8) !void {
+    const address = try net.IpAddress.resolveIp6(testing.io, input, 0);
+    try testing.expectEqual(expected, address.ip6.interface.index);
+}
+
+test "numeric IPv6 scope ids resolve to interface index" {
+    try testResolveIndex(3, "fe80::1%3");
+    try testResolveIndex(1, "fe80::1%1");
+    try testResolveIndex(4294967295, "fe80::1%4294967295");
+}
+
+test "numeric IPv6 scope id edge cases" {
+    try testing.expectError(error.InterfaceNotFound, net.IpAddress.resolveIp6(testing.io, "fe80::1%0", 0));
+    try testing.expectError(error.InterfaceNotFound, net.IpAddress.resolveIp6(testing.io, "fe80::1%99999999999", 0));
+}
+
 test "parse and render IPv4 addresses" {
     try testIp4ParseAndRender("0.0.0.0");
     try testIp4ParseAndRender("255.255.255.255");

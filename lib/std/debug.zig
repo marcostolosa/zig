@@ -94,8 +94,195 @@ pub const SelfInfoError = error{
     Unexpected,
 };
 
-pub const simple_panic = @import("debug/simple_panic.zig");
 pub const no_panic = @import("debug/no_panic.zig");
+
+/// A lightweight panic handler without any string formatting code included. All
+/// panics will call the provided function.
+///
+/// To use it, add this statement to your module root alongside `main`:
+///
+/// ```zig
+/// pub const panic = std.debug.SimplePanic(...);
+/// ```
+///
+/// For compiler-generated safety panics, if `common_message` is given, safety
+/// panics will always use that message. If it's null, the message will be based
+/// on the operation that triggered the panic.
+///
+/// Explicit `@panic(message)` calls aren't affected by the `common_message`
+/// parameter. The explicit message will pass through unaffected.
+pub fn SimplePanic(
+    common_message: ?[]const u8,
+    comptime panicFn: fn ([]const u8, ?usize) noreturn,
+) type {
+    return struct {
+        /// Explicit calls to `@panic` lower to calling this function.
+        pub const call = panicFn;
+
+        pub fn sentinelMismatch(expected: anytype, found: @TypeOf(expected)) noreturn {
+            @branchHint(.cold);
+            _ = found;
+            call(common_message orelse "sentinel mismatch", null);
+        }
+
+        pub fn unwrapError(err: anyerror) noreturn {
+            @branchHint(.cold);
+            _ = &err;
+            call(common_message orelse "attempt to unwrap error", null);
+        }
+
+        pub fn outOfBounds(index: usize, len: usize) noreturn {
+            @branchHint(.cold);
+            _ = index;
+            _ = len;
+            call(common_message orelse "index out of bounds", null);
+        }
+
+        pub fn startGreaterThanEnd(start: usize, end: usize) noreturn {
+            @branchHint(.cold);
+            _ = start;
+            _ = end;
+            call(common_message orelse "start index is larger than end index", null);
+        }
+
+        pub fn inactiveUnionField(active: anytype, accessed: @TypeOf(active)) noreturn {
+            @branchHint(.cold);
+            _ = accessed;
+            call(common_message orelse "access of inactive union field", null);
+        }
+
+        pub fn sliceCastLenRemainder(src_len: usize) noreturn {
+            @branchHint(.cold);
+            _ = src_len;
+            call(common_message orelse "slice length does not divide exactly into destination elements", null);
+        }
+
+        pub fn reachedUnreachable() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "reached unreachable code", null);
+        }
+
+        pub fn unwrapNull() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "attempt to use null value", null);
+        }
+
+        pub fn castToNull() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "cast causes pointer to be null", null);
+        }
+
+        pub fn incorrectAlignment() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "incorrect alignment", null);
+        }
+
+        pub fn invalidErrorCode() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "invalid error code", null);
+        }
+
+        pub fn unexpectedErrorCode(err: anyerror) noreturn {
+            @branchHint(.cold);
+            _ = &err;
+            call(common_message orelse "unexpected error code", null);
+        }
+
+        pub fn integerOutOfBounds() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "integer does not fit in destination type", null);
+        }
+
+        pub fn integerOverflow() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "integer overflow", null);
+        }
+
+        pub fn shlOverflow() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "left shift overflowed bits", null);
+        }
+
+        pub fn shrOverflow() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "right shift overflowed bits", null);
+        }
+
+        pub fn divideByZero() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "division by zero", null);
+        }
+
+        pub fn exactDivisionRemainder() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "exact division produced remainder", null);
+        }
+
+        pub fn integerPartOutOfBounds() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "integer part of floating point value out of bounds", null);
+        }
+
+        pub fn corruptSwitch() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "switch on corrupt value", null);
+        }
+
+        pub fn shiftRhsTooBig() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "shift amount is greater than the type size", null);
+        }
+
+        pub fn invalidEnumValue() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "invalid enum value", null);
+        }
+
+        pub fn forLenMismatch() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "for loop over objects with non-equal lengths", null);
+        }
+
+        pub fn copyLenMismatch() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "source and destination have non-equal lengths", null);
+        }
+
+        pub fn memcpyAlias() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "@memcpy arguments alias", null);
+        }
+
+        pub fn noreturnReturned() noreturn {
+            @branchHint(.cold);
+            call(common_message orelse "'noreturn' function returned", null);
+        }
+
+        pub fn loadUninstantiableType() noreturn {
+            call(common_message orelse "attempt to load uninstantiable type", null);
+        }
+    };
+}
+
+/// A lightweight panic handler that prints the message to stderr without a
+/// newline and then traps.
+///
+/// To use it, add this statement to your module root alongside `main`:
+///
+/// ```zig
+/// pub const panic = std.debug.simple_panic;
+/// ```
+///
+/// For customizable alternatives, see `std.debug.SimplePanic` or `std.debug.FullPanic`.
+pub const simple_panic = SimplePanic(null, struct {
+    pub fn call(msg: []const u8, ra: ?usize) noreturn {
+        @branchHint(.cold);
+        _ = ra;
+        const stderr_writer = &std.debug.lockStderr(&.{}).file_writer.interface;
+        stderr_writer.writeAll(msg) catch {};
+        @trap();
+    }
+}.call);
 
 /// A fully-featured panic handler namespace which lowers all panics to calls to `panicFn`.
 /// Safety panics will use formatted printing to provide a meaningful error message.

@@ -213,10 +213,10 @@ pub const ElfDynLib = struct {
             }
         }
 
-        if (resolveFromParent(io, "/lib", path_or_name)) |file| return file;
         if (resolveFromParent(io, "/lib64", path_or_name)) |file| return file;
-        if (resolveFromParent(io, "/usr/lib", path_or_name)) |file| return file;
         if (resolveFromParent(io, "/usr/lib64", path_or_name)) |file| return file;
+        if (resolveFromParent(io, "/lib", path_or_name)) |file| return file;
+        if (resolveFromParent(io, "/usr/lib", path_or_name)) |file| return file;
         return error.FileNotFound;
     }
 

@@ -629,8 +629,6 @@ pub fn AlignedManaged(comptime T: type, comptime alignment: ?mem.Alignment) type
 /// Functions that potentially allocate memory accept an `Allocator` parameter.
 /// Initialize directly or with `initCapacity`, and deinitialize with `deinit`
 /// or use `toOwnedSlice`.
-///
-/// Default initialization of this struct is deprecated; use `.empty` instead.
 pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
     if (alignment) |a| {
         if (a.toByteUnits() == @alignOf(T)) {
@@ -778,6 +776,9 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
         ///
         /// Asserts what the capacity is equal to the length.
         /// Never invalidates element pointers.
+        ///
+        /// See also:
+        /// * `shrinkToLen`
         pub fn toOwnedSliceAssert(self: *Self) Slice {
             assert(self.items.len == self.capacity);
             const items = self.items;

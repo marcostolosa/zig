@@ -689,18 +689,24 @@ pub const File = struct {
         return macho.reopenDebugInfo();
     }
 
+    pub fn canMakeExecutable(base: *File) bool {
+        const comp = base.comp;
+        return switch (comp.config.output_mode) {
+            .Obj => false,
+            .Lib => switch (comp.config.link_mode) {
+                .static => false,
+                .dynamic => true,
+            },
+            .Exe => true,
+        };
+    }
+
     pub fn makeExecutable(base: *File) !void {
         dev.check(.make_executable);
         const comp = base.comp;
         const io = comp.io;
-        switch (comp.config.output_mode) {
-            .Obj => return,
-            .Lib => switch (comp.config.link_mode) {
-                .static => return,
-                .dynamic => {},
-            },
-            .Exe => {},
-        }
+        if (!base.canMakeExecutable())
+            return;
         switch (base.tag) {
             .lld => assert(base.file == null),
             .elf => if (base.file) |f| {
@@ -1319,7 +1325,7 @@ pub const File = struct {
                 .macho => MachO,
                 .c => C,
                 .wasm => Wasm,
-                .spirv => SpirV,
+                .spirv => Spirv,
                 .lld => Lld,
                 .plan9 => comptime unreachable,
                 .spork8 => Spork8,
@@ -1423,7 +1429,7 @@ pub const File = struct {
     pub const Elf = @import("link/Elf.zig");
     pub const Elf2 = @import("link/Elf2.zig");
     pub const MachO = @import("link/MachO.zig");
-    pub const SpirV = @import("link/SpirV.zig");
+    pub const Spirv = @import("link/Spirv.zig");
     pub const Wasm = @import("link/Wasm.zig");
     pub const Dwarf = @import("link/Dwarf.zig");
     pub const Dwarf2 = @import("link/Dwarf2.zig");
@@ -1500,11 +1506,11 @@ pub fn doPrelinkTask(comp: *Compilation, task: PrelinkTask) void {
                 base.loadInput(input) catch |err| switch (err) {
                     error.AlreadyReported => return, // error reported via diags
                     else => |e| switch (input) {
-                        .dso => |dso| diags.addParseError(dso.path, "failed to parse shared library: {s}", .{@errorName(e)}),
-                        .object => |obj| diags.addParseError(obj.path, "failed to parse object: {s}", .{@errorName(e)}),
-                        .archive => |obj| diags.addParseError(obj.path, "failed to parse archive: {s}", .{@errorName(e)}),
-                        .res => |res| diags.addParseError(res.path, "failed to parse Windows resource: {s}", .{@errorName(e)}),
-                        .dso_exact => diags.addError("failed to handle dso_exact: {s}", .{@errorName(e)}),
+                        .dso => |dso| diags.addParseError(dso.path, "failed to parse shared library: {t}", .{e}),
+                        .object => |obj| diags.addParseError(obj.path, "failed to parse object: {t}", .{e}),
+                        .archive => |obj| diags.addParseError(obj.path, "failed to parse archive: {t}", .{e}),
+                        .res => |res| diags.addParseError(res.path, "failed to parse Windows resource: {t}", .{e}),
+                        .dso_exact => diags.addError("failed to handle dso_exact: {t}", .{e}),
                     },
                 };
                 prog_node.completeOne();
@@ -1925,15 +1931,24 @@ pub fn hashInputs(man: *Cache.Manifest, link_inputs: []const Input) !void {
         man.hash.add(@as(@typeInfo(Input).@"union".tag_type.?, link_input));
         switch (link_input) {
             .object, .archive => |obj| {
-                _ = try man.addOpenedFile(obj.path, obj.file, null);
+                _ = try man.addInputPath(obj.path, .{
+                    .handle = .{ .file = obj.file },
+                    .request_handle = true,
+                });
                 man.hash.add(obj.must_link);
                 man.hash.add(obj.hidden);
             },
             .res => |res| {
-                _ = try man.addOpenedFile(res.path, res.file, null);
+                _ = try man.addInputPath(res.path, .{
+                    .handle = .{ .file = res.file },
+                    .request_handle = true,
+                });
             },
             .dso => |dso| {
-                _ = try man.addOpenedFile(dso.path, dso.file, null);
+                _ = try man.addInputPath(dso.path, .{
+                    .handle = .{ .file = dso.file },
+                    .request_handle = true,
+                });
                 man.hash.add(dso.needed);
                 man.hash.add(dso.weak);
                 man.hash.add(dso.reexport);

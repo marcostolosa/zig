@@ -758,6 +758,47 @@ test "readFileAlloc" {
     );
 }
 
+test "readStreamingAll" {
+    const io = testing.io;
+
+    var tmp_dir = tmpDir(.{});
+    defer tmp_dir.cleanup();
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = "file", .data = "abc" });
+
+    var buf: [4]u8 = undefined;
+
+    // buffer size == file size
+    {
+        const file = try tmp_dir.dir.openFile(io, "file", .{});
+        defer file.close(io);
+
+        try file.readStreamingAll(io, buf[0..3]);
+        try testing.expectEqualStrings(buf[0..3], "abc");
+    }
+
+    // buffer size < file size
+    {
+        const file = try tmp_dir.dir.openFile(io, "file", .{});
+        defer file.close(io);
+
+        try file.readStreamingAll(io, buf[0..2]);
+        try testing.expectEqualStrings(buf[0..2], "ab");
+
+        try file.readStreamingAll(io, buf[0..1]);
+        try testing.expectEqualStrings(buf[0..1], "c");
+
+        try expectError(error.EndOfStream, file.readStreamingAll(io, buf[0..1]));
+    }
+
+    // buffer size > file size
+    {
+        const file = try tmp_dir.dir.openFile(io, "file", .{});
+        defer file.close(io);
+
+        try expectError(error.EndOfStream, file.readStreamingAll(io, buf[0..4]));
+    }
+}
+
 test "file operations with follow_symlinks=false" {
     const io = testing.io;
 

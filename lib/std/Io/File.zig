@@ -475,6 +475,15 @@ pub fn readStreaming(file: File, io: Io, buffer: []const []u8) ReadStreamingErro
     } })).file_read_streaming;
 }
 
+/// Completely fills `buffer` by reading data from the file's current position.
+/// End-of-stream is indicated by `error.EndOfStream`.
+pub fn readStreamingAll(file: File, io: Io, buffer: []u8) ReadStreamingError!void {
+    var index: usize = 0;
+    while (index < buffer.len) {
+        index += try readStreaming(file, io, &.{buffer[index..]});
+    }
+}
+
 pub const ReadPositionalError = error{
     InputOutput,
     SystemResources,

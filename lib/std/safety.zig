@@ -195,7 +195,7 @@ test ConfigurableState {
 }
 
 /// Tracks which state the program is in, and asserts the transitions respect the
-/// ones it declares, much like a finite state machine. 
+/// ones it declares, much like a finite state machine.
 /// A failure reports the state found and where the last transition was made.
 ///
 /// See `ConfigurableState` to configure enable/disabled, thread safety and more.
@@ -409,7 +409,7 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
         const ReadPtr = if (Mutex.present) *L else *const L;
 
         /// Guarded as one unit by `mutex`, since a claim is only valid against
-        /// both halves at once. 
+        /// both halves at once.
         state: LockState = .init(.unlocked),
         readers: LockObligations = .none,
         mutex: Mutex = .init,

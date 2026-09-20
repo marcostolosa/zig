@@ -98,6 +98,7 @@ pub const pdb = @import("pdb.zig");
 pub const pie = @import("pie.zig");
 pub const posix = @import("posix.zig");
 pub const process = @import("process.zig");
+pub const safety = @import("safety.zig");
 pub const sort = @import("sort.zig");
 pub const simd = @import("simd.zig");
 pub const ascii = @import("ascii.zig");

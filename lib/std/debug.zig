@@ -424,23 +424,8 @@ test dumpHexFallible {
 /// The pointer through which a `cpu_context.Native` is received from callers of stack tracing logic.
 pub const CpuContextPtr = if (cpu_context.Native == noreturn) noreturn else *const cpu_context.Native;
 
-/// Invokes detectable illegal behavior when `ok` is `false`.
-///
-/// In debug and safe modes, calls to this function are always
-/// generated, and the `unreachable` statement triggers a panic.
-///
-/// In fast and small modes, calls to this function are optimized
-/// away, and in fact the optimizer is able to use the assertion in its
-/// heuristics.
-///
-/// Inside a test block, it is best to use the `testing` module rather than
-/// this function, because this function may not detect a test failure in
-/// fast and small mode. Outside of a test block, this assert
-/// function is the correct function to use.
-pub fn assert(ok: bool) void {
-    @disableInstrumentation();
-    if (!ok) unreachable; // assertion failure
-}
+/// Deprecated; use `std.safety.assert`.
+pub const assert = std.safety.assert;
 
 /// Invokes detectable illegal behavior when the provided slice is not mapped
 /// or lacks read permissions.
@@ -645,7 +630,7 @@ pub const StackTrace = struct {
     /// included in this slice. Instead, when printing the stack trace, the source locations of
     /// inline calls should be read from debug information and the corresponding "inline frames"
     /// printed in the appropriate locations.
-    return_addresses: []usize,
+    return_addresses: []const usize,
     /// Indicates whether any stack frames were omitted from `return_addresses`.
     skipped: SkippedAddresses,
 };
@@ -846,6 +831,78 @@ pub const FormatStackTrace = struct {
         try writeStackTrace(&fst.stack_trace, .{ .writer = writer, .mode = fst.terminal_mode });
     }
 };
+
+/// A stack trace of at most `frames_len` frames, stored inline, for embedding in a value which
+/// wants to remember where something was done to it: where a lock was taken, where a resource
+/// was allocated, and so on.
+///
+/// Unlike `StackTrace`, which borrows a buffer, this type owns its addresses, so it may be
+/// copied and kept for as long as the value holding it lives. `frames` of 0 makes the type
+/// zero-sized and every method a no-op, which is how a caller compiles the tracing out.
+pub fn CapturedStackTrace(comptime frames_len: usize) type {
+    return struct {
+        /// Return addresses, innermost first, zero padded.
+        addresses: [frames_len]usize,
+
+        const Capture = @This();
+
+        /// The maximum number of frames this type can hold.
+        pub const len = frames_len;
+
+        pub const empty: Capture = .{ .addresses = @splat(0) };
+
+        /// `capture` as a single expression, for initializing a field.
+        pub fn captured(ret_addr: usize) Capture {
+            var c: Capture = .empty;
+            c.capture(ret_addr);
+            return c;
+        }
+
+        /// Capture the current stack trace, ignoring all frames up to and including `ret_addr`.
+        /// Pass `@returnAddress()` from the public entry point so that the intermediate bookkeeping
+        /// code is omitted from the trace.
+        pub fn capture(c: *Capture, ret_addr: usize) void {
+            if (frames_len == 0) return;
+            const st = captureCurrentStackTrace(.{ .first_address = ret_addr }, &c.addresses);
+            // Zero the unused frames to indicate the end of the trace.
+            @memset(c.addresses[@min(st.return_addresses.len, frames_len)..], 0);
+        }
+
+        /// The captured addresses as a `StackTrace`, for use with `writeStackTrace` and
+        /// `dumpStackTrace`.
+        pub fn stackTrace(c: *const Capture) StackTrace {
+            const n = mem.indexOfScalar(usize, &c.addresses, 0) orelse frames_len;
+            return .{
+                .return_addresses = c.addresses[0..n],
+                .skipped = if (n < frames_len) .none else .unknown,
+            };
+        }
+
+        /// Formats the captured trace, annotated with source locations, for use with `{f}`.
+        pub fn fmt(c: *const Capture) FormatStackTrace {
+            return .{
+                .stack_trace = c.stackTrace(),
+                .terminal_mode = std.log.terminalMode(),
+            };
+        }
+    };
+}
+
+test CapturedStackTrace {
+    const empty: CapturedStackTrace(6) = .empty;
+    try testing.expectEqual(0, empty.stackTrace().return_addresses.len);
+
+    const captured: CapturedStackTrace(6) = .captured(@returnAddress());
+    if (sys_can_stack_trace and std.options.allow_stack_tracing) {
+        try testing.expect(captured.stackTrace().return_addresses.len > 0);
+    }
+
+    // Zero frames is zero-sized and inert.
+    try testing.expectEqual(0, @sizeOf(CapturedStackTrace(0)));
+    var none: CapturedStackTrace(0) = .empty;
+    none.capture(@returnAddress());
+    try testing.expectEqual(0, none.stackTrace().return_addresses.len);
+}
 
 /// Write a previously captured error return trace to `writer`, annotated with source locations.
 pub fn writeErrorReturnTrace(et: *const std.builtin.StackTrace, t: Io.Terminal) Writer.Error!void {
@@ -1848,79 +1905,8 @@ pub fn ConfigurableTrace(comptime size: usize, comptime stack_frame_count: usize
     };
 }
 
-pub const SafetyLock = struct {
-    state: State = if (runtime_safety) .unlocked else .unknown,
-
-    pub const State = if (runtime_safety) enum(usize) {
-        unlocked = 0,
-        exclusive = math.maxInt(usize),
-        _, // shared lock count
-
-        fn isShared(state: State) bool {
-            return switch (state) {
-                _ => true,
-                else => false,
-            };
-        }
-    } else enum { unknown };
-
-    /// Exclusive. Use when mutating data.
-    pub fn lock(l: *SafetyLock) void {
-        if (!runtime_safety) return;
-        assert(l.state == .unlocked);
-        l.state = .exclusive;
-    }
-
-    pub fn unlock(l: *SafetyLock) void {
-        if (!runtime_safety) return;
-        assert(l.state == .exclusive);
-        l.state = .unlocked;
-    }
-
-    /// Use when consuming data in a read-only manner.
-    pub fn lockShared(l: *SafetyLock) void {
-        if (!runtime_safety) return;
-        assert(l.state != .exclusive);
-        l.state = @fromBackingInt(@backingInt(l.state) + 1);
-        assert(l.state.isShared()); // Catch overflow to `exclusive`.
-    }
-
-    pub fn unlockShared(l: *SafetyLock) void {
-        if (!runtime_safety) return;
-        assert(l.state.isShared());
-        l.state = @fromBackingInt(@backingInt(l.state) - 1);
-    }
-
-    pub fn assertUnlocked(l: SafetyLock) void {
-        if (!runtime_safety) return;
-        assert(l.state == .unlocked);
-    }
-
-    pub fn assertLocked(l: SafetyLock) void {
-        if (!runtime_safety) return;
-        assert(l.state == .exclusive);
-    }
-
-    pub fn assertLockedShared(l: SafetyLock) void {
-        if (!runtime_safety) return;
-        assert(l.state.isShared());
-    }
-};
-
-test SafetyLock {
-    var safety_lock: SafetyLock = .{};
-    safety_lock.assertUnlocked();
-    safety_lock.lock();
-    safety_lock.assertLocked();
-    safety_lock.unlock();
-    safety_lock.assertUnlocked();
-    safety_lock.lockShared();
-    safety_lock.assertLockedShared();
-    for (0..3) |_| safety_lock.lockShared();
-    safety_lock.assertLockedShared();
-    for (0..4) |_| safety_lock.unlockShared();
-    safety_lock.assertUnlocked();
-}
+/// Deprecated; use `std.safety.Lock`.
+pub const SafetyLock = std.safety.ConfigurableLock(.{ .thread_safe = false }, .{});
 
 /// Detect whether the program is being executed in the Valgrind virtual machine.
 ///

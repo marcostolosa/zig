@@ -1547,9 +1547,6 @@ pub const Inst = struct {
         /// Uses `none` payload.
         pseudo_dbg_end_none,
         /// Local argument.
-        /// Uses `none` payload.
-        pseudo_dbg_arg_none,
-        /// Local argument.
         /// Uses `i` payload.
         pseudo_dbg_arg_i_s,
         /// Local argument.
@@ -1572,9 +1569,6 @@ pub const Inst = struct {
         pseudo_dbg_arg_val,
         /// Remaining arguments are varargs.
         pseudo_dbg_var_args_none,
-        /// Local variable.
-        /// Uses `none` payload.
-        pseudo_dbg_var_none,
         /// Local variable.
         /// Uses `i` payload.
         pseudo_dbg_var_i_s,
@@ -2009,7 +2003,7 @@ pub fn emit(
             .column = func.lbrace_column,
             .is_stmt = switch (debug_output) {
                 .dwarf => |dwarf| dwarf.dwarf.debug_line.header.default_is_stmt,
-                .dwarf2 => |dwarf| dwarf.wip_nav.dwarf.debug_line.header.default_is_stmt,
+                .dwarf2 => |dwarf| dwarf.wip_func.dwarf.debug_line.header.default_is_stmt,
                 .eh_frame, .none => undefined,
             },
         },

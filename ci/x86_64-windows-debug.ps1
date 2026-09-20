@@ -4,6 +4,8 @@ $PREFIX_PATH = "$($Env:USERPROFILE)\deps\zig+llvm+lld+clang-$TARGET-0.17.0-dev.2
 $ZIG = "$PREFIX_PATH\bin\zig.exe"
 $ZSF_MAX_RSS = if ($Env:ZSF_MAX_RSS) { $Env:ZSF_MAX_RSS } else { 0 }
 
+$Env:PATH = "$($Env:USERPROFILE)\local\bin;$Env:PATH"
+
 function CheckLastExitCode {
     if (!$?) {
         exit 1
@@ -18,7 +20,7 @@ $Env:ZIG_GLOBAL_CACHE_DIR="$(Get-Location)\zig-global-cache"
 $Env:ZIG_LOCAL_CACHE_DIR="$(Get-Location)\zig-local-cache"
 
 Write-Output "Building from source..."
-New-Item -Path 'build-debug' -ItemType Directory
+New-Item -Force -Path 'build-debug' -ItemType Directory
 Set-Location -Path 'build-debug'
 
 # CMake gives a syntax error when file paths with backward slashes are used.
@@ -45,18 +47,26 @@ CheckLastExitCode
 $Env:ZIG_LIB_DIR="$(Get-Location)\..\lib"
 
 Write-Output "Main test suite..."
-stage3-debug\bin\zig build test docs `
-  --maxrss $ZSF_MAX_RSS `
+stage3-debug\bin\zig.exe build install test docs `
+  --maxrss "$ZSF_MAX_RSS" `
+  --prefix stage4-debug `
   --search-prefix "$PREFIX_PATH" `
-  -Dstatic-llvm `
-  -Dskip-non-native `
-  -Dskip-test-incremental `
+  --test-timeout 30m `
+  -Dversion-string="$(stage3-debug\bin\zig.exe version)" `
+  -Dtarget="$TARGET" `
+  -Dcpu="$MCPU" `
+  -Duse-zig-libcxx `
+  -Denable-llvm `
+  -Dno-lib `
   -Denable-symlinks-windows `
-  --test-timeout 30m
+  -Dskip-non-native
+CheckLastExitCode
+
+stage4-debug\bin\zig.exe test ..\test\behavior.zig
 CheckLastExitCode
 
 Write-Output "Build x86_64-windows-msvc behavior tests using the C backend..."
-stage3-debug\bin\zig build-obj `
+stage3-debug\bin\zig.exe build-obj `
   -ofmt=c `
   -OReleaseSmall `
   --name compiler_rt `
@@ -66,7 +76,7 @@ stage3-debug\bin\zig build-obj `
   ..\lib\compiler_rt.zig
 CheckLastExitCode
 
-stage3-debug\bin\zig test `
+stage3-debug\bin\zig.exe test `
   -ofmt=c `
   -femit-bin="behavior-x86_64-windows-msvc.c" `
   --test-no-exec `

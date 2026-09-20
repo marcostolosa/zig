@@ -189,7 +189,7 @@ fn _start() callconv(.naked) noreturn {
             .m88k => ".cfi_undefined %%r1",
             .microblaze, .microblazeel => "", // No CFI support.
             .mips, .mipsel, .mips64, .mips64el => ".cfi_undefined $ra",
-            .or1k => ".cfi_undefined r9",
+            .or1k => ".cfi_undefined 9",
             .powerpc, .powerpcle, .powerpc64, .powerpc64le => ".cfi_undefined lr",
             .riscv32, .riscv32be, .riscv64, .riscv64be => if (builtin.zig_backend == .stage2_riscv64)
                 ""
@@ -617,11 +617,11 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
         var i: usize = 0;
         var at_phdr: usize = 0;
         var at_phnum: usize = 0;
-        while (auxv[i].a_type != elf.AT_NULL) : (i += 1) {
+        while (auxv[i].a_type != elf.AT.NULL) : (i += 1) {
             switch (auxv[i].a_type) {
-                elf.AT_PHNUM => at_phnum = auxv[i].a_un.a_val,
-                elf.AT_PHDR => at_phdr = auxv[i].a_un.a_val,
-                elf.AT_HWCAP => at_hwcap = auxv[i].a_un.a_val,
+                elf.AT.PHNUM => at_phnum = auxv[i].a_un.a_val,
+                elf.AT.PHDR => at_phdr = auxv[i].a_un.a_val,
+                elf.AT.HWCAP => at_hwcap = auxv[i].a_un.a_val,
                 else => continue,
             }
         }
@@ -736,8 +736,8 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) cal
 
     switch (builtin.os.tag) {
         .linux => {
-            const at_phdr = std.c.getauxval(elf.AT_PHDR);
-            const at_phnum = std.c.getauxval(elf.AT_PHNUM);
+            const at_phdr = std.c.getauxval(elf.AT.PHDR);
+            const at_phnum = std.c.getauxval(elf.AT.PHNUM);
             const phdrs = (@as([*]elf.ElfN.Phdr, @ptrFromInt(at_phdr)))[0..at_phnum];
             expandStackSize(phdrs);
         },

@@ -536,14 +536,12 @@ pub fn emitMir(emit: *Emit) Error!void {
                     .column = emit.prev_di_loc.column,
                     .end = true,
                 }),
-                .pseudo_dbg_arg_none,
                 .pseudo_dbg_arg_i_s,
                 .pseudo_dbg_arg_i_u,
                 .pseudo_dbg_arg_i_64,
                 .pseudo_dbg_arg_ro,
                 .pseudo_dbg_arg_fa,
                 .pseudo_dbg_arg_m,
-                .pseudo_dbg_var_none,
                 .pseudo_dbg_var_i_s,
                 .pseudo_dbg_var_i_u,
                 .pseudo_dbg_var_i_64,
@@ -552,15 +550,14 @@ pub fn emitMir(emit: *Emit) Error!void {
                 .pseudo_dbg_var_m,
                 => switch (emit.debug_output) {
                     inline .dwarf, .dwarf2 => |dwarf, tag| {
-                        const DwarfLoc = switch (tag) {
-                            .dwarf => link.File.Dwarf.Loc,
-                            .dwarf2 => link.File.Dwarf2.Loc,
+                        const DwarfLoc, const addr_loc = switch (tag) {
+                            .dwarf => .{ link.File.Dwarf.Loc, "addr_reloc" },
+                            .dwarf2 => .{ link.File.Dwarf2.Loc, "addrx_sym" },
                             .eh_frame, .none => comptime unreachable,
                         };
                         var loc_buf: [2]DwarfLoc = undefined;
                         const loc: DwarfLoc = loc: switch (mir_inst.ops) {
                             else => unreachable,
-                            .pseudo_dbg_arg_none, .pseudo_dbg_var_none => .empty,
                             .pseudo_dbg_arg_i_s,
                             .pseudo_dbg_arg_i_u,
                             .pseudo_dbg_var_i_s,
@@ -597,16 +594,21 @@ pub fn emitMir(emit: *Emit) Error!void {
                                             .none => .{ .constu = 0 },
                                             .reg => |reg| .{ .breg = reg.dwarfNum() },
                                             .frame, .table, .rip_inst => unreachable,
-                                            .nav => |nav| .{ .addr_reloc = try codegen.genNavRef(
-                                                emit.bin_file,
-                                                emit.pt,
-                                                nav,
-                                            ) },
-                                            .uav => |uav| .{ .addr_reloc = try emit.bin_file.lowerUav(
-                                                emit.pt,
-                                                uav.val,
-                                                Type.fromInterned(uav.orig_ty).ptrAlignment(emit.pt.zcu),
-                                            ) },
+                                            .nav => |nav| @unionInit(
+                                                DwarfLoc,
+                                                addr_loc,
+                                                try codegen.genNavRef(emit.bin_file, emit.pt, nav),
+                                            ),
+                                            .uav => |uav| @unionInit(
+                                                DwarfLoc,
+                                                addr_loc,
+                                                try emit.bin_file.lowerUav(
+                                                    emit.pt,
+                                                    uav.val,
+                                                    Type.fromInterned(uav.orig_ty)
+                                                        .ptrAlignment(emit.pt.zcu),
+                                                ),
+                                            ),
                                             .lazy_sym, .extern_func => unreachable,
                                         };
                                         break :base &loc_buf[0];
@@ -627,23 +629,19 @@ pub fn emitMir(emit: *Emit) Error!void {
                         try dwarf.genLocalVarDebugInfo(
                             switch (mir_inst.ops) {
                                 else => unreachable,
-                                .pseudo_dbg_arg_none,
                                 .pseudo_dbg_arg_i_s,
                                 .pseudo_dbg_arg_i_u,
                                 .pseudo_dbg_arg_i_64,
                                 .pseudo_dbg_arg_ro,
                                 .pseudo_dbg_arg_fa,
                                 .pseudo_dbg_arg_m,
-                                .pseudo_dbg_arg_val,
                                 => .arg,
-                                .pseudo_dbg_var_none,
                                 .pseudo_dbg_var_i_s,
                                 .pseudo_dbg_var_i_u,
                                 .pseudo_dbg_var_i_64,
                                 .pseudo_dbg_var_ro,
                                 .pseudo_dbg_var_fa,
                                 .pseudo_dbg_var_m,
-                                .pseudo_dbg_var_val,
                                 => .local_var,
                             },
                             local.name.toSlice(&emit.lower.mir),

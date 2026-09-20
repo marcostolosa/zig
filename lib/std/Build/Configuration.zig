@@ -1378,17 +1378,21 @@ pub const Step = extern struct {
         flags: @This().Flags,
         generated_file: GeneratedFileIndex,
         contents: Bytes,
-        args: Storage.FlagLengthPrefixedList(.flags, .args, Arg),
+        files: Storage.FlagLengthPrefixedList(.flags, .files, NamedPath),
+        directories: Storage.FlagLengthPrefixedList(.flags, .directories, NamedPath),
+        untracked_paths: Storage.FlagLengthPrefixedList(.flags, .untracked_paths, NamedPath),
 
-        pub const Arg = extern struct {
+        pub const NamedPath = extern struct {
             name: String,
             path: LazyPath.Index,
         };
 
         pub const Flags = packed struct(u32) {
             tag: Tag = .options,
-            args: bool,
-            _: u26 = 0,
+            files: bool,
+            directories: bool,
+            untracked_paths: bool,
+            _: u24 = 0,
         };
     };
 
@@ -1652,6 +1656,7 @@ pub const Module = struct {
     rpaths: Storage.UnionList(.flags, .rpaths, RPath),
     link_objects: Storage.UnionList(.flags, .link_objects, LinkObject),
     frameworks: Storage.FlagLengthPrefixedList(.flags, .frameworks, Framework),
+    patchable_function_entry: u32,
 
     pub const Optimize = enum(u3) {
         debug,
@@ -1872,12 +1877,11 @@ pub const PathDep = extern struct {
     pkg: Package.OptionalIndex,
 
     pub const Flags = packed struct(u32) {
-        mode: Mode,
+        is_directory: bool,
+        metadata_only: bool,
         base: LazyPath.Relative.Base,
-        _: u16 = 0,
+        _: u22 = 0,
     };
-
-    pub const Mode = enum(u8) { directory, contents, metadata };
 };
 
 pub const InstallDestDir = enum(u32) {

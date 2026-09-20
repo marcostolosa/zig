@@ -227,7 +227,7 @@ pub fn ConfigurableObligations(config: Config, messages: ObligationsMessages) ty
 
         const ReadPtr = if (Mutex.present) *O else *const O;
 
-        counter: if (config.enabled) usize else void,
+        counter: if (config.enabled) u32 else void,
         last_incur: ObligationsTrace,
         last_discharge: ObligationsTrace,
         mutex: Mutex = .init,

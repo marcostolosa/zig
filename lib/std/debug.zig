@@ -842,7 +842,7 @@ pub const FormatStackTrace = struct {
 pub fn CapturedStackTrace(comptime frames_len: usize) type {
     return struct {
         /// Return addresses, innermost first, zero padded.
-        addresses: [frames_len]usize,
+        addresses: [frames_len]usize align(if (frames_len == 0) 1 else @alignOf(usize)),
 
         const Capture = @This();
 
@@ -871,6 +871,7 @@ pub fn CapturedStackTrace(comptime frames_len: usize) type {
         /// The captured addresses as a `StackTrace`, for use with `writeStackTrace` and
         /// `dumpStackTrace`.
         pub fn stackTrace(c: *const Capture) StackTrace {
+            if (frames_len == 0) return .{ .return_addresses = &.{}, .skipped = .unknown };
             const n = mem.indexOfScalar(usize, &c.addresses, 0) orelse frames_len;
             return .{
                 .return_addresses = c.addresses[0..n],
@@ -1906,7 +1907,7 @@ pub fn ConfigurableTrace(comptime size: usize, comptime stack_frame_count: usize
 }
 
 /// Deprecated; use `std.safety.Lock`.
-pub const SafetyLock = std.safety.ConfigurableLock(.{ .thread_safe = false }, .{});
+pub const SafetyLock = std.safety.ConfigurableLock(.{ .thread_safe = false, .stack_trace_frames = 0 }, .{});
 
 /// Detect whether the program is being executed in the Valgrind virtual machine.
 ///

@@ -689,18 +689,24 @@ pub const File = struct {
         return macho.reopenDebugInfo();
     }
 
+    pub fn canMakeExecutable(base: *File) bool {
+        const comp = base.comp;
+        return switch (comp.config.output_mode) {
+            .Obj => false,
+            .Lib => switch (comp.config.link_mode) {
+                .static => false,
+                .dynamic => true,
+            },
+            .Exe => true,
+        };
+    }
+
     pub fn makeExecutable(base: *File) !void {
         dev.check(.make_executable);
         const comp = base.comp;
         const io = comp.io;
-        switch (comp.config.output_mode) {
-            .Obj => return,
-            .Lib => switch (comp.config.link_mode) {
-                .static => return,
-                .dynamic => {},
-            },
-            .Exe => {},
-        }
+        if (!base.canMakeExecutable())
+            return;
         switch (base.tag) {
             .lld => assert(base.file == null),
             .elf => if (base.file) |f| {
@@ -1319,7 +1325,7 @@ pub const File = struct {
                 .macho => MachO,
                 .c => C,
                 .wasm => Wasm,
-                .spirv => SpirV,
+                .spirv => Spirv,
                 .lld => Lld,
                 .plan9 => comptime unreachable,
                 .spork8 => Spork8,
@@ -1423,7 +1429,7 @@ pub const File = struct {
     pub const Elf = @import("link/Elf.zig");
     pub const Elf2 = @import("link/Elf2.zig");
     pub const MachO = @import("link/MachO.zig");
-    pub const SpirV = @import("link/SpirV.zig");
+    pub const Spirv = @import("link/Spirv.zig");
     pub const Wasm = @import("link/Wasm.zig");
     pub const Dwarf = @import("link/Dwarf.zig");
     pub const Dwarf2 = @import("link/Dwarf2.zig");

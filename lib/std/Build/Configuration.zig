@@ -1378,17 +1378,21 @@ pub const Step = extern struct {
         flags: @This().Flags,
         generated_file: GeneratedFileIndex,
         contents: Bytes,
-        args: Storage.FlagLengthPrefixedList(.flags, .args, Arg),
+        files: Storage.FlagLengthPrefixedList(.flags, .files, NamedPath),
+        directories: Storage.FlagLengthPrefixedList(.flags, .directories, NamedPath),
+        untracked_paths: Storage.FlagLengthPrefixedList(.flags, .untracked_paths, NamedPath),
 
-        pub const Arg = extern struct {
+        pub const NamedPath = extern struct {
             name: String,
             path: LazyPath.Index,
         };
 
         pub const Flags = packed struct(u32) {
             tag: Tag = .options,
-            args: bool,
-            _: u26 = 0,
+            files: bool,
+            directories: bool,
+            untracked_paths: bool,
+            _: u24 = 0,
         };
     };
 

@@ -309,6 +309,33 @@ pub fn make(
     }
 }
 
+pub fn deinit(step: *Step, gpa: Allocator) void {
+    step.clearResultStderr(gpa);
+    step.clearFailedCommand(gpa);
+    step.clearErrorBundle(gpa);
+    step.inputs.deinit(gpa);
+    if (step.getZigProcess()) |zp| gpa.destroy(zp);
+    switch (step.extended) {
+        .check_file,
+        .compile,
+        .config_header,
+        .fail,
+        .find_program,
+        .install_artifact,
+        .install_dir,
+        .install_file,
+        .obj_copy,
+        .options,
+        .top_level,
+        .translate_c,
+        .update_source_files,
+        .write_file,
+        => {},
+        inline .fmt, .run => |*extended| extended.deinit(gpa),
+    }
+    step.* = undefined;
+}
+
 /// Prepares the step for being re-evaluated.
 pub fn reset(step: *Step, maker: *Maker) void {
     assert(step.state == .precheck_done);

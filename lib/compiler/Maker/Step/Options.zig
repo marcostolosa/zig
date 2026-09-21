@@ -27,8 +27,11 @@ pub fn make(
     const contents = conf_options.contents.slice(conf);
 
     // This step operates under the assumption that all contents of the
-    // generated zig file are observable by dependant steps, as well as the
-    // contents of files added via Options.Arg.
+    // generated zig file are observable by dependant steps.
+    // Pathnames added to Options.args are assumed to be generated files whose
+    // contents are also observable, while pathnames added to
+    // Options.untracked_paths are treated as pure path string data with no
+    // tracking of the path's state or contents.
 
     step.clearWatchInputs(maker);
 
@@ -37,12 +40,34 @@ pub fn make(
 
     var args_bytes: std.ArrayList(u8) = .empty;
 
-    for (conf_options.args.slice) |arg| {
+    for (conf_options.files.slice) |arg| {
         const name = arg.name.slice(conf);
         const lazy_path = arg.path.get(conf);
         try step.addWatchInput(maker, arena, lazy_path);
         const arg_path = try maker.resolveLazyPath(arena, lazy_path, step_index);
         _ = try man.addInputPath(arg_path, .{});
+        try args_bytes.print(arena, "pub const {f}: []const u8 = \"{f}\";\n", .{
+            std.zig.fmtId(name), arg_path.fmtEscapeString(),
+        });
+    }
+
+    for (conf_options.directories.slice) |arg| {
+        const name = arg.name.slice(conf);
+        const lazy_path = arg.path.get(conf);
+        _ = try step.addDirectoryWatchInput(maker, lazy_path);
+        const arg_path = try maker.resolveLazyPath(arena, lazy_path, step_index);
+        _ = try man.addInputPath(arg_path, .{
+            .handle = .{ .dir = null },
+        });
+        try args_bytes.print(arena, "pub const {f}: []const u8 = \"{f}\";\n", .{
+            std.zig.fmtId(name), arg_path.fmtEscapeString(),
+        });
+    }
+
+    for (conf_options.untracked_paths.slice) |arg| {
+        const name = arg.name.slice(conf);
+        const lazy_path = arg.path.get(conf);
+        const arg_path = try maker.resolveLazyPath(arena, lazy_path, step_index);
         try args_bytes.print(arena, "pub const {f}: []const u8 = \"{f}\";\n", .{
             std.zig.fmtId(name), arg_path.fmtEscapeString(),
         });

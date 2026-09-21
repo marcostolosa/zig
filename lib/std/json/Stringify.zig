@@ -322,8 +322,9 @@ pub fn endObjectFieldRaw(self: *Stringify) void {
 ///  * Zig `?T` -> `null` or the rendering of `T`.
 ///  * Zig `i32`, `u64`, etc. -> JSON number or string.
 ///      * When option `emit_nonportable_numbers_as_strings` is true, if the value is outside the range `+-1<<53` (the precise integer range of f64), it is rendered as a JSON string in base 10. Otherwise, it is rendered as JSON number.
-///  * Zig floats -> JSON number or string.
-///      * If the value cannot be precisely represented by an f64, it is rendered as a JSON string. Otherwise, it is rendered as JSON number.
+///  * Zig floats -> JSON number.
+///      * Printed with the precision of the value's own type; for example f128. Preserving the level of precision on serialization, and leaving the deserialization precision to the recipient.
+///      * If the value is NaN or ±Infinity, `error.WriteFailed` is returned since the values are not permitted in JSON (RFC 8259, section 6).
 ///      * TODO: Float rendering will likely change in the future, e.g. to remove the unnecessary "e+00".
 ///  * Zig `[]const u8`, `[]u8`, `*[N]u8`, `@Vector(N, u8)`, and similar -> JSON string.
 ///      * See `Options.emit_strings_as_arrays`.
@@ -365,18 +366,17 @@ pub fn write(self: *Stringify, v: anytype) Error!void {
             return self.write(@as(std.math.IntFittingRange(v, v), v));
         },
         .float, .comptime_float => {
-            if (@as(f64, @floatCast(v)) == v) {
-                try self.valueStart();
-                try self.writer.print("{}", .{@as(f64, @floatCast(v))});
-                self.valueDone();
-                return;
+            if (@typeInfo(T) == .float) {
+                if (std.math.isNan(v) or std.math.isInf(v)) {
+                    return error.WriteFailed;
+                }
             }
+
             try self.valueStart();
-            try self.writer.print("\"{}\"", .{v});
+            try self.writer.print("{}", .{v});
             self.valueDone();
             return;
         },
-
         .bool => {
             try self.valueStart();
             try self.writer.writeAll(if (v) "true" else "false");
@@ -841,6 +841,31 @@ test "stringify many-item sentinel-terminated string" {
     try testStringify("\"hello\"", @as([*:0]const u8, "hello"), .{});
     try testStringify("\"with\\nescapes\\r\"", @as([*:0]const u8, "with\nescapes\r"), .{ .escape_unicode = true });
     try testStringify("\"with unicode\\u0001\"", @as([*:0]const u8, "with unicode\u{1}"), .{ .escape_unicode = true });
+}
+
+test "stringify non-finite floats" {
+    try testNonFiniteFloatWriteError(std.math.inf(f64));
+    try testNonFiniteFloatWriteError(-std.math.inf(f64));
+    try testNonFiniteFloatWriteError(std.math.nan(f64));
+    try testNonFiniteFloatWriteError(std.math.inf(f32));
+    try testNonFiniteFloatWriteError(std.math.nan(f128));
+}
+
+fn testNonFiniteFloatWriteError(v: anytype) !void {
+    var buffer: [64]u8 = undefined;
+    var w: Writer = .fixed(&buffer);
+
+    try std.testing.expectError(
+        error.WriteFailed,
+        value(v, .{}, &w),
+    );
+}
+
+test "stringify finite floats" {
+    try testStringify("42", @as(f64, 42), .{});
+    try testStringify("1.5", @as(f32, 1.5), .{});
+    try testStringify("0.1", @as(f64, 0.1), .{});
+    try testStringify("1.5", 1.5, .{});
 }
 
 test "stringify enums" {

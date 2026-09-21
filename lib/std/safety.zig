@@ -4,8 +4,8 @@
 //! In their default configuration, in debug and safe modes the state is
 //! carried and the checks are always generated, and a violation triggers a
 //! panic.
-//! In fast and small modes if the primitive has state is zero-sized and the
-//! checks are optimized away, so declaring valid state costs nothing there.
+//! In fast and small modes the primitives that carry state are zero-sized and
+//! the checks are optimized away, so declaring valid state costs nothing there.
 //!
 //! User code should not branch on the internal state of these primitives, nor
 //! otherwise change program behavior upon them, since in some configurations
@@ -56,6 +56,25 @@ const Config = struct {
     }
 };
 
+fn fail(
+    comptime headline: []const u8,
+    headline_args: anytype,
+    comptime trace_label: []const u8,
+    trace_label_args: anytype,
+    trace: anytype,
+    ret_addr: usize,
+) noreturn {
+    @branchHint(.cold);
+
+    if (@TypeOf(trace.*).len != 0)
+        log.err(
+            headline ++ "\n\n" ++ trace_label ++ ":{f}",
+            headline_args ++ trace_label_args ++ .{trace.fmt()},
+        );
+
+    std.debug.panicExtra(ret_addr, headline, headline_args);
+}
+
 fn OptionalMutex(config: Config) type {
     return struct {
         const M = @This();
@@ -103,6 +122,11 @@ pub fn ConfigurableState(Enum: type, config: Config) type {
         /// Initializes the state to `initial_state` and captures the current
         /// stack trace.
         pub fn initAndCapture(initial_state: Enum) S {
+            return .initAndCaptureAt(initial_state, @returnAddress());
+        }
+
+        /// `initAndCapture`, capturing from `ret_addr`.
+        pub fn initAndCaptureAt(initial_state: Enum, ret_addr: usize) S {
             if (!config.enabled) return .{
                 .state = {},
                 .last_transition = .empty,
@@ -110,65 +134,114 @@ pub fn ConfigurableState(Enum: type, config: Config) type {
 
             return .{
                 .state = initial_state,
-                .last_transition = .captured(@returnAddress()),
+                .last_transition = .captured(ret_addr),
             };
         }
 
         /// Transitions to `next_state`.
         pub fn transition(self: *S, next_state: Enum) void {
+            self.transitionAt(next_state, @returnAddress());
+        }
+
+        /// `transition`, capturing from `ret_addr`.
+        pub fn transitionAt(self: *S, next_state: Enum, ret_addr: usize) void {
             if (!config.enabled) return;
 
             self.mutex.lock();
             defer self.mutex.unlock();
 
             self.state = next_state;
-            self.last_transition.capture(@returnAddress());
+            self.last_transition.capture(ret_addr);
         }
 
         /// Asserts that the current state is equal to the one provided.
         pub fn assertEql(self: ReadPtr, comptime expected: Enum) void {
-            if (!config.enabled) return;
+            self.check(&.{expected}, null, @returnAddress());
+        }
 
-            if (Mutex.present) self.mutex.lock();
-            defer if (Mutex.present) self.mutex.unlock();
-
-            if (self.state != expected) self.failLocked(&.{expected}, @returnAddress());
+        /// `assertEql`, reporting from `ret_addr`.
+        pub fn assertEqlAt(self: ReadPtr, comptime expected: Enum, ret_addr: usize) void {
+            self.check(&.{expected}, null, ret_addr);
         }
 
         /// Asserts that the current state is equal to any of the provided states.
         pub fn assertEqlAnyOf(self: ReadPtr, comptime expect_any_of: []const Enum) void {
+            self.check(expect_any_of, null, @returnAddress());
+        }
+
+        /// `assertEqlAnyOf`, reporting from `ret_addr`.
+        pub fn assertEqlAnyOfAt(
+            self: ReadPtr,
+            comptime expect_any_of: []const Enum,
+            ret_addr: usize,
+        ) void {
+            self.check(expect_any_of, null, ret_addr);
+        }
+
+        fn assertEqlWith(
+            self: ReadPtr,
+            comptime expected: Enum,
+            comptime message: []const u8,
+            ret_addr: usize,
+        ) void {
+            self.check(&.{expected}, message, ret_addr);
+        }
+
+        fn check(
+            self: ReadPtr,
+            comptime expect_any_of: []const Enum,
+            comptime message: ?[]const u8,
+            ret_addr: usize,
+        ) void {
             if (!config.enabled) return;
 
             if (Mutex.present) self.mutex.lock();
             defer if (Mutex.present) self.mutex.unlock();
 
             for (expect_any_of) |expected| {
-                if (self.state == expected) break;
-            } else self.failLocked(expect_any_of, @returnAddress());
+                if (self.state == expected) return;
+            }
+
+            self.failLocked(expect_any_of, message, ret_addr);
         }
 
-        fn failLocked(self: *const S, comptime expected: []const Enum, ret_addr: usize) noreturn {
+        fn failLocked(
+            self: *const S,
+            comptime expected: []const Enum,
+            comptime message: ?[]const u8,
+            ret_addr: usize,
+        ) noreturn {
             @branchHint(.cold);
 
-            const expected_string = comptime string: {
-                var buf: []const u8 = "";
-                for (expected, 0..) |e, i|
-                    buf = buf ++ (if (i == 0) "" else ", ") ++ @tagName(e);
+            const label = "entered {s} at";
+            const found = @tagName(self.state);
 
-                break :string buf;
+            if (message) |m|
+                fail(m, .{}, label, .{found}, &self.last_transition, ret_addr);
+
+            const expected_list = comptime list: {
+                var buf: []const u8 = "";
+                for (expected, 0..) |e, i| {
+                    const separator = if (i == 0)
+                        ""
+                    else if (i == expected.len - 1)
+                        " or "
+                    else
+                        ", ";
+
+                    buf = buf ++ separator ++ @tagName(e);
+                }
+
+                break :list buf;
             };
 
-            if (TransitionTrace.len != 0)
-                log.err("invalid state: expected {s}, found {s}; last transition: {f}", .{
-                    expected_string,
-                    @tagName(self.state),
-                    self.last_transition.fmt(),
-                });
-
-            std.debug.panicExtra(
+            fail(
+                "expected state " ++ expected_list ++ ", found {s}",
+                .{found},
+                label,
+                .{found},
+                &self.last_transition,
                 ret_addr,
-                "invalid state: expected {s}, found {s}",
-                .{ expected_string, @tagName(self.state) },
             );
         }
     };
@@ -206,15 +279,17 @@ pub fn State(Enum: type) type {
 /// Text used when an obligation assertion fails.
 pub const ObligationsMessages = struct {
     /// `discharge` with nothing outstanding.
-    unmatched_discharge: []const u8 = "discharge without a matching obligation",
+    unmatched_discharge: []const u8 = "discharged with nothing outstanding",
     /// `assertAny` with nothing outstanding.
     none_outstanding: []const u8 = "expected an outstanding obligation, found none",
     /// `assertNone` with something still outstanding.
     still_outstanding: []const u8 = "obligations still outstanding",
+    /// Noun in the "(2 outstanding)" appended when a count is known.
+    counted: []const u8 = "outstanding",
     /// Labels the trace of the most recent discharge.
-    last_discharge: []const u8 = "last discharge",
-    /// Labels the trace of the most recent incur.
-    last_incur: []const u8 = "one was incurred at",
+    last_discharge: []const u8 = "previously discharged at",
+    /// Labels the trace of the most recent incur
+    last_incur: []const u8 = "last incurred at",
 };
 
 pub fn ConfigurableObligations(config: Config, messages: ObligationsMessages) type {
@@ -240,84 +315,92 @@ pub fn ConfigurableObligations(config: Config, messages: ObligationsMessages) ty
 
         /// Takes an obligation.
         pub fn incur(self: *O) void {
+            self.incurAt(@returnAddress());
+        }
+
+        /// `incur`, capturing from `ret_addr`.
+        pub fn incurAt(self: *O, ret_addr: usize) void {
             if (!config.enabled) return;
 
             self.mutex.lock();
             defer self.mutex.unlock();
 
             self.counter += 1;
-            self.last_incur.capture(@returnAddress());
+            self.last_incur.capture(ret_addr);
         }
 
         /// Asserts one obligation is outstanding then discharge it.
         pub fn discharge(self: *O) void {
+            self.dischargeAt(@returnAddress());
+        }
+
+        /// `discharge`, capturing and reporting from `ret_addr`.
+        pub fn dischargeAt(self: *O, ret_addr: usize) void {
             if (!config.enabled) return;
 
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            if (self.counter == 0) self.failLocked(
+            if (self.counter == 0) fail(
                 messages.unmatched_discharge,
-                &self.last_discharge,
+                .{},
                 messages.last_discharge,
-                @returnAddress(),
+                .{},
+                &self.last_discharge,
+                ret_addr,
             );
 
             self.counter -= 1;
-            self.last_discharge.capture(@returnAddress());
+            self.last_discharge.capture(ret_addr);
         }
 
         /// Asserts at least one obligation is outstanding.
         /// If fails, report where the last obligation was discharged.
         pub fn assertAny(self: ReadPtr) void {
+            self.assertAnyAt(@returnAddress());
+        }
+
+        /// `assertAny`, reporting from `ret_addr`.
+        pub fn assertAnyAt(self: ReadPtr, ret_addr: usize) void {
             if (!config.enabled) return;
 
             if (Mutex.present) self.mutex.lock();
             defer if (Mutex.present) self.mutex.unlock();
 
-            if (self.counter == 0) self.failLocked(
+            if (self.counter == 0) fail(
                 messages.none_outstanding,
-                &self.last_discharge,
+                .{},
                 messages.last_discharge,
-                @returnAddress(),
+                .{},
+                &self.last_discharge,
+                ret_addr,
             );
         }
 
         /// Asserts no obligations are outstanding.
         /// If fails, report where the last obligation was incurred.
         pub fn assertNone(self: ReadPtr) void {
+            self.assertNoneWith(messages.still_outstanding, @returnAddress());
+        }
+
+        /// `assertNone`, reporting from `ret_addr`.
+        pub fn assertNoneAt(self: ReadPtr, ret_addr: usize) void {
+            self.assertNoneWith(messages.still_outstanding, ret_addr);
+        }
+
+        fn assertNoneWith(self: ReadPtr, comptime message: []const u8, ret_addr: usize) void {
             if (!config.enabled) return;
 
             if (Mutex.present) self.mutex.lock();
             defer if (Mutex.present) self.mutex.unlock();
 
-            if (self.counter != 0) self.failLocked(
-                messages.still_outstanding,
-                &self.last_incur,
-                messages.last_incur,
-                @returnAddress(),
-            );
-        }
-
-        fn failLocked(
-            self: *const O,
-            comptime message: []const u8,
-            trace: *const ObligationsTrace,
-            comptime trace_label: []const u8,
-            ret_addr: usize,
-        ) noreturn {
-            @branchHint(.cold);
-
-            if (ObligationsTrace.len != 0)
-                log.err(message ++ " (outstanding: {d}); " ++ trace_label ++ ": {f}", .{
-                    self.counter,
-                    trace.fmt(),
-                });
-
-            std.debug.panicExtra(
-                ret_addr,
-                message ++ " (outstanding: {d})",
+            if (self.counter != 0) fail(
+                message ++ " ({d} " ++ messages.counted ++ ")",
                 .{self.counter},
+                messages.last_incur,
+                .{},
+                &self.last_incur,
+                ret_addr,
             );
         }
     };
@@ -357,49 +440,54 @@ test ConfigurableObligations {
 /// `discharge` settles it; `assertAny` and `assertNone` check at the points
 /// where the program expects a debt, or none.
 ///
+/// Obligations are counted, not identified: discharging the same one twice
+/// while another is outstanding goes unnoticed until the count reaches zero.
+///
 /// See `ConfigurableObligations` to configure enable/disabled, thread safety,
 /// messages and more.
 pub const Obligations = ConfigurableObligations(.{}, .{});
 
-/// Text used when a shared-lock assertion fails.
+/// Text used when a lock assertion fails.
 pub const LockMessages = struct {
-    /// `unlockShared` with no shared holders.
-    unmatched_unlock_shared: []const u8 = "unlockShared without a matching lockShared",
-    /// `assertLockedShared` with no shared holders.
-    not_locked_shared: []const u8 = "expected the lock to be held shared, found no holders",
-    /// Shared holders remaining where none were expected.
-    still_locked_shared: []const u8 = "lock still held shared",
-    /// Labels the trace of the most recent `unlockShared`.
-    last_unlock_shared: []const u8 = "last unlockShared",
+    /// Held exclusively where that is not what the caller needed.
+    held_exclusively: []const u8 = "the lock is held exclusively",
+    /// Held shared where that is not what the caller needed.
+    held_shared: []const u8 = "the lock is held shared",
+    /// Expected an exclusive holder, found none.
+    not_held_exclusively: []const u8 = "the lock is not held exclusively",
+    /// Expected readers, found none.
+    not_held_shared: []const u8 = "the lock is not held shared",
+    /// Noun in the "(2 reader(s))" appended when readers are found.
+    counted: []const u8 = "reader(s)",
     /// Labels the trace of the most recent `lockShared`.
-    last_lock_shared: []const u8 = "one holder locked it at",
+    last_lock_shared: []const u8 = "last locked shared at",
+    /// Labels the trace of the most recent `unlockShared`.
+    last_unlock_shared: []const u8 = "previously unlocked at",
 };
 
 pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
     return struct {
         const L = @This();
 
-        /// Tracks the exclusive claim. Shared claims leave it `unlocked`, so
-        /// this alone cannot tell readers from an idle lock; `readers` does.
-        const LockState = ConfigurableState(
-            enum { locked, unlocked },
-            .{
-                .enabled = config.enabled,
-                .thread_safe = false,
-                .stack_trace_frames = config.stack_trace_frames,
-            },
-        );
-
-        /// Counts the shared claims, one obligation per reader, so the last
-        /// `unlockShared` is what returns the lock to idle.
-        const LockObligations = ConfigurableObligations(.{
+        /// The inner primitives are guarded by this lock's `mutex`, so they
+        /// do not take their own.
+        const inner_config: Config = .{
             .enabled = config.enabled,
             .thread_safe = false,
             .stack_trace_frames = config.stack_trace_frames,
-        }, .{
-            .unmatched_discharge = messages.unmatched_unlock_shared,
-            .none_outstanding = messages.not_locked_shared,
-            .still_outstanding = messages.still_locked_shared,
+        };
+
+        /// Tracks the exclusive claim. Shared claims leave it `unlocked`, so
+        /// this alone cannot tell readers from an idle lock; `readers` does.
+        const LockState = ConfigurableState(enum { locked, unlocked }, inner_config);
+
+        /// Counts the shared claims, one obligation per reader, so the last
+        /// `unlockShared` is what returns the lock to idle.
+        const LockObligations = ConfigurableObligations(inner_config, .{
+            .unmatched_discharge = messages.not_held_shared,
+            .none_outstanding = messages.not_held_shared,
+            .still_outstanding = messages.held_shared,
+            .counted = messages.counted,
             .last_discharge = messages.last_unlock_shared,
             .last_incur = messages.last_lock_shared,
         });
@@ -417,71 +505,78 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
         /// Claims exclusive access. Use when mutating data.
         /// Asserts nobody holds it, exclusively or shared.
         pub fn lock(self: *L) void {
+            const ret_addr = @returnAddress();
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            self.state.assertEql(.unlocked);
-            self.readers.assertNone();
-            self.state.transition(.locked);
+            self.state.assertEqlWith(.unlocked, messages.held_exclusively, ret_addr);
+            self.readers.assertNoneWith(messages.held_shared, ret_addr);
+            self.state.transitionAt(.locked, ret_addr);
         }
 
         /// Releases the exclusive claim. Asserts it is the one held.
         pub fn unlock(self: *L) void {
+            const ret_addr = @returnAddress();
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            self.state.assertEql(.locked);
-            self.readers.assertNone();
-            self.state.transition(.unlocked);
+            self.state.assertEqlWith(.locked, messages.not_held_exclusively, ret_addr);
+            self.readers.assertNoneWith(messages.held_shared, ret_addr);
+            self.state.transitionAt(.unlocked, ret_addr);
         }
 
         /// Claims shared access, alongside any other readers. Use when
         /// consuming data in a read-only manner. Asserts nobody holds it
         /// exclusively.
         pub fn lockShared(self: *L) void {
+            const ret_addr = @returnAddress();
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            self.state.assertEql(.unlocked);
-            self.readers.incur();
+            self.state.assertEqlWith(.unlocked, messages.held_exclusively, ret_addr);
+            self.readers.incurAt(ret_addr);
         }
 
         /// Releases one shared claim. Asserts one is held, so a reader that
         /// releases twice is caught rather than cancelling out another.
         pub fn unlockShared(self: *L) void {
+            const ret_addr = @returnAddress();
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            self.state.assertEql(.unlocked);
-            self.readers.discharge();
+            self.state.assertEqlWith(.unlocked, messages.held_exclusively, ret_addr);
+            self.readers.dischargeAt(ret_addr);
         }
 
         /// Asserts nobody holds it, exclusively or shared.
         pub fn assertUnlocked(self: ReadPtr) void {
+            const ret_addr = @returnAddress();
             if (Mutex.present) self.mutex.lock();
             defer if (Mutex.present) self.mutex.unlock();
 
-            self.state.assertEql(.unlocked);
-            self.readers.assertNone();
+            self.state.assertEqlWith(.unlocked, messages.held_exclusively, ret_addr);
+            self.readers.assertNoneWith(messages.held_shared, ret_addr);
         }
 
         /// Asserts it is held exclusively, as a mutator should before writing.
         pub fn assertLocked(self: ReadPtr) void {
+            const ret_addr = @returnAddress();
             if (Mutex.present) self.mutex.lock();
             defer if (Mutex.present) self.mutex.unlock();
 
-            self.state.assertEql(.locked);
-            self.readers.assertNone();
+            self.state.assertEqlWith(.locked, messages.not_held_exclusively, ret_addr);
+            self.readers.assertNoneWith(messages.held_shared, ret_addr);
         }
 
         /// Asserts at least one reader holds it, as a reader should before
         /// reading. Says nothing about which reader, only that a shared claim
         /// is outstanding.
         pub fn assertLockedShared(self: ReadPtr) void {
+            const ret_addr = @returnAddress();
             if (Mutex.present) self.mutex.lock();
             defer if (Mutex.present) self.mutex.unlock();
 
-            self.readers.assertAny();
+            self.readers.assertAnyAt(ret_addr);
         }
     };
 }
@@ -531,8 +626,8 @@ pub const Lock = ConfigurableLock(.{}, .{});
 
 /// Text used when a binding assertion fails.
 pub const BoundToMessages = struct {
-    /// The identity differs from the one bound.
-    mismatch: []const u8 = "bound to a different context",
+    /// The identity differs from the one bound; "(was x, now y)" is appended.
+    mismatch: []const u8 = "accessed from a different context than the one bound",
     /// Labels the trace of the bind that established the current context.
     last_bind: []const u8 = "bound at",
 };
@@ -577,37 +672,59 @@ pub fn ConfigurableBoundTo(
         /// Asserts the current context matches, binding it if unbound.
         pub fn assertSame(self: *B) void {
             if (!config.enabled) return;
-            self.assertSameAs(self.identity());
+            self.assertSameAsAt(self.identity(), @returnAddress());
+        }
+
+        /// `assertSame`, capturing and reporting from `ret_addr`.
+        pub fn assertSameAt(self: *B, ret_addr: usize) void {
+            if (!config.enabled) return;
+            self.assertSameAsAt(self.identity(), ret_addr);
         }
 
         /// Asserts `context` matches the bound one, binding it if unbound.
         pub fn assertSameAs(self: *B, context: Context) void {
+            self.assertSameAsAt(context, @returnAddress());
+        }
+
+        /// `assertSameAs`, capturing and reporting from `ret_addr`.
+        pub fn assertSameAsAt(self: *B, context: Context, ret_addr: usize) void {
             if (!config.enabled) return;
 
             self.mutex.lock();
             defer self.mutex.unlock();
 
             const bound = self.context orelse
-                return self.bindLocked(context, @returnAddress());
+                return self.bindLocked(context, ret_addr);
 
             if (!std.meta.eql(bound, context))
-                self.failLocked(@returnAddress());
+                self.failLocked(bound, context, ret_addr);
         }
 
         /// Binds `context`, replacing any existing binding.
         pub fn rebind(self: *B, context: Context) void {
+            self.rebindAt(context, @returnAddress());
+        }
+
+        /// `rebind`, capturing from `ret_addr`.
+        pub fn rebindAt(self: *B, context: Context, ret_addr: usize) void {
             if (!config.enabled) return;
 
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            self.bindLocked(context, @returnAddress());
+            self.bindLocked(context, ret_addr);
         }
 
         /// Binds the context reported by `identityFn`, replacing any existing binding.
         pub fn rebindCurrent(self: *B) void {
             if (!config.enabled) return;
-            self.rebind(self.identity());
+            self.rebindAt(self.identity(), @returnAddress());
+        }
+
+        /// `rebindCurrent`, capturing from `ret_addr`.
+        pub fn rebindCurrentAt(self: *B, ret_addr: usize) void {
+            if (!config.enabled) return;
+            self.rebindAt(self.identity(), ret_addr);
         }
 
         /// Drops the binding, so the next access binds afresh.
@@ -625,15 +742,15 @@ pub fn ConfigurableBoundTo(
             self.last_bind.capture(ret_addr);
         }
 
-        fn failLocked(self: *B, ret_addr: usize) noreturn {
-            @branchHint(.cold);
-
-            if (BindTrace.len != 0)
-                log.err(messages.mismatch ++ "; " ++ messages.last_bind ++ ": {f}", .{
-                    self.last_bind.fmt(),
-                });
-
-            std.debug.panicExtra(ret_addr, messages.mismatch, .{});
+        fn failLocked(self: *const B, bound: Context, current: Context, ret_addr: usize) noreturn {
+            fail(
+                messages.mismatch ++ " (was {any}, now {any})",
+                .{ bound, current },
+                messages.last_bind,
+                .{},
+                &self.last_bind,
+                ret_addr,
+            );
         }
     };
 }
@@ -682,6 +799,9 @@ test ConfigurableBoundTo {
 /// context is whatever `identityFn(self, args)` returns: the current thread, task,
 /// generation counter, and so on.
 ///
+/// A failure reports the bound and current contexts, and where the binding
+/// was made.
+///
 /// See `ConfigurableBoundTo` to configure enable/disabled, thread safety,
 /// messages and more.
 pub fn BoundTo(identityFn: anytype, args: anytype) type {
@@ -724,8 +844,8 @@ test valueAt {
     b.assertSame();
 }
 
-fn addressOf(self: *const anyopaque) usize {
-    return @intFromPtr(self);
+fn addressOf(self: *const anyopaque) *const anyopaque {
+    return self;
 }
 
 pub fn ConfigurablePinned(config: Config) type {
@@ -771,7 +891,9 @@ test ConfigurablePinned {
 /// is called and asserts it has not moved on every later call, so it can be
 /// called on every use.
 ///
-/// A copy panics and reports where the original was pinned.
+/// A copy panics, reporting both addresses and where the original was pinned.
+/// A copy carries the original's pin trace with it, so that trace shows where
+/// the original was first checked, not where the copy was made.
 ///
 /// See `ConfigurablePinned` to configure enable/disabled, thread safety and more.
 pub const Pinned = ConfigurablePinned(.{});

@@ -1,0 +1,15 @@
+#zig build-obj {
+--name test -fno-emit-bin
+-Mroot=test.zig
+#}
+
+#write test.zig {
+comptime {
+    @export(@as(*const u8, @ptrCast(&@as(u7, 0))), .{ .name = "exported_u7" });
+}
+#}
+#update
+#check errors {
+test.zig:2:5: error: unable to export type 'u7'
+test.zig:2:5: note: only integers with 0 or power of two bits are extern compatible
+#}

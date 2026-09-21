@@ -5571,18 +5571,6 @@ fn zirExport(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!void
         }
     }
 
-    const export_ty = ptr_ty.childType(zcu);
-    try sema.ensureLayoutResolved(export_ty, src, .@"export");
-    if (!export_ty.validateExtern(.other, zcu)) {
-        return sema.failWithOwnedErrorMsg(block, msg: {
-            const msg = try sema.errMsg(src, "unable to export type '{f}'", .{export_ty.fmt(zcu)});
-            errdefer msg.destroy(sema.gpa);
-            try sema.explainWhyTypeIsNotExtern(msg, src, export_ty, .other);
-            try sema.addDeclaredHereNote(msg, export_ty);
-            break :msg msg;
-        });
-    }
-
     const ptr_info = ip.indexToKey(ptr_val.toIntern()).ptr;
     const target: Zcu.Exported = switch (ptr_info.base_addr) {
         .comptime_alloc, .int, .comptime_field => return sema.fail(block, ptr_src, "export target must be a global variable or a comptime-known constant", .{}),
@@ -5602,6 +5590,19 @@ fn zirExport(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!void
             break :target .{ .nav = export_nav };
         },
     };
+
+    const export_ty = target.getValue(zcu).typeOf(zcu);
+    try sema.ensureLayoutResolved(export_ty, src, .@"export");
+    if (!export_ty.validateExtern(.other, zcu)) {
+        return sema.failWithOwnedErrorMsg(block, msg: {
+            const msg = try sema.errMsg(src, "unable to export type '{f}'", .{export_ty.fmt(zcu)});
+            errdefer msg.destroy(sema.gpa);
+            try sema.explainWhyTypeIsNotExtern(msg, src, export_ty, .other);
+            try sema.addDeclaredHereNote(msg, export_ty);
+            break :msg msg;
+        });
+    }
+
     if (ptr_info.byte_offset != 0) {
         return sema.fail(block, ptr_src, "TODO: export pointer in middle of value", .{});
     }

@@ -981,9 +981,9 @@ pub const WebSocket = struct {
             truncate += try w.writeSplat(&.{ data[0][truncate..], data[0] }, splat - 1);
         }
     }
+    // dst and src must be equal, or not alias.
     fn maskedCopy(dst: []u8, src: []const u8, mask: [4]u8, mask_pos: *u2) void {
         assert(dst.len == src.len);
-        assert(dst.ptr == src.ptr or !std.mem.overlap(dst, src));
         var i: usize = 0;
 
         if (std.simd.suggestVectorLength(u8)) |lanes| {

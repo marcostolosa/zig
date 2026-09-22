@@ -742,7 +742,7 @@ pub const WebSocket = struct {
     ///
     /// In a departure from WebSocket's spec, this does not perform utf8 validation when MessageKind
     /// is text.  Clients which care should validate it themselves, eg with `std.unicode.utf8ValidateSlice`.
-    pub fn messageReader(ws: *WebSocket, buffer: []u8) !struct { MessageKind, *std.Io.Reader } {
+    pub fn messageReader(ws: *WebSocket, buffer: []u8) ReadError!struct { MessageKind, *std.Io.Reader } {
         ws.reader = .{
             .vtable = &.{
                 .stream = readerStream,
@@ -752,7 +752,9 @@ pub const WebSocket = struct {
             .end = 0,
         };
         if (ws.reader_frame) |frame| {
-            _ = try ws.reader.discardRemaining();
+            _ = ws.reader.discardRemaining() catch |err| switch (err) {
+                error.ReadFailed => return ws.reader_err.?,
+            };
             assert(frame.finish);
             assert(frame.bytes_remaining == 0);
             ws.reader_frame = null;

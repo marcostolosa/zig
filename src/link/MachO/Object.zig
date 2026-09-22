@@ -440,23 +440,27 @@ fn initSections(self: *Object, allocator: Allocator, nlists: anytype) !void {
     try self.atoms.ensureUnusedCapacity(allocator, self.sections.items(.header).len);
     try self.atoms_indexes.ensureUnusedCapacity(allocator, self.sections.items(.header).len);
 
-    for (slice.items(.header), 0..) |sect, n_sect| {
+    for (slice.items(.header), slice.items(.subsections), 0..) |sect, *subsections, n_sect| {
         if (isCstringLiteral(sect)) continue;
         if (isFixedSizeLiteral(sect)) continue;
         if (isPtrLiteral(sect)) continue;
 
-        const name = try std.fmt.allocPrintSentinel(allocator, "{s}${s}", .{ sect.segName(), sect.sectName() }, 0);
-        defer allocator.free(name);
+        try subsections.ensureUnusedCapacity(allocator, 2); // always two items: start and end of section
 
-        const atom_index = try self.addAtom(allocator, .{
-            .name = try self.addString(allocator, name),
-            .n_sect = @intCast(n_sect),
-            .off = 0,
-            .size = sect.size,
-            .alignment = sect.@"align",
-        });
-        try self.atoms_indexes.append(allocator, atom_index);
-        try slice.items(.subsections)[n_sect].append(allocator, .{ .atom = atom_index, .off = 0 });
+        {
+            const name = try std.fmt.allocPrintSentinel(allocator, "{s}${s}", .{ sect.segName(), sect.sectName() }, 0);
+            defer allocator.free(name);
+
+            const atom_index = try self.addAtom(allocator, .{
+                .name = try self.addString(allocator, name),
+                .n_sect = @intCast(n_sect),
+                .off = 0,
+                .size = sect.size,
+                .alignment = sect.@"align",
+            });
+            try self.atoms_indexes.append(allocator, atom_index);
+            subsections.appendAssumeCapacity(.{ .atom = atom_index, .off = 0 });
+        }
 
         const nlist_start = for (nlists, 0..) |nlist, i| {
             if (nlist.nlist.n_sect - 1 == n_sect) break i;
@@ -481,6 +485,29 @@ fn initSections(self: *Object, allocator: Allocator, nlists: anytype) !void {
             for (nlist_start..idx) |i| {
                 self.symtab.items(.size)[nlists[i].idx] = size;
             }
+        }
+
+        {
+            // Some compilers such as Go reference the end of a section (addr + size)
+            // which cannot be contained in any non-zero atom (since then this atom
+            // would exceed section boundaries). In order to facilitate this behaviour,
+            // we create a dummy zero-sized atom at section end (addr + size).
+            const name = try std.fmt.allocPrintSentinel(allocator, "{s}${s}$end", .{
+                sect.segName(), sect.sectName(),
+            }, 0);
+            defer allocator.free(name);
+            const atom_index = try self.addAtom(allocator, .{
+                .name = try self.addString(allocator, name),
+                .n_sect = @intCast(n_sect),
+                .off = sect.size,
+                .size = 0,
+                .alignment = sect.@"align",
+            });
+            try self.atoms_indexes.append(allocator, atom_index);
+            subsections.appendAssumeCapacity(.{
+                .atom = atom_index,
+                .off = sect.size,
+            });
         }
     }
 }

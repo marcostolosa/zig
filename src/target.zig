@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const assert = std.debug.assert;
 
+const dev = @import("dev.zig");
 const Type = @import("Type.zig");
 const AddressSpace = std.lang.AddressSpace;
 const Alignment = @import("InternPool.zig").Alignment;
@@ -603,6 +604,7 @@ pub fn defaultAddressSpace(
     // The default address space for functions on AVR is .flash to produce
     // correct fixups into progmem.
     if (context == .function and target.cpu.arch == .avr) return .flash;
+    if (context == .global_mutable and target.os.tag == .vulkan) return .private;
     return .generic;
 }
 
@@ -648,6 +650,7 @@ pub fn shouldBlockPointerOps(target: *const std.Target, as: AddressSpace) bool {
         // Logical pointers that never support operations
         .constant,
         .local,
+        .private,
         .input,
         .output,
         .uniform,
@@ -855,7 +858,10 @@ pub fn functionPointerMask(target: *const std.Target) ?u64 {
 
 pub fn supportsTailCall(target: *const std.Target, backend: std.lang.CompilerBackend) bool {
     switch (backend) {
-        .stage2_llvm => return @import("codegen/llvm.zig").supportsTailCall(target),
+        .stage2_llvm => {
+            dev.check(.llvm_backend);
+            return @import("codegen/llvm.zig").supportsTailCall(target);
+        },
         .stage2_c => return true,
         else => return false,
     }

@@ -1330,8 +1330,16 @@ pub const IOV_MAX = switch (native_os) {
 };
 pub const CTL = switch (native_os) {
     .freebsd => struct {
+        pub const SYSCTL = 0;
         pub const KERN = 1;
+        pub const VM = 2;
+        pub const VFS = 3;
+        pub const NET = 4;
         pub const DEBUG = 5;
+        pub const HW = 6;
+        pub const MACHDEP = 7;
+        pub const USER = 8;
+        pub const P1003_1B = 9;
     },
     .netbsd => struct {
         pub const KERN = 1;
@@ -1363,6 +1371,84 @@ pub const CTL = switch (native_os) {
 
         pub const DDB = 9;
         pub const VFS = 10;
+    },
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => struct {
+        pub const UNSPEC = 0;
+        pub const KERN = 1;
+        pub const VM = 2;
+        pub const VFS = 3;
+        pub const NET = 4;
+        pub const DEBUG = 5;
+        pub const HW = 6;
+        pub const MACHDEP = 7;
+        pub const USER = 8;
+        pub const MAXID = 9;
+    },
+    else => void,
+};
+pub const CPU = switch (native_os) {
+    .openbsd => switch (native_arch) {
+        .aarch64, .aarch64_be => struct {
+            pub const COMPATIBLE = 1;
+            pub const ID_AA64ISAR0 = 2;
+            pub const ID_AA64ISAR1 = 3;
+            pub const ID_AA64ISAR2 = 4;
+            pub const ID_AA64MMFR0 = 5;
+            pub const ID_AA64MMFR1 = 6;
+            pub const ID_AA64MMFR2 = 7;
+            pub const AA64PFR0 = 8;
+            pub const AA64PFR1 = 9;
+            pub const AA64SMFR0 = 10;
+            pub const AA64ZFR0 = 11;
+            pub const LIDACTION = 12;
+            pub const LED_BLINK = 13;
+        },
+        else => void,
+    },
+    else => void,
+};
+pub const HW = switch (native_os) {
+    .freebsd => struct {
+        pub const MACHINE = 1;
+        pub const MODEL = 2;
+        pub const NCPU = 3;
+        pub const BYTEORDER = 4;
+        pub const PHYSMEM = 5;
+        pub const USERMEM = 6;
+        pub const PAGESIZE = 7;
+        pub const DISKNAMES = 8;
+        pub const DISKSTATS = 9;
+        pub const FLOATINGPT = 10;
+        pub const MACHINE_ARCH = 11;
+        pub const REALMEM = 12;
+    },
+    .openbsd => struct {
+        pub const MACHINE = 1;
+        pub const MODEL = 2;
+        pub const NCPU = 3;
+        pub const BYTEORDER = 4;
+        pub const PHYSMEM = 5;
+        pub const USERMEM = 6;
+        pub const PAGESIZE = 7;
+        pub const DISKNAMES = 8;
+        pub const DISKSTATS = 9;
+        pub const DISKCOUNT = 10;
+        pub const SENSORS = 11;
+        pub const CPUSPEED = 12;
+        pub const SETPERF = 13;
+        pub const VENDOR = 14;
+        pub const PRODUCT = 15;
+        pub const VERSION = 16;
+        pub const SERIALNO = 17;
+        pub const UUID = 18;
+        pub const PHYSMEM64 = 19;
+        pub const USERMEM64 = 20;
+        pub const NCPUFOUND = 21;
+        pub const ALLOWPOWERDOWN = 22;
+        pub const PERFPOLICY = 23;
+        pub const SMT = 24;
+        pub const NCPUONLINE = 25;
+        pub const POWER = 26;
     },
     else => void,
 };
@@ -1537,6 +1623,79 @@ pub const KERN = switch (native_os) {
         pub const PROC_NARGV = 2;
         pub const PROC_ENV = 3;
         pub const PROC_NENV = 4;
+    },
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => struct {
+        pub const OSTYPE = 1;
+        pub const OSRELEASE = 2;
+        pub const OSREV = 3;
+        pub const VERSION = 4;
+        pub const MAXVNODES = 5;
+        pub const MAXPROC = 6;
+        pub const MAXFILES = 7;
+        pub const ARGMAX = 8;
+        pub const SECURELVL = 9;
+        pub const HOSTNAME = 10;
+        pub const HOSTID = 11;
+        pub const CLOCKRATE = 12;
+        pub const VNODE = 13;
+        pub const PROC = 14;
+        pub const FILE = 15;
+        pub const PROF = 16;
+        pub const POSIX1 = 17;
+        pub const NGROUPS = 18;
+        pub const JOB_CONTROL = 19;
+        pub const SAVED_IDS = 20;
+        pub const BOOTTIME = 21;
+        pub const NISDOMAINNAME = 22;
+        pub const DOMAINNAME = 22;
+        pub const MAXPARTITIONS = 23;
+        pub const KDEBUG = 24;
+        pub const UPDATEINTERVAL = 25;
+        pub const OSRELDATE = 26;
+        pub const NTP_PLL = 27;
+        pub const BOOTFILE = 28;
+        pub const MAXFILESPERPROC = 29;
+        pub const MAXPROCPERUID = 30;
+        pub const DUMPDEV = 31;
+        pub const IPC = 32;
+        pub const DUMMY = 33;
+        pub const PS_STRINGS = 34;
+        pub const USRSTACK32 = 35;
+        pub const LOGSIGEXIT = 36;
+        pub const SYMFILE = 37;
+        pub const PROCARGS = 38;
+        pub const NETBOOT = 40;
+        pub const SYSV = 42;
+        pub const AFFINITY = 43;
+        pub const TRANSLATE = 44;
+        pub const CLASSIC = 44;
+        pub const EXEC = 45;
+        pub const CLASSICHANDLER = 45;
+        pub const AIOMAX = 46;
+        pub const AIOPROCMAX = 47;
+        pub const AIOTHREADS = 48;
+        pub const PROCARGS2 = 49;
+        pub const COREFILE = 50;
+        pub const COREDUMP = 51;
+        pub const SUGID_COREDUMP = 52;
+        pub const PROCDELAYTERM = 53;
+        pub const SHREG_PRIVATIZABLE = 54;
+        pub const LOW_PRI_WINDOW = 56;
+        pub const LOW_PRI_DELAY = 57;
+        pub const POSIX = 58;
+        pub const USRSTACK64 = 59;
+        pub const NX_PROTECTION = 60;
+        pub const TFP = 61;
+        pub const PROCNAME = 62;
+        pub const THALTSTACK = 63;
+        pub const SPECULATIVE_READS = 64;
+        pub const OSVERSION = 65;
+        pub const SAFEBOOT = 66;
+        pub const RAGEVNODE = 68;
+        pub const TTY = 69;
+        pub const CHECKOPENEVT = 70;
+        pub const THREADNAME = 71;
+        pub const MAXID = 72;
     },
     else => void,
 };
@@ -5997,8 +6156,14 @@ pub const SOCK = switch (native_os) {
 pub const TCP = switch (native_os) {
     .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => darwin.TCP,
     .linux => linux.TCP,
+    .freebsd => freebsd.TCP,
+    .netbsd => netbsd.TCP,
+    .openbsd => openbsd.TCP,
+    .dragonfly => dragonfly.TCP,
     .emscripten => emscripten.TCP,
     .windows => ws2_32.TCP,
+    .illumos => illumos.TCP,
+    .haiku => haiku.TCP,
     // https://github.com/SerenityOS/serenity/blob/61ac554a3403838f79ca746bd1c65ded6f97d124/Kernel/API/POSIX/netinet/tcp.h#L13-L14
     .serenity => struct {
         pub const NODELAY = 10;
@@ -6614,6 +6779,7 @@ pub const IP = switch (native_os) {
     .illumos => illumos.IP,
     .haiku => haiku.IP,
     .serenity => serenity.IP,
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => darwin.IP,
     else => void,
 };
 pub const IPV6 = switch (native_os) {
@@ -6625,6 +6791,7 @@ pub const IPV6 = switch (native_os) {
     .illumos => illumos.IPV6,
     .haiku => haiku.IPV6,
     .serenity => serenity.IPV6,
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => darwin.IPV6,
     else => void,
 };
 pub const IPTOS = switch (native_os) {
@@ -6636,6 +6803,7 @@ pub const IPTOS = switch (native_os) {
     .illumos => illumos.IPTOS,
     .haiku => haiku.IPTOS,
     .serenity => serenity.IPTOS,
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => darwin.IPTOS,
     else => void,
 };
 pub const SOL = switch (native_os) {
@@ -10450,8 +10618,134 @@ pub const sendfile = switch (native_os) {
     .linux => private.sendfile,
     else => {},
 };
-/// See std.elf for constants for this
-pub extern "c" fn getauxval(__type: c_ulong) c_ulong;
+
+pub extern "c" fn getauxval(type: c_ulong) c_ulong;
+pub extern "c" fn elf_aux_info(aux: c_int, buf: *anyopaque, buflen: c_int) c_int;
+
+pub const HWCAP = switch (native_os) {
+    .freebsd => switch (native_arch) {
+        // FreeBSD deliberately matches the Linux ABI for AT_HWCAP...
+        else => std.os.linux.HWCAP,
+        // ... but because Linux went the SYS_riscv_hwprobe route, FreeBSD
+        // defines more bits than Linux does:
+        .riscv64 => struct {
+            pub const ISA_A = 1 << 0;
+            pub const ISA_B = 1 << 1;
+            pub const ISA_C = 1 << 2;
+            pub const ISA_D = 1 << 3;
+            pub const ISA_F = 1 << 5;
+            pub const ISA_H = 1 << 7;
+            pub const ISA_I = 1 << 8;
+            pub const ISA_M = 1 << 12;
+            pub const ISA_V = 1 << 21;
+        },
+    },
+    .illumos => switch (native_arch) {
+        .x86, .x86_64 => struct {
+            pub const FPU = 1 << 0;
+            pub const TSC = 1 << 1;
+            pub const CX8 = 1 << 2;
+            pub const SEP = 1 << 3;
+            pub const AMD_SYSC = 1 << 4;
+            pub const CMOV = 1 << 5;
+            pub const MMX = 1 << 6;
+            pub const AMD_MMX = 1 << 7;
+            pub const AMD_3DNow = 1 << 8;
+            pub const AMD_3DNowx = 1 << 9;
+            pub const FXSR = 1 << 10;
+            pub const SSE = 1 << 11;
+            pub const SSE2 = 1 << 12;
+            pub const PAUSE = 1 << 13;
+            pub const SSE3 = 1 << 14;
+            pub const MON = 1 << 15;
+            pub const CX16 = 1 << 16;
+            pub const AHF = 1 << 17;
+            pub const TSCP = 1 << 18;
+            pub const AMD_SSE4A = 1 << 19;
+            pub const POPCNT = 1 << 20;
+            pub const AMD_LZCNT = 1 << 21;
+            pub const SSSE3 = 1 << 22;
+            pub const SSE4_1 = 1 << 23;
+            pub const SSE4_2 = 1 << 24;
+            pub const MOVBE = 1 << 25;
+            pub const AES = 1 << 26;
+            pub const PCLMULQDQ = 1 << 27;
+            pub const XSAVE = 1 << 28;
+            pub const AVX = 1 << 29;
+            pub const VMX = 1 << 30;
+            pub const AMD_SVM = 1 << 31;
+
+            pub const @"2" = struct {
+                pub const F16C = 1 << 0;
+                pub const RDRAND = 1 << 1;
+                pub const BMI1 = 1 << 2;
+                pub const BMI2 = 1 << 3;
+                pub const FMA = 1 << 4;
+                pub const AVX2 = 1 << 5;
+                pub const ADX = 1 << 6;
+                pub const RDSEED = 1 << 7;
+                pub const AVX512F = 1 << 8;
+                pub const AVX512DQ = 1 << 9;
+                pub const AVX512IFMA = 1 << 10;
+                pub const AVX512PF = 1 << 11;
+                pub const AVX512ER = 1 << 12;
+                pub const AVX512CD = 1 << 13;
+                pub const AVX512BW = 1 << 14;
+                pub const AVX512VL = 1 << 15;
+                pub const AVX512VBMI = 1 << 16;
+                pub const AVX512VPOPCDQ = 1 << 17;
+                pub const AVX512_4NNIW = 1 << 18;
+                pub const AVX512_4FMAPS = 1 << 19;
+                pub const SHA = 1 << 20;
+                pub const FSGSBASE = 1 << 21;
+                pub const CLFLUSHOPT = 1 << 22;
+                pub const CLWB = 1 << 23;
+                pub const MONITORX = 1 << 24;
+                pub const CLZERO = 1 << 25;
+                pub const AVX512_VNNI = 1 << 26;
+                pub const VPCLMULQDQ = 1 << 27;
+                pub const VAES = 1 << 28;
+            };
+        },
+        else => struct {},
+    },
+    .linux => std.os.linux.HWCAP,
+    .openbsd => switch (native_arch) {
+        // Same deal as for FreeBSD.
+        else => std.os.linux.HWCAP,
+        .riscv64 => struct {
+            pub const ISA_A = 1 << 0;
+            pub const ISA_B = 1 << 1;
+            pub const ISA_C = 1 << 2;
+            pub const ISA_D = 1 << 3;
+            pub const ISA_F = 1 << 5;
+            pub const ISA_H = 1 << 7;
+            pub const ISA_I = 1 << 8;
+            pub const ISA_M = 1 << 12;
+            pub const ISA_V = 1 << 21;
+
+            pub const @"2" = struct {
+                pub const ISA_ZBA = 1 << 0;
+                pub const ISA_ZBB = 1 << 1;
+                pub const ISA_ZBC = 1 << 2;
+                pub const ISA_ZBS = 1 << 3;
+                pub const ISA_ZFH = 1 << 4;
+                pub const ISA_ZKT = 1 << 5;
+                pub const ISA_ZVBB = 1 << 6;
+                pub const ISA_ZVBC = 1 << 7;
+                pub const ISA_ZVFH = 1 << 8;
+                pub const ISA_ZVKG = 1 << 9;
+                pub const ISA_ZVKNED = 1 << 10;
+                pub const ISA_ZVKNHA = 1 << 11;
+                pub const ISA_ZVKNHB = 1 << 12;
+                pub const ISA_ZVKSED = 1 << 13;
+                pub const ISA_ZVKSH = 1 << 14;
+                pub const ISA_ZVKT = 1 << 15;
+            };
+        },
+    },
+    else => struct {},
+};
 
 pub extern "c" fn dl_iterate_phdr(callback: dl_iterate_phdr_callback, data: ?*anyopaque) c_int;
 
@@ -11177,7 +11471,9 @@ pub const strdup = switch (builtin.abi) {
     .msvc => private._strdup,
     else => private.strdup,
 };
+pub extern "c" fn strnlen(s: [*:0]const c_char, n: usize) callconv(.c) usize;
 pub extern "c" fn strndup(s: [*:0]const c_char, n: usize) ?[*:0]c_char;
+pub extern "c" fn wcsnlen(s: [*:0]const wchar_t, n: usize) callconv(.c) usize;
 pub const wcsdup = switch (builtin.abi) {
     .msvc => private._wcsdup,
     else => private.wcsdup,
@@ -11295,7 +11591,6 @@ pub const writev_pos = haiku.writev_pos;
 
 pub const AUTH = openbsd.AUTH;
 pub const BI = openbsd.BI;
-pub const HW = openbsd.HW;
 pub const PTHREAD_STACK_MIN = openbsd.PTHREAD_STACK_MIN;
 pub const TCFLUSH = openbsd.TCFLUSH;
 pub const TCIO = openbsd.TCIO;

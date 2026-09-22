@@ -36,7 +36,7 @@ const Module = @import("Module.zig");
 
 test {
     _ = @import("codegen.zig");
-    _ = @import("link/MappedFile.zig");
+    _ = link.MappedFile;
 }
 
 const thread_stack_size = 60 << 20;
@@ -69,10 +69,6 @@ const fatal = std.process.fatal;
 var stdin_buffer: [4096]u8 align(std.heap.page_size_min) = undefined;
 /// This can be global since stdout is a singleton.
 var stdout_buffer: [4096]u8 align(std.heap.page_size_min) = undefined;
-
-/// Shaming all the locations that inappropriately use an O(N) search algorithm.
-/// Please delete this and fix the compilation errors!
-pub const @"bad O(N)" = void;
 
 const normal_usage =
     \\Usage: zig [command] [options]
@@ -107,6 +103,7 @@ const normal_usage =
     \\
     \\  env              Print lib path, std path, cache directory, and version
     \\  help             Print this help and exit
+    \\  cache-cat        Print a zig-cache manifest file as zon
     \\  std              View standard library documentation in a browser
     \\  libc             Display native libc paths file or validate one
     \\  targets          List available compilation targets
@@ -242,6 +239,10 @@ const Cmd = enum {
     ar,
 
     build,
+    @"cache-cat",
+    fetch,
+    init,
+    libc,
 
     clang,
     @"-cc1",
@@ -258,10 +259,7 @@ const Cmd = enum {
     fmt,
     objcopy,
     objdump,
-    fetch,
-    libc,
     std,
-    init,
     targets,
     version,
     env,
@@ -351,7 +349,7 @@ fn mainArgs(
             dev.check(.ar_command);
             return process.exit(try llvmArMain(arena, args));
         },
-        .build, .fetch, .init, .libc => {
+        .build, .fetch, .init, .libc, .@"cache-cat" => {
             return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
                 .cmd_name = "maker",
                 .root_src_path = "Maker.zig",
@@ -567,35 +565,36 @@ const compile_usage =
     \\  --build-root [path]       Override path to project source files
     \\
     \\Global Compile Options:
-    \\  --name [name]             Compilation unit name (not a file path)
-    \\  -M[name][=src]            Create a module based on the current per-module settings.
-    \\                            The first module is the main module.
-    \\                            "std" can be configured by omitting src
-    \\                            After a -M argument, per-module settings are reset.
-    \\  --libc [file]             Provide a file which specifies libc paths
-    \\  -x [language]             Treat subsequent input files as having type <language>
-    \\  --error-limit [num]       Set the maximum amount of distinct error values
-    \\  -fllvm                    Force using LLVM as the codegen backend
-    \\  -fno-llvm                 Prevent using LLVM as the codegen backend
-    \\  -flibllvm                 Force using the LLVM API in the codegen backend
-    \\  -fno-libllvm              Prevent using the LLVM API in the codegen backend
-    \\  -fclang                   Force using Clang as the C/C++ compilation backend
-    \\  -fno-clang                Prevent using Clang as the C/C++ compilation backend
-    \\  -fPIE                     Force-enable Position Independent Executable
-    \\  -fno-PIE                  Force-disable Position Independent Executable
-    \\  -flto                     Force-enable Link Time Optimization (requires LLVM extensions)
-    \\  -fno-lto                  Force-disable Link Time Optimization
-    \\  -fdll-export-fns          Mark exported functions as DLL exports (Windows)
-    \\  -fno-dll-export-fns       Force-disable marking exported functions as DLL exports
-    \\  -freference-trace[=num]   Show num lines of reference trace per compile error
-    \\  -fno-reference-trace      Disable reference trace
-    \\  -ffunction-sections       Places each function in a separate section
-    \\  -fno-function-sections    All functions go into same section
-    \\  -fdata-sections           Places each data in a separate section
-    \\  -fno-data-sections        All data go into same section
-    \\  -mexec-model=[value]      (WASI) Execution model
-    \\  -municode                 (Windows) Use wmain/wWinMain as entry point
-    \\  --time-report             Send timing diagnostics to '--listen' clients
+    \\  --name [name]                    Compilation unit name (not a file path)
+    \\  -M[name][=src]                   Create a module based on the current per-module settings.
+    \\                                   The first module is the main module.
+    \\                                   "std" can be configured by omitting src
+    \\                                   After a -M argument, per-module settings are reset.
+    \\  --libc [file]                    Provide a file which specifies libc paths
+    \\  -x [language]                    Treat subsequent input files as having type <language>
+    \\  --error-limit [num]              Set the maximum amount of distinct error values
+    \\  -fllvm                           Force using LLVM as the codegen backend
+    \\  -fno-llvm                        Prevent using LLVM as the codegen backend
+    \\  -flibllvm                        Force using the LLVM API in the codegen backend
+    \\  -fno-libllvm                     Prevent using the LLVM API in the codegen backend
+    \\  -fclang                          Force using Clang as the C/C++ compilation backend
+    \\  -fno-clang                       Prevent using Clang as the C/C++ compilation backend
+    \\  -fPIE                            Force-enable Position Independent Executable
+    \\  -fno-PIE                         Force-disable Position Independent Executable
+    \\  -flto                            Force-enable Link Time Optimization (requires LLVM extensions)
+    \\  -fno-lto                         Force-disable Link Time Optimization
+    \\  -fdll-export-fns                 Mark exported functions as DLL exports (Windows)
+    \\  -fno-dll-export-fns              Force-disable marking exported functions as DLL exports
+    \\  -freference-trace[=num]          Show num lines of reference trace per compile error
+    \\  -fno-reference-trace             Disable reference trace
+    \\  -ffunction-sections              Places each function in a separate section
+    \\  -fno-function-sections           All functions go into same section
+    \\  -fdata-sections                  Places each data in a separate section
+    \\  -fno-data-sections               All data go into same section
+    \\  -fpatchable-function-entry=[num] Add num NOPs of padding in function prologues
+    \\  -mexec-model=[value]             (WASI) Execution model
+    \\  -municode                        (Windows) Use wmain/wWinMain as entry point
+    \\  --time-report                    Send timing diagnostics to '--listen' clients
     \\
     \\Per-Module Compile Options:
     \\  --dep [[import=]name]     Add an entry to the next module's import table
@@ -804,7 +803,7 @@ const compile_usage =
     \\  --verbose-llvm-cpu-features  Enable compiler debug output for LLVM CPU features
     \\  --debug-log [scope]          Enable printing debug/info log messages for scope
     \\  --debug-compile-errors       Crash with helpful diagnostics at the first compile error
-    \\  --debug-link-snapshot        Enable dumping of the linker's state in JSON format
+    \\  --debug-link-snapshot        Dump linker state and output file information for troubleshooting
     \\  --debug-rt[=mode]            Build compiler runtime libraries with [mode] optimization
     \\                               (debug if [=mode] is omitted)
     \\  --debug-incremental          Enable incremental compilation debug features
@@ -1352,6 +1351,7 @@ fn buildOutputType(
                                 .search_strategy = lib_search_strategy,
                                 .allow_so_scripts = allow_so_scripts,
                             },
+                            .name_done = false,
                         } });
                     } else if (mem.eql(u8, arg, "--needed-library") or
                         mem.eql(u8, arg, "-needed-l") or
@@ -1367,6 +1367,7 @@ fn buildOutputType(
                                 .search_strategy = lib_search_strategy,
                                 .allow_so_scripts = allow_so_scripts,
                             },
+                            .name_done = false,
                         } });
                     } else if (mem.eql(u8, arg, "-weak_library") or mem.eql(u8, arg, "-weak-l")) {
                         try create_module.cli_link_inputs.append(arena, .{ .name_query = .{
@@ -1378,6 +1379,7 @@ fn buildOutputType(
                                 .search_strategy = lib_search_strategy,
                                 .allow_so_scripts = allow_so_scripts,
                             },
+                            .name_done = false,
                         } });
                     } else if (mem.eql(u8, arg, "-D")) {
                         try cc_argv.appendSlice(arena, &.{ arg, args_iter.nextOrFatal() });
@@ -1705,6 +1707,10 @@ fn buildOutputType(
                     } else if (mem.cutPrefix(u8, arg, "-fopt-bisect-limit=")) |next_arg| {
                         llvm_opt_bisect_limit = std.fmt.parseInt(c_int, next_arg, 0) catch |err|
                             fatal("unable to parse {q}: {t}", .{ arg, err });
+                    } else if (mem.cutPrefix(u8, arg, "-fpatchable-function-entry=")) |num| {
+                        mod_opts.patchable_function_entry = std.fmt.parseUnsigned(u16, num, 10) catch |err| {
+                            fatal("unable to parse patchable-function-entry count {q}: {t}", .{ num, err });
+                        };
                     } else if (mem.eql(u8, arg, "--eh-frame-hdr")) {
                         link_eh_frame_hdr = true;
                     } else if (mem.eql(u8, arg, "--no-eh-frame-hdr")) {
@@ -1836,6 +1842,7 @@ fn buildOutputType(
                                 .search_strategy = lib_search_strategy,
                                 .allow_so_scripts = allow_so_scripts,
                             },
+                            .name_done = false,
                         } });
                     } else if (mem.cutPrefix(u8, arg, "-needed-l")) |name| {
                         try create_module.cli_link_inputs.append(arena, .{ .name_query = .{
@@ -1847,6 +1854,7 @@ fn buildOutputType(
                                 .search_strategy = lib_search_strategy,
                                 .allow_so_scripts = allow_so_scripts,
                             },
+                            .name_done = false,
                         } });
                     } else if (mem.cutPrefix(u8, arg, "-weak-l")) |name| {
                         try create_module.cli_link_inputs.append(arena, .{ .name_query = .{
@@ -1858,6 +1866,7 @@ fn buildOutputType(
                                 .search_strategy = lib_search_strategy,
                                 .allow_so_scripts = allow_so_scripts,
                             },
+                            .name_done = false,
                         } });
                     } else if (mem.startsWith(u8, arg, "-D")) {
                         try cc_argv.append(arena, arg);
@@ -2076,12 +2085,24 @@ fn buildOutputType(
                         // We don't know whether this library is part of libc or libc++ until
                         // we resolve the target, so we simply append to the list for now.
                         if (mem.startsWith(u8, it.only_arg, ":")) {
-                            // -l :path/to/filename is used when callers need
-                            // more control over what's in the resulting
-                            // binary: no extra rpaths and DSO filename exactly
-                            // as provided. CGo compilation depends on this.
-                            try create_module.cli_link_inputs.append(arena, .{ .dso_exact = .{
-                                .name = it.only_arg,
+                            // -l :path/to/filename indicates:
+                            // * No extra rpaths.
+                            // * NEEDED entry should be exactly the string
+                            //   after the colon. No file system paths prepended.
+                            // * The DSO still must be found at compile/link
+                            //   time and its entries used to resolve symbols.
+                            // CGo compilation depends on this.
+                            try create_module.cli_link_inputs.append(arena, .{ .name_query = .{
+                                .name = it.only_arg[1..],
+                                .query = .{
+                                    .must_link = must_link,
+                                    .needed = needed,
+                                    .weak = false,
+                                    .preferred_mode = lib_preferred_mode,
+                                    .search_strategy = lib_search_strategy,
+                                    .allow_so_scripts = allow_so_scripts,
+                                },
+                                .name_done = true,
                             } });
                         } else {
                             const compiler_rt_classification = target_util.classifyCompilerRtLibName(it.only_arg);
@@ -2107,6 +2128,7 @@ fn buildOutputType(
                                         .search_strategy = lib_search_strategy,
                                         .allow_so_scripts = allow_so_scripts,
                                     },
+                                    .name_done = false,
                                 } });
                             }
                         }
@@ -2174,6 +2196,14 @@ fn buildOutputType(
                         },
                     } else {
                         mod_opts.unwind_tables = .sync;
+                    },
+                    .patchable_function_entry => {
+                        mod_opts.patchable_function_entry =
+                            std.fmt.parseUnsigned(u16, it.only_arg, 10) catch |err| {
+                                fatal("unable to parse patchable function entry count {q}: {t}", .{
+                                    it.only_arg, err,
+                                });
+                            };
                     },
                     .nostdlib => {
                         create_module.opts.ensure_libc_on_non_freestanding = false;
@@ -2529,6 +2559,7 @@ fn buildOutputType(
                             .search_strategy = lib_search_strategy,
                             .allow_so_scripts = allow_so_scripts,
                         },
+                        .name_done = false,
                     } }),
                     .weak_framework => try create_module.frameworks.put(arena, it.only_arg, .{ .weak = true }),
                     .headerpad_max_install_names => headerpad_max_install_names = true,
@@ -2898,6 +2929,7 @@ fn buildOutputType(
                             .search_strategy = lib_search_strategy,
                             .allow_so_scripts = allow_so_scripts,
                         },
+                        .name_done = false,
                     } });
                 } else if (mem.cutPrefix(u8, arg, "-weak-l")) |rest| {
                     try create_module.cli_link_inputs.append(arena, .{ .name_query = .{
@@ -2909,6 +2941,7 @@ fn buildOutputType(
                             .search_strategy = lib_search_strategy,
                             .allow_so_scripts = allow_so_scripts,
                         },
+                        .name_done = false,
                     } });
                 } else if (mem.eql(u8, arg, "-weak_library")) {
                     try create_module.cli_link_inputs.append(arena, .{ .name_query = .{
@@ -2920,6 +2953,7 @@ fn buildOutputType(
                             .search_strategy = lib_search_strategy,
                             .allow_so_scripts = allow_so_scripts,
                         },
+                        .name_done = false,
                     } });
                 } else if (mem.eql(u8, arg, "-compatibility_version")) {
                     const compat_version = linker_args_it.nextOrFatal();
@@ -3255,6 +3289,7 @@ fn buildOutputType(
     };
 
     const cwd_path = try std.zig.getResolvedCwd(io, arena);
+    std.log.debug("cwd_path={s}", .{cwd_path});
 
     // This `init` calls `fatal` on error.
     var dirs: std.zig.Directories = .init(arena, io, .{
@@ -4159,6 +4194,10 @@ fn createModule(
                     fatal("cannot use absolute path as a system library: {s}", .{lib_name});
                 }
 
+                if (!nq.name_done and std.mem.findScalar(u8, nq.name, '/') != null) {
+                    fatal("cannot use path separator in system library name: {s}", .{lib_name});
+                }
+
                 unresolved_link_inputs.appendAssumeCapacity(cli_link_input);
                 any_name_queries_remaining = true;
             },
@@ -4253,10 +4292,10 @@ fn createModule(
             &create_module.link_inputs,
             create_module.lib_directories.items,
             color,
-        ) catch |err| fatal("failed to resolve link inputs: {s}", .{@errorName(err)});
+        ) catch |err| fatal("failed to resolve link inputs: {t}", .{err});
 
         if (!create_module.opts.any_dyn_libs) for (create_module.link_inputs.items) |item| switch (item) {
-            .dso, .dso_exact => {
+            .dso => {
                 create_module.opts.any_dyn_libs = true;
                 break;
             },
@@ -4325,6 +4364,7 @@ fn createModule(
         error.StackCheckUnsupportedByTarget => fatal("unable to create module {q}: the selected target does not support stack checking", .{name}),
         error.StackProtectorUnsupportedByTarget => fatal("unable to create module {q}: the selected target does not support stack protection", .{name}),
         error.StackProtectorUnavailableWithoutLibC => fatal("unable to create module {q}: enabling stack protection requires libc", .{name}),
+        error.PatchableFunctionEntryUnsupportedByBackend => fatal("unable to create module {q}: patchable function entries are unsupported by the selected backend", .{name}),
         error.OutOfMemory => |e| return e,
     };
     cli_mod.resolved = mod;
@@ -4423,12 +4463,8 @@ fn serve(
                     continue;
                 }
 
-                if (comp.config.output_mode == .Exe) {
-                    try comp.makeBinFileWritable();
-                }
-
+                try comp.makeBinFileWritable();
                 try comp.update(main_progress_node);
-
                 try comp.makeBinFileExecutable();
                 try serveUpdateResults(&server, comp);
             },
@@ -4459,9 +4495,7 @@ fn serve(
                     try comp.hotCodeSwap(main_progress_node, pid);
                     try serveUpdateResults(&server, comp);
                 } else {
-                    if (comp.config.output_mode == .Exe) {
-                        try comp.makeBinFileWritable();
-                    }
+                    try comp.makeBinFileWritable();
                     try comp.update(main_progress_node);
                     try comp.makeBinFileExecutable();
                     try serveUpdateResults(&server, comp);
@@ -4862,8 +4896,14 @@ fn cmdTranslateC(
     Compilation.cache_helpers.hashCSource(&man, c_source_file) catch |err|
         fatal("unable to process {q}: {t}", .{ c_source_file.src_path, err });
 
-    const result: Compilation.TranslateCResult = if (try man.hit(prog_node)) .{
-        .digest = man.finalBin(),
+    var diag: Cache.Manifest.CheckDiagnostic = undefined;
+    const status = man.check(&diag, prog_node) catch |err| switch (err) {
+        error.OutOfMemory, error.Canceled => |e| return e,
+        error.CacheCheckFailed => fatal("translate-c checking cache failed: {f}", .{diag.fmt(&man)}),
+    };
+    std.log.debug("translate-c cache {f}", .{status.fmt(&man)});
+    const result: Compilation.TranslateCResult = if (status == .hit) .{
+        .digest = man.hitDigest(),
         .cache_hit = true,
         .errors = std.zig.ErrorBundle.empty,
     } else result: {
@@ -4890,7 +4930,7 @@ fn cmdTranslateC(
             }
         }
 
-        man.writeManifest() catch |err| warn("failed to write cache manifest: {t}", .{err});
+        man.finalize() catch |err| warn("failed to write cache manifest: {t}", .{err});
         break :result result;
     };
 
@@ -5792,7 +5832,7 @@ fn cmdChangelist(arena: Allocator, io: Io, args: []const []const u8, environ_map
     }
 
     var inst_map: std.AutoHashMapUnmanaged(Zir.Inst.Index, Zir.Inst.Index) = .empty;
-    try Zcu.mapOldZirToNew(arena, old_zir, new_zir, &inst_map);
+    try Zcu.mapOldZirToNew(arena, &old_zir, &new_zir, &inst_map);
 
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout_bw = &stdout_writer.interface;

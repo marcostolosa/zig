@@ -15,7 +15,6 @@ concurrency:
 
 jobs:
   aarch64-freebsd-debug:
-    if: github.event_name != 'pull_request'
     runs-on: [self-hosted, aarch64-freebsd]
     steps:
       - name: Checkout
@@ -24,9 +23,8 @@ jobs:
           fetch-depth: 0
       - name: Build and Test
         run: sh ci/aarch64-freebsd-debug.sh
-        timeout-minutes: 360
+        timeout-minutes: 240
   aarch64-freebsd-release:
-    if: github.event_name != 'pull_request'
     runs-on: [self-hosted, aarch64-freebsd]
     steps:
       - name: Checkout
@@ -35,7 +33,7 @@ jobs:
           fetch-depth: 0
       - name: Build and Test
         run: sh ci/aarch64-freebsd-release.sh
-        timeout-minutes: 300
+        timeout-minutes: 180
 
   aarch64-linux-debug:
     runs-on: [self-hosted, aarch64-linux]
@@ -59,7 +57,6 @@ jobs:
         timeout-minutes: 180
 
   aarch64-netbsd-debug:
-    if: github.event_name != 'pull_request'
     runs-on: [self-hosted, aarch64-netbsd]
     steps:
       - name: Checkout
@@ -68,9 +65,8 @@ jobs:
           fetch-depth: 0
       - name: Build and Test
         run: sh ci/aarch64-netbsd-debug.sh
-        timeout-minutes: 360
+        timeout-minutes: 240
   aarch64-netbsd-release:
-    if: github.event_name != 'pull_request'
     runs-on: [self-hosted, aarch64-netbsd]
     steps:
       - name: Checkout
@@ -79,7 +75,7 @@ jobs:
           fetch-depth: 0
       - name: Build and Test
         run: sh ci/aarch64-netbsd-release.sh
-        timeout-minutes: 300
+        timeout-minutes: 180
 
   aarch64-macos-debug:
     runs-on: [self-hosted, aarch64-macos]
@@ -101,6 +97,27 @@ jobs:
       - name: Build and Test
         run: sh ci/aarch64-macos-release.sh
         timeout-minutes: 180
+
+  aarch64-openbsd-debug:
+    runs-on: [self-hosted, aarch64-openbsd]
+    steps:
+      - name: Checkout
+        uses: https://codeberg.org/ziglang/checkout@19af6bac491e2534a4687a50ee84fa7f13258d28
+        with:
+          fetch-depth: 0
+      - name: Build and Test
+        run: sh ci/aarch64-openbsd-debug.sh
+        timeout-minutes: 300
+  aarch64-openbsd-release:
+    runs-on: [self-hosted, aarch64-openbsd]
+    steps:
+      - name: Checkout
+        uses: https://codeberg.org/ziglang/checkout@19af6bac491e2534a4687a50ee84fa7f13258d28
+        with:
+          fetch-depth: 0
+      - name: Build and Test
+        run: sh ci/aarch64-openbsd-release.sh
+        timeout-minutes: 240
 
   loongarch64-linux-debug:
     runs-on: [self-hosted, loongarch64-linux]

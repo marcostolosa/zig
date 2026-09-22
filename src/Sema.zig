@@ -403,6 +403,7 @@ pub const Block = struct {
     /// is always incorporated into the type name somehow.
     /// See `Sema.setTypeName`.
     type_name_ctx: InternPool.NullTerminatedString,
+    type_fqn_ctx: InternPool.NullTerminatedString,
 
     /// Create a `LazySrcLoc` based on an `Offset` from the code being analyzed in this block.
     /// Specifically, the given `Offset` is treated as relative to `block.src_base_inst`.
@@ -531,6 +532,7 @@ pub const Block = struct {
             .need_debug_scope = parent.need_debug_scope,
             .src_base_inst = parent.src_base_inst,
             .type_name_ctx = parent.type_name_ctx,
+            .type_fqn_ctx = parent.type_fqn_ctx,
         };
     }
 
@@ -4782,7 +4784,7 @@ fn failWithBadStructFieldAccess(
         const msg = try sema.errMsg(
             field_src,
             "no field named '{f}' in struct '{f}'",
-            .{ field_name.fmt(ip), struct_type.name.fmt(ip) },
+            .{ field_name.fmt(ip), struct_type.fqn.fmt(ip) },
         );
         errdefer msg.destroy(sema.gpa);
         try sema.errNote(struct_ty.srcLoc(zcu), msg, "struct declared here", .{});
@@ -4808,7 +4810,7 @@ fn failWithBadUnionFieldAccess(
         const msg = try sema.errMsg(
             field_src,
             "no field named '{f}' in union '{f}'",
-            .{ field_name.fmt(ip), union_obj.name.fmt(ip) },
+            .{ field_name.fmt(ip), union_obj.fqn.fmt(ip) },
         );
         errdefer msg.destroy(gpa);
         try sema.errNote(union_ty.srcLoc(zcu), msg, "union declared here", .{});
@@ -5291,6 +5293,7 @@ fn zirBlock(sema: *Sema, parent_block: *Block, inst: Zir.Inst.Index) CompileErro
         .error_return_trace_index = parent_block.error_return_trace_index,
         .src_base_inst = parent_block.src_base_inst,
         .type_name_ctx = parent_block.type_name_ctx,
+        .type_fqn_ctx = parent_block.type_fqn_ctx,
     };
 
     defer child_block.instructions.deinit(gpa);
@@ -6773,7 +6776,8 @@ fn analyzeCall(
         .instructions = .empty,
         .inlining = &generic_inlining,
         .src_base_inst = fn_nav.analysis.?.zir_index,
-        .type_name_ctx = fn_nav.fqn,
+        .type_name_ctx = fn_nav.name,
+        .type_fqn_ctx = fn_nav.fqn,
     } else undefined;
     defer if (any_generic_types) generic_block.instructions.deinit(gpa);
 
@@ -7039,6 +7043,7 @@ fn analyzeCall(
                 .inferred_error_set = fn_zir_info.inferred_error_set,
                 .generic_owner = func_val.?.toIntern(),
                 .comptime_args = comptime_args,
+                .anon_name_counter = &zcu.anon_name_counter,
             });
             if (zcu.comp.debugIncremental()) {
                 const nav = ip.indexToKey(func_instance).func.owner_nav;
@@ -7308,7 +7313,8 @@ fn analyzeCall(
         .runtime_loop = block.runtime_loop,
         .runtime_index = block.runtime_index,
         .src_base_inst = fn_nav.analysis.?.zir_index,
-        .type_name_ctx = fn_nav.fqn,
+        .type_name_ctx = fn_nav.name,
+        .type_fqn_ctx = fn_nav.fqn,
     };
 
     defer child_block.instructions.deinit(gpa);
@@ -12968,7 +12974,7 @@ fn zirEmbedFile(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!A
 
     const result = ef_idx.get(zcu);
     if (result.val == .none) {
-        return sema.fail(block, operand_src, "unable to open '{s}': {s}", .{ name, @errorName(result.err.?) });
+        return sema.fail(block, operand_src, "failed opening {q}: {t}", .{ name, result.err.? });
     }
 
     return Air.internedToRef(result.val);
@@ -15905,9 +15911,7 @@ fn zirClosureGet(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstDat
                 const file, const src_base_node = Zcu.LazySrcLoc.resolveBaseNode(block.src_base_inst, zcu).?;
                 const tree = file.getTree(zcu) catch |err| {
                     // In this case we emit a warning + a less precise source location.
-                    log.warn("unable to load {f}: {s}", .{
-                        file.path.fmt(zcu.comp), @errorName(err),
-                    });
+                    log.warn("failed loading {qf}: {t}", .{ file.path.fmt(zcu.comp), err });
                     break :name null;
                 };
                 const node = src_node.toAbsolute(src_base_node);
@@ -15933,9 +15937,7 @@ fn zirClosureGet(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstDat
                 const file, const src_base_node = Zcu.LazySrcLoc.resolveBaseNode(block.src_base_inst, zcu).?;
                 const tree = file.getTree(zcu) catch |err| {
                     // In this case we emit a warning + a less precise source location.
-                    log.warn("unable to load {f}: {s}", .{
-                        file.path.fmt(zcu.comp), @errorName(err),
-                    });
+                    log.warn("failed loading {qf}: {t}", .{ file.path.fmt(zcu.comp), err });
                     break :name null;
                 };
                 const node = src_node.toAbsolute(src_base_node);
@@ -15944,7 +15946,7 @@ fn zirClosureGet(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstDat
             };
 
             const msg = if (name) |some|
-                try sema.errMsg(src, "'{s}' not accessible from inner function", .{some})
+                try sema.errMsg(src, "{q} not accessible from inner function", .{some})
             else
                 try sema.errMsg(src, "variable not accessible from inner function", .{});
             errdefer msg.destroy(sema.gpa);
@@ -17314,6 +17316,7 @@ fn zirTypeofBuiltin(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileErr
         .error_return_trace_index = block.error_return_trace_index,
         .src_base_inst = block.src_base_inst,
         .type_name_ctx = block.type_name_ctx,
+        .type_fqn_ctx = block.type_fqn_ctx,
     };
     defer child_block.instructions.deinit(sema.gpa);
 
@@ -17380,6 +17383,7 @@ fn zirTypeofPeer(
         .runtime_index = block.runtime_index,
         .src_base_inst = block.src_base_inst,
         .type_name_ctx = block.type_name_ctx,
+        .type_fqn_ctx = block.type_fqn_ctx,
     };
     defer child_block.instructions.deinit(sema.gpa);
     // Ignore the result, we only care about the instructions in `args`.
@@ -17939,6 +17943,7 @@ fn ensurePostHoc(sema: *Sema, block: *Block, dest_block: Zir.Inst.Index) !*Label
             .comptime_reason = block.comptime_reason,
             .src_base_inst = block.src_base_inst,
             .type_name_ctx = block.type_name_ctx,
+            .type_fqn_ctx = block.type_fqn_ctx,
         },
     };
     sema.post_hoc_blocks.putAssumeCapacityNoClobber(new_block_inst, labeled_block);
@@ -20909,13 +20914,8 @@ fn zirReifySpirvType(
             const depth = try sema.interpretStdLangType(block, operand_src, depth_val, std.lang.Type.Spirv.Image.Depth);
             const access = try sema.interpretStdLangType(block, operand_src, access_val, std.lang.Type.Spirv.Image.Access);
 
-            switch (target.os.tag) {
-                .opencl => if (access == .unknown) {
-                    return sema.fail(block, operand_src, "'access' field must be specified under the 'opencl' os", .{});
-                },
-                else => if (access != .unknown) {
-                    return sema.fail(block, operand_src, "access qualifier '.{t}' is only valid under the 'opencl' os", .{access});
-                },
+            if (target.os.tag == .opencl and access == .unknown) {
+                return sema.fail(block, operand_src, "'access' field must be specified under the 'opencl' OS", .{});
             }
 
             const arrayed = try sema.interpretStdLangType(block, operand_src, arrayed_val, bool);
@@ -20925,31 +20925,24 @@ fn zirReifySpirvType(
             const usage_tag = try sema.interpretStdLangType(block, operand_src, usage_tag_val, @typeInfo(std.lang.Type.Spirv.Image.Usage).@"union".tag_type.?);
 
             switch (target.os.tag) {
-                .vulkan => {
-                    if (usage_tag == .unknown) {
-                        return sema.fail(
-                            block,
-                            operand_src,
-                            "'usage' must be '.sampled' or '.storage' under the 'vulkan' os (Sampled == 0 is forbidden)",
-                            .{},
-                        );
-                    }
+                .vulkan => if (usage_tag == .unknown) {
+                    return sema.fail(block, operand_src, "'usage' must be '.sampled' or '.storage' under the 'vulkan' OS", .{});
                 },
                 .opencl => {
                     if (usage_tag != .unknown) {
-                        return sema.fail(block, operand_src, "'usage' must be '.unknown' under the 'opencl' os", .{});
+                        return sema.fail(block, operand_src, "'usage' must be '.unknown' under the 'opencl' OS", .{});
                     }
                     if (multisampled) {
-                        return sema.fail(block, operand_src, "'multisampled' must be 'false' under the 'opencl' os", .{});
+                        return sema.fail(block, operand_src, "'multisampled' must be 'false' under the 'opencl' OS", .{});
                     }
                     if (format != .unknown) {
-                        return sema.fail(block, operand_src, "'format' must be '.unknown' under the 'opencl' os", .{});
+                        return sema.fail(block, operand_src, "'format' must be '.unknown' under the 'opencl' OS", .{});
                     }
                     if (dim == .cube) {
-                        return sema.fail(block, operand_src, "'dim' '.cube' is not allowed under the 'opencl' os", .{});
+                        return sema.fail(block, operand_src, "'dim' '.cube' is not allowed under the 'opencl' OS", .{});
                     }
                     if (arrayed and dim != .@"1d" and dim != .@"2d") {
-                        return sema.fail(block, operand_src, "'arrayed' may only be 'true' when 'dim' is '.1d' or '.2d' under the 'opencl' os", .{});
+                        return sema.fail(block, operand_src, "'arrayed' may only be 'true' when 'dim' is '.1d' or '.2d' under the 'opencl' OS", .{});
                     }
                 },
                 else => {},
@@ -20960,10 +20953,10 @@ fn zirReifySpirvType(
                     const sampled_type = usage_val.unionPayload(zcu).toType();
 
                     if (target.os.tag != .opencl and sampled_type.toIntern() == .void_type) {
-                        return sema.fail(block, operand_src, "'void' type for '{t}' field is only valid under the 'opencl' os", .{usage_tag});
+                        return sema.fail(block, operand_src, "'void' type for '{t}' field is only valid under the 'opencl' OS", .{usage_tag});
                     }
                     if (target.os.tag == .opencl and sampled_type.toIntern() != .void_type) {
-                        return sema.fail(block, operand_src, "'{t}' field type must be 'void' under the 'opencl' os", .{usage_tag});
+                        return sema.fail(block, operand_src, "'{t}' field type must be 'void' under the 'opencl' OS", .{usage_tag});
                     }
 
                     if (sampled_type.toIntern() != .void_type and
@@ -20979,7 +20972,7 @@ fn zirReifySpirvType(
                             return sema.fail(
                                 block,
                                 operand_src,
-                                "'{t}' field value must be a 32-bit int, 64-bit int or 32-bit float under the 'vulkan' os",
+                                "'{t}' field value must be a 32-bit int, 64-bit int or 32-bit float under the 'vulkan' OS",
                                 .{usage_tag},
                             );
                         }
@@ -21000,7 +20993,7 @@ fn zirReifySpirvType(
                                 return sema.fail(
                                     block,
                                     operand_src,
-                                    "image 'format' '.{t}' does not match '{t}' type '{f}' under the 'vulkan' os",
+                                    "image 'format' '.{t}' does not match '{t}' type '{f}' under the 'vulkan' OS",
                                     .{ format, usage_tag, sampled_type.fmt(pt) },
                                 );
                             }
@@ -21053,7 +21046,7 @@ fn zirReifySpirvType(
                 elem_ty.zigTypeTag(zcu) == .spirv and
                 ip.loadSpirvType(elem_ty.toIntern()).flags.tag == .runtime_array)
             {
-                return sema.fail(block, operand_src, "'runtime_array' of 'runtime_array' is not allowed under the 'vulkan' os", .{});
+                return sema.fail(block, operand_src, "'runtime_array' of 'runtime_array' is not allowed under the 'vulkan' OS", .{});
             }
             break :blk .{
                 .ty = union_val.val,
@@ -25310,11 +25303,14 @@ fn zirBuiltinExtern(
     }
 
     if (options.decoration) |decoration| switch (decoration) {
-        .flat => switch (ptr_info.flags.address_space) {
+        .location, .flat => switch (ptr_info.flags.address_space) {
             .input, .output => {},
-            else => return sema.fail(block, options_src, "\"flat\" decoration requires \"input\" or \"output\" address space", .{}),
+            else => return sema.fail(block, options_src, "'{t}' decoration requires 'input' or 'output' address space", .{decoration}),
         },
-        .location, .descriptor => {},
+        .descriptor => switch (ptr_info.flags.address_space) {
+            .global, .storage_buffer, .uniform, .constant => {},
+            else => return sema.fail(block, options_src, "'descriptor' decoration requires 'storage_buffer', 'uniform', 'constant' or 'global' address space", .{}),
+        },
     };
 
     const target = zcu.getTarget();
@@ -25934,6 +25930,7 @@ fn addSafetyCheck(
         .comptime_reason = null,
         .src_base_inst = parent_block.src_base_inst,
         .type_name_ctx = parent_block.type_name_ctx,
+        .type_fqn_ctx = parent_block.type_fqn_ctx,
     };
 
     defer fail_block.instructions.deinit(gpa);
@@ -26028,6 +26025,7 @@ fn addSafetyCheckUnwrapError(
         .comptime_reason = null,
         .src_base_inst = parent_block.src_base_inst,
         .type_name_ctx = parent_block.type_name_ctx,
+        .type_fqn_ctx = parent_block.type_fqn_ctx,
     };
 
     defer fail_block.instructions.deinit(gpa);
@@ -26151,6 +26149,7 @@ fn addSafetyCheckCall(
         .comptime_reason = null,
         .src_base_inst = parent_block.src_base_inst,
         .type_name_ctx = parent_block.type_name_ctx,
+        .type_fqn_ctx = parent_block.type_fqn_ctx,
     };
 
     defer fail_block.instructions.deinit(gpa);
@@ -34905,6 +34904,7 @@ pub fn resolveNavPtrModifiers(
     const gpa = comp.gpa;
     const io = comp.io;
     const ip = &zcu.intern_pool;
+    const target = zcu.getTarget();
 
     const align_src = block.src(.{ .node_offset_var_decl_align = .zero });
     const section_src = block.src(.{ .node_offset_var_decl_section = .zero });
@@ -34936,7 +34936,6 @@ pub fn resolveNavPtrModifiers(
                 else => .constant,
             },
         };
-        const target = zcu.getTarget();
         const addrspace_body = zir_decl.addrspace_body orelse {
             if (zir_decl.linkage == .@"extern" and
                 target.cpu.arch.isSpirV() and
@@ -34959,6 +34958,21 @@ pub fn resolveNavPtrModifiers(
         const addrspace_ref = try sema.resolveInlineBody(block, addrspace_body, decl_inst);
         break :as try sema.analyzeAsAddressSpace(block, addrspace_src, addrspace_ref, addrspace_ctx);
     };
+
+    if (target.cpu.arch.isSpirV()) {
+        if (zir_decl.kind == .@"var" and zir_decl.linkage != .@"extern" and !zir_decl.is_threadlocal) {
+            return sema.failWithOwnedErrorMsg(block, msg: {
+                const decl_src = block.nodeOffset(.zero);
+                const msg = try sema.errMsg(decl_src, "SPIR-V target does not support global variables", .{});
+                errdefer msg.destroy(gpa);
+                try sema.errNote(decl_src, msg, "consider using 'threadlocal'", .{});
+                break :msg msg;
+            });
+        }
+        if (zir_decl.is_threadlocal and @"addrspace" != .private and target.os.tag == .vulkan) {
+            return sema.fail(block, addrspace_src, "threadlocal variables with address space '{t}' are not supported on {t}", .{ @"addrspace", target.os.tag });
+        }
+    }
 
     return .{
         .@"align" = @"align",
@@ -34993,6 +35007,7 @@ pub fn analyzeMemoizedState(sema: *Sema, stage: InternPool.MemoizedStateStage) C
             .comptime_reason = null,
             .src_base_inst = std_type.typeDeclInst(zcu).?,
             .type_name_ctx = .empty,
+            .type_fqn_ctx = .empty,
         };
     };
     defer block.instructions.deinit(gpa);
@@ -35222,11 +35237,19 @@ pub fn setTypeName(
                 io,
                 pt.tid,
                 "{f}__{s}_{d}",
-                .{ block.type_name_ctx.fmt(ip), anon_prefix, @backingInt(wip.index) },
+                .{ block.type_name_ctx.fmt(ip), anon_prefix, zcu.anon_name_counter },
+                .no_embedded_nulls,
+            ), try ip.getOrPutStringFmt(
+                gpa,
+                io,
+                pt.tid,
+                "{f}__{s}_{d}",
+                .{ block.type_fqn_ctx.fmt(ip), anon_prefix, zcu.anon_name_counter },
                 .no_embedded_nulls,
             ), .none);
+            zcu.anon_name_counter += 1;
         },
-        .parent => wip.setName(ip, block.type_name_ctx, sema.owner.unwrap().nav_val.toOptional()),
+        .parent => wip.setName(ip, block.type_name_ctx, block.type_fqn_ctx, sema.owner.unwrap().nav_val.toOptional()),
         .func => {
             const fn_info = sema.code.getFnInfo(ip.funcZirBodyInst(sema.func_index).resolve(ip) orelse {
                 return sema.failTransitive(.{ .lost_tracking = ip.funcZirBodyInst(sema.func_index) });
@@ -35236,7 +35259,7 @@ pub fn setTypeName(
             var aw: std.Io.Writer.Allocating = .init(gpa);
             defer aw.deinit();
             const w = &aw.writer;
-            w.print("{f}(", .{block.type_name_ctx.fmt(ip)}) catch return error.OutOfMemory;
+            w.writeByte('(') catch return error.OutOfMemory;
 
             var arg_i: usize = 0;
             for (fn_info.param_body) |zir_inst| switch (zir_tags[@backingInt(zir_inst)]) {
@@ -35271,8 +35294,13 @@ pub fn setTypeName(
             };
 
             w.writeByte(')') catch return error.OutOfMemory;
-            const name = try ip.getOrPutString(gpa, io, pt.tid, aw.written(), .no_embedded_nulls);
-            wip.setName(ip, name, .none);
+            wip.setName(ip, try ip.getOrPutStringFmt(gpa, io, pt.tid, "{f}{s}", .{
+                block.type_name_ctx.fmt(ip),
+                aw.written(),
+            }, .no_embedded_nulls), try ip.getOrPutStringFmt(gpa, io, pt.tid, "{f}{s}", .{
+                block.type_fqn_ctx.fmt(ip),
+                aw.written(),
+            }, .no_embedded_nulls), .none);
         },
         .dbg_var => {
             // TODO: this logic is questionable. We ideally should be traversing the `Block` rather than relying on the order of AstGen instructions.
@@ -35287,10 +35315,12 @@ pub fn setTypeName(
             } else {
                 continue :strat .anon;
             };
-            const name = try ip.getOrPutStringFmt(gpa, io, pt.tid, "{f}.{s}", .{
+            wip.setName(ip, try ip.getOrPutStringFmt(gpa, io, pt.tid, "{f}.{s}", .{
+                // this "{f}." should be elided, but there's currently no way to get the parent function
                 block.type_name_ctx.fmt(ip), var_name,
-            }, .no_embedded_nulls);
-            wip.setName(ip, name, .none);
+            }, .no_embedded_nulls), try ip.getOrPutStringFmt(gpa, io, pt.tid, "{f}.{s}", .{
+                block.type_fqn_ctx.fmt(ip), var_name,
+            }, .no_embedded_nulls), .none);
         },
     }
 }

@@ -495,26 +495,26 @@ pub const Request = struct {
         extra_headers: []const http.Header = &.{},
     };
 
-    const RespondWebsocketError = ExpectContinueError || error{ WebsocketProtocolViolation, UnknownWebsocketVersion };
+    const RespondWebSocketError = ExpectContinueError || error{ WebSocketProtocolViolation, UnknownWebSocketVersion };
 
     pub const supported_websocket_version = "13";
 
     /// Requires `request.head` to still be valid.
     ///
-    /// If `error.HttpExpectationFailed`, `error.WebsocketProtocolViolation`,
-    /// or `error.UnknownWebsocketVersion` are returned, does not invalidate
+    /// If `error.HttpExpectationFailed`, `error.WebSocketProtocolViolation`,
+    /// or `error.UnknownWebSocketVersion` are returned, does not invalidate
     /// `request.head`.
     ///
     /// The spec requires servers to respond with supported websocket
-    /// versions if this returns `error.UnknownWebsocketVersion`.  However
+    /// versions if this returns `error.UnknownWebSocketVersion`.  However
     /// it has been 15 years with only one valid version, so this is unlikely
     /// to ever matter.
-    pub fn respondWebSocket(request: *Request, io: std.Io, options: WebSocketOptions) RespondWebsocketError!WebSocket {
+    pub fn respondWebSocket(request: *Request, io: std.Io, options: WebSocketOptions) RespondWebSocketError!WebSocket {
         if (request.head.expect != null) return error.HttpExpectationFailed;
 
         switch (request.head.version) {
-            .@"HTTP/1.0" => return error.WebsocketProtocolViolation,
-            .@"HTTP/1.1" => if (request.head.method != .GET) return error.WebsocketProtocolViolation,
+            .@"HTTP/1.0" => return error.WebSocketProtocolViolation,
+            .@"HTTP/1.1" => if (request.head.method != .GET) return error.WebSocketProtocolViolation,
         }
 
         const key = blk: {
@@ -526,20 +526,20 @@ pub const Request = struct {
             var it = request.iterateHeaders();
             while (it.next()) |header| {
                 if (std.ascii.eqlIgnoreCase(header.name, "sec-websocket-key")) {
-                    if (std.base64.standard.Decoder.calcSizeForSlice(header.value) catch 0 != 16) return error.WebsocketProtocolViolation;
+                    if (std.base64.standard.Decoder.calcSizeForSlice(header.value) catch 0 != 16) return error.WebSocketProtocolViolation;
                     sec_websocket_key = header.value;
                 } else if (std.ascii.eqlIgnoreCase(header.name, "upgrade")) {
                     if (std.ascii.findIgnoreCase(header.value, "websocket")) |_| upgrade = true;
                 } else if (std.ascii.eqlIgnoreCase(header.name, "connection")) {
                     if (std.ascii.findIgnoreCase(header.value, "upgrade")) |_| connection = true;
                 } else if (std.ascii.eqlIgnoreCase(header.name, "sec-websocket-version")) {
-                    if (!std.mem.eql(u8, header.value, supported_websocket_version)) return error.UnknownWebsocketVersion;
+                    if (!std.mem.eql(u8, header.value, supported_websocket_version)) return error.UnknownWebSocketVersion;
                     sec_websocket_version = true;
                 }
             }
-            if (!(upgrade and connection and sec_websocket_version)) return error.WebsocketProtocolViolation;
+            if (!(upgrade and connection and sec_websocket_version)) return error.WebSocketProtocolViolation;
 
-            break :blk (sec_websocket_key orelse return error.WebsocketProtocolViolation);
+            break :blk (sec_websocket_key orelse return error.WebSocketProtocolViolation);
         };
 
         const out = request.server.out;
@@ -718,7 +718,7 @@ pub const WebSocket = struct {
     pub const control_frame_max_payload_len = 125;
 
     pub const ReadError = error{
-        WebsocketProtocolViolation,
+        WebSocketProtocolViolation,
         WebSocketClosed,
         EndOfStream,
         ReadFailed,
@@ -740,7 +740,7 @@ pub const WebSocket = struct {
     /// Begins reading a new message. Invalidates previously returned readers and discards any unread
     /// bytes in the last message.
     ///
-    /// In a departure from Websocket's spec, this does not perform utf8 validation when MessageKind
+    /// In a departure from WebSocket's spec, this does not perform utf8 validation when MessageKind
     /// is text.  Clients which care should validate it themselves, eg with `std.unicode.utf8ValidateSlice`.
     pub fn messageReader(ws: *WebSocket, buffer: []u8) !struct { MessageKind, *std.Io.Reader } {
         ws.reader = .{
@@ -759,7 +759,7 @@ pub const WebSocket = struct {
         }
 
         const kind: MessageKind = switch (try ws.beginDataFrame()) {
-            .continuation => return error.WebsocketProtocolViolation,
+            .continuation => return error.WebSocketProtocolViolation,
             .text => .text,
             .binary => .binary,
             else => unreachable,
@@ -818,7 +818,7 @@ pub const WebSocket = struct {
             const header = try Header.read(ws.input);
             switch (header.op_code) {
                 .continuation, .text, .binary => {
-                    const mask = header.mask orelse return error.WebsocketProtocolViolation;
+                    const mask = header.mask orelse return error.WebSocketProtocolViolation;
 
                     ws.reader_frame = .{
                         .finish = header.finish,
@@ -830,7 +830,7 @@ pub const WebSocket = struct {
                     return header.op_code;
                 },
                 .close => {
-                    if (!header.finish) return error.WebsocketProtocolViolation;
+                    if (!header.finish) return error.WebSocketProtocolViolation;
                     const payload = try ws.controlFramePayload(header);
 
                     const no_status_code = 1005;
@@ -843,7 +843,7 @@ pub const WebSocket = struct {
                     return error.WebSocketClosed;
                 },
                 .ping => {
-                    if (!header.finish) return error.WebsocketProtocolViolation;
+                    if (!header.finish) return error.WebSocketProtocolViolation;
                     const payload = try ws.controlFramePayload(header);
                     _ = ws.writeFrame(.pong, true, payload, &.{}, 0) catch |err| switch (err) {
                         error.WebSocketClosed => {}, // Even if writing is closed, should continue processing reads.
@@ -854,7 +854,7 @@ pub const WebSocket = struct {
                 .pong => {
                     // Though this API doesn't support sending pings, remote connections are allowed
                     // to send unsolicited pongs.
-                    if (!header.finish) return error.WebsocketProtocolViolation;
+                    if (!header.finish) return error.WebSocketProtocolViolation;
                     _ = try ws.controlFramePayload(header);
                     continue;
                 },
@@ -864,7 +864,7 @@ pub const WebSocket = struct {
 
     fn controlFramePayload(ws: *WebSocket, header: Header) ![]u8 {
         if (header.payload_len > control_frame_max_payload_len) {
-            return error.WebsocketProtocolViolation;
+            return error.WebSocketProtocolViolation;
         }
         const result = try ws.input.take(header.payload_len);
         var mask_pos: u2 = 0;
@@ -886,7 +886,7 @@ pub const WebSocket = struct {
                 return error.ReadFailed;
             };
             if (op_code != .continuation) {
-                ws.reader_err = error.WebsocketProtocolViolation;
+                ws.reader_err = error.WebSocketProtocolViolation;
                 return error.ReadFailed;
             }
         }
@@ -1069,12 +1069,12 @@ pub const WebSocket = struct {
             const partial: Partial = @bitCast(try reader.takeInt(u16, .big));
             if (partial.reserved != 0) {
                 @branchHint(.cold);
-                return error.WebsocketProtocolViolation;
+                return error.WebSocketProtocolViolation;
             }
 
             var r: Header = undefined;
             r.finish = partial.fin;
-            r.op_code = std.enums.fromInt(OpCode, partial.op_code) orelse return error.WebsocketProtocolViolation;
+            r.op_code = std.enums.fromInt(OpCode, partial.op_code) orelse return error.WebSocketProtocolViolation;
             r.payload_len = switch (partial.payload_len) {
                 .u16_len => try reader.takeInt(u16, .big),
                 .u64_len => try reader.takeInt(u64, .big),

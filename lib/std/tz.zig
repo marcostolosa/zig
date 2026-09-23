@@ -18,7 +18,7 @@ pub const Timetype = struct {
     name_data: [6:0]u8,
 
     pub fn name(self: *const Timetype) [:0]const u8 {
-        return std.mem.sliceTo(self.name_data[0..], 0);
+        return std.mem.sliceTo(&self.name_data, 0);
     }
 
     pub fn isDst(self: Timetype) bool {

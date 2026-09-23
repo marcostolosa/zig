@@ -308,7 +308,7 @@ pub fn allocateSymbols(self: *LinkerDefined, elf_file: *Elf) void {
             const name = start.name(elf_file);
             const stop_ref = self.resolveSymbol(self.start_stop_indexes.items[index + 1], elf_file);
             const stop = elf_file.symbol(stop_ref).?;
-            const shndx = elf_file.sectionByName(name["__start_".len..]).?;
+            const shndx = elf_file.sectionByName(name["__start_".len.. :0]).?;
             const shdr = shdrs[shndx];
             start.value = @intCast(shdr.sh_addr);
             start.output_section_index = shndx;

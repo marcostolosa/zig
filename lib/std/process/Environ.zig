@@ -680,7 +680,7 @@ pub fn getWindows(environ: Environ, key: [*:0]const u16) ?[:0]const u16 {
 
         const this_key = key_value[0..equal_index];
         if (std.os.windows.eqlIgnoreCaseWtf16(key_slice, this_key)) {
-            return key_value[equal_index + 1 ..];
+            return key_value[equal_index + 1 .. :0];
         }
 
         // skip past the NUL terminator

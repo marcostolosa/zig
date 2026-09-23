@@ -593,7 +593,7 @@ test "parse into struct with strings and arrays with sentinels" {
     try testing.expectEqualSentinel(u8, 0, "zig", parsed.value.language);
 
     const data = [_:99]i32{ 1, 2, 3 };
-    try testing.expectEqualSentinel(i32, 99, data[0..data.len], parsed.value.data);
+    try testing.expectEqualSentinel(i32, 99, &data, parsed.value.data);
 
     // Make sure that arrays who aren't supposed to have a sentinel still parse without one.
     try testing.expectEqual(@as(?i32, null), std.meta.sentinel(@TypeOf(parsed.value.simple_data)));

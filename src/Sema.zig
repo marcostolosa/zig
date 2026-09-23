@@ -31720,22 +31720,11 @@ fn analyzeSlice(
         return sema.analyzePtrArithmetic(block, src, ptr, start, .ptr_add, start_src);
     };
 
-    const sentinel = s: {
-        if (sentinel_opt != .none) {
-            const casted = try sema.coerce(block, elem_ty, sentinel_opt, sentinel_src);
-            try checkSentinelType(sema, block, sentinel_src, elem_ty);
-            break :s try sema.resolveConstDefinedValue(block, sentinel_src, casted, .{ .simple = .slice_sentinel });
-        }
-        // If we are slicing to the end of something that is sentinel-terminated
-        // then the resulting slice type is also sentinel-terminated.
-        if (end_is_len) {
-            if (ptr_sentinel) |sent| {
-                break :s sent;
-            }
-        }
-        break :s null;
-    };
-    const slice_sentinel = if (sentinel_opt != .none) sentinel else null;
+    const sentinel = if (sentinel_opt != .none) s: {
+        const casted = try sema.coerce(block, elem_ty, sentinel_opt, sentinel_src);
+        try checkSentinelType(sema, block, sentinel_src, elem_ty);
+        break :s try sema.resolveConstDefinedValue(block, sentinel_src, casted, .{ .simple = .slice_sentinel });
+    } else null;
 
     var checked_start_lte_end = by_length;
     var runtime_src: ?LazySrcLoc = null;
@@ -31866,7 +31855,7 @@ fn analyzeSlice(
                             try sema.analyzeArithmetic(block, .add, slice_len, .one, src, end_src, end_src, true);
                     } else break :bounds_check;
 
-                    const actual_end = if (slice_sentinel != null)
+                    const actual_end = if (sentinel != null)
                         try sema.analyzeArithmetic(block, .add, end, .one, src, end_src, end_src, true)
                     else
                         end;
@@ -31877,7 +31866,7 @@ fn analyzeSlice(
                 }
 
                 // requirement: result[new_len] == slice_sentinel
-                try sema.addSafetyCheckSentinelMismatch(block, src, slice_sentinel, elem_ty, result, new_len);
+                try sema.addSafetyCheckSentinelMismatch(block, src, sentinel, elem_ty, result, new_len);
             }
             return result;
         };
@@ -31932,7 +31921,7 @@ fn analyzeSlice(
             break :blk try sema.analyzeArithmetic(block, .add, slice_len_inst, .one, src, end_src, end_src, true);
         } else null;
         if (opt_len_inst) |len_inst| {
-            const actual_end = if (slice_sentinel != null)
+            const actual_end = if (sentinel != null)
                 try sema.analyzeArithmetic(block, .add, end, .one, src, end_src, end_src, true)
             else
                 end;
@@ -31951,7 +31940,7 @@ fn analyzeSlice(
     });
     if (block.wantSafety()) {
         // requirement: result[new_len] == slice_sentinel
-        try sema.addSafetyCheckSentinelMismatch(block, src, slice_sentinel, elem_ty, result, new_len);
+        try sema.addSafetyCheckSentinelMismatch(block, src, sentinel, elem_ty, result, new_len);
     }
     return result;
 }

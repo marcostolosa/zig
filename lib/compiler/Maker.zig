@@ -3812,7 +3812,7 @@ fn findBuildRoot(arena: Allocator, io: Io, options: FindBuildRootOptions) !Build
             return .{
                 .build_zig_basename = build_zig_basename,
                 .directory = .{
-                    .path = dirname,
+                    .path = dirname orelse options.cwd_path,
                     .handle = dir,
                 },
                 .close_directory = dirname != null,

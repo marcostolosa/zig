@@ -8,7 +8,7 @@ const math = std.math;
 
 /// Provides deterministic randomness in unit tests.
 /// Initialized on startup. Read-only after that.
-pub var random_seed: u32 = 0;
+pub var random_seed: u64 = 0;
 
 pub const FailingAllocator = @import("testing/FailingAllocator.zig");
 pub const failing_allocator = failing_allocator_instance.allocator();

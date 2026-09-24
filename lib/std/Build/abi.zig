@@ -169,7 +169,7 @@ pub const fuzz = struct {
     /// `fuzzer_init` must be called first.
     pub extern fn fuzzer_main(
         n_tests: u32,
-        seed: u32,
+        seed: u64,
         limit_kind: LimitKind,
         amount_or_instance: u64,
     ) void;

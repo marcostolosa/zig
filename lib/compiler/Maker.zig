@@ -2380,7 +2380,7 @@ fn prepare(
     const gpa = maker.gpa;
     const graph = maker.graph;
     const arena = graph.arena;
-    const seed: u32 = graph.random_seed;
+    const seed: u64 = graph.random_seed;
     const initial_steps = &maker.initial_steps;
     const step_stack = &maker.step_stack;
     const c = &maker.scanned_config.configuration;
@@ -4159,9 +4159,9 @@ const Fork = struct {
     }
 };
 
-fn parseRandomSeed(arg: []const u8) u32 {
-    return std.fmt.parseUnsigned(u32, arg, 0) catch |err|
-        fatal("failed parsing random seed {q} as unsigned 32-bit integer: {t}", .{ arg, err });
+fn parseRandomSeed(arg: []const u8) u64 {
+    return std.fmt.parseUnsigned(u64, arg, 0) catch |err|
+        fatal("failed parsing random seed {q} as unsigned 64-bit integer: {t}", .{ arg, err });
 }
 
 fn randInt(io: Io, comptime T: type) T {

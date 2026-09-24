@@ -54,7 +54,7 @@ pub fn main(init: std.process.Init.Minimal) void {
         if (std.mem.eql(u8, arg, "--listen=-")) {
             listen = true;
         } else if (std.mem.startsWith(u8, arg, "--seed=")) {
-            testing.random_seed = std.fmt.parseUnsigned(u32, arg["--seed=".len..], 0) catch
+            testing.random_seed = std.fmt.parseUnsigned(u64, arg["--seed=".len..], 0) catch
                 @panic("unable to parse --seed command line argument");
         } else if (std.mem.startsWith(u8, arg, "--cache-dir")) {
             opt_cache_dir = arg["--cache-dir=".len..];

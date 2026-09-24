@@ -20,7 +20,7 @@ build_root_directory: Directory,
 
 debug_compiler_runtime_libs: ?std.builtin.Optimize = null,
 incremental: ?bool = null,
-random_seed: u32 = 0,
+random_seed: u64 = 0,
 allow_so_scripts: ?bool = null,
 time_report: bool = false,
 /// Similar to the `Io.Terminal.Mode` returned by `Io.lockStderr`, but also

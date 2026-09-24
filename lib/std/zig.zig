@@ -1424,10 +1424,11 @@ pub const Directories = struct {
                 });
             };
         };
-        const build_root: Cache.Directory = if (options.build_root) |s|
-            openUnresolved(arena, io, cwd, s, .@"build root")
-        else
-            .cwd();
+        const build_root: Cache.Directory = if (options.build_root) |s| root: {
+            var root = openUnresolved(arena, io, cwd, s, .@"build root");
+            root.path = s;
+            break :root root;
+        } else .cwd();
 
         const global_cache: Cache.Directory = d: {
             if (options.override_global_cache) |path| break :d openUnresolved(arena, io, cwd, path, .@"global cache");

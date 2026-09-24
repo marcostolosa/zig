@@ -27,11 +27,16 @@ pub fn make(
 
     var argv: std.ArrayList([]const u8) = .empty;
 
-    try argv.ensureUnusedCapacity(arena, 10);
+    try argv.ensureUnusedCapacity(arena, 12);
     argv.appendAssumeCapacity(graph.zig_exe);
     argv.appendAssumeCapacity("translate-c");
     if (conf_tc.flags.link_libc) {
         argv.appendAssumeCapacity("-lc");
+    }
+
+    if (graph.build_root_directory.path) |build_root| {
+        argv.appendAssumeCapacity("--build-root");
+        argv.appendAssumeCapacity(build_root);
     }
 
     argv.appendAssumeCapacity("--cache-dir");

@@ -1580,6 +1580,18 @@ pub const LazyPath = union(@This().Tag) {
     };
 };
 
+pub const IncludeDirPath = struct {
+    flags: Flags,
+    lazy_path: LazyPath.Index,
+
+    pub const Index = IndexType(@This());
+
+    pub const Flags = packed struct(u32) {
+        optional: bool,
+        _: u31 = 0,
+    };
+};
+
 pub const GeneratedFileIndex = enum(u32) {
     _,
 };
@@ -1752,7 +1764,7 @@ pub const Module = struct {
     };
 
     pub const IncludeDir = union(enum(u3)) {
-        path: LazyPath.Index,
+        path: IncludeDirPath.Index,
         path_system: LazyPath.Index,
         path_after: LazyPath.Index,
         framework_path: LazyPath.Index,

@@ -114,7 +114,7 @@ pub fn addSystemIncludePath(translate_c: *TranslateC, lazy_path: LazyPath) void 
 pub fn addIncludePath(translate_c: *TranslateC, lazy_path: LazyPath) void {
     const graph = translate_c.step.owner.graph;
     const arena = graph.arena;
-    translate_c.include_dirs.append(arena, .{ .path = lazy_path.dupe(graph) }) catch
+    translate_c.include_dirs.append(arena, .{ .path = .{ .lazy_path = lazy_path.dupe(graph) } }) catch
         @panic("OOM");
     lazy_path.addStepDependencies(&translate_c.step);
 }

@@ -2460,6 +2460,12 @@ pub const LazyPath = union(enum) {
     }
 };
 
+pub const IncludePath = struct {
+    lazy_path: LazyPath,
+    // When true, indicates a path may not be present.
+    optional: bool = false,
+};
+
 fn dumpBadDirnameHelp(
     fail_step: ?*Step,
     asking_step: ?*Step,

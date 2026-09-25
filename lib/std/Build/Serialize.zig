@@ -1137,19 +1137,31 @@ fn initArgsList(s: *Serialize, args: []const Step.Run.Arg) ![]const Configuratio
     return result;
 }
 
+fn addIncludeDirPath(
+    s: *Serialize,
+    p: std.Build.IncludePath,
+) !Configuration.IncludeDirPath.Index {
+    const wc = s.wc;
+    const lazy_path = try addLazyPath(s, p.lazy_path);
+    return try wc.addExtra(Configuration.IncludeDirPath, .{
+        .flags = .{ .optional = p.optional },
+        .lazy_path = lazy_path,
+    });
+}
+
 fn initIncludeDirList(
     s: *Serialize,
     list: []const std.Build.Module.IncludeDir,
 ) ![]const Configuration.Module.IncludeDir {
     const result = try s.arena.alloc(Configuration.Module.IncludeDir, list.len);
     for (result, list) |*dest, src| dest.* = switch (src) {
-        .path => |lp| .{ .path = try addLazyPath(s, lp) },
+        .path => |p| .{ .path = try addIncludeDirPath(s, p) },
         .path_system => |lp| .{ .path_system = try addLazyPath(s, lp) },
         .path_after => |lp| .{ .path_after = try addLazyPath(s, lp) },
         .framework_path => |lp| .{ .framework_path = try addLazyPath(s, lp) },
         .framework_path_system => |lp| .{ .framework_path_system = try addLazyPath(s, lp) },
         .embed_path => |lp| .{ .embed_path = try addLazyPath(s, lp) },
-        .other_step => |cs| .{ .path = try addLazyPath(s, cs.installed_headers_include_tree.?.getDirectory()) },
+        .other_step => |cs| .{ .path = try addIncludeDirPath(s, .{ .lazy_path = cs.installed_headers_include_tree.?.getDirectory() }) },
         .config_header_step => |chs| .{ .config_header_step = stepIndex(s, &chs.step) },
     };
     return result;
@@ -1322,7 +1334,7 @@ fn createModuleDependenciesForStep(step: *Step) Allocator.Error!void {
     for (modules) |mod| {
         if (mod.root_source_file) |lp| lp.addStepDependencies(step);
         for (mod.include_dirs.items) |include_dir| switch (include_dir) {
-            .path,
+            .path => |p| p.lazy_path.addStepDependencies(step),
             .path_system,
             .path_after,
             .framework_path,

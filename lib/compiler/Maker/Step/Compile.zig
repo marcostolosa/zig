@@ -1340,6 +1340,12 @@ fn appendModuleFlags(
     };
 }
 
+fn isDirAccessible(maker: *const Maker, dir: Path) bool {
+    const io = maker.graph.io;
+    dir.root_dir.handle.access(io, dir.subPathOrDot(), .{}) catch return false;
+    return true;
+}
+
 /// Assumes unused capacity for at least 2 items.
 pub fn appendIncludeDirFlags(
     arena: Allocator,
@@ -1351,9 +1357,19 @@ pub fn appendIncludeDirFlags(
     const conf = &maker.scanned_config.configuration;
 
     switch (include_dir) {
-        .path => |lp| {
+        .path => |index| {
+            const include_path = index.get(conf);
+            const resolved = try maker.resolveLazyPathIndex(arena, include_path.lazy_path, asking_step);
+            if (!isDirAccessible(maker, resolved)) {
+                if (include_path.flags.optional) return;
+                return maker.stepByIndex(asking_step).fail(
+                    maker,
+                    "include directory not accessible: {qf}",
+                    .{resolved},
+                );
+            }
             zig_args.appendAssumeCapacity("-I");
-            zig_args.appendAssumeCapacity(try maker.resolveLazyPathIndexAbs(arena, lp, asking_step));
+            zig_args.appendAssumeCapacity(try maker.resolveLazyPathIndexAbs(arena, include_path.lazy_path, asking_step));
         },
         .path_system => |lp| {
             zig_args.appendAssumeCapacity("-isystem");

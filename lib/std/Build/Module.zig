@@ -2,6 +2,7 @@ const Module = @This();
 
 const std = @import("std");
 const assert = std.debug.assert;
+const IncludePath = std.Build.IncludePath;
 const LazyPath = std.Build.LazyPath;
 const Step = std.Build.Step;
 const ArrayList = std.ArrayList;
@@ -160,7 +161,8 @@ pub const RcSourceFile = struct {
 };
 
 pub const IncludeDir = union(enum) {
-    path: LazyPath,
+    path: IncludePath,
+    // TODO: Make all these IncludePath.
     path_system: LazyPath,
     path_after: LazyPath,
     framework_path: LazyPath,
@@ -473,10 +475,18 @@ pub fn addSystemIncludePath(m: *Module, lazy_path: LazyPath) void {
     m.include_dirs.append(arena, .{ .path_system = lazy_path.dupe(graph) }) catch @panic("OOM");
 }
 
+pub const IncludePathOptions = struct {
+    optional: bool = false,
+};
+
 pub fn addIncludePath(m: *Module, lazy_path: LazyPath) void {
+    return m.addIncludePath2(lazy_path, .{});
+}
+
+pub fn addIncludePath2(m: *Module, lazy_path: LazyPath, options: IncludePathOptions) void {
     const graph = m.owner.graph;
     const arena = graph.arena;
-    m.include_dirs.append(arena, .{ .path = lazy_path.dupe(graph) }) catch @panic("OOM");
+    m.include_dirs.append(arena, .{ .path = .{ .lazy_path = lazy_path.dupe(graph), .optional = options.optional } }) catch @panic("OOM");
 }
 
 pub fn addConfigHeader(m: *Module, config_header: *Step.ConfigHeader) void {

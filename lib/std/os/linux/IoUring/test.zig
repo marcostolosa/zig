@@ -2515,6 +2515,66 @@ test "bind/listen/connect" {
     }
 }
 
+test "reject SQE128" {
+    var p = linux.io_uring_params{
+        .sq_entries = 0,
+        .cq_entries = 0,
+        .features = 0,
+        .wq_fd = 0,
+        .flags = linux.IORING_SETUP_SQE128,
+        .sq_thread_cpu = 0,
+        .sq_thread_idle = 0,
+        .resv = @splat(0),
+        .sq_off = undefined,
+        .cq_off = undefined,
+    };
+
+    try testing.expectError(
+        error.Unsupported,
+        IoUring.init_params(4, &p),
+    );
+}
+
+test "reject CQE32" {
+    var p = linux.io_uring_params{
+        .sq_entries = 0,
+        .cq_entries = 0,
+        .features = 0,
+        .wq_fd = 0,
+        .flags = linux.IORING_SETUP_CQE32,
+        .sq_thread_cpu = 0,
+        .sq_thread_idle = 0,
+        .resv = @splat(0),
+        .sq_off = undefined,
+        .cq_off = undefined,
+    };
+
+    try testing.expectError(
+        error.Unsupported,
+        IoUring.init_params(4, &p),
+    );
+}
+
+test "reject NO_MMAP" {
+    var p = linux.io_uring_params{
+        .sq_entries = 0,
+        .cq_entries = 0,
+        .features = 0,
+        .wq_fd = 0,
+        .flags = linux.IORING_SETUP_NO_MMAP,
+        .sq_thread_cpu = 0,
+        .sq_thread_idle = 0,
+        .resv = @splat(0),
+        .sq_off = undefined,
+        .cq_off = undefined,
+    };
+
+    try testing.expectError(
+        error.Unsupported,
+        IoUring.init_params(4, &p),
+    );
+}
+
 // Prepare, submit recv and get cqe using buffer group.
 fn buf_grp_recv_submit_get_cqe(
     ring: *IoUring,

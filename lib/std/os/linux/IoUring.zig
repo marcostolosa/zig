@@ -36,9 +36,14 @@ pub fn init(entries: u16, flags: u32) !IoUring {
 /// queue thread cpu affinity or thread idle timeout (the kernel and our default is 1 second).
 /// `params` is passed by reference because the kernel needs to modify the parameters.
 /// Matches the interface of io_uring_queue_init_params() in liburing.
+/// Returns `error.Unsupported` if `IORING_SETUP_SQE128`, `IORING_SETUP_CQE32` or `IORING_SETUP_NO_MMAP` are enabled.
 pub fn init_params(entries: u16, p: *linux.io_uring_params) !IoUring {
     if (entries == 0) return error.EntriesZero;
     if (!std.math.isPowerOfTwo(entries)) return error.EntriesNotPowerOfTwo;
+
+    if ((p.flags & linux.IORING_SETUP_SQE128) != 0) return error.Unsupported;
+    if ((p.flags & linux.IORING_SETUP_CQE32) != 0) return error.Unsupported;
+    if ((p.flags & linux.IORING_SETUP_NO_MMAP) != 0) return error.Unsupported;
 
     assert(p.sq_entries == 0);
     assert(p.cq_entries == 0 or p.flags & linux.IORING_SETUP_CQSIZE != 0);

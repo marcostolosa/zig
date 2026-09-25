@@ -720,7 +720,6 @@ pub const WebSocket = struct {
     pub const ReadError = error{
         WebSocketProtocolViolation,
         WebSocketClosed,
-        EndOfStream,
         ReadFailed,
         WriteFailed,
         Canceled,
@@ -809,18 +808,24 @@ pub const WebSocket = struct {
     ///
     /// For the connection to be considered properly closed, the server should call messageReader until getting an
     /// error, such as error.WebSocketClosed.
-    pub fn sendClose(ws: *WebSocket) void {
+    pub fn sendClose(ws: *WebSocket) error{ Canceled, WriteFailed }!void {
         // Could take close status code and reason parameters.  Do that when there's literally any reason whatsoever to do so.
         const normal_closure_code: u16 = 1000;
-        _ = ws.writeFrame(.close, true, std.mem.asBytes(&@byteSwap(normal_closure_code)), &.{}, 0) catch |err| switch (err) {
-            error.Canceled => ws.io.recancel(),
-            error.WebSocketClosed, error.WriteFailed => {},
+        var body: [2]u8 = undefined;
+        std.mem.writeInt(u16, &body, normal_closure_code, .big);
+        _ = ws.writeFrame(.close, true, &body, &.{}, 0) catch |err| return switch (err) {
+            error.Canceled => error.Canceled,
+            error.WriteFailed => error.WriteFailed,
+            error.WebSocketClosed => {},
         };
     }
 
-    fn beginDataFrame(ws: *WebSocket) !Header.OpCode {
+    fn beginDataFrame(ws: *WebSocket) ReadError!Header.OpCode {
         while (true) {
-            const header = try Header.read(ws.input);
+            const header = Header.read(ws.input) catch |err| return switch (err) {
+                error.EndOfStream, error.WebSocketProtocolViolation => error.WebSocketProtocolViolation,
+                error.ReadFailed => error.ReadFailed,
+            };
             switch (header.op_code) {
                 .continuation, .text, .binary => {
                     const mask = header.mask orelse return error.WebSocketProtocolViolation;
@@ -846,10 +851,11 @@ pub const WebSocket = struct {
                     }
                     _ = ws.writeFrame(.close, true, "", &.{}, 0) catch |err| return switch (err) {
                         error.Canceled => error.Canceled,
-                        // Close previously sent.  Either both closed at same time, or this is response to close being sent.
+                        // Close previously sent.  Either both closed at same time, or this is the response to close being sent.
                         error.WebSocketClosed => error.WebSocketClosed,
                         // A failed write is still an error here.  If the remote wanted to shut down in a spec complaint way,
-                        // it should have waited for the close echo before closing sockets.
+                        // it should have waited for the close echo before closing sockets.  The source Writer may also have
+                        // encountered an error.Canceled.
                         error.WriteFailed => error.WriteFailed,
                     };
                     return error.WebSocketClosed;
@@ -878,7 +884,10 @@ pub const WebSocket = struct {
         if (header.payload_len > control_frame_max_payload_len) {
             return error.WebSocketProtocolViolation;
         }
-        const result = try ws.input.take(header.payload_len);
+        const result = ws.input.take(header.payload_len) catch |err| return switch (err) {
+            error.EndOfStream => error.WebSocketProtocolViolation,
+            error.ReadFailed => error.ReadFailed,
+        };
         var mask_pos: u2 = 0;
         if (header.mask) |mask| maskedCopy(result, result, mask, &mask_pos);
         return result;

@@ -812,7 +812,10 @@ pub const WebSocket = struct {
     pub fn sendClose(ws: *WebSocket) void {
         // Could take close status code and reason parameters.  Do that when there's literally any reason whatsoever to do so.
         const normal_closure_code: u16 = 1000;
-        _ = ws.writeFrame(.close, true, std.mem.asBytes(&@byteSwap(normal_closure_code)), &.{}, 0) catch 0;
+        _ = ws.writeFrame(.close, true, std.mem.asBytes(&@byteSwap(normal_closure_code)), &.{}, 0) catch |err| switch (err) {
+            error.Canceled => ws.io.recancel(),
+            error.WebSocketClosed, error.WriteFailed => {},
+        };
     }
 
     fn beginDataFrame(ws: *WebSocket) !Header.OpCode {
@@ -841,7 +844,14 @@ pub const WebSocket = struct {
                     if (payload.len > 2) {
                         ws.close_reason = payload[2..];
                     }
-                    _ = ws.writeFrame(.close, true, "", &.{}, 0) catch 0;
+                    _ = ws.writeFrame(.close, true, "", &.{}, 0) catch |err| return switch (err) {
+                        error.Canceled => error.Canceled,
+                        // Close previously sent.  Either both closed at same time, or this is response to close being sent.
+                        error.WebSocketClosed => error.WebSocketClosed,
+                        // A failed write is still an error here.  If the remote wanted to shut down in a spec complaint way,
+                        // it should have waited for the close echo before closing sockets.
+                        error.WriteFailed => error.WriteFailed,
+                    };
                     return error.WebSocketClosed;
                 },
                 .ping => {

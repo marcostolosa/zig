@@ -14,6 +14,7 @@
 const std = @import("std");
 const testing = std.testing;
 const builtin = @import("builtin");
+const io = std.Options.debug_io;
 
 const log = std.log.scoped(.safety);
 
@@ -87,11 +88,11 @@ fn OptionalMutex(config: Config) type {
         pub const init: M = .{};
 
         pub fn lock(m: *M) void {
-            if (present) std.Io.Threaded.mutexLock(&m.inner);
+            if (present) m.inner.lockUncancelable(io);
         }
 
         pub fn unlock(m: *M) void {
-            if (present) std.Io.Threaded.mutexUnlock(&m.inner);
+            if (present) m.inner.unlock(io);
         }
     };
 }

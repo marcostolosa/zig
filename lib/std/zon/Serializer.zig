@@ -410,57 +410,37 @@ pub const StringOptions = struct {
 
 /// Like `value`, but always serializes `val` as a string.
 pub fn string(self: *Serializer, val: []const u8, options: StringOptions) Writer.Error!void {
+    if (!options.escape_non_ascii) {
+        return try self.writer.print("{q}", .{val});
+    }
+
     try self.writer.writeByte('"');
-    // Batch write sequences of "raw" bytes (printable ASCII or non-escaped non-ASCII) for performance.
-    // `val[start..i]` contains pending raw bytes to write.
-    var start: usize = 0;
     var i: usize = 0;
     while (i < val.len) {
         const byte = val[i];
-        // Check if this byte can be written as-is
-        const is_raw = switch (byte) {
-            ' ', '!', '#'...'[', ']'...'~' => true,
-            0x80...0xFF => !options.escape_non_ascii,
-            else => false,
-        };
-        if (is_raw) {
-            i += 1;
-            continue;
-        }
-        // Flush pending raw bytes
-        try self.writer.writeAll(val[start..i]);
-        // Handle the special character
-        const encoded: ?struct { codepoint: u21, ulen: u3 } = encoded: {
-            const ulen = std.unicode.utf8ByteSequenceLength(byte) catch |err| {
-                assert(err == error.Utf8InvalidStartByte);
-                // ASCII character that needs escaping
-                break :encoded null;
-            };
-            if (val[i..].len < ulen) {
-                // Truncated UTF-8 sequence
-                break :encoded null;
-            }
-            const codepoint = std.unicode.utf8Decode(val[i..][0..ulen]) catch {
-                // Utf8DecodeError codepoint error
-                break :encoded null;
-            };
-            break :encoded .{ .codepoint = codepoint, .ulen = ulen };
-        };
 
-        if (encoded) |rune| {
-            self.writeCodepoint(rune.codepoint, .{
-                .escape_non_ascii = options.escape_non_ascii,
-                .quote_style = .double,
-            }) catch unreachable;
-            i += rune.ulen;
-        } else {
-            try self.writer.print("\\x{x:0>2}", .{byte});
-            i += 1;
+        if (byte >= 0x80) {
+            if (std.unicode.utf8ByteSequenceLength(byte)) |ulen| utf8: {
+                if (val[i..].len < ulen) {
+                    // Truncated UTF-8 sequence
+                    break :utf8;
+                }
+                const codepoint = std.unicode.utf8Decode(val[i..][0..ulen]) catch break :utf8;
+                self.writeCodepoint(codepoint, .{
+                    .escape_non_ascii = true,
+                    .quote_style = .double,
+                }) catch unreachable;
+                i += ulen;
+                continue;
+            } else |err| {
+                assert(err == error.Utf8InvalidStartByte);
+            }
         }
-        start = i;
+
+        try std.zig.stringEscape(&.{byte}, self.writer);
+        i += 1;
     }
 
-    try self.writer.writeAll(val[start..]);
     try self.writer.writeByte('"');
 }
 
@@ -471,7 +451,7 @@ test string {
 
     try testString("\"ÿ\"", "ÿ", .{});
     try testString("\"\\u{ff}\"", "ÿ", .{ .escape_non_ascii = true });
-    try testString("\"\xff\"", &.{0xff}, .{});
+    try testString("\"\\xff\"", &.{0xff}, .{});
     try testString("\"\\xff\"", &.{0xff}, .{ .escape_non_ascii = true });
     try testString("\"ÿ\"", &.{ 0xc3, 0xbf }, .{});
     try testString("\"\\u{ff}\"", &.{ 0xc3, 0xbf }, .{ .escape_non_ascii = true });

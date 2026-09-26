@@ -1185,7 +1185,13 @@ pub const Request = struct {
                     // Connection can still be reused by skipping the body.
                     const reader = r.reader.bodyReader(&.{}, head.transfer_encoding, head.content_length);
                     _ = reader.discardRemaining() catch |err| switch (err) {
-                        error.ReadFailed => connection.closing = true,
+                        error.ReadFailed => {
+                            connection.closing = true;
+                            if (connection.getReadError().? == error.Canceled) {
+                                return error.Canceled;
+                            }
+                            return error.TooManyHttpRedirects;
+                        },
                     };
                     return error.TooManyHttpRedirects;
                 }
@@ -1220,7 +1226,13 @@ pub const Request = struct {
             // the correct state. This causes `new_location` to be invalidated.
             const reader = r.reader.bodyReader(&.{}, head.transfer_encoding, head.content_length);
             _ = reader.discardRemaining() catch |err| switch (err) {
-                error.ReadFailed => return r.reader.body_err.?,
+                error.ReadFailed => {
+                    if (r.connection.?.getReadError().? == error.Canceled) {
+                        r.connection.?.closing = true;
+                        return error.Canceled;
+                    }
+                    return r.reader.body_err.?;
+                },
             };
         }
         const new_uri = r.uri.resolveInPlace(location.len, aux_buf) catch |err| switch (err) {
@@ -1545,6 +1557,7 @@ pub fn connectProxied(
         .protocol = proxy.protocol,
     })) |node| return node;
 
+    var canceled = false;
     var maybe_valid = false;
     (tunnel: {
         const connection = try client.connectTcpOptions(.{
@@ -1571,8 +1584,20 @@ pub fn connectProxied(
         };
         defer req.deinit();
 
-        req.sendBodiless() catch |err| break :tunnel err;
-        const response = req.receiveHead(&.{}) catch |err| break :tunnel err;
+        req.sendBodiless() catch |err| {
+            if (connection.stream_writer.err.? == error.Canceled) {
+                connection.closing = true;
+                canceled = true;
+            }
+            break :tunnel err;
+        };
+        const response = req.receiveHead(&.{}) catch |err| {
+            if (connection.getReadError().? == error.Canceled) {
+                connection.closing = true;
+                canceled = true;
+            }
+            break :tunnel err;
+        };
 
         if (response.head.status.class() == .server_error) {
             maybe_valid = true;
@@ -1589,6 +1614,7 @@ pub fn connectProxied(
 
         return connection;
     }) catch {
+        if (canceled) return error.Canceled;
         // something went wrong with the tunnel
         proxy.supports_connect = maybe_valid;
         return error.TunnelNotSupported;
@@ -1834,24 +1860,64 @@ pub fn fetch(client: *Client, options: FetchOptions) FetchError!FetchResult {
 
     if (options.payload) |payload| {
         req.transfer_encoding = .{ .content_length = payload.len };
-        var body = try req.sendBodyUnflushed(&.{});
-        try body.writer.writeAll(payload);
-        try body.end();
-        try req.connection.?.flush();
+        (blk: {
+            var body = req.sendBodyUnflushed(&.{}) catch |err| break :blk err;
+            body.writer.writeAll(payload) catch |err| break :blk err;
+            body.end() catch |err| break :blk err;
+            req.connection.?.flush() catch |err| break :blk err;
+        }) catch |err| switch (err) {
+            error.WriteFailed => {
+                if (req.connection.?.stream_writer.err.? == error.Canceled) {
+                    req.connection.?.closing = true;
+                    return error.Canceled;
+                }
+                return err;
+            },
+        };
     } else {
-        try req.sendBodiless();
+        req.sendBodiless() catch |err| switch (err) {
+            error.WriteFailed => {
+                if (req.connection.?.stream_writer.err.? == error.Canceled) {
+                    req.connection.?.closing = true;
+                    return error.Canceled;
+                }
+                return err;
+            },
+        };
     }
 
     const redirect_buffer: []u8 = if (redirect_behavior == .unhandled) &.{} else options.redirect_buffer orelse
         try client.allocator.alloc(u8, 8 * 1024);
     defer if (options.redirect_buffer == null) client.allocator.free(redirect_buffer);
 
-    var response = try req.receiveHead(redirect_buffer);
+    var response = req.receiveHead(redirect_buffer) catch |err| switch (err) {
+        error.ReadFailed => {
+            if (req.connection.?.getReadError().? == error.Canceled) {
+                req.connection.?.closing = true;
+                return error.Canceled;
+            }
+            return err;
+        },
+        error.WriteFailed => {
+            if (req.connection.?.stream_writer.err.? == error.Canceled) {
+                req.connection.?.closing = true;
+                return error.Canceled;
+            }
+            return err;
+        },
+        else => return err,
+    };
 
     const response_writer = options.response_writer orelse {
         const reader = response.reader(&.{});
         _ = reader.discardRemaining() catch |err| switch (err) {
-            error.ReadFailed => return response.bodyErr().?,
+            error.ReadFailed => {
+                if (req.connection.?.getReadError().? == error.Canceled) {
+                    req.connection.?.closing = true;
+                    return error.Canceled;
+                }
+                return response.bodyErr().?;
+            },
         };
         return .{ .status = response.head.status };
     };
@@ -1869,7 +1935,13 @@ pub fn fetch(client: *Client, options: FetchOptions) FetchError!FetchResult {
     const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
 
     _ = reader.streamRemaining(response_writer) catch |err| switch (err) {
-        error.ReadFailed => return response.bodyErr().?,
+        error.ReadFailed => {
+            if (req.connection.?.getReadError().? == error.Canceled) {
+                req.connection.?.closing = true;
+                return error.Canceled;
+            }
+            return response.bodyErr().?;
+        },
         else => |e| return e,
     };
 

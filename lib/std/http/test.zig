@@ -1284,6 +1284,84 @@ test "redirect to different connection" {
     }
 }
 
+test "fetch cancellation" {
+    if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
+
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+
+    const state = struct {
+        var request_received: Io.Event = .unset;
+    };
+
+    const test_server = try createTestServer(io, struct {
+        fn run(test_server: *TestServer) anyerror!void {
+            var recv_buffer: [500]u8 = undefined;
+            var send_buffer: [500]u8 = undefined;
+
+            // Hold the first fetch in its response-header read to allow
+            // testing a canceled state.
+            {
+                var stream = try test_server.net_server.accept(io);
+                defer stream.close(io);
+
+                var connection_br = stream.reader(io, &recv_buffer);
+                var connection_bw = stream.writer(io, &send_buffer);
+                var server = http.Server.init(&connection_br.interface, &connection_bw.interface);
+
+                try expectEqual(.ready, server.reader.state);
+                _ = try server.receiveHead();
+                state.request_received.set(io);
+                try expectError(error.HttpConnectionClosing, server.receiveHead());
+            }
+
+            { // The next fetch after a cancel works as expected.
+                var stream = try test_server.net_server.accept(io);
+                defer stream.close(io);
+
+                var connection_br = stream.reader(io, &recv_buffer);
+                var connection_bw = stream.writer(io, &send_buffer);
+                var server = http.Server.init(&connection_br.interface, &connection_bw.interface);
+
+                try expectEqual(.ready, server.reader.state);
+                var request = try server.receiveHead();
+                try request.respond("ok", .{});
+            }
+        }
+    });
+    defer test_server.destroy();
+
+    var client: http.Client = .{ .allocator = gpa, .io = io };
+    defer client.deinit();
+
+    const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/", .{test_server.port()});
+    defer gpa.free(location);
+
+    const FetchTask = struct {
+        fn run(http_client: *http.Client, fetch_url: []const u8) Io.Cancelable!void {
+            _ = http_client.fetch(.{
+                .location = .{ .url = fetch_url },
+            }) catch |err| switch (err) {
+                error.Canceled => return error.Canceled,
+                else => @panic(@errorName(err)),
+            };
+        }
+    };
+    var future = io.concurrent(FetchTask.run, .{ &client, location }) catch |err| switch (err) {
+        error.ConcurrencyUnavailable => return error.SkipZigTest,
+    };
+
+    try state.request_received.wait(io);
+    try expectError(error.Canceled, future.cancel(io));
+
+    // Send a second request to ensure the previous cancel cleaned up things
+    // correctly.
+    const response = try client.fetch(.{
+        .location = .{ .url = location },
+    });
+    try expectEqual(.ok, response.status);
+}
+
 test "boot failed connections from the pool" {
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
 

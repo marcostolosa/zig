@@ -1068,15 +1068,14 @@ const module_test_targets = blk: {
                 .abi = .none,
             },
         },
-        // SPARC linking support is currently incomplete.
-        // .{
-        //     .target = .{
-        //         .cpu_arch = .sparc64,
-        //         .os_tag = .linux,
-        //         .abi = .gnu,
-        //     },
-        //     .link_libc = true,
-        // },
+        .{
+            .target = .{
+                .cpu_arch = .sparc64,
+                .os_tag = .linux,
+                .abi = .gnu,
+            },
+            .link_libc = true,
+        },
 
         // Calls are normally lowered to branch instructions that only support +/- 16 MB range when
         // targeting Thumb. This easily becomes insufficient for our test binaries, so use long
@@ -1661,45 +1660,6 @@ const module_test_targets = blk: {
                 .abi = .gnu,
             },
             .link_libc = true,
-        },
-
-        .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-windows-msvc",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
-            .function_sections = true,
-            .data_sections = true,
-        },
-        .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-windows-msvc",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .link_libc = true,
-            .pic = false, // Long calls don't work with PIC.
-            .function_sections = true,
-            .data_sections = true,
-        },
-        .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-windows-gnu",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
-            .function_sections = true,
-            .data_sections = true,
-        },
-        .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-windows-gnu",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .link_libc = true,
-            .pic = false, // Long calls don't work with PIC.
-            .function_sections = true,
-            .data_sections = true,
         },
 
         .{

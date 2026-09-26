@@ -372,7 +372,6 @@ pub fn flush(
     for (comp.link_inputs) |link_input| switch (link_input) {
         .dso => continue, // handled below
         .object, .archive => positionals.appendAssumeCapacity(link_input),
-        .dso_exact => @panic("TODO"),
         .res => unreachable,
     };
 
@@ -406,7 +405,7 @@ pub fn flush(
 
     for (positionals.items) |link_input| {
         self.classifyInputFile(link_input) catch |err|
-            diags.addParseError(link_input.path().?, "failed to read input file: {s}", .{@errorName(err)});
+            diags.addParseError(link_input.path(), "failed to read input file: {t}", .{err});
     }
 
     var system_libs = std.array_list.Managed(SystemLib).init(gpa);
@@ -447,11 +446,11 @@ pub fn flush(
     };
 
     for (comp.link_inputs) |link_input| switch (link_input) {
-        .object, .archive, .dso_exact => continue,
+        .object, .archive => continue,
         .res => unreachable,
         .dso => {
             self.classifyInputFile(link_input) catch |err|
-                diags.addParseError(link_input.path().?, "failed to parse input file: {s}", .{@errorName(err)});
+                diags.addParseError(link_input.path(), "failed to parse input file: {t}", .{err});
         },
     };
 
@@ -467,7 +466,19 @@ pub fn flush(
                 self.classifyInputFile(archive_input) catch |err|
                     diags.addParseError(lib.path, "failed to parse input file: {s}", .{@errorName(err)});
             },
-            else => unreachable,
+            else => {
+                dso: {
+                    const dso_input = link.openDsoInput(io, diags, lib.path, lib.needed, lib.weak, lib.reexport) catch break :dso;
+                    self.classifyInputFile(dso_input) catch break :dso;
+                    continue;
+                }
+                ar: {
+                    const archive_input = link.openArchiveInput(io, diags, lib.path, lib.must_link, lib.hidden) catch break :ar;
+                    self.classifyInputFile(archive_input) catch break :ar;
+                    continue;
+                }
+                diags.addParseError(lib.path, "unknown file extension", .{});
+            },
         }
     }
 
@@ -655,8 +666,9 @@ fn dumpArgv(self: *MachO, comp: *Compilation) !void {
         for (comp.link_inputs) |link_input| switch (link_input) {
             .object, .archive => |obj| try argv.append(try obj.path.toString(arena)),
             .res => |res| try argv.append(try res.path.toString(arena)),
-            .dso => |dso| try argv.append(try dso.path.toString(arena)),
-            .dso_exact => |dso_exact| try argv.appendSlice(&.{ "-l", dso_exact.name }),
+            .dso => |dso| {
+                try argv.append(try dso.path.toString(arena));
+            },
         };
 
         for (comp.c_objects.items) |c_object| {
@@ -748,7 +760,6 @@ fn dumpArgv(self: *MachO, comp: *Compilation) !void {
                 if (obj.must_link) try argv.append("-force_load"); // TODO: verify this
                 try argv.append(try obj.path.toString(arena));
             },
-            .dso_exact => |dso_exact| try argv.appendSlice(&.{ "-l", dso_exact.name }),
         };
 
         for (comp.c_objects.items) |c_object| {
@@ -775,16 +786,18 @@ fn dumpArgv(self: *MachO, comp: *Compilation) !void {
         }
 
         for (comp.link_inputs) |link_input| switch (link_input) {
-            .object, .archive, .dso_exact => continue, // handled above
+            .object, .archive => continue, // handled above
             .res => unreachable, // windows only
             .dso => |dso| {
+                try argv.ensureUnusedCapacity(2);
                 if (dso.needed) {
-                    try argv.appendSlice(&.{ "-needed-l", try dso.path.toString(arena) });
+                    argv.appendAssumeCapacity("-needed-l");
                 } else if (dso.weak) {
-                    try argv.appendSlice(&.{ "-weak-l", try dso.path.toString(arena) });
+                    argv.appendAssumeCapacity("-weak-l");
                 } else {
-                    try argv.appendSlice(&.{ "-l", try dso.path.toString(arena) });
+                    argv.appendAssumeCapacity("-l");
                 }
+                argv.appendAssumeCapacity(try dso.path.toString(arena));
             },
         };
 
@@ -870,7 +883,7 @@ pub fn classifyInputFile(self: *MachO, input: link.Input) !void {
     const comp = self.base.comp;
     const io = comp.io;
 
-    const path, const file = input.pathAndFile().?;
+    const path, const file = input.pathAndFile();
     // TODO don't classify now, it's too late. The input file has already been classified
     log.debug("classifying input file {f}", .{path});
 
@@ -4478,7 +4491,6 @@ const SystemLib = struct {
 
     fn fromLinkInput(link_input: link.Input) SystemLib {
         return switch (link_input) {
-            .dso_exact => unreachable,
             .res => unreachable,
             .object, .archive => |obj| .{
                 .path = obj.path,

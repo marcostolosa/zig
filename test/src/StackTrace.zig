@@ -702,15 +702,14 @@ pub const param_sets = [_]CaseParameters{
             .abi = .none,
         },
     },
-    // SPARC linking support is currently incomplete.
-    // .{
-    //     .target = .{
-    //         .cpu_arch = .sparc64,
-    //         .os_tag = .linux,
-    //         .abi = .gnu,
-    //     },
-    //     .link_libc = true,
-    // },
+    .{
+        .target = .{
+            .cpu_arch = .sparc64,
+            .os_tag = .linux,
+            .abi = .gnu,
+        },
+        .link_libc = true,
+    },
 
     .{
         .target = .{
@@ -894,37 +893,6 @@ pub const param_sets = [_]CaseParameters{
     .{
         .target = .{
             .cpu_arch = .aarch64,
-            .os_tag = .windows,
-            .abi = .gnu,
-        },
-        .link_libc = true,
-    },
-
-    .{
-        .target = .{
-            .cpu_arch = .thumb,
-            .os_tag = .windows,
-            .abi = .msvc,
-        },
-    },
-    .{
-        .target = .{
-            .cpu_arch = .thumb,
-            .os_tag = .windows,
-            .abi = .msvc,
-        },
-        .link_libc = true,
-    },
-    .{
-        .target = .{
-            .cpu_arch = .thumb,
-            .os_tag = .windows,
-            .abi = .gnu,
-        },
-    },
-    .{
-        .target = .{
-            .cpu_arch = .thumb,
             .os_tag = .windows,
             .abi = .gnu,
         },

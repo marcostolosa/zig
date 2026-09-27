@@ -63,6 +63,16 @@ pub const Iterator = struct {
         return it.inner.next();
     }
 
+    /// Return subsequent argument, or `null` if no more remaining.
+    /// Without advancing the iterator.
+    ///
+    /// Returned slice is pointing to the iterator's internal buffer.
+    /// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
+    /// On other platforms, the result is an opaque sequence of bytes with no particular encoding.
+    pub fn peek(it: *Iterator) ?[:0]const u8 {
+        return it.inner.peek();
+    }
+
     /// Parse past 1 argument without capturing it.
     /// Returns `true` if skipped an arg, `false` if we are at the end.
     pub fn skip(it: *Iterator) bool {
@@ -105,6 +115,7 @@ pub const Iterator = struct {
         buffer: []u8,
         start: usize = 0,
         end: usize = 0,
+        peeked: ?[:0]const u8 = null,
 
         pub const InitError = error{OutOfMemory};
 
@@ -136,12 +147,31 @@ pub const Iterator = struct {
         /// command-line string. The iterator owns the returned slice.
         /// The result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
         pub fn next(self: *Windows) ?[:0]const u8 {
+            if (self.peeked) |arg| {
+                self.peeked = null;
+                return arg;
+            }
             return self.nextWithStrategy(next_strategy);
+        }
+
+        /// Returns the next argument without advancing the iterator. Returns `null` if at the end of the
+        /// command-line string. The iterator owns the returned slice.
+        /// The result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
+        pub fn peek(self: *Windows) ?[:0]const u8 {
+            if (self.peeked) |arg| {
+                return arg;
+            }
+            self.peeked = self.nextWithStrategy(next_strategy);
+            return self.peeked;
         }
 
         /// Skips the next argument and advances the iterator. Returns `true` if an argument was
         /// skipped, `false` if at the end of the command-line string.
         pub fn skip(self: *Windows) bool {
+            if (self.peeked) |_| {
+                self.peeked = null;
+                return true;
+            }
             return self.nextWithStrategy(skip_strategy);
         }
 
@@ -350,6 +380,7 @@ pub const Iterator = struct {
 
     pub const Posix = struct {
         remaining: Vector,
+        peeked: ?[:0]const u8 = null,
 
         pub const InitError = error{};
 
@@ -358,13 +389,29 @@ pub const Iterator = struct {
         }
 
         pub fn next(it: *Posix) ?[:0]const u8 {
+            if (it.peeked) |arg| {
+                it.peeked = null;
+                return arg;
+            }
             if (it.remaining.len == 0) return null;
             const arg = it.remaining[0];
             it.remaining = it.remaining[1..];
             return std.mem.sliceTo(arg, 0);
         }
 
+        pub fn peek(it: *Posix) ?[:0]const u8 {
+            if (it.peeked) |arg| {
+                return arg;
+            }
+            it.peeked = it.next();
+            return it.peeked;
+        }
+
         pub fn skip(it: *Posix) bool {
+            if (it.peeked) |_| {
+                it.peeked = null;
+                return true;
+            }
             if (it.remaining.len == 0) return false;
             it.remaining = it.remaining[1..];
             return true;
@@ -427,6 +474,12 @@ pub const Iterator = struct {
             const arg = self.args[self.index];
             self.index += 1;
             return arg;
+        }
+
+        pub fn peek(self: *Wasi) ?[:0]const u8 {
+            const original_index = self.index;
+            defer self.index = original_index;
+            return self.next();
         }
 
         pub fn skip(self: *Wasi) bool {
@@ -531,6 +584,66 @@ pub fn toSlice(a: Args, arena: Allocator) ToSliceError![]const [:0]const u8 {
         for (args, a.vector) |*dst, src| dst.* = std.mem.sliceTo(src, 0);
         return args;
     }
+}
+
+test "Iterator.Posix" {
+    var it = Iterator.Posix.init(.{
+        .vector = &.{ "aa", "bb", "cc", "dd", "ee" },
+    });
+
+    try testing.expectEqualStrings("aa", it.peek().?);
+    try testing.expectEqualStrings("aa", it.next().?);
+    try testing.expectEqualStrings("bb", it.next().?);
+    try testing.expectEqualStrings("cc", it.peek().?);
+    try testing.expectEqualStrings("cc", it.peek().?);
+    try testing.expect(it.skip());
+    try testing.expect(it.skip());
+    try testing.expectEqualStrings("ee", it.peek().?);
+
+    try testing.expect(it.skip());
+
+    try testing.expect(it.peek() == null);
+    try testing.expect(it.peek() == null);
+    try testing.expect(!it.skip());
+    try testing.expect(it.next() == null);
+}
+
+test "Iterator.Wasi" {
+    var aa = [_:0]u8{ 'a', 'a' };
+    var bb = [_:0]u8{ 'b', 'b' };
+    var cc = [_:0]u8{ 'c', 'c' };
+    var dd = [_:0]u8{ 'd', 'd' };
+    var ee = [_:0]u8{ 'e', 'e' };
+
+    var args = [_][:0]u8{
+        aa[0.. :0],
+        bb[0.. :0],
+        cc[0.. :0],
+        dd[0.. :0],
+        ee[0.. :0],
+    };
+
+    var it = Iterator.Wasi{
+        .allocator = testing.allocator,
+        .index = 0,
+        .args = args[0..],
+    };
+
+    try testing.expectEqualStrings("aa", it.peek().?);
+    try testing.expectEqualStrings("aa", it.next().?);
+    try testing.expectEqualStrings("bb", it.next().?);
+    try testing.expectEqualStrings("cc", it.peek().?);
+    try testing.expectEqualStrings("cc", it.peek().?);
+    try testing.expect(it.skip());
+    try testing.expect(it.skip());
+    try testing.expectEqualStrings("ee", it.peek().?);
+
+    try testing.expect(it.skip());
+
+    try testing.expect(it.peek() == null);
+    try testing.expect(it.peek() == null);
+    try testing.expect(!it.skip());
+    try testing.expect(it.next() == null);
 }
 
 test "Iterator.Windows" {
@@ -682,6 +795,38 @@ fn testIteratorWindows(cmd_line: []const u8, expected_args: []const []const u8) 
                 return error.TestUnexpectedResult;
             }
         }
+        try testing.expect(it.next() == null);
+    }
+
+    // next peek skip
+    {
+        var it = try Iterator.Windows.init(testing.allocator, cmd_line_w);
+        defer it.deinit();
+
+        for (expected_args, 0..) |expected, i| {
+            if (it.peek()) |actual| {
+                try testing.expectEqualStrings(expected, actual);
+            } else {
+                return error.TestUnexpectedResult;
+            }
+            if (it.peek()) |actual| {
+                try testing.expectEqualStrings(expected, actual);
+            } else {
+                return error.TestUnexpectedResult;
+            }
+            if (i % 2 == 0) {
+                if (it.next()) |actual| {
+                    try testing.expectEqualStrings(expected, actual);
+                } else {
+                    return error.TestUnexpectedResult;
+                }
+            } else {
+                try testing.expect(it.skip());
+            }
+        }
+        try testing.expect(it.peek() == null);
+        try testing.expect(it.peek() == null);
+        try testing.expect(!it.skip());
         try testing.expect(it.next() == null);
     }
 

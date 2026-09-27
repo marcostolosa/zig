@@ -588,7 +588,12 @@ pub fn toSlice(a: Args, arena: Allocator) ToSliceError![]const [:0]const u8 {
 
 test "Iterator.Posix" {
     var it = Iterator.Posix.init(.{
-        .vector = &.{ "aa", "bb", "cc", "dd", "ee" },
+        .vector = switch (native_os) {
+            .windows => try std.unicode.wtf8ToWtf16LeAllocZ(testing.allocator, "aa bb cc dd ee"),
+            .wasi => if (builtin.link_libc) &.{ "aa", "bb", "cc", "dd", "ee" } else return,
+            .freestanding, .other => return,
+            else => &.{ "aa", "bb", "cc", "dd", "ee" },
+        },
     });
 
     try testing.expectEqualStrings("aa", it.peek().?);

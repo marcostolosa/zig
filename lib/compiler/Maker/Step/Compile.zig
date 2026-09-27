@@ -1369,7 +1369,7 @@ pub fn appendIncludeDirFlags(
                 );
             }
             zig_args.appendAssumeCapacity("-I");
-            zig_args.appendAssumeCapacity(try maker.resolveLazyPathIndexAbs(arena, include_path.lazy_path, asking_step));
+            zig_args.appendAssumeCapacity(try resolved.toString(arena));
         },
         .path_system => |lp| {
             zig_args.appendAssumeCapacity("-isystem");

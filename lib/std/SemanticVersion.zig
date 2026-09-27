@@ -5,9 +5,9 @@
 const std = @import("std");
 const Version = @This();
 
-major: usize,
-minor: usize,
-patch: usize,
+major: u64,
+minor: u64,
+patch: u64,
 pre: ?[]const u8 = null,
 build: ?[]const u8 = null,
 
@@ -57,11 +57,11 @@ pub fn order(lhs: Version, rhs: Version) std.math.Order {
         const rid = next_rid.?; // Right identifier
 
         // Attempt to parse identifiers as numbers. Overflows are checked by parse.
-        const lnum: ?usize = std.fmt.parseUnsigned(usize, lid, 10) catch |err| switch (err) {
+        const lnum: ?u64 = std.fmt.parseUnsigned(u64, lid, 10) catch |err| switch (err) {
             error.InvalidCharacter => null,
             error.Overflow => unreachable,
         };
-        const rnum: ?usize = std.fmt.parseUnsigned(usize, rid, 10) catch |err| switch (err) {
+        const rnum: ?u64 = std.fmt.parseUnsigned(u64, rid, 10) catch |err| switch (err) {
             error.InvalidCharacter => null,
             error.Overflow => unreachable,
         };
@@ -140,11 +140,11 @@ pub fn parse(text: []const u8) !Version {
     return ver;
 }
 
-fn parseNum(text: []const u8) error{ InvalidVersion, Overflow }!usize {
+fn parseNum(text: []const u8) error{ InvalidVersion, Overflow }!u64 {
     // Leading zeroes are not allowed.
     if (text.len > 1 and text[0] == '0') return error.InvalidVersion;
 
-    return std.fmt.parseUnsigned(usize, text, 10) catch |err| switch (err) {
+    return std.fmt.parseUnsigned(u64, text, 10) catch |err| switch (err) {
         error.InvalidCharacter => return error.InvalidVersion,
         error.Overflow => |e| return e,
     };
@@ -259,13 +259,13 @@ test format {
         "....3",
     }) |invalid| try expectError(error.InvalidVersion, parse(invalid));
 
-    // Valid version string that may overflow.
+    // Valid version string that overflows.
     const big_valid = "99999999999999999999999.999999999999999999.99999999999999999";
     if (parse(big_valid)) |ver| {
         try std.testing.expectFmt(big_valid, "{f}", .{ver});
     } else |err| try expect(err == error.Overflow);
 
-    // Invalid version string that may overflow.
+    // Invalid version string that overflows.
     const big_invalid = "99999999999999999999999.999999999999999999.99999999999999999----RC-SNAPSHOT.12.09.1--------------------------------..12";
     if (parse(big_invalid)) |ver| std.debug.panic("expected error, found {f}", .{ver}) else |_| {}
 }

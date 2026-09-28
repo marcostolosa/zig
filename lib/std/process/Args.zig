@@ -587,14 +587,14 @@ pub fn toSlice(a: Args, arena: Allocator) ToSliceError![]const [:0]const u8 {
 }
 
 test "Iterator.Posix" {
-    var it = Iterator.Posix.init(.{
-        .vector = switch (native_os) {
-            .windows => return,
-            .wasi => if (builtin.link_libc) &.{ "aa", "bb", "cc", "dd", "ee" } else return,
-            .freestanding, .other => return,
-            else => &.{ "aa", "bb", "cc", "dd", "ee" },
-        },
-    });
+    switch (native_os) {
+        .windows => return error.SkipZigTest,
+        .wasi => if (!builtin.link_libc) return error.SkipZigTest,
+        .freestanding, .other => return error.SkipZigTest,
+        else => {},
+    }
+
+    var it = Iterator.Posix.init(.{ .vector = &.{ "aa", "bb", "cc", "dd", "ee" } });
 
     try testing.expectEqualStrings("aa", it.peek().?);
     try testing.expectEqualStrings("aa", it.next().?);

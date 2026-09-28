@@ -29,6 +29,7 @@ test {
     _ = @import("behavior/error.zig");
     _ = @import("behavior/eval.zig");
     _ = @import("behavior/export_builtin.zig");
+    _ = @import("behavior/export_strong_vs_weak.zig");
     _ = @import("behavior/field_parent_ptr.zig");
     _ = @import("behavior/floatop.zig");
     _ = @import("behavior/fn.zig");

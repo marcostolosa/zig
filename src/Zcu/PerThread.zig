@@ -3647,35 +3647,48 @@ pub fn processExports(pt: Zcu.PerThread) (Allocator.Error || Io.Cancelable)!void
     {
         var exports_by_name: std.array_hash_map.Auto(
             InternPool.NullTerminatedString,
-            Zcu.Export.Index,
+            u32, // index in alive_exports
         ) = .empty;
         defer exports_by_name.deinit(gpa);
 
         try exports_by_name.ensureUnusedCapacity(gpa, alive_exports.items.len);
 
-        for (alive_exports.items) |export_index| {
+        var i: u32 = 0;
+        while (i < alive_exports.items.len) {
+            const export_index = alive_exports.items[i];
             const exp = export_index.ptr(zcu);
-            switch (exp.opts.linkage) {
-                .strong => {},
-                .weak => continue,
-            }
             const gop = exports_by_name.getOrPutAssumeCapacity(exp.opts.name);
             if (gop.found_existing) {
-                const existing_exp = gop.value_ptr.*.ptr(zcu);
-                try zcu.failed_exports.ensureUnusedCapacity(gpa, 1);
-                const msg = try Zcu.ErrorMsg.create(
-                    gpa,
-                    exp.src,
-                    "exported symbol collision: {f}",
-                    .{exp.opts.name.fmt(&zcu.intern_pool)},
-                );
-                errdefer msg.destroy(gpa);
-                try zcu.errNote(existing_exp.src, msg, "other symbol here", .{});
-                zcu.failed_exports.putAssumeCapacityNoClobber(export_index, msg);
+                switch (exp.opts.linkage) {
+                    .strong => {
+                        const existing = gop.value_ptr.*;
+                        const existing_exp = alive_exports.items[existing].ptr(zcu);
+                        switch (existing_exp.opts.linkage) {
+                            .strong => {
+                                try zcu.failed_exports.ensureUnusedCapacity(gpa, 1);
+                                const msg = try Zcu.ErrorMsg.create(
+                                    gpa,
+                                    exp.src,
+                                    "exported symbol collision: {f}",
+                                    .{exp.opts.name.fmt(&zcu.intern_pool)},
+                                );
+                                errdefer msg.destroy(gpa);
+                                try zcu.errNote(existing_exp.src, msg, "other symbol here", .{});
+                                zcu.failed_exports.putAssumeCapacityNoClobber(export_index, msg);
+                            },
+                            .weak => alive_exports.items[existing] = export_index,
+                        }
+                    },
+                    .weak => {},
+                }
+                _ = alive_exports.swapRemove(i);
             } else {
-                gop.value_ptr.* = export_index;
+                gop.value_ptr.* = i;
+                i += 1;
             }
         }
+
+        assert(exports_by_name.count() == alive_exports.items.len);
     }
 
     // If there are compile errors, we won't call `updateExports`. Not only would it be redundant

@@ -432,8 +432,8 @@ pub fn string(self: *Serializer, val: []const u8, options: StringOptions) Writer
                 }) catch unreachable;
                 i += ulen;
                 continue;
-            } else |err| {
-                assert(err == error.Utf8InvalidStartByte);
+            } else |err| switch (err) {
+                error.Utf8InvalidStartByte => {},
             }
         }
 
@@ -448,13 +448,14 @@ test string {
     try testString("\"foobar\"", "foobar", .{});
     try testString("\"€\"", "€", .{});
     try testString("\"\\u{20ac}\"", "€", .{ .escape_non_ascii = true });
-
     try testString("\"ÿ\"", "ÿ", .{});
     try testString("\"\\u{ff}\"", "ÿ", .{ .escape_non_ascii = true });
     try testString("\"\\xff\"", &.{0xff}, .{});
     try testString("\"\\xff\"", &.{0xff}, .{ .escape_non_ascii = true });
-    try testString("\"ÿ\"", &.{ 0xc3, 0xbf }, .{});
-    try testString("\"\\u{ff}\"", &.{ 0xc3, 0xbf }, .{ .escape_non_ascii = true });
+
+    // Truncated UTF-8 sequence (0xe2 starts a 3-byte sequence, 0x80 is a valid continuation byte)
+    try testString("\"\\xe2\\x80\"", &.{ 0xe2, 0x80 }, .{});
+    try testString("\"\\xe2\\x80\"", &.{ 0xe2, 0x80 }, .{ .escape_non_ascii = true });
 
     try std.testing.fuzz(StringOptions{}, fuzzString, .{});
     try std.testing.fuzz(StringOptions{ .escape_non_ascii = true }, fuzzString, .{});
@@ -478,8 +479,9 @@ fn fuzzString(options: StringOptions, smith: *std.testing.Smith) !void {
     defer allocating.deinit();
     var s: Serializer = .{ .writer = &allocating.writer };
 
-    const input = try allocator.alloc(u8, smith.valueRangeAtMost(u32, 0, 0x100));
-    smith.bytes(input);
+    var buf: [0x100]u8 = undefined;
+    const input_len = smith.slice(&buf);
+    const input = buf[0..input_len];
     try s.string(input, options);
 
     const encoded = try allocator.dupeSentinel(u8, allocating.written(), 0);

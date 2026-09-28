@@ -41,6 +41,7 @@ pub fn legalizeFeatures(target: *const std.Target) ?*const Air.Legalize.Features
             // little-endian targets, which matches our semantics; but it does the opposite on
             // big-endian targets, so in that case we need to scalarize.
             .scalarize_bit_cast_vector_non_elementwise = endian != .little,
+            .call_memcpy = false,
         }),
     };
 }

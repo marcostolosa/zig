@@ -230,6 +230,9 @@ pub const Feature = enum {
     /// Like `soft_f16`, but for 128-bit floating-point types.
     soft_f128,
 
+    /// Replace memcpy operations with calls to coresponding compiler_rt function.
+    call_memcpy,
+
     fn scalarize(tag: Air.Inst.Tag) Feature {
         return switch (tag) {
             else => unreachable,
@@ -949,9 +952,14 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
                     .soft_float => unreachable, // the operand is not a scalar
                 }
             },
+            .memcpy,
+            => {
+                if (l.features.has(.call_memcpy)) {
+                    continue :inst l.replaceInst(inst, .block, try l.callRtMemcpyPayload(inst));
+                }
+            },
             .memset,
             .memset_safe,
-            .memcpy,
             .memmove,
             .cmpxchg_weak,
             .cmpxchg_strong,
@@ -1037,6 +1045,64 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             => {},
         }
     }
+}
+
+fn callRtMemcpyPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Inst.Data {
+    const zcu = l.pt.zcu;
+    const gpa = zcu.gpa;
+    const bin_op = l.air_instructions.items(.data)[@backingInt(orig_inst)].bin_op;
+    const dest_ptr_ty = l.typeOf(bin_op.lhs);
+    const src_ptr_ty = l.typeOf(bin_op.rhs);
+
+    var inst_buf: [8]Air.Inst.Index = undefined;
+    var main_block: Block = .init(&inst_buf);
+    const dest_ref = (switch (dest_ptr_ty.ptrSize(zcu)) {
+        .slice => dest: {
+            try l.air_instructions.ensureUnusedCapacity(gpa, 2);
+            const dest_ptr = main_block.addTyOp(l, .slice_ptr, dest_ptr_ty.slicePtrFieldType(zcu), bin_op.lhs);
+            break :dest main_block.addPtrCast(l, .manyptr_u8, dest_ptr.toRef());
+        },
+        .one, .many => dest: {
+            try l.air_instructions.ensureUnusedCapacity(gpa, 1);
+            break :dest main_block.addPtrCast(l, .manyptr_u8, bin_op.lhs);
+        },
+        .c => unreachable,
+    });
+
+    const src_ref = (switch (src_ptr_ty.ptrSize(zcu)) {
+        .slice => src: {
+            try l.air_instructions.ensureUnusedCapacity(gpa, 2);
+            const src_ptr = main_block.addTyOp(l, .slice_ptr, src_ptr_ty.slicePtrFieldType(zcu), bin_op.rhs);
+            break :src main_block.addPtrCast(l, .manyptr_u8, src_ptr.toRef());
+        },
+        .one, .many => src: {
+            try l.air_instructions.ensureUnusedCapacity(gpa, 1);
+            break :src main_block.addPtrCast(l, .manyptr_u8, bin_op.rhs);
+        },
+        .c => unreachable,
+    });
+
+    const len_ref = switch (dest_ptr_ty.ptrSize(zcu)) {
+        .slice => len: {
+            try l.air_instructions.ensureUnusedCapacity(gpa, 2);
+            const dest_len = main_block.addTyOp(l, .slice_len, .usize, bin_op.lhs);
+            const abi_size_ref = try l.pt.intRef(.usize, dest_ptr_ty.childType(zcu).abiSize(zcu));
+            break :len main_block.addBinOp(l, .mul, dest_len.toRef(), abi_size_ref).toRef();
+        },
+        .many, .one => try l.pt.intRef(.usize, dest_ptr_ty.childType(zcu).abiSize(zcu)),
+        .c => unreachable,
+    };
+    try l.air_instructions.ensureUnusedCapacity(gpa, 2);
+    _ = try main_block.addCompilerRtCall(l, .memcpy, &.{ dest_ref, src_ref, len_ref });
+    main_block.addBr(l, orig_inst, .void_value);
+
+    // We never allocate more than enough so remaining can be forget.
+    _ = main_block.stealRemainingCapacity();
+
+    return .{ .ty_pl = .{
+        .ty = .void,
+        .payload = try l.addBlockBody(main_block.body()),
+    } };
 }
 
 const ScalarizeForm = enum { un_op, ty_op, bin_op, pl_op_bin, cmp_vector, select };

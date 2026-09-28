@@ -360,7 +360,29 @@ fn genBody(self: *FuncGen, body: []const Air.Inst.Index, coverage_point: Air.Cov
             .legalize_vec_store_elem => try self.airLegalizeVecStoreElem(inst),
 
             // No soft float legalizations are enabled.
-            .legalize_compiler_rt_call => unreachable,
+            .legalize_compiler_rt_call => val: {
+                const target = zcu.getTarget();
+                const unwrapped_call = self.air.unwrapCompilerRtCall(inst);
+                const fn_name = try o.builder.strtabString(unwrapped_call.func.name(target));
+                const args = unwrapped_call.args;
+                const arg_types = try self.gpa.alloc(InternPool.Index, args.len);
+                defer self.gpa.free(arg_types);
+                const arg_values = try self.gpa.alloc(Builder.Value, args.len);
+                defer self.gpa.free(arg_values);
+                for (arg_types, arg_values, args) |*arg_type, *arg_value, arg| {
+                    const arg_ty = self.typeOf(arg);
+                    arg_type.* = arg_ty.toIntern();
+                    arg_value.* = if (arg_ty.hasRuntimeBits(zcu)) try self.resolveInst(arg) else .none;
+                }
+                const fn_info: Object.FuncInfo = .{
+                        .cc = target.cCallingConvention().?,
+                        .param_types = arg_types,
+                        .return_type = unwrapped_call.func.returnType().toIntern(),
+                };
+                const llvm_fn = try self.object.getLibcFunction(self.pt, fn_name, fn_info );
+
+                break :val try self.buildCall(.{}, llvm_fn.typeOf(&o.builder), llvm_fn.toValue(&o.builder), fn_info, fn_info.param_types, arg_values);
+            },
 
             .add            => try self.airAdd(inst, .normal),
             .add_optimized  => try self.airAdd(inst, .fast),

@@ -2621,6 +2621,9 @@ pub const CompilerRtFunc = enum(u32) {
     __fixunshfti, __fixunssfti, __fixunsdfti, __fixunsxfti, __fixunstfti, // float to u128
     __fixunshfei, __fixunssfei, __fixunsdfei, __fixunsxfei, __fixunstfei, // float to arbitray uN
 
+    // memory builtin
+    memset, memcpy,
+
     // zig fmt: on
 
     /// Usually, the tag names of `CompilerRtFunc` match the corresponding symbol name, but not
@@ -2862,6 +2865,8 @@ pub const CompilerRtFunc = enum(u32) {
             .__fixunshfdi, .__fixunssfdi, .__fixunsdfdi, .__fixunsxfdi, .__fixunstfdi => .u64,
             .__fixunshfti, .__fixunssfti, .__fixunsdfti, .__fixunsxfti, .__fixunstfti => .u128,
             .__fixunshfei, .__fixunssfei, .__fixunsdfei, .__fixunsxfei, .__fixunstfei => .void,
+
+            .memset, .memcpy => .void,
         };
     }
 };

@@ -8447,6 +8447,9 @@ fn airDbgInlineBlock(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
 
 fn airDbgVar(cg: *CodeGen, inst: Air.Inst.Index) !void {
     const pl_op = cg.air.instructions.items(.data)[@backingInt(inst)].pl_op;
+    // A comptime-known value has no runtime variable of its own to name, and lowering it only to
+    // name it can fail, as for a slice of a global constant.
+    if (pl_op.operand.toInterned() != null) return;
     const target_id = switch (try cg.resolvePtr(pl_op.operand)) {
         .tracked => return,
         .id => |id| id,

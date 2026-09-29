@@ -584,6 +584,11 @@ fn verifyBody(self: *Verify, body: []const Air.Inst.Index) Error!void {
                 }
                 try self.verifyInst(inst);
             },
+            .legalize_ptr_offset_cast => {
+                const ty_pl = data[@backingInt(inst)].ty_pl;
+                const extra = self.air.extraData(Air.OffsetField, ty_pl.payload).data;
+                try self.verifyInstOperands(inst, .{ extra.operand, .none, .none });
+            },
         }
     }
 }

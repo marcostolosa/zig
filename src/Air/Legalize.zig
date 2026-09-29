@@ -230,6 +230,20 @@ pub const Feature = enum {
     /// Like `soft_f16`, but for 128-bit floating-point types.
     soft_f128,
 
+    /// Convert field pointer access.
+    /// When this feature is enabled the following instructions is replace by legalize_ptr_offset_cast
+    ///
+    /// * struct_field_ptr
+    /// * struct_field_ptr_index_0
+    /// * struct_field_ptr_index_1
+    /// * struct_field_ptr_index_2
+    /// * struct_field_ptr_index_3
+    /// * optional_payload_ptr
+    /// * ptr_slice_len_ptr
+    /// * ptr_slice_ptr_ptr
+    /// * unwrap_errunion_payload_ptr
+    expand_field_ptr,
+
     fn scalarize(tag: Air.Inst.Tag) Feature {
         return switch (tag) {
             else => unreachable,
@@ -833,22 +847,49 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             },
             .unreach,
             .optional_payload,
+            => {},
             .optional_payload_ptr,
+            => if (l.features.has(.expand_field_ptr)) {
+                const ty_op = l.air_instructions.items(.data)[@backingInt(inst)].ty_op;
+                continue :inst l.replaceInst(inst, .block, try l.ptrOffsetCastPayLoad(inst, ty_op.operand, 0));
+            },
             .optional_payload_ptr_set,
             .wrap_optional,
             .unwrap_errunion_payload,
             .unwrap_errunion_err,
+            => {},
             .unwrap_errunion_payload_ptr,
+            => if (l.features.has(.expand_field_ptr)) {
+                const ty_op = l.air_instructions.items(.data)[@backingInt(inst)].ty_op;
+                continue :inst l.replaceInst(inst, .block, try l.unwrapErrorunionPayloadPtrPayload(inst, ty_op.ty, ty_op.operand));
+            },
             .unwrap_errunion_err_ptr,
             .errunion_payload_ptr_set,
             .wrap_errunion_payload,
             .wrap_errunion_err,
+            => {},
             .struct_field_ptr,
-            .struct_field_ptr_index_0,
+            => if (l.features.has(.expand_field_ptr)) {
+                const ty_pl = l.air_instructions.items(.data)[@backingInt(inst)].ty_pl;
+                const extra = l.extraData(Air.StructField, ty_pl.payload).data;
+                continue :inst l.replaceInst(inst, .block, try l.structFieldPtrPayLoad(inst, extra.struct_operand, ty_pl.ty, extra.field_index));
+            },
+            inline .struct_field_ptr_index_0,
             .struct_field_ptr_index_1,
             .struct_field_ptr_index_2,
             .struct_field_ptr_index_3,
-            => {},
+            => |tag| if (l.features.has(.expand_field_ptr)) {
+                const index = switch (tag) {
+                    .struct_field_ptr_index_0 => 0,
+                    .struct_field_ptr_index_1 => 1,
+                    .struct_field_ptr_index_2 => 2,
+                    .struct_field_ptr_index_3 => 3,
+                    else => unreachable,
+                };
+
+                const ty_op = l.air_instructions.items(.data)[@backingInt(inst)].ty_op;
+                continue :inst l.replaceInst(inst, .block, try l.structFieldPtrPayLoad(inst, ty_op.operand, ty_op.ty, index));
+            },
             .agg_field_val => if (l.features.has(.expand_packed_agg_field_val)) {
                 const ty_pl = l.air_instructions.items(.data)[@backingInt(inst)].ty_pl;
                 const extra = l.extraData(Air.StructField, ty_pl.payload).data;
@@ -862,8 +903,17 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             .slice,
             .slice_len,
             .slice_ptr,
+            => {},
             .ptr_slice_len_ptr,
+            => if (l.features.has(.expand_field_ptr)) {
+                const ty_op = l.air_instructions.items(.data)[@backingInt(inst)].ty_op;
+                continue :inst l.replaceInst(inst, .block, try l.ptrOffsetCastPayLoad(inst, ty_op.operand, @intCast(Type.usize.abiSize(zcu))));
+            },
             .ptr_slice_ptr_ptr,
+            => if (l.features.has(.expand_field_ptr)) {
+                const ty_op = l.air_instructions.items(.data)[@backingInt(inst)].ty_op;
+                continue :inst l.replaceInst(inst, .block, try l.ptrOffsetCastPayLoad(inst, ty_op.operand, 0));
+            },
             .array_elem_val,
             .slice_elem_val,
             .slice_elem_ptr,
@@ -1034,9 +1084,74 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             .error_from_int,
             .int_from_error,
             .union_from_enum,
+            .legalize_ptr_offset_cast,
             => {},
         }
     }
+}
+
+fn unwrapErrorunionPayloadPtrPayload(l: *Legalize, orig_inst: Air.Inst.Index, ty: Type, operand: Air.Inst.Ref) Error!Air.Inst.Data {
+    const zcu = l.pt.zcu;
+    const offset: u32 = @intCast(codegen.errUnionErrorOffset(ty, zcu));
+    var inst_buf: [2]Air.Inst.Index = undefined;
+    var main_block: Block = .init(&inst_buf);
+    try l.air_instructions.ensureUnusedCapacity(zcu.gpa, inst_buf.len);
+
+    const result_val = main_block.add(l, .{ .tag = .legalize_ptr_offset_cast, .data = .{ .ty_pl = .{ .ty = ty, .payload = try l.addExtra(Air.OffsetField, .{ .operand = operand, .offset = offset }) } } });
+    main_block.addBr(l, orig_inst, result_val.toRef());
+    return .{ .ty_pl = .{
+        .ty = ty,
+        .payload = try l.addBlockBody(main_block.body()),
+    } };
+}
+
+fn ptrOffsetCastPayLoad(l: *Legalize, orig_inst: Air.Inst.Index, operand: Air.Inst.Ref, offset: u32) Error!Air.Inst.Data {
+    const zcu = l.pt.zcu;
+    const dest_ty = l.typeOfIndex(orig_inst);
+
+    var inst_buf: [2]Air.Inst.Index = undefined;
+    var main_block: Block = .init(&inst_buf);
+    try l.air_instructions.ensureUnusedCapacity(zcu.gpa, inst_buf.len);
+
+    const result_val = main_block.add(l, .{ .tag = .legalize_ptr_offset_cast, .data = .{ .ty_pl = .{ .ty = dest_ty, .payload = try l.addExtra(Air.OffsetField, .{ .operand = operand, .offset = offset }) } } });
+    main_block.addBr(l, orig_inst, result_val.toRef());
+    return .{ .ty_pl = .{
+        .ty = dest_ty,
+        .payload = try l.addBlockBody(main_block.body()),
+    } };
+}
+
+fn structFieldPtrPayLoad(l: *Legalize, orig_inst: Air.Inst.Index, src: Air.Inst.Ref, dest_ty: Type, index: u32) Error!Air.Inst.Data {
+    const zcu = l.pt.zcu;
+    const struct_ptr_ty = l.typeOf(src);
+    const struct_ty = struct_ptr_ty.childType(zcu);
+    const struct_ptr_ty_info = struct_ptr_ty.ptrInfo(zcu);
+    const offset = switch (struct_ty.containerLayout(zcu)) {
+        .@"packed" => switch (struct_ty.zigTypeTag(zcu)) {
+            .@"struct" => offset: {
+                if (dest_ty.ptrInfo(zcu).packed_offset.host_size != 0) {
+                    break :offset @as(u32, 0);
+                }
+                const struct_type = zcu.typeToStruct(struct_ty).?;
+                break :offset @divExact(zcu.structPackedFieldBitOffset(struct_type, index) + struct_ptr_ty_info.packed_offset.bit_offset, 8);
+            },
+            .@"union" => 0,
+            else => unreachable,
+        },
+        else => struct_ty.structFieldOffset(index, zcu),
+    };
+
+    var inst_buf: [2]Air.Inst.Index = undefined;
+
+    var main_block: Block = .init(&inst_buf);
+    try l.air_instructions.ensureUnusedCapacity(zcu.gpa, inst_buf.len);
+
+    const result_val = main_block.add(l, .{ .tag = .legalize_ptr_offset_cast, .data = .{ .ty_pl = .{ .ty = dest_ty, .payload = try l.addExtra(Air.OffsetField, .{ .operand = src, .offset = @intCast(offset) }) } } });
+    main_block.addBr(l, orig_inst, result_val.toRef());
+    return .{ .ty_pl = .{
+        .ty = dest_ty,
+        .payload = try l.addBlockBody(main_block.body()),
+    } };
 }
 
 const ScalarizeForm = enum { un_op, ty_op, bin_op, pl_op_bin, cmp_vector, select };
@@ -4008,6 +4123,7 @@ inline fn wantSoftFloatScalar(l: *const Legalize, ty: Type) bool {
     };
 }
 
+const codegen = @import("../codegen.zig");
 const Air = @import("../Air.zig");
 const assert = std.debug.assert;
 const dev = @import("../dev.zig");

@@ -1033,6 +1033,12 @@ pub const Inst = struct {
         /// See `unwrapCompilerRtCall` for a way to load this tag's data.
         legalize_compiler_rt_call,
 
+        /// Given a pointer (non-slice, scalar) and an offset, return a casted pointer at that offset
+        /// This is similar to struct_field_ptr but using bytes offset instead of index.
+        ///
+        /// Use the `ty_pl` field with payload OffsetField.
+        legalize_ptr_offset_cast,
+
         pub fn fromCmpOp(op: std.math.CompareOperator, optimized: bool) Tag {
             switch (op) {
                 .lt => return if (optimized) .cmp_lt_optimized else .cmp_lt,
@@ -1440,6 +1446,11 @@ pub const TryPtr = struct {
     body_len: u32,
 };
 
+pub const OffsetField = struct {
+    operand: Inst.Ref,
+    offset: u32,
+};
+
 pub const StructField = struct {
     /// Whether this is a pointer or byval is determined by the AIR tag.
     struct_operand: Inst.Ref,
@@ -1727,6 +1738,7 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         .try_ptr_cold,
         .shuffle_one,
         .shuffle_two,
+        .legalize_ptr_offset_cast,
         => return datas[@backingInt(inst)].ty_pl.ty,
 
         .not,
@@ -2146,6 +2158,7 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .work_group_id,
         .legalize_vec_elem_val,
         .spirv_runtime_array_len,
+        .legalize_ptr_offset_cast,
         => false,
 
         .is_non_null_ptr, .is_null_ptr, .is_non_err_ptr, .is_err_ptr => air.typeOf(data.un_op, ip).isVolatilePtrIp(ip),

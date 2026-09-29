@@ -642,6 +642,8 @@ fn genBody(self: *FuncGen, body: []const Air.Inst.Index, coverage_point: Air.Cov
                 break :res res;
             },
 
+            .legalize_ptr_offset_cast => try self.airLegalizePtrOffsetCast(inst),
+
             // zig fmt: on
         };
         if (val != .none) try self.func_inst_table.putNoClobber(self.gpa, inst.toRef(), val);
@@ -2306,6 +2308,13 @@ fn airPtrElemPtr(self: *FuncGen, inst: Air.Inst.Index) Allocator.Error!Builder.V
     const rhs = try self.resolveInst(bin_op.rhs);
 
     return self.ptraddScaled(base_ptr, rhs, elem_ty.abiSize(zcu));
+}
+
+fn airLegalizePtrOffsetCast(self: *FuncGen, inst: Air.Inst.Index) Allocator.Error!Builder.Value {
+    const ty_pl = self.air.instructions.items(.data)[@backingInt(inst)].ty_pl;
+    const offset_field = self.air.extraData(Air.OffsetField, ty_pl.payload).data;
+    const aggregate_ptr = try self.resolveInst(offset_field.operand);
+    return self.ptraddConst(aggregate_ptr, offset_field.offset);
 }
 
 fn airStructFieldPtr(self: *FuncGen, inst: Air.Inst.Index) Allocator.Error!Builder.Value {

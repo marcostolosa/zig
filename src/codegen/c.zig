@@ -3041,6 +3041,9 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
             .call_never_tail   => try airCall(f, inst, .never_tail),
             .call_never_inline => try airCall(f, inst, .never_inline),
 
+            // TODO: No legalize feature enable yet
+            .legalize_ptr_offset_cast => unreachable
+
             // zig fmt: on
         };
         if (result_value == .new_local) {

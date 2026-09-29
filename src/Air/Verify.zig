@@ -432,6 +432,7 @@ fn body(verify: *Verify, body_insts: []const Air.Inst.Index) Error!void {
             .legalize_vec_store_elem,
             .legalize_vec_elem_val,
             .legalize_compiler_rt_call,
+            .legalize_ptr_offset_cast,
             => {},
         }
         if (air.typeOfIndex(inst, ip).isNoReturn(zcu)) {

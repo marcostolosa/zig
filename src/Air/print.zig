@@ -348,6 +348,7 @@ const Writer = struct {
             .runtime_nav_ptr => try w.writeRuntimeNavPtr(s, inst),
             .legalize_vec_store_elem => try w.writeLegalizeVecStoreElem(s, inst),
             .legalize_compiler_rt_call => try w.writeLegalizeCompilerRtCall(s, inst),
+            .legalize_ptr_offset_cast => try w.writeLegalizePtrOffsetCast(s, inst),
 
             .work_item_id,
             .work_group_size,
@@ -536,6 +537,16 @@ const Writer = struct {
             try w.writeOperand(s, inst, i, arg);
         }
         try s.writeByte(']');
+    }
+
+    fn writeLegalizePtrOffsetCast(w: *Writer, s: *std.Io.Writer, inst: Air.Inst.Index) Error!void {
+        const ty_pl = w.air.instructions.items(.data)[@backingInt((inst))].ty_pl;
+        const offsetField = w.air.extraData(Air.OffsetField, ty_pl.payload).data;
+
+        try w.writeType(s, ty_pl.ty);
+        try s.writeAll(", ");
+        try w.writeOperand(s, inst, 0, offsetField.operand);
+        try s.print(" + {d}", .{offsetField.offset});
     }
 
     fn writeShuffleOne(w: *Writer, s: *std.Io.Writer, inst: Air.Inst.Index) Error!void {

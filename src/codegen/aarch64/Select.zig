@@ -139,6 +139,8 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         .legalize_vec_store_elem => unreachable,
         // No soft float legalizations are enabled.
         .legalize_compiler_rt_call => unreachable,
+        // TODO
+        .legalize_ptr_offset_cast => unreachable,
 
         .arg,
         .ret_addr,

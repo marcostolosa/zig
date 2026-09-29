@@ -173749,6 +173749,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
 
             // No soft-float `Legalize` features are enabled, so this instruction never appears.
             .legalize_compiler_rt_call => unreachable,
+            .legalize_ptr_offset_cast => unreachable,
 
             .work_item_id, .work_group_size, .work_group_id, .spirv_runtime_array_len => unreachable,
         }

@@ -419,6 +419,7 @@ fn genInst(cg: *CodeGen, inst: Air.Inst.Index) codegen.Error!void {
         .legalize_vec_store_elem,
         .legalize_vec_elem_val,
         .legalize_compiler_rt_call,
+        .legalize_ptr_offset_cast,
         => |tag| return cg.fail("TODO: implement spork8 inst: {t}", .{tag}),
 
         .unreach => cg.airUnreachable(inst),

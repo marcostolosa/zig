@@ -797,6 +797,11 @@ fn analyzeInst(
             }
             return big.finish();
         },
+        .legalize_ptr_offset_cast => {
+            const ty_pl = inst_datas[@backingInt(inst)].ty_pl;
+            const extra = a.air.extraData(Air.OffsetField, ty_pl.payload).data;
+            return analyzeOperands(a, pass, data, inst, .{ extra.operand, .none, .none });
+        },
     }
 }
 

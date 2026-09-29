@@ -456,9 +456,6 @@ test string {
     // Truncated UTF-8 sequence (0xe2 starts a 3-byte sequence, 0x80 is a valid continuation byte)
     try testString("\"\\xe2\\x80\"", &.{ 0xe2, 0x80 }, .{});
     try testString("\"\\xe2\\x80\"", &.{ 0xe2, 0x80 }, .{ .escape_non_ascii = true });
-
-    try std.testing.fuzz(StringOptions{}, fuzzString, .{});
-    try std.testing.fuzz(StringOptions{ .escape_non_ascii = true }, fuzzString, .{});
 }
 
 fn testString(expected: []const u8, input: []const u8, options: StringOptions) !void {
@@ -468,6 +465,14 @@ fn testString(expected: []const u8, input: []const u8, options: StringOptions) !
 
     try s.string(input, options);
     try std.testing.expectEqualSlices(u8, expected, allocating.written());
+}
+
+test "fuzz string non-escaping" {
+    try std.testing.fuzz(StringOptions{ .escape_non_ascii = false }, fuzzString, .{});
+}
+
+test "fuzz string escaping" {
+    try std.testing.fuzz(StringOptions{ .escape_non_ascii = true }, fuzzString, .{});
 }
 
 fn fuzzString(options: StringOptions, smith: *std.testing.Smith) !void {

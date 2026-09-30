@@ -3398,8 +3398,8 @@ fn vectorization(cg: *CodeGen, args: anytype) Vectorization {
     return v;
 }
 
-/// This function builds an OpSConvert of OpUConvert depending on the
-/// signedness of the types.
+/// This function builds the conversion between two numeric types: OpFConvert, OpSConvert or
+/// OpUConvert within floats or integers, and OpConvert{S,U}ToF or OpConvertFTo{S,U} across them.
 fn buildConvert(cg: *CodeGen, dst_ty: Type, src: Temporary) !Temporary {
     const zcu = cg.zcu;
 
@@ -3428,8 +3428,16 @@ fn buildConvert(cg: *CodeGen, dst_ty: Type, src: Temporary) !Temporary {
     const op_result_ty_id = try cg.resolveType(op_result_ty, .direct);
 
     const opcode: Opcode = blk: {
-        if (dst_ty.scalarType(zcu).isAnyFloat()) break :blk .OpFConvert;
-        if (dst_ty.scalarType(zcu).isSignedInt(zcu)) break :blk .OpSConvert;
+        if (dst_scalar.isAnyFloat()) {
+            if (src_scalar.isAnyFloat()) break :blk .OpFConvert;
+            if (src_scalar.isSignedInt(zcu)) break :blk .OpConvertSToF;
+            break :blk .OpConvertUToF;
+        }
+        if (src_scalar.isAnyFloat()) {
+            if (dst_scalar.isSignedInt(zcu)) break :blk .OpConvertFToS;
+            break :blk .OpConvertFToU;
+        }
+        if (dst_scalar.isSignedInt(zcu)) break :blk .OpSConvert;
         break :blk .OpUConvert;
     };
 
@@ -6114,50 +6122,19 @@ fn intFromPtr(cg: *CodeGen, operand_id: Id) !Id {
 }
 
 fn airFloatFromInt(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
-    const gpa = cg.gpa;
     const ty_op = cg.air.instructions.items(.data)[@backingInt(inst)].ty_op;
-    const operand_ty = cg.typeOf(ty_op.operand);
-    const operand_id = try cg.resolve(ty_op.operand);
+    const operand = try cg.temporary(ty_op.operand);
     const result_ty = cg.typeOfIndex(inst);
-    const operand_info = cg.arithmeticTypeInfo(operand_ty);
-    const result_id = cg.allocId();
-    const result_ty_id = try cg.resolveType(result_ty, .direct);
-    switch (operand_info.signedness) {
-        .signed => try cg.body.emit(gpa, .OpConvertSToF, .{
-            .id_result_type = result_ty_id,
-            .id_result = result_id,
-            .signed_value = operand_id,
-        }),
-        .unsigned => try cg.body.emit(gpa, .OpConvertUToF, .{
-            .id_result_type = result_ty_id,
-            .id_result = result_id,
-            .unsigned_value = operand_id,
-        }),
-    }
-    return result_id;
+    const result = try cg.buildConvert(result_ty, operand);
+    return try result.materialize(cg);
 }
 
 fn airIntFromFloat(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
-    const gpa = cg.gpa;
     const ty_op = cg.air.instructions.items(.data)[@backingInt(inst)].ty_op;
-    const operand_id = try cg.resolve(ty_op.operand);
+    const operand = try cg.temporary(ty_op.operand);
     const result_ty = cg.typeOfIndex(inst);
-    const result_info = cg.arithmeticTypeInfo(result_ty);
-    const result_ty_id = try cg.resolveType(result_ty, .direct);
-    const result_id = cg.allocId();
-    switch (result_info.signedness) {
-        .signed => try cg.body.emit(gpa, .OpConvertFToS, .{
-            .id_result_type = result_ty_id,
-            .id_result = result_id,
-            .float_value = operand_id,
-        }),
-        .unsigned => try cg.body.emit(gpa, .OpConvertFToU, .{
-            .id_result_type = result_ty_id,
-            .id_result = result_id,
-            .float_value = operand_id,
-        }),
-    }
-    return result_id;
+    const result = try cg.buildConvert(result_ty, operand);
+    return try result.materialize(cg);
 }
 
 fn airFloatCast(cg: *CodeGen, inst: Air.Inst.Index) !?Id {

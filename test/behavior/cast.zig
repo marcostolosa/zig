@@ -2932,6 +2932,36 @@ test "@intFromFloat on vector" {
     try comptime S.doTheTest();
 }
 
+test "@floatFromInt and @intFromFloat on vectors of any length" {
+    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+
+    const S = struct {
+        fn doTheTest(comptime len: comptime_int) !void {
+            var signed: @Vector(len, i32) = std.simd.iota(i32, len) - @as(@Vector(len, i32), @splat(4));
+            _ = &signed;
+            const from_signed: @Vector(len, f32) = @floatFromInt(signed);
+            inline for (0..len) |i| try expect(from_signed[i] == @as(f32, @floatFromInt(@as(i32, i) - 4)));
+            const to_signed: @Vector(len, i32) = @intFromFloat(from_signed);
+            inline for (0..len) |i| try expect(to_signed[i] == @as(i32, i) - 4);
+
+            var unsigned: @Vector(len, u32) = std.simd.iota(u32, len) * @as(@Vector(len, u32), @splat(3));
+            _ = &unsigned;
+            const from_unsigned: @Vector(len, f32) = @floatFromInt(unsigned);
+            inline for (0..len) |i| try expect(from_unsigned[i] == @as(f32, @floatFromInt(i * 3)));
+            const to_unsigned: @Vector(len, u32) = @intFromFloat(from_unsigned);
+            inline for (0..len) |i| try expect(to_unsigned[i] == i * 3);
+        }
+    };
+
+    inline for (.{ 1, 2, 3, 4, 8 }) |len| {
+        try S.doTheTest(len);
+        try comptime S.doTheTest(len);
+    }
+}
+
 test "@intFromBool on vector" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;

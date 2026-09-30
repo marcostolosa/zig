@@ -5784,6 +5784,23 @@ fn bitCast(
         // TODO: Some more cases are missing here
         //   See fn bitCast in llvm.zig
 
+        // An elementwise vector bitcast is a scalar bitcast per lane, which also normalizes lanes
+        // of strange integers.
+        if (src_ty.isVector(zcu) and dst_ty.isVector(zcu) and
+            src_ty.vectorLen(zcu) == dst_ty.vectorLen(zcu) and
+            src_ty.childType(zcu).isNumeric(zcu) and dst_ty.childType(zcu).isNumeric(zcu))
+        {
+            const src_elem_ty = src_ty.childType(zcu);
+            const dst_elem_ty = dst_ty.childType(zcu);
+            const scratch_top = cg.id_scratch.items.len;
+            defer cg.id_scratch.shrinkRetainingCapacity(scratch_top);
+            for (0..src_ty.vectorLen(zcu)) |i| {
+                const src_lane_id = try cg.extractVectorComponent(src_elem_ty, src_id, @intCast(i));
+                try cg.id_scratch.append(gpa, try cg.bitCast(dst_elem_ty, src_elem_ty, src_lane_id));
+            }
+            break :blk try cg.constructComposite(dst_ty_id, cg.id_scratch.items[scratch_top..]);
+        }
+
         if (src_ty.zigTypeTag(zcu) == .int and dst_ty.isPtrAtRuntime(zcu)) {
             if (target.os.tag != .opencl) {
                 if (dst_ty.ptrAddressSpace(zcu) != .physical_storage_buffer) {

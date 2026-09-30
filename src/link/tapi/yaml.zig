@@ -62,7 +62,7 @@ pub const Value = union(enum) {
         should_inline_first_key: bool = false,
     };
 
-    pub fn stringify(self: Value, writer: anytype, args: StringifyArgs) anyerror!void {
+    pub fn stringify(self: Value, allocator: Allocator, writer: *std.Io.Writer, args: StringifyArgs) anyerror!void {
         switch (self) {
             .empty => return,
             .int => |int| return writer.print("{}", .{int}),
@@ -75,9 +75,9 @@ pub const Value = union(enum) {
                 const first = list[0];
                 if (first.isCompound()) {
                     for (list, 0..) |elem, i| {
-                        try writer.writeByteNTimes(' ', args.indentation);
+                        try writer.splatByteAll(' ', args.indentation);
                         try writer.writeAll("- ");
-                        try elem.stringify(writer, .{
+                        try elem.stringify(allocator, writer, .{
                             .indentation = args.indentation + 2,
                             .should_inline_first_key = true,
                         });
@@ -90,7 +90,7 @@ pub const Value = union(enum) {
 
                 try writer.writeAll("[ ");
                 for (list, 0..) |elem, i| {
-                    try elem.stringify(writer, args);
+                    try elem.stringify(allocator, writer, args);
                     if (i < len - 1) {
                         try writer.writeAll(", ");
                     }
@@ -103,12 +103,24 @@ pub const Value = union(enum) {
 
                 var i: usize = 0;
                 var it = map.iterator();
-                while (it.next()) |entry| {
-                    const key = entry.key_ptr.*;
-                    const value = entry.value_ptr.*;
+
+                var keys: std.ArrayList([]const u8) = .empty;
+                defer keys.deinit(allocator);
+
+                while (it.next()) |entry| try keys.append(allocator, entry.key_ptr.*);
+
+                std.mem.sort([]const u8, keys.items, {}, struct {
+                    fn lt(_: void, a: []const u8, b: []const u8) bool {
+                        return std.mem.order(u8, a, b) == .lt;
+                    }
+                }.lt);
+
+                while (i < keys.items.len) : (i += 1) {
+                    const key = keys.items[i];
+                    const value = map.get(key).?;
 
                     if (!args.should_inline_first_key or i != 0) {
-                        try writer.writeByteNTimes(' ', args.indentation);
+                        try writer.splatByteAll(' ', args.indentation);
                     }
                     try writer.print("{s}: ", .{key});
 
@@ -119,10 +131,10 @@ pub const Value = union(enum) {
                     };
 
                     if (should_inline) {
-                        try value.stringify(writer, args);
+                        try value.stringify(allocator, writer, args);
                     } else {
                         try writer.writeByte('\n');
-                        try value.stringify(writer, .{
+                        try value.stringify(allocator, writer, .{
                             .indentation = args.indentation + 4,
                         });
                     }
@@ -130,8 +142,6 @@ pub const Value = union(enum) {
                     if (i < len - 1) {
                         try writer.writeByte('\n');
                     }
-
-                    i += 1;
                 }
             },
         }
@@ -211,8 +221,8 @@ pub const Value = union(enum) {
             .float => return Value{ .float = math.lossyCast(f64, input) },
 
             .@"struct" => |info| if (info.is_tuple) {
-                var list: std.ArrayList(Value) = try .initCapacity(arena);
-                defer list.deinit();
+                var list: std.ArrayList(Value) = try .initCapacity(arena, input.len);
+                defer list.deinit(arena);
 
                 inline for (info.field_names) |field_name| {
                     if (try encode(arena, @field(input, field_name))) |value| {
@@ -261,7 +271,7 @@ pub const Value = union(enum) {
                         return Value{ .string = try arena.dupe(u8, input) };
                     }
 
-                    var list: std.ArrayList(Value) = .initCapacity(input.len);
+                    var list: std.ArrayList(Value) = try .initCapacity(arena, input.len);
                     defer list.deinit(arena);
 
                     for (input) |elem| {
@@ -471,7 +481,7 @@ pub const Yaml = struct {
         return parsed;
     }
 
-    pub fn stringify(self: Yaml, writer: anytype) !void {
+    pub fn stringify(self: Yaml, writer: *std.Io.Writer) !void {
         for (self.docs.items, 0..) |doc, i| {
             try writer.writeAll("---");
             if (self.tree.?.getDirective(i)) |directive| {
@@ -485,7 +495,7 @@ pub const Yaml = struct {
     }
 };
 
-pub fn stringify(allocator: Allocator, input: anytype, writer: anytype) !void {
+pub fn stringify(allocator: Allocator, input: anytype, writer: *std.Io.Writer) !void {
     var arena = ArenaAllocator.init(allocator);
     defer arena.deinit();
 
@@ -494,7 +504,7 @@ pub fn stringify(allocator: Allocator, input: anytype, writer: anytype) !void {
     if (maybe_value) |value| {
         // TODO should we output as an explicit doc?
         // How can allow the user to specify?
-        try value.stringify(writer, .{});
+        try value.stringify(allocator, writer, .{});
     }
 }
 

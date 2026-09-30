@@ -36,6 +36,7 @@ const Module = @import("Module.zig");
 
 test {
     _ = @import("codegen.zig");
+    _ = @import("link/tapi/yaml.zig");
     _ = link.MappedFile;
 }
 

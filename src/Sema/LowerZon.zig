@@ -69,7 +69,7 @@ fn lowerExprAnonResTy(self: *LowerZon, node: Zoir.Node.Index) CompileError!Inter
     const gpa = comp.gpa;
     const io = comp.io;
     const ip = &pt.zcu.intern_pool;
-    switch (node.get(self.zoir.*)) {
+    switch (node.get(self.zoir)) {
         .true => return .bool_true,
         .false => return .bool_false,
         .null => return .null_value,
@@ -99,7 +99,7 @@ fn lowerExprAnonResTy(self: *LowerZon, node: Zoir.Node.Index) CompileError!Inter
                 gpa,
                 io,
                 pt.tid,
-                val.get(self.zoir.*),
+                val.get(self.zoir),
                 .no_embedded_nulls,
             ),
         }),
@@ -172,7 +172,7 @@ fn lowerExprAnonResTy(self: *LowerZon, node: Zoir.Node.Index) CompileError!Inter
                             gpa,
                             io,
                             pt.tid,
-                            zoir_name.get(self.zoir.*),
+                            zoir_name.get(self.zoir),
                             .no_embedded_nulls,
                         );
                         field_ty.* = ip.typeOf(field_val);
@@ -310,7 +310,7 @@ fn checkTypeInner(
 fn nodeSrc(self: *LowerZon, node: Zoir.Node.Index) LazySrcLoc {
     return .{
         .baseline = .{ .inst = self.tracked_inst, .node = .main },
-        .offset = .{ .node_abs = node.getAstNode(self.zoir.*) },
+        .offset = .{ .node_abs = node.getAstNode(self.zoir) },
     };
 }
 
@@ -321,10 +321,11 @@ fn failUnsupportedResultType(
 ) Zcu.SemaError {
     @branchHint(.cold);
     const sema = self.sema;
-    const gpa = sema.gpa;
     const pt = sema.pt;
+    const zcu = pt.zcu;
+    const gpa = zcu.comp.gpa;
     return sema.failWithOwnedErrorMsg(self.block, msg: {
-        const msg = try sema.errMsg(self.import_src, "type '{f}' is not available in ZON", .{ty.fmt(pt)});
+        const msg = try sema.errMsg(self.import_src, "type '{f}' is not available in ZON", .{ty.fmt(zcu)});
         errdefer msg.destroy(gpa);
         if (opt_note) |n| try sema.errNote(self.import_src, msg, "{s}", .{n});
         break :msg msg;
@@ -344,9 +345,9 @@ fn fail(
 }
 
 fn lowerExprKnownResTy(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) CompileError!InternPool.Index {
-    const pt = self.sema.pt;
+    const zcu = self.sema.pt.zcu;
     return self.lowerExprKnownResTyInner(node, res_ty) catch |err| switch (err) {
-        error.WrongType => return self.fail(node, "expected type '{f}'", .{res_ty.fmt(pt)}),
+        error.WrongType => return self.fail(node, "expected type '{f}'", .{res_ty.fmt(zcu)}),
         else => |e| return e,
     };
 }
@@ -357,20 +358,21 @@ fn lowerExprKnownResTyInner(
     res_ty: Type,
 ) (CompileError || error{WrongType})!InternPool.Index {
     const pt = self.sema.pt;
-    switch (res_ty.zigTypeTag(pt.zcu)) {
+    const zcu = pt.zcu;
+    switch (res_ty.zigTypeTag(zcu)) {
         .optional => return pt.intern(.{
             .opt = .{
                 .ty = res_ty.toIntern(),
-                .val = if (node.get(self.zoir.*) == .null) b: {
+                .val = if (node.get(self.zoir) == .null) b: {
                     break :b .none;
                 } else b: {
-                    const child_type = res_ty.optionalChild(pt.zcu);
+                    const child_type = res_ty.optionalChild(zcu);
                     break :b try self.lowerExprKnownResTyInner(node, child_type);
                 },
             },
         }),
         .pointer => {
-            const ptr_info = res_ty.ptrInfo(pt.zcu);
+            const ptr_info = res_ty.ptrInfo(zcu);
             switch (ptr_info.flags.size) {
                 .one => return pt.intern(.{ .ptr = .{
                     .ty = res_ty.toIntern(),
@@ -411,12 +413,12 @@ fn lowerExprKnownResTyInner(
         .frame,
         .@"anyframe",
         .void,
-        => return self.fail(node, "type '{f}' not available in ZON", .{res_ty.fmt(pt)}),
+        => return self.fail(node, "type '{f}' not available in ZON", .{res_ty.fmt(zcu)}),
     }
 }
 
 fn lowerBool(self: *LowerZon, node: Zoir.Node.Index) !InternPool.Index {
-    return switch (node.get(self.zoir.*)) {
+    return switch (node.get(self.zoir)) {
         .true => .bool_true,
         .false => .bool_false,
         else => return error.WrongType,
@@ -429,7 +431,7 @@ fn lowerInt(
     res_ty: Type,
 ) !InternPool.Index {
     @setFloatMode(.strict);
-    return switch (node.get(self.zoir.*)) {
+    return switch (node.get(self.zoir)) {
         .int_literal => |int| switch (int) {
             .small => |val| {
                 const rhs: i32 = val;
@@ -442,7 +444,7 @@ fn lowerInt(
                     if (lhs_info.signedness == .unsigned and rhs < 0) return self.fail(
                         node,
                         "type '{f}' cannot represent integer value '{d}'",
-                        .{ res_ty.fmt(self.sema.pt), rhs },
+                        .{ res_ty.fmt(self.sema.pt.zcu), rhs },
                     );
 
                     // If lhs has less than the 32 bits rhs can hold, we need to check the max and
@@ -458,7 +460,7 @@ fn lowerInt(
                             return self.fail(
                                 node,
                                 "type '{f}' cannot represent integer value '{d}'",
-                                .{ res_ty.fmt(self.sema.pt), rhs },
+                                .{ res_ty.fmt(self.sema.pt.zcu), rhs },
                             );
                         }
                     }
@@ -476,7 +478,7 @@ fn lowerInt(
                         return self.fail(
                             node,
                             "type '{f}' cannot represent integer value '{d}'",
-                            .{ res_ty.fmt(self.sema.pt), val },
+                            .{ res_ty.fmt(self.sema.pt.zcu), val },
                         );
                     }
                 }
@@ -497,7 +499,7 @@ fn lowerInt(
                 .inexact => return self.fail(
                     node,
                     "fractional component prevents float value '{d}' from coercion to type '{f}'",
-                    .{ val, res_ty.fmt(self.sema.pt) },
+                    .{ val, res_ty.fmt(self.sema.pt.zcu) },
                 ),
                 .exact => {},
             }
@@ -508,7 +510,7 @@ fn lowerInt(
                 return self.fail(
                     node,
                     "type '{f}' cannot represent integer value '{d}'",
-                    .{ res_ty.fmt(self.sema.pt), val },
+                    .{ res_ty.fmt(self.sema.pt.zcu), val },
                 );
             }
 
@@ -530,7 +532,7 @@ fn lowerInt(
                         return self.fail(
                             node,
                             "type '{f}' cannot represent integer value '{d}'",
-                            .{ res_ty.fmt(self.sema.pt), val },
+                            .{ res_ty.fmt(self.sema.pt.zcu), val },
                         );
                     }
                 }
@@ -553,7 +555,7 @@ fn lowerFloat(
     res_ty: Type,
 ) !InternPool.Index {
     @setFloatMode(.strict);
-    const value = switch (node.get(self.zoir.*)) {
+    const value = switch (node.get(self.zoir)) {
         .int_literal => |int| switch (int) {
             .small => |val| try self.sema.pt.floatValue(res_ty, @as(f128, @floatFromInt(val))),
             .big => |val| try self.sema.pt.floatValue(res_ty, val.toFloat(f128, .nearest_even)[0]),
@@ -564,7 +566,7 @@ fn lowerFloat(
             if (res_ty.toIntern() == .comptime_float_type) return self.fail(
                 node,
                 "expected type '{f}'",
-                .{res_ty.fmt(self.sema.pt)},
+                .{res_ty.fmt(self.sema.pt.zcu)},
             );
             break :b try self.sema.pt.floatValue(res_ty, std.math.inf(f128));
         },
@@ -572,7 +574,7 @@ fn lowerFloat(
             if (res_ty.toIntern() == .comptime_float_type) return self.fail(
                 node,
                 "expected type '{f}'",
-                .{res_ty.fmt(self.sema.pt)},
+                .{res_ty.fmt(self.sema.pt.zcu)},
             );
             break :b try self.sema.pt.floatValue(res_ty, -std.math.inf(f128));
         },
@@ -580,7 +582,7 @@ fn lowerFloat(
             if (res_ty.toIntern() == .comptime_float_type) return self.fail(
                 node,
                 "expected type '{f}'",
-                .{res_ty.fmt(self.sema.pt)},
+                .{res_ty.fmt(self.sema.pt.zcu)},
             );
             break :b try self.sema.pt.floatValue(res_ty, std.math.nan(f128));
         },
@@ -590,7 +592,7 @@ fn lowerFloat(
 }
 
 fn lowerNull(self: *LowerZon, node: Zoir.Node.Index) !InternPool.Index {
-    switch (node.get(self.zoir.*)) {
+    switch (node.get(self.zoir)) {
         .null => return .null_value,
         else => return error.WrongType,
     }
@@ -598,7 +600,7 @@ fn lowerNull(self: *LowerZon, node: Zoir.Node.Index) !InternPool.Index {
 
 fn lowerArray(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.Index {
     const array_info = res_ty.arrayInfo(self.sema.pt.zcu);
-    const nodes: Zoir.Node.Index.Range = switch (node.get(self.zoir.*)) {
+    const nodes: Zoir.Node.Index.Range = switch (node.get(self.zoir)) {
         .array_literal => |nodes| nodes,
         .empty_literal => .{ .start = node, .len = 0 },
         else => return error.WrongType,
@@ -631,13 +633,13 @@ fn lowerEnum(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.I
     const io = comp.io;
     const ip = &pt.zcu.intern_pool;
     try self.sema.ensureLayoutResolved(res_ty, self.import_src, .init);
-    switch (node.get(self.zoir.*)) {
+    switch (node.get(self.zoir)) {
         .enum_literal => |field_name| {
             const field_name_interned = try ip.getOrPutString(
                 gpa,
                 io,
                 self.sema.pt.tid,
-                field_name.get(self.zoir.*),
+                field_name.get(self.zoir),
                 .no_embedded_nulls,
             );
             const field_index = res_ty.enumFieldIndex(field_name_interned, self.sema.pt.zcu) orelse {
@@ -645,8 +647,8 @@ fn lowerEnum(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.I
                     node,
                     "enum {f} has no member named '{f}'",
                     .{
-                        res_ty.fmt(self.sema.pt),
-                        std.zig.fmtId(field_name.get(self.zoir.*)),
+                        res_ty.fmt(self.sema.pt.zcu),
+                        std.zig.fmtId(field_name.get(self.zoir)),
                     },
                 );
             };
@@ -665,13 +667,13 @@ fn lowerEnumLiteral(self: *LowerZon, node: Zoir.Node.Index) !InternPool.Index {
     const gpa = comp.gpa;
     const io = comp.io;
     const ip = &pt.zcu.intern_pool;
-    switch (node.get(self.zoir.*)) {
+    switch (node.get(self.zoir)) {
         .enum_literal => |field_name| {
             const field_name_interned = try ip.getOrPutString(
                 gpa,
                 io,
                 self.sema.pt.tid,
-                field_name.get(self.zoir.*),
+                field_name.get(self.zoir),
                 .no_embedded_nulls,
             );
             return self.sema.pt.intern(.{ .enum_literal = field_name_interned });
@@ -694,7 +696,7 @@ fn lowerTuple(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
 
     const tuple_info = ip.indexToKey(res_ty.toIntern()).tuple_type;
 
-    const elem_nodes: Zoir.Node.Index.Range = switch (node.get(self.zoir.*)) {
+    const elem_nodes: Zoir.Node.Index.Range = switch (node.get(self.zoir)) {
         .array_literal => |nodes| nodes,
         .empty_literal => .{ .start = node, .len = 0 },
         else => return error.WrongType,
@@ -718,7 +720,7 @@ fn lowerTuple(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
                 "index {} outside tuple of length {}",
                 .{
                     elems.len,
-                    elem_nodes.at(@intCast(i)).getAstNode(self.zoir.*),
+                    elem_nodes.at(@intCast(i)).getAstNode(self.zoir),
                 },
             );
         }
@@ -758,7 +760,7 @@ fn lowerStruct(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool
     try self.sema.ensureStructDefaultsResolved(res_ty, self.import_src);
     const struct_info = self.sema.pt.zcu.typeToStruct(res_ty).?;
 
-    const fields: @FieldType(Zoir.Node, "struct_literal") = switch (node.get(self.zoir.*)) {
+    const fields: @FieldType(Zoir.Node, "struct_literal") = switch (node.get(self.zoir)) {
         .struct_literal => |fields| fields,
         .empty_literal => .{ .names = &.{}, .vals = .{ .start = node, .len = 0 } },
         else => return error.WrongType,
@@ -778,7 +780,7 @@ fn lowerStruct(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool
             gpa,
             io,
             self.sema.pt.tid,
-            fields.names[i].get(self.zoir.*),
+            fields.names[i].get(self.zoir),
             .no_embedded_nulls,
         );
         const field_node = fields.vals.at(@intCast(i));
@@ -842,7 +844,7 @@ fn lowerSlice(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
     const string_alignment = ptr_info.flags.alignment == .none or ptr_info.flags.alignment == .@"1";
     const string_sentinel = ptr_info.sentinel == .none or ptr_info.sentinel == .zero_u8;
     if (string_alignment and ptr_info.child == .u8_type and string_sentinel) {
-        switch (node.get(self.zoir.*)) {
+        switch (node.get(self.zoir)) {
             .string_literal => |val| {
                 const ip_str = try ip.getOrPutString(gpa, io, self.sema.pt.tid, val, .maybe_embedded_nulls);
                 const str_ref = try self.sema.addStrLit(ip_str, val.len);
@@ -858,7 +860,7 @@ fn lowerSlice(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
     }
 
     // Slice literals
-    const elem_nodes: Zoir.Node.Index.Range = switch (node.get(self.zoir.*)) {
+    const elem_nodes: Zoir.Node.Index.Range = switch (node.get(self.zoir)) {
         .array_literal => |nodes| nodes,
         .empty_literal => .{ .start = node, .len = 0 },
         else => return error.WrongType,
@@ -925,21 +927,21 @@ fn lowerUnion(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
     const union_info = pt.zcu.typeToUnion(res_ty).?;
     const enum_tag_info = ip.loadEnumType(union_info.enum_tag_type);
 
-    const field_name, const maybe_field_node = switch (node.get(self.zoir.*)) {
+    const field_name, const maybe_field_node = switch (node.get(self.zoir)) {
         .enum_literal => |name| b: {
             const field_name = try ip.getOrPutString(
                 gpa,
                 io,
                 self.sema.pt.tid,
-                name.get(self.zoir.*),
+                name.get(self.zoir),
                 .no_embedded_nulls,
             );
             break :b .{ field_name, null };
         },
         .struct_literal => b: {
-            const fields: @FieldType(Zoir.Node, "struct_literal") = switch (node.get(self.zoir.*)) {
+            const fields: @FieldType(Zoir.Node, "struct_literal") = switch (node.get(self.zoir)) {
                 .struct_literal => |fields| fields,
-                else => return self.fail(node, "expected type '{f}'", .{res_ty.fmt(self.sema.pt)}),
+                else => return self.fail(node, "expected type '{f}'", .{res_ty.fmt(self.sema.pt.zcu)}),
             };
             if (fields.names.len != 1) {
                 return error.WrongType;
@@ -948,7 +950,7 @@ fn lowerUnion(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
                 gpa,
                 io,
                 self.sema.pt.tid,
-                fields.names[0].get(self.zoir.*),
+                fields.names[0].get(self.zoir),
                 .no_embedded_nulls,
             );
             break :b .{ field_name, fields.vals.at(0) };
@@ -984,7 +986,7 @@ fn lowerVector(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool
 
     const vector_info = ip.indexToKey(res_ty.toIntern()).vector_type;
 
-    const elem_nodes: Zoir.Node.Index.Range = switch (node.get(self.zoir.*)) {
+    const elem_nodes: Zoir.Node.Index.Range = switch (node.get(self.zoir)) {
         .array_literal => |nodes| nodes,
         .empty_literal => .{ .start = node, .len = 0 },
         else => return error.WrongType,

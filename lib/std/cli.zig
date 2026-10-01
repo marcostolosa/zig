@@ -154,7 +154,7 @@ pub fn Config(Args: type) type {
         /// If true, the first argument will be treated as the program name when parsing and skipped.
         /// Set to false for a positional argument to be able to recover it.
         skip_first_arg: bool = true,
-        /// Printed after the Usage line of the --help before the per-argument help.
+        /// Printed after the "Usage" line of the auto generated help text before the per-argument help.
         description: ?[]const u8 = null,
         /// see `ArgConfig`.
         args: @Struct(.auto, null, info.field_names, &@splat(ArgConfig), &@splat(attrs)) = .{},

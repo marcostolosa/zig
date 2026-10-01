@@ -121,7 +121,14 @@ pub const StateMessages = struct {
     last_transition: []const u8 = "last transition at",
 };
 
-pub fn ConfigurableState(Enum: type, config: Config, messages: StateMessages) type {
+pub fn ConfigurableState(States: type, config: Config, messages: StateMessages) type {
+    const Enum = switch (@typeInfo(States)) {
+        .@"enum" => States,
+        .@"union" => |info| info.tag_type orelse
+            @compileError("State needs a tagged union, found untagged " ++ @typeName(States)),
+        else => @compileError("State needs an enum or a tagged union, found " ++ @typeName(States)),
+    };
+
     return struct {
         const S = @This();
 
@@ -271,6 +278,15 @@ test ConfigurableState {
     enabled.assertEql(.a);
     enabled.transition(.b);
     enabled.assertEqlAnyOf(&.{.b});
+
+    const Body = union(enum) { none, content_length: u64, end };
+    var body: Body = .{ .content_length = 3 };
+    var tracked: ConfigurableState(Body, .{ .enabled = true }, .{}) = .init(body);
+    tracked.assertEql(.content_length);
+    body = .end;
+    tracked.transition(body);
+    tracked.assertEqlAnyOf(&.{ .none, .end });
+    try testing.expectEqual(@sizeOf(ConfigurableState(Body, .{ .enabled = false }, .{})), 0);
 }
 
 /// Tracks which state the program is in, and asserts the transitions respect the
@@ -279,8 +295,8 @@ test ConfigurableState {
 ///
 /// See `ConfigurableState` to name the thing being tracked, and to configure
 /// enable/disabled, thread safety and more.
-pub fn State(Enum: type) type {
-    return ConfigurableState(Enum, .{}, .{});
+pub fn State(States: type) type {
+    return ConfigurableState(States, .{}, .{});
 }
 
 /// Text used when an obligation assertion fails. Each headline is followed by

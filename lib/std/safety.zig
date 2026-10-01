@@ -176,11 +176,19 @@ pub fn ConfigurableState(States: type, config: Config, messages: StateMessages) 
         pub fn transitionAt(self: *S, next_state: Enum, ret_addr: usize) void {
             if (!config.enabled) return;
 
+            const trace: TransitionTrace = .captured(ret_addr);
+
             mutex.lock();
             defer mutex.unlock();
 
+            self.transitionUnsafe(next_state, trace);
+        }
+
+        fn transitionUnsafe(self: *S, next_state: Enum, trace: TransitionTrace) void {
+            if (!config.enabled) return;
+
             self.state = next_state;
-            self.last_transition.capture(ret_addr);
+            self.last_transition = trace;
         }
 
         /// Asserts that the current state is equal to the one provided.
@@ -345,11 +353,19 @@ pub fn ConfigurableObligations(config: Config, messages: ObligationsMessages) ty
         pub fn incurAt(self: *O, ret_addr: usize) void {
             if (!config.enabled) return;
 
+            const trace: ObligationsTrace = .captured(ret_addr);
+
             mutex.lock();
             defer mutex.unlock();
 
+            self.incurUnsafe(trace);
+        }
+
+        fn incurUnsafe(self: *O, trace: ObligationsTrace) void {
+            if (!config.enabled) return;
+
             self.counter += 1;
-            self.last_incur.capture(ret_addr);
+            self.last_incur = trace;
         }
 
         /// Asserts one obligation is outstanding, then discharges it.
@@ -361,14 +377,22 @@ pub fn ConfigurableObligations(config: Config, messages: ObligationsMessages) ty
         pub fn dischargeAt(self: *O, ret_addr: usize) void {
             if (!config.enabled) return;
 
+            const trace: ObligationsTrace = .captured(ret_addr);
+
             mutex.lock();
             defer mutex.unlock();
+
+            self.dischargeUnsafe(trace, ret_addr);
+        }
+
+        fn dischargeUnsafe(self: *O, trace: ObligationsTrace, ret_addr: usize) void {
+            if (!config.enabled) return;
 
             if (self.counter == 0)
                 self.failUnsafe(.gte, 1, ret_addr); // Discharge expects at least 1 outstanding
 
             self.counter -= 1;
-            self.last_discharge.capture(ret_addr);
+            self.last_discharge = trace;
         }
 
         /// Asserts the outstanding count compares to `rhs` as `op` says:
@@ -521,6 +545,8 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
 
         const mutex = CheckMutex(L, config);
 
+        const Trace = std.debug.CapturedStackTrace(config.traceFrames());
+
         /// Checked as one unit under `mutex`, since a claim is only valid
         /// against both halves at once.
         state: LockState = .init(.free),
@@ -533,21 +559,23 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
         /// Asserts nobody holds it, exclusively or shared.
         pub fn lock(self: *L) void {
             const ret_addr = @returnAddress();
+            const trace: Trace = .captured(ret_addr);
             mutex.lock();
             defer mutex.unlock();
 
             self.assertUnlockedUnsafe(ret_addr);
-            self.state.transitionAt(.held, ret_addr);
+            self.state.transitionUnsafe(.held, trace);
         }
 
         /// Releases the exclusive claim. Asserts it is the one held.
         pub fn unlock(self: *L) void {
             const ret_addr = @returnAddress();
+            const trace: Trace = .captured(ret_addr);
             mutex.lock();
             defer mutex.unlock();
 
             self.assertLockedUnsafe(ret_addr);
-            self.state.transitionAt(.free, ret_addr);
+            self.state.transitionUnsafe(.free, trace);
         }
 
         /// Claims shared access, alongside any other readers. Use when
@@ -555,22 +583,24 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
         /// exclusively.
         pub fn lockShared(self: *L) void {
             const ret_addr = @returnAddress();
+            const trace: Trace = .captured(ret_addr);
             mutex.lock();
             defer mutex.unlock();
 
             self.state.assertEqlAt(.free, ret_addr);
-            self.readers.incurAt(ret_addr);
+            self.readers.incurUnsafe(trace);
         }
 
         /// Releases one shared claim. Asserts one is held, so a reader that
         /// releases twice is caught rather than cancelling out another.
         pub fn unlockShared(self: *L) void {
             const ret_addr = @returnAddress();
+            const trace: Trace = .captured(ret_addr);
             mutex.lock();
             defer mutex.unlock();
 
             self.state.assertEqlAt(.free, ret_addr);
-            self.readers.dischargeAt(ret_addr);
+            self.readers.dischargeUnsafe(trace, ret_addr);
         }
 
         /// Asserts nobody holds it, exclusively or shared.
@@ -759,7 +789,7 @@ pub fn ConfigurableBoundTo(
             defer mutex.unlock();
 
             const bound_identity = self.identity orelse
-                return self.bindUnsafe(identity, ret_addr);
+                return self.bindUnsafe(identity, .captured(ret_addr));
 
             if (!std.meta.eql(bound_identity, identity))
                 self.failUnsafe(bound_identity, identity, ret_addr);
@@ -774,10 +804,12 @@ pub fn ConfigurableBoundTo(
         pub fn rebindAt(self: *B, identity: Identity, ret_addr: usize) void {
             if (!config.enabled) return;
 
+            const trace: BindTrace = .captured(ret_addr);
+
             mutex.lock();
             defer mutex.unlock();
 
-            self.bindUnsafe(identity, ret_addr);
+            self.bindUnsafe(identity, trace);
         }
 
         /// Binds the identity returned by `identityFn`, replacing any existing
@@ -803,9 +835,9 @@ pub fn ConfigurableBoundTo(
             self.identity = null;
         }
 
-        fn bindUnsafe(self: *B, identity: Identity, ret_addr: usize) void {
+        fn bindUnsafe(self: *B, identity: Identity, trace: BindTrace) void {
             self.identity = identity;
-            self.last_bind.capture(ret_addr);
+            self.last_bind = trace;
         }
 
         fn failUnsafe(self: *const B, bound_identity: Identity, found_identity: Identity, ret_addr: usize) noreturn {

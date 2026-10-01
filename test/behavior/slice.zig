@@ -385,8 +385,6 @@ test "obtaining a null terminated slice" {
 }
 
 test "empty array to slice" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const S = struct {
         fn doTheTest() !void {
             const empty: []align(16) u8 = &[_]u8{};

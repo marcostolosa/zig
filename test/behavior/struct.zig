@@ -1631,8 +1631,6 @@ test "struct init with no result pointer sets field result types" {
 }
 
 test "runtime side-effects in comptime-known struct init" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     var side_effects: u4 = 0;
     const S = struct { a: u4, b: u4, c: u4, d: u4 };
     const init = S{
@@ -1911,7 +1909,6 @@ test "runtime value in nested initializer passed as pointer to function" {
 }
 
 test "struct field default value is a call" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -2275,7 +2272,6 @@ test "struct contains underaligned field with overaligned pointer to itself" {
 }
 
 test "struct contains pointer to function accepting that struct" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     const S = struct {
         const FnPtr = ?*const fn (@This()) void;
         fn_ptr: FnPtr,

@@ -140,7 +140,7 @@ pub const File = struct {
             full: Ast.full.FnProto,
         ) Category {
             return switch (categorize_expr(file_index, full.ast.return_type.unwrap().?)) {
-                .namespace, .container, .error_set, .type_type => .{ .type_function = node },
+                .type_type => .{ .type_function = node },
                 else => .{ .function = node },
             };
         }

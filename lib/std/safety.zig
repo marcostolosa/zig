@@ -706,10 +706,29 @@ pub fn ConfigurableBoundTo(
         /// sees.
         ///
         /// Use it when the identity is known at creation.
-        pub fn bound(identity: Identity) B {
+        pub fn init(identity: Identity) B {
             return .{
                 .identity = if (config.enabled) identity else {},
                 .last_bind = .empty,
+            };
+        }
+
+        /// `init`, also capturing the current stack trace, so a failure
+        /// reports where the binding was created.
+        pub fn initAndCapture(identity: Identity) B {
+            return .initAndCaptureAt(identity, @returnAddress());
+        }
+
+        /// `initAndCapture`, capturing from `ret_addr`.
+        pub fn initAndCaptureAt(identity: Identity, ret_addr: usize) B {
+            if (!config.enabled) return .{
+                .identity = {},
+                .last_bind = .empty,
+            };
+
+            return .{
+                .identity = identity,
+                .last_bind = .captured(ret_addr),
             };
         }
 
@@ -842,7 +861,7 @@ test ConfigurableBoundTo {
     enabled.rebind(10);
 
     // Test that an eager binding is in place before the first access
-    var eager: Enabled = .bound(11);
+    var eager: Enabled = .init(11);
     try testing.expectEqual(11, eager.identity.?);
     Id.current = 11;
     eager.assertIdentity();
@@ -859,6 +878,56 @@ test ConfigurableBoundTo {
 /// messages and more.
 pub fn BoundTo(identityFn: anytype, args: anytype) type {
     return ConfigurableBoundTo(identityFn, args, .{}, .{});
+}
+
+test BoundTo {
+    const Arena = struct {
+        generation: u32 = 0,
+
+        /// Invalidates every handle into this arena, and no other's.
+        fn reset(arena: *@This()) void {
+            arena.generation += 1;
+        }
+
+        fn handle(arena: *const @This()) Handle {
+            return .{
+                .arena_generation = &arena.generation,
+                .generation = .initAndCapture(arena.generation),
+            };
+        }
+
+        const Handle = struct {
+            const BoundToGeneration = BoundTo(currentGeneration, .{});
+
+            arena_generation: *const u32,
+            generation: BoundToGeneration,
+
+            fn currentGeneration(taken_in: *const anyopaque) u32 {
+                const generation: *const BoundToGeneration = @ptrCast(@alignCast(taken_in));
+                const h: *const Handle = @fieldParentPtr("generation", generation);
+                return h.arena_generation.*;
+            }
+        };
+    };
+
+    var a: Arena = .{};
+    var b: Arena = .{};
+
+    var handle_into_a = a.handle();
+    var handle_into_b = b.handle();
+
+    handle_into_a.generation.assertIdentity();
+    handle_into_b.generation.assertIdentity();
+
+    b.reset();
+
+    // `a` was not reset, so its handle is still valid.
+    handle_into_a.generation.assertIdentity();
+    // `handle_into_b.generation.assertIdentity()` would now panic: it was taken
+    // in generation 0 and `b` is at 1. The panic reports where it was taken.
+
+    var new_handle_into_b = b.handle();
+    new_handle_into_b.generation.assertIdentity();
 }
 
 /// An identity function that returns whatever `ptr` holds at the moment it is

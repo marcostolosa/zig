@@ -38,7 +38,7 @@ pub fn assert(ok: bool) void {
 
 /// Carries the configuration options and their default values for this
 /// module's primitives.
-const Config = struct {
+pub const Config = struct {
     /// When false the primitive is zero-sized and its checks compile away,
     /// so declaring the state costs nothing.
     enabled: bool = std.lang.Optimize.runtimeSafety(builtin.optimize),
@@ -204,8 +204,6 @@ pub fn ConfigurableState(Enum: type, config: Config, messages: StateMessages) ty
         ) noreturn {
             @branchHint(.cold);
 
-            const found = @tagName(self.state);
-
             const expected_list = comptime list: {
                 var buf: []const u8 = "";
                 for (expected, 0..) |e, i| {
@@ -222,9 +220,18 @@ pub fn ConfigurableState(Enum: type, config: Config, messages: StateMessages) ty
                 break :list buf;
             };
 
-            fail(
-                "expected " ++ messages.name ++ " to be " ++ expected_list ++ ", found {s}",
+            const headline = "expected " ++ messages.name ++ " to be " ++ expected_list ++ ", found ";
+
+            if (std.enums.tagName(Enum, self.state)) |found| fail(
+                headline ++ "{s}",
                 .{found},
+                messages.last_transition,
+                .{},
+                &self.last_transition,
+                ret_addr,
+            ) else fail(
+                headline ++ "{d}",
+                .{@backingInt(self.state)},
                 messages.last_transition,
                 .{},
                 &self.last_transition,
@@ -320,7 +327,7 @@ pub fn ConfigurableObligations(config: Config, messages: ObligationsMessages) ty
             self.last_incur.capture(ret_addr);
         }
 
-        /// Asserts one obligation is outstanding then discharge it.
+        /// Asserts one obligation is outstanding, then discharges it.
         pub fn discharge(self: *O) void {
             self.dischargeAt(@returnAddress());
         }
@@ -340,14 +347,14 @@ pub fn ConfigurableObligations(config: Config, messages: ObligationsMessages) ty
         }
 
         /// Asserts the outstanding count compares to `rhs` as `op` says:
-        /// `assert(.eq, 0)` expects nothing outstanding, `assert(.gte, 1)`
-        /// expects at least one.
-        pub fn assert(self: ReadPtr, op: std.math.CompareOperator, rhs: u32) void {
-            self.assertAt(op, rhs, @returnAddress());
+        /// `assertCount(.eq, 0)` expects nothing outstanding,
+        /// `assertCount(.gte, 1)` expects at least one.
+        pub fn assertCount(self: ReadPtr, op: std.math.CompareOperator, rhs: u32) void {
+            self.assertCountAt(op, rhs, @returnAddress());
         }
 
-        /// `assert`, reporting from `ret_addr`.
-        pub fn assertAt(self: ReadPtr, op: std.math.CompareOperator, rhs: u32, ret_addr: usize) void {
+        /// `assertCount`, reporting from `ret_addr`.
+        pub fn assertCountAt(self: ReadPtr, op: std.math.CompareOperator, rhs: u32, ret_addr: usize) void {
             if (!config.enabled) return;
 
             if (Mutex.present) self.mutex.lock();
@@ -404,33 +411,33 @@ test ConfigurableObligations {
 
     // Test that once disabled the checks don't run
     var disabled: Disabled = .none;
-    disabled.assert(.gte, 1); // Should fail since nothing is outstanding.
+    disabled.assertCount(.gte, 1); // Should fail since nothing is outstanding.
     disabled.discharge(); // Same as before.
 
     // Test correct behavior
     const Enabled = ConfigurableObligations(.{ .enabled = true }, .{});
     var enabled: Enabled = .none;
-    enabled.assert(.eq, 0);
+    enabled.assertCount(.eq, 0);
     enabled.incur();
-    enabled.assert(.gte, 1);
+    enabled.assertCount(.gte, 1);
     enabled.discharge();
-    enabled.assert(.eq, 0);
+    enabled.assertCount(.eq, 0);
 
     // Test that obligations are counted rather than collapsed
     enabled.incur();
     enabled.incur();
-    enabled.assert(.eq, 2);
+    enabled.assertCount(.eq, 2);
     enabled.discharge();
-    enabled.assert(.gte, 1);
-    enabled.assert(.lt, 2);
+    enabled.assertCount(.gte, 1);
+    enabled.assertCount(.lt, 2);
     enabled.discharge();
-    enabled.assert(.eq, 0);
+    enabled.assertCount(.eq, 0);
 }
 
 /// Declares that what is taken must later be given back, and asserts the
 /// program does it. Every `incur` leaves one obligation outstanding until a
-/// `discharge` settles it; `assert` checks the outstanding count wherever the
-/// program has an expectation about it
+/// `discharge` settles it; `assertCount` checks the outstanding count wherever
+/// the program has an expectation about it.
 ///
 /// Obligations are counted, not identified: discharging the same one twice
 /// while another is outstanding goes unnoticed until the count reaches zero.
@@ -497,6 +504,9 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
         readers: LockObligations = .none,
         mutex: Mutex = .init,
 
+        /// Held by nobody, exclusively or shared. Same as `.{}`.
+        pub const unlocked: L = .{};
+
         /// Claims exclusive access. Use when mutating data.
         /// Asserts nobody holds it, exclusively or shared.
         pub fn lock(self: *L) void {
@@ -504,7 +514,7 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            self.checkIdleUnsafe(ret_addr);
+            self.assertUnlockedUnsafe(ret_addr);
             self.state.transitionAt(.held, ret_addr);
         }
 
@@ -514,7 +524,7 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            self.checkExclusiveUnsafe(ret_addr);
+            self.assertLockedUnsafe(ret_addr);
             self.state.transitionAt(.free, ret_addr);
         }
 
@@ -547,7 +557,7 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
             if (Mutex.present) self.mutex.lock();
             defer if (Mutex.present) self.mutex.unlock();
 
-            self.checkIdleUnsafe(ret_addr);
+            self.assertUnlockedUnsafe(ret_addr);
         }
 
         /// Asserts it is held exclusively, as a mutator should before writing.
@@ -556,7 +566,7 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
             if (Mutex.present) self.mutex.lock();
             defer if (Mutex.present) self.mutex.unlock();
 
-            self.checkExclusiveUnsafe(ret_addr);
+            self.assertLockedUnsafe(ret_addr);
         }
 
         /// Asserts at least one reader holds it, as a reader should before
@@ -568,16 +578,16 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
             defer if (Mutex.present) self.mutex.unlock();
 
             self.state.assertEqlAt(.free, ret_addr);
-            self.readers.assertAt(.gte, 1, ret_addr);
+            self.readers.assertCountAt(.gte, 1, ret_addr);
         }
 
-        fn checkIdleUnsafe(self: *const L, ret_addr: usize) void {
-            self.readers.assertAt(.eq, 0, ret_addr);
+        fn assertUnlockedUnsafe(self: *const L, ret_addr: usize) void {
+            self.readers.assertCountAt(.eq, 0, ret_addr);
             self.state.assertEqlAt(.free, ret_addr);
         }
 
-        fn checkExclusiveUnsafe(self: *const L, ret_addr: usize) void {
-            self.readers.assertAt(.eq, 0, ret_addr);
+        fn assertLockedUnsafe(self: *const L, ret_addr: usize) void {
+            self.readers.assertCountAt(.eq, 0, ret_addr);
             self.state.assertEqlAt(.held, ret_addr);
         }
     };
@@ -596,7 +606,7 @@ test ConfigurableLock {
 
     // Test correct behavior
     const Enabled = ConfigurableLock(.{ .enabled = true }, .{});
-    var enabled: Enabled = .{};
+    var enabled: Enabled = .unlocked;
     enabled.assertUnlocked();
     enabled.lock();
     enabled.assertLocked();
@@ -629,8 +639,8 @@ pub const Lock = ConfigurableLock(.{}, .{});
 /// Text used when a binding assertion fails.
 pub const BoundToMessages = struct {
     /// The identity differs from the one bound; "(was x, now y)" is appended.
-    mismatch: []const u8 = "accessed from a different context than the one bound",
-    /// Labels the trace of the bind that established the current context.
+    mismatch: []const u8 = "accessed with a different identity than the one bound",
+    /// Labels the trace of the bind that established the bound identity.
     last_bind: []const u8 = "bound at",
 };
 
@@ -645,14 +655,14 @@ pub fn ConfigurableBoundTo(
 
     if (@typeInfo(@TypeOf(identityFn)).@"fn".param_types.len != args.len + 1)
         @compileError("identityFn must take the binding as its first parameter, " ++
-            "followed by args; discard it when the context does not depend on it");
+            "followed by args; discard it when the identity does not depend on it");
 
     return struct {
         const B = @This();
 
-        pub const Context = @typeInfo(@TypeOf(identityFn)).@"fn".return_type.?;
+        pub const Identity = @typeInfo(@TypeOf(identityFn)).@"fn".return_type.?;
 
-        fn identity(self: *const B) Context {
+        fn queryIdentity(self: *const B) Identity {
             return @call(.auto, identityFn, .{@as(*const anyopaque, self)} ++ args);
         }
 
@@ -662,71 +672,87 @@ pub fn ConfigurableBoundTo(
 
         const ReadPtr = if (Mutex.present) *B else *const B;
 
-        context: if (config.enabled) ?Context else void,
+        identity: if (config.enabled) ?Identity else void,
         last_bind: BindTrace,
         mutex: Mutex = .init,
 
+        /// Binds lazily: the first assertion binds whatever identity it sees.
         pub const unbound: B = .{
-            .context = if (config.enabled) null else {},
+            .identity = if (config.enabled) null else {},
             .last_bind = .empty,
         };
 
-        /// Asserts the current context matches, binding it if unbound.
-        pub fn assertSame(self: *B) void {
+        /// Binds `identity` up front, without capturing a stack trace, so the
+        /// first assertion checks against it instead of binding whatever it
+        /// sees.
+        ///
+        /// Use it when the identity is known at creation.
+        pub fn bound(identity: Identity) B {
+            return .{
+                .identity = if (config.enabled) identity else {},
+                .last_bind = .empty,
+            };
+        }
+
+        /// Binds the identity returned by `identityFn` if unbound, otherwise
+        /// asserts it matches the bound one.
+        pub fn assertIdentity(self: *B) void {
             if (!config.enabled) return;
-            self.assertSameAsAt(self.identity(), @returnAddress());
+            self.assertEqlAt(self.queryIdentity(), @returnAddress());
         }
 
-        /// `assertSame`, capturing and reporting from `ret_addr`.
-        pub fn assertSameAt(self: *B, ret_addr: usize) void {
+        /// `assertIdentity`, capturing and reporting from `ret_addr`.
+        pub fn assertIdentityAt(self: *B, ret_addr: usize) void {
             if (!config.enabled) return;
-            self.assertSameAsAt(self.identity(), ret_addr);
+            self.assertEqlAt(self.queryIdentity(), ret_addr);
         }
 
-        /// Asserts `context` matches the bound one, binding it if unbound.
-        pub fn assertSameAs(self: *B, context: Context) void {
-            self.assertSameAsAt(context, @returnAddress());
+        /// Binds `identity` if unbound, otherwise asserts it matches the bound
+        /// one. Unlike `State.assertEql`, the first call never fails.
+        pub fn assertEql(self: *B, identity: Identity) void {
+            self.assertEqlAt(identity, @returnAddress());
         }
 
-        /// `assertSameAs`, capturing and reporting from `ret_addr`.
-        pub fn assertSameAsAt(self: *B, context: Context, ret_addr: usize) void {
+        /// `assertEql`, capturing and reporting from `ret_addr`.
+        pub fn assertEqlAt(self: *B, identity: Identity, ret_addr: usize) void {
             if (!config.enabled) return;
 
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            const bound = self.context orelse
-                return self.bindUnsafe(context, ret_addr);
+            const bound_identity = self.identity orelse
+                return self.bindUnsafe(identity, ret_addr);
 
-            if (!std.meta.eql(bound, context))
-                self.failUnsafe(bound, context, ret_addr);
+            if (!std.meta.eql(bound_identity, identity))
+                self.failUnsafe(bound_identity, identity, ret_addr);
         }
 
-        /// Binds `context`, replacing any existing binding.
-        pub fn rebind(self: *B, context: Context) void {
-            self.rebindAt(context, @returnAddress());
+        /// Binds `identity`, replacing any existing binding.
+        pub fn rebind(self: *B, identity: Identity) void {
+            self.rebindAt(identity, @returnAddress());
         }
 
         /// `rebind`, capturing from `ret_addr`.
-        pub fn rebindAt(self: *B, context: Context, ret_addr: usize) void {
+        pub fn rebindAt(self: *B, identity: Identity, ret_addr: usize) void {
             if (!config.enabled) return;
 
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            self.bindUnsafe(context, ret_addr);
+            self.bindUnsafe(identity, ret_addr);
         }
 
-        /// Binds the context reported by `identityFn`, replacing any existing binding.
-        pub fn rebindCurrent(self: *B) void {
+        /// Binds the identity returned by `identityFn`, replacing any existing
+        /// binding.
+        pub fn rebindIdentity(self: *B) void {
             if (!config.enabled) return;
-            self.rebindAt(self.identity(), @returnAddress());
+            self.rebindAt(self.queryIdentity(), @returnAddress());
         }
 
-        /// `rebindCurrent`, capturing from `ret_addr`.
-        pub fn rebindCurrentAt(self: *B, ret_addr: usize) void {
+        /// `rebindIdentity`, capturing from `ret_addr`.
+        pub fn rebindIdentityAt(self: *B, ret_addr: usize) void {
             if (!config.enabled) return;
-            self.rebindAt(self.identity(), ret_addr);
+            self.rebindAt(self.queryIdentity(), ret_addr);
         }
 
         /// Drops the binding, so the next access binds afresh.
@@ -736,18 +762,18 @@ pub fn ConfigurableBoundTo(
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            self.context = null;
+            self.identity = null;
         }
 
-        fn bindUnsafe(self: *B, context: Context, ret_addr: usize) void {
-            self.context = context;
+        fn bindUnsafe(self: *B, identity: Identity, ret_addr: usize) void {
+            self.identity = identity;
             self.last_bind.capture(ret_addr);
         }
 
-        fn failUnsafe(self: *const B, bound: Context, current: Context, ret_addr: usize) noreturn {
+        fn failUnsafe(self: *const B, bound_identity: Identity, found_identity: Identity, ret_addr: usize) noreturn {
             fail(
                 messages.mismatch ++ " (was {any}, now {any})",
-                .{ bound, current },
+                .{ bound_identity, found_identity },
                 messages.last_bind,
                 .{},
                 &self.last_bind,
@@ -758,7 +784,7 @@ pub fn ConfigurableBoundTo(
 }
 
 test ConfigurableBoundTo {
-    const Ctx = struct {
+    const Id = struct {
         var current: usize = 0;
 
         fn identity(_: *const anyopaque) usize {
@@ -766,42 +792,48 @@ test ConfigurableBoundTo {
         }
     };
 
-    const Disabled = ConfigurableBoundTo(Ctx.identity, .{}, .{ .enabled = false }, .{});
+    const Disabled = ConfigurableBoundTo(Id.identity, .{}, .{ .enabled = false }, .{});
 
     // Test that the size is 0
     try testing.expect(@sizeOf(Disabled) == 0);
 
     // Test that once disabled the checks don't run
-    Ctx.current = 1;
+    Id.current = 1;
     var disabled: Disabled = .unbound;
-    disabled.assertSame();
-    Ctx.current = 2;
-    disabled.assertSame(); // Should fail since the context moved on.
+    disabled.assertIdentity();
+    Id.current = 2;
+    disabled.assertIdentity(); // Should fail since the identity changed.
 
     // Test correct behavior
-    const Enabled = ConfigurableBoundTo(Ctx.identity, .{}, .{ .enabled = true }, .{});
-    Ctx.current = 7;
+    const Enabled = ConfigurableBoundTo(Id.identity, .{}, .{ .enabled = true }, .{});
+    Id.current = 7;
     var enabled: Enabled = .unbound;
 
-    enabled.assertSame(); // The first access binds.
-    enabled.assertSameAs(7);
+    enabled.assertIdentity(); // The first access binds.
+    enabled.assertEql(7);
 
-    // Test that a new context needs the old binding released, or acknowledged
-    Ctx.current = 8;
+    // Test that a new identity needs the old binding released, or acknowledged
+    Id.current = 8;
     enabled.unbind();
-    enabled.assertSame();
+    enabled.assertIdentity();
 
-    Ctx.current = 9;
-    enabled.rebindCurrent();
+    Id.current = 9;
+    enabled.rebindIdentity();
 
     enabled.rebind(10);
+
+    // Test that an eager binding is in place before the first access
+    var eager: Enabled = .bound(11);
+    try testing.expectEqual(11, eager.identity.?);
+    Id.current = 11;
+    eager.assertIdentity();
 }
 
-/// Asserts that every access originates from the same context, where the
-/// context is whatever `identityFn(self, args)` returns: the current thread, task,
-/// generation counter, and so on.
+/// Asserts that every access happens under the same identity, where the
+/// identity is whatever `identityFn(self, args)` returns: the current thread,
+/// task, generation counter, and so on.
 ///
-/// A failure reports the bound and current contexts, and where the binding
+/// A failure reports the bound and found identities, and where the binding
 /// was made.
 ///
 /// See `ConfigurableBoundTo` to configure enable/disabled, thread safety,
@@ -810,8 +842,8 @@ pub fn BoundTo(identityFn: anytype, args: anytype) type {
     return ConfigurableBoundTo(identityFn, args, .{}, .{});
 }
 
-/// An identity function that reports whatever `ptr` holds at the moment it is
-/// called, for binding to a context that lives elsewhere and changes over
+/// An identity function that returns whatever `ptr` holds at the moment it is
+/// called, for binding to an identity that lives elsewhere and changes over
 /// time: a generation counter, an epoch, an owner slot.
 ///
 /// `BoundTo(valueAt(&generation), .{})` binds the generation current at first
@@ -838,12 +870,12 @@ test valueAt {
     // Test that the binding follows the pointee at the time of the call
     Gen.counter = 1;
     var b: ConfigurableBoundTo(valueAt(&Gen.counter), .{}, .{ .enabled = true }, .{}) = .unbound;
-    b.assertSame();
+    b.assertIdentity();
 
     // Test that moving the generation on needs the stale binding released
     Gen.counter = 2;
     b.unbind();
-    b.assertSame();
+    b.assertIdentity();
 }
 
 fn addressOf(self: *const anyopaque) *const anyopaque {
@@ -865,31 +897,31 @@ test ConfigurablePinned {
 
     // Test that once disabled the checks don't run
     var disabled: Disabled = .unbound;
-    disabled.assertSame();
+    disabled.assertIdentity();
     var disabled_copy = disabled;
-    disabled_copy.assertSame(); // Should fail since the value was copied.
+    disabled_copy.assertIdentity(); // Should fail since the value was copied.
 
     // Test correct behavior
     const Enabled = ConfigurablePinned(.{ .enabled = true });
     var enabled: Enabled = .unbound;
-    enabled.assertSame(); // The first access pins it here.
+    enabled.assertIdentity(); // The first access pins it here.
 
     // Test that releasing the pin lets the value move
     enabled.unbind();
     var moved = enabled;
-    moved.assertSame();
+    moved.assertIdentity();
 
     // Test that a move can be acknowledged after the fact instead
     var moved_again = moved;
-    moved_again.rebindCurrent();
-    moved_again.assertSame();
+    moved_again.rebindIdentity();
+    moved_again.assertIdentity();
 }
 
 /// Detects when an address-sensitive value has been copied or moved.
 ///
 /// Embed it in any struct that other code reaches through a pointer to one of
 /// its fields (`@fieldParentPtr`), or that intrusive data structures point
-/// into. `assertSame` pins the value at its current address the first time it
+/// into. `assertIdentity` pins the value at its current address the first time it
 /// is called and asserts it has not moved on every later call, so it can be
 /// called on every use.
 ///

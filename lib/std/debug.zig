@@ -837,7 +837,7 @@ pub const FormatStackTrace = struct {
 /// was allocated, and so on.
 ///
 /// Unlike `StackTrace`, which borrows a buffer, this type owns its addresses, so it may be
-/// copied and kept for as long as the value holding it lives. `frames` of 0 makes the type
+/// copied and kept for as long as the value holding it lives. `frames_len` of 0 makes the type
 /// zero-sized and every method a no-op, which is how a caller compiles the tracing out.
 pub fn CapturedStackTrace(comptime frames_len: usize) type {
     return struct {

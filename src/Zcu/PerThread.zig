@@ -138,6 +138,15 @@ pub fn update(
     const gpa = comp.gpa;
     const io = comp.io;
 
+    if (!zcu.backendSupportsFeature(.separate_thread)) {
+        // We may still be running the linker on a separate thread at the moment, but once prelink
+        // completes, we need that thread to exit so that we can process all ZCU link tasks on the
+        // main thread. We signal this condition by immediately closing the ZCU task queue. It's
+        // important that we do this before enqueueing *any* ZCU link tasks: otherwise those tasks
+        // will run on the linker thread which is meant to be for prelink only!
+        comp.link_queue.finishZcuQueue(comp);
+    }
+
     {
         const tracy_trace = traceNamed(@src(), "astgen");
         defer tracy_trace.end();
@@ -268,14 +277,6 @@ pub fn update(
     }
 
     try zcu.flushRetryableFailures();
-
-    if (!zcu.backendSupportsFeature(.separate_thread)) {
-        // Close the ZCU task queue. Prelink may still be running, but the closed
-        // queue will cause the linker task to exit once prelink finishes. The
-        // closed queue also communicates to `enqueueZcu` that it should wait for
-        // the linker task to finish and then run ZCU tasks serially.
-        comp.link_queue.finishZcuQueue(comp);
-    }
 
     zcu.sema_prog_node = main_progress_node.start("Semantic Analysis", 0);
     if (comp.bin_file != null) {
@@ -1317,12 +1318,15 @@ fn analyzeComptimeUnit(pt: Zcu.PerThread, cu_id: InternPool.ComptimeUnit.Id) Zcu
         .inlining = null,
         .comptime_reason = .{ .reason = .{
             .src = .{
-                .base_node_inst = comptime_unit.zir_index,
+                .baseline = .{ .inst = comptime_unit.zir_index, .node = .main },
                 .offset = .{ .token_offset = .zero },
             },
             .r = .{ .simple = .comptime_keyword },
         } },
-        .src_base_inst = comptime_unit.zir_index,
+        .src_baseline = .{
+            .inst = comptime_unit.zir_index,
+            .node = .main,
+        },
         .type_name_ctx = try ip.getOrPutStringFmt(gpa, io, pt.tid, "{f}.comptime", .{
             parent_ns.name.fmt(ip),
         }, .no_embedded_nulls),
@@ -1723,7 +1727,10 @@ fn analyzeNavVal(
         .instructions = .empty,
         .inlining = null,
         .comptime_reason = undefined, // set below
-        .src_base_inst = old_nav.analysis.?.zir_index,
+        .src_baseline = .{
+            .inst = old_nav.analysis.?.zir_index,
+            .node = .main,
+        },
         .type_name_ctx = old_nav.name,
         .type_fqn_ctx = old_nav.fqn,
     };
@@ -2093,7 +2100,10 @@ fn analyzeNavType(
         .instructions = .empty,
         .inlining = null,
         .comptime_reason = undefined, // set below
-        .src_base_inst = old_nav.analysis.?.zir_index,
+        .src_baseline = .{
+            .inst = old_nav.analysis.?.zir_index,
+            .node = .main,
+        },
         .type_name_ctx = old_nav.name,
         .type_fqn_ctx = old_nav.fqn,
     };
@@ -3373,7 +3383,10 @@ fn analyzeFuncBodyInner(
         .instructions = .empty,
         .inlining = null,
         .comptime_reason = null,
-        .src_base_inst = decl_analysis.zir_index,
+        .src_baseline = .{
+            .inst = decl_analysis.zir_index,
+            .node = .main,
+        },
         .type_name_ctx = func_nav.name,
         .type_fqn_ctx = func_nav.fqn,
     };
@@ -3459,7 +3472,7 @@ fn analyzeFuncBodyInner(
             &inner_block,
             inner_block.nodeOffset(.zero),
             "cannot resolve inferred error set of {s} function type '{f}'",
-            .{ description, fn_ty.fmt(pt) },
+            .{ description, fn_ty.fmt(zcu) },
         );
     }
 
@@ -3511,7 +3524,7 @@ fn analyzeFuncBodyInner(
     // can be emitted here.
     if (sema.fn_ret_ty_ies) |ies| {
         sema.resolveInferredErrorSetPtr(&inner_block, .{
-            .base_node_inst = inner_block.src_base_inst,
+            .baseline = inner_block.src_baseline,
             .offset = Zcu.LazySrcLoc.Offset.nodeOffset(.zero),
         }, ies) catch |err| switch (err) {
             error.ComptimeReturn => unreachable,
@@ -3655,6 +3668,10 @@ pub fn processExports(pt: Zcu.PerThread) (Allocator.Error || Io.Cancelable)!void
 
         for (alive_exports.items) |export_index| {
             const exp = export_index.ptr(zcu);
+            switch (exp.opts.linkage) {
+                .strong => {},
+                .weak => continue,
+            }
             const gop = exports_by_name.getOrPutAssumeCapacity(exp.opts.name);
             if (gop.found_existing) {
                 const existing_exp = gop.value_ptr.*.ptr(zcu);
@@ -4571,6 +4588,6 @@ fn printVerboseAir(
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
     try w.print("# Begin Function AIR: {f}:\n", .{fqn.fmt(ip)});
-    try air.write(w, pt, liveness);
+    try air.write(w, zcu, liveness);
     try w.print("# End Function AIR: {f}\n\n", .{fqn.fmt(ip)});
 }

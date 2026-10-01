@@ -147,8 +147,22 @@ pub const OBJECT = struct {
         pub const Max: @typeInfo(@This()).@"enum".tag_type = @typeInfo(@This()).@"enum".field_names.len;
     };
 
+    pub const BASIC_INFORMATION = extern struct {
+        Attributes: ATTRIBUTES.Flags,
+        GrantedAccess: ACCESS_MASK,
+        HandleCount: ULONG,
+        PointerCount: ULONG,
+        Reserved: [10]ULONG,
+    };
+
     pub const NAME_INFORMATION = extern struct {
         Name: UNICODE_STRING,
+    };
+
+    pub const HANDLE_FLAG = packed struct(USHORT) {
+        INHERIT: bool = false,
+        PROTECT_FROM_CLOSE: bool = false,
+        Reserved1: u14 = 0,
     };
 };
 
@@ -3502,6 +3516,39 @@ pub const SEC = packed struct(ULONG) {
 };
 
 pub const ERESOURCE = opaque {};
+
+pub const VIRTUAL_MEMORY = struct {
+    pub const INFORMATION_CLASS = enum(c_int) {
+        Prefetch = 0,
+        PagePriority = 1,
+        CfgCallTarget = 2,
+        PageDirtyState = 3,
+        ImageHotPatch = 4,
+        PhysicalContiguity = 5,
+        VirtualMachinePrepopulate = 6,
+        RemoveFromWorkingSet = 7,
+        _,
+
+        pub const Max: @typeInfo(@This()).@"enum".tag_type = @typeInfo(@This()).@"enum".field_names.len;
+    };
+
+    pub const MEMORY_PREFETCH_INFORMATION = extern struct {
+        Flags: VM_PREFETCH,
+
+        pub const VM_PREFETCH = packed struct(ULONG) {
+            /// Introduced in Windows 11 24H4.
+            /// Attempt to populate specified single or multiple address ranges
+            /// into the process working set (bring pages into physical memory).
+            TO_WORKING_SET: bool,
+            Reserved1: u31 = 0,
+        };
+    };
+};
+
+pub const MEMORY_RANGE_ENTRY = extern struct {
+    VirtualAddress: PVOID,
+    NumberOfBytes: SIZE_T,
+};
 
 // ref: shared/ntdef.h
 

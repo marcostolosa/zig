@@ -255,7 +255,6 @@ pub fn generateLazySymbol(
 ) link.EmitError!void {
     const tracy = trace(@src());
     defer tracy.end();
-    tracy.addTextFmt("{t}, {f}", .{ lazy_sym.kind, Type.fromInterned(lazy_sym.ty).fmt(pt) });
 
     const comp = bin_file.comp;
     const zcu = pt.zcu;
@@ -263,9 +262,11 @@ pub fn generateLazySymbol(
     const target = &comp.root_mod.resolved_target.result;
     const endian = target.cpu.arch.endian();
 
+    tracy.addTextFmt("{t}, {f}", .{ lazy_sym.kind, Type.fromInterned(lazy_sym.ty).fmt(zcu) });
+
     log.debug("generateLazySymbol: kind = {s}, ty = {f}", .{
         @tagName(lazy_sym.kind),
-        Type.fromInterned(lazy_sym.ty).fmt(pt),
+        Type.fromInterned(lazy_sym.ty).fmt(zcu),
     });
 
     if (lazy_sym.kind == .code) {
@@ -303,7 +304,7 @@ pub fn generateLazySymbol(
         }
     } else {
         return zcu.codegenFailType(lazy_sym.ty, "TODO implement generateLazySymbol for {s} {f}", .{
-            @tagName(lazy_sym.kind), Type.fromInterned(lazy_sym.ty).fmt(pt),
+            @tagName(lazy_sym.kind), Type.fromInterned(lazy_sym.ty).fmt(zcu),
         });
     }
 }
@@ -325,7 +326,7 @@ pub fn generateSymbol(
     const target = zcu.getTarget();
     const endian = target.cpu.arch.endian();
 
-    log.debug("generateSymbol: val = {f}", .{val.fmtValue(pt)});
+    log.debug("generateSymbol: val = {f}", .{val.fmtValue(zcu)});
 
     const abi_size = math.cast(usize, ty.abiSize(zcu)) orelse {
         return zcu.comp.link_diags.fail("failed to generate symbol: type size overflow", .{});
@@ -733,7 +734,7 @@ fn lowerUavRef(
     const uav_ty = Type.fromInterned(ip.typeOf(uav_val));
     const is_fn_body = uav_ty.zigTypeTag(zcu) == .@"fn";
 
-    log.debug("lowerUavRef: ty = {f}", .{uav_ty.fmt(pt)});
+    log.debug("lowerUavRef: ty = {f}", .{uav_ty.fmt(zcu)});
 
     if (!is_fn_body and !uav_ty.hasRuntimeBits(zcu)) {
         try w.splatByteAll(0xaa, ptr_width_bytes);
@@ -754,23 +755,15 @@ fn lowerUavRef(
     }
 
     const uav_align = Type.fromInterned(uav.orig_ty).ptrAlignment(zcu);
-    _ = try lf.lowerUav(pt, uav_val, uav_align);
 
-    const vaddr = lf.getUavVAddr(uav_val, .{
+    try lf.relocSymAddr(.{
         .parent = reloc_parent,
         .offset = w.end,
+        .target = try lf.uavSymbol(pt, uav_val, uav_align),
         .addend = @intCast(offset),
-    }) catch |err| switch (err) {
-        error.OutOfMemory => |e| return e,
-        else => |e| std.debug.panic("TODO rework lowerUav. internal error: {t}", .{e}),
-    };
-    const endian = target.cpu.arch.endian();
-    switch (ptr_width_bytes) {
-        2 => try w.writeInt(u16, @intCast(vaddr), endian),
-        4 => try w.writeInt(u32, @intCast(vaddr), endian),
-        8 => try w.writeInt(u64, vaddr, endian),
-        else => unreachable,
-    }
+    });
+
+    try w.splatByteAll(0, ptr_width_bytes); // overwritten by relocation
 }
 
 fn lowerNavRef(
@@ -805,84 +798,14 @@ fn lowerNavRef(
         else => {},
     }
 
-    const vaddr = lf.getNavVAddr(pt, nav_index, .{
+    try lf.relocSymAddr(.{
         .parent = reloc_parent,
         .offset = w.end,
+        .target = try lf.navSymbol(nav_index),
         .addend = @intCast(offset),
-    }) catch @panic("TODO rework getNavVAddr");
-    const endian = target.cpu.arch.endian();
-    switch (ptr_width_bytes) {
-        2 => try w.writeInt(u16, @intCast(vaddr), endian),
-        4 => try w.writeInt(u32, @intCast(vaddr), endian),
-        8 => try w.writeInt(u64, vaddr, endian),
-        else => unreachable,
-    }
-}
+    });
 
-pub fn genNavRef(
-    lf: *link.File,
-    pt: Zcu.PerThread,
-    nav_index: InternPool.Nav.Index,
-) Error!link.File.SymbolId {
-    const zcu = pt.zcu;
-    const ip = &zcu.intern_pool;
-    const nav = ip.getNav(nav_index);
-    log.debug("genNavRef({f})", .{nav.fqn.fmt(ip)});
-
-    const is_threadlocal = nav.resolved.?.@"threadlocal" and zcu.comp.config.any_non_single_threaded;
-    const lib_name, const linkage = if (nav.getExtern(ip)) |e|
-        .{ e.lib_name, e.linkage }
-    else
-        .{ .none, .internal };
-    if (lf.cast(.elf)) |elf_file| {
-        const zo = elf_file.zigObjectPtr().?;
-        switch (linkage) {
-            .internal => {
-                const sym_index = try zo.getOrCreateMetadataForNav(zcu, nav_index);
-                if (is_threadlocal) zo.symbol(sym_index).flags.is_tls = true;
-                return @fromBackingInt(@intCast(sym_index));
-            },
-            .strong, .weak => {
-                const sym_index = try elf_file.getGlobalSymbol(nav.name.toSlice(ip), lib_name.toSlice(ip));
-                switch (linkage) {
-                    .internal => unreachable,
-                    .strong => {},
-                    .weak => zo.symbol(sym_index).flags.weak = true,
-                    .link_once => unreachable,
-                }
-                if (is_threadlocal) zo.symbol(sym_index).flags.is_tls = true;
-                return @fromBackingInt(@intCast(sym_index));
-            },
-            .link_once => unreachable,
-        }
-    } else if (lf.cast(.elf2)) |elf| {
-        return elf.navSymbol(nav_index);
-    } else if (lf.cast(.macho)) |macho_file| {
-        const zo = macho_file.getZigObject().?;
-        switch (linkage) {
-            .internal => {
-                const sym_index = try zo.getOrCreateMetadataForNav(macho_file, nav_index);
-                if (is_threadlocal) zo.symbols.items[sym_index].flags.tlv = true;
-                return @fromBackingInt(@intCast(sym_index));
-            },
-            .strong, .weak => {
-                const sym_index = try macho_file.getGlobalSymbol(nav.name.toSlice(ip), lib_name.toSlice(ip));
-                switch (linkage) {
-                    .internal => unreachable,
-                    .strong => {},
-                    .weak => zo.symbols.items[sym_index].flags.weak = true,
-                    .link_once => unreachable,
-                }
-                if (is_threadlocal) zo.symbols.items[sym_index].flags.tlv = true;
-                return @fromBackingInt(@intCast(sym_index));
-            },
-            .link_once => unreachable,
-        }
-    } else if (lf.cast(.coff2)) |coff| {
-        return @fromBackingInt(@intCast(@backingInt(try coff.navSymbol(zcu, nav_index))));
-    } else {
-        std.debug.panic("TODO genNavRef for '{t}'", .{lf.tag});
-    }
+    try w.splatByteAll(0, ptr_width_bytes); // overwritten by relocation
 }
 
 /// deprecated legacy type
@@ -924,13 +847,13 @@ pub fn genTypedValue(
         .none => .none,
         .undef => .undef,
         .immediate => |imm| .{ .immediate = imm },
-        .lea_nav => |nav| .{ .lea_symbol = try genNavRef(lf, pt, nav) },
-        .load_uav => |uav| .{ .load_symbol = try lf.lowerUav(
+        .lea_nav => |nav| .{ .lea_symbol = try lf.navSymbol(nav) },
+        .load_uav => |uav| .{ .load_symbol = try lf.uavSymbol(
             pt,
             uav.val,
             Type.fromInterned(uav.orig_ty).ptrAlignment(pt.zcu),
         ) },
-        .lea_uav => |uav| .{ .lea_symbol = try lf.lowerUav(
+        .lea_uav => |uav| .{ .lea_symbol = try lf.uavSymbol(
             pt,
             uav.val,
             Type.fromInterned(uav.orig_ty).ptrAlignment(pt.zcu),
@@ -954,7 +877,7 @@ pub fn lowerValue(pt: Zcu.PerThread, val: Value, target: *const std.Target) Allo
     const ip = &zcu.intern_pool;
     const ty = val.typeOf(zcu);
 
-    log.debug("lowerValue(@as({f}, {f}))", .{ ty.fmt(pt), val.fmtValue(pt) });
+    log.debug("lowerValue(@as({f}, {f}))", .{ ty.fmt(zcu), val.fmtValue(zcu) });
 
     if (val.isUndef(zcu)) return .undef;
 

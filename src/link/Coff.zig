@@ -1607,7 +1607,7 @@ fn create(
     errdefer file.close(io);
     coff.* = .{
         .base = .{
-            .tag = .coff2,
+            .tag = .coff,
 
             .comp = comp,
             .emit = path,
@@ -2935,18 +2935,19 @@ fn navMapIndex(coff: *Coff, zcu: *Zcu, nav_index: InternPool.Nav.Index) !Node.Na
     if (!sym_gop.found_existing) sym_gop.value_ptr.* = coff.addSymbolAssumeCapacity();
     return @fromBackingInt(@intCast(sym_gop.index));
 }
-pub fn navSymbol(coff: *Coff, zcu: *Zcu, nav_index: InternPool.Nav.Index) !Symbol.Index {
+pub fn navSymbol(coff: *Coff, nav_index: InternPool.Nav.Index) link.Error!link.File.SymbolId {
+    const zcu = coff.base.comp.zcu.?;
     const ip = &zcu.intern_pool;
     const nav = ip.getNav(nav_index);
-    if (nav.getExtern(ip)) |@"extern"| return coff.globalSymbol(.{
+    if (nav.getExtern(ip)) |@"extern"| return @bitCast(try coff.globalSymbol(.{
         .name = @"extern".name.toSlice(ip),
         .lib_name = @"extern".lib_name.toSlice(ip),
         // TODO: Threadlocal as well?
         .type = if (ip.isFunctionType(nav.resolved.?.type)) .code else .data,
         .dll_storage_class = if (@"extern".is_dll_import) .dllimport else .default,
-    });
+    }));
     const nmi = try coff.navMapIndex(zcu, nav_index);
-    return nmi.symbol(coff);
+    return @bitCast(nmi.symbol(coff));
 }
 
 fn uavMapIndex(coff: *Coff, uav_val: InternPool.Index) !Node.UavMapIndex {
@@ -2955,10 +2956,6 @@ fn uavMapIndex(coff: *Coff, uav_val: InternPool.Index) !Node.UavMapIndex {
     const sym_gop = try coff.uavs.getOrPut(gpa, uav_val);
     if (!sym_gop.found_existing) sym_gop.value_ptr.* = coff.addSymbolAssumeCapacity();
     return @fromBackingInt(@intCast(sym_gop.index));
-}
-pub fn uavSymbol(coff: *Coff, uav_val: InternPool.Index) !Symbol.Index {
-    const umi = try coff.uavMapIndex(uav_val);
-    return umi.symbol(coff);
 }
 
 pub fn lazySymbol(coff: *Coff, lazy: link.File.LazySymbol) !Symbol.Index {
@@ -2972,24 +2969,8 @@ pub fn lazySymbol(coff: *Coff, lazy: link.File.LazySymbol) !Symbol.Index {
     return sym_gop.value_ptr.*;
 }
 
-pub fn getNavVAddr(
-    coff: *Coff,
-    pt: Zcu.PerThread,
-    nav: InternPool.Nav.Index,
-    reloc_info: link.File.RelocInfo,
-) link.Error!u64 {
-    return coff.getVAddr(reloc_info, try coff.navSymbol(pt.zcu, nav));
-}
-
-pub fn getUavVAddr(
-    coff: *Coff,
-    uav: InternPool.Index,
-    reloc_info: link.File.RelocInfo,
-) link.Error!u64 {
-    return coff.getVAddr(reloc_info, try coff.uavSymbol(uav));
-}
-
-pub fn getVAddr(coff: *Coff, reloc_info: link.File.RelocInfo, target_si: Symbol.Index) link.Error!u64 {
+pub fn relocSymAddr(coff: *Coff, reloc_info: link.File.RelocInfo) link.Error!void {
+    const target_si: Symbol.Index = @bitCast(reloc_info.target);
     try coff.addReloc(
         @fromBackingInt(@intCast(@backingInt(reloc_info.parent.atom_index))),
         reloc_info.offset,
@@ -3001,10 +2982,6 @@ pub fn getVAddr(coff: *Coff, reloc_info: link.File.RelocInfo, target_si: Symbol.
             .I386 => .{ .I386 = .DIR32 },
         },
     );
-
-    var vaddr: u64 = target_si.get(coff).rva;
-    if (coff.isImage()) vaddr += coff.optionalHeaderField(.image_base);
-    return vaddr;
 }
 
 /// Caller guarantees there is capacity for one member and two nodes
@@ -3935,6 +3912,7 @@ pub fn loadInput(coff: *Coff, input: link.Input) link.Error!void {
             coff.loadDll(dso.path, &fr) catch |err|
                 return coff.failLoadInput(err, &fr, dso.path);
         },
+        .tbd => unreachable,
     }
 }
 
@@ -5580,13 +5558,15 @@ pub fn updateContainerType(
     };
 }
 
-pub fn lowerUav(
+pub fn uavSymbol(
     coff: *Coff,
     pt: Zcu.PerThread,
     uav_val: InternPool.Index,
     uav_align: InternPool.Alignment,
 ) link.Error!link.File.SymbolId {
-    const zcu = pt.zcu;
+    _ = pt;
+
+    const zcu = coff.base.comp.zcu.?;
     const gpa = zcu.gpa;
 
     try coff.pending_uavs.ensureUnusedCapacity(gpa, 1);
@@ -5786,7 +5766,7 @@ fn flushImplib(
     try file_writer.interface.flush();
 }
 
-fn reportUndefs(coff: *Coff, tid: Zcu.PerThread.Id) !void {
+fn reportUndefs(coff: *Coff) !void {
     const comp = coff.base.comp;
     const gpa = comp.gpa;
     const max_notes = 4;
@@ -5907,14 +5887,8 @@ fn reportUndefs(coff: *Coff, tid: Zcu.PerThread.Id) !void {
                                     const ip = &comp.zcu.?.intern_pool;
                                     break :format ip.getNav(val.navIndex(coff)).fqn.fmt(ip);
                                 },
-                                .uav => Value.fromInterned(val.uavValue(coff)).fmtValue(.{
-                                    .zcu = coff.base.comp.zcu.?,
-                                    .tid = tid,
-                                }),
-                                inline .lazy_code, .lazy_const_data => Type.fromInterned(val.lazySymbol(coff).ty).fmt(.{
-                                    .zcu = coff.base.comp.zcu.?,
-                                    .tid = tid,
-                                }),
+                                .uav => Value.fromInterned(val.uavValue(coff)).fmtValue(coff.base.comp.zcu.?),
+                                inline .lazy_code, .lazy_const_data => Type.fromInterned(val.lazySymbol(coff).ty).fmt(coff.base.comp.zcu.?),
                                 else => unreachable,
                             },
                         });
@@ -5942,13 +5916,14 @@ pub fn flush(
     prog_node: std.Progress.Node,
 ) link.Error!void {
     _ = arena;
+    _ = tid;
     const sub_prog_node = prog_node.start("COFF Flush", 0);
     defer sub_prog_node.end();
 
     const comp = coff.base.comp;
 
-    while (try coff.resolve(tid)) {}
-    while (try coff.idle(tid)) {}
+    while (try coff.resolve()) {}
+    while (try coff.idle()) {}
 
     // This has to occur after all other flushMoved / flushResized have resolved,
     // but it will also generate one more set of resizes and moves.
@@ -5968,10 +5943,10 @@ pub fn flush(
             ),
         };
     }
-    while (try coff.idle(tid)) {}
+    while (try coff.idle()) {}
 
     if (coff.isImage())
-        try coff.reportUndefs(tid);
+        try coff.reportUndefs();
 
     if (comp.emit_implib) |implib_file|
         coff.flushImplib(implib_file) catch |err|
@@ -5983,14 +5958,14 @@ pub fn flush(
     };
 
     if (coff.options.enable_link_snapshots)
-        coff.dumpStderr(tid) catch |err|
+        coff.dumpStderr() catch |err|
             return comp.link_diags.fail("dumping link snapshot failed: {t}", .{err});
 }
 
 /// Runs a single "resolution" task.
 /// These are tasks that need to modify the node structure in some way.
 /// They must run in a defined order with respect to linker tasks.
-fn resolve(coff: *Coff, tid: Zcu.PerThread.Id) !bool {
+fn resolve(coff: *Coff) !bool {
     const comp = coff.base.comp;
     task: {
         while (coff.section_merge_pending_index < coff.section_merges.count()) {
@@ -6066,7 +6041,6 @@ fn resolve(coff: *Coff, tid: Zcu.PerThread.Id) !bool {
             const si = coff.symbol_table.symbols.keys()[coff.symbol_table.pending_symbol_index];
             const sym = si.get(coff);
             const sub_prog_node = coff.idleProgNode(
-                tid,
                 coff.symbol_prog_node,
                 if (sym.ni.unwrap()) |sym_ni|
                     coff.getNode(sym_ni)
@@ -6096,7 +6070,7 @@ fn resolve(coff: *Coff, tid: Zcu.PerThread.Id) !bool {
     return false;
 }
 
-pub fn idle(coff: *Coff, tid: Zcu.PerThread.Id) !bool {
+pub fn idle(coff: *Coff) !bool {
     // Idle tasks should not modify create / modify nodes, otherwise the output is not reproducible.
     coff.mf.nodes_lock.lock();
     defer coff.mf.nodes_lock.unlock();
@@ -6107,7 +6081,7 @@ pub fn idle(coff: *Coff, tid: Zcu.PerThread.Id) !bool {
         if (coff.input_section_pending_index < coff.input_sections.items.len) {
             const isi: Node.InputSection.Index = @fromBackingInt(@intCast(coff.input_section_pending_index));
             coff.input_section_pending_index += 1;
-            const sub_prog_node = coff.idleProgNode(tid, coff.input_prog_node, coff.getNode(isi.symbol(coff).node(coff)));
+            const sub_prog_node = coff.idleProgNode(coff.input_prog_node, coff.getNode(isi.symbol(coff).node(coff)));
             defer sub_prog_node.end();
             coff.flushInputSection(isi) catch |err| switch (err) {
                 else => |e| {
@@ -6132,7 +6106,7 @@ pub fn idle(coff: *Coff, tid: Zcu.PerThread.Id) !bool {
             const clean_next_moved = ni.cleanNextMoved(&coff.mf);
             if (!clean_moved and !clean_resized and !clean_next_moved) continue;
             const sub_prog_node =
-                coff.idleProgNode(tid, coff.mf.update_prog_node, coff.getNode(ni));
+                coff.idleProgNode(coff.mf.update_prog_node, coff.getNode(ni));
             defer sub_prog_node.end();
             if (clean_moved) try coff.flushMoved(ni);
             if (clean_resized) try coff.flushResized(ni);
@@ -6140,7 +6114,6 @@ pub fn idle(coff: *Coff, tid: Zcu.PerThread.Id) !bool {
         }
         while (coff.pending_members.pop()) |pending_mi| {
             const sub_prog_node = coff.idleProgNode(
-                tid,
                 coff.symbol_prog_node,
                 coff.getNode(pending_mi.key.get(coff).content_ni),
             );
@@ -6151,7 +6124,6 @@ pub fn idle(coff: *Coff, tid: Zcu.PerThread.Id) !bool {
         if (coff.exports_complete and coff.export_table.pending_sort) {
             defer coff.export_table.pending_sort = false;
             const sub_prog_node = coff.idleProgNode(
-                tid,
                 coff.synth_prog_node,
                 coff.getNode(coff.export_table.ni),
             );
@@ -6170,7 +6142,6 @@ pub fn idle(coff: *Coff, tid: Zcu.PerThread.Id) !bool {
 
 fn idleProgNode(
     coff: *Coff,
-    tid: Zcu.PerThread.Id,
     prog_node: std.Progress.Node,
     node: Node,
 ) std.Progress.Node {
@@ -6193,10 +6164,7 @@ fn idleProgNode(
             break :name ip.getNav(nmi.navIndex(coff)).fqn.toSlice(ip);
         },
         .uav => |umi| std.mem.print(&name, "{f}", .{
-            Value.fromInterned(umi.uavValue(coff)).fmtValue(.{
-                .zcu = coff.base.comp.zcu.?,
-                .tid = tid,
-            }),
+            Value.fromInterned(umi.uavValue(coff)).fmtValue(coff.base.comp.zcu.?),
         }) catch &name,
         .archive_member => |mi| &mi.get(coff).headerPtr(coff).name,
     }, 0);
@@ -6205,7 +6173,7 @@ fn idleProgNode(
 fn genPending(coff: *Coff, pt: Zcu.PerThread) Error!void {
     const comp = pt.zcu.comp;
     while (coff.pending_uavs.pop()) |pending_uav| {
-        const sub_prog_node = coff.idleProgNode(pt.tid, coff.const_prog_node, .{ .uav = pending_uav.key });
+        const sub_prog_node = coff.idleProgNode(coff.const_prog_node, .{ .uav = pending_uav.key });
         defer sub_prog_node.end();
         coff.genUav(pt, pending_uav.key, pending_uav.value.alignment) catch |err| switch (err) {
             else => |e| return e,
@@ -6865,7 +6833,7 @@ fn genLazy(coff: *Coff, pt: Zcu.PerThread, lmr: Node.LazyMapRef) !void {
     const sub_prog_node = coff.synth_prog_node.start(
         std.mem.print(&name, "lazy {s} for {f}", .{
             kind,
-            Type.fromInterned(lazy.ty).fmt(pt),
+            Type.fromInterned(lazy.ty).fmt(coff.base.comp.zcu.?),
         }) catch &name,
         0,
     );
@@ -7471,8 +7439,8 @@ fn updateExportInner(
 
     try coff.symbols.ensureUnusedCapacity(gpa, 1);
     const exported_si: Symbol.Index = switch (exp.exported) {
-        .nav => |nav| try coff.navSymbol(zcu, nav),
-        .uav => |uav| @fromBackingInt(@intCast(@backingInt(try coff.lowerUav(
+        .nav => |nav| @bitCast(try coff.navSymbol(nav)),
+        .uav => |uav| @fromBackingInt(@intCast(@backingInt(try coff.uavSymbol(
             pt,
             uav,
             Type.fromInterned(ip.typeOf(uav)).abiAlignment(zcu),
@@ -7481,15 +7449,15 @@ fn updateExportInner(
     switch (exp.exported) {
         .nav => |nav| log.debug("updateExports({f}) = {d}", .{ ip.getNav(nav).fqn.fmt(ip), exported_si }),
         .uav => |uav| log.debug("updateExports(@as({f}, {f})) = {d}", .{
-            Type.fromInterned(ip.typeOf(uav)).fmt(pt),
-            Value.fromInterned(uav).fmtValue(pt),
+            Type.fromInterned(ip.typeOf(uav)).fmt(zcu),
+            Value.fromInterned(uav).fmtValue(zcu),
             exported_si,
         }),
     }
 
     try coff.genPending(pt);
-    while (try coff.resolve(pt.tid)) {}
-    while (try coff.idle(pt.tid)) {}
+    while (try coff.resolve()) {}
+    while (try coff.idle()) {}
 
     const machine = coff.targetLoad(&coff.headerPtr().machine);
     const exported_ni = exported_si.node(coff);
@@ -7627,27 +7595,27 @@ fn updateExportInner(
     }
 }
 
-fn dumpStderr(coff: *Coff, tid: Zcu.PerThread.Id) Io.File.Writer.Error!void {
+fn dumpStderr(coff: *Coff) Io.File.Writer.Error!void {
     const comp = coff.base.comp;
     const io = comp.io;
     var buffer: [512]u8 = undefined;
     const stderr = try io.lockStderr(&buffer, null);
     defer io.unlockStderr();
     const w = &stderr.file_writer.interface;
-    _ = coff.dump(w, tid) catch |err| switch (err) {
+    _ = coff.dump(w) catch |err| switch (err) {
         error.WriteFailed => return stderr.file_writer.err.?,
     };
 }
 
-pub fn dump(coff: *Coff, w: *Io.Writer, tid: Zcu.PerThread.Id) Io.Writer.Error!link.File.DumpResult {
+pub fn dump(coff: *Coff, w: *Io.Writer) Io.Writer.Error!link.File.DumpResult {
     if (coff.options.enable_link_snapshots) {
-        try coff.printNode(tid, w, .root, 0);
+        try coff.printNode(w, .root, 0);
         try w.writeAll("Section table:\n");
         for (coff.section_table.keys(), coff.section_table.values()) |name, sec|
             try coff.printSection(w, name, sec.si);
         try w.writeAll("Symbol table:\n");
         for (1..coff.symbols.items.len) |si|
-            try coff.printSymbol(w, tid, @fromBackingInt(@intCast(si)));
+            try coff.printSymbol(w, @fromBackingInt(@intCast(si)));
 
         return .enabled;
     }
@@ -7668,7 +7636,6 @@ fn printSection(coff: *Coff, w: *Io.Writer, name: String, si: Symbol.Index) Io.W
 fn printSymbol(
     coff: *Coff,
     w: *Io.Writer,
-    tid: Zcu.PerThread.Id,
     si: Symbol.Index,
 ) Io.Writer.Error!void {
     const sym = si.get(coff);
@@ -7707,7 +7674,7 @@ fn printSymbol(
         try w.print("G {f}\n", .{fmtGlobalName(coff, sym.gmi)});
     } else {
         try w.writeAll("| ");
-        try coff.printNodeName(w, tid, coff.getNode(sym.ni.unwrap().?));
+        try coff.printNodeName(w, coff.getNode(sym.ni.unwrap().?));
         if (sym.flags.extra_tag == .isli)
             try w.print(" | {s}", .{sym.extra.isli.name(coff).toSlice(coff)});
         try w.writeByte('\n');
@@ -7732,7 +7699,6 @@ fn globalNameEscape(data: FmtGlobalName, w: *std.Io.Writer) std.Io.Writer.Error!
 fn printNodeName(
     coff: *Coff,
     w: *std.Io.Writer,
-    tid: Zcu.PerThread.Id,
     node: Node,
 ) Io.Writer.Error!void {
     switch (node) {
@@ -7774,7 +7740,7 @@ fn printNodeName(
             const ip = &zcu.intern_pool;
             const nav = ip.getNav(nmi.navIndex(coff));
             try w.print("({f}, {f})", .{
-                Type.fromInterned(ip.typeOf(nav.resolved.?.value)).fmt(.{ .zcu = zcu, .tid = tid }),
+                Type.fromInterned(ip.typeOf(nav.resolved.?.value)).fmt(zcu),
                 nav.fqn.fmt(ip),
             });
         },
@@ -7782,15 +7748,12 @@ fn printNodeName(
             const zcu = coff.base.comp.zcu.?;
             const val: Value = .fromInterned(umi.uavValue(coff));
             try w.print("({f}, {f})", .{
-                val.typeOf(zcu).fmt(.{ .zcu = zcu, .tid = tid }),
-                val.fmtValue(.{ .zcu = zcu, .tid = tid }),
+                val.typeOf(zcu).fmt(zcu),
+                val.fmtValue(zcu),
             });
         },
         inline .lazy_code, .lazy_const_data => |lmi| try w.print("({f})", .{
-            Type.fromInterned(lmi.lazySymbol(coff).ty).fmt(.{
-                .zcu = coff.base.comp.zcu.?,
-                .tid = tid,
-            }),
+            Type.fromInterned(lmi.lazySymbol(coff).ty).fmt(coff.base.comp.zcu.?),
         }),
         .builtin => |si| {
             const sym = si.get(coff);
@@ -7799,9 +7762,8 @@ fn printNodeName(
     }
 }
 
-pub fn printNode(
+fn printNode(
     coff: *Coff,
-    tid: Zcu.PerThread.Id,
     w: *Io.Writer,
     ni: MappedFile.Node.Index,
     indent: usize,
@@ -7809,7 +7771,7 @@ pub fn printNode(
     const node = coff.getNode(ni);
     try w.splatByteAll(' ', indent);
     try w.writeAll(@tagName(node));
-    try coff.printNodeName(w, tid, node);
+    try coff.printNodeName(w, node);
     {
         const mf_node = &coff.mf.nodes.items[@backingInt(ni)];
         const off, const size = mf_node.location().resolve(&coff.mf);
@@ -7829,7 +7791,7 @@ pub fn printNode(
         // non-leaf, just print children
         var child_ni = first_ni;
         while (true) {
-            try coff.printNode(tid, w, child_ni, indent + 1);
+            try coff.printNode(w, child_ni, indent + 1);
             child_ni = child_ni.next(&coff.mf).unwrap() orelse break;
         }
         return;

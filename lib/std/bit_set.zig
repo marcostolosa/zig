@@ -170,7 +170,7 @@ pub fn Integer(comptime size: u16) type {
 
         /// Set all bits to 1.
         pub fn setAll(self: *Self) void {
-            self.mask = ~self.mask;
+            self.mask = ~@as(MaskInt, 0);
         }
 
         /// Performs a union of two bit sets, and stores the
@@ -723,13 +723,8 @@ pub const Dynamic = struct {
     // That slot holds the size of the true allocation, which
     // is needed by Zig's allocator interface in case a shrink
     // fails.
-
-    // Don't modify this value.  Ideally it would go in const data so
-    // modifications would cause a bus error, but the only way
-    // to discard a const qualifier is through intFromPtr, which
-    // cannot currently round trip at comptime.
-    var empty_masks_data = [_]MaskInt{ 0, undefined };
-    const empty_masks_ptr = empty_masks_data[1..2];
+    const empty_masks_data = [_]MaskInt{ 0, undefined };
+    const empty_masks_ptr = @constCast(empty_masks_data[1..2]);
 
     /// Creates a bit set with no elements present.
     /// If bit_length is not zero, deinit must eventually be called.
@@ -1671,6 +1666,7 @@ fn testBitSet(a: anytype, b: anytype, len: usize) !void {
     a.unsetAll();
     try testing.expectEqual(0, a.count());
 
+    fillEven(a, len);
     a.setAll();
     try testing.expectEqual(len, a.count());
 }

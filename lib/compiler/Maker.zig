@@ -1816,8 +1816,11 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
         },
         .yes, .exact => |name| name: {
             if (name) |n| break :name n;
-            if (!fetch.have_manifest)
-                fatal("unable to determine name; fetched package has no build.zig.zon file", .{});
+            if (!fetch.have_manifest) {
+                log.err("unable to determine name; fetched package has no build.zig.zon file", .{});
+                log.info("hint: use --save=<name> or --save-exact=<name> instead", .{});
+                process.exit(1);
+            }
             break :name fetch.manifest.name;
         },
     };

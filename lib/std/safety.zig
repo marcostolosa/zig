@@ -692,6 +692,8 @@ pub const Lock = ConfigurableLock(.{}, .{});
 pub const BoundToMessages = struct {
     /// The identity differs from the one bound; "(was x, now y)" is appended.
     mismatch: []const u8 = "accessed with a different identity than the one bound",
+    /// `assertEql` found nothing bound; "(expected x)" is appended.
+    unbound: []const u8 = "accessed before any identity was bound",
     /// Labels the trace of the bind that established the bound identity.
     last_bind: []const u8 = "bound at",
 };
@@ -725,7 +727,7 @@ pub fn ConfigurableBoundTo(
         identity: if (config.enabled) ?Identity else void,
         last_bind: BindTrace,
 
-        /// Binds lazily: the first assertion binds whatever identity it sees.
+        /// Binds lazily: the first `assertIdentity` binds whatever identity it sees.
         pub const unbound: B = .{
             .identity = if (config.enabled) null else {},
             .last_bind = .empty,
@@ -765,31 +767,40 @@ pub fn ConfigurableBoundTo(
         /// Binds the identity returned by `identityFn` if unbound, otherwise
         /// asserts it matches the bound one.
         pub fn assertIdentity(self: *B) void {
-            if (!config.enabled) return;
-            self.assertEqlAt(self.queryIdentity(), @returnAddress());
+            self.assertIdentityAt(@returnAddress());
         }
 
         /// `assertIdentity`, capturing and reporting from `ret_addr`.
         pub fn assertIdentityAt(self: *B, ret_addr: usize) void {
             if (!config.enabled) return;
-            self.assertEqlAt(self.queryIdentity(), ret_addr);
-        }
 
-        /// Binds `identity` if unbound, otherwise asserts it matches the bound
-        /// one. Unlike `State.assertEql`, the first call never fails.
-        pub fn assertEql(self: *B, identity: Identity) void {
-            self.assertEqlAt(identity, @returnAddress());
-        }
-
-        /// `assertEql`, capturing and reporting from `ret_addr`.
-        pub fn assertEqlAt(self: *B, identity: Identity, ret_addr: usize) void {
-            if (!config.enabled) return;
+            const identity = self.queryIdentity();
 
             mutex.lock();
             defer mutex.unlock();
 
             const bound_identity = self.identity orelse
                 return self.bindUnsafe(identity, .captured(ret_addr));
+
+            if (!std.meta.eql(bound_identity, identity))
+                self.failUnsafe(bound_identity, identity, ret_addr);
+        }
+
+        /// Asserts `identity` matches the bound one. Unlike `assertIdentity`
+        /// it never binds, so it fails when nothing is bound.
+        pub fn assertEql(self: *const B, identity: Identity) void {
+            self.assertEqlAt(identity, @returnAddress());
+        }
+
+        /// `assertEql`, reporting from `ret_addr`.
+        pub fn assertEqlAt(self: *const B, identity: Identity, ret_addr: usize) void {
+            if (!config.enabled) return;
+
+            mutex.lock();
+            defer mutex.unlock();
+
+            const bound_identity = self.identity orelse
+                fail(messages.unbound ++ " (expected {any})", .{identity}, "", .{}, &BindTrace.empty, ret_addr);
 
             if (!std.meta.eql(bound_identity, identity))
                 self.failUnsafe(bound_identity, identity, ret_addr);
@@ -825,7 +836,7 @@ pub fn ConfigurableBoundTo(
             self.rebindAt(self.queryIdentity(), ret_addr);
         }
 
-        /// Drops the binding, so the next access binds afresh.
+        /// Drops the binding, so the next `assertIdentity` binds afresh.
         pub fn unbind(self: *B) void {
             if (!config.enabled) return;
 
@@ -895,6 +906,7 @@ test ConfigurableBoundTo {
     // Test that an eager binding is in place before the first access
     var eager: Enabled = .init(11);
     try testing.expectEqual(11, eager.identity.?);
+    eager.assertEql(11);
     Id.current = 11;
     eager.assertIdentity();
 }

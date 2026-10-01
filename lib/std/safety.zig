@@ -16,8 +16,6 @@ const testing = std.testing;
 const builtin = @import("builtin");
 const io = std.Options.debug_io;
 
-const log = std.log.scoped(.safety);
-
 /// Invokes detectable illegal behavior when `ok` is `false`.
 ///
 /// In debug and safe modes, calls to this function are always
@@ -67,13 +65,18 @@ fn fail(
 ) noreturn {
     @branchHint(.cold);
 
-    if (trace.stackTrace().return_addresses.len != 0)
-        log.err(
-            headline ++ "\n\n" ++ trace_label ++ ":{f}",
-            headline_args ++ trace_label_args ++ .{trace.fmt()},
-        );
+    const stack_trace = trace.stackTrace();
+    if (stack_trace.return_addresses.len == 0)
+        std.debug.panicExtra(ret_addr, headline, headline_args);
 
-    std.debug.panicExtra(ret_addr, headline, headline_args);
+    std.debug.panicExtra(
+        ret_addr,
+        headline ++ "\n\n" ++ trace_label ++ ":{f}\nviolation occurred at:",
+        headline_args ++ trace_label_args ++ .{std.debug.FormatStackTrace{
+            .stack_trace = stack_trace,
+            .terminal_mode = .no_color,
+        }},
+    );
 }
 
 /// A mutex that makes the safety checks of `Owner` thread-safe.

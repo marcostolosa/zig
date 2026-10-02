@@ -121,8 +121,7 @@ pub inline fn plotConfig(comptime name: [*:0]const u8, config: PlotConfig) void 
         config.format,
         config.mode,
         @intFromBool(config.fill),
-        // https://github.com/wolfpld/tracy/issues/1232
-        @byteSwap(config.color),
+        config.color,
     );
 }
 

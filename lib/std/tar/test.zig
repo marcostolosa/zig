@@ -334,6 +334,26 @@ test "run test cases" {
         .data = @embedFile("testdata/fuzz2.tar"),
         .err = error.PaxSizeAttrOverflow,
     });
+    try testCase(.{
+        // GNU-Format, Hardlink (Typ '1') without dir entries.
+        .data = @embedFile("testdata/hardlink.tar"),
+        .files = &[_]Case.File{
+            .{
+                .name = "hardlink/a/file",
+                .size = 17,
+                .mode = 0o644,
+            },
+            .{
+                .name = "hardlink/b/link",
+                .mode = 0o644,
+                .link_name = "hardlink/a/file",
+                .kind = .hard_link,
+            },
+        },
+        .chksums = &[_][]const u8{
+            "6a6edbd9c6d8b99fd4dc4bda3d65dd02",
+        },
+    });
 }
 
 fn testCase(case: Case) !void {
@@ -510,4 +530,78 @@ test "case sensitivity" {
     // on case sensitive os both files are created
     try testing.expect((try root.dir.statFile(io, "alacritty/darkermatrix.yml", .{})).kind == .file);
     try testing.expect((try root.dir.statFile(io, "alacritty/Darkermatrix.yml", .{})).kind == .file);
+}
+
+fn hardLinkUnsupported(d: *const tar.Diagnostics) !bool {
+    // should return true only if hard links are unsuportet through OS
+    if (d.errors.items.len == 0) return false;
+    try testing.expectEqual(@as(usize, 1), d.errors.items.len);
+    const e = d.errors.items[0].unable_to_create_hard_link;
+    return switch (e.code) {
+        error.OperationUnsupported => true,
+        error.PermissionDenied => true, // actually this should not happen
+        else => {
+            std.debug.print("unexpected hard link error: {t}\n", .{e.code});
+            return e.code;
+        },
+    };
+}
+
+test "extract hard link" {
+    const io = testing.io;
+    // $ tree root
+    //    root
+    //    ├── a
+    //    │   └── file
+    //    └── b
+    //        └── link
+    const data = @embedFile("testdata/hardlink.tar");
+
+    for ([_]u32{ 0, 1 }) |strip| {
+        var r: std.Io.Reader = .fixed(data);
+        var root = std.testing.tmpDir(.{});
+        defer root.cleanup();
+
+        var diagnostics: tar.Diagnostics = .{ .allocator = testing.allocator };
+        defer diagnostics.deinit();
+        try tar.pipeToFileSystem(io, root.dir, &r, .{
+            .mode_mode = .ignore,
+            .strip_components = strip,
+            .diagnostics = &diagnostics,
+        });
+        if (try hardLinkUnsupported(&diagnostics)) return error.SkipZigTest;
+
+        const target = if (strip == 0) "hardlink/a/file" else "a/file";
+        const link = if (strip == 0) "hardlink/b/link" else "b/link";
+
+        var buf: [64]u8 = undefined;
+        try testing.expectEqualStrings("hard link target\n", try root.dir.readFile(io, link, &buf));
+
+        const st_target = try root.dir.statFile(io, target, .{});
+        const st_link = try root.dir.statFile(io, link, .{});
+        try testing.expectEqual(st_target.inode, st_link.inode);
+    }
+}
+
+test "extract hard link with diagnostics" {
+    const io = testing.io;
+    const data = @embedFile("testdata/hardlink.tar");
+    var r: std.Io.Reader = .fixed(data);
+    var root = std.testing.tmpDir(.{});
+    defer root.cleanup();
+
+    var diagnostics: tar.Diagnostics = .{ .allocator = testing.allocator };
+    defer diagnostics.deinit();
+    try tar.pipeToFileSystem(io, root.dir, &r, .{
+        .mode_mode = .ignore,
+        .diagnostics = &diagnostics,
+    });
+    if (try hardLinkUnsupported(&diagnostics)) {
+        // in case of an error we want to see name and target
+        const e = diagnostics.errors.items[0].unable_to_create_hard_link;
+        try testing.expectEqualStrings("hardlink/b/link", e.file_name);
+        try testing.expectEqualStrings("hardlink/a/file", e.link_name);
+        return error.SkipZigTest;
+    }
+    try testing.expectEqualStrings("hardlink", diagnostics.root_dir);
 }

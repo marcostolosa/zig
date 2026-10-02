@@ -40,6 +40,11 @@ pub const Diagnostics = struct {
             file_name: []const u8,
             link_name: []const u8,
         },
+        unable_to_create_hard_link: struct {
+            code: anyerror,
+            file_name: []const u8,
+            link_name: []const u8,
+        },
         unable_to_create_file: struct {
             code: anyerror,
             file_name: []const u8,
@@ -80,6 +85,7 @@ pub const Diagnostics = struct {
         return switch (kind) {
             .file => "",
             .sym_link => "",
+            .hard_link => "",
             .directory => buf,
         };
     }
@@ -100,6 +106,10 @@ pub const Diagnostics = struct {
         for (d.errors.items) |item| {
             switch (item) {
                 .unable_to_create_sym_link => |info| {
+                    d.allocator.free(info.file_name);
+                    d.allocator.free(info.link_name);
+                },
+                .unable_to_create_hard_link => |info| {
                     d.allocator.free(info.file_name);
                     d.allocator.free(info.link_name);
                 },
@@ -301,6 +311,7 @@ fn nullStr(str: []const u8) []const u8 {
 pub const FileKind = enum {
     directory,
     sym_link,
+    hard_link,
     file,
 };
 
@@ -343,7 +354,7 @@ pub const Iterator = struct {
 
     pub const File = struct {
         name: []const u8, // name of file, symlink or directory
-        link_name: []const u8, // target name of symlink
+        link_name: []const u8, // target name of symlink or hardlink
         size: u64 = 0, // size of the file in bytes
         mode: u32 = 0,
         kind: FileKind = .file,
@@ -402,11 +413,12 @@ pub const Iterator = struct {
 
             switch (kind) {
                 // File types to return upstream
-                .directory, .normal, .symbolic_link => {
+                .directory, .normal, .symbolic_link, .hard_link => {
                     file.kind = switch (kind) {
                         .directory => .directory,
                         .normal => .file,
                         .symbolic_link => .sym_link,
+                        .hard_link => .hard_link,
                         else => unreachable,
                     };
                     file.mode = try header.mode();
@@ -591,6 +603,7 @@ pub fn extract(io: Io, dir: Io.Dir, reader: *Io.Reader, options: ExtractOptions)
     var file_name_buffer: [Io.Dir.max_path_bytes]u8 = undefined;
     var link_name_buffer: [Io.Dir.max_path_bytes]u8 = undefined;
     var sanitize_buffer: [Io.Dir.max_path_bytes]u8 = undefined;
+    var link_sanitize_buffer: [Io.Dir.max_path_bytes]u8 = undefined;
     var file_contents_buffer: [1024]u8 = undefined;
     var it: Iterator = .init(reader, .{
         .file_name_buffer = &file_name_buffer,
@@ -643,6 +656,19 @@ pub fn extract(io: Io, dir: Io.Dir, reader: *Io.Reader, options: ExtractOptions)
                     } });
                 };
             },
+            .hard_link => {
+                const link_len = sanitizePath(&link_sanitize_buffer, file.link_name, options.strip_components) catch 0;
+                const link_name = link_sanitize_buffer[0..link_len];
+                const result = if (link_len == 0) error.BadPathName else createDirAndHardLink(io, dir, link_name, file_name);
+                result catch |err| {
+                    const d = options.diagnostics orelse return error.UnableToCreateHardLink;
+                    try d.errors.append(d.allocator, .{ .unable_to_create_hard_link = .{
+                        .code = err,
+                        .file_name = try d.allocator.dupe(u8, file_name),
+                        .link_name = try d.allocator.dupe(u8, if (link_len == 0) file.link_name else link_name),
+                    } });
+                };
+            },
         }
     }
 }
@@ -671,6 +697,14 @@ fn createDirAndSymlink(io: Io, dir: Io.Dir, link_name: []const u8, file_name: []
         }
         return err;
     };
+}
+
+// Creates a hard link at path `file_name` which points to `link_name`.
+fn createDirAndHardLink(io: Io, dir: Io.Dir, link_name: []const u8, file_name: []const u8) !void {
+    if (std.fs.path.dirname(file_name)) |dir_name| {
+        try dir.createDirPath(io, dir_name);
+    }
+    try dir.hardLink(link_name, dir, file_name, io, .{});
 }
 
 fn sanitizePath(buffer: []u8, path: []const u8, strip_components: u32) error{Invalid}!usize {
@@ -998,6 +1032,7 @@ test Iterator {
                 try testing.expectEqualStrings("example/b/symlink", file.name);
                 try testing.expectEqualStrings("../a/file", file.link_name);
             },
+            .hard_link => unreachable, // example.tar dosn't contain hard links
         }
     }
 }

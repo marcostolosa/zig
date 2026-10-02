@@ -150,7 +150,28 @@ pub fn log(
         } else return;
     }
 
-    // Otherwise, use the default implementation.
+    // Otherwise, use the default implementation and emit logs as messages if
+    // Tracy is enabled.
+
+    if (tracy.enable) tracy_log: {
+        var buf: [2048]u8 = undefined;
+        var len: usize = 0;
+        len += (std.mem.print(buf[0..], "LOG {t}({t}): ", .{ level, scope }) catch break :tracy_log).len;
+        len += (std.mem.print(buf[len..], format, args) catch break :tracy_log).len;
+
+        tracy.messageSeverityColorCopy(buf[0..len], switch (level) {
+            .debug => .Debug,
+            .info => .Info,
+            .warn => .Warning,
+            .err => .Error,
+        }, switch (level) {
+            .debug => 0xff7fff,
+            .info => 0x7fff7f,
+            .warn => 0xffff7f,
+            .err => 0xff7f7f,
+        });
+    }
+
     std.log.defaultLog(level, scope, format, args);
 }
 

@@ -214,12 +214,16 @@ pub inline fn messageColor(comptime msg: [:0]const u8, color: u24) void {
 }
 
 pub inline fn messageCopy(msg: []const u8) void {
-    messageColorCopy(msg, 0);
+    messageSeverityColorCopy(msg, .Info, 0);
 }
 
-pub inline fn messageColorCopy(msg: []const u8, color: u24) void {
+pub inline fn messageSeverityCopy(msg: []const u8, severity: MessageSeverity) void {
+    messageSeverityColorCopy(msg, severity, 0);
+}
+
+pub inline fn messageSeverityColorCopy(msg: []const u8, severity: MessageSeverity, color: u24) void {
     if (!enable) return;
-    ___tracy_emit_logString(.Info, color, callstack_depth, msg.len, msg.ptr);
+    ___tracy_emit_logString(severity, color, callstack_depth, msg.len, msg.ptr);
 }
 
 /// Used to store strings which Tracy requires to have stable pointers for the program's entire

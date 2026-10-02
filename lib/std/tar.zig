@@ -40,6 +40,11 @@ pub const Diagnostics = struct {
             file_name: []const u8,
             link_name: []const u8,
         },
+        unable_to_create_hard_link: struct {
+            code: anyerror,
+            file_name: []const u8,
+            link_name: []const u8,
+        },
         unable_to_create_file: struct {
             code: anyerror,
             file_name: []const u8,
@@ -80,6 +85,7 @@ pub const Diagnostics = struct {
         return switch (kind) {
             .file => "",
             .sym_link => "",
+            .hard_link => "",
             .directory => buf,
         };
     }
@@ -100,6 +106,10 @@ pub const Diagnostics = struct {
         for (d.errors.items) |item| {
             switch (item) {
                 .unable_to_create_sym_link => |info| {
+                    d.allocator.free(info.file_name);
+                    d.allocator.free(info.link_name);
+                },
+                .unable_to_create_hard_link => |info| {
                     d.allocator.free(info.file_name);
                     d.allocator.free(info.link_name);
                 },
@@ -132,6 +142,8 @@ pub const ExtractOptions = struct {
     exclude_empty_directories: bool = false,
     /// Collects error messages during unpacking
     diagnostics: ?*Diagnostics = null,
+    /// If the file system does not support hard links, create a copy of the link target instead.
+    hard_link_fallback: bool = false,
 
     pub const ModeMode = enum {
         /// The mode from the tar file is completely ignored. Files are created
@@ -301,6 +313,7 @@ fn nullStr(str: []const u8) []const u8 {
 pub const FileKind = enum {
     directory,
     sym_link,
+    hard_link,
     file,
 };
 
@@ -343,7 +356,7 @@ pub const Iterator = struct {
 
     pub const File = struct {
         name: []const u8, // name of file, symlink or directory
-        link_name: []const u8, // target name of symlink
+        link_name: []const u8, // target name of symlink or hardlink
         size: u64 = 0, // size of the file in bytes
         mode: u32 = 0,
         kind: FileKind = .file,
@@ -402,11 +415,12 @@ pub const Iterator = struct {
 
             switch (kind) {
                 // File types to return upstream
-                .directory, .normal, .symbolic_link => {
+                .directory, .normal, .symbolic_link, .hard_link => {
                     file.kind = switch (kind) {
                         .directory => .directory,
                         .normal => .file,
                         .symbolic_link => .sym_link,
+                        .hard_link => .hard_link,
                         else => unreachable,
                     };
                     file.mode = try header.mode();
@@ -414,6 +428,10 @@ pub const Iterator = struct {
                     // set file attributes if not already set by prefix/extended headers
                     if (file.size == 0) {
                         file.size = size;
+                    }
+                    // Hard links have no data section
+                    if (kind == .hard_link) {
+                        file.size = 0;
                     }
                     if (file.link_name.len == 0) {
                         file.link_name = try header.linkName(self.link_name_buffer);
@@ -591,6 +609,7 @@ pub fn extract(io: Io, dir: Io.Dir, reader: *Io.Reader, options: ExtractOptions)
     var file_name_buffer: [Io.Dir.max_path_bytes]u8 = undefined;
     var link_name_buffer: [Io.Dir.max_path_bytes]u8 = undefined;
     var sanitize_buffer: [Io.Dir.max_path_bytes]u8 = undefined;
+    var link_sanitize_buffer: [Io.Dir.max_path_bytes]u8 = undefined;
     var file_contents_buffer: [1024]u8 = undefined;
     var it: Iterator = .init(reader, .{
         .file_name_buffer = &file_name_buffer,
@@ -643,6 +662,27 @@ pub fn extract(io: Io, dir: Io.Dir, reader: *Io.Reader, options: ExtractOptions)
                     } });
                 };
             },
+            .hard_link => {
+                const link_len = sanitizePath(&link_sanitize_buffer, file.link_name, options.strip_components) catch |err| {
+                    const d = options.diagnostics orelse return error.TarComponentsOutsideStrippedPrefix;
+                    try d.errors.append(d.allocator, .{ .unable_to_create_hard_link = .{
+                        .code = err,
+                        .file_name = try d.allocator.dupe(u8, file_name),
+                        .link_name = try d.allocator.dupe(u8, file.link_name),
+                    } });
+                    continue;
+                };
+                const link_name = link_sanitize_buffer[0..link_len];
+                const result = if (link_len == 0) error.TarComponentsOutsideStrippedPrefix else createDirAndHardLink(io, dir, link_name, file_name, options.hard_link_fallback);
+                result catch |err| {
+                    const d = options.diagnostics orelse return err;
+                    try d.errors.append(d.allocator, .{ .unable_to_create_hard_link = .{
+                        .code = err,
+                        .file_name = try d.allocator.dupe(u8, file_name),
+                        .link_name = try d.allocator.dupe(u8, if (link_len == 0) file.link_name else link_name),
+                    } });
+                };
+            },
         }
     }
 }
@@ -671,6 +711,66 @@ fn createDirAndSymlink(io: Io, dir: Io.Dir, link_name: []const u8, file_name: []
         }
         return err;
     };
+}
+
+// Returns the kind of `sub_path` within `dir` without following a symlink.
+// Returns null if the path does not exist or the parent component is not a directory (e.g., symlink).
+// `sub_path` must be sanitized.
+fn fileKind(io: Io, dir: Io.Dir, sub_path: []const u8) ?Io.File.Kind {
+    var n: usize = 0;
+    while (std.mem.findScalarPos(u8, sub_path, n, '/')) |sep| : (n = sep + 1) {
+        const stat = dir.statFile(io, sub_path[0..sep], .{ .follow_symlinks = false }) catch return null;
+        if (stat.kind != .directory) return null;
+    }
+    const stat = dir.statFile(io, sub_path, .{ .follow_symlinks = false }) catch return null;
+    return stat.kind;
+}
+
+// Creates a hard link from `file_name` to `link_name` without following a symbolic link.
+// This ensures that nothing outside `dir` is read:
+// A regular file is copied, a symbolic link with the same target is created.
+// Returns false if `link_name` is neither.
+fn copyHardLink(io: Io, dir: Io.Dir, link_name: []const u8, file_name: []const u8) !bool {
+    const file_kind = fileKind(io, dir, link_name) orelse return false;
+    switch (file_kind) {
+        .file => try dir.copyFile(link_name, dir, file_name, io, .{
+            .open_options = .{ .follow_symlinks = false },
+            .make_path = true,
+            .replace = false,
+        }),
+        .sym_link => {
+            var buf: [Io.Dir.max_path_bytes]u8 = undefined;
+            const target = buf[0..try dir.readLink(io, link_name, &buf)];
+            try createDirAndSymlink(io, dir, target, file_name);
+        },
+        else => return false,
+    }
+    return true;
+}
+
+// Creates a hard link at path `file_name` which points to `link_name`.
+// If the file system does not support hard links and `fallback` is set, `link_name` is copied to `file_name` instead.
+// The target must be reachable without traversing a symlink, otherwise the hard link could refer to a file outside of `dir`.
+fn createDirAndHardLink(io: Io, dir: Io.Dir, link_name: []const u8, file_name: []const u8, fallback: bool) !void {
+    _ = fileKind(io, dir, link_name) orelse return error.FileNotFound;
+    var dir_created = false;
+    while (true) {
+        dir.hardLink(link_name, dir, file_name, io, .{}) catch |err| switch (err) {
+            error.FileNotFound => {
+                if (dir_created) return err;
+                const dir_name = std.fs.path.dirname(file_name) orelse return err;
+                try dir.createDirPath(io, dir_name);
+                dir_created = true;
+                continue;
+            },
+            error.OperationUnsupported, error.PermissionDenied => {
+                if (!fallback) return err;
+                if (try copyHardLink(io, dir, link_name, file_name)) return else return err;
+            },
+            else => return err,
+        };
+        return;
+    }
 }
 
 fn sanitizePath(buffer: []u8, path: []const u8, strip_components: u32) error{Invalid}!usize {
@@ -998,6 +1098,7 @@ test Iterator {
                 try testing.expectEqualStrings("example/b/symlink", file.name);
                 try testing.expectEqualStrings("../a/file", file.link_name);
             },
+            .hard_link => unreachable, // example.tar contains no hard links
         }
     }
 }
@@ -1219,6 +1320,45 @@ test "executable bit" {
             try testing.expect(mode & S.IXOTH == 0);
         }
     }
+}
+
+test "copyHardLink" {
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "a");
+    try tmp.dir.writeFile(io, .{ .sub_path = "a/file", .data = "content" });
+    try setupSymLink(io, tmp.dir, "file", "a/link", .{});
+    try setupSymLink(io, tmp.dir, "a", "dir_link", .{ .is_directory = true });
+
+    var buf: [16]u8 = undefined;
+
+    // a regular file is copied
+    try testing.expect(try copyHardLink(io, tmp.dir, "a/file", "b/file"));
+    try testing.expectEqualStrings("content", try tmp.dir.readFile(io, "b/file", &buf));
+
+    // a symlink is recreated with the same target, not followed
+    try testing.expect(try copyHardLink(io, tmp.dir, "a/link", "b/link"));
+    const stat = try tmp.dir.statFile(io, "b/link", .{ .follow_symlinks = false });
+    try testing.expectEqual(Io.File.Kind.sym_link, stat.kind);
+    try testing.expectEqualStrings("file", buf[0..try tmp.dir.readLink(io, "b/link", &buf)]);
+
+    // rejected: symlink as intermediate component, directory, missing entry
+    try testing.expect(!try copyHardLink(io, tmp.dir, "dir_link/file", "b/x"));
+    try testing.expect(!try copyHardLink(io, tmp.dir, "a", "b/y"));
+    try testing.expect(!try copyHardLink(io, tmp.dir, "missing", "b/z"));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "b/x", .{}));
+}
+
+// For use in copyHardLink. If the symlink creation fails on Windows with
+// AccessDenied/PermissionDenied/FileSystem, then make the test failure silent (it is not a Zig failure).
+fn setupSymLink(io: Io, dir: Io.Dir, target: []const u8, link: []const u8, flags: Io.Dir.SymLinkFlags) !void {
+    return dir.symLink(io, target, link, flags) catch |err| switch (err) {
+        // On Windows, symlinks require admin privileges and the underlying filesystem must support symlinks
+        error.AccessDenied, error.PermissionDenied, error.FileSystem => if (builtin.os.tag == .windows) return error.SkipZigTest else return err,
+        else => return err,
+    };
 }
 
 test {

@@ -1793,6 +1793,8 @@ pub const CopyFileOptions = struct {
     permissions: ?File.Permissions = null,
     make_path: bool = false,
     replace: bool = true,
+    /// Options used to open the source file. `mode` must allow reading.
+    open_options: OpenFileOptions = .{},
 };
 
 pub const CopyFileError = File.OpenError || File.StatError ||
@@ -1821,7 +1823,7 @@ pub fn copyFile(
     io: Io,
     options: CopyFileOptions,
 ) CopyFileError!void {
-    const file = try source_dir.openFile(io, source_path, .{});
+    const file = try source_dir.openFile(io, source_path, options.open_options);
     var file_reader: File.Reader = .init(file, io, &.{});
     defer file_reader.file.close(io);
 

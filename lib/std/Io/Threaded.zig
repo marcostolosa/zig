@@ -5133,7 +5133,17 @@ fn dirOpenFilePosix(
                         .NXIO => return error.NoDevice,
                         .ROFS => return error.ReadOnlyFileSystem,
                         .ILSEQ => return error.BadPathName,
-                        else => |err| return posix.unexpectedErrno(err),
+                        else => |err| {
+                            // With O_NOFOLLOW, some systems report a symlink as
+                            // the last path component with a different errno
+                            // than ELOOP, as specified by POSIX.
+                            if (!options.follow_symlinks) switch (native_os) {
+                                .netbsd => if (err == .FTYPE) return error.SymLinkLoop,
+                                .freebsd => if (err == .MLINK) return error.SymLinkLoop,
+                                else => {},
+                            };
+                            return posix.unexpectedErrno(err);
+                        },
                     }
                 },
             }

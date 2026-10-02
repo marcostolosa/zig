@@ -108,6 +108,10 @@ pub fn writeLink(w: *Writer, sub_path: []const u8, link_name: []const u8, option
     try w.writeHeader(.symbolic_link, sub_path, link_name, 0, options);
 }
 
+pub fn writeHardLink(w: *Writer, sub_path: []const u8, link_name: []const u8, options: Options) Error!void {
+    try w.writeHeader(.hard_link, sub_path, link_name, 0, options);
+}
+
 fn writeHeader(
     w: *Writer,
     typeflag: Header.FileType,
@@ -122,11 +126,11 @@ fn writeHeader(
     try header.setMtime(options.mtime);
     if (options.mode != 0)
         try header.setMode(options.mode);
-    if (typeflag == .symbolic_link)
-        header.setLinkname(link_name) catch |err| switch (err) {
-            error.NameTooLong => try w.writeExtendedHeader(.gnu_long_link, &.{link_name}),
-            else => |e| return e,
-        };
+    switch (typeflag) {
+        .symbolic_link => try w.setLinkname(&header, &.{link_name}),
+        .hard_link => try w.setLinkname(&header, if (w.prefix.len == 0) &.{link_name} else &.{ w.prefix, "/", link_name }),
+        else => {},
+    }
     try header.write(w.underlying_writer);
 }
 
@@ -144,6 +148,21 @@ fn setPath(w: *Writer, header: *Header, sub_path: []const u8) Error!void {
         },
         else => |e| return e,
     };
+}
+
+/// Writes link name in posix header, if it doesn't fit (100 bytes) writes it
+/// in gnu extended header.
+fn setLinkname(w: *Writer, header: *Header, buffers: []const []const u8) Error!void {
+    var len: usize = 0;
+    for (buffers) |buf| len += buf.len;
+    if (len > header.linkname.len)
+        return w.writeExtendedHeader(.gnu_long_link, buffers);
+
+    var pos: usize = 0;
+    for (buffers) |buf| {
+        @memcpy(header.linkname[pos..][0..buf.len], buf);
+        pos += buf.len;
+    }
 }
 
 /// Writes gnu extended header: gnu_long_name or gnu_long_link.
@@ -213,6 +232,7 @@ pub const Header = extern struct {
 
     pub const FileType = enum(u8) {
         regular = '0',
+        hard_link = '1',
         symbolic_link = '2',
         directory = '5',
         gnu_long_name = 'L',
@@ -232,7 +252,7 @@ pub const Header = extern struct {
             .mode = switch (typeflag) {
                 .directory => default_mode.dir,
                 .symbolic_link => default_mode.sym_link,
-                .regular => default_mode.file,
+                .regular, .hard_link => default_mode.file,
                 else => default_mode.other,
             },
         };
@@ -487,4 +507,42 @@ test "write files" {
 inline fn repeatString(comptime n: usize, comptime str: []const u8) []const u8 {
     const buf: [n][str.len]u8 = @splat(str[0..str.len].*);
     return @ptrCast(&buf);
+}
+
+fn testWriteHardLink(root: []const u8, target: []const u8) !void {
+    var file_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    var link_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    var expected_buffer: [std.fs.max_path_bytes]u8 = undefined;
+
+    var output: Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var w: Writer = .{ .underlying_writer = &output.writer };
+    try w.setRoot(root);
+    try w.writeFileBytes(target, "content", .{});
+    try w.writeHardLink("b/link", target, .{});
+
+    var input: Io.Reader = .fixed(output.written());
+    var it: std.tar.Iterator = .init(&input, .{
+        .file_name_buffer = &file_name_buffer,
+        .link_name_buffer = &link_name_buffer,
+    });
+    if (root.len > 0) _ = (try it.next()).?; // with Root
+    _ = (try it.next()).?; // target
+
+    const link = (try it.next()).?;
+    try testing.expectEqual(std.tar.FileKind.hard_link, link.kind);
+    const expected = if (root.len == 0) target else try std.fmt.bufPrint(&expected_buffer, "{s}/{s}", .{ root, target });
+    try testing.expectEqualStrings(expected, link.link_name);
+    try testing.expect((try it.next()) == null);
+}
+
+test "write hard link" {
+    const short_path = "a/file";
+    // short and long path, so the writer must use the 'K' header
+    const long_path = repeatString(12, "a12345678/") ++ "file";
+
+    try testWriteHardLink("", short_path);
+    try testWriteHardLink("", long_path);
+    try testWriteHardLink("root", short_path);
+    try testWriteHardLink("root", long_path);
 }

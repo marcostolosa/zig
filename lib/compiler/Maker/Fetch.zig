@@ -1498,6 +1498,7 @@ fn unpackTarball(f: *Fetch, out_dir: Io.Dir, reader: *Io.Reader) RunError!Unpack
         .strip_components = 0,
         .mode_mode = .ignore,
         .exclude_empty_directories = true,
+        .hard_link_fallback = true,
     }) catch |err| return f.fail(
         f.location_tok,
         try eb.printString("unable to unpack tarball to temporary directory: {t}", .{err}),
@@ -1510,6 +1511,7 @@ fn unpackTarball(f: *Fetch, out_dir: Io.Dir, reader: *Io.Reader) RunError!Unpack
             switch (item) {
                 .unable_to_create_file => |i| res.unableToCreateFile(stripRoot(i.file_name, res.root_dir), i.code),
                 .unable_to_create_sym_link => |i| res.unableToCreateSymLink(stripRoot(i.file_name, res.root_dir), i.link_name, i.code),
+                .unable_to_create_hard_link => |i| res.unableToCreateHardLink(stripRoot(i.file_name, res.root_dir), stripRoot(i.link_name, res.root_dir), i.code),
                 .unsupported_file_type => |i| res.unsupportedFileType(stripRoot(i.file_name, res.root_dir), @backingInt(i.file_type)),
                 .components_outside_stripped_prefix => unreachable, // unreachable with strip_components = 0
             }
@@ -2165,6 +2167,11 @@ const UnpackResult = struct {
             file_name: []const u8,
             link_name: []const u8,
         },
+        unable_to_create_hard_link: struct {
+            code: anyerror,
+            file_name: []const u8,
+            link_name: []const u8,
+        },
         unable_to_create_file: struct {
             code: anyerror,
             file_name: []const u8,
@@ -2178,6 +2185,7 @@ const UnpackResult = struct {
             const file_name = switch (self) {
                 .unable_to_create_file => |info| info.file_name,
                 .unable_to_create_sym_link => |info| info.file_name,
+                .unable_to_create_hard_link => |info| info.file_name,
                 .unsupported_file_type => |info| info.file_name,
             };
             return !filter.includePath(file_name);
@@ -2207,6 +2215,17 @@ const UnpackResult = struct {
             .file_name = file_name,
             .link_name = link_name,
         } };
+        self.errors_count += 1;
+    }
+
+    fn unableToCreateHardLink(self: *UnpackResult, file_name: []const u8, link_name: []const u8, err: anyerror) void {
+        self.errors[self.errors_count] = .{
+            .unable_to_create_hard_link = .{
+                .code = err,
+                .file_name = file_name,
+                .link_name = link_name,
+            },
+        };
         self.errors_count += 1;
     }
 
@@ -2246,6 +2265,13 @@ const UnpackResult = struct {
                         }),
                     }));
                 },
+                .unable_to_create_hard_link => |info| {
+                    eb.extra.items[note_i] = @backingInt(try eb.addErrorMessage(.{
+                        .msg = try eb.printString("unable to create hard link from {q} to {q}: {t}", .{
+                            info.file_name, info.link_name, info.code,
+                        }),
+                    }));
+                },
                 .unable_to_create_file => |info| {
                     eb.extra.items[note_i] = @backingInt(try eb.addErrorMessage(.{
                         .msg = try eb.printString("unable to create file {q}: {t}", .{
@@ -2275,13 +2301,14 @@ const UnpackResult = struct {
 
         // fill UnpackResult with errors
         var res: UnpackResult = .{};
-        try res.allocErrors(arena, 4, "unable to unpack");
+        try res.allocErrors(arena, 5, "unable to unpack");
         try std.testing.expectEqual(0, res.errors_count);
         res.unableToCreateFile("dir1/file1", error.File1);
         res.unableToCreateSymLink("dir2/file2", "filename", error.SymlinkError);
         res.unableToCreateFile("dir1/file3", error.File3);
         res.unsupportedFileType("dir2/file4", 'x');
-        try std.testing.expectEqual(4, res.errors_count);
+        res.unableToCreateHardLink("dir2/file5", "dir2/file4", error.HardLinkError);
+        try std.testing.expectEqual(5, res.errors_count);
 
         // create filter, includes dir2, excludes dir1
         var filter: Filter = .{};
@@ -2306,6 +2333,7 @@ const UnpackResult = struct {
         try std.testing.expectEqualStrings(
             \\error: unable to unpack
             \\    note: unable to create symlink from 'dir2/file2' to 'filename': SymlinkError
+            \\    note: unable to create hard link from 'dir2/file5' to 'dir2/file4': HardLinkError
             \\    note: file 'dir2/file4' has unsupported type 'x'
             \\
         , aw.written());

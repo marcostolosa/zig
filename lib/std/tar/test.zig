@@ -334,6 +334,30 @@ test "run test cases" {
         .data = @embedFile("testdata/fuzz2.tar"),
         .err = error.PaxSizeAttrOverflow,
     });
+    // Create a test file with hard link
+    var archive: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer archive.deinit();
+    try writeHardLinkTar(&archive.writer);
+    try testCase(.{
+        // USTAR format, hard link (type '1') without dir entries.
+        .data = archive.written(),
+        .files = &[_]Case.File{
+            .{
+                .name = "hardlink/a/file",
+                .size = 17,
+                .mode = 0o644,
+            },
+            .{
+                .name = "hardlink/b/link",
+                .mode = 0o644,
+                .link_name = "hardlink/a/file",
+                .kind = .hard_link,
+            },
+        },
+        .chksums = &[_][]const u8{
+            "6a6edbd9c6d8b99fd4dc4bda3d65dd02",
+        },
+    });
 }
 
 fn testCase(case: Case) !void {
@@ -510,4 +534,121 @@ test "case sensitivity" {
     // on case sensitive os both files are created
     try testing.expect((try root.dir.statFile(io, "alacritty/darkermatrix.yml", .{})).kind == .file);
     try testing.expect((try root.dir.statFile(io, "alacritty/Darkermatrix.yml", .{})).kind == .file);
+}
+
+fn hardLinkUnsupported(d: *const tar.Diagnostics) !bool {
+    // should return true only if hard links are unsupported by the OS
+    if (d.errors.items.len == 0) return false;
+    try testing.expectEqual(@as(usize, 1), d.errors.items.len);
+    const e = switch (d.errors.items[0]) {
+        .unable_to_create_hard_link => |info| info,
+        else => return error.TestUnexpectedResult,
+    };
+    return switch (e.code) {
+        error.OperationUnsupported => true,
+        error.PermissionDenied => true, // EPERM: file system does not support hard links, see link(2)
+        else => {
+            std.debug.print("unexpected hard link error: {t}\n", .{e.code});
+            return e.code;
+        },
+    };
+}
+
+// $ tree hardlink
+//    hardlink
+//    ├── a
+//    │   └── file
+//    └── b
+//        └── link (hard link to hardlink/a/file)
+fn writeHardLinkTar(out: *std.Io.Writer) !void {
+    var w: tar.Writer = .{ .underlying_writer = out };
+    try w.writeFileBytes("hardlink/a/file", "hard link target\n", .{ .mode = 0o644 });
+    try w.writeHardLink("hardlink/b/link", "hardlink/a/file", .{ .mode = 0o644 });
+}
+
+fn testExtractHardLink(strip: u32, target: []const u8, link: []const u8) !void {
+    const io = testing.io;
+
+    var archive: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer archive.deinit();
+    try writeHardLinkTar(&archive.writer);
+
+    var r: std.Io.Reader = .fixed(archive.written());
+    var root = std.testing.tmpDir(.{});
+    defer root.cleanup();
+
+    var diagnostics: tar.Diagnostics = .{ .allocator = testing.allocator };
+    defer diagnostics.deinit();
+    try tar.extract(io, root.dir, &r, .{
+        .mode_mode = .ignore,
+        .strip_components = strip,
+        .diagnostics = &diagnostics,
+    });
+    if (try hardLinkUnsupported(&diagnostics)) {
+        // in case of an error we want to see name and target
+        const e = diagnostics.errors.items[0].unable_to_create_hard_link;
+        try testing.expectEqualStrings(link, e.file_name);
+        try testing.expectEqualStrings(target, e.link_name);
+        return error.SkipZigTest;
+    }
+    if (strip == 0) try testing.expectEqualStrings("hardlink", diagnostics.root_dir);
+
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("hard link target\n", try root.dir.readFile(io, link, &buf));
+
+    const st_target = try root.dir.statFile(io, target, .{});
+    const st_link = try root.dir.statFile(io, link, .{});
+    try testing.expectEqual(st_target.inode, st_link.inode);
+}
+
+test "extract hard link" {
+    try testExtractHardLink(0, "hardlink/a/file", "hardlink/b/link");
+    try testExtractHardLink(1, "a/file", "b/link");
+}
+
+test "extract hard link with fallback" {
+    const io = testing.io;
+    var archive: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer archive.deinit();
+    try writeHardLinkTar(&archive.writer);
+    var r: std.Io.Reader = .fixed(archive.written());
+    var root = std.testing.tmpDir(.{});
+    defer root.cleanup();
+
+    try tar.extract(io, root.dir, &r, .{
+        .mode_mode = .ignore,
+        .hard_link_fallback = true,
+    });
+
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("hard link target\n", try root.dir.readFile(io, "hardlink/b/link", &buf));
+}
+
+test "hard link cannot escape through a symlink parent" {
+    const io = testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "outside");
+    try tmp.dir.writeFile(io, .{ .sub_path = "outside/secret", .data = "host secret\n" });
+    try tmp.dir.createDirPath(io, "extract");
+    var root = try tmp.dir.openDir(io, "extract", .{});
+    defer root.close(io);
+
+    var archive: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer archive.deinit();
+    var w: tar.Writer = .{ .underlying_writer = &archive.writer };
+    // Both names survive sanitizePath: relative, no "..".
+    try w.writeLink("pkg/evil", "../../outside", .{});
+    try w.writeHardLink("pkg/pwned", "pkg/evil/secret", .{});
+
+    var r: std.Io.Reader = .fixed(archive.written());
+    var diagnostics: tar.Diagnostics = .{ .allocator = testing.allocator };
+    defer diagnostics.deinit();
+    try tar.extract(io, root, &r, .{ .mode_mode = .ignore, .diagnostics = &diagnostics });
+    // hard link must not have been created!
+    try testing.expectError(error.FileNotFound, root.statFile(io, "pkg/pwned", .{ .follow_symlinks = false }));
+
+    const st = try tmp.dir.statFile(io, "outside/secret", .{ .follow_symlinks = false });
+    try testing.expect(st.nlink == 1);
 }

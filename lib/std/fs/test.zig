@@ -1773,6 +1773,29 @@ test "copyFile" {
     }.impl);
 }
 
+test "copyFile with follow_symlinks = false" {
+    if (native_os == .windows or native_os == .wasi) return error.SkipZigTest;
+
+    try testWithAllSupportedPathTypes(struct {
+        fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
+            const data = "u6wj+JmdF3qHsFPE BUlH2g4gJCmEz0PP";
+            const src_file = try ctx.transformPath("tmp_test_copy_nofollow.txt");
+            const link_file = try ctx.transformPath("tmp_test_copy_nofollow_link.txt");
+            const dest_file = try ctx.transformPath("tmp_test_copy_nofollow_dest.txt");
+
+            try ctx.dir.writeFile(io, .{ .sub_path = src_file, .data = data });
+            try setupSymlink(io, ctx.dir, src_file, link_file, .{});
+            try testing.expectError(error.SymLinkLoop, ctx.dir.copyFile(link_file, ctx.dir, dest_file, io, .{
+                .open_options = .{ .follow_symlinks = false },
+            }));
+            // without the option the symlink is followed
+            try ctx.dir.copyFile(link_file, ctx.dir, dest_file, io, .{});
+            try expectFileContents(io, ctx.dir, dest_file, data);
+        }
+    }.impl);
+}
+
 fn expectFileContents(io: Io, dir: Dir, file_path: []const u8, data: []const u8) !void {
     const contents = try dir.readFileAlloc(io, file_path, testing.allocator, .limited(1000));
     defer testing.allocator.free(contents);

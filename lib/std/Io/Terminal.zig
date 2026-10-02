@@ -12,27 +12,75 @@ const File = std.Io.File;
 writer: *Io.Writer,
 mode: Mode,
 
-pub const Color = enum {
-    black,
-    red,
-    green,
-    yellow,
-    blue,
-    magenta,
-    cyan,
-    white,
-    bright_black,
-    bright_red,
-    bright_green,
-    bright_yellow,
-    bright_blue,
-    bright_magenta,
-    bright_cyan,
-    bright_white,
-    dim,
-    bold,
-    reset,
+pub const Effect = enum(u8) {
+    reset = 0,
+    bold = 1,
+    dim = 2,
+    italic = 3,
+    underline = 4,
+    slow_blink = 5,
+    fast_blink = 6,
+    reverse = 7,
+    hidden = 8,
+    strikethrough = 9,
 };
+
+pub const Color = enum(u8) {
+    black = 30,
+    red = 31,
+    green = 32,
+    yellow = 33,
+    blue = 34,
+    magenta = 35,
+    cyan = 36,
+    white = 37,
+    bright_black = 90,
+    bright_red = 91,
+    bright_green = 92,
+    bright_yellow = 93,
+    bright_blue = 94,
+    bright_magenta = 95,
+    bright_cyan = 96,
+    bright_white = 97,
+
+    pub fn foreground_code(c: Color) u8 {
+        return @backingInt(c);
+    }
+
+    pub fn background_code(c: Color) u8 {
+        return @backingInt(c) + 10;
+    }
+};
+
+pub const Style = struct {
+    text_effects: []const Effect = &.{},
+    foreground_color: ?Color = null,
+    background_color: ?Color = null,
+
+    /// Returns ANSI string format for provided style
+    pub fn write(self: Style, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        try w.writeAll("\x1b[");
+        var first_change = true; // Means that no color/effect has been set yet
+
+        for (self.text_effects) |e| try param(w, &first, @backingInt(e));
+        if (self.foreground_color) |f| try param(w, &first, f);
+        if (self.background_color) |b| try param(w, &first, f);
+    }
+
+    fn param(w: *Io.Writer, first: *bool, n: u8) Io.Writer.Error!void {
+        if (!first.*) try w.writeByte(';');
+        first.* = false;
+        try w.print("{d}", .{n});
+    }
+};
+
+pub fn setStyle(t: Terminal, style: Style) SetColorError!void {
+    switch (t.mode) {
+        .no_color => return,
+        .escape_codes => style.write(t.writer),
+        .windows_api => style.write(t.writer),
+    }
+}
 
 pub const Mode = union(enum) {
     no_color,
@@ -82,7 +130,30 @@ pub const Mode = union(enum) {
 
 pub const SetColorError = Io.Cancelable || Io.UnexpectedError || Io.Writer.Error;
 
-pub fn setColor(t: Terminal, color: Color) SetColorError!void {
+pub const OldColour = enum {
+    black,
+    red,
+    green,
+    yellow,
+    blue,
+    magenta,
+    cyan,
+    white,
+    bright_black,
+    bright_red,
+    bright_green,
+    bright_yellow,
+    bright_blue,
+    bright_magenta,
+    bright_cyan,
+    bright_white,
+    bold,
+    dim,
+    reset,
+};
+
+/// DEPRECIATED: Use 'Terminal.setStyle()' instead
+pub fn setColor(t: Terminal, color: OldColor) SetColorError!void {
     switch (t.mode) {
         .no_color => return,
         .escape_codes => {

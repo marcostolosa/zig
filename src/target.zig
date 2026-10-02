@@ -375,6 +375,8 @@ pub fn supportsReturnAddress(target: *const std.Target, optimize: std.lang.Optim
         .wasm32, .wasm64 => target.os.tag == .emscripten and optimize == .debug,
         .bpfel, .bpfeb => false,
         .spirv32, .spirv64 => false,
+        // https://codeberg.org/ziglang/zig/issues/31127
+        .avr => false,
         else => true,
     };
 }

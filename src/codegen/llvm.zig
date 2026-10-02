@@ -3236,10 +3236,10 @@ pub const Object = struct {
             },
             .err => |err| {
                 const int = zcu.intern_pool.getErrorValueIfExists(err.name).?;
-                return o.builder.intConst(try o.errorIntType(repr), int);
+                return o.builder.intConst(try o.errorIntType(.as_value), int);
             },
             .error_union => |error_union| {
-                const llvm_error_ty = try o.errorIntType(repr);
+                const llvm_error_ty = try o.errorIntType(.as_value);
                 const llvm_error_value = switch (error_union.val) {
                     .err_name => |name| try o.builder.intConst(
                         llvm_error_ty,

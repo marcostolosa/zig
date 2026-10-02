@@ -4514,14 +4514,42 @@ pub const KEY = struct {
 pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x4;
 pub const DISABLE_NEWLINE_AUTO_RETURN = 0x8;
 
+// Foreground Color Constants
 pub const FOREGROUND_BLUE = 0x0001;
 pub const FOREGROUND_GREEN = 0x0002;
+pub const FOREGROUND_CYAN = 0x0003;
 pub const FOREGROUND_RED = 0x0004;
-pub const FOREGROUND_INTENSITY = 0x0008;
-pub const BACKGROUND_BLUE = 0x0010;
+pub const FOREGROUND_MAGENTA = 0x0005;
+pub const FOREGROUND_YELLOW = 0x0006;
+pub const FOREGROUND_LIGHT_GREY = 0x0007;
+pub const FOREGROUND_GREY = 0x0008;
+pub const FOREGROUND_LIGHT_BLUE = 0x0009;
+pub const FOREGROUND_LIGHT_GREEN = 0x000a;
+pub const FOREGROUND_LIGHT_CYAN = 0x000b;
+pub const FOREGROUND_LIGHT_RED = 0x000c;
+pub const FOREGROUND_LIGHT_MAGENTA = 0x000d;
+pub const FOREGROUND_LIGHT_YELLOW = 0x000e;
+pub const FOREGROUND_WHITE = 0x000f;
+
+// Background Color Constants;
 pub const BACKGROUND_GREEN = 0x0020;
+pub const BACKGROUND_CYAN = 0x0030;
 pub const BACKGROUND_RED = 0x0040;
-pub const BACKGROUND_INTENSITY = 0x0080;
+pub const BACKGROUND_MAGENTA = 0x0050;
+pub const BACKGROUND_YELLOW = 0x0060;
+pub const BACKGROUND_LIGHT_GREY = 0x0070;
+pub const BACKGROUND_GREY = 0x0080;
+pub const BACKGROUND_LIGHT_BLUE = 0x0090;
+pub const BACKGROUND_LIGHT_GREEN = 0x00a0;
+pub const BACKGROUND_LIGHT_CYAN = 0x00b0;
+pub const BACKGROUND_LIGHT_RED = 0x00c0;
+pub const BACKGROUND_LIGHT_MAGENTA = 0x00d0;
+pub const BACKGROUND_LIGHT_YELLOW = 0x00e0;
+pub const BACKGROUND_WHITE = 0x00f0;
+
+// Text Effects Constants
+pub const COMMON_LVB_REVERSE_VIDEO = 0x4000;
+pub const COMMON_LVB_UNDERSCORE = 0x8000;
 
 pub const LIST_ENTRY = extern struct {
     Flink: *LIST_ENTRY,

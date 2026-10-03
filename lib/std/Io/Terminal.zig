@@ -6,6 +6,7 @@ const builtin = @import("builtin");
 const is_windows = builtin.os.tag == .windows;
 
 const std = @import("std");
+const windows = std.os.windows;
 const Io = std.Io;
 const File = std.Io.File;
 
@@ -23,6 +24,17 @@ pub const Effect = enum(u8) {
     reverse = 7,
     hidden = 8,
     strikethrough = 9,
+
+    fn effects_code_windows(e: Effect, wa: Mode.WindowsApi) SetColorError!windows.WORD {
+        return switch (e) {
+            .reset => wa.reset_attributes,
+            .bold => windows.FOREGROUND_WHITE,
+            .dim => windows.FOREGROUND_GREY,
+            .underline => windows.COMMON_LVB_UNDERSCORE,
+            .reverse => windows.COMMON_LVB_REVERSE_VIDEO,
+            else => SetColorError.LegacyWindowsUnsupported,
+        };
+    }
 };
 
 pub const Color = enum(u8) {
@@ -43,12 +55,54 @@ pub const Color = enum(u8) {
     bright_cyan = 96,
     bright_white = 97,
 
-    pub fn foreground_code(c: Color) u8 {
+    fn foreground_code(c: Color) u8 {
         return @backingInt(c);
     }
 
-    pub fn background_code(c: Color) u8 {
+    fn background_code(c: Color) u8 {
         return @backingInt(c) + 10;
+    }
+
+    fn foreground_code_windows(c: Color) windows.WORD {
+        return switch (c) {
+            .black => windows.FOREGROUND_BLACK,
+            .red => windows.FOREGROUND_RED,
+            .green => windows.FOREGROUND_GREEN,
+            .yellow => windows.FOREGROUND_YELLOW,
+            .blue => windows.FOREGROUND_BLUE,
+            .magenta => windows.FOREGROUND_MAGENTA,
+            .cyan => windows.FOREGROUND_CYAN,
+            .white => windows.FOREGROUND_LIGHT_GREY,
+            .bright_black => windows.FOREGROUND_GREY,
+            .bright_red => windows.FOREGROUND_LIGHT_RED,
+            .bright_green => windows.FOREGROUND_LIGHT_GREEN,
+            .bright_yellow => windows.FOREGROUND_LIGHT_YELLOW,
+            .bright_blue => windows.FOREGROUND_LIGHT_BLUE,
+            .bright_magenta => windows.FOREGROUND_LIGHT_MAGENTA,
+            .bright_cyan => windows.FOREGROUND_LIGHT_CYAN,
+            .bright_white => windows.FOREGROUND_WHITE,
+        };
+    }
+
+    fn background_code_windows(c: Color) windows.WORD {
+        return switch (c) {
+            .black => windows.BACKGROUND_BLACK,
+            .red => windows.BACKGROUND_RED,
+            .green => windows.BACKGROUND_GREEN,
+            .yellow => windows.BACKGROUND_YELLOW,
+            .blue => windows.BACKGROUND_BLUE,
+            .magenta => windows.BACKGROUND_MAGENTA,
+            .cyan => windows.BACKGROUND_CYAN,
+            .white => windows.BACKGROUND_LIGHT_GREY,
+            .bright_black => windows.BACKGROUND_GREY,
+            .bright_red => windows.BACKGROUND_LIGHT_RED,
+            .bright_green => windows.BACKGROUND_LIGHT_GREEN,
+            .bright_yellow => windows.BACKGROUND_LIGHT_YELLOW,
+            .bright_blue => windows.BACKGROUND_LIGHT_BLUE,
+            .bright_magenta => windows.BACKGROUND_LIGHT_MAGENTA,
+            .bright_cyan => windows.BACKGROUND_LIGHT_CYAN,
+            .bright_white => windows.BACKGROUND_WHITE,
+        };
     }
 };
 
@@ -57,28 +111,44 @@ pub const Style = struct {
     foreground_color: ?Color = null,
     background_color: ?Color = null,
 
-    /// Returns ANSI string format for provided style
-    pub fn write(self: Style, w: *std.Io.Writer) std.Io.Writer.Error!void {
+    fn write_windows(self: Style, wa: Mode.WindowsApi, t: *Terminal) SetColorError!void {
+        const foreground: Color = self.foreground_color orelse Color.black;
+        const background: Color = self.background_color orelse Color.black;
+        var effects: windows.WORD = 0x0000;
+        for (self.text_effects) |e| {
+            effects |= try e.effects_code_windows(wa);
+        }
+        const attributes: windows.WORD = foreground.foreground_code_windows() | background.background_code_windows() | effects;
+        try t.writer.flush();
+        var set_text_attribute = windows.CONSOLE.USER_IO.SET_TEXT_ATTRIBUTE(attributes);
+        switch (try set_text_attribute.operate(wa.io, wa.file)) {
+            .SUCCESS => {},
+            else => |status| return windows.unexpectedStatus(status),
+        }
+    }
+
+    fn write_ansi(self: Style, w: *std.Io.Writer) SetColorError!void {
         try w.writeAll("\x1b[");
-        var first_change = true; // Means that no color/effect has been set yet
+        var first = true; // Means that no color/effect has been set yet
 
         for (self.text_effects) |e| try param(w, &first, @backingInt(e));
         if (self.foreground_color) |f| try param(w, &first, f);
-        if (self.background_color) |b| try param(w, &first, f);
+        if (self.background_color) |b| try param(w, &first, b);
     }
 
-    fn param(w: *Io.Writer, first: *bool, n: u8) Io.Writer.Error!void {
+    fn param(w: *Io.Writer, first: *bool, n: u8) SetColorError!void {
         if (!first.*) try w.writeByte(';');
         first.* = false;
         try w.print("{d}", .{n});
     }
 };
 
+/// Sets terminal foreground, background, and effects, using a `Style`
 pub fn setStyle(t: Terminal, style: Style) SetColorError!void {
     switch (t.mode) {
         .no_color => return,
-        .escape_codes => style.write(t.writer),
-        .windows_api => style.write(t.writer),
+        .escape_codes => style.write_ansi(t.writer),
+        .windows_api => |wa| style.write_windows(wa, &t),
     }
 }
 
@@ -128,9 +198,9 @@ pub const Mode = union(enum) {
     }
 };
 
-pub const SetColorError = Io.Cancelable || Io.UnexpectedError || Io.Writer.Error;
+pub const SetColorError = Io.Cancelable || Io.UnexpectedError || Io.Writer.Error || error{LegacyWindowsUnsupported};
 
-pub const OldColour = enum {
+pub const OldColor = enum {
     black,
     red,
     green,
@@ -181,7 +251,6 @@ pub fn setColor(t: Terminal, color: OldColor) SetColorError!void {
             try t.writer.writeAll(color_string);
         },
         .windows_api => |wa| {
-            const windows = std.os.windows;
             const attributes: windows.WORD = switch (color) {
                 .black => 0,
                 .red => windows.FOREGROUND_RED,

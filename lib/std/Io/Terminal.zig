@@ -25,14 +25,18 @@ pub const Effect = enum(u8) {
     hidden = 8,
     strikethrough = 9,
 
-    fn effects_code_windows(e: Effect, wa: Mode.WindowsApi) SetColorError!windows.WORD {
+    fn effects_code_windows(e: Effect, wa: Mode.WindowsApi) windows.WORD {
         return switch (e) {
+            // Just follows theme with depreciated `.setColour()`
             .reset => wa.reset_attributes,
-            .bold => windows.FOREGROUND_WHITE,
+            .bold => windows.FOREGROUND_BRIGHT_WHITE,
             .dim => windows.FOREGROUND_GREY,
+
+            // Adds two new options though, real fancy :D
             .underline => windows.COMMON_LVB_UNDERSCORE,
             .reverse => windows.COMMON_LVB_REVERSE_VIDEO,
-            else => SetColorError.LegacyWindowsUnsupported,
+
+            else => 0x0000, // Unsupported but I don't wanna throw an error
         };
     }
 };
@@ -72,15 +76,15 @@ pub const Color = enum(u8) {
             .blue => windows.FOREGROUND_BLUE,
             .magenta => windows.FOREGROUND_MAGENTA,
             .cyan => windows.FOREGROUND_CYAN,
-            .white => windows.FOREGROUND_LIGHT_GREY,
+            .white => windows.FOREGROUND_WHITE,
             .bright_black => windows.FOREGROUND_GREY,
-            .bright_red => windows.FOREGROUND_LIGHT_RED,
-            .bright_green => windows.FOREGROUND_LIGHT_GREEN,
-            .bright_yellow => windows.FOREGROUND_LIGHT_YELLOW,
-            .bright_blue => windows.FOREGROUND_LIGHT_BLUE,
-            .bright_magenta => windows.FOREGROUND_LIGHT_MAGENTA,
-            .bright_cyan => windows.FOREGROUND_LIGHT_CYAN,
-            .bright_white => windows.FOREGROUND_WHITE,
+            .bright_red => windows.FOREGROUND_BRIGHT_RED,
+            .bright_green => windows.FOREGROUND_BRIGHT_GREEN,
+            .bright_yellow => windows.FOREGROUND_BRIGHT_YELLOW,
+            .bright_blue => windows.FOREGROUND_BRIGHT_BLUE,
+            .bright_magenta => windows.FOREGROUND_BRIGHT_MAGENTA,
+            .bright_cyan => windows.FOREGROUND_BRIGHT_CYAN,
+            .bright_white => windows.FOREGROUND_BRIGHT_WHITE,
         };
     }
 
@@ -93,15 +97,15 @@ pub const Color = enum(u8) {
             .blue => windows.BACKGROUND_BLUE,
             .magenta => windows.BACKGROUND_MAGENTA,
             .cyan => windows.BACKGROUND_CYAN,
-            .white => windows.BACKGROUND_LIGHT_GREY,
+            .white => windows.BACKGROUND_WHITE,
             .bright_black => windows.BACKGROUND_GREY,
-            .bright_red => windows.BACKGROUND_LIGHT_RED,
-            .bright_green => windows.BACKGROUND_LIGHT_GREEN,
-            .bright_yellow => windows.BACKGROUND_LIGHT_YELLOW,
-            .bright_blue => windows.BACKGROUND_LIGHT_BLUE,
-            .bright_magenta => windows.BACKGROUND_LIGHT_MAGENTA,
-            .bright_cyan => windows.BACKGROUND_LIGHT_CYAN,
-            .bright_white => windows.BACKGROUND_WHITE,
+            .bright_red => windows.BACKGROUND_BRIGHT_RED,
+            .bright_green => windows.BACKGROUND_BRIGHT_GREEN,
+            .bright_yellow => windows.BACKGROUND_BRIGHT_YELLOW,
+            .bright_blue => windows.BACKGROUND_BRIGHT_BLUE,
+            .bright_magenta => windows.BACKGROUND_BRIGHT_MAGENTA,
+            .bright_cyan => windows.BACKGROUND_BRIGHT_CYAN,
+            .bright_white => windows.BACKGROUND_BRIGHT_WHITE,
         };
     }
 };
@@ -111,15 +115,44 @@ pub const Style = struct {
     foreground_color: ?Color = null,
     background_color: ?Color = null,
 
-    fn write_windows(self: Style, wa: Mode.WindowsApi, t: *Terminal) SetColorError!void {
-        const foreground: Color = self.foreground_color orelse Color.black;
-        const background: Color = self.background_color orelse Color.black;
+    pub fn from_color(c: Color) Style {
+        return Style{ .foreground_color = c };
+    }
+
+    pub fn from_background_color(c: Color) Style {
+        return Style{ .background_color = c };
+    }
+
+    pub fn from_effects(e: []const Effect) Style {
+        return Style{ .text_effects = e };
+    }
+
+    pub fn new(fg: ?Color, bg: ?Color, effects: []const Effect) Style {
+        return Style{ .foreground_color = fg, .background_color = bg, .text_effects = effects };
+    }
+
+    fn is_empty(self: Style) bool {
+        return (self.foreground_color == null or self.background_color == null or self.text_effects == &.{});
+    }
+
+    fn write_windows(self: Style, wa: Mode.WindowsApi, w: *std.Io.Writer) SetColorError!void {
+        const fg = if (self.foreground_color) |c| c.foreground_code_windows() else wa.reset_attributes & 0x000F;
+        const bg = if (self.background_color) |c| c.background_code_windows() else wa.reset_attributes & 0x00F0;
         var effects: windows.WORD = 0x0000;
+        var reset = false;
         for (self.text_effects) |e| {
-            effects |= try e.effects_code_windows(wa);
+            if (e == .reset) {
+                reset = true;
+                break;
+            }
+            effects |= e.effects_code_windows(wa);
         }
-        const attributes: windows.WORD = foreground.foreground_code_windows() | background.background_code_windows() | effects;
-        try t.writer.flush();
+        const attributes: windows.WORD = if (reset) {
+            wa.reset_attributes;
+        } else {
+            fg | bg | effects;
+        };
+        try w.flush();
         var set_text_attribute = windows.CONSOLE.USER_IO.SET_TEXT_ATTRIBUTE(attributes);
         switch (try set_text_attribute.operate(wa.io, wa.file)) {
             .SUCCESS => {},
@@ -132,8 +165,9 @@ pub const Style = struct {
         var first = true; // Means that no color/effect has been set yet
 
         for (self.text_effects) |e| try param(w, &first, @backingInt(e));
-        if (self.foreground_color) |f| try param(w, &first, f);
-        if (self.background_color) |b| try param(w, &first, b);
+        if (self.foreground_color) |f| try param(w, &first, f.foreground_code());
+        if (self.background_color) |b| try param(w, &first, b.background_code());
+        try w.writeAll("m");
     }
 
     fn param(w: *Io.Writer, first: *bool, n: u8) SetColorError!void {
@@ -143,12 +177,16 @@ pub const Style = struct {
     }
 };
 
-/// Sets terminal foreground, background, and effects, using a `Style`
+/// Sets terminal foreground, background, and effects, using a `Style`.
+/// If using `Mode.windows_api` then italic, blink, hidden, and strikethrough
+/// are unsupported and do nothing.
 pub fn setStyle(t: Terminal, style: Style) SetColorError!void {
-    switch (t.mode) {
-        .no_color => return,
-        .escape_codes => style.write_ansi(t.writer),
-        .windows_api => |wa| style.write_windows(wa, &t),
+    if (!style.is_empty()) {
+        switch (t.mode) {
+            .no_color => return,
+            .escape_codes => try style.write_ansi(t.writer),
+            .windows_api => |wa| try style.write_windows(wa, t.writer),
+        }
     }
 }
 
@@ -198,7 +236,7 @@ pub const Mode = union(enum) {
     }
 };
 
-pub const SetColorError = Io.Cancelable || Io.UnexpectedError || Io.Writer.Error || error{LegacyWindowsUnsupported};
+pub const SetColorError = Io.Cancelable || Io.UnexpectedError || Io.Writer.Error;
 
 pub const OldColor = enum {
     black,
@@ -259,18 +297,18 @@ pub fn setColor(t: Terminal, color: OldColor) SetColorError!void {
                 .blue => windows.FOREGROUND_BLUE,
                 .magenta => windows.FOREGROUND_MAGENTA,
                 .cyan => windows.FOREGROUND_CYAN,
-                .white => windows.FOREGROUND_LIGHT_GREY,
-                .bright_black => windows.FOREGROUND_DARK_GREY,
-                .bright_red => windows.FOREGROUND_LIGHT_RED,
-                .bright_green => windows.FOREGROUND_LIGHT_GREEN,
-                .bright_yellow => windows.FOREGROUND_LIGHT_YELLOW,
-                .bright_blue => windows.FOREGROUND_LIGHT_BLUE,
-                .bright_magenta => windows.FOREGROUND_LIGHT_RED,
-                .bright_cyan => windows.FOREGROUND_LIGHT_CYAN,
-                .bright_white, .bold => windows.FOREGROUND_WHITE,
+                .white => windows.FOREGROUND_WHITE,
+                .bright_black => windows.FOREGROUND_GREY,
+                .bright_red => windows.FOREGROUND_BRIGHT_RED,
+                .bright_green => windows.FOREGROUND_BRIGHT_GREEN,
+                .bright_yellow => windows.FOREGROUND_BRIGHT_YELLOW,
+                .bright_blue => windows.FOREGROUND_BRIGHT_BLUE,
+                .bright_magenta => windows.FOREGROUND_BRIGHT_MAGENTA,
+                .bright_cyan => windows.FOREGROUND_BRIGHT_CYAN,
+                .bright_white, .bold => windows.FOREGROUND_BRIGHT_WHITE,
                 // "dim" is not supported using basic character attributes, but let's still make it do *something*.
                 // This matches the old behavior of TTY.Color before the bright variants were added.
-                .dim => windows.FOREGROUND_DARK_GREY,
+                .dim => windows.FOREGROUND_GREY,
                 .reset => wa.reset_attributes,
             };
             try t.writer.flush();

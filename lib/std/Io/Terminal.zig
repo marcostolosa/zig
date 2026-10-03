@@ -13,31 +13,42 @@ const File = std.Io.File;
 writer: *Io.Writer,
 mode: Mode,
 
-pub const Effect = enum(u8) {
-    reset = 0,
-    bold = 1,
-    dim = 2,
-    italic = 3,
-    underline = 4,
-    slow_blink = 5,
-    fast_blink = 6,
-    reverse = 7,
-    hidden = 8,
-    strikethrough = 9,
+pub const Effects = packed struct {
+    reset: bool = false,
+    bold: bool = false,
+    dim: bool = false,
+    italic: bool = false,
+    underline: bool = false,
+    slow_blink: bool = false,
+    fast_blink: bool = false,
+    reverse: bool = false,
+    hidden: bool = false,
+    strikethrough: bool = false,
 
-    fn effectsCodeWindows(e: Effect) windows.WORD {
-        return switch (e) {
-            .reset => unreachable,
-            // Just follows theme with depreciated `.setColour()`
-            .bold => windows.FOREGROUND_BRIGHT_WHITE,
-            .dim => windows.FOREGROUND_GREY,
+    fn isEmpty(e: Effects) bool {
+        return !(e.reset or e.bold or e.dim or e.italic or e.underline or e.slow_blink or e.fast_blink or e.reverse or e.hidden or e.strikethrough);
+    }
 
-            // Adds two new options though, real fancy :D
-            .underline => windows.COMMON_LVB_UNDERSCORE,
-            .reverse => windows.COMMON_LVB_REVERSE_VIDEO,
+    fn writeAnsiParams(e: Effects, w: *std.Io.Writer, first: *bool) !void {
+        if (e.reset) try Style.param(w, first, 0);
+        if (e.bold) try Style.param(w, first, 1);
+        if (e.dim) try Style.param(w, first, 2);
+        if (e.italic) try Style.param(w, first, 3);
+        if (e.underline) try Style.param(w, first, 4);
+        if (e.slow_blink) try Style.param(w, first, 5);
+        if (e.fast_blink) try Style.param(w, first, 6);
+        if (e.reverse) try Style.param(w, first, 7);
+        if (e.hidden) try Style.param(w, first, 8);
+        if (e.strikethrough) try Style.param(w, first, 9);
+    }
 
-            else => 0x0000, // Unsupported but I don't wanna throw an error
-        };
+    fn effectsCodeWindows(e: Effects) windows.WORD {
+        var effect_code: windows.WORD = 0;
+        if (e.bold) effect_code |= windows.FOREGROUND_BRIGHT_WHITE;
+        if (e.dim) effect_code |= windows.FOREGROUND_GREY;
+        if (e.underline) effect_code |= windows.COMMON_LVB_UNDERSCORE;
+        if (e.reverse) effect_code |= windows.COMMON_LVB_REVERSE_VIDEO;
+        return effect_code;
     }
 };
 
@@ -111,31 +122,19 @@ pub const Color = enum(u8) {
 };
 
 pub const Style = struct {
-    text_effects: []const Effect = &.{},
+    text_effects: Effects,
     foreground_color: ?Color = null,
     background_color: ?Color = null,
 
-    pub fn new(fg: ?Color, bg: ?Color, effects: []const Effect) Style {
+    pub fn new(fg: ?Color, bg: ?Color, effects: Effects) Style {
         return Style{ .foreground_color = fg, .background_color = bg, .text_effects = effects };
     }
 
     fn isEmpty(self: Style) bool {
-        return (self.foreground_color == null and self.background_color == null and self.text_effects.len == 0);
+        return (self.foreground_color == null and self.background_color == null and self.text_effects.isEmpty());
     }
 
-    fn writeWindows(self: Style, wa: Mode.WindowsApi, w: *std.Io.Writer) SetColorError!void {
-        const fg = if (self.foreground_color) |c| c.foregroundCodeWindows() else wa.reset_attributes & 0x000F;
-        const bg = if (self.background_color) |c| c.backgroundCodeWindows() else wa.reset_attributes & 0x00F0;
-        var effects: windows.WORD = 0x0000;
-        var reset = false;
-        for (self.text_effects) |e| {
-            if (e == .reset) {
-                reset = true;
-                break;
-            }
-            effects |= e.effectsCodeWindows();
-        }
-        const attributes: windows.WORD = if (reset) wa.reset_attributes else fg | bg | effects;
+    fn windowsAttributesCall(wa: Mode.WindowsApi, attributes: windows.WORD, w: *std.Io.Writer) SetColorError!void {
         try w.flush();
         var set_text_attribute = windows.CONSOLE.USER_IO.SET_TEXT_ATTRIBUTE(attributes);
         switch (try set_text_attribute.operate(wa.io, wa.file)) {
@@ -144,11 +143,24 @@ pub const Style = struct {
         }
     }
 
+    fn writeWindows(self: Style, wa: Mode.WindowsApi, w: *std.Io.Writer) SetColorError!void {
+        if (!self.foreground_color and !self.background_color and self.text_effects == .{ .reset = true }) {
+            return self.windowsAttributesCall(wa, wa.reset_attributes, w);
+        } else if (self.text_effects == .{ .reset = true }) {
+            try self.windowsAttributesCall(wa, wa.reset_attributes, w);
+        }
+        const fg = if (self.foreground_color) |c| c.foregroundCodeWindows() else wa.reset_attributes & 0x000F;
+        const bg = if (self.background_color) |c| c.backgroundCodeWindows() else wa.reset_attributes & 0x00F0;
+        const effects = self.text_effects.effectsCodeWindows();
+        const attributes: windows.WORD = fg | bg | effects;
+        return self.windowsAttributesCall(wa, attributes, w);
+    }
+
     fn writeAnsi(self: Style, w: *std.Io.Writer) SetColorError!void {
         try w.writeAll("\x1b[");
         var first = true; // Means that no color/effect has been set yet
 
-        for (self.text_effects) |e| try param(w, &first, @backingInt(e));
+        self.text_effects.writeAnsiParams(w, &first);
         if (self.foreground_color) |f| try param(w, &first, f.foregroundCode());
         if (self.background_color) |b| try param(w, &first, b.backgroundCode());
         try w.writeAll("m");

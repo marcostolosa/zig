@@ -827,16 +827,14 @@ pub const BoundToMessages = struct {
 
 pub fn ConfigurableBoundTo(
     identityFn: anytype,
-    args: anytype,
     config: Config,
     messages: BoundToMessages,
 ) type {
     if (@typeInfo(@TypeOf(identityFn)) != .@"fn")
         @compileError("identityFn must be a function");
 
-    if (@typeInfo(@TypeOf(identityFn)).@"fn".param_types.len != args.len + 1)
-        @compileError("identityFn must take the binding as its first parameter, " ++
-            "followed by args; discard it when the identity does not depend on it");
+    if (@typeInfo(@TypeOf(identityFn)).@"fn".param_types.len != 1)
+        @compileError("identityFn must take one parameter, the *const to the BoundTo instance");
 
     return struct {
         const B = @This();
@@ -844,8 +842,11 @@ pub fn ConfigurableBoundTo(
         pub const Identity = @typeInfo(@TypeOf(identityFn)).@"fn".return_type.?;
 
         fn queryIdentity(self: *const B) Identity {
-            return @call(.auto, identityFn, .{@as(*const anyopaque, self)} ++ args);
+            return identityFn(self);
         }
+
+        /// Identities that define `format` are printed through it.
+        const identity_fmt = if (std.meta.hasMethod(Identity, "format")) "{f}" else "{any}";
 
         const BindTrace = std.debug.CapturedStackTrace(config.traceFrames());
 
@@ -927,7 +928,7 @@ pub fn ConfigurableBoundTo(
             defer mutex.unlock();
 
             const bound_identity = self.identity orelse
-                return fail(messages.unbound ++ " (expected {any})", .{identity}, "", .{}, &BindTrace.empty, ret_addr);
+                return fail(messages.unbound ++ " (expected " ++ identity_fmt ++ ")", .{identity}, "", .{}, &BindTrace.empty, ret_addr);
 
             if (!std.meta.eql(bound_identity, identity))
                 self.failUnsafe(bound_identity, identity, ret_addr);
@@ -980,7 +981,7 @@ pub fn ConfigurableBoundTo(
 
         fn failUnsafe(self: *const B, bound_identity: Identity, found_identity: Identity, ret_addr: usize) FailReturn {
             fail(
-                messages.mismatch ++ " (was {any}, now {any})",
+                messages.mismatch ++ " (was " ++ identity_fmt ++ ", now " ++ identity_fmt ++ ")",
                 .{ bound_identity, found_identity },
                 messages.last_bind,
                 .{},
@@ -1003,7 +1004,7 @@ test ConfigurableBoundTo {
         }
     };
 
-    const Disabled = ConfigurableBoundTo(Id.identity, .{}, .{ .enabled = false }, .{});
+    const Disabled = ConfigurableBoundTo(Id.identity, .{ .enabled = false }, .{});
 
     // Test that the size is 0
     try testing.expect(@sizeOf(Disabled) == 0);
@@ -1018,7 +1019,7 @@ test ConfigurableBoundTo {
     try violation.expectNone();
 
     // Test correct behavior
-    const Enabled = ConfigurableBoundTo(Id.identity, .{}, .{ .enabled = true }, .{});
+    const Enabled = ConfigurableBoundTo(Id.identity, .{ .enabled = true }, .{});
     Id.current = 7;
     var enabled: Enabled = .unbound;
 
@@ -1061,16 +1062,21 @@ test ConfigurableBoundTo {
 }
 
 /// Asserts that every access happens under the same identity, where the
-/// identity is whatever `identityFn(self, args)` returns: the current thread,
+/// identity is whatever `identityFn(self)` returns: the current thread,
 /// task, generation counter, and so on.
+///
+/// `identityFn` shall take `anytype` as its first parameter and it will be a
+/// `*const` pointer to the `BoundTo` specification instance itself, which you
+/// can pass to `@fieldParentPtr` to reach other values in the struct that
+/// contains it.
 ///
 /// A failure reports the bound and found identities, and where the binding
 /// was made.
 ///
 /// See `ConfigurableBoundTo` to configure enable/disabled, thread safety,
 /// messages and more.
-pub fn BoundTo(identityFn: anytype, args: anytype) type {
-    return ConfigurableBoundTo(identityFn, args, .{}, .{});
+pub fn BoundTo(identityFn: anytype) type {
+    return ConfigurableBoundTo(identityFn, .{}, .{});
 }
 
 test BoundTo {
@@ -1093,13 +1099,12 @@ test BoundTo {
         }
 
         const Handle = struct {
-            const BoundToGeneration = BoundTo(currentGeneration, .{});
+            const BoundToGeneration = BoundTo(currentGeneration);
 
             arena_generation: *const u32,
             generation: BoundToGeneration,
 
-            fn currentGeneration(taken_in: *const anyopaque) u32 {
-                const generation: *const BoundToGeneration = @ptrCast(@alignCast(taken_in));
+            fn currentGeneration(generation: anytype) u32 {
                 const h: *const Handle = @fieldParentPtr("generation", generation);
                 return h.arena_generation.*;
             }
@@ -1130,56 +1135,12 @@ test BoundTo {
         try violation.expectNone();
 }
 
-/// An identity function that returns whatever `ptr` holds at the moment it is
-/// called, for binding to an identity that lives elsewhere and changes over
-/// time: a generation counter, an epoch, an owner slot.
-///
-/// `BoundTo(valueAt(&generation), .{})` binds the generation current at first
-/// use and fails once it moves on, which catches a stale handle surviving the
-/// reuse of whatever it referred to.
-pub fn valueAt(comptime ptr: anytype) fn (*const anyopaque) @typeInfo(@TypeOf(ptr)).pointer.child {
-    const info = @typeInfo(@TypeOf(ptr));
-
-    if (info != .pointer or info.pointer.size != .one)
-        @compileError("valueAt needs a single-item pointer, found " ++ @typeName(@TypeOf(ptr)));
-
-    return struct {
-        fn identity(_: *const anyopaque) info.pointer.child {
-            return ptr.*;
-        }
-    }.identity;
-}
-
-test valueAt {
-    violation.startCapture();
-    defer violation.stopCapture();
-
-    const Gen = struct {
-        var counter: u32 = 0;
-    };
-
-    // Test that the binding follows the pointee at the time of the call
-    Gen.counter = 1;
-    var b: ConfigurableBoundTo(valueAt(&Gen.counter), .{}, .{ .enabled = true }, .{}) = .unbound;
-    b.assertIdentity();
-
-    // Test that moving the generation on fails the stale binding
-    Gen.counter = 2;
-    b.assertIdentity();
-    try violation.expect();
-
-    // Test that releasing the stale binding lets it bind the new generation
-    b.unbind();
-    b.assertIdentity();
-    try violation.expectNone();
-}
-
-fn addressOf(self: *const anyopaque) *const anyopaque {
+fn addressOf(self: anytype) *const anyopaque {
     return self;
 }
 
 pub fn ConfigurablePinned(config: Config) type {
-    return ConfigurableBoundTo(addressOf, .{}, config, .{
+    return ConfigurableBoundTo(addressOf, config, .{
         .mismatch = "pinned value was copied or moved",
         .last_bind = "pinned at",
     });

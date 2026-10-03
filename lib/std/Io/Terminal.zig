@@ -25,10 +25,10 @@ pub const Effect = enum(u8) {
     hidden = 8,
     strikethrough = 9,
 
-    fn effects_code_windows(e: Effect, wa: Mode.WindowsApi) windows.WORD {
+    fn effectsCodeWindows(e: Effect) windows.WORD {
         return switch (e) {
+            .reset => unreachable,
             // Just follows theme with depreciated `.setColour()`
-            .reset => wa.reset_attributes,
             .bold => windows.FOREGROUND_BRIGHT_WHITE,
             .dim => windows.FOREGROUND_GREY,
 
@@ -59,15 +59,15 @@ pub const Color = enum(u8) {
     bright_cyan = 96,
     bright_white = 97,
 
-    fn foreground_code(c: Color) u8 {
+    fn foregroundCode(c: Color) u8 {
         return @backingInt(c);
     }
 
-    fn background_code(c: Color) u8 {
+    fn backgroundCode(c: Color) u8 {
         return @backingInt(c) + 10;
     }
 
-    fn foreground_code_windows(c: Color) windows.WORD {
+    fn foregroundCodeWindows(c: Color) windows.WORD {
         return switch (c) {
             .black => windows.FOREGROUND_BLACK,
             .red => windows.FOREGROUND_RED,
@@ -88,7 +88,7 @@ pub const Color = enum(u8) {
         };
     }
 
-    fn background_code_windows(c: Color) windows.WORD {
+    fn backgroundCodeWindows(c: Color) windows.WORD {
         return switch (c) {
             .black => windows.BACKGROUND_BLACK,
             .red => windows.BACKGROUND_RED,
@@ -115,29 +115,17 @@ pub const Style = struct {
     foreground_color: ?Color = null,
     background_color: ?Color = null,
 
-    pub fn from_color(c: Color) Style {
-        return Style{ .foreground_color = c };
-    }
-
-    pub fn from_background_color(c: Color) Style {
-        return Style{ .background_color = c };
-    }
-
-    pub fn from_effects(e: []const Effect) Style {
-        return Style{ .text_effects = e };
-    }
-
     pub fn new(fg: ?Color, bg: ?Color, effects: []const Effect) Style {
         return Style{ .foreground_color = fg, .background_color = bg, .text_effects = effects };
     }
 
-    fn is_empty(self: Style) bool {
-        return (self.foreground_color == null or self.background_color == null or self.text_effects == &.{});
+    fn isEmpty(self: Style) bool {
+        return (self.foreground_color == null and self.background_color == null and self.text_effects.len == 0);
     }
 
-    fn write_windows(self: Style, wa: Mode.WindowsApi, w: *std.Io.Writer) SetColorError!void {
-        const fg = if (self.foreground_color) |c| c.foreground_code_windows() else wa.reset_attributes & 0x000F;
-        const bg = if (self.background_color) |c| c.background_code_windows() else wa.reset_attributes & 0x00F0;
+    fn writeWindows(self: Style, wa: Mode.WindowsApi, w: *std.Io.Writer) SetColorError!void {
+        const fg = if (self.foreground_color) |c| c.foregroundCodeWindows() else wa.reset_attributes & 0x000F;
+        const bg = if (self.background_color) |c| c.backgroundCodeWindows() else wa.reset_attributes & 0x00F0;
         var effects: windows.WORD = 0x0000;
         var reset = false;
         for (self.text_effects) |e| {
@@ -145,13 +133,9 @@ pub const Style = struct {
                 reset = true;
                 break;
             }
-            effects |= e.effects_code_windows(wa);
+            effects |= e.effectsCodeWindows();
         }
-        const attributes: windows.WORD = if (reset) {
-            wa.reset_attributes;
-        } else {
-            fg | bg | effects;
-        };
+        const attributes: windows.WORD = if (reset) wa.reset_attributes else fg | bg | effects;
         try w.flush();
         var set_text_attribute = windows.CONSOLE.USER_IO.SET_TEXT_ATTRIBUTE(attributes);
         switch (try set_text_attribute.operate(wa.io, wa.file)) {
@@ -160,13 +144,13 @@ pub const Style = struct {
         }
     }
 
-    fn write_ansi(self: Style, w: *std.Io.Writer) SetColorError!void {
+    fn writeAnsi(self: Style, w: *std.Io.Writer) SetColorError!void {
         try w.writeAll("\x1b[");
         var first = true; // Means that no color/effect has been set yet
 
         for (self.text_effects) |e| try param(w, &first, @backingInt(e));
-        if (self.foreground_color) |f| try param(w, &first, f.foreground_code());
-        if (self.background_color) |b| try param(w, &first, b.background_code());
+        if (self.foreground_color) |f| try param(w, &first, f.foregroundCode());
+        if (self.background_color) |b| try param(w, &first, b.backgroundCode());
         try w.writeAll("m");
     }
 
@@ -181,11 +165,11 @@ pub const Style = struct {
 /// If using `Mode.windows_api` then italic, blink, hidden, and strikethrough
 /// are unsupported and do nothing.
 pub fn setStyle(t: Terminal, style: Style) SetColorError!void {
-    if (!style.is_empty()) {
+    if (!style.isEmpty()) {
         switch (t.mode) {
             .no_color => return,
-            .escape_codes => try style.write_ansi(t.writer),
-            .windows_api => |wa| try style.write_windows(wa, t.writer),
+            .escape_codes => try style.writeAnsi(t.writer),
+            .windows_api => |wa| try style.writeWindows(wa, t.writer),
         }
     }
 }

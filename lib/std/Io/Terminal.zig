@@ -126,6 +126,12 @@ pub const Style = struct {
     foreground_color: ?Color = null,
     background_color: ?Color = null,
 
+    pub const reset = Style{ .text_effects = .{ .reset = true } };
+
+    pub fn new_bold(fg: Color) Style {
+        return Style{ .foreground_color = fg, .text_effects = .{ .reset = true } };
+    }
+
     pub fn new(fg: ?Color, bg: ?Color, effects: Effects) Style {
         return Style{ .foreground_color = fg, .background_color = bg, .text_effects = effects };
     }

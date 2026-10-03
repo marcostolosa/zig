@@ -128,7 +128,7 @@ pub const Style = struct {
     pub const reset = Style{ .text_effects = .{ .reset = true } };
 
     pub fn new_bold(fg: Style.Color) Style {
-        return Style{ .foreground_color = fg, .text_effects = .{ .reset = true } };
+        return Style{ .foreground_color = fg, .text_effects = .{ .bold = true } };
     }
 
     pub fn new(fg: ?Style.Color, bg: ?Style.Color, effects: Style.Effects) Style {
@@ -165,7 +165,7 @@ pub const Style = struct {
         try w.writeAll("\x1b[");
         var first = true; // Means that no color/effect has been set yet
 
-        self.text_effects.writeAnsiParams(w, &first);
+        try self.text_effects.writeAnsiParams(w, &first);
         if (self.foreground_color) |f| try param(w, &first, f.foregroundCode());
         if (self.background_color) |b| try param(w, &first, b.backgroundCode());
         try w.writeAll("m");

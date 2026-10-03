@@ -55,6 +55,35 @@ pub const Config = struct {
     }
 };
 
+// A call to fail() would result in std.debug.panicExtra, making failures non testable.
+// In testing mode, while capturing, fail() will just increment this counter so we can
+// test against it. Capturing is off by default, so every other test build still panics.
+const violation = struct {
+    var capturing: bool = false;
+    var count: usize = 0;
+
+    fn startCapture() void {
+        capturing = true;
+        count = 0;
+    }
+
+    fn stopCapture() void {
+        capturing = false;
+        count = 0;
+    }
+
+    fn expect() !void {
+        try testing.expectEqual(1, count);
+        count = 0;
+    }
+
+    fn expectNone() !void {
+        try testing.expectEqual(0, count);
+    }
+};
+
+const FailReturn = if (builtin.is_test) void else noreturn;
+
 fn fail(
     comptime headline: []const u8,
     headline_args: anytype,
@@ -62,8 +91,13 @@ fn fail(
     trace_label_args: anytype,
     trace: anytype,
     ret_addr: usize,
-) noreturn {
+) FailReturn {
     @branchHint(.cold);
+
+    if (builtin.is_test and violation.capturing) {
+        violation.count += 1;
+        return;
+    }
 
     const stack_trace = trace.stackTrace();
     if (stack_trace.return_addresses.len == 0)
@@ -228,7 +262,7 @@ pub fn ConfigurableState(States: type, config: Config, messages: StateMessages) 
             self: *const S,
             comptime expected: []const Enum,
             ret_addr: usize,
-        ) noreturn {
+        ) FailReturn {
             @branchHint(.cold);
 
             const expected_list = comptime list: {
@@ -269,6 +303,9 @@ pub fn ConfigurableState(States: type, config: Config, messages: StateMessages) 
 }
 
 test ConfigurableState {
+    violation.startCapture();
+    defer violation.stopCapture();
+
     const Disabled = ConfigurableState(enum { a, b }, .{ .enabled = false }, .{});
 
     // Test that the size is 0
@@ -276,17 +313,29 @@ test ConfigurableState {
 
     // Test that once disabled the checks don't run
     var disabled: Disabled = .init(.a);
-    disabled.assertEql(.b); // Should fail but since it's disabled nothing should happen.
+    disabled.assertEql(.b);
     disabled.transition(.b);
-    disabled.assertEqlAnyOf(&.{.a}); // Same as before.
+    disabled.assertEqlAnyOf(&.{.a});
+    try violation.expectNone();
 
     // Test correct behavior
-    const Enabled = ConfigurableState(enum { a, b }, .{}, .{});
+    const Enabled = ConfigurableState(enum { a, b, c }, .{ .enabled = true }, .{});
     var enabled: Enabled = .init(.a);
     enabled.assertEql(.a);
     enabled.transition(.b);
-    enabled.assertEqlAnyOf(&.{.b});
+    enabled.assertEqlAnyOf(&.{ .a, .b });
+    try violation.expectNone();
 
+    // Test that a state other than the expected one fails
+    enabled.assertEql(.a);
+    try violation.expect();
+    enabled.assertEqlAnyOf(&.{ .a, .c });
+    try violation.expect();
+    enabled.transition(.c);
+    enabled.assertEqlAnyOf(&.{ .a, .b });
+    try violation.expect();
+
+    // Test that a tagged union is tracked by its tag
     const Body = union(enum) { none, content_length: u64, end };
     var body: Body = .{ .content_length = 3 };
     var tracked: ConfigurableState(Body, .{ .enabled = true }, .{}) = .init(body);
@@ -294,6 +343,9 @@ test ConfigurableState {
     body = .end;
     tracked.transition(body);
     tracked.assertEqlAnyOf(&.{ .none, .end });
+    try violation.expectNone();
+    tracked.assertEql(.content_length);
+    try violation.expect();
     try testing.expectEqual(@sizeOf(ConfigurableState(Body, .{ .enabled = false }, .{})), 0);
 }
 
@@ -389,7 +441,7 @@ pub fn ConfigurableObligations(config: Config, messages: ObligationsMessages) ty
             if (!config.enabled) return;
 
             if (self.counter == 0)
-                self.failUnsafe(.gte, 1, ret_addr); // Discharge expects at least 1 outstanding
+                return self.failUnsafe(.gte, 1, ret_addr); // Discharge expects at least 1 outstanding
 
             self.counter -= 1;
             self.last_discharge = trace;
@@ -413,7 +465,7 @@ pub fn ConfigurableObligations(config: Config, messages: ObligationsMessages) ty
                 self.failUnsafe(op, rhs, ret_addr);
         }
 
-        fn failUnsafe(self: *const O, op: std.math.CompareOperator, rhs: u32, ret_addr: usize) noreturn {
+        fn failUnsafe(self: *const O, op: std.math.CompareOperator, rhs: u32, ret_addr: usize) FailReturn {
             @branchHint(.cold);
 
             const too_many = switch (op) {
@@ -453,6 +505,9 @@ pub fn ConfigurableObligations(config: Config, messages: ObligationsMessages) ty
 }
 
 test ConfigurableObligations {
+    violation.startCapture();
+    defer violation.stopCapture();
+
     const Disabled = ConfigurableObligations(.{ .enabled = false }, .{});
 
     // Test that the size is 0
@@ -460,8 +515,9 @@ test ConfigurableObligations {
 
     // Test that once disabled the checks don't run
     var disabled: Disabled = .none;
-    disabled.assertCount(.gte, 1); // Should fail since nothing is outstanding.
-    disabled.discharge(); // Same as before.
+    disabled.assertCount(.gte, 1);
+    disabled.discharge();
+    try violation.expectNone();
 
     // Test correct behavior
     const Enabled = ConfigurableObligations(.{ .enabled = true }, .{});
@@ -481,6 +537,29 @@ test ConfigurableObligations {
     enabled.assertCount(.lt, 2);
     enabled.discharge();
     enabled.assertCount(.eq, 0);
+    try violation.expectNone();
+
+    // Test that discharging with nothing outstanding fails, and leaves the count at 0
+    enabled.discharge();
+    try violation.expect();
+    enabled.assertCount(.eq, 0);
+    try violation.expectNone();
+
+    // Test that every comparison operator fails when it does not hold
+    enabled.incur();
+    enabled.assertCount(.eq, 0);
+    try violation.expect();
+    enabled.assertCount(.lt, 1);
+    try violation.expect();
+    enabled.assertCount(.lte, 0);
+    try violation.expect();
+    enabled.assertCount(.gt, 1);
+    try violation.expect();
+    enabled.assertCount(.neq, 1);
+    try violation.expect();
+    enabled.discharge();
+    enabled.assertCount(.neq, 0);
+    try violation.expect();
 }
 
 /// Declares that what is taken must later be given back, and asserts the
@@ -646,6 +725,9 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
 }
 
 test ConfigurableLock {
+    violation.startCapture();
+    defer violation.stopCapture();
+
     const Disabled = ConfigurableLock(.{ .enabled = false }, .{});
 
     // Test that the size is 0
@@ -653,8 +735,10 @@ test ConfigurableLock {
 
     // Test that once disabled the checks don't run
     var disabled: Disabled = .{};
-    disabled.assertLocked(); // Should fail since nobody holds it.
-    disabled.unlock(); // Same as before.
+    disabled.assertLocked();
+    disabled.unlock();
+    disabled.unlockShared();
+    try violation.expectNone();
 
     // Test correct behavior
     const Enabled = ConfigurableLock(.{ .enabled = true }, .{});
@@ -672,6 +756,41 @@ test ConfigurableLock {
     enabled.assertLockedShared();
     enabled.unlockShared();
     enabled.assertUnlocked();
+    try violation.expectNone();
+
+    // Test that an idle lock can't be released or asserted held
+    enabled.unlock();
+    try violation.expect();
+    enabled.unlockShared();
+    try violation.expect();
+    enabled.assertLocked();
+    try violation.expect();
+    enabled.assertLockedShared();
+    try violation.expect();
+
+    // Test that an exclusive claim excludes every other claim
+    enabled.lock();
+    enabled.lock();
+    try violation.expect();
+    enabled.assertUnlocked();
+    try violation.expect();
+    enabled.lockShared(); // Fails, but still counts the reader.
+    try violation.expect();
+    enabled.unlock();
+    try violation.expect();
+    enabled.unlockShared();
+    enabled.assertUnlocked();
+    try violation.expectNone();
+
+    // Test that a shared claim excludes a mutator, and that releasing it twice is caught
+    enabled.lockShared();
+    enabled.lock();
+    try violation.expect();
+    enabled.unlock();
+    try violation.expect();
+    enabled.unlockShared();
+    enabled.unlockShared();
+    try violation.expect();
 
     // Test that the claims don't re-enter the mutex, which is not recursive
     var thread_safe: ConfigurableLock(.{ .enabled = true, .thread_safe = true }, .{}) = .{};
@@ -679,6 +798,14 @@ test ConfigurableLock {
     thread_safe.unlock();
     thread_safe.lockShared();
     thread_safe.unlockShared();
+    try violation.expectNone();
+
+    // Test that a failing check releases the mutex, or the next one would deadlock
+    thread_safe.unlock();
+    try violation.expect();
+    thread_safe.lock();
+    thread_safe.unlock();
+    try violation.expectNone();
 }
 
 /// Declares who may read and who may mutate, and asserts the program keeps to
@@ -800,7 +927,7 @@ pub fn ConfigurableBoundTo(
             defer mutex.unlock();
 
             const bound_identity = self.identity orelse
-                fail(messages.unbound ++ " (expected {any})", .{identity}, "", .{}, &BindTrace.empty, ret_addr);
+                return fail(messages.unbound ++ " (expected {any})", .{identity}, "", .{}, &BindTrace.empty, ret_addr);
 
             if (!std.meta.eql(bound_identity, identity))
                 self.failUnsafe(bound_identity, identity, ret_addr);
@@ -851,7 +978,7 @@ pub fn ConfigurableBoundTo(
             self.last_bind = trace;
         }
 
-        fn failUnsafe(self: *const B, bound_identity: Identity, found_identity: Identity, ret_addr: usize) noreturn {
+        fn failUnsafe(self: *const B, bound_identity: Identity, found_identity: Identity, ret_addr: usize) FailReturn {
             fail(
                 messages.mismatch ++ " (was {any}, now {any})",
                 .{ bound_identity, found_identity },
@@ -865,6 +992,9 @@ pub fn ConfigurableBoundTo(
 }
 
 test ConfigurableBoundTo {
+    violation.startCapture();
+    defer violation.stopCapture();
+
     const Id = struct {
         var current: usize = 0;
 
@@ -883,32 +1013,51 @@ test ConfigurableBoundTo {
     var disabled: Disabled = .unbound;
     disabled.assertIdentity();
     Id.current = 2;
-    disabled.assertIdentity(); // Should fail since the identity changed.
+    disabled.assertIdentity();
+    disabled.assertEql(3);
+    try violation.expectNone();
 
     // Test correct behavior
     const Enabled = ConfigurableBoundTo(Id.identity, .{}, .{ .enabled = true }, .{});
     Id.current = 7;
     var enabled: Enabled = .unbound;
 
+    // Test that `assertEql` never binds, so it fails before the first access
+    enabled.assertEql(7);
+    try violation.expect();
+
     enabled.assertIdentity(); // The first access binds.
     enabled.assertEql(7);
+    try violation.expectNone();
+
+    // Test that a different identity fails
+    Id.current = 8;
+    enabled.assertIdentity();
+    try violation.expect();
+    enabled.assertEql(8);
+    try violation.expect();
 
     // Test that a new identity needs the old binding released, or acknowledged
-    Id.current = 8;
     enabled.unbind();
     enabled.assertIdentity();
 
     Id.current = 9;
     enabled.rebindIdentity();
+    enabled.assertIdentity();
 
     enabled.rebind(10);
+    enabled.assertEql(10);
+    try violation.expectNone();
 
     // Test that an eager binding is in place before the first access
     var eager: Enabled = .init(11);
     try testing.expectEqual(11, eager.identity.?);
     eager.assertEql(11);
+    eager.assertIdentity(); // `Id.current` is still 9, so this checks rather than binds.
+    try violation.expect();
     Id.current = 11;
     eager.assertIdentity();
+    try violation.expectNone();
 }
 
 /// Asserts that every access happens under the same identity, where the
@@ -925,6 +1074,9 @@ pub fn BoundTo(identityFn: anytype, args: anytype) type {
 }
 
 test BoundTo {
+    violation.startCapture();
+    defer violation.stopCapture();
+
     const Arena = struct {
         generation: u32 = 0,
 
@@ -967,11 +1119,15 @@ test BoundTo {
 
     // `a` was not reset, so its handle is still valid.
     handle_into_a.generation.assertIdentity();
-    // `handle_into_b.generation.assertIdentity()` would now panic: it was taken
-    // in generation 0 and `b` is at 1. The panic reports where it was taken.
 
     var new_handle_into_b = b.handle();
     new_handle_into_b.generation.assertIdentity();
+
+    handle_into_b.generation.assertIdentity();
+    if (@as(Config, .{}).enabled)
+        try violation.expect()
+    else
+        try violation.expectNone();
 }
 
 /// An identity function that returns whatever `ptr` holds at the moment it is
@@ -995,6 +1151,9 @@ pub fn valueAt(comptime ptr: anytype) fn (*const anyopaque) @typeInfo(@TypeOf(pt
 }
 
 test valueAt {
+    violation.startCapture();
+    defer violation.stopCapture();
+
     const Gen = struct {
         var counter: u32 = 0;
     };
@@ -1004,10 +1163,15 @@ test valueAt {
     var b: ConfigurableBoundTo(valueAt(&Gen.counter), .{}, .{ .enabled = true }, .{}) = .unbound;
     b.assertIdentity();
 
-    // Test that moving the generation on needs the stale binding released
+    // Test that moving the generation on fails the stale binding
     Gen.counter = 2;
+    b.assertIdentity();
+    try violation.expect();
+
+    // Test that releasing the stale binding lets it bind the new generation
     b.unbind();
     b.assertIdentity();
+    try violation.expectNone();
 }
 
 fn addressOf(self: *const anyopaque) *const anyopaque {
@@ -1022,6 +1186,9 @@ pub fn ConfigurablePinned(config: Config) type {
 }
 
 test ConfigurablePinned {
+    violation.startCapture();
+    defer violation.stopCapture();
+
     const Disabled = ConfigurablePinned(.{ .enabled = false });
 
     // Test that the size is 0
@@ -1031,12 +1198,20 @@ test ConfigurablePinned {
     var disabled: Disabled = .unbound;
     disabled.assertIdentity();
     var disabled_copy = disabled;
-    disabled_copy.assertIdentity(); // Should fail since the value was copied.
+    disabled_copy.assertIdentity();
+    try violation.expectNone();
 
     // Test correct behavior
     const Enabled = ConfigurablePinned(.{ .enabled = true });
     var enabled: Enabled = .unbound;
     enabled.assertIdentity(); // The first access pins it here.
+    enabled.assertIdentity();
+    try violation.expectNone();
+
+    // Test that a copy fails
+    var copy = enabled;
+    copy.assertIdentity();
+    try violation.expect();
 
     // Test that releasing the pin lets the value move
     enabled.unbind();
@@ -1047,6 +1222,7 @@ test ConfigurablePinned {
     var moved_again = moved;
     moved_again.rebindIdentity();
     moved_again.assertIdentity();
+    try violation.expectNone();
 }
 
 /// Detects when an address-sensitive value has been copied or moved.

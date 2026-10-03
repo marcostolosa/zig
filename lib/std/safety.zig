@@ -59,7 +59,7 @@ pub const Config = struct {
     thread_safe: bool = !builtin.single_threaded,
     /// How many frames each captured trace keeps. 0 captures nothing, which
     /// is what a disabled primitive is forced to regardless of this value.
-    stack_trace_frames: usize = 6,
+    stack_trace_frames: usize = if (builtin.optimize == .debug) 6 else 0,
 
     fn traceFrames(config: Config) usize {
         return if (config.enabled and std.debug.sys_can_stack_trace)
@@ -1081,8 +1081,8 @@ test ConfigurableBoundTo {
 ///
 /// `identityFn` shall take `anytype` as its first parameter and it will be a
 /// `*const` pointer to the `BoundTo` specification instance itself, which you
-/// can pass to `@fieldParentPtr` to reach other values in the struct that
-/// contains it.
+/// can pass to `@alignCast(@fieldParentPtr(...))` to reach other values in the
+/// struct that contains it.
 ///
 /// A failure reports the bound and found identities, and where the binding
 /// was made.
@@ -1119,7 +1119,7 @@ test BoundTo {
             generation: BoundToGeneration,
 
             fn currentGeneration(generation: anytype) u32 {
-                const h: *const Handle = @fieldParentPtr("generation", generation);
+                const h: *const Handle = @alignCast(@fieldParentPtr("generation", generation));
                 return h.arena_generation.*;
             }
         };

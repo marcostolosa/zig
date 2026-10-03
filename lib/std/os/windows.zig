@@ -4515,6 +4515,7 @@ pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x4;
 pub const DISABLE_NEWLINE_AUTO_RETURN = 0x8;
 
 // Foreground Color Constants
+pub const FOREGROUND_BLACK = 0x0000;
 pub const FOREGROUND_BLUE = 0x0001;
 pub const FOREGROUND_GREEN = 0x0002;
 pub const FOREGROUND_CYAN = 0x0003;
@@ -4532,6 +4533,8 @@ pub const FOREGROUND_LIGHT_YELLOW = 0x000e;
 pub const FOREGROUND_WHITE = 0x000f;
 
 // Background Color Constants;
+pub const BACKGROUND_BLACK = 0x0000;
+pub const BACKGROUND_BLUE = 0x0010;
 pub const BACKGROUND_GREEN = 0x0020;
 pub const BACKGROUND_CYAN = 0x0030;
 pub const BACKGROUND_RED = 0x0040;

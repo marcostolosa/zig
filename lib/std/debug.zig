@@ -427,19 +427,11 @@ pub const CpuContextPtr = if (cpu_context.Native == noreturn) noreturn else *con
 /// Deprecated; use `std.safety.assert`.
 pub const assert = std.safety.assert;
 
-/// Invokes detectable illegal behavior when the provided slice is not mapped
-/// or lacks read permissions.
-pub fn assertReadable(slice: []const volatile u8) void {
-    if (!runtime_safety) return;
-    for (slice) |*byte| _ = byte.*;
-}
+/// Deprecated; use `std.safety.assertReadable`.
+pub const assertReadable = std.safety.assertReadable;
 
-/// Invokes detectable illegal behavior when the provided array is not aligned
-/// to the provided amount.
-pub fn assertAligned(ptr: anytype, comptime alignment: std.mem.Alignment) void {
-    const aligned_ptr: *align(alignment.toByteUnits()) const anyopaque = @ptrCast(@alignCast(ptr));
-    _ = aligned_ptr;
-}
+/// Deprecated; use `std.safety.assertAligned`.
+pub const assertAligned = std.safety.assertAligned;
 
 /// Equivalent to `@panic` but with a formatted message.
 pub fn panic(comptime format: []const u8, args: anytype) noreturn {

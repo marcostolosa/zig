@@ -34,6 +34,20 @@ pub fn assert(ok: bool) void {
     if (!ok) unreachable; // assertion failure
 }
 
+/// Invokes detectable illegal behavior when the provided slice is not mapped
+/// or lacks read permissions.
+pub fn assertReadable(slice: []const volatile u8) void {
+    if (!std.debug.runtime_safety) return;
+    for (slice) |*byte| _ = byte.*;
+}
+
+/// Invokes detectable illegal behavior when the provided array is not aligned
+/// to the provided amount.
+pub fn assertAligned(ptr: anytype, comptime alignment: std.mem.Alignment) void {
+    const aligned_ptr: *align(alignment.toByteUnits()) const anyopaque = @ptrCast(@alignCast(ptr));
+    _ = aligned_ptr;
+}
+
 /// Carries the configuration options and their default values for this
 /// module's primitives.
 pub const Config = struct {

@@ -556,7 +556,7 @@ fn struct_decl(
             if (namespace.doctests.get(fn_name)) |doctest_node| {
                 try w.file.get().doctests.put(gpa, member, doctest_node);
             }
-            const decl_index = try w.file.add_decl(member, parent_decl);
+            const decl_index = if (parent_decl != .none) try w.file.add_decl(member, parent_decl) else .none;
             const body = if (ast.nodeTag(member) == .fn_decl) ast.nodeData(member).node_and_node[1].toOptional() else .none;
             try w.fn_decl(&namespace.base, decl_index, body, full);
         },
@@ -566,14 +566,14 @@ fn struct_decl(
         .simple_var_decl,
         .aligned_var_decl,
         => {
-            const decl_index = try w.file.add_decl(member, parent_decl);
+            const decl_index = if (parent_decl != .none) try w.file.add_decl(member, parent_decl) else .none;
             try w.global_var_decl(&namespace.base, decl_index, ast.fullVarDecl(member).?);
         },
 
         .@"comptime",
         => try w.expr(&namespace.base, parent_decl, ast.nodeData(member).node),
 
-        .test_decl => try w.expr(&namespace.base, parent_decl, ast.nodeData(member).opt_token_and_node[1]),
+        .test_decl => try w.expr(&namespace.base, .none, ast.nodeData(member).opt_token_and_node[1]),
 
         else => unreachable,
     };

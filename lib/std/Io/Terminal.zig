@@ -13,126 +13,125 @@ const File = std.Io.File;
 writer: *Io.Writer,
 mode: Mode,
 
-pub const Effects = packed struct {
-    reset: bool = false,
-    bold: bool = false,
-    dim: bool = false,
-    italic: bool = false,
-    underline: bool = false,
-    slow_blink: bool = false,
-    fast_blink: bool = false,
-    reverse: bool = false,
-    hidden: bool = false,
-    strikethrough: bool = false,
-
-    fn isEmpty(e: Effects) bool {
-        return !(e.reset or e.bold or e.dim or e.italic or e.underline or e.slow_blink or e.fast_blink or e.reverse or e.hidden or e.strikethrough);
-    }
-
-    fn writeAnsiParams(e: Effects, w: *std.Io.Writer, first: *bool) !void {
-        if (e.reset) try Style.param(w, first, 0);
-        if (e.bold) try Style.param(w, first, 1);
-        if (e.dim) try Style.param(w, first, 2);
-        if (e.italic) try Style.param(w, first, 3);
-        if (e.underline) try Style.param(w, first, 4);
-        if (e.slow_blink) try Style.param(w, first, 5);
-        if (e.fast_blink) try Style.param(w, first, 6);
-        if (e.reverse) try Style.param(w, first, 7);
-        if (e.hidden) try Style.param(w, first, 8);
-        if (e.strikethrough) try Style.param(w, first, 9);
-    }
-
-    fn effectsCodeWindows(e: Effects) windows.WORD {
-        var effect_code: windows.WORD = 0;
-        if (e.bold) effect_code |= windows.FOREGROUND_BRIGHT_WHITE;
-        if (e.dim) effect_code |= windows.FOREGROUND_GREY;
-        if (e.underline) effect_code |= windows.COMMON_LVB_UNDERSCORE;
-        if (e.reverse) effect_code |= windows.COMMON_LVB_REVERSE_VIDEO;
-        return effect_code;
-    }
-};
-
-pub const Color = enum(u8) {
-    black = 30,
-    red = 31,
-    green = 32,
-    yellow = 33,
-    blue = 34,
-    magenta = 35,
-    cyan = 36,
-    white = 37,
-    bright_black = 90,
-    bright_red = 91,
-    bright_green = 92,
-    bright_yellow = 93,
-    bright_blue = 94,
-    bright_magenta = 95,
-    bright_cyan = 96,
-    bright_white = 97,
-
-    fn foregroundCode(c: Color) u8 {
-        return @backingInt(c);
-    }
-
-    fn backgroundCode(c: Color) u8 {
-        return @backingInt(c) + 10;
-    }
-
-    fn foregroundCodeWindows(c: Color) windows.WORD {
-        return switch (c) {
-            .black => windows.FOREGROUND_BLACK,
-            .red => windows.FOREGROUND_RED,
-            .green => windows.FOREGROUND_GREEN,
-            .yellow => windows.FOREGROUND_YELLOW,
-            .blue => windows.FOREGROUND_BLUE,
-            .magenta => windows.FOREGROUND_MAGENTA,
-            .cyan => windows.FOREGROUND_CYAN,
-            .white => windows.FOREGROUND_WHITE,
-            .bright_black => windows.FOREGROUND_GREY,
-            .bright_red => windows.FOREGROUND_BRIGHT_RED,
-            .bright_green => windows.FOREGROUND_BRIGHT_GREEN,
-            .bright_yellow => windows.FOREGROUND_BRIGHT_YELLOW,
-            .bright_blue => windows.FOREGROUND_BRIGHT_BLUE,
-            .bright_magenta => windows.FOREGROUND_BRIGHT_MAGENTA,
-            .bright_cyan => windows.FOREGROUND_BRIGHT_CYAN,
-            .bright_white => windows.FOREGROUND_BRIGHT_WHITE,
-        };
-    }
-
-    fn backgroundCodeWindows(c: Color) windows.WORD {
-        return switch (c) {
-            .black => windows.BACKGROUND_BLACK,
-            .red => windows.BACKGROUND_RED,
-            .green => windows.BACKGROUND_GREEN,
-            .yellow => windows.BACKGROUND_YELLOW,
-            .blue => windows.BACKGROUND_BLUE,
-            .magenta => windows.BACKGROUND_MAGENTA,
-            .cyan => windows.BACKGROUND_CYAN,
-            .white => windows.BACKGROUND_WHITE,
-            .bright_black => windows.BACKGROUND_GREY,
-            .bright_red => windows.BACKGROUND_BRIGHT_RED,
-            .bright_green => windows.BACKGROUND_BRIGHT_GREEN,
-            .bright_yellow => windows.BACKGROUND_BRIGHT_YELLOW,
-            .bright_blue => windows.BACKGROUND_BRIGHT_BLUE,
-            .bright_magenta => windows.BACKGROUND_BRIGHT_MAGENTA,
-            .bright_cyan => windows.BACKGROUND_BRIGHT_CYAN,
-            .bright_white => windows.BACKGROUND_BRIGHT_WHITE,
-        };
-    }
-};
-
 pub const Style = struct {
-    text_effects: Effects,
-    foreground_color: ?Color = null,
-    background_color: ?Color = null,
+    text_effects: Style.Effects,
+    foreground_color: ?Style.Color = null,
+    background_color: ?Style.Color = null,
 
+    pub const Effects = packed struct {
+        reset: bool = false,
+        bold: bool = false,
+        dim: bool = false,
+        italic: bool = false,
+        underline: bool = false,
+        slow_blink: bool = false,
+        fast_blink: bool = false,
+        reverse: bool = false,
+        hidden: bool = false,
+        strikethrough: bool = false,
+
+        fn isEmpty(e: Effects) bool {
+            return !(e.reset or e.bold or e.dim or e.italic or e.underline or e.slow_blink or e.fast_blink or e.reverse or e.hidden or e.strikethrough);
+        }
+
+        fn writeAnsiParams(e: Style.Effects, w: *std.Io.Writer, first: *bool) !void {
+            if (e.reset) try Style.param(w, first, 0);
+            if (e.bold) try Style.param(w, first, 1);
+            if (e.dim) try Style.param(w, first, 2);
+            if (e.italic) try Style.param(w, first, 3);
+            if (e.underline) try Style.param(w, first, 4);
+            if (e.slow_blink) try Style.param(w, first, 5);
+            if (e.fast_blink) try Style.param(w, first, 6);
+            if (e.reverse) try Style.param(w, first, 7);
+            if (e.hidden) try Style.param(w, first, 8);
+            if (e.strikethrough) try Style.param(w, first, 9);
+        }
+
+        fn effectsCodeWindows(e: Effects) windows.WORD {
+            var effect_code: windows.WORD = 0;
+            if (e.bold) effect_code |= windows.FOREGROUND_BRIGHT_WHITE;
+            if (e.dim) effect_code |= windows.FOREGROUND_GREY;
+            if (e.underline) effect_code |= windows.COMMON_LVB_UNDERSCORE;
+            if (e.reverse) effect_code |= windows.COMMON_LVB_REVERSE_VIDEO;
+            return effect_code;
+        }
+    };
+
+    pub const Color = enum(u8) {
+        black = 30,
+        red = 31,
+        green = 32,
+        yellow = 33,
+        blue = 34,
+        magenta = 35,
+        cyan = 36,
+        white = 37,
+        bright_black = 90,
+        bright_red = 91,
+        bright_green = 92,
+        bright_yellow = 93,
+        bright_blue = 94,
+        bright_magenta = 95,
+        bright_cyan = 96,
+        bright_white = 97,
+
+        fn foregroundCode(c: Style.Color) u8 {
+            return @backingInt(c);
+        }
+
+        fn backgroundCode(c: Style.Color) u8 {
+            return @backingInt(c) + 10;
+        }
+
+        fn foregroundCodeWindows(c: Style.Color) windows.WORD {
+            return switch (c) {
+                .black => windows.FOREGROUND_BLACK,
+                .red => windows.FOREGROUND_RED,
+                .green => windows.FOREGROUND_GREEN,
+                .yellow => windows.FOREGROUND_YELLOW,
+                .blue => windows.FOREGROUND_BLUE,
+                .magenta => windows.FOREGROUND_MAGENTA,
+                .cyan => windows.FOREGROUND_CYAN,
+                .white => windows.FOREGROUND_WHITE,
+                .bright_black => windows.FOREGROUND_GREY,
+                .bright_red => windows.FOREGROUND_BRIGHT_RED,
+                .bright_green => windows.FOREGROUND_BRIGHT_GREEN,
+                .bright_yellow => windows.FOREGROUND_BRIGHT_YELLOW,
+                .bright_blue => windows.FOREGROUND_BRIGHT_BLUE,
+                .bright_magenta => windows.FOREGROUND_BRIGHT_MAGENTA,
+                .bright_cyan => windows.FOREGROUND_BRIGHT_CYAN,
+                .bright_white => windows.FOREGROUND_BRIGHT_WHITE,
+            };
+        }
+
+        fn backgroundCodeWindows(c: Style.Color) windows.WORD {
+            return switch (c) {
+                .black => windows.BACKGROUND_BLACK,
+                .red => windows.BACKGROUND_RED,
+                .green => windows.BACKGROUND_GREEN,
+                .yellow => windows.BACKGROUND_YELLOW,
+                .blue => windows.BACKGROUND_BLUE,
+                .magenta => windows.BACKGROUND_MAGENTA,
+                .cyan => windows.BACKGROUND_CYAN,
+                .white => windows.BACKGROUND_WHITE,
+                .bright_black => windows.BACKGROUND_GREY,
+                .bright_red => windows.BACKGROUND_BRIGHT_RED,
+                .bright_green => windows.BACKGROUND_BRIGHT_GREEN,
+                .bright_yellow => windows.BACKGROUND_BRIGHT_YELLOW,
+                .bright_blue => windows.BACKGROUND_BRIGHT_BLUE,
+                .bright_magenta => windows.BACKGROUND_BRIGHT_MAGENTA,
+                .bright_cyan => windows.BACKGROUND_BRIGHT_CYAN,
+                .bright_white => windows.BACKGROUND_BRIGHT_WHITE,
+            };
+        }
+    };
     pub const reset = Style{ .text_effects = .{ .reset = true } };
 
-    pub fn new_bold(fg: Color) Style {
+    pub fn new_bold(fg: Style.Color) Style {
         return Style{ .foreground_color = fg, .text_effects = .{ .reset = true } };
     }
 
-    pub fn new(fg: ?Color, bg: ?Color, effects: Effects) Style {
+    pub fn new(fg: ?Style.Color, bg: ?Style.Color, effects: Style.Effects) Style {
         return Style{ .foreground_color = fg, .background_color = bg, .text_effects = effects };
     }
 
@@ -240,7 +239,8 @@ pub const Mode = union(enum) {
 
 pub const SetColorError = Io.Cancelable || Io.UnexpectedError || Io.Writer.Error;
 
-pub const OldColor = enum {
+/// Depricated; See `Style.Color`
+pub const Color = enum {
     black,
     red,
     green,
@@ -262,8 +262,8 @@ pub const OldColor = enum {
     reset,
 };
 
-/// DEPRECIATED: Use 'Terminal.setStyle()' instead
-pub fn setColor(t: Terminal, color: OldColor) SetColorError!void {
+/// Depricated; See 'Terminal.setStyle()'
+pub fn setColor(t: Terminal, color: Color) SetColorError!void {
     switch (t.mode) {
         .no_color => return,
         .escape_codes => {

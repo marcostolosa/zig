@@ -2277,7 +2277,7 @@ const UnpackResult = struct {
         var fetch: Fetch = undefined;
         fetch.parent_manifest_ast = null;
         fetch.location_tok = 0;
-        try fetch.error_bundle.init(gpa);
+        fetch.error_bundle = try .init(gpa);
         defer fetch.error_bundle.deinit();
 
         // validate errors with filter

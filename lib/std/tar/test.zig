@@ -511,3 +511,65 @@ test "case sensitivity" {
     try testing.expect((try root.dir.statFile(io, "alacritty/darkermatrix.yml", .{})).kind == .file);
     try testing.expect((try root.dir.statFile(io, "alacritty/Darkermatrix.yml", .{})).kind == .file);
 }
+
+// Builds a single-entry archive with `name` stored verbatim in the header, so
+// that names a tar writer would normally reject can be exercised.
+fn archiveWithName(buffer: []u8, name: []const u8) ![]const u8 {
+    var w: std.Io.Writer = .fixed(buffer);
+    var header: tar.Writer.Header = .init(.regular);
+    try header.setPath("", name);
+    try header.setSize(0);
+    try header.write(&w);
+    const end_of_archive: [1024]u8 = @splat(0);
+    try w.writeAll(&end_of_archive);
+    return w.buffered();
+}
+
+test "unusable file names are diagnosed, not fatal" {
+    const io = testing.io;
+    // Absolute and climbing names are rejected outright. "." and "a/.." name
+    // the extraction directory itself, which is not a file.
+    for ([_][]const u8{ "/evil", "../evil", "a/../..", ".", "a/.." }) |name| {
+        var buffer: [2048]u8 = undefined;
+        const data = try archiveWithName(&buffer, name);
+
+        var r: std.Io.Reader = .fixed(data);
+        var root = std.testing.tmpDir(.{});
+        defer root.cleanup();
+
+        var diagnostics: tar.Diagnostics = .{ .allocator = testing.allocator };
+        defer diagnostics.deinit();
+        try tar.extract(io, root.dir, &r, .{ .mode_mode = .ignore, .diagnostics = &diagnostics });
+
+        try testing.expectEqual(@as(usize, 1), diagnostics.errors.items.len);
+        try testing.expectEqualStrings(name, diagnostics.errors.items[0].invalid_file_name.file_name);
+    }
+}
+
+test "strip_components still reports components outside the stripped prefix" {
+    const io = testing.io;
+    var buffer: [2048]u8 = undefined;
+    const data = try archiveWithName(&buffer, "a/file");
+
+    // 2 consumes every component and 3 is deeper than the path. Both mean the
+    // entry lies outside the requested prefix, not that its name is bad.
+    for ([_]u32{ 2, 3 }) |strip| {
+        var r: std.Io.Reader = .fixed(data);
+        var root = std.testing.tmpDir(.{});
+        defer root.cleanup();
+
+        var diagnostics: tar.Diagnostics = .{ .allocator = testing.allocator };
+        defer diagnostics.deinit();
+        try tar.extract(io, root.dir, &r, .{
+            .mode_mode = .ignore,
+            .strip_components = strip,
+            .diagnostics = &diagnostics,
+        });
+
+        try testing.expectEqual(@as(usize, 1), diagnostics.errors.items.len);
+        try testing.expectEqualStrings(
+            "a/file",
+            diagnostics.errors.items[0].components_outside_stripped_prefix.file_name,
+        );
+    }
+}

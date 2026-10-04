@@ -51,6 +51,10 @@ pub const Diagnostics = struct {
         components_outside_stripped_prefix: struct {
             file_name: []const u8,
         },
+        /// Empty, absolute, or resolving to the extraction directory or above it.
+        invalid_file_name: struct {
+            file_name: []const u8,
+        },
     };
 
     fn findRoot(d: *Diagnostics, kind: FileKind, path: []const u8) !void {
@@ -110,6 +114,9 @@ pub const Diagnostics = struct {
                     d.allocator.free(info.file_name);
                 },
                 .components_outside_stripped_prefix => |info| {
+                    d.allocator.free(info.file_name);
+                },
+                .invalid_file_name => |info| {
                     d.allocator.free(info.file_name);
                 },
             }
@@ -599,8 +606,20 @@ pub fn extract(io: Io, dir: Io.Dir, reader: *Io.Reader, options: ExtractOptions)
     });
 
     while (try it.next()) |file| {
-        const n = sanitizePath(&sanitize_buffer, file.name, options.strip_components) catch 0;
+        const n = sanitizePath(&sanitize_buffer, file.name, options.strip_components) catch |err| switch (err) {
+            error.Invalid => {
+                try diagnoseInvalidFileName(options, file.name);
+                continue;
+            },
+            error.StrippedPrefixTooDeep => 0,
+        };
         if (n == 0 and file.kind != .directory) {
+            // Without stripping this means a name like "." or "a/..", which
+            // resolves to the extraction directory itself.
+            if (options.strip_components == 0) {
+                try diagnoseInvalidFileName(options, file.name);
+                continue;
+            }
             const d = options.diagnostics orelse return error.TarComponentsOutsideStrippedPrefix;
             try d.errors.append(d.allocator, .{ .components_outside_stripped_prefix = .{
                 .file_name = try d.allocator.dupe(u8, file.name),
@@ -647,6 +666,13 @@ pub fn extract(io: Io, dir: Io.Dir, reader: *Io.Reader, options: ExtractOptions)
     }
 }
 
+fn diagnoseInvalidFileName(options: ExtractOptions, file_name: []const u8) !void {
+    const d = options.diagnostics orelse return error.TarInvalidFileName;
+    try d.errors.append(d.allocator, .{ .invalid_file_name = .{
+        .file_name = try d.allocator.dupe(u8, file_name),
+    } });
+}
+
 fn createDirAndFile(io: Io, dir: Io.Dir, file_name: []const u8, permissions: Io.File.Permissions) !Io.File {
     const fs_file = dir.createFile(io, file_name, .{ .exclusive = true, .permissions = permissions }) catch |err| {
         if (err == error.FileNotFound) {
@@ -673,7 +699,9 @@ fn createDirAndSymlink(io: Io, dir: Io.Dir, link_name: []const u8, file_name: []
     };
 }
 
-fn sanitizePath(buffer: []u8, path: []const u8, strip_components: u32) error{Invalid}!usize {
+/// `error.Invalid` means the path itself is unusable. `error.StrippedPrefixTooDeep`
+/// means `strip_components` is deeper than the path.
+fn sanitizePath(buffer: []u8, path: []const u8, strip_components: u32) error{ Invalid, StrippedPrefixTooDeep }!usize {
     if (path.len == 0 or path[0] == '/') return error.Invalid;
     var i: usize = 0;
     var c = strip_components;
@@ -700,7 +728,7 @@ fn sanitizePath(buffer: []u8, path: []const u8, strip_components: u32) error{Inv
         @memcpy(buffer[i..][0..component.len], component);
         i += component.len;
     }
-    if (c > 0) return error.Invalid;
+    if (c > 0) return error.StrippedPrefixTooDeep;
     return i;
 }
 
@@ -722,7 +750,7 @@ test sanitizePath {
     try testSanitizePath("c", "a/b/c", 2);
     try testSanitizePath("", "a/b/c", 3);
     try testSanitizePath("", "a/b/c/../../..", 0);
-    try testSanitizePathError(error.Invalid, "a/b/c", 4);
+    try testSanitizePathError(error.StrippedPrefixTooDeep, "a/b/c", 4);
     try testSanitizePathError(error.Invalid, "..", 0);
     try testSanitizePathError(error.Invalid, "a/b/../../..", 0);
     try testSanitizePathError(error.Invalid, "a/b/../..", 1);

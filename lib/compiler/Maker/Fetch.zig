@@ -1473,7 +1473,9 @@ fn unpackTarball(f: *Fetch, out_dir: Io.Dir, reader: *Io.Reader) RunError!Unpack
                 .unable_to_create_file => |i| res.unableToCreateFile(stripRoot(i.file_name, res.root_dir), i.code),
                 .unable_to_create_sym_link => |i| res.unableToCreateSymLink(stripRoot(i.file_name, res.root_dir), i.link_name, i.code),
                 .unsupported_file_type => |i| res.unsupportedFileType(stripRoot(i.file_name, res.root_dir), @backingInt(i.file_type)),
-                .components_outside_stripped_prefix => unreachable, // unreachable with strip_components = 0
+                .invalid_file_name => |i| res.invalidFileName(stripRoot(i.file_name, res.root_dir)),
+                // Nothing can fall outside a prefix that was not stripped.
+                .components_outside_stripped_prefix => unreachable,
             }
         }
     }
@@ -2138,12 +2140,16 @@ const UnpackResult = struct {
             file_name: []const u8,
             file_type: u8,
         },
+        invalid_file_name: struct {
+            file_name: []const u8,
+        },
 
         fn excluded(self: Error, filter: Filter) bool {
             const file_name = switch (self) {
                 .unable_to_create_file => |info| info.file_name,
                 .unable_to_create_sym_link => |info| info.file_name,
                 .unsupported_file_type => |info| info.file_name,
+                .invalid_file_name => |info| info.file_name,
             };
             return !filter.includePath(file_name);
         }
@@ -2179,6 +2185,13 @@ const UnpackResult = struct {
         self.errors[self.errors_count] = .{ .unsupported_file_type = .{
             .file_name = file_name,
             .file_type = file_type,
+        } };
+        self.errors_count += 1;
+    }
+
+    fn invalidFileName(self: *UnpackResult, file_name: []const u8) void {
+        self.errors[self.errors_count] = .{ .invalid_file_name = .{
+            .file_name = file_name,
         } };
         self.errors_count += 1;
     }
@@ -2225,6 +2238,13 @@ const UnpackResult = struct {
                         }),
                     }));
                 },
+                .invalid_file_name => |info| {
+                    eb.extra.items[note_i] = @backingInt(try eb.addErrorMessage(.{
+                        .msg = try eb.printString("file '{s}' has an invalid name: it is absolute or points outside the package", .{
+                            info.file_name,
+                        }),
+                    }));
+                },
             }
             note_i += 1;
         }
@@ -2240,13 +2260,14 @@ const UnpackResult = struct {
 
         // fill UnpackResult with errors
         var res: UnpackResult = .{};
-        try res.allocErrors(arena, 4, "unable to unpack");
+        try res.allocErrors(arena, 5, "unable to unpack");
         try std.testing.expectEqual(0, res.errors_count);
         res.unableToCreateFile("dir1/file1", error.File1);
         res.unableToCreateSymLink("dir2/file2", "filename", error.SymlinkError);
         res.unableToCreateFile("dir1/file3", error.File3);
         res.unsupportedFileType("dir2/file4", 'x');
-        try std.testing.expectEqual(4, res.errors_count);
+        res.invalidFileName("dir2/file5");
+        try std.testing.expectEqual(5, res.errors_count);
 
         // create filter, includes dir2, excludes dir1
         var filter: Filter = .{};
@@ -2272,6 +2293,7 @@ const UnpackResult = struct {
             \\error: unable to unpack
             \\    note: unable to create symlink from 'dir2/file2' to 'filename': SymlinkError
             \\    note: file 'dir2/file4' has unsupported type 'x'
+            \\    note: file 'dir2/file5' has an invalid name: it is absolute or points outside the package
             \\
         , aw.written());
     }

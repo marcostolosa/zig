@@ -56,7 +56,7 @@ pub const Config = struct {
     enabled: bool = std.lang.Optimize.runtimeSafety(builtin.optimize),
     /// Serializes the checks through the type's `CheckMutex`, so that they do
     /// not race when values are shared between threads.
-    thread_safe: bool = !builtin.single_threaded,
+    thread_safe: bool = false,
     /// How many frames each captured trace keeps. 0 captures nothing, which
     /// is what a disabled primitive is forced to regardless of this value.
     stack_trace_frames: usize = if (builtin.optimize == .debug) 6 else 0,

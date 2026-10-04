@@ -407,6 +407,20 @@ test "base64 url_safe_no_pad" {
     try comptime testAllApis(url_safe_no_pad, "comptime", "Y29tcHRpbWU");
 }
 
+test "base64 standard_no_pad" {
+    @setEvalBranchQuota(8000);
+    try testAllApis(standard_no_pad, "f", "Zg");
+    try comptime testAllApis(standard_no_pad, "comptime", "Y29tcHRpbWU");
+    try testError(standard_no_pad, "Zg==", error.InvalidCharacter);
+}
+
+test "base64 url_safe" {
+    @setEvalBranchQuota(8000);
+    try testAllApis(url_safe, "f", "Zg==");
+    try comptime testAllApis(url_safe, "comptime", "Y29tcHRpbWU=");
+    try testError(url_safe, "Zg", error.InvalidPadding);
+}
+
 fn testBase64() !void {
     const codecs = standard;
 

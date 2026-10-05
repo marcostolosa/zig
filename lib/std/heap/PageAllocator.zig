@@ -10,6 +10,7 @@ const assert = std.debug.assert;
 const windows = std.os.windows;
 const ntdll = std.os.windows.ntdll;
 const posix = std.posix;
+const uefi = std.os.uefi;
 const page_size_min = std.heap.page_size_min;
 
 pub const vtable: Allocator.VTable = .{
@@ -105,6 +106,41 @@ pub fn map(n: usize, alignment: Alignment) ?[*]u8 {
         _ = ntdll.NtFreeVirtualMemory(current_process, @ptrCast(&base_addr), &size, .{ .RELEASE = true });
 
         return null;
+    } else if (native_os == .uefi) {
+        const boot_services = uefi.system_table.boot_services.?;
+
+        const page_aligned_len = mem.alignForward(usize, n, page_size);
+        const max_drop_len = alignment_bytes -| page_size;
+        const overalloc_len = page_aligned_len + max_drop_len;
+        const overalloc_pages = overalloc_len / page_size;
+
+        const base_pages = boot_services.allocatePages(.any, .loader_data, overalloc_pages) catch return null;
+        const base_ptr: [*]u8 = @ptrCast(base_pages.ptr);
+
+        const result_ptr = mem.alignPointer(base_ptr, alignment_bytes).?;
+
+        const drop_pages = (result_ptr - base_ptr) / page_size;
+        const keep_pages = page_aligned_len / page_size;
+
+        if (drop_pages != 0) {
+            boot_services.freePages(base_pages[0..drop_pages]) catch |err| switch (err) {
+                error.InvalidParameter, error.NotFound => {
+                    return null;
+                },
+                error.Unexpected => unreachable,
+            };
+        }
+
+        if (drop_pages + keep_pages < base_pages.len) {
+            boot_services.freePages(base_pages[drop_pages + keep_pages ..]) catch |err| switch (err) {
+                error.InvalidParameter, error.NotFound => {
+                    return null;
+                },
+                error.Unexpected => unreachable,
+            };
+        }
+
+        return @ptrCast(@alignCast(result_ptr));
     }
 
     const page_aligned_len = mem.alignForward(usize, n, page_size);
@@ -190,6 +226,14 @@ pub fn unmap(memory: []align(page_size_min) u8) void {
         var base_addr: ?*anyopaque = memory.ptr;
         var region_size: windows.SIZE_T = 0;
         _ = ntdll.NtFreeVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&base_addr), &region_size, .{ .RELEASE = true });
+    } else if (native_os == .uefi) {
+        const page_aligned_len = mem.alignForward(usize, memory.len, std.heap.pageSize());
+        const page_aligned_mem: []align(4096) uefi.Page = @ptrCast(@alignCast(memory.ptr[0..page_aligned_len]));
+
+        uefi.system_table.boot_services.?.freePages(page_aligned_mem) catch |err| switch (err) {
+            error.InvalidParameter, error.NotFound => {},
+            error.Unexpected => unreachable,
+        };
     } else {
         const page_aligned_len = mem.alignForward(usize, memory.len, std.heap.pageSize());
         posix.munmap(memory.ptr[0..page_aligned_len]);
@@ -220,6 +264,17 @@ pub fn realloc(uncasted_memory: []u8, alignment: Alignment, new_len: usize, may_
             return memory.ptr;
         }
         return null;
+    } else if (native_os == .uefi) {
+        const boot_services = uefi.system_table.boot_services.?;
+        const old_pages = mem.alignForward(usize, memory.len, page_size) / page_size;
+        const new_pages = new_size_aligned / page_size;
+
+        if (new_pages == old_pages) return memory.ptr;
+        if (new_pages > old_pages) return null;
+
+        const base: [*]align(4096) uefi.Page = @ptrCast(memory.ptr);
+        boot_services.freePages(base[new_pages..old_pages]) catch return null;
+        return memory.ptr;
     }
 
     const page_aligned_len = mem.alignForward(usize, memory.len, page_size);

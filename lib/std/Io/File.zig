@@ -101,6 +101,12 @@ pub fn stdout() File {
             .handle = std.os.windows.peb().ProcessParameters.hStdOutput,
             .flags = .{ .nonblocking = false },
         },
+        .uefi => .{
+            .handle = .{
+                .text_out = std.os.uefi.system_table.con_out.?,
+            },
+            .flags = .{ .nonblocking = false },
+        },
         else => .{
             .handle = std.posix.STDOUT_FILENO,
             .flags = .{ .nonblocking = false },
@@ -114,6 +120,12 @@ pub fn stderr() File {
             .handle = std.os.windows.peb().ProcessParameters.hStdError,
             .flags = .{ .nonblocking = false },
         },
+        .uefi => .{
+            .handle = .{
+                .text_out = std.os.uefi.system_table.std_err.?,
+            },
+            .flags = .{ .nonblocking = false },
+        },
         else => .{
             .handle = std.posix.STDERR_FILENO,
             .flags = .{ .nonblocking = false },
@@ -125,6 +137,12 @@ pub fn stdin() File {
     return switch (native_os) {
         .windows => .{
             .handle = std.os.windows.peb().ProcessParameters.hStdInput,
+            .flags = .{ .nonblocking = false },
+        },
+        .uefi => .{
+            .handle = .{
+                .text_in = std.os.uefi.system_table.con_in.?,
+            },
             .flags = .{ .nonblocking = false },
         },
         else => .{

@@ -25,7 +25,14 @@ fn AesGcm(comptime Aes: anytype) type {
         /// `ad`: The associated data to authenticate.
         /// `npub`: The nonce to use for encryption.
         /// `key`: The encryption key.
-        pub fn encrypt(c: []u8, tag: *[tag_length]u8, m: []const u8, ad: []const u8, npub: [nonce_length]u8, key: [key_length]u8) void {
+        pub fn encrypt(
+            c: []u8,
+            tag: *[tag_length]u8,
+            m: []const u8,
+            ad: []const u8,
+            npub: [nonce_length]u8,
+            key: *const [key_length]u8,
+        ) void {
             debug.assert(c.len == m.len);
             debug.assert(m.len <= 16 * ((1 << 32) - 2));
 
@@ -68,7 +75,14 @@ fn AesGcm(comptime Aes: anytype) type {
         /// Asserts `c.len == m.len`.
         ///
         /// Contents of `m` are undefined if an error is returned.
-        pub fn decrypt(m: []u8, c: []const u8, tag: [tag_length]u8, ad: []const u8, npub: [nonce_length]u8, key: [key_length]u8) AuthenticationError!void {
+        pub fn decrypt(
+            m: []u8,
+            c: []const u8,
+            tag: [tag_length]u8,
+            ad: []const u8,
+            npub: [nonce_length]u8,
+            key: *const [key_length]u8,
+        ) AuthenticationError!void {
             assert(c.len == m.len);
 
             const aes = Aes.initEnc(key);
@@ -123,7 +137,7 @@ test "Aes256Gcm - Empty message and no associated data" {
     var c: [m.len]u8 = undefined;
     var tag: [Aes256Gcm.tag_length]u8 = undefined;
 
-    Aes256Gcm.encrypt(&c, &tag, m, ad, nonce, key);
+    Aes256Gcm.encrypt(&c, &tag, m, ad, nonce, &key);
     try htest.assertEqual("6b6ff610a16fa4cd59f1fb7903154e92", &tag);
 }
 
@@ -135,7 +149,7 @@ test "Aes256Gcm - Associated data only" {
     var c: [m.len]u8 = undefined;
     var tag: [Aes256Gcm.tag_length]u8 = undefined;
 
-    Aes256Gcm.encrypt(&c, &tag, m, ad, nonce, key);
+    Aes256Gcm.encrypt(&c, &tag, m, ad, nonce, &key);
     try htest.assertEqual("262ed164c2dfb26e080a9d108dd9dd4c", &tag);
 }
 
@@ -148,8 +162,8 @@ test "Aes256Gcm - Message only" {
     var m2: [m.len]u8 = undefined;
     var tag: [Aes256Gcm.tag_length]u8 = undefined;
 
-    Aes256Gcm.encrypt(&c, &tag, m, ad, nonce, key);
-    try Aes256Gcm.decrypt(&m2, &c, tag, ad, nonce, key);
+    Aes256Gcm.encrypt(&c, &tag, m, ad, nonce, &key);
+    try Aes256Gcm.decrypt(&m2, &c, tag, ad, nonce, &key);
     try testing.expectEqualSlices(u8, m[0..], m2[0..]);
 
     try htest.assertEqual("5ca1642d90009fea33d01f78cf6eefaf01d539472f7c", &c);
@@ -165,8 +179,8 @@ test "Aes256Gcm - Message and associated data" {
     var m2: [m.len]u8 = undefined;
     var tag: [Aes256Gcm.tag_length]u8 = undefined;
 
-    Aes256Gcm.encrypt(&c, &tag, m, ad, nonce, key);
-    try Aes256Gcm.decrypt(&m2, &c, tag, ad, nonce, key);
+    Aes256Gcm.encrypt(&c, &tag, m, ad, nonce, &key);
+    try Aes256Gcm.decrypt(&m2, &c, tag, ad, nonce, &key);
     try testing.expectEqualSlices(u8, m[0..], m2[0..]);
 
     try htest.assertEqual("5ca1642d90009fea33d01f78cf6eefaf01", &c);

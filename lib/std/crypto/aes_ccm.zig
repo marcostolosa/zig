@@ -65,7 +65,7 @@ fn AesCcm(comptime BlockCipher: type, comptime tag_len: usize, comptime nonce_le
             m: []const u8,
             ad: []const u8,
             npub: [nonce_length]u8,
-            key: [key_length]u8,
+            key: *const [key_length]u8,
         ) void {
             assert(c.len == m.len);
 
@@ -118,7 +118,7 @@ fn AesCcm(comptime BlockCipher: type, comptime tag_len: usize, comptime nonce_le
             tag: [tag_length]u8,
             ad: []const u8,
             npub: [nonce_length]u8,
-            key: [key_length]u8,
+            key: *const [key_length]u8,
         ) AuthenticationError!void {
             assert(m.len == c.len);
 
@@ -276,7 +276,7 @@ test "Aes256Ccm8 - Encrypt decrypt round-trip" {
 
     Aes256Ccm8.encrypt(&c, &tag, m, "", nonce, key);
 
-    try Aes256Ccm8.decrypt(&m2, &c, tag, "", nonce, key);
+    try Aes256Ccm8.decrypt(&m2, &c, tag, "", nonce, &key);
 
     try testing.expectEqualSlices(u8, m[0..], m2[0..]);
 }
@@ -290,14 +290,14 @@ test "Aes256Ccm8 - Associated data" {
     var m2: [m.len]u8 = undefined;
     var tag: [Aes256Ccm8.tag_length]u8 = undefined;
 
-    Aes256Ccm8.encrypt(&c, &tag, m, ad, nonce, key);
+    Aes256Ccm8.encrypt(&c, &tag, m, ad, nonce, &key);
 
     try Aes256Ccm8.decrypt(&m2, &c, tag, ad, nonce, key);
     try testing.expectEqualSlices(u8, m[0..], m2[0..]);
 
     var m3: [m.len]u8 = undefined;
     const wrong_adata = "wrong data";
-    const result = Aes256Ccm8.decrypt(&m3, &c, tag, wrong_adata, nonce, key);
+    const result = Aes256Ccm8.decrypt(&m3, &c, tag, wrong_adata, nonce, &key);
     try testing.expectError(error.AuthenticationFailed, result);
 }
 
@@ -312,7 +312,7 @@ test "Aes256Ccm8 - Wrong key" {
 
     Aes256Ccm8.encrypt(&c, &tag, m, "", nonce, key);
 
-    const result = Aes256Ccm8.decrypt(&m2, &c, tag, "", nonce, wrong_key);
+    const result = Aes256Ccm8.decrypt(&m2, &c, tag, "", nonce, &wrong_key);
     try testing.expectError(error.AuthenticationFailed, result);
 }
 
@@ -328,7 +328,7 @@ test "Aes256Ccm8 - Corrupted ciphertext" {
 
     c[5] ^= 0xFF;
 
-    const result = Aes256Ccm8.decrypt(&m2, &c, tag, "", nonce, key);
+    const result = Aes256Ccm8.decrypt(&m2, &c, tag, "", nonce, &key);
     try testing.expectError(error.AuthenticationFailed, result);
 }
 
@@ -340,9 +340,9 @@ test "Aes256Ccm8 - Empty plaintext" {
     var m2: [m.len]u8 = undefined;
     var tag: [Aes256Ccm8.tag_length]u8 = undefined;
 
-    Aes256Ccm8.encrypt(&c, &tag, m, "", nonce, key);
+    Aes256Ccm8.encrypt(&c, &tag, m, "", nonce, &key);
 
-    try Aes256Ccm8.decrypt(&m2, &c, tag, "", nonce, key);
+    try Aes256Ccm8.decrypt(&m2, &c, tag, "", nonce, &key);
 
     try testing.expectEqual(@as(usize, 0), m2.len);
 }
@@ -355,9 +355,9 @@ test "Aes128Ccm8 - Basic functionality" {
     var m2: [m.len]u8 = undefined;
     var tag: [Aes128Ccm8.tag_length]u8 = undefined;
 
-    Aes128Ccm8.encrypt(&c, &tag, m, "", nonce, key);
+    Aes128Ccm8.encrypt(&c, &tag, m, "", nonce, &key);
 
-    try Aes128Ccm8.decrypt(&m2, &c, tag, "", nonce, key);
+    try Aes128Ccm8.decrypt(&m2, &c, tag, "", nonce, &key);
 
     try testing.expectEqualSlices(u8, m[0..], m2[0..]);
 }
@@ -370,11 +370,11 @@ test "Aes256Ccm16 - 16-byte tag" {
     var m2: [m.len]u8 = undefined;
     var tag: [Aes256Ccm16.tag_length]u8 = undefined;
 
-    Aes256Ccm16.encrypt(&c, &tag, m, "", nonce, key);
+    Aes256Ccm16.encrypt(&c, &tag, m, "", nonce, &key);
 
     try testing.expectEqual(@as(usize, 16), tag.len);
 
-    try Aes256Ccm16.decrypt(&m2, &c, tag, "", nonce, key);
+    try Aes256Ccm16.decrypt(&m2, &c, tag, "", nonce, &key);
 
     try testing.expectEqualSlices(u8, m[0..], m2[0..]);
 }
@@ -391,11 +391,11 @@ test "Aes256Ccm8 - Edge case short nonce" {
     var c: [m.len]u8 = undefined;
     var tag: [Aes256Ccm8_7.tag_length]u8 = undefined;
 
-    Aes256Ccm8_7.encrypt(&c, &tag, &m, "", nonce, key);
+    Aes256Ccm8_7.encrypt(&c, &tag, &m, "", nonce, &key);
 
     var m2: [c.len]u8 = undefined;
 
-    try Aes256Ccm8_7.decrypt(&m2, &c, tag, "", nonce, key);
+    try Aes256Ccm8_7.decrypt(&m2, &c, tag, "", nonce, &key);
     try testing.expectEqualSlices(u8, &m, &m2);
 }
 
@@ -410,11 +410,11 @@ test "Aes256Ccm8 - Edge case long nonce" {
     var c: [m.len]u8 = undefined;
     var tag: [Aes256Ccm8.tag_length]u8 = undefined;
 
-    Aes256Ccm8.encrypt(&c, &tag, &m, "", nonce, key);
+    Aes256Ccm8.encrypt(&c, &tag, &m, "", nonce, &key);
 
     var m2: [c.len]u8 = undefined;
 
-    try Aes256Ccm8.decrypt(&m2, &c, tag, "", nonce, key);
+    try Aes256Ccm8.decrypt(&m2, &c, tag, "", nonce, &key);
     try testing.expectEqualSlices(u8, &m, &m2);
 }
 
@@ -431,17 +431,17 @@ test "Aes256Ccm8 - With AAD and wrong AAD detection" {
     var c: [m.len]u8 = undefined;
     var tag: [Aes256Ccm8.tag_length]u8 = undefined;
 
-    Aes256Ccm8.encrypt(&c, &tag, &m, &ad, nonce, key);
+    Aes256Ccm8.encrypt(&c, &tag, &m, &ad, nonce, &key);
 
     var m2: [c.len]u8 = undefined;
 
-    try Aes256Ccm8.decrypt(&m2, &c, tag, &ad, nonce, key);
+    try Aes256Ccm8.decrypt(&m2, &c, tag, &ad, nonce, &key);
     try testing.expectEqualSlices(u8, &m, &m2);
 
     var wrong_ad: [32]u8 = undefined;
     _ = try hexToBytes(&wrong_ad, "0000000000000000000000000000000000000000000000000000000000000000");
     var m3: [c.len]u8 = undefined;
-    const result = Aes256Ccm8.decrypt(&m3, &c, tag, &wrong_ad, nonce, key);
+    const result = Aes256Ccm8.decrypt(&m3, &c, tag, &wrong_ad, nonce, &key);
     try testing.expectError(error.AuthenticationFailed, result);
 }
 
@@ -460,12 +460,12 @@ test "Aes256Ccm8 - Multi-block payload" {
     var c: [32]u8 = undefined;
     var tag: [Aes256Ccm8_12.tag_length]u8 = undefined;
 
-    Aes256Ccm8_12.encrypt(&c, &tag, &m, "", nonce, key);
+    Aes256Ccm8_12.encrypt(&c, &tag, &m, "", nonce, &key);
 
     // Decrypt and verify
     var m2: [32]u8 = undefined;
 
-    try Aes256Ccm8_12.decrypt(&m2, &c, tag, "", nonce, key);
+    try Aes256Ccm8_12.decrypt(&m2, &c, tag, "", nonce, &key);
     try testing.expectEqualSlices(u8, &m, &m2);
 }
 
@@ -490,12 +490,12 @@ test "Aes256Ccm8 - Multi-block with AAD" {
     var c: [48]u8 = undefined;
     var tag: [Aes256Ccm8_12.tag_length]u8 = undefined;
 
-    Aes256Ccm8_12.encrypt(&c, &tag, &m, &ad, nonce, key);
+    Aes256Ccm8_12.encrypt(&c, &tag, &m, &ad, nonce, &key);
 
     // Decrypt and verify
     var m2: [48]u8 = undefined;
 
-    try Aes256Ccm8_12.decrypt(&m2, &c, tag, &ad, nonce, key);
+    try Aes256Ccm8_12.decrypt(&m2, &c, tag, &ad, nonce, &key);
     try testing.expectEqualSlices(u8, &m, &m2);
 }
 
@@ -513,12 +513,12 @@ test "Aes256Ccm8 - Minimum nonce length" {
     var c: [m.len]u8 = undefined;
     var tag: [Aes256Ccm8_7.tag_length]u8 = undefined;
 
-    Aes256Ccm8_7.encrypt(&c, &tag, m, "", nonce, key);
+    Aes256Ccm8_7.encrypt(&c, &tag, m, "", nonce, &key);
 
     // Decrypt and verify
     var m2: [m.len]u8 = undefined;
 
-    try Aes256Ccm8_7.decrypt(&m2, &c, tag, "", nonce, key);
+    try Aes256Ccm8_7.decrypt(&m2, &c, tag, "", nonce, &key);
     try testing.expectEqualSlices(u8, m[0..], m2[0..]);
 }
 
@@ -534,12 +534,12 @@ test "Aes256Ccm8 - Maximum nonce length" {
     var c: [m.len]u8 = undefined;
     var tag: [Aes256Ccm8.tag_length]u8 = undefined;
 
-    Aes256Ccm8.encrypt(&c, &tag, m, "", nonce, key);
+    Aes256Ccm8.encrypt(&c, &tag, m, "", nonce, &key);
 
     // Decrypt and verify
     var m2: [m.len]u8 = undefined;
 
-    try Aes256Ccm8.decrypt(&m2, &c, tag, "", nonce, key);
+    try Aes256Ccm8.decrypt(&m2, &c, tag, "", nonce, &key);
     try testing.expectEqualSlices(u8, m[0..], m2[0..]);
 }
 
@@ -568,7 +568,7 @@ test "Aes128Ccm8 - RFC 3610 Packet Vector #1" {
     var c: [plaintext.len]u8 = undefined;
     var tag: [Aes128Ccm8_13.tag_length]u8 = undefined;
 
-    Aes128Ccm8_13.encrypt(&c, &tag, &plaintext, &ad, nonce, key);
+    Aes128Ccm8_13.encrypt(&c, &tag, &plaintext, &ad, nonce, &key);
 
     // Verify ciphertext matches RFC expected output
     try testing.expectEqualSlices(u8, &expected_ciphertext, &c);
@@ -578,7 +578,7 @@ test "Aes128Ccm8 - RFC 3610 Packet Vector #1" {
 
     // Decrypt and verify round-trip
     var m: [plaintext.len]u8 = undefined;
-    try Aes128Ccm8_13.decrypt(&m, &c, tag, &ad, nonce, key);
+    try Aes128Ccm8_13.decrypt(&m, &c, tag, &ad, nonce, &key);
     try testing.expectEqualSlices(u8, &plaintext, &m);
 }
 
@@ -605,7 +605,7 @@ test "Aes128Ccm8 - RFC 3610 Packet Vector #2" {
     var c: [plaintext.len]u8 = undefined;
     var tag: [Aes128Ccm8_13.tag_length]u8 = undefined;
 
-    Aes128Ccm8_13.encrypt(&c, &tag, &plaintext, &ad, nonce, key);
+    Aes128Ccm8_13.encrypt(&c, &tag, &plaintext, &ad, nonce, &key);
 
     // Verify ciphertext matches RFC expected output
     try testing.expectEqualSlices(u8, &expected_ciphertext, &c);
@@ -615,7 +615,7 @@ test "Aes128Ccm8 - RFC 3610 Packet Vector #2" {
 
     // Decrypt and verify round-trip
     var m: [plaintext.len]u8 = undefined;
-    try Aes128Ccm8_13.decrypt(&m, &c, tag, &ad, nonce, key);
+    try Aes128Ccm8_13.decrypt(&m, &c, tag, &ad, nonce, &key);
     try testing.expectEqualSlices(u8, &plaintext, &m);
 }
 
@@ -642,7 +642,7 @@ test "Aes128Ccm8 - RFC 3610 Packet Vector #3" {
     var c: [plaintext.len]u8 = undefined;
     var tag: [Aes128Ccm8_13.tag_length]u8 = undefined;
 
-    Aes128Ccm8_13.encrypt(&c, &tag, &plaintext, &ad, nonce, key);
+    Aes128Ccm8_13.encrypt(&c, &tag, &plaintext, &ad, nonce, &key);
 
     // Verify ciphertext matches RFC expected output
     try testing.expectEqualSlices(u8, &expected_ciphertext, &c);
@@ -652,7 +652,7 @@ test "Aes128Ccm8 - RFC 3610 Packet Vector #3" {
 
     // Decrypt and verify round-trip
     var m: [plaintext.len]u8 = undefined;
-    try Aes128Ccm8_13.decrypt(&m, &c, tag, &ad, nonce, key);
+    try Aes128Ccm8_13.decrypt(&m, &c, tag, &ad, nonce, &key);
     try testing.expectEqualSlices(u8, &plaintext, &m);
 }
 
@@ -681,7 +681,7 @@ test "Aes128Ccm4 - NIST SP 800-38C Example 1" {
     var c: [plaintext.len]u8 = undefined;
     var tag: [Aes128Ccm4_7.tag_length]u8 = undefined;
 
-    Aes128Ccm4_7.encrypt(&c, &tag, &plaintext, &ad, nonce, key);
+    Aes128Ccm4_7.encrypt(&c, &tag, &plaintext, &ad, nonce, &key);
 
     // Verify ciphertext matches NIST expected output
     try testing.expectEqualSlices(u8, &expected_ciphertext, &c);
@@ -691,7 +691,7 @@ test "Aes128Ccm4 - NIST SP 800-38C Example 1" {
 
     // Decrypt and verify round-trip
     var m: [plaintext.len]u8 = undefined;
-    try Aes128Ccm4_7.decrypt(&m, &c, tag, &ad, nonce, key);
+    try Aes128Ccm4_7.decrypt(&m, &c, tag, &ad, nonce, &key);
     try testing.expectEqualSlices(u8, &plaintext, &m);
 }
 
@@ -718,7 +718,7 @@ test "Aes128Ccm6 - NIST SP 800-38C Example 2" {
     var c: [plaintext.len]u8 = undefined;
     var tag: [Aes128Ccm6_8.tag_length]u8 = undefined;
 
-    Aes128Ccm6_8.encrypt(&c, &tag, &plaintext, &ad, nonce, key);
+    Aes128Ccm6_8.encrypt(&c, &tag, &plaintext, &ad, nonce, &key);
 
     // Verify ciphertext matches NIST expected output
     try testing.expectEqualSlices(u8, &expected_ciphertext, &c);
@@ -728,7 +728,7 @@ test "Aes128Ccm6 - NIST SP 800-38C Example 2" {
 
     // Decrypt and verify round-trip
     var m: [plaintext.len]u8 = undefined;
-    try Aes128Ccm6_8.decrypt(&m, &c, tag, &ad, nonce, key);
+    try Aes128Ccm6_8.decrypt(&m, &c, tag, &ad, nonce, &key);
     try testing.expectEqualSlices(u8, &plaintext, &m);
 }
 
@@ -755,7 +755,7 @@ test "Aes128Ccm8 - NIST SP 800-38C Example 3" {
     var c: [plaintext.len]u8 = undefined;
     var tag: [Aes128Ccm8_12.tag_length]u8 = undefined;
 
-    Aes128Ccm8_12.encrypt(&c, &tag, &plaintext, &ad, nonce, key);
+    Aes128Ccm8_12.encrypt(&c, &tag, &plaintext, &ad, nonce, &key);
 
     // Verify ciphertext matches NIST expected output
     try testing.expectEqualSlices(u8, &expected_ciphertext, &c);
@@ -765,7 +765,7 @@ test "Aes128Ccm8 - NIST SP 800-38C Example 3" {
 
     // Decrypt and verify round-trip
     var m: [plaintext.len]u8 = undefined;
-    try Aes128Ccm8_12.decrypt(&m, &c, tag, &ad, nonce, key);
+    try Aes128Ccm8_12.decrypt(&m, &c, tag, &ad, nonce, &key);
     try testing.expectEqualSlices(u8, &plaintext, &m);
 }
 
@@ -800,7 +800,7 @@ test "Aes128Ccm14 - NIST SP 800-38C Example 4" {
     var c: [plaintext.len]u8 = undefined;
     var tag: [Aes128Ccm14_13.tag_length]u8 = undefined;
 
-    Aes128Ccm14_13.encrypt(&c, &tag, &plaintext, &ad, nonce, key);
+    Aes128Ccm14_13.encrypt(&c, &tag, &plaintext, &ad, nonce, &key);
 
     // Verify ciphertext matches NIST expected output
     try testing.expectEqualSlices(u8, &expected_ciphertext, &c);
@@ -810,7 +810,7 @@ test "Aes128Ccm14 - NIST SP 800-38C Example 4" {
 
     // Decrypt and verify round-trip
     var m: [plaintext.len]u8 = undefined;
-    try Aes128Ccm14_13.decrypt(&m, &c, tag, &ad, nonce, key);
+    try Aes128Ccm14_13.decrypt(&m, &c, tag, &ad, nonce, &key);
     try testing.expectEqualSlices(u8, &plaintext, &m);
 }
 
@@ -836,14 +836,14 @@ test "Aes128Ccm0 - IEEE 802.15.4 Data Frame (Encryption-only)" {
     var c: [plaintext.len]u8 = undefined;
     var tag: [Aes128Ccm0.tag_length]u8 = undefined;
 
-    Aes128Ccm0.encrypt(&c, &tag, &plaintext, &ad, nonce, key);
+    Aes128Ccm0.encrypt(&c, &tag, &plaintext, &ad, nonce, &key);
 
     // Verify ciphertext matches IEEE expected output
     try testing.expectEqualSlices(u8, &expected_ciphertext, &c);
 
     // Decrypt and verify round-trip
     var m: [plaintext.len]u8 = undefined;
-    try Aes128Ccm0.decrypt(&m, &c, tag, &ad, nonce, key);
+    try Aes128Ccm0.decrypt(&m, &c, tag, &ad, nonce, &key);
     try testing.expectEqualSlices(u8, &plaintext, &m);
 }
 
@@ -856,9 +856,9 @@ test "Aes128Ccm0 - Zero-length plaintext with encryption-only" {
     var m2: [m.len]u8 = undefined;
     var tag: [Aes128Ccm0.tag_length]u8 = undefined;
 
-    Aes128Ccm0.encrypt(&c, &tag, m, ad, nonce, key);
+    Aes128Ccm0.encrypt(&c, &tag, m, ad, nonce, &key);
 
-    try Aes128Ccm0.decrypt(&m2, &c, tag, ad, nonce, key);
+    try Aes128Ccm0.decrypt(&m2, &c, tag, ad, nonce, &key);
 
     try testing.expectEqual(@as(usize, 0), m2.len);
 }
@@ -871,9 +871,9 @@ test "Aes256Ccm0 - Basic encryption-only round-trip" {
     var m2: [m.len]u8 = undefined;
     var tag: [Aes256Ccm0.tag_length]u8 = undefined;
 
-    Aes256Ccm0.encrypt(&c, &tag, m, "", nonce, key);
+    Aes256Ccm0.encrypt(&c, &tag, m, "", nonce, &key);
 
-    try Aes256Ccm0.decrypt(&m2, &c, tag, "", nonce, key);
+    try Aes256Ccm0.decrypt(&m2, &c, tag, "", nonce, &key);
 
     try testing.expectEqualSlices(u8, m[0..], m2[0..]);
 }
@@ -883,5 +883,5 @@ test "Aes256Ccm decryption of oversized ciphertext" {
     const nonce: [13]u8 = @splat(0);
     const tag: [Aes256Ccm16.tag_length]u8 = @splat(0);
     var buf: [65536]u8 = @splat(0);
-    try testing.expectError(error.AuthenticationFailed, Aes256Ccm16.decrypt(&buf, &buf, tag, "", nonce, key));
+    try testing.expectError(error.AuthenticationFailed, Aes256Ccm16.decrypt(&buf, &buf, tag, "", nonce, &key));
 }

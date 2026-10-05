@@ -138,7 +138,14 @@ fn AesSiv(comptime Aes: anytype) type {
         /// `ad`: Optional associated data
         /// `nonce`: Optional nonce (if provided, will be added as last AD component)
         /// `key`: Combined key (2x AES key size)
-        pub fn encrypt(c: []u8, tag: *[tag_length]u8, m: []const u8, ad: ?[]const u8, nonce: ?[]const u8, key: [key_length]u8) void {
+        pub fn encrypt(
+            c: []u8,
+            tag: *[tag_length]u8,
+            m: []const u8,
+            ad: ?[]const u8,
+            nonce: ?[]const u8,
+            key: *const [key_length]u8,
+        ) void {
             debug.assert(c.len == m.len);
 
             // Split key into K1 (for S2V) and K2 (for CTR)
@@ -180,7 +187,14 @@ fn AesSiv(comptime Aes: anytype) type {
         /// `ad`: Optional associated data (must match encryption)
         /// `nonce`: Optional nonce (must match encryption)
         /// `key`: Combined key (2x AES key size)
-        pub fn decrypt(m: []u8, c: []const u8, tag: [tag_length]u8, ad: ?[]const u8, nonce: ?[]const u8, key: [key_length]u8) AuthenticationError!void {
+        pub fn decrypt(
+            m: []u8,
+            c: []const u8,
+            tag: [tag_length]u8,
+            ad: ?[]const u8,
+            nonce: ?[]const u8,
+            key: *const [key_length]u8,
+        ) AuthenticationError!void {
             assert(c.len == m.len);
 
             // Split key into K1 (for S2V) and K2 (for CTR)

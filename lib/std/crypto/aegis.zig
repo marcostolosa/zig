@@ -61,8 +61,8 @@ pub const Aegis256_256 = Aegis256XGeneric(1, 256);
 
 /// `inline` to avoid needless binary bloat from generic instantiations since the arguments are
 /// usually comptime-known and the function is a trivial leaf function.
-inline fn repeat16u8(comptime count: usize, part: [16]u8) [16 * count]u8 {
-    const buf: [count][part.len]u8 = @splat(part);
+inline fn repeat16u8(comptime count: usize, part: *const [16]u8) [16 * count]u8 {
+    const buf: [count][part.len]u8 = @splat(part.*);
     const ptr: *const [16 * count]u8 = @ptrCast(&buf);
     return ptr.*;
 }
@@ -78,11 +78,13 @@ fn State128X(comptime degree: u7) type {
         const rate = aes_block_length * 2;
         const alignment = AesBlockVec.native_word_size;
 
-        fn init(key: [16]u8, nonce: [16]u8) State {
-            const c1 = AesBlockVec.fromBytes(&repeat16u8(degree, .{ 0xdb, 0x3d, 0x18, 0x55, 0x6d, 0xc2, 0x2f, 0xf1, 0x20, 0x11, 0x31, 0x42, 0x73, 0xb5, 0x28, 0xdd }));
-            const c2 = AesBlockVec.fromBytes(&repeat16u8(degree, .{ 0x0, 0x1, 0x01, 0x02, 0x03, 0x05, 0x08, 0x0d, 0x15, 0x22, 0x37, 0x59, 0x90, 0xe9, 0x79, 0x62 }));
+        fn init(key: *const [16]u8, nonce: [16]u8) State {
+            const c1value: [16]u8 = .{ 0xdb, 0x3d, 0x18, 0x55, 0x6d, 0xc2, 0x2f, 0xf1, 0x20, 0x11, 0x31, 0x42, 0x73, 0xb5, 0x28, 0xdd };
+            const c2value: [16]u8 = .{ 0x0, 0x1, 0x01, 0x02, 0x03, 0x05, 0x08, 0x0d, 0x15, 0x22, 0x37, 0x59, 0x90, 0xe9, 0x79, 0x62 };
+            const c1 = AesBlockVec.fromBytes(&repeat16u8(degree, &c1value));
+            const c2 = AesBlockVec.fromBytes(&repeat16u8(degree, &c2value));
             const key_block = AesBlockVec.fromBytes(&repeat16u8(degree, key));
-            const nonce_block = AesBlockVec.fromBytes(&repeat16u8(degree, nonce));
+            const nonce_block = AesBlockVec.fromBytes(&repeat16u8(degree, &nonce));
             const blocks = [8]AesBlockVec{
                 key_block.xorBlocks(nonce_block),
                 c1,
@@ -295,7 +297,14 @@ fn Aegis128XGeneric(comptime degree: u7, comptime tag_bits: u9) type {
         /// ad: Associated Data
         /// npub: public nonce
         /// k: private key
-        pub fn encrypt(c: []u8, tag: *[tag_length]u8, m: []const u8, ad: []const u8, npub: [nonce_length]u8, key: [key_length]u8) void {
+        pub fn encrypt(
+            c: []u8,
+            tag: *[tag_length]u8,
+            m: []const u8,
+            ad: []const u8,
+            npub: [nonce_length]u8,
+            key: *const [key_length]u8,
+        ) void {
             assert(c.len == m.len);
             var state = State.init(key, npub);
             var src: [block_length]u8 align(alignment) = undefined;
@@ -331,7 +340,14 @@ fn Aegis128XGeneric(comptime degree: u7, comptime tag_bits: u9) type {
         /// Asserts `c.len == m.len`.
         ///
         /// Contents of `m` are undefined if an error is returned.
-        pub fn decrypt(m: []u8, c: []const u8, tag: [tag_length]u8, ad: []const u8, npub: [nonce_length]u8, key: [key_length]u8) AuthenticationError!void {
+        pub fn decrypt(
+            m: []u8,
+            c: []const u8,
+            tag: [tag_length]u8,
+            ad: []const u8,
+            npub: [nonce_length]u8,
+            key: *const [key_length]u8,
+        ) AuthenticationError!void {
             assert(c.len == m.len);
             var state = State.init(key, npub);
             var src: [block_length]u8 align(alignment) = undefined;
@@ -373,13 +389,15 @@ fn State256X(comptime degree: u7) type {
         const rate = aes_block_length;
         const alignment = AesBlockVec.native_word_size;
 
-        fn init(key: [32]u8, nonce: [32]u8) State {
-            const c1 = AesBlockVec.fromBytes(&repeat16u8(degree, .{ 0xdb, 0x3d, 0x18, 0x55, 0x6d, 0xc2, 0x2f, 0xf1, 0x20, 0x11, 0x31, 0x42, 0x73, 0xb5, 0x28, 0xdd }));
-            const c2 = AesBlockVec.fromBytes(&repeat16u8(degree, .{ 0x0, 0x1, 0x01, 0x02, 0x03, 0x05, 0x08, 0x0d, 0x15, 0x22, 0x37, 0x59, 0x90, 0xe9, 0x79, 0x62 }));
-            const key_block1 = AesBlockVec.fromBytes(&repeat16u8(degree, key[0..16].*));
-            const key_block2 = AesBlockVec.fromBytes(&repeat16u8(degree, key[16..32].*));
-            const nonce_block1 = AesBlockVec.fromBytes(&repeat16u8(degree, nonce[0..16].*));
-            const nonce_block2 = AesBlockVec.fromBytes(&repeat16u8(degree, nonce[16..32].*));
+        fn init(key: *const [32]u8, nonce: [32]u8) State {
+            const c1value: [16]u8 = .{ 0xdb, 0x3d, 0x18, 0x55, 0x6d, 0xc2, 0x2f, 0xf1, 0x20, 0x11, 0x31, 0x42, 0x73, 0xb5, 0x28, 0xdd };
+            const c2value: [16]u8 = .{ 0x0, 0x1, 0x01, 0x02, 0x03, 0x05, 0x08, 0x0d, 0x15, 0x22, 0x37, 0x59, 0x90, 0xe9, 0x79, 0x62 };
+            const c1 = AesBlockVec.fromBytes(&repeat16u8(degree, &c1value));
+            const c2 = AesBlockVec.fromBytes(&repeat16u8(degree, &c2value));
+            const key_block1 = AesBlockVec.fromBytes(&repeat16u8(degree, key[0..16]));
+            const key_block2 = AesBlockVec.fromBytes(&repeat16u8(degree, key[16..32]));
+            const nonce_block1 = AesBlockVec.fromBytes(&repeat16u8(degree, nonce[0..16]));
+            const nonce_block2 = AesBlockVec.fromBytes(&repeat16u8(degree, nonce[16..32]));
             const kxn1 = key_block1.xorBlocks(nonce_block1);
             const kxn2 = key_block2.xorBlocks(nonce_block2);
             const blocks = [6]AesBlockVec{
@@ -590,7 +608,14 @@ fn Aegis256XGeneric(comptime degree: u7, comptime tag_bits: u9) type {
         /// ad: Associated Data
         /// npub: public nonce
         /// k: private key
-        pub fn encrypt(c: []u8, tag: *[tag_length]u8, m: []const u8, ad: []const u8, npub: [nonce_length]u8, key: [key_length]u8) void {
+        pub fn encrypt(
+            c: []u8,
+            tag: *[tag_length]u8,
+            m: []const u8,
+            ad: []const u8,
+            npub: [nonce_length]u8,
+            key: *const [key_length]u8,
+        ) void {
             assert(c.len == m.len);
             var state = State.init(key, npub);
             var src: [block_length]u8 align(alignment) = undefined;
@@ -626,7 +651,14 @@ fn Aegis256XGeneric(comptime degree: u7, comptime tag_bits: u9) type {
         /// Asserts `c.len == m.len`.
         ///
         /// Contents of `m` are undefined if an error is returned.
-        pub fn decrypt(m: []u8, c: []const u8, tag: [tag_length]u8, ad: []const u8, npub: [nonce_length]u8, key: [key_length]u8) AuthenticationError!void {
+        pub fn decrypt(
+            m: []u8,
+            c: []const u8,
+            tag: [tag_length]u8,
+            ad: []const u8,
+            npub: [nonce_length]u8,
+            key: *const [key_length]u8,
+        ) AuthenticationError!void {
             assert(c.len == m.len);
             var state = State.init(key, npub);
             var src: [block_length]u8 align(alignment) = undefined;
@@ -750,7 +782,10 @@ fn AegisMac(comptime T: type) type {
         msg_len: usize = 0,
 
         /// Initialize a state for the MAC function, with a key and a nonce
-        pub fn initWithNonce(key: *const [key_length]u8, nonce: *const [nonce_length]u8) Mac {
+        pub fn initWithNonce(
+            key: *const [key_length]u8,
+            nonce: *const [nonce_length]u8,
+        ) Mac {
             return Mac{
                 .state = T.State.init(key.*, nonce.*),
             };
@@ -805,14 +840,23 @@ fn AegisMac(comptime T: type) type {
         }
 
         /// Return an authentication tag for a message, a key and a nonce
-        pub fn createWithNonce(out: *[mac_length]u8, msg: []const u8, key: *const [key_length]u8, nonce: *const [nonce_length]u8) void {
+        pub fn createWithNonce(
+            out: *[mac_length]u8,
+            msg: []const u8,
+            key: *const [key_length]u8,
+            nonce: *const [nonce_length]u8,
+        ) void {
             var ctx = Mac.initWithNonce(key, nonce);
             ctx.update(msg);
             ctx.final(out);
         }
 
         /// Return an authentication tag for a message and a key
-        pub fn create(out: *[mac_length]u8, msg: []const u8, key: *const [key_length]u8) void {
+        pub fn create(
+            out: *[mac_length]u8,
+            msg: []const u8,
+            key: *const [key_length]u8,
+        ) void {
             var ctx = Mac.init(key);
             ctx.update(msg);
             ctx.final(out);

@@ -374,7 +374,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                             const operand: V = pad ++ @as([8]u8, @bitCast(@byteSwap(read_seq)));
                             break :nonce @as(V, pv.server_handshake_iv) ^ operand;
                         };
-                        P.AEAD.decrypt(cleartext, ciphertext, auth_tag, &record_header, nonce, pv.server_handshake_key) catch
+                        P.AEAD.decrypt(cleartext, ciphertext, auth_tag, &record_header, nonce, &pv.server_handshake_key) catch
                             return error.TlsBadRecordMac;
                         // TODO use scalar, non-slice version
                         const trimmed_len = mem.trimEnd(u8, cleartext, "\x00").len;
@@ -416,7 +416,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                         };
                         const ciphertext = record_decoder.slice(message_len);
                         const auth_tag = record_decoder.array(P.mac_length);
-                        P.AEAD.decrypt(cleartext, ciphertext, auth_tag.*, ad, nonce, pv.app_cipher.server_write_key) catch return error.TlsBadRecordMac;
+                        P.AEAD.decrypt(cleartext, ciphertext, auth_tag.*, ad, nonce, &pv.app_cipher.server_write_key) catch return error.TlsBadRecordMac;
                         cleartext_fragment_end += message_len;
                     },
                 }
@@ -801,7 +801,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                     &client_verify_cleartext,
                                     mem.toBytes(big(write_seq)) ++ client_verify_msg[0 .. 1 + 2] ++ int(u16, client_verify_cleartext.len),
                                     nonce,
-                                    pv.app_cipher.client_write_key,
+                                    &pv.app_cipher.client_write_key,
                                 );
                                 var all_msgs_vec: [4][]const u8 = .{
                                     &client_key_exchange_prefix,
@@ -870,7 +870,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                     const ciphertext = finished_msg[tls.record_header_len..][0..out_cleartext.len];
                                     const auth_tag = finished_msg[finished_msg.len - P.AEAD.tag_length ..];
                                     const nonce = pv.client_handshake_iv;
-                                    P.AEAD.encrypt(ciphertext, auth_tag, &out_cleartext, ad, nonce, pv.client_handshake_key);
+                                    P.AEAD.encrypt(ciphertext, auth_tag, &out_cleartext, ad, nonce, &pv.client_handshake_key);
 
                                     var all_msgs_vec: [2][]const u8 = .{
                                         &client_change_cipher_spec_msg,
@@ -1066,7 +1066,7 @@ fn prepareCiphertextRecord(
                         const operand: V = pad ++ mem.toBytes(big(c.write_seq));
                         break :nonce @as(V, pv.client_iv) ^ operand;
                     };
-                    P.AEAD.encrypt(ciphertext, auth_tag, cleartext, ad, nonce, pv.client_key);
+                    P.AEAD.encrypt(ciphertext, auth_tag, cleartext, ad, nonce, &pv.client_key);
                     c.write_seq += 1; // TODO send key_update on overflow
                 }
             },
@@ -1108,7 +1108,7 @@ fn prepareCiphertextRecord(
                     ciphertext_end += message_len;
                     const auth_tag = ciphertext_buf[ciphertext_end..][0..P.mac_length];
                     ciphertext_end += P.mac_length;
-                    P.AEAD.encrypt(ciphertext, auth_tag, cleartext, ad, nonce, pv.client_write_key);
+                    P.AEAD.encrypt(ciphertext, auth_tag, cleartext, ad, nonce, &pv.client_write_key);
                     c.write_seq += 1; // TODO send key_update on overflow
                 }
             },
@@ -1187,7 +1187,7 @@ fn readIndirect(c: *Client) Reader.Error!usize {
                 };
                 rebase(r, ciphertext.len);
                 const cleartext = r.buffer[r.end..][0..ciphertext.len];
-                P.AEAD.decrypt(cleartext, ciphertext, auth_tag, ad, nonce, pv.server_key) catch
+                P.AEAD.decrypt(cleartext, ciphertext, auth_tag, ad, nonce, &pv.server_key) catch
                     return failRead(c, error.TlsBadRecordMac);
                 // TODO use scalar, non-slice version
                 const msg = mem.trimEnd(u8, cleartext, "\x00");
@@ -1216,7 +1216,7 @@ fn readIndirect(c: *Client) Reader.Error!usize {
                 const auth_tag = (input.takeArray(P.mac_length) catch unreachable).*; // already peeked
                 rebase(r, ciphertext.len);
                 const cleartext = r.buffer[r.end..][0..ciphertext.len];
-                P.AEAD.decrypt(cleartext, ciphertext, auth_tag, ad, nonce, pv.server_write_key) catch
+                P.AEAD.decrypt(cleartext, ciphertext, auth_tag, ad, nonce, &pv.server_write_key) catch
                     return failRead(c, error.TlsBadRecordMac);
                 break :cleartext .{ cleartext.len, ct };
             },

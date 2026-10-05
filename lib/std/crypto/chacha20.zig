@@ -511,7 +511,7 @@ fn ChaChaImpl(comptime rounds_nb: usize) type {
     }
 }
 
-fn keyToWords(key: [32]u8) [8]u32 {
+fn keyToWords(key: *const [32]u8) [8]u32 {
     var k: [8]u32 = undefined;
     for (0..8) |i| {
         k[i] = mem.readInt(u32, key[i * 4 ..][0..4], .little);
@@ -541,7 +541,13 @@ fn ChaChaIETF(comptime rounds_nb: usize) type {
         /// Add the output of the ChaCha20 stream cipher to `in` and stores the result into `out`.
         /// WARNING: This function doesn't provide authenticated encryption.
         /// Using the AEAD or one of the `box` versions is usually preferred.
-        pub fn xor(out: []u8, in: []const u8, counter: u32, key: [key_length]u8, nonce: [nonce_length]u8) void {
+        pub fn xor(
+            out: []u8,
+            in: []const u8,
+            counter: u32,
+            key: *const [key_length]u8,
+            nonce: [nonce_length]u8,
+        ) void {
             assert(in.len == out.len);
             assert(in.len <= 64 * (@as(u39, 1 << 32) - counter));
 
@@ -554,7 +560,12 @@ fn ChaChaIETF(comptime rounds_nb: usize) type {
         }
 
         /// Write the output of the ChaCha20 stream cipher into `out`.
-        pub fn stream(out: []u8, counter: u32, key: [key_length]u8, nonce: [nonce_length]u8) void {
+        pub fn stream(
+            out: []u8,
+            counter: u32,
+            key: [key_length]u8,
+            nonce: [nonce_length]u8,
+        ) void {
             assert(out.len <= 64 * (@as(u39, 1 << 32) - counter));
 
             var d: [4]u32 = undefined;
@@ -562,7 +573,7 @@ fn ChaChaIETF(comptime rounds_nb: usize) type {
             d[1] = mem.readInt(u32, nonce[0..4], .little);
             d[2] = mem.readInt(u32, nonce[4..8], .little);
             d[3] = mem.readInt(u32, nonce[8..12], .little);
-            ChaChaImpl(rounds_nb).chacha20Stream(out, keyToWords(key), d, false);
+            ChaChaImpl(rounds_nb).chacha20Stream(out, keyToWords(&key), d, false);
         }
     };
 }
@@ -579,7 +590,13 @@ fn ChaChaWith64BitNonce(comptime rounds_nb: usize) type {
         /// Add the output of the ChaCha20 stream cipher to `in` and stores the result into `out`.
         /// WARNING: This function doesn't provide authenticated encryption.
         /// Using the AEAD or one of the `box` versions is usually preferred.
-        pub fn xor(out: []u8, in: []const u8, counter: u64, key: [key_length]u8, nonce: [nonce_length]u8) void {
+        pub fn xor(
+            out: []u8,
+            in: []const u8,
+            counter: u64,
+            key: *const [key_length]u8,
+            nonce: [nonce_length]u8,
+        ) void {
             assert(in.len == out.len);
             assert(in.len <= 64 * (@as(u71, 1 << 64) - counter));
 
@@ -593,7 +610,12 @@ fn ChaChaWith64BitNonce(comptime rounds_nb: usize) type {
         }
 
         /// Write the output of the ChaCha20 stream cipher into `out`.
-        pub fn stream(out: []u8, counter: u64, key: [key_length]u8, nonce: [nonce_length]u8) void {
+        pub fn stream(
+            out: []u8,
+            counter: u64,
+            key: *const [key_length]u8,
+            nonce: [nonce_length]u8,
+        ) void {
             assert(out.len <= 64 * (@as(u71, 1 << 64) - counter));
 
             const k = keyToWords(key);
@@ -619,13 +641,24 @@ fn XChaChaIETF(comptime rounds_nb: usize) type {
         /// Add the output of the XChaCha20 stream cipher to `in` and stores the result into `out`.
         /// WARNING: This function doesn't provide authenticated encryption.
         /// Using the AEAD or one of the `box` versions is usually preferred.
-        pub fn xor(out: []u8, in: []const u8, counter: u32, key: [key_length]u8, nonce: [nonce_length]u8) void {
+        pub fn xor(
+            out: []u8,
+            in: []const u8,
+            counter: u32,
+            key: *const [key_length]u8,
+            nonce: [nonce_length]u8,
+        ) void {
             const extended = extend(key, nonce, rounds_nb);
             ChaChaIETF(rounds_nb).xor(out, in, counter, extended.key, extended.nonce);
         }
 
         /// Write the output of the XChaCha20 stream cipher into `out`.
-        pub fn stream(out: []u8, counter: u32, key: [key_length]u8, nonce: [nonce_length]u8) void {
+        pub fn stream(
+            out: []u8,
+            counter: u32,
+            key: *const [key_length]u8,
+            nonce: [nonce_length]u8,
+        ) void {
             const extended = extend(key, nonce, rounds_nb);
             ChaChaIETF(rounds_nb).stream(out, counter, extended.key, extended.nonce);
         }
@@ -644,7 +677,14 @@ fn ChaChaPoly1305(comptime rounds_nb: usize) type {
         /// ad: Associated Data
         /// npub: public nonce
         /// k: private key
-        pub fn encrypt(c: []u8, tag: *[tag_length]u8, m: []const u8, ad: []const u8, npub: [nonce_length]u8, k: [key_length]u8) void {
+        pub fn encrypt(
+            c: []u8,
+            tag: *[tag_length]u8,
+            m: []const u8,
+            ad: []const u8,
+            npub: [nonce_length]u8,
+            k: *const [key_length]u8,
+        ) void {
             assert(c.len == m.len);
             assert(m.len <= 64 * (@as(u39, 1 << 32) - 1));
 
@@ -682,7 +722,14 @@ fn ChaChaPoly1305(comptime rounds_nb: usize) type {
         /// Asserts `c.len == m.len`.
         ///
         /// Contents of `m` are undefined if an error is returned.
-        pub fn decrypt(m: []u8, c: []const u8, tag: [tag_length]u8, ad: []const u8, npub: [nonce_length]u8, k: [key_length]u8) AuthenticationError!void {
+        pub fn decrypt(
+            m: []u8,
+            c: []const u8,
+            tag: [tag_length]u8,
+            ad: []const u8,
+            npub: [nonce_length]u8,
+            k: *const [key_length]u8,
+        ) AuthenticationError!void {
             assert(c.len == m.len);
 
             var polyKey: [32]u8 = @splat(0);

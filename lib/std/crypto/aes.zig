@@ -64,7 +64,7 @@ test "decrypt" {
         const exp_out = [_]u8{ 0x32, 0x43, 0xf6, 0xa8, 0x88, 0x5a, 0x30, 0x8d, 0x31, 0x31, 0x98, 0xa2, 0xe0, 0x37, 0x07, 0x34 };
 
         var out: [exp_out.len]u8 = undefined;
-        var ctx = Aes128.initDec(key);
+        var ctx = Aes128.initDec(&key);
         ctx.decrypt(out[0..], in[0..]);
         try testing.expectEqualSlices(u8, exp_out[0..], out[0..]);
     }
@@ -79,7 +79,7 @@ test "decrypt" {
         const exp_out = [_]u8{ 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff };
 
         var out: [exp_out.len]u8 = undefined;
-        var ctx = Aes256.initDec(key);
+        var ctx = Aes256.initDec(&key);
         ctx.decrypt(out[0..], in[0..]);
         try testing.expectEqualSlices(u8, exp_out[0..], out[0..]);
     }

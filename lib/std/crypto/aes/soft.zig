@@ -698,12 +698,12 @@ pub const Aes128 = struct {
     pub const block = Block;
 
     /// Create a new context for encryption.
-    pub fn initEnc(key: [key_bits / 8]u8) AesEncryptCtx(Aes128) {
+    pub fn initEnc(key: *const [key_bits / 8]u8) AesEncryptCtx(Aes128) {
         return AesEncryptCtx(Aes128).init(key);
     }
 
     /// Create a new context for decryption.
-    pub fn initDec(key: [key_bits / 8]u8) AesDecryptCtx(Aes128) {
+    pub fn initDec(key: *const [key_bits / 8]u8) AesDecryptCtx(Aes128) {
         return AesDecryptCtx(Aes128).init(key);
     }
 };
@@ -715,12 +715,12 @@ pub const Aes256 = struct {
     pub const block = Block;
 
     /// Create a new context for encryption.
-    pub fn initEnc(key: [key_bits / 8]u8) AesEncryptCtx(Aes256) {
+    pub fn initEnc(key: *const [key_bits / 8]u8) AesEncryptCtx(Aes256) {
         return AesEncryptCtx(Aes256).init(key);
     }
 
     /// Create a new context for decryption.
-    pub fn initDec(key: [key_bits / 8]u8) AesDecryptCtx(Aes256) {
+    pub fn initDec(key: *const [key_bits / 8]u8) AesDecryptCtx(Aes256) {
         return AesDecryptCtx(Aes256).init(key);
     }
 };

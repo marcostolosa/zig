@@ -101,7 +101,14 @@ fn AesGcmSiv(comptime Aes: anytype) type {
         /// `ad`: The associated data to authenticate.
         /// `npub`: The nonce to use for encryption.
         /// `key`: The encryption key.
-        pub fn encrypt(c: []u8, tag: *[tag_length]u8, m: []const u8, ad: []const u8, npub: [nonce_length]u8, key: [key_length]u8) void {
+        pub fn encrypt(
+            c: []u8,
+            tag: *[tag_length]u8,
+            m: []const u8,
+            ad: []const u8,
+            npub: [nonce_length]u8,
+            key: *const [key_length]u8,
+        ) void {
             debug.assert(c.len == m.len);
             debug.assert(m.len <= (1 << 36));
             debug.assert(ad.len <= (1 << 36));
@@ -163,7 +170,14 @@ fn AesGcmSiv(comptime Aes: anytype) type {
         /// `npub`: The nonce.
         /// `key`: The decryption key.
         /// Asserts `c.len == m.len`.
-        pub fn decrypt(m: []u8, c: []const u8, tag: [tag_length]u8, ad: []const u8, npub: [nonce_length]u8, key: [key_length]u8) AuthenticationError!void {
+        pub fn decrypt(
+            m: []u8,
+            c: []const u8,
+            tag: [tag_length]u8,
+            ad: []const u8,
+            npub: [nonce_length]u8,
+            key: *const [key_length]u8,
+        ) AuthenticationError!void {
             assert(c.len == m.len);
             assert(c.len <= (1 << 36));
             assert(ad.len <= (1 << 36));

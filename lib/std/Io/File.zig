@@ -23,7 +23,14 @@ pub const Flags = struct {
     nonblocking: bool,
 };
 
-pub const Handle = std.posix.fd_t;
+pub const Handle = switch (native_os) {
+    .uefi => union(enum) {
+        file: *std.os.uefi.protocol.File,
+        text_out: *std.os.uefi.protocol.SimpleTextOutput,
+        text_in: *std.os.uefi.protocol.SimpleTextInput,
+    },
+    else => std.posix.fd_t,
+};
 
 pub const Reader = @import("File/Reader.zig");
 pub const Writer = @import("File/Writer.zig");

@@ -3,6 +3,7 @@ const Threaded = @This();
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 const is_windows = native_os == .windows;
+const is_uefi = native_os == .uefi;
 const is_darwin = native_os.isDarwin();
 const is_debug = builtin.mode == .debug;
 
@@ -18,6 +19,7 @@ const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 const assert = std.debug.assert;
 const posix = std.posix;
+const uefi = std.os.uefi;
 const windows = std.os.windows;
 const ws2_32 = windows.ws2_32;
 
@@ -60,7 +62,7 @@ disable_memory_mapping: bool,
 stderr_writer: File.Writer = .{
     .io = undefined,
     .interface = File.Writer.initInterface(&.{}),
-    .file = if (is_windows) undefined else .stderr(),
+    .file = if (is_windows or is_uefi) undefined else .stderr(),
     .mode = .streaming,
 },
 stderr_mode: Io.Terminal.Mode = .no_color,
@@ -354,7 +356,7 @@ pub const NullFile = switch (native_os) {
             }
         }
     },
-    .wasi, .tvos, .watchos => struct {
+    .wasi, .tvos, .watchos, .uefi => struct {
         fn deinit(this: @This()) void {
             _ = this;
         }
@@ -372,7 +374,7 @@ pub const NullFile = switch (native_os) {
 };
 
 pub const RandomFile = switch (native_os) {
-    .windows => NullFile,
+    .windows, .uefi => NullFile,
     else => if (use_dev_urandom) NullFile else struct {
         fn deinit(this: @This()) void {
             _ = this;
@@ -1808,7 +1810,32 @@ fn worker(t: *Threaded) void {
     }
 }
 
+const uefi_vtable: Io.VTable = v: {
+    var v = Io.failing.vtable.*;
+    v.swapCancelProtection = swapCancelProtection;
+    v.checkCancel = checkCancel;
+    v.operate = operate;
+    v.tryLockStderr = tryLockStderr;
+    v.lockStderr = lockStderr;
+    v.unlockStderr = unlockStderr;
+    v.fileIsTty = fileIsTty;
+    v.fileSupportsAnsiEscapeCodes = fileSupportsAnsiEscapeCodes;
+    v.random = random;
+    v.randomSecure = randomSecure;
+    v.now = now;
+    v.clockResolution = clockResolution;
+    v.sleep = sleep;
+    break :v v;
+};
+
 pub fn io(t: *Threaded) Io {
+    if (is_uefi) {
+        return .{
+            .userdata = t,
+            .vtable = &uefi_vtable,
+        };
+    }
+
     return .{
         .userdata = t,
         .vtable = &.{
@@ -2397,6 +2424,8 @@ fn recancelInner() void {
 }
 
 fn swapCancelProtection(userdata: ?*anyopaque, new: Io.CancelProtection) Io.CancelProtection {
+    if (is_uefi) return .unblocked;
+
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     const thread = Thread.current orelse return .unblocked;
@@ -2406,6 +2435,8 @@ fn swapCancelProtection(userdata: ?*anyopaque, new: Io.CancelProtection) Io.Canc
 }
 
 fn checkCancel(userdata: ?*anyopaque) Io.Cancelable!void {
+    if (is_uefi) return;
+
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     return Thread.checkCancel();
@@ -2539,6 +2570,19 @@ fn futexWake(userdata: ?*anyopaque, ptr: *const u32, max_waiters: u32) void {
 
 fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Operation.Result {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
+
+    if (is_uefi) {
+        switch (operation) {
+            .file_write_streaming => |o| return .{
+                .file_write_streaming = fileWriteStreaming(t, o.file, o.header, o.data, o.splat) catch |err| switch (err) {
+                    error.Canceled => |e| return e,
+                    else => |e| e,
+                },
+            },
+            else => return Io.failing.vtable.operate(userdata, operation),
+        }
+    }
+
     switch (operation) {
         .file_read_streaming => |o| return .{
             .file_read_streaming = fileReadStreaming(t, o.file, o.data) catch |err| switch (err) {
@@ -8896,6 +8940,13 @@ fn isTty(file: File) Io.Cancelable!bool {
         }
     }
 
+    if (is_uefi) {
+        return switch (file.handle) {
+            .text_out, .text_in => true,
+            .file => false,
+        };
+    }
+
     if (builtin.link_libc) {
         const syscall: Syscall = try .start();
         while (true) {
@@ -9031,10 +9082,12 @@ fn supportsAnsiEscapeCodes(t: *Threaded, file: File) Io.Cancelable!bool {
         };
     }
 
-    if (native_os == .wasi) {
+    if (native_os == .wasi or is_uefi) {
         // WASI sanitizes stdout when fd is a tty so ANSI escape codes
         // will not be interpreted as actual cursor commands, and
         // stderr is always sanitized.
+        //
+        // UEFI does not support ANSI escape codes.
 
         return false;
     }
@@ -10982,6 +11035,30 @@ fn fileWriteStreaming(
         return fileWriteStreamingWindows(file, buffer);
     }
 
+    if (is_uefi) {
+        const out = switch (file.handle) {
+            .text_out => |text_out| text_out,
+            else => return error.NotOpenForWriting,
+        };
+
+        var n: usize = 0;
+        try consoleWriteUefi(out, header);
+        n += header.len;
+        if (data.len == 0) return n;
+
+        for (data[0 .. data.len - 1]) |bytes| {
+            try consoleWriteUefi(out, bytes);
+            n += bytes.len;
+        }
+
+        const pattern = data[data.len - 1];
+        if (pattern.len != 0) for (0..splat) |_| {
+            try consoleWriteUefi(out, pattern);
+            n += pattern.len;
+        };
+        return n;
+    }
+
     var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
     var iovlen: iovlen_t = 0;
     addBuf(&iovecs, &iovlen, header);
@@ -11143,6 +11220,32 @@ fn fileWriteStreamingWindows(file: File, buffer: []const u8) File.Writer.Error!u
         };
     }
     return ntWriteFileResult(&iosb);
+}
+
+fn consoleWriteUefi(out: *uefi.protocol.SimpleTextOutput, bytes: []const u8) File.Writer.Error!void {
+    var rest = bytes;
+    while (std.mem.indexOfScalar(u8, rest, '\n')) |nl| {
+        try consoleWriteRawUefi(out, rest[0..nl]);
+        try consoleWriteRawUefi(out, "\r\n");
+        rest = rest[nl + 1 ..];
+    }
+    try consoleWriteRawUefi(out, rest);
+}
+
+fn consoleWriteRawUefi(out: *uefi.protocol.SimpleTextOutput, bytes: []const u8) File.Writer.Error!void {
+    const chunk_len = 128;
+    var buf: [chunk_len * 2:0]u16 = undefined;
+    var rest = bytes;
+    while (rest.len != 0) {
+        var take = @min(rest.len, chunk_len);
+        while (take < rest.len and (rest[take] & 0xc0) == 0x80) take -= 1;
+
+        const len = std.unicode.wtf8ToWtf16Le(&buf, rest[0..take]) catch
+            return error.InputOutput;
+        buf[len] = 0;
+        _ = out.outputString(buf[0..len :0]) catch return error.InputOutput;
+        rest = rest[take..];
+    }
 }
 
 fn fileWriteFileStreaming(
@@ -11757,6 +11860,16 @@ fn fileWriteFilePositional(
     return error.Unimplemented;
 }
 
+fn nowUefi(clock: Io.Clock) Io.Timestamp {
+    switch (clock) {
+        .real => {
+            const time, _ = uefi.system_table.runtime_services.getTime() catch return .zero;
+            return .fromNanoseconds(time.toEpoch());
+        },
+        .awake, .boot, .cpu_process, .cpu_thread => return .zero,
+    }
+}
+
 fn nowPosix(clock: Io.Clock) Io.Timestamp {
     const clock_id: posix.clockid_t = clockToPosix(clock);
     var timespec: posix.timespec = undefined;
@@ -11772,6 +11885,7 @@ fn now(userdata: ?*anyopaque, clock: Io.Clock) Io.Timestamp {
     return switch (native_os) {
         .windows => nowWindows(clock),
         .wasi => nowWasi(clock),
+        .uefi => nowUefi(clock),
         else => nowPosix(clock),
     };
 }
@@ -11811,6 +11925,14 @@ fn clockResolution(userdata: ?*anyopaque, clock: Io.Clock) Io.Clock.ResolutionEr
                 .INVAL => return error.ClockUnavailable,
                 else => |err| return posix.unexpectedErrno(err),
             };
+        },
+        .uefi => switch (clock) {
+            .real => {
+                _, const caps = uefi.system_table.runtime_services.getTime() catch return error.ClockUnavailable;
+                if (caps.resolution == 0) return error.ClockUnavailable;
+                return .fromNanoseconds(std.time.ns_per_s / caps.resolution);
+            },
+            .awake, .boot, .cpu_process, .cpu_thread => return error.ClockUnavailable,
         },
         else => return clockResolutionPosix(clock),
     };
@@ -11908,6 +12030,7 @@ fn sleep(userdata: ?*anyopaque, timeout: Io.Timeout) Io.Cancelable!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     if (use_parking_sleep) return parking_sleep.sleep(timeout);
     if (native_os == .wasi) return sleepWasi(t, timeout);
+    if (is_uefi) return sleepUefi(t, timeout);
     if (@TypeOf(posix.system.clock_nanosleep) != void) return sleepPosix(timeout);
     return sleepNanosleep(t, timeout);
 }
@@ -11946,6 +12069,17 @@ fn sleepPosix(timeout: Io.Timeout) Io.Cancelable!void {
             },
         }
     }
+}
+
+fn sleepUefi(t: *Threaded, timeout: Io.Timeout) Io.Cancelable!void {
+    const boot_services = uefi.system_table.boot_services.?;
+
+    const dur_ms: usize = if (timeout.toDurationFromNow(io(t))) |d|
+        std.math.lossyCast(usize, d.raw.toMicroseconds())
+    else
+        std.math.maxInt(usize);
+
+    boot_services.stall(dur_ms) catch {};
 }
 
 fn sleepWasi(t: *Threaded, timeout: Io.Timeout) Io.Cancelable!void {
@@ -14153,6 +14287,23 @@ fn netLookupFallible(
 
 fn lockStderr(userdata: ?*anyopaque, terminal_mode: ?Io.Terminal.Mode) Io.Cancelable!Io.LockedStderr {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
+
+    if (is_uefi) {
+        t.stderr_mutex_lock_count += 1;
+
+        if (!t.stderr_writer_initialized) {
+            t.stderr_writer.file = .stderr();
+            t.stderr_writer.io = io(t);
+            t.stderr_writer_initialized = true;
+            t.stderr_mode = terminal_mode orelse .no_color;
+        }
+
+        return .{
+            .file_writer = &t.stderr_writer,
+            .terminal_mode = terminal_mode orelse t.stderr_mode,
+        };
+    }
+
     const current_thread_id = Thread.currentId();
 
     if (@atomicLoad(std.Thread.Id, &t.stderr_mutex_locker, .unordered) != current_thread_id) {
@@ -14167,6 +14318,11 @@ fn lockStderr(userdata: ?*anyopaque, terminal_mode: ?Io.Terminal.Mode) Io.Cancel
 
 fn tryLockStderr(userdata: ?*anyopaque, terminal_mode: ?Io.Terminal.Mode) Io.Cancelable!?Io.LockedStderr {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
+
+    if (is_uefi) {
+        return try lockStderr(userdata, terminal_mode);
+    }
+
     const current_thread_id = Thread.currentId();
 
     if (@atomicLoad(std.Thread.Id, &t.stderr_mutex_locker, .unordered) != current_thread_id) {
@@ -14199,18 +14355,25 @@ fn initLockedStderr(t: *Threaded, terminal_mode: ?Io.Terminal.Mode) Io.Cancelabl
 fn unlockStderr(userdata: ?*anyopaque) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     if (t.stderr_writer.err == null) t.stderr_writer.interface.flush() catch {};
-    if (t.stderr_writer.err) |err| {
-        switch (err) {
-            error.Canceled => recancelInner(),
-            else => {},
-        }
+
+    if (is_uefi) {
         t.stderr_writer.err = null;
+    } else {
+        if (t.stderr_writer.err) |err| {
+            switch (err) {
+                error.Canceled => recancelInner(),
+                else => {},
+            }
+            t.stderr_writer.err = null;
+        }
     }
+
     t.stderr_writer.interface.end = 0;
     t.stderr_writer.interface.buffer = &.{};
 
     t.stderr_mutex_lock_count -= 1;
-    if (t.stderr_mutex_lock_count == 0) {
+
+    if (t.stderr_mutex_lock_count == 0 and !is_uefi) {
         @atomicStore(std.Thread.Id, &t.stderr_mutex_locker, Thread.invalid_id, .unordered);
         mutexUnlock(&t.stderr_mutex);
     }
@@ -17875,6 +18038,10 @@ pub fn environString(t: *Threaded, comptime name: []const u8) ?[:0]const u8 {
 }
 
 fn random(userdata: ?*anyopaque, buffer: []u8) void {
+    if (is_uefi) {
+        return randomSecure(userdata, buffer) catch {};
+    }
+
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const thread = Thread.current orelse return randomMainThread(t, buffer);
     if (!thread.csprng.isInitialized()) {
@@ -17953,6 +18120,14 @@ fn fallbackSeedWasi(seed: *[Csprng.seed_len]u8) void {
 }
 
 fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
+    if (is_uefi) {
+        const boot_services = uefi.system_table.boot_services.?;
+        const rng_proto = (boot_services.locateProtocol(uefi.protocol.Rng, null) catch unreachable) orelse return error.EntropyUnavailable;
+
+        rng_proto.getRNG(null, buffer) catch return error.EntropyUnavailable;
+        return;
+    }
+
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
     if (is_windows) {

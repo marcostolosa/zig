@@ -190,11 +190,11 @@ pub const Time = extern struct {
         var year: u16 = 0;
         var days: u32 = 0;
 
-        while (year < (self.year - 1971)) : (year += 1) {
+        while (year < (self.year - 1970)) : (year += 1) {
             days += daysInYear(year + 1970, 12);
         }
 
-        days += daysInYear(self.year, @as(u4, @intCast(self.month)) - 1) + self.day;
+        days += daysInYear(self.year, @as(u4, @intCast(self.month)) - 1) + self.day - 1;
         const hours: u64 = self.hour + (days * 24);
         const minutes: u64 = self.minute + (hours * 60);
         const seconds: u64 = self.second + (minutes * std.time.s_per_min);

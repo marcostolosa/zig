@@ -119,6 +119,13 @@ pub fn defaultSingleThreaded(target: *const std.Target) bool {
         .wasm32, .wasm64 => return true,
         else => {},
     }
+
+    switch (target.os.tag) {
+        // UEFI has no multi-threading, it has a multi-processing protocol in the PI spec.
+        // The stdlib does not support the UEFI MP protocol.
+        .uefi => return true,
+        else => {},
+    }
     return false;
 }
 

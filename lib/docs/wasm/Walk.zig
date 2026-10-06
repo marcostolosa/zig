@@ -341,7 +341,25 @@ pub const File = struct {
                 }
             }
 
-            return .{ .global_const = node };
+            const type_builtins: std.StaticStringMap(void) = .initComptime(.{
+                .{"@FieldType"},
+                .{"@EnumLiteral"},
+                .{"@Int"},
+                .{"@Tuple"},
+                .{"@Pointer"},
+                .{"@Fn"},
+                .{"@Struct"},
+                .{"@Union"},
+                .{"@Enum"},
+                .{"@SpirvType"},
+                .{"@Vector"},
+            });
+
+            if (type_builtins.has(builtin_name)) {
+                return .type;
+            } else {
+                return .{ .global_const = node };
+            }
         }
 
         fn categorize_switch(file_index: File.Index, node: Ast.Node.Index) Category {

@@ -152,7 +152,7 @@ pub fn parseNumberLiteral(bytes: []const u8) Result {
         underscore = false;
         special = 0;
 
-        if (float) continue;
+        if (float or overflow) continue;
         if (x != 0) {
             const res = @mulWithOverflow(x, base);
             if (res[1] != 0) overflow = true;

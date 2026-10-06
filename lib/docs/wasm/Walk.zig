@@ -353,6 +353,7 @@ pub const File = struct {
                 .{"@Enum"},
                 .{"@SpirvType"},
                 .{"@Vector"},
+                .{"@TypeOf"},
             });
 
             if (type_builtins.has(builtin_name)) {

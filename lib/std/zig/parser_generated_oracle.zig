@@ -38,7 +38,7 @@ const Def = enum {
     defBlockExprStatement,
     defBlockExprPrefix,
     defBlockExpr,
-    defVarAssignStatement,
+    defVarAssignExpr,
     defAssignExpr,
     defSingleAssignExpr,
     defExpr,
@@ -587,7 +587,7 @@ const Parser = struct {
                 const match_1 = try p.parseStatementPrefix();
                 p.i = pos_1;
                 break :blk_1 !match_1;
-            } and (try p.parseKEYWORD_comptime() or true) and try p.parseVarAssignStatement()) break :blk_0 true;
+            } and (try p.parseKEYWORD_comptime() or true) and try p.parseVarAssignExpr() and try p.parseSEMICOLON()) break :blk_0 true;
             p.i = pos_0;
             break :blk_0 false;
         };
@@ -850,8 +850,8 @@ const Parser = struct {
             break :blk_0 false;
         };
     }
-    pub fn parseVarAssignStatement(p: *Parser) Error!bool {
-        const def_index = @backingInt(Def.defVarAssignStatement);
+    pub fn parseVarAssignExpr(p: *Parser) Error!bool {
+        const def_index = @backingInt(Def.defVarAssignExpr);
         if (p.depths[def_index] > max_depth) return error.MaxDepth;
         p.depths[def_index] += 1;
         defer p.depths[def_index] -= 1;
@@ -883,7 +883,7 @@ const Parser = struct {
                     i_1 += 1;
                 }
                 break :blk_1 true;
-            } and try p.parseEQUAL() and try p.parseExpr() and try p.parseSEMICOLON()) break :blk_0 true;
+            } and try p.parseEQUAL() and try p.parseExpr()) break :blk_0 true;
             p.i = pos_0;
             break :blk_0 false;
         };

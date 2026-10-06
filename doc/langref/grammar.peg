@@ -78,7 +78,7 @@ BlockStatement
     <- Statement
      / KEYWORD_defer BlockExprStatement
      / KEYWORD_errdefer BlockExprStatement
-     / !StatementPrefix KEYWORD_comptime? VarAssignStatement
+     / !StatementPrefix KEYWORD_comptime? VarAssignExpr SEMICOLON
 
 Statement
     <- IfStatement
@@ -118,7 +118,7 @@ BlockExprPrefix <- BlockLabel? LBRACE
 BlockExpr <- BlockLabel? Block
 
 # An assignment or a destructure whose LHS are all lvalue expressions or variable declarations.
-VarAssignStatement <- (VarDeclProto / Expr) (COMMA (VarDeclProto / Expr))* EQUAL Expr SEMICOLON
+VarAssignExpr <- (VarDeclProto / Expr) (COMMA (VarDeclProto / Expr))* EQUAL Expr
 
 # *** Expression Level ***
 

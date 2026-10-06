@@ -950,7 +950,9 @@ fn expectStatement(p: *Parse, is_block_level: bool) Error!Node.Index {
         }
 
         if (is_block_level) {
-            return p.expectVarAssignStatement(comptime_token);
+            const assign = try p.expectVarAssignExpr(comptime_token);
+            try p.expectSemicolon(.expected_semi_after_stmt, true);
+            return assign;
         } else {
             const assign = try p.expectAssignExpr();
             try p.expectSemicolon(.expected_semi_after_stmt, true);
@@ -1010,16 +1012,15 @@ fn expectStatement(p: *Parse, is_block_level: bool) Error!Node.Index {
 
     if (try p.parseLabeledStatement()) |labeled_statement| return labeled_statement;
 
-    if (is_block_level) {
-        return p.expectVarAssignStatement(null);
-    } else {
-        const assign = try p.expectAssignExpr();
-        try p.expectSemicolon(.expected_semi_after_stmt, true);
-        return assign;
-    }
+    const assign = if (is_block_level)
+        try p.expectVarAssignExpr(null)
+    else
+        try p.expectAssignExpr();
+    try p.expectSemicolon(.expected_semi_after_stmt, true);
+    return assign;
 }
 
-fn expectVarAssignStatement(p: *Parse, comptime_token: ?TokenIndex) !Node.Index {
+fn expectVarAssignExpr(p: *Parse, comptime_token: ?TokenIndex) !Node.Index {
     const scratch_top = p.scratch.items.len;
     defer p.scratch.shrinkRetainingCapacity(scratch_top);
 
@@ -1068,7 +1069,6 @@ fn expectVarAssignStatement(p: *Parse, comptime_token: ?TokenIndex) !Node.Index 
         }
 
         const expr = try p.finishAssignExpr(lhs);
-        try p.expectSemicolon(.expected_semi_after_stmt, true);
         if (comptime_token) |t| {
             return p.addNode(.{
                 .tag = .@"comptime",
@@ -1081,7 +1081,6 @@ fn expectVarAssignStatement(p: *Parse, comptime_token: ?TokenIndex) !Node.Index 
     };
 
     const rhs = try p.expectExpr();
-    try p.expectSemicolon(.expected_semi_after_stmt, true);
 
     if (lhs_count == 1) {
         const lhs = p.scratch.items[scratch_top];

@@ -239,7 +239,7 @@ pub const Mode = union(enum) {
 
 pub const SetColorError = Io.Cancelable || Io.UnexpectedError || Io.Writer.Error;
 
-/// Depricated; See `Style.Color`
+/// Deprecated; See `Style.Color`
 pub const Color = enum {
     black,
     red,
@@ -262,7 +262,7 @@ pub const Color = enum {
     reset,
 };
 
-/// Depricated; See 'Terminal.setStyle()'
+/// Deprecated; See 'Terminal.setStyle()'
 pub fn setColor(t: Terminal, color: Color) SetColorError!void {
     switch (t.mode) {
         .no_color => return,

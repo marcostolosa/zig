@@ -33057,6 +33057,7 @@ fn resolvePeerTypesInner(
                 var ptr_info = opt_ptr_info orelse {
                     opt_ptr_info = peer_info;
                     opt_ptr_info.?.flags.size = .c;
+                    opt_ptr_info.?.sentinel = .none;
                     first_idx = i;
                     continue;
                 };
@@ -33068,18 +33069,6 @@ fn resolvePeerTypesInner(
                         .peer_idx_b = i,
                     } };
                 }).toIntern();
-
-                if (ptr_info.sentinel != .none and peer_info.sentinel != .none) {
-                    const peer_sent = try ip.getCoerced(gpa, io, pt.tid, ptr_info.sentinel, ptr_info.child);
-                    const ptr_sent = try ip.getCoerced(gpa, io, pt.tid, peer_info.sentinel, ptr_info.child);
-                    if (ptr_sent == peer_sent) {
-                        ptr_info.sentinel = ptr_sent;
-                    } else {
-                        ptr_info.sentinel = .none;
-                    }
-                } else {
-                    ptr_info.sentinel = .none;
-                }
 
                 ptr_info.flags.alignment = a: {
                     // If both alignments are implicit, the result alignment is implicit.
@@ -33707,7 +33696,6 @@ fn resolvePeerTypesInner(
             // First, check that every peer has the same approximate structure (field count)
 
             var opt_first_idx: ?usize = null;
-            var is_tuple: bool = undefined;
             var field_count: usize = undefined;
 
             for (peer_tys, 0..) |opt_ty, i| {
@@ -33722,7 +33710,6 @@ fn resolvePeerTypesInner(
 
                 const first_idx = opt_first_idx orelse {
                     opt_first_idx = i;
-                    is_tuple = ty.isTuple(zcu);
                     field_count = ty.structFieldCount(zcu);
                     continue;
                 };

@@ -571,9 +571,9 @@ fn struct_decl(
         },
 
         .@"comptime",
-        => try w.expr(&namespace.base, parent_decl, ast.nodeData(member).node),
+        => try w.expr(&namespace.base, .none, ast.nodeData(member).node),
 
-        .test_decl => try w.expr(&namespace.base, parent_decl, ast.nodeData(member).opt_token_and_node[1]),
+        .test_decl => try w.expr(&namespace.base, .none, ast.nodeData(member).opt_token_and_node[1]),
 
         else => unreachable,
     };

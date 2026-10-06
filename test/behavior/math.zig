@@ -2137,6 +2137,25 @@ test "comptime float rem int" {
     }
 }
 
+test "comptime float and comptime int arithmetic" {
+    comptime {
+        assert(@TypeOf(2 * 3.0) == comptime_float);
+        assert(2 * 3.0 == 6.0);
+        assert(@TypeOf(3.0 * 2) == comptime_float);
+        assert(3.0 * 2 == 6.0);
+
+        assert(@TypeOf(2 + 3.0) == comptime_float);
+        assert(2 + 3.0 == 5.0);
+        assert(@TypeOf(3.0 + 2) == comptime_float);
+        assert(3.0 + 2 == 5.0);
+
+        assert(@TypeOf(3.0 - 2) == comptime_float);
+        assert(3.0 - 2 == 1.0);
+        assert(@TypeOf(2 - 3.0) == comptime_float);
+        assert(2 - 3.0 == -1.0);
+    }
+}
+
 test "remainder division" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO

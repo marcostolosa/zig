@@ -455,7 +455,7 @@ fn inner(
     initialized: bool,
     options: InnerOptions,
 ) error{ OutOfMemory, ParseZon }!void {
-    comptime assert(canParseType(T));
+    comptime assertCanParseType(T);
 
     if (options.zoir.hasCompileErrors()) {
         for (options.zoir.compile_errors) |e| {
@@ -1235,24 +1235,42 @@ fn intFromFloatExact(T: type, value: anytype) ?T {
     return @intFromFloat(value);
 }
 
-fn canParseType(T: type) bool {
-    comptime return canParseTypeInner(T, &.{}, false);
+inline fn assertCanParseType(T: type) void {
+    switch (findUnparsable(T, &.{}, false) orelse return) {
+        .type => @compileError("cannot parse: " ++ @typeName(T)),
+        .field => |f| @compileError("cannot parse field '" ++ f.name ++ "' of type '" ++
+            @typeName(f.type) ++ "' in '" ++ @typeName(f.container) ++ "'"),
+    }
 }
 
-fn canParseTypeInner(
+fn canParseType(T: type) bool {
+    comptime return findUnparsable(T, &.{}, false) == null;
+}
+
+const Unparsable = union(enum) {
+    type,
+    /// The innermost field whose type cannot be parsed.
+    field: struct {
+        container: type,
+        name: [:0]const u8,
+        type: type,
+    },
+};
+
+fn findUnparsable(
     T: type,
     /// Visited structs and unions, to avoid infinite recursion.
     /// Tracking more types is unnecessary, and a little complex due to optional nesting.
     visited: []const type,
     parent_is_optional: bool,
-) bool {
+) ?Unparsable {
     return switch (@typeInfo(T)) {
         .bool,
         .int,
         .float,
         .null,
         .@"enum",
-        => true,
+        => null,
 
         .noreturn,
         .void,
@@ -1268,41 +1286,61 @@ fn canParseTypeInner(
         .comptime_int,
         .comptime_float,
         .enum_literal,
-        => false,
+        => .type,
 
         .pointer => |pointer| switch (pointer.size) {
-            .one => canParseTypeInner(pointer.child, visited, parent_is_optional),
-            .slice => canParseTypeInner(pointer.child, visited, false),
-            .many, .c => false,
+            .one => findUnparsable(pointer.child, visited, parent_is_optional),
+            .slice => findUnparsable(pointer.child, visited, false),
+            .many, .c => .type,
         },
 
         .optional => |optional| if (parent_is_optional)
-            false
+            .type
         else
-            canParseTypeInner(optional.child, visited, true),
+            findUnparsable(optional.child, visited, true),
 
-        .array => |array| canParseTypeInner(array.child, visited, false),
-        .vector => |vector| canParseTypeInner(vector.child, visited, false),
+        .array => |array| findUnparsable(array.child, visited, false),
+        .vector => |vector| findUnparsable(vector.child, visited, false),
 
         .@"struct" => |@"struct"| {
-            for (visited) |V| if (T == V) return true;
+            for (visited) |V| if (T == V) return null;
             const new_visited = visited ++ .{T};
-            for (@"struct".field_types, @"struct".field_attrs) |field_type, field_attrs| {
-                if (!field_attrs.@"comptime" and !canParseTypeInner(field_type, new_visited, false)) {
-                    return false;
+            for (
+                @"struct".field_names,
+                @"struct".field_types,
+                @"struct".field_attrs,
+            ) |field_name, field_type, field_attrs| {
+                if (field_attrs.@"comptime") continue;
+                if (findUnparsable(field_type, new_visited, false)) |unparsable| {
+                    return switch (unparsable) {
+                        .type => .{ .field = .{
+                            .container = T,
+                            .name = field_name,
+                            .type = field_type,
+                        } },
+                        .field => unparsable,
+                    };
                 }
             }
-            return true;
+            return null;
         },
         .@"union" => |@"union"| {
-            for (visited) |V| if (T == V) return true;
+            for (visited) |V| if (T == V) return null;
             const new_visited = visited ++ .{T};
-            for (@"union".field_types) |field_type| {
-                if (field_type != void and !canParseTypeInner(field_type, new_visited, false)) {
-                    return false;
+            for (@"union".field_names, @"union".field_types) |field_name, field_type| {
+                if (field_type == void) continue;
+                if (findUnparsable(field_type, new_visited, false)) |unparsable| {
+                    return switch (unparsable) {
+                        .type => .{ .field = .{
+                            .container = T,
+                            .name = field_name,
+                            .type = field_type,
+                        } },
+                        .field => unparsable,
+                    };
                 }
             }
-            return true;
+            return null;
         },
     };
 }

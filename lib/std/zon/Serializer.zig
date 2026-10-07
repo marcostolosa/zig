@@ -975,20 +975,34 @@ test checkValueDepth {
 }
 
 inline fn assertCanSerializeType(T: type) void {
-    if (!canSerializeType(T)) @compileError("cannot serialize: " ++ @typeName(T));
+    switch (findUnserializable(T, &.{}, false) orelse return) {
+        .type => @compileError("cannot serialize: " ++ @typeName(T)),
+        .field => |f| @compileError("cannot serialize field '" ++ f.name ++ "' of type '" ++
+            @typeName(f.type) ++ "' in '" ++ @typeName(f.container) ++ "'"),
+    }
 }
 
 inline fn canSerializeType(T: type) bool {
-    comptime return canSerializeTypeInner(T, &.{}, false);
+    comptime return findUnserializable(T, &.{}, false) == null;
 }
 
-fn canSerializeTypeInner(
+const Unserializable = union(enum) {
+    type,
+    /// The innermost field whose type cannot be serialized.
+    field: struct {
+        container: type,
+        name: [:0]const u8,
+        type: type,
+    },
+};
+
+fn findUnserializable(
     T: type,
     /// Visited structs and unions, to avoid infinite recursion.
     /// Tracking more types is unnecessary, and a little complex due to optional nesting.
     visited: []const type,
     parent_is_optional: bool,
-) bool {
+) ?Unserializable {
     return switch (@typeInfo(T)) {
         .bool,
         .int,
@@ -997,7 +1011,7 @@ fn canSerializeTypeInner(
         .comptime_int,
         .null,
         .enum_literal,
-        => true,
+        => null,
 
         .noreturn,
         .void,
@@ -1010,42 +1024,59 @@ fn canSerializeTypeInner(
         .@"anyframe",
         .@"opaque",
         .spirv,
-        => false,
+        => .type,
 
-        .@"enum" => |@"enum"| @"enum".mode == .exhaustive,
+        .@"enum" => |@"enum"| if (@"enum".mode == .exhaustive) null else .type,
 
         .pointer => |pointer| switch (pointer.size) {
-            .one => canSerializeTypeInner(pointer.child, visited, parent_is_optional),
-            .slice => canSerializeTypeInner(pointer.child, visited, false),
-            .many, .c => false,
+            .one => findUnserializable(pointer.child, visited, parent_is_optional),
+            .slice => findUnserializable(pointer.child, visited, false),
+            .many, .c => .type,
         },
 
         .optional => |optional| if (parent_is_optional)
-            false
+            .type
         else
-            canSerializeTypeInner(optional.child, visited, true),
+            findUnserializable(optional.child, visited, true),
 
-        .array => |array| canSerializeTypeInner(array.child, visited, false),
-        .vector => |vector| canSerializeTypeInner(vector.child, visited, false),
+        .array => |array| findUnserializable(array.child, visited, false),
+        .vector => |vector| findUnserializable(vector.child, visited, false),
 
         .@"struct" => |@"struct"| {
-            for (visited) |V| if (T == V) return true;
+            for (visited) |V| if (T == V) return null;
             const new_visited = visited ++ .{T};
-            for (@"struct".field_types) |field_type| {
-                if (!canSerializeTypeInner(field_type, new_visited, false)) return false;
-            }
-            return true;
-        },
-        .@"union" => |@"union"| {
-            for (visited) |V| if (T == V) return true;
-            const new_visited = visited ++ .{T};
-            if (@"union".tag_type == null) return false;
-            for (@"union".field_types) |field_type| {
-                if (field_type != void and !canSerializeTypeInner(field_type, new_visited, false)) {
-                    return false;
+            for (@"struct".field_names, @"struct".field_types) |field_name, field_type| {
+                if (findUnserializable(field_type, new_visited, false)) |unserializable| {
+                    return switch (unserializable) {
+                        .type => .{ .field = .{
+                            .container = T,
+                            .name = field_name,
+                            .type = field_type,
+                        } },
+                        .field => unserializable,
+                    };
                 }
             }
-            return true;
+            return null;
+        },
+        .@"union" => |@"union"| {
+            for (visited) |V| if (T == V) return null;
+            const new_visited = visited ++ .{T};
+            if (@"union".tag_type == null) return .type;
+            for (@"union".field_names, @"union".field_types) |field_name, field_type| {
+                if (field_type == void) continue;
+                if (findUnserializable(field_type, new_visited, false)) |unserializable| {
+                    return switch (unserializable) {
+                        .type => .{ .field = .{
+                            .container = T,
+                            .name = field_name,
+                            .type = field_type,
+                        } },
+                        .field => unserializable,
+                    };
+                }
+            }
+            return null;
         },
     };
 }

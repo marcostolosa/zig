@@ -208,6 +208,7 @@ pub const Feature = enum {
     expand_ptr_elem_val,
     /// Replace `array_to_slice` with a `ptr_cast` followed by a `slice`.
     expand_array_to_slice,
+    expand_is_null,
 
     /// Replace all arithmetic operations on 16-bit floating-point types with calls to soft-float
     /// routines in compiler_rt, including `fptrunc`/`fpext`/`float_from_int`/`int_from_float`
@@ -807,8 +808,6 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             .dbg_var_ptr,
             .dbg_var_val,
             .dbg_arg_inline,
-            .is_null,
-            .is_non_null,
             .is_null_ptr,
             .is_non_null_ptr,
             .is_err,
@@ -816,6 +815,31 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             .is_err_ptr,
             .is_non_err_ptr,
             => {},
+            inline .is_null, .is_non_null => |tag| if (l.features.has(.expand_is_null)) {
+                const un_op = l.air_instructions.items(.data)[@backingInt(inst)].un_op;
+                const opt_ty = l.typeOf(un_op);
+                const child_ty = opt_ty.optionalChild(zcu);
+                if (child_ty.zigTypeTag(zcu) == .pointer and !child_ty.isSlice(zcu)) {
+                    const opt_null_ptr = if (!child_ty.isCPtr(zcu))
+                        try l.pt.nullValue(opt_ty)
+                    else blk: {
+                        const null_val = Value.fromInterned(.null_value);
+                        const null_ptr = try l.pt.getCoerced(null_val, child_ty);
+                        break :blk try l.pt.getCoerced(null_ptr, opt_ty);
+                    };
+                    continue :inst l.replaceInst(inst, switch (tag) {
+                        .is_null => .cmp_eq,
+                        .is_non_null => .cmp_neq,
+                        else => unreachable,
+                    }, .{ .bin_op = .{ .lhs = un_op, .rhs = .fromValue(opt_null_ptr) } });
+                } else {
+                    continue :inst l.replaceInst(inst, .block, try l.isNullBlockPayload(inst, switch (tag) {
+                        .is_null => false,
+                        .is_non_null => true,
+                        else => unreachable,
+                    }));
+                }
+            },
             .load => if (l.features.has(.expand_packed_load)) {
                 const ty_op = l.air_instructions.items(.data)[@backingInt(inst)].ty_op;
                 const ptr_info = l.typeOf(ty_op.operand).ptrInfo(zcu);
@@ -3095,6 +3119,28 @@ fn arrayToSliceBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.I
     main_block.addBr(l, orig_inst, result);
     return .{ .ty_pl = .{
         .ty = slice_ty,
+        .payload = try l.addBlockBody(main_block.body()),
+    } };
+}
+
+fn isNullBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index, invert: bool) Error!Air.Inst.Data {
+    const pt = l.pt;
+    const zcu = pt.zcu;
+
+    const orig_un_op = l.air_instructions.items(.data)[@backingInt(orig_inst)].un_op;
+    const orig_ty = l.typeOf(orig_un_op);
+
+    var inst_buf: [4]Air.Inst.Index = undefined;
+    try l.air_instructions.ensureUnusedCapacity(zcu.gpa, inst_buf.len);
+    var main_block: Block = .init(&inst_buf);
+
+    const alloc_inst = main_block.addTy(l, .alloc, try pt.singleConstPtrType(orig_ty));
+    _ = main_block.addBinOp(l, .store, alloc_inst.toRef(), orig_un_op);
+    const is_null_ptr_tag: Air.Inst.Tag = if (invert) .is_non_null_ptr else .is_null_ptr;
+    const is_null_ptr_inst = main_block.addUnOp(l, is_null_ptr_tag, alloc_inst.toRef());
+    main_block.addBr(l, orig_inst, is_null_ptr_inst.toRef());
+    return .{ .ty_pl = .{
+        .ty = Type.bool,
         .payload = try l.addBlockBody(main_block.body()),
     } };
 }

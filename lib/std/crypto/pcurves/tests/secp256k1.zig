@@ -110,6 +110,8 @@ test "secp256k1 uncompressed sec1 encoding/decoding" {
 }
 
 test "secp256k1 public key is the neutral element" {
+    if (builtin.zig_backend == .stage2_llvm and builtin.target.cpu.arch.isPowerpc64()) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/37121
+
     const io = testing.io;
     const n = Secp256k1.scalar.Scalar.zero.toBytes(.little);
     const p = Secp256k1.random(io);

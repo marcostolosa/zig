@@ -435,6 +435,7 @@ fn fromZoirInner(
         .arena = options.arena,
         .ast = options.ast,
         .zoir = options.zoir,
+        .node = options.node,
         .errors = &errors,
         .ignore_unknown_fields = options.ignore_unknown_fields,
     });
@@ -4948,6 +4949,81 @@ test "std.zon variants" {
             }),
             end,
         );
+    }
+}
+
+test "std.zon custom node" {
+    const gpa = std.testing.allocator;
+    var arena_allocator: ArenaAllocator = .init(gpa);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
+    var diagnostics: Diagnostics = undefined;
+
+    const Index = std.zig.Zoir.Node.Index;
+
+    const Struct = struct { a: u32, b: u32 };
+    const start: Struct = .{ .a = 10, .b = 20 };
+    const end: Struct = .{ .a = 100, .b = 20 };
+
+    // from
+    {
+        var ast = try std.zig.Ast.parse(gpa, ".{.{.a = 100, .b = 20}}", .{ .mode = .zon });
+        defer ast.deinit(gpa);
+        var zoir = try std.zig.ZonGen.generate(gpa, ast, .{ .parse_str_lits = false });
+        defer zoir.deinit(gpa);
+
+        const node = Index.root.get(&zoir).array_literal.at(0);
+        try std.testing.expectEqual(
+            end,
+            try fromZoir(Struct, .{
+                .node = node,
+                .zoir = &zoir,
+                .ast = &ast,
+                .arena = arena,
+                .diagnostics = &diagnostics,
+            }),
+        );
+        try std.testing.expectEqual(
+            end,
+            try fromZoirNoAlloc(Struct, .{
+                .node = node,
+                .zoir = &zoir,
+                .ast = &ast,
+                .arena = arena,
+                .diagnostics = &diagnostics,
+            }),
+        );
+    }
+
+    // update
+    {
+        var ast = try std.zig.Ast.parse(gpa, ".{.{.a = 100, .b = 20}}", .{ .mode = .zon });
+        defer ast.deinit(gpa);
+        var zoir = try std.zig.ZonGen.generate(gpa, ast, .{ .parse_str_lits = false });
+        defer zoir.deinit(gpa);
+
+        var curr = start;
+
+        const node = Index.root.get(&zoir).array_literal.at(0);
+
+        try updateFromZoir(Struct, &curr, .{
+            .node = node,
+            .zoir = &zoir,
+            .ast = &ast,
+            .arena = arena,
+            .diagnostics = &diagnostics,
+        });
+        try std.testing.expectEqual(end, curr);
+        curr = start;
+
+        try updateFromZoirNoAlloc(Struct, &curr, .{
+            .node = node,
+            .zoir = &zoir,
+            .ast = &ast,
+            .arena = arena,
+            .diagnostics = &diagnostics,
+        });
+        try std.testing.expectEqual(end, curr);
     }
 }
 

@@ -301,6 +301,7 @@ test {
 
     _ = core.aes;
     _ = core.Ascon;
+    _ = core.keccak;
     _ = core.modes;
 
     _ = dh.X25519;

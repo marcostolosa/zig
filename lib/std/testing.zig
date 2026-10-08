@@ -1245,7 +1245,7 @@ test "checkAllAllocationFailures provide result type to 'extra_args' argument" {
 test "checkAllAllocationFailures does not depend on in-place resizes" {
     // `std.testing.allocator` never reuses memory, so whether a list can grow in place depends
     // on where in its bucket it landed, which differs from one run to the next.
-    try checkAllAllocationFailures(std.testing.allocator, struct {
+    const S = struct {
         fn f(gpa: std.mem.Allocator) !void {
             var a: std.ArrayList(u8) = .empty;
             defer a.deinit(gpa);
@@ -1256,7 +1256,8 @@ test "checkAllAllocationFailures does not depend on in-place resizes" {
                 try b.append(gpa, @truncate(i));
             }
         }
-    }.f, .{});
+    };
+    try checkAllAllocationFailures(std.testing.allocator, S.f, .{});
 }
 
 /// Given a type, references all the declarations inside, so that the semantic analyzer sees them.

@@ -712,11 +712,6 @@ pub fn build(b: *std.Build) !void {
         .skip_libc = skip_libc,
     }));
     test_step.dependOn(tests.addCliTests(b));
-    if (tests.addLlvmIrTests(b, .{
-        .enable_llvm = enable_llvm,
-        .test_filters = test_filters,
-        .test_target_filters = test_target_filters,
-    })) |test_llvm_ir_step| test_step.dependOn(test_llvm_ir_step);
 
     try addWasiUpdateStep(b, version);
 
@@ -822,6 +817,10 @@ pub fn build(b: *std.Build) !void {
     const test_incremental_step = b.step("test-incremental", "Run the incremental compilation tests");
     try tests.addRunnerTests(b, runner, test_incremental_step, "test/incremental", @import("test/incremental/matrix.zon"), runner_opts);
     test_step.dependOn(test_incremental_step);
+
+    const test_llvm_ir_step = b.step("test-llvm-ir", "Run the LLVM IR tests");
+    try tests.addRunnerTests(b, runner, test_llvm_ir_step, "test/llvm-ir", @import("test/llvm-ir/matrix.zon"), runner_opts);
+    test_step.dependOn(test_llvm_ir_step);
 }
 
 fn addWasiUpdateStep(b: *std.Build, version: [:0]const u8) !void {

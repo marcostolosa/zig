@@ -6,14 +6,12 @@ const OptimizeMode = std.builtin.Optimize;
 const Step = std.Build.Step;
 
 // Cases
-const llvm_ir = @import("llvm_ir.zig");
 const libc = @import("libc.zig");
 const link = @import("link.zig");
 
 // Implementations
 pub const ErrorTracesContext = @import("src/ErrorTrace.zig");
 pub const StackTracesContext = @import("src/StackTrace.zig");
-pub const LlvmIrContext = @import("src/LlvmIr.zig");
 pub const LibcContext = @import("src/Libc.zig");
 pub const LinkContext = @import("src/Link.zig");
 
@@ -2196,7 +2194,7 @@ const link_targets = blk: {
 const RunnerTarget = struct {
     target: std.Target.Query,
     cache_mode: enum { whole, incremental },
-    backend: enum { selfhosted, llvm, cbe },
+    backend: enum { selfhosted, llvm, llvmir, cbe },
     linker: enum { lld, old, new },
     pic: enum { nopic, pic, pie },
 };
@@ -3173,25 +3171,6 @@ pub fn addRunnerTests(
 fn isEditorFileName(name: []const u8) bool {
     return (std.mem.startsWith(u8, name, "#") and std.mem.endsWith(u8, name, "#")) or
         std.mem.endsWith(u8, name, "~") or std.mem.endsWith(u8, name, ".swp");
-}
-
-pub fn addLlvmIrTests(b: *std.Build, options: LlvmIrContext.Options) ?*Step {
-    const step = b.step("test-llvm-ir", "Run the LLVM IR tests");
-
-    if (!options.enable_llvm) {
-        step.dependOn(&b.addFail("test-llvm-ir requires -Denable-llvm").step);
-        return null;
-    }
-
-    var context: LlvmIrContext = .{
-        .b = b,
-        .options = options,
-        .root_step = step,
-    };
-
-    llvm_ir.addCases(&context);
-
-    return step;
 }
 
 const libc_test_nsz_targets: []const std.Target.Query = &.{

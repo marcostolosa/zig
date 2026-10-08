@@ -917,6 +917,7 @@ fn handleCommand(
                         .arch_os_abi = triple,
                         .object_format = switch (backend) {
                             .sema, .selfhosted, .llvm => null,
+                            .llvmir => "llvmir",
                             .cbe => "c",
                         },
                     }) catch |err| switch (err) {
@@ -1075,7 +1076,7 @@ fn handleCommand(
                                 ),
                             };
                         },
-                        .stdout, .exit, .gdb, .lldb => if (eb.errorMessageCount() > 0) {
+                        .stdout, .exit, .llvm, .gdb, .lldb => if (eb.errorMessageCount() > 0) {
                             eb.renderToStderr(runner.io, .{}, .auto) catch |err| switch (err) {
                                 error.Canceled => {},
                                 else => {},
@@ -1146,6 +1147,7 @@ fn spawnCompiler(
         .sema => try argv.append(gpa, "-fno-emit-bin"),
         .selfhosted => try argv.append(gpa, "-fno-llvm"),
         .llvm => try argv.append(gpa, "-fllvm"),
+        .llvmir => try argv.append(gpa, "-ofmt=llvmir"),
         .cbe => try argv.append(gpa, "-ofmt=c"),
     } else try argv.appendSlice(gpa, &.{ "-I", path_buffer[0 .. (runner.args.lib_dir orelse
         return runner.fail("\"--lib=path/to/lib\" arg required with cbe", .{}))
@@ -1287,6 +1289,8 @@ const Compiler = struct {
             /// Use the LLVM backend.
             /// Corresponds to `-fllvm -flld`.
             llvm,
+            /// Use the LLVM backend without libLLVM.
+            llvmir,
             /// Use the C backend. The output is compiled with `zig cc`.
             /// Corresponds to `-ofmt=c`.
             cbe,
@@ -1325,7 +1329,7 @@ const Compiler = struct {
         return .{ .tag = header.tag, .body = body };
     }
 
-    const Check = enum { errors, stdout, exit, gdb, lldb };
+    const Check = enum { errors, stdout, exit, llvm, gdb, lldb };
     fn checkSuccess(
         comp: *Compiler,
         update: *const Update,
@@ -1361,7 +1365,7 @@ const Compiler = struct {
         var script_buffer: [512]u8 = undefined;
         const script_path, const script_file, var script_fw = script: switch (check) {
             .errors => return,
-            .stdout, .exit => .{ undefined, null, undefined },
+            .stdout, .exit, .llvm => .{ undefined, null, undefined },
             .gdb => {
                 const script_path = tmp_dir_path ++ std.Io.Dir.path.sep_str ++ "gdb";
                 argv.appendSliceAssumeCapacity(&.{ "gdb", "--batch", "--command", script_path, "--args" });
@@ -1425,7 +1429,7 @@ const Compiler = struct {
         const out_path = try std.Io.Dir.path.join(arena, &.{ out_dir_path, comp.out_name });
         const bin_path = switch (comp.target.backend.?) {
             .sema => return,
-            .selfhosted, .llvm => out_path,
+            .selfhosted, .llvm, .llvmir => out_path,
             .cbe => try comp.compileC(update.src_dir, out_path),
         };
 
@@ -1527,6 +1531,23 @@ const Compiler = struct {
             .exe = exe: switch (check) {
                 .errors => unreachable,
                 .stdout, .exit => if (use_executor) .search else .{ .file = bin_file },
+                .llvm => {
+                    var bin_fr = bin_file.reader(io, &.{});
+                    const actual = bin_fr.interface.readAllocAll(arena, @intCast(
+                        bin_fr.getSize() catch |err| switch (err) {
+                            error.Canceled => |e| return e,
+                            else => |e| return runner.fail("unable to get size of {q}: {t}", .{ bin_path, e }),
+                        },
+                    )) catch |err| switch (switch (err) {
+                        error.OutOfMemory => |e| return e,
+                        error.EndOfStream => |e| e,
+                        error.ReadFailed => bin_fr.err.?,
+                    }) {
+                        error.Canceled => |e| return e,
+                        else => |e| return runner.fail("unable to read {q}: {t}", .{ bin_path, e }),
+                    };
+                    return update.checkMatches("LLVM IR", expected, actual);
+                },
                 .gdb, .lldb => {
                     if (use_executor) {
                         if (!runner.args.quiet) std.log.warn(
@@ -1603,7 +1624,7 @@ const Compiler = struct {
         }
         switch (result.term) {
             .exited => |code| switch (check) {
-                .errors => unreachable,
+                .errors, .llvm => unreachable,
                 .stdout => {
                     if (code != 0) return update.fail(
                         "generated executable {q} failed with code {d}",

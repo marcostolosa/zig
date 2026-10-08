@@ -25,6 +25,7 @@ const InternPool = @import("../InternPool.zig");
 const AnalUnit = InternPool.AnalUnit;
 const Module = @import("../Module.zig");
 const Sema = @import("../Sema.zig");
+const debugLogScopeEnabled = @import("../main.zig").debugLogScopeEnabled;
 const target_util = @import("../target.zig");
 const tracy = @import("../tracy.zig");
 const trace = tracy.trace;
@@ -2303,10 +2304,9 @@ fn analyzeFuncBody(
 
     const comp = zcu.comp;
 
-    const dump_air = build_options.enable_debug_extensions and comp.verbose_air;
-    const dump_llvm_ir = build_options.enable_debug_extensions and (comp.verbose_llvm_ir != null or comp.verbose_llvm_bc != null);
-
-    if (comp.bin_file != null or zcu.llvm_object != null or dump_air or dump_llvm_ir) {
+    if (comp.bin_file != null or zcu.llvm_object != null or log_air: {
+        break :log_air debugLogScopeEnabled("illegal-air") or debugLogScopeEnabled("legal-air") or debugLogScopeEnabled("air");
+    }) {
         zcu.codegen_prog_node.increaseEstimatedTotalItems(1);
         comp.link_prog_node.increaseEstimatedTotalItems(1);
 
@@ -4522,32 +4522,28 @@ fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) e
     tracy_trace.addText(fqn.toSlice(ip));
     tracy_trace.addTextFmt("func_ip_index={d}", .{func_index});
 
-    Air.Verify.run(pt, func_index, air);
-
-    if (codegen.legalizeFeatures(pt, nav)) |features| {
-        try air.legalize(pt, features);
-        // Verify the AIR again post-legalization.
-        Air.Verify.run(pt, func_index, air);
-    }
-
-    var liveness: ?Air.Liveness = if (codegen.wantsLiveness(pt, nav))
-        try .analyze(zcu, air.*, ip)
-    else
-        null;
+    var liveness: ?Air.Liveness = null;
     defer if (liveness) |*l| l.deinit(gpa);
 
-    if (build_options.enable_debug_extensions and comp.verbose_air) p: {
-        const io = comp.io;
-        const stderr = try io.lockStderr(&.{}, null);
-        defer io.unlockStderr();
-        printVerboseAir(pt, liveness, fqn, air, &stderr.file_writer.interface) catch |err| switch (err) {
-            error.WriteFailed => switch (stderr.file_writer.err.?) {
-                error.Canceled => |e| return e,
-                else => break :p,
-            },
-        };
+    const ap: Air.Print = .{
+        .zcu = zcu,
+        .fqn = fqn,
+        .air = air,
+        .liveness = &liveness,
+    };
+    std.log.scoped(.@"illegal-air").debug("{f}", .{&ap});
+
+    if (codegen.legalizeFeatures(pt, nav)) |features| {
+        // Verify the AIR again pre-legalization.
+        Air.Verify.run(pt, func_index, air);
+        try air.legalize(pt, features);
     }
 
+    std.log.scoped(.@"legal-air").debug("{f}", .{&ap});
+    Air.Verify.run(pt, func_index, air);
+
+    if (codegen.wantsLiveness(pt, nav)) liveness = try .analyze(zcu, air.*, ip);
+    std.log.scoped(.air).debug("{f}", .{&ap});
     if (std.debug.runtime_safety) verify_liveness: {
         var verify: Air.Liveness.Verify = .{
             .gpa = gpa,
@@ -4576,18 +4572,4 @@ fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) e
     const lf = comp.bin_file orelse return error.NoLinkFile;
 
     return codegen.generateFunction(lf, pt, func_index, air, &liveness);
-}
-
-fn printVerboseAir(
-    pt: Zcu.PerThread,
-    liveness: ?Air.Liveness,
-    fqn: InternPool.NullTerminatedString,
-    air: *const Air,
-    w: *Io.Writer,
-) Io.Writer.Error!void {
-    const zcu = pt.zcu;
-    const ip = &zcu.intern_pool;
-    try w.print("# Begin Function AIR: {f}:\n", .{fqn.fmt(ip)});
-    try air.write(w, zcu, liveness);
-    try w.print("# End Function AIR: {f}\n\n", .{fqn.fmt(ip)});
 }

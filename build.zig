@@ -25,6 +25,10 @@ pub fn build(b: *std.Build) !void {
         },
     });
     const optimize = b.standardOptimizeOption(.{});
+    const is_debug = switch (optimize) {
+        .debug => true,
+        .safe, .fast, .small => false,
+    };
 
     const flat = b.option(bool, "flat", "Put files into the installation prefix in a manner suited for upstream distribution rather than a posix file system hierarchy standard") orelse false;
     const single_threaded = b.option(bool, "single-threaded", "Build artifacts that run in single threaded mode");
@@ -205,9 +209,9 @@ pub fn build(b: *std.Build) !void {
     const value_tracing = b.option(bool, "value-tracing", "Enable extra state tracking to help troubleshoot bugs in the compiler (using the std.debug.Trace API)") orelse false;
 
     const mem_leak_frames: u32 = b.option(u32, "mem-leak-frames", "How many stack frames to print when a memory leak occurs. Tests get 2x this amount.") orelse blk: {
-        if (strip == true) break :blk @as(u32, 0);
-        if (optimize != .debug) break :blk 0;
-        break :blk 4;
+        if (strip == true) break :blk 0;
+        if (is_debug) break :blk 4;
+        break :blk 0;
     };
 
     const exe = addCompilerStep(b, .{
@@ -255,9 +259,15 @@ pub fn build(b: *std.Build) !void {
         exe.root_module.link_libc = true;
     }
 
-    const is_debug = optimize == .debug;
     const enable_debug_extensions = b.option(bool, "debug-extensions", "Enable commands and options useful for debugging the compiler") orelse is_debug;
-    const enable_logging = b.option(bool, "log", "Enable debug logging with --debug-log") orelse is_debug;
+    const log_level: std.log.Level = b.option(std.log.Level, "log", "Enable logs of the given or higher severity. Passing 'debug' still requires passing '--debug-log' to actually see any debug logs.") orelse switch (enable_debug_extensions) {
+        true => .debug,
+        false => switch (optimize) {
+            .debug => .debug,
+            .safe, .fast => .info,
+            .small => .err,
+        },
+    };
 
     const opt_version_string = b.option([]const u8, "version-string", "Override Zig version string. Default is to find out with git.");
     const version_slice = if (opt_version_string) |version| version else v: {
@@ -398,7 +408,7 @@ pub fn build(b: *std.Build) !void {
     exe_options.addOption(std.SemanticVersion, "semver", semver);
 
     exe_options.addOption(bool, "enable_debug_extensions", enable_debug_extensions);
-    exe_options.addOption(bool, "enable_logging", enable_logging);
+    exe_options.addOption(std.log.Level, "log_level", log_level);
     exe_options.addOption(bool, "enable_tracy", tracy != null);
     exe_options.addOption(bool, "enable_tracy_callstack", tracy_callstack);
     exe_options.addOption(bool, "enable_tracy_allocation", tracy_allocation);
@@ -837,7 +847,7 @@ fn addWasiUpdateStep(b: *std.Build, version: [:0]const u8) !void {
     exe_options.addOption([:0]const u8, "version", version);
     exe_options.addOption(std.SemanticVersion, "semver", semver);
     exe_options.addOption(bool, "enable_debug_extensions", false);
-    exe_options.addOption(bool, "enable_logging", false);
+    exe_options.addOption(std.log.Level, "log_level", .err);
     exe_options.addOption(bool, "enable_tracy", false);
     exe_options.addOption(bool, "enable_tracy_callstack", false);
     exe_options.addOption(bool, "enable_tracy_allocation", false);

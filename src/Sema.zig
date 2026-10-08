@@ -1126,6 +1126,8 @@ fn analyzeBodyInner(
     crash_info.push(sema, block, body);
     defer crash_info.pop();
 
+    const path = zcu.namespacePtr(block.namespace).fileScope(zcu).path;
+
     // We use a while (true) loop here to avoid a redundant way of breaking out of
     // the loop. The only way to break out of the loop is with a `noreturn`
     // instruction.
@@ -1134,11 +1136,7 @@ fn analyzeBodyInner(
         crash_info.setBodyIndex(i);
         const inst = body[i];
 
-        // This log is a bit expensive, and LLVM fails to optimize it away.
-        if (build_options.enable_logging) {
-            const path = zcu.namespacePtr(block.namespace).fileScope(zcu).path;
-            std.log.scoped(.sema_zir).debug("sema ZIR {f} %{d}", .{ path.fmt(comp), inst });
-        }
+        std.log.scoped(.sema_zir).debug("sema ZIR {f} %{d}", .{ path.fmt(comp), inst });
 
         const air_ref: Air.Inst.Ref = inst: switch (tags[@backingInt(inst)]) {
             // zig fmt: off

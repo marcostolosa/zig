@@ -42,11 +42,8 @@ const thread_stack_size = 60 << 20;
 
 pub const std_options: std.Options = .{
     .logFn = log,
-
-    .log_level = switch (builtin.mode) {
-        .debug => .debug,
-        .safe, .fast => .info,
-        .small => .err,
+    .log_level = switch (build_options.log_level) {
+        inline else => |log_level| @field(std.log.Level, @tagName(log_level)),
     },
 };
 pub const std_options_cwd = if (native_os == .wasi) wasi_cwd else null;
@@ -104,7 +101,7 @@ const normal_usage =
     \\  help             Print this help and exit
     \\  cache-cat        Print a zig-cache manifest file as zon
     \\  std              View standard library documentation in a browser
-    \\  libc             Display native libc paths file or validate one
+    \\  libc             Print native libc paths file or validate one
     \\  targets          List available compilation targets
     \\  version          Print version number and exit
     \\  zen              Print Zen of Zig and exit
@@ -126,7 +123,15 @@ const debug_usage = normal_usage ++
 
 const usage = if (build_options.enable_debug_extensions) debug_usage else normal_usage;
 
-var log_scopes: std.ArrayList([]const u8) = .empty;
+var log_scopes: std.array_hash_map.String(void) = .empty;
+
+pub fn debugLogScopeEnabled(scope: []const u8) bool {
+    switch (build_options.log_level) {
+        else => {},
+        .debug => if (log_scopes.contains(scope)) return true,
+    }
+    return false;
+}
 
 pub fn log(
     comptime level: std.log.Level,
@@ -135,18 +140,11 @@ pub fn log(
     args: anytype,
 ) void {
     // Hide debug messages unless:
-    // * logging enabled with `-Dlog`.
+    // * logging enabled with `-Ddebug-extensions` or `-Dlog=debug`.
     // * the --debug-log arg for the scope has been provided
-    if (@backingInt(level) > @backingInt(std.options.log_level) or
-        @backingInt(level) > @backingInt(std.log.Level.info))
-    {
-        if (!build_options.enable_logging) return;
-
-        const scope_name = @tagName(scope);
-        for (log_scopes.items) |log_scope| {
-            if (mem.eql(u8, log_scope, scope_name))
-                break;
-        } else return;
+    switch (level) {
+        else => {},
+        .debug => if (!debugLogScopeEnabled(@tagName(scope))) return,
     }
 
     // Otherwise, use the default implementation.
@@ -557,11 +555,14 @@ const compile_usage =
     \\  -fno-emit-docs            (default) Do not produce docs/ dir with html documentation
     \\  -femit-implib[=path]      (default) Produce an import .lib when building a Windows DLL
     \\  -fno-emit-implib          Do not produce an import .lib when building a Windows DLL
-    \\  --show-builtin            Output the source of @import("builtin") then exit
     \\  --cache-dir [path]        Override the local cache directory
     \\  --global-cache-dir [path] Override the global cache directory
     \\  --zig-lib-dir [path]      Override path to Zig installation lib directory
     \\  --build-root [path]       Override path to project source files
+    \\  --show-builtin            Output the source of @import("builtin") then exit
+    \\  --time-report             Send timing diagnostics to '--listen' clients
+    \\  --verbose-cc              Print C compiler commands before executing them
+    \\  --verbose-link            Print linker commands before executing them
     \\
     \\Global Compile Options:
     \\  --name [name]                    Compilation unit name (not a file path)
@@ -593,7 +594,6 @@ const compile_usage =
     \\  -fpatchable-function-entry=[num] Add num NOPs of padding in function prologues
     \\  -mexec-model=[value]             (WASI) Execution model
     \\  -municode                        (Windows) Use wmain/wWinMain as entry point
-    \\  --time-report                    Send timing diagnostics to '--listen' clients
     \\
     \\Per-Module Compile Options:
     \\  --dep [[import=]name]     Add an entry to the next module's import table
@@ -604,13 +604,15 @@ const compile_usage =
     \\    safe                    Enable both safety checks and machine code optimizations
     \\    small                   Prioritize small binary size. Safety checks off.
     \\  -ofmt=[fmt]               Override target object format
-    \\    elf                     Executable and Linking Format
     \\    c                       C source code
-    \\    wasm                    WebAssembly
     \\    coff                    Common Object File Format (Windows)
+    \\    elf                     Executable and Linking Format
+    \\    llvmir                  LLVM text intermediate representation
+    \\    llvmbc                  LLVM binary intermediate representation
     \\    macho                   macOS relocatables
-    \\    spirv                   Standard, Portable Intermediate Representation V (SPIR-V)
     \\    plan9                   Plan 9 from Bell Labs object format
+    \\    spirv                   Standard, Portable Intermediate Representation V (SPIR-V)
+    \\    wasm                    WebAssembly
     \\    hex  (planned feature)  Intel IHEX
     \\    raw  (planned feature)  Dump machine code directly
     \\  -mcpu [cpu]               Specify target CPU and feature set
@@ -791,15 +793,6 @@ const compile_usage =
     \\Debug Options (Zig Compiler Development):
     \\  -fopt-bisect-limit=[limit]   Only run [limit] first LLVM optimization passes
     \\  -fstack-report               Print stack size diagnostics
-    \\  --verbose-link               Display linker invocations
-    \\  --verbose-cc                 Display C compiler invocations
-    \\  --verbose-air                Enable compiler debug output for Zig AIR
-    \\  --verbose-intern-pool        Enable compiler debug output for InternPool
-    \\  --verbose-generic-instances  Enable compiler debug output for generic instance generation
-    \\  --verbose-llvm-ir[=path]     Enable compiler debug output for unoptimized LLVM IR
-    \\  --verbose-llvm-bc=[path]     Enable compiler debug output for unoptimized LLVM BC
-    \\  --verbose-cimport            Enable compiler debug output for C imports
-    \\  --verbose-llvm-cpu-features  Enable compiler debug output for LLVM CPU features
     \\  --debug-log [scope]          Enable printing debug/info log messages for scope
     \\  --debug-compile-errors       Crash with helpful diagnostics at the first compile error
     \\  --debug-link-snapshot        Dump linker state and output file information for troubleshooting
@@ -933,17 +926,11 @@ fn buildOutputType(
     var listen: Listen = .none;
     var debug_compile_errors = false;
     var debug_incremental = false;
-    var verbose_link = (native_os != .wasi or builtin.link_libc) and
-        EnvVar.ZIG_VERBOSE_LINK.isSet(environ_map);
     var verbose_cc = (native_os != .wasi or builtin.link_libc) and
         EnvVar.ZIG_VERBOSE_CC.isSet(environ_map);
-    var verbose_air = false;
-    var verbose_intern_pool = false;
-    var verbose_generic_instances = false;
-    var verbose_llvm_ir: ?[]const u8 = null;
-    var verbose_llvm_bc: ?[]const u8 = null;
+    var verbose_link = (native_os != .wasi or builtin.link_libc) and
+        EnvVar.ZIG_VERBOSE_LINK.isSet(environ_map);
     var link_depfile: ?[]const u8 = null;
-    var verbose_llvm_cpu_features = false;
     var time_report = false;
     var stack_report = false;
     var show_builtin = false;
@@ -1809,24 +1796,10 @@ fn buildOutputType(
                         } else {
                             warn("Zig was compiled without debug extensions. --debug-compile-errors has no effect.", .{});
                         }
-                    } else if (mem.eql(u8, arg, "--verbose-link")) {
-                        verbose_link = true;
                     } else if (mem.eql(u8, arg, "--verbose-cc")) {
                         verbose_cc = true;
-                    } else if (mem.eql(u8, arg, "--verbose-air")) {
-                        verbose_air = true;
-                    } else if (mem.eql(u8, arg, "--verbose-intern-pool")) {
-                        verbose_intern_pool = true;
-                    } else if (mem.eql(u8, arg, "--verbose-generic-instances")) {
-                        verbose_generic_instances = true;
-                    } else if (mem.eql(u8, arg, "--verbose-llvm-ir")) {
-                        verbose_llvm_ir = "-";
-                    } else if (mem.cutPrefix(u8, arg, "--verbose-llvm-ir=")) |rest| {
-                        verbose_llvm_ir = rest;
-                    } else if (mem.cutPrefix(u8, arg, "--verbose-llvm-bc=")) |rest| {
-                        verbose_llvm_bc = rest;
-                    } else if (mem.eql(u8, arg, "--verbose-llvm-cpu-features")) {
-                        verbose_llvm_cpu_features = true;
+                    } else if (mem.eql(u8, arg, "--verbose-link")) {
+                        verbose_link = true;
                     } else if (mem.cutPrefix(u8, arg, "-T")) |rest| {
                         linker_script = rest;
                     } else if (mem.cutPrefix(u8, arg, "-L")) |rest| {
@@ -3729,13 +3702,7 @@ fn buildOutputType(
         .libc_installation = if (create_module.libc_installation) |*lci| lci else null,
         .verbose_cc = verbose_cc,
         .verbose_link = verbose_link,
-        .verbose_air = verbose_air,
-        .verbose_intern_pool = verbose_intern_pool,
-        .verbose_generic_instances = verbose_generic_instances,
-        .verbose_llvm_ir = verbose_llvm_ir,
-        .verbose_llvm_bc = verbose_llvm_bc,
         .link_depfile = link_depfile,
-        .verbose_llvm_cpu_features = verbose_llvm_cpu_features,
         .time_report = time_report,
         .stack_report = stack_report,
         .build_id = build_id,
@@ -3956,10 +3923,10 @@ fn buildOutputType(
                 });
             }
 
-            try test_exec_args.ensureUnusedCapacity(arena, 2 * log_scopes.items.len + @intFromBool(verbose_link) + @intFromBool(verbose_cc));
-            for (log_scopes.items) |log_scope| test_exec_args.appendSliceAssumeCapacity(&.{ "--debug-log", log_scope });
-            if (verbose_link) test_exec_args.appendAssumeCapacity("--verbose-link");
+            try test_exec_args.ensureUnusedCapacity(arena, 2 * log_scopes.count() + @intFromBool(verbose_link) + @intFromBool(verbose_cc));
+            for (log_scopes.keys()) |log_scope| test_exec_args.appendSliceAssumeCapacity(&.{ "--debug-log", log_scope });
             if (verbose_cc) test_exec_args.appendAssumeCapacity("--verbose-cc");
+            if (verbose_link) test_exec_args.appendAssumeCapacity("--verbose-link");
         }
 
         try runOrTest(
@@ -5627,17 +5594,17 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8, environ_map: 
         }
     }
 
-    const display_path = zig_source_path orelse "<stdin>";
+    const print_path = zig_source_path orelse "<stdin>";
     const source: [:0]const u8 = s: {
         var f = if (zig_source_path) |p| file: {
             break :file Io.Dir.cwd().openFile(io, p, .{}) catch |err| {
-                fatal("unable to open file {q} for ast-check: {t}", .{ display_path, err });
+                fatal("unable to open file {q} for ast-check: {t}", .{ print_path, err });
             };
         } else Io.File.stdin();
         defer if (zig_source_path != null) f.close(io);
         var file_reader: Io.File.Reader = f.reader(io, &stdin_buffer);
         break :s std.zig.readSourceFileToEndAlloc(arena, &file_reader) catch |err| {
-            fatal("unable to load file {q} for ast-check: {t}", .{ display_path, err });
+            fatal("unable to load file {q} for ast-check: {t}", .{ print_path, err });
         };
     };
 
@@ -5661,7 +5628,7 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8, environ_map: 
 
             if (zir.hasCompileErrors()) {
                 var wip_errors: std.zig.ErrorBundle.Wip = try .init(arena);
-                try wip_errors.addZirErrorMessages(zir, tree, source, display_path);
+                try wip_errors.addZirErrorMessages(zir, tree, source, print_path);
                 var error_bundle = try wip_errors.toOwnedBundle("");
                 try error_bundle.renderToStderr(io, .{}, color);
                 if (zir.loweringFailed()) {
@@ -5731,7 +5698,7 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8, environ_map: 
             const zoir = try ZonGen.generate(arena, tree, .{});
             if (zoir.hasCompileErrors()) {
                 var wip_errors: std.zig.ErrorBundle.Wip = try .init(arena);
-                try wip_errors.addZoirErrorMessages(zoir, tree, source, display_path);
+                try wip_errors.addZoirErrorMessages(zoir, tree, source, print_path);
                 var error_bundle = try wip_errors.toOwnedBundle("");
                 error_bundle.renderToStderr(io, .{}, color) catch {};
                 process.exit(1);
@@ -6254,9 +6221,8 @@ fn randInt(io: Io, comptime T: type) T {
 }
 
 fn addDebugLog(arena: Allocator, scope_name: []const u8) error{OutOfMemory}!void {
-    if (!build_options.enable_logging) {
-        warn("Zig was compiled without logging enabled (-Dlog). --debug-log has no effect.", .{});
-    } else {
-        try log_scopes.append(arena, scope_name);
+    switch (build_options.log_level) {
+        else => warn("Zig was compiled without logging enabled (-Dlog). --debug-log has no effect.", .{}),
+        .debug => try log_scopes.put(arena, try arena.dupe(u8, scope_name), {}),
     }
 }

@@ -10591,17 +10591,36 @@ pub fn errorUnionPayload(ip: *const InternPool, ty: Index) Index {
     return ip.indexToKey(ty).error_union_type.payload_type;
 }
 
-pub fn dump(ip: *const InternPool) void {
-    var buffer: [4096]u8 = undefined;
-    const stderr = std.debug.lockStderr(&buffer);
-    defer std.debug.unlockStderr();
-    const w = &stderr.file_writer.interface;
-    dumpDependencyStatsFallible(ip, w) catch return;
-    dumpStatsFallible(ip, w, std.heap.page_allocator) catch return;
-    dumpAllFallible(ip, w) catch return;
-}
+pub const Dump = struct {
+    name: []const u8,
+    arena: std.mem.Allocator,
+    ip: *const InternPool,
+    err: ?Allocator.Error,
 
-fn dumpDependencyStatsFallible(ip: *const InternPool, w: *Io.Writer) !void {
+    pub fn format(d: *Dump, w: *Io.Writer) Io.Writer.Error!void {
+        try w.print("{q}:\n", .{d.name});
+        try d.ip.dumpDependencyStatsFallible(w);
+        d.ip.dumpStatsFallible(d.arena, w) catch |err| switch (err) {
+            error.WriteFailed => |e| return e,
+            error.OutOfMemory => |e| {
+                d.err = e;
+                return error.WriteFailed;
+            },
+        };
+    }
+
+    pub fn formatAll(d: *Dump, w: *Io.Writer) Io.Writer.Error!void {
+        try w.print("{q}:\n", .{d.name});
+        try d.ip.dumpAllFallible(w);
+    }
+
+    pub fn formatGenericInstances(d: *Dump, w: *Io.Writer) Io.Writer.Error!void {
+        try w.print("{q}:\n", .{d.name});
+        d.ip.dumpGenericInstancesFallible(d.arena, w) catch return;
+    }
+};
+
+fn dumpDependencyStatsFallible(ip: *const InternPool, w: *Io.Writer) Io.Writer.Error!void {
     const dep_entries_len = ip.dep_entries.items.len - ip.free_dep_entries.items.len;
     const src_hash_deps_len = ip.src_hash_deps.count();
     const nav_val_deps_len = ip.nav_val_deps.count();
@@ -10668,7 +10687,7 @@ fn dumpDependencyStatsFallible(ip: *const InternPool, w: *Io.Writer) !void {
     });
 }
 
-fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !void {
+fn dumpStatsFallible(ip: *const InternPool, arena: Allocator, w: *Io.Writer) (Allocator.Error || Io.Writer.Error)!void {
     var items_len: usize = 0;
     var extra_len: usize = 0;
     var limbs_len: usize = 0;
@@ -10968,7 +10987,7 @@ fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !vo
     }
 }
 
-fn dumpAllFallible(ip: *const InternPool, w: *Io.Writer) anyerror!void {
+fn dumpAllFallible(ip: *const InternPool, w: *Io.Writer) Io.Writer.Error!void {
     for (ip.locals, 0..) |*local, tid| {
         // Early check for length 0, because `view()` is invalid if capacity is 0
         if (local.mutate.items.len == 0) continue;
@@ -11071,21 +11090,10 @@ fn dumpAllFallible(ip: *const InternPool, w: *Io.Writer) anyerror!void {
     }
 }
 
-pub fn dumpGenericInstances(ip: *const InternPool, allocator: Allocator) void {
-    var buffer: [4096]u8 = undefined;
-    const stderr = std.debug.lockStderr(&buffer);
-    defer std.debug.unlockStderr();
-    const w = &stderr.file_writer.interface;
-    ip.dumpGenericInstancesFallible(allocator, w) catch return;
-}
-
-pub fn dumpGenericInstancesFallible(ip: *const InternPool, allocator: Allocator, w: *Io.Writer) !void {
-    var arena_allocator = std.heap.ArenaAllocator.init(allocator);
-    defer arena_allocator.deinit();
-    const arena = arena_allocator.allocator();
-
+pub fn dumpGenericInstancesFallible(ip: *const InternPool, arena: Allocator, w: *Io.Writer) !void {
     var instances: std.array_hash_map.Auto(Index, std.ArrayList(Index)) = .empty;
     for (ip.locals, 0..) |*local, tid| {
+        if (local.mutate.items.len == 0) continue;
         const items = local.shared.items.view().slice();
         const extra_list = local.shared.extra;
         for (

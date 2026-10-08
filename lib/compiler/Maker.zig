@@ -509,14 +509,10 @@ pub fn main(init: process.Init.Minimal) !void {
             } else if (mem.eql(u8, arg, "--libc-runtimes") or mem.eql(u8, arg, "--glibc-runtimes")) {
                 // --glibc-runtimes was the old name of the flag; kept for compatibility for now.
                 graph.libc_runtimes_dir = nextArgOrFatal(args, &arg_i);
-            } else if (mem.eql(u8, arg, "--verbose-air")) {
-                graph.verbose_air = true;
             } else if (mem.eql(u8, arg, "--verbose-cc")) {
                 graph.verbose_cc = true;
             } else if (mem.eql(u8, arg, "--verbose-link")) {
                 graph.verbose_link = true;
-            } else if (mem.eql(u8, arg, "--verbose-llvm-ir")) {
-                graph.verbose_llvm_ir = true;
             } else if (mem.eql(u8, arg, "--watch")) {
                 watch_flag = true;
             } else if (mem.eql(u8, arg, "--time-report")) {

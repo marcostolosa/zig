@@ -20,6 +20,7 @@ const link = @import("link.zig");
 const tracy = @import("tracy.zig");
 const trace = tracy.trace;
 const build_options = @import("build_options");
+const debugLogScopeEnabled = @import("main.zig").debugLogScopeEnabled;
 const LibCInstallation = std.zig.LibCInstallation;
 const glibc = @import("libs/glibc.zig");
 const musl = @import("libs/musl.zig");
@@ -161,12 +162,6 @@ clang_passthrough_mode: bool,
 clang_preprocessor_mode: ClangPreprocessorMode,
 /// Whether to print clang argvs to stdout.
 verbose_cc: bool,
-verbose_air: bool,
-verbose_intern_pool: bool,
-verbose_generic_instances: bool,
-verbose_llvm_ir: ?[]const u8,
-verbose_llvm_bc: ?[]const u8,
-verbose_llvm_cpu_features: bool,
 verbose_link: bool,
 link_depfile: ?[]const u8,
 disable_c_depfile: bool,
@@ -1544,13 +1539,7 @@ pub const CreateOptions = struct {
     clang_passthrough_mode: bool = false,
     verbose_cc: bool = false,
     verbose_link: bool = false,
-    verbose_air: bool = false,
-    verbose_intern_pool: bool = false,
-    verbose_generic_instances: bool = false,
-    verbose_llvm_ir: ?[]const u8 = null,
-    verbose_llvm_bc: ?[]const u8 = null,
     link_depfile: ?[]const u8 = null,
-    verbose_llvm_cpu_features: bool = false,
     debug_compiler_runtime_libs: ?std.lang.Optimize = null,
     debug_compile_errors: bool = false,
     debug_incremental: bool = false,
@@ -1932,21 +1921,6 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             try options.root_mod.deps.putNoClobber(arena, "zigc", zigc_mod);
         }
 
-        if (options.verbose_llvm_cpu_features) {
-            if (options.root_mod.resolved_target.llvm_cpu_features) |cf| {
-                const stderr = try io.lockStderr(&.{}, null);
-                defer io.unlockStderr();
-                const w = &stderr.file_writer.interface;
-                printVerboseLlvmCpuFeatures(w, arena, options.root_name, target, cf) catch |err| switch (err) {
-                    error.WriteFailed => switch (stderr.file_writer.err.?) {
-                        error.Canceled => |e| return e,
-                        else => {},
-                    },
-                    error.OutOfMemory => |e| return e,
-                };
-            }
-        }
-
         const error_limit = options.error_limit orelse (std.math.maxInt(u16) - 1);
         const main_mod = options.main_mod orelse options.root_mod;
 
@@ -2111,14 +2085,8 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             .clang_passthrough_mode = options.clang_passthrough_mode,
             .clang_preprocessor_mode = options.clang_preprocessor_mode,
             .verbose_cc = options.verbose_cc,
-            .verbose_air = options.verbose_air,
-            .verbose_intern_pool = options.verbose_intern_pool,
-            .verbose_generic_instances = options.verbose_generic_instances,
-            .verbose_llvm_ir = options.verbose_llvm_ir,
-            .verbose_llvm_bc = options.verbose_llvm_bc,
-            .link_depfile = options.link_depfile,
-            .verbose_llvm_cpu_features = options.verbose_llvm_cpu_features,
             .verbose_link = options.verbose_link,
+            .link_depfile = options.link_depfile,
             .disable_c_depfile = options.disable_c_depfile,
             .reference_trace = options.reference_trace,
             .time_report = if (options.time_report) .init else null,
@@ -2353,8 +2321,9 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                 comp.emit_asm != null or
                 comp.emit_llvm_ir != null or
                 comp.emit_llvm_bc != null or
-                comp.verbose_llvm_ir != null or
-                comp.verbose_llvm_bc != null))
+                log_llvm_ir: {
+                    break :log_llvm_ir debugLogScopeEnabled("llvm-ir") or debugLogScopeEnabled("opt-llvm-ir");
+                }))
         {
             if (opt_zcu) |zcu| {
                 dev.check(.llvm_backend);
@@ -2564,19 +2533,6 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
     }
     log.debug("queued oneshot prelink tasks: {d}", .{comp.oneshot_prelink_tasks.items.len});
     return comp;
-}
-
-fn printVerboseLlvmCpuFeatures(
-    w: *Writer,
-    arena: Allocator,
-    root_name: []const u8,
-    target: *const std.Target,
-    cf: [*:0]const u8,
-) (Writer.Error || Allocator.Error)!void {
-    try w.print("compilation: {s}\n", .{root_name});
-    try w.print("  target: {s}\n", .{try target.zigTriple(arena)});
-    try w.print("  cpu: {s}\n", .{target.cpu.model.name});
-    try w.print("  features: {s}\n", .{cf});
 }
 
 pub fn destroy(comp: *Compilation) void {
@@ -2991,14 +2947,19 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
             try pt.processExports();
         }
 
-        if (build_options.enable_debug_extensions and comp.verbose_intern_pool) {
-            std.debug.print("intern pool stats for {q}:\n", .{comp.root_name});
-            zcu.intern_pool.dump();
-        }
-
-        if (build_options.enable_debug_extensions and comp.verbose_generic_instances) {
-            std.debug.print("generic instances for '{s}:0x{x}':\n", .{ comp.root_name, @intFromPtr(zcu) });
-            zcu.intern_pool.dumpGenericInstances(gpa);
+        {
+            var d: InternPool.Dump = .{
+                .name = comp.root_name,
+                .arena = arena,
+                .ip = &zcu.intern_pool,
+                .err = null,
+            };
+            std.log.scoped(.@"ip-stats").debug("{f}", .{&d});
+            if (d.err) |err| return err;
+            std.log.scoped(.@"ip-values").debug("{f}", .{std.fmt.alt(&d, .formatAll)});
+            if (d.err) |err| return err;
+            std.log.scoped(.@"ip-generic-instances").debug("{f}", .{std.fmt.alt(&d, .formatGenericInstances)});
+            if (d.err) |err| return err;
         }
     }
 
@@ -3220,28 +3181,29 @@ fn flush(comp: *Compilation, arena: Allocator) (Io.Cancelable || Allocator.Error
                 comp.time_report.?.stats.real_ns_llvm_emit = ns;
             };
 
-            const zcu_obj_path: ?Cache.Path = if (comp.bin_file != null) p: {
-                break :p try comp.resolveEmitPathFlush(arena, .temp, llvm_object.out_bin_basename);
-            } else null;
+            const zcu_obj_path: ?Cache.Path = switch (comp.getTarget().ofmt) {
+                .llvmbc, .llvmir => null,
+                else => if (comp.bin_file != null)
+                    try comp.resolveEmitPathFlush(arena, .temp, llvm_object.out_bin_basename)
+                else
+                    null,
+            };
 
             const active = zcu.activate(tid);
             defer active.deactivate();
             llvm_object.emit(active.pt, .{
-                .pre_ir_path = comp.verbose_llvm_ir,
-                .pre_bc_path = comp.verbose_llvm_bc,
-
                 .bin_path = if (zcu_obj_path) |p| try p.toStringZ(arena) else null,
                 .asm_path = p: {
                     const raw = comp.emit_asm orelse break :p null;
                     const p = try comp.resolveEmitPathFlush(arena, .artifact, raw);
                     break :p try p.toStringZ(arena);
                 },
-                .post_ir_path = p: {
+                .opt_ir_path = p: {
                     const raw = comp.emit_llvm_ir orelse break :p null;
                     const p = try comp.resolveEmitPathFlush(arena, .artifact, raw);
                     break :p try p.toStringZ(arena);
                 },
-                .post_bc_path = p: {
+                .opt_bc_path = p: {
                     const raw = comp.emit_llvm_bc orelse break :p null;
                     const p = try comp.resolveEmitPathFlush(arena, .artifact, raw);
                     break :p try p.toStringZ(arena);
@@ -3267,7 +3229,7 @@ fn flush(comp: *Compilation, arena: Allocator) (Io.Cancelable || Allocator.Error
                     error.Canceled, error.OutOfMemory => |e| return e,
                     error.AlreadyReported => return,
                 };
-            }
+            } else return;
         }
     }
     if (comp.bin_file) |lf| {
@@ -4903,12 +4865,6 @@ fn workerDocsWasmFallible(comp: *Compilation, prog_node: std.Progress.Node) SubU
         .emit_bin = .yes_cache,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
-        .verbose_air = comp.verbose_air,
-        .verbose_intern_pool = comp.verbose_intern_pool,
-        .verbose_generic_instances = comp.verbose_intern_pool,
-        .verbose_llvm_ir = comp.verbose_llvm_ir,
-        .verbose_llvm_bc = comp.verbose_llvm_bc,
-        .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .environ_map = comp.environ_map,
     }) catch |err| switch (err) {
         error.CreateFail => {
@@ -7414,12 +7370,6 @@ fn buildOutputFromZig(
         .data_sections = true,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
-        .verbose_air = comp.verbose_air,
-        .verbose_intern_pool = comp.verbose_intern_pool,
-        .verbose_generic_instances = comp.verbose_intern_pool,
-        .verbose_llvm_ir = comp.verbose_llvm_ir,
-        .verbose_llvm_bc = comp.verbose_llvm_bc,
-        .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .skip_linker_dependencies = true,
         .environ_map = comp.environ_map,
@@ -7551,12 +7501,6 @@ pub fn build_crt_file(
         .c_source_files = c_source_files,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
-        .verbose_air = comp.verbose_air,
-        .verbose_intern_pool = comp.verbose_intern_pool,
-        .verbose_generic_instances = comp.verbose_generic_instances,
-        .verbose_llvm_ir = comp.verbose_llvm_ir,
-        .verbose_llvm_bc = comp.verbose_llvm_bc,
-        .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .skip_linker_dependencies = true,
         .environ_map = comp.environ_map,

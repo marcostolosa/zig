@@ -244,6 +244,10 @@ pub const Feature = enum {
     /// * unwrap_errunion_payload_ptr
     expand_field_ptr,
 
+    /// Convert slice  to field wise initialization
+    /// When this feature is enable slice is replace by legalize_ptr_offset_cast
+    fieldwise_init_slice,
+
     fn scalarize(tag: Air.Inst.Tag) Feature {
         return switch (tag) {
             else => unreachable,
@@ -900,7 +904,11 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             },
             .set_union_tag,
             .get_union_tag,
+            => {},
             .slice,
+            => if (l.features.has(.fieldwise_init_slice)) {
+                continue :inst l.replaceInst(inst, .block, try l.fieldwiseInitSlicePayload(inst));
+            },
             .slice_len,
             .slice_ptr,
             => {},
@@ -1088,6 +1096,34 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             => {},
         }
     }
+}
+
+fn fieldwiseInitSlicePayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Inst.Data {
+    const zcu = l.pt.zcu;
+    const ty_pl = l.air_instructions.items(.data)[@backingInt(orig_inst)].ty_pl;
+    const bin = l.extraData(Air.Bin, ty_pl.payload).data;
+
+    var inst_buf: [7]Air.Inst.Index = undefined;
+    var main_block: Block = .init(&inst_buf);
+    try l.air_instructions.ensureUnusedCapacity(zcu.gpa, inst_buf.len);
+    const ptr_slice_type = switch (ty_pl.ty.zigTypeTag(zcu)) {
+        .optional => ty: {
+            const child_ty = ty_pl.ty.optionalChild(zcu).slicePtrFieldType(zcu);
+            break :ty try l.pt.optionalType(child_ty.toIntern());
+        },
+        .pointer => ty_pl.ty.slicePtrFieldType(zcu),
+        else => unreachable,
+    };
+
+    const slice = main_block.addTy(l, .alloc, try l.pt.singleMutPtrType(ty_pl.ty)).toRef();
+    const ptr_slice = try main_block.addLegalizePtrOffsetCast(l, ptr_slice_type, slice, 0);
+    _ = main_block.addBinOp(l, .store, ptr_slice.toRef(), bin.lhs);
+    const len_slice = try main_block.addLegalizePtrOffsetCast(l, .ptr_usize, slice, @intCast(Type.ptrAbiSize(zcu.getTarget())));
+    _ = main_block.addBinOp(l, .store, len_slice.toRef(), bin.rhs);
+    const result_slice = main_block.addTyOp(l, .load, ty_pl.ty, slice).toRef();
+    main_block.addBr(l, orig_inst, result_slice);
+
+    return .{ .ty_pl = .{ .ty = ty_pl.ty, .payload = try l.addBlockBody(main_block.body()) } };
 }
 
 fn unwrapErrorunionPayloadPtrPayload(l: *Legalize, orig_inst: Air.Inst.Index, ty: Type, operand: Air.Inst.Ref) Error!Air.Inst.Data {
@@ -3313,6 +3349,10 @@ const Block = struct {
                 },
             } },
         });
+    }
+
+    fn addLegalizePtrOffsetCast(b: *Block, l: *Legalize, ty: Type, from: Air.Inst.Ref, offset: u32) Error!Air.Inst.Index {
+        return b.add(l, .{ .tag = .legalize_ptr_offset_cast, .data = .{ .ty_pl = .{ .ty = ty, .payload = try l.addExtra(Air.OffsetField, .{ .operand = from, .offset = offset }) } } });
     }
 
     /// Adds the code to call the panic handler `panic_id`. This is usually `.call` then `.unreach`,

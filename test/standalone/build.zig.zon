@@ -156,10 +156,9 @@
         .run_cwd = .{
             .path = "run_cwd",
         },
-        // https://github.com/ziglang/zig/issues/25471
-        // .tsan = .{
-        //     .path = "tsan",
-        // },
+        .tsan = .{
+            .path = "tsan",
+        },
         .posix = .{
             .path = "posix",
         },

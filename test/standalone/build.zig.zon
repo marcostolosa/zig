@@ -132,6 +132,9 @@
         .c_embed_path = .{
             .path = "c_embed_path",
         },
+        .c_include_flag = .{
+            .path = "c_include_flag",
+        },
         .issue_12706 = .{
             .path = "issue_12706",
         },

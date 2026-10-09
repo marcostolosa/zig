@@ -4906,8 +4906,10 @@ fn cmdTranslateC(
     defer man.deinit();
 
     man.hash.add(@as(u16, 0xb945)); // Random number to distinguish translate-c from compiling C objects
-    Compilation.cache_helpers.hashCSource(&man, c_source_file) catch |err|
-        fatal("unable to process {q}: {t}", .{ c_source_file.src_path, err });
+    Compilation.cache_helpers.hashCSource(&man, c_source_file) catch |err| switch (err) {
+        error.Canceled => |e| return e,
+        error.OutOfMemory => fatal("unable to process {q}: {t}", .{ c_source_file.src_path, err }),
+    };
 
     var diag: Cache.Manifest.CheckDiagnostic = undefined;
     const status = man.check(&diag, prog_node) catch |err| switch (err) {

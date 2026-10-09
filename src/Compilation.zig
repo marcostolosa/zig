@@ -1311,20 +1311,29 @@ pub const cache_helpers = struct {
         }
     }
 
-    pub fn hashCSource(man: *Cache.Manifest, c_source: CSourceFile) Allocator.Error!void {
+    pub fn hashCSource(
+        man: *Cache.Manifest,
+        c_source: CSourceFile,
+    ) (Allocator.Error || Io.Cancelable)!void {
         _ = try man.addInputPath(.initCwd(c_source.src_path), .{});
-        // Hash the extra flags, with special care to call addFile for file parameters.
+        // Hash the extra flags, with special care to call addInputPath for file parameters.
         // TODO this logic can likely be improved by utilizing clang_options_data.zig.
-        const file_args = [_][]const u8{"-include"};
         var arg_i: usize = 0;
         while (arg_i < c_source.extra_flags.len) : (arg_i += 1) {
             const arg = c_source.extra_flags[arg_i];
             man.hash.addBytes(arg);
-            for (file_args) |file_arg| {
-                if (mem.eql(u8, file_arg, arg) and arg_i + 1 < c_source.extra_flags.len) {
-                    arg_i += 1;
-                    _ = try man.addInputPath(.initCwd(c_source.extra_flags[arg_i]), .{});
-                }
+            if (mem.eql(u8, arg, "-include") and arg_i + 1 < c_source.extra_flags.len) {
+                arg_i += 1;
+                const header_path = c_source.extra_flags[arg_i];
+                man.hash.addBytes(header_path);
+                // A header found through an include path is not here; the dep file records it.
+                // Other errors are left to the cache check, which names the file.
+                Io.Dir.cwd().access(man.cache.io, header_path, .{}) catch |err| switch (err) {
+                    error.FileNotFound => continue,
+                    error.Canceled => |e| return e,
+                    else => {},
+                };
+                _ = try man.addInputPath(.initCwd(header_path), .{});
             }
         }
     }

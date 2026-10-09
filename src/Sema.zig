@@ -8680,19 +8680,17 @@ fn checkParamType(
     if (param_is_noalias and !param_ty.isGenericPoison() and !param_ty.isPtrAtRuntime(zcu) and !param_ty.isSliceAtRuntime(zcu)) {
         return sema.fail(block, param_src, "non-pointer parameter declared noalias", .{});
     }
-    switch (target.os.tag) {
-        .vulkan, .opengl => if (cc != .@"inline" and param_ty.isPtrAtRuntime(zcu)) {
-            switch (param_ty.ptrAddressSpace(zcu)) {
-                .input, .output => |as| return sema.failWithOwnedErrorMsg(block, msg: {
-                    const msg = try sema.errMsg(param_src, "function parameter cannot be a pointer in '{s}' address space", .{@tagName(as)});
-                    errdefer msg.destroy(sema.gpa);
-                    try sema.errNote(param_src, msg, "mark the function as 'inline' so the parameter is substituted at call sites", .{});
-                    break :msg msg;
-                }),
-                else => {},
-            }
-        },
-        else => {},
+    if (cc != .@"inline" and param_ty.isPtrAtRuntime(zcu)) {
+        const as = param_ty.ptrAddressSpace(zcu);
+        if (target_util.addrSpaceIsLogical(target, as)) switch (as) {
+            .input, .output => return sema.failWithOwnedErrorMsg(block, msg: {
+                const msg = try sema.errMsg(param_src, "function parameter cannot be a pointer in '{s}' address space", .{@tagName(as)});
+                errdefer msg.destroy(sema.gpa);
+                try sema.errNote(param_src, msg, "mark the function as 'inline' so the parameter is substituted at call sites", .{});
+                break :msg msg;
+            }),
+            else => {},
+        };
     }
 }
 
@@ -30208,25 +30206,8 @@ fn checkSpirvSliceAllowed(
     if (!target.cpu.arch.isSpirV()) return;
     if (block.isComptime()) return;
 
-    // This probably lets some invalid OpPtrAccessChains slip through, but it's better than nothing
-    if (!target.cpu.has(.spirv, .variable_pointers) and !target.cpu.has(.spirv, .variable_pointers_storage_buffer)) {
-        return sema.failWithOwnedErrorMsg(
-            block,
-            try sema.errMsg(src, "cannot construct slices without the 'variable_pointers' or 'variable_pointers_storage_buffer' features", .{}),
-        );
-    }
-
-    switch (address_space) {
-        .shared, .storage_buffer => {},
-        else => {
-            return sema.failWithOwnedErrorMsg(block, msg: {
-                const msg = try sema.errMsg(src, "cannot construct slice from address space '{t}'", .{address_space});
-                errdefer msg.destroy(sema.gpa);
-                try sema.errNote(src, msg, "only 'shared' and 'storage_buffer' address spaces support slicing on SPIR-V", .{});
-                break :msg msg;
-            });
-        },
-    }
+    if (!target_util.addrSpaceIsLogical(target, address_space)) return;
+    return sema.fail(block, src, "cannot construct slice from logical address space '{t}'", .{address_space});
 }
 
 fn coerceArrayPtrToSlice(

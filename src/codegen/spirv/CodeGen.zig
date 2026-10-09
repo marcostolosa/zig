@@ -5457,6 +5457,7 @@ fn accessChain(
 
 fn ptrAccessChain(
     cg: *CodeGen,
+    as: std.lang.AddressSpace,
     result_ty_id: Id,
     base: Id,
     element: Id,
@@ -5484,8 +5485,7 @@ fn ptrAccessChain(
             });
         },
         .vulkan, .opengl => {
-            assert(target.cpu.has(.spirv, .variable_pointers) or
-                target.cpu.has(.spirv, .variable_pointers_storage_buffer));
+            assert(!target_util.addrSpaceIsLogical(target, as));
             try cg.body.emit(gpa, .OpPtrAccessChain, .{
                 .id_result_type = result_ty_id,
                 .id_result = result_id,
@@ -5506,11 +5506,11 @@ fn ptrAdd(cg: *CodeGen, result_ty: Type, ptr_ty: Type, ptr_id: Id, offset_id: Id
     const result_ty_id = try cg.ptrType(child_ty_id, cg.storageClass(as));
     return switch (ptr_ty.ptrSize(zcu)) {
         .one => cg.accessChainId(result_ty_id, ptr_id, &.{offset_id}),
-        .c, .many => cg.ptrAccessChain(result_ty_id, ptr_id, offset_id, &.{}),
+        .c, .many => cg.ptrAccessChain(as, result_ty_id, ptr_id, offset_id, &.{}),
         .slice => blk: {
             // TODO: This is probably incorrect. A slice should be returned here, though this is what llvm does.
             const slice_ptr_id = try cg.extractField(result_ty, ptr_id, 0);
-            break :blk cg.ptrAccessChain(result_ty_id, slice_ptr_id, offset_id, &.{});
+            break :blk cg.ptrAccessChain(as, result_ty_id, slice_ptr_id, offset_id, &.{});
         },
     };
 }
@@ -6450,7 +6450,7 @@ fn airSliceElemPtr(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
     const ptr_ty_id = try cg.resolveType(ptr_ty, .direct);
 
     const slice_ptr = try cg.extractField(ptr_ty, slice_id, 0);
-    return try cg.ptrAccessChain(ptr_ty_id, slice_ptr, index_id, &.{});
+    return try cg.ptrAccessChain(ptr_ty.ptrAddressSpace(zcu), ptr_ty_id, slice_ptr, index_id, &.{});
 }
 
 fn airSliceElemVal(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
@@ -6466,7 +6466,7 @@ fn airSliceElemVal(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
     const ptr_ty_id = try cg.resolveType(ptr_ty, .direct);
 
     const slice_ptr = try cg.extractField(ptr_ty, slice_id, 0);
-    const elem_ptr = try cg.ptrAccessChain(ptr_ty_id, slice_ptr, index_id, &.{});
+    const elem_ptr = try cg.ptrAccessChain(ptr_ty.ptrAddressSpace(zcu), ptr_ty_id, slice_ptr, index_id, &.{});
     return try cg.load(slice_ty.childType(zcu), elem_ptr, .{ .is_volatile = slice_ty.isVolatilePtr(zcu) });
 }
 
@@ -6490,7 +6490,7 @@ fn ptrElemPtr(
         },
         .many_ptr => {
             // Resulting pointer type is the same as the ptr_ty, so use ptrAccessChain
-            return cg.ptrAccessChain(elem_ptr_ty_id, ptr_id, index_id, &.{});
+            return cg.ptrAccessChain(as, elem_ptr_ty_id, ptr_id, index_id, &.{});
         },
     }
 }

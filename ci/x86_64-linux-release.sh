@@ -10,6 +10,7 @@ MCPU="baseline"
 CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.18.0-dev.92+1e1964473"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
+SPIRV_TEST_EXECUTOR="$HOME/deps/zig-spirv-test-executor-a125040"
 
 export PATH="$HOME/deps/wasmtime-v46.0.1-x86_64-linux:$HOME/deps/qemu-linux-x86_64-11.1.1.1/bin:$HOME/local/bin:$PATH"
 
@@ -50,6 +51,14 @@ stage3-release/bin/zig build \
   -Dtarget=arm-linux-musleabihf \
   -Dno-lib
 
+# Build the SPIR-V test executor
+SPIRV_TEST_EXECUTOR_OUT="$PWD/spirv-test-executor"
+STAGE3_ZIG_BIN="$PWD/stage3-release/bin/zig"
+(
+    cd "$SPIRV_TEST_EXECUTOR"
+    "$STAGE3_ZIG_BIN" build --system zig-pkg --prefix "$SPIRV_TEST_EXECUTOR_OUT"
+)
+
 stage3-release/bin/zig build install test docs \
   --maxrss "${ZSF_MAX_RSS:-0}" \
   --prefix stage4-release \
@@ -67,6 +76,8 @@ stage3-release/bin/zig build install test docs \
   -Denable-llvm \
   -Dno-lib \
   -Denable-superhtml \
+  -Dspirv-test-runner="$SPIRV_TEST_EXECUTOR/src/test_runner.zig" \
+  -Dspirv-test-executor="$SPIRV_TEST_EXECUTOR_OUT/bin/zig-spirv-test-executor" \
   -Dlldb="$HOME/deps/lldb-zig/Release-86a744cac9/bin/lldb" \
   -Dlibc-test-path="$HOME/deps/libc-test-b95fe84"
 

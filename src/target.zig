@@ -649,7 +649,8 @@ pub fn addrSpaceIsLogical(target: *const std.Target, as: AddressSpace) bool {
             .push_constant,
             => true,
             .shared => !features.isEnabled(@backingInt(std.Target.spirv.Feature.variable_pointers)),
-            .storage_buffer => !features.isEnabled(@backingInt(std.Target.spirv.Feature.variable_pointers)),
+            .storage_buffer => !features.isEnabled(@backingInt(std.Target.spirv.Feature.variable_pointers)) and
+                !features.isEnabled(@backingInt(std.Target.spirv.Feature.variable_pointers_storage_buffer)),
             .physical_storage_buffer => false,
             else => unreachable,
         },

@@ -1595,17 +1595,15 @@ const module_test_targets = blk: {
 
         // SPIR-V Targets
 
-        // Disabled due to no active maintainer (feel free to fix the failures
-        // and then re-enable at any time). The failures occur due to changing AIR
-        // from the frontend, and backend being incomplete.
-        //.{
-        //    .target = std.Target.Query.parse(.{
-        //        .arch_os_abi = "spirv64-vulkan",
-        //        .cpu_features = "vulkan_v1_2+float16+float64",
-        //    }) catch unreachable,
-        //    .use_llvm = false,
-        //    .use_lld = false,
-        //},
+        .{
+            .target = std.Target.Query.parse(.{
+                .arch_os_abi = "spirv64-vulkan",
+                .cpu_features = "vulkan_v1_2+variable_pointers+float16+float64+int8+int16+int64",
+            }) catch unreachable,
+            .use_llvm = false,
+            .use_lld = false,
+            .skip_modules = &.{"compiler-rt"},
+        },
 
         // WASI Targets
 
@@ -2647,6 +2645,8 @@ pub const ModuleTestOptions = struct {
     no_builtin: bool = false,
     sanitize_thread: ?bool = null,
     build_options: ?*Step.Options = null,
+    spirv_test_runner: ?std.Build.LazyPath = null,
+    spirv_test_executor: ?std.Build.LazyPath = null,
 
     pub const TestOnly = union(enum) {
         default: void,
@@ -2770,6 +2770,10 @@ fn addOneModuleTest(
         }),
         .max_rss = options.max_rss,
         .filters = options.test_filters,
+        .test_runner = if (target.cpu.arch.isSpirV())
+            if (options.spirv_test_runner) |path| .{ .path = path, .mode = .simple } else null
+        else
+            null,
         .use_llvm = test_target.use_llvm,
         .use_lld = test_target.use_lld,
         .zig_lib_dir = b.path("lib"),
@@ -2929,9 +2933,17 @@ fn addOneModuleTest(
 
         step.dependOn(&run.step);
     } else if (target.cpu.arch.isSpirV()) {
-        // Don't run spirv binaries
-        _ = these_tests.getEmittedBin();
-        step.dependOn(&these_tests.step);
+        if (options.spirv_test_executor) |executor| {
+            const run = b.addRunFile(executor);
+            if (target.os.tag == .vulkan) run.addArgs(&.{ "--platform", "llvmpipe" });
+            run.addFileArg(these_tests.getEmittedBin());
+            run.enableProtocolMode();
+            run.setName(b.fmt("run test {s}", .{qualified_name}));
+            step.dependOn(&run.step);
+        } else {
+            _ = these_tests.getEmittedBin();
+            step.dependOn(&these_tests.step);
+        }
     } else if (target.cpu.arch == .x86_64 and target.os.tag.isDarwin()) {
         // https://codeberg.org/ziglang/zig/issues/35267
         _ = these_tests.getEmittedBin();

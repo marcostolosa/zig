@@ -126,9 +126,6 @@
         .c_embed_path = .{
             .path = "c_embed_path",
         },
-        .issue_12706 = .{
-            .path = "issue_12706",
-        },
         .coff_dwarf = .{
             .path = "coff_dwarf",
         },

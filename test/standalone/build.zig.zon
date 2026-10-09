@@ -30,9 +30,6 @@
         .static_c_lib = .{
             .path = "static_c_lib",
         },
-        .issue_339 = .{
-            .path = "issue_339",
-        },
         .compile_asm = .{
             .path = "compile_asm",
         },

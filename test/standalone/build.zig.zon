@@ -144,9 +144,6 @@
         .coff_dwarf = .{
             .path = "coff_dwarf",
         },
-        .compiler_rt_panic = .{
-            .path = "compiler_rt_panic",
-        },
         .ios = .{
             .path = "ios",
         },

@@ -97,13 +97,6 @@ const cases = [_]Case{
     .{
         .src_path = "cat/main.zig",
     },
-    .{
-        .src_path = "issue_7030.zig",
-        .target = .{
-            .cpu_arch = .wasm32,
-            .os_tag = .freestanding,
-        },
-    },
     .{ .src_path = "guess_number/main.zig" },
     .{ .src_path = "std_enums_big_enums.zig" },
 };

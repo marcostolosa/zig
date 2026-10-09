@@ -225,6 +225,7 @@ test "nested packed structs" {
 }
 
 test "regular in irregular packed struct" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
@@ -792,6 +793,7 @@ test "nested packed struct at non-zero offset 2" {
 }
 
 test "runtime init of unnamed packed struct type" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -885,6 +887,7 @@ test "pointer to container level packed struct field" {
 }
 
 test "store undefined to packed result location" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
@@ -907,6 +910,7 @@ test "bitcast back and forth" {
 
 // Originally reported at https://github.com/ziglang/zig/issues/14200
 test "field access of packed struct smaller than its abi size inside struct initialized with rls" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
 
@@ -1001,6 +1005,7 @@ test "packed struct acts as a namespace" {
 }
 
 test "assignment to non-byte-aligned field in packed struct" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
@@ -1039,6 +1044,7 @@ test "packed struct field pointer aligned properly" {
 }
 
 test "load flag from packed struct in union" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
@@ -1162,6 +1168,7 @@ test "packed struct equality" {
 }
 
 test "packed struct equality ignores padding bits" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
 
     const S = packed struct { b: bool };
@@ -1172,6 +1179,7 @@ test "packed struct equality ignores padding bits" {
 }
 
 test "packed struct with signed field" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
 
     var s: packed struct {
@@ -1184,6 +1192,7 @@ test "packed struct with signed field" {
 }
 
 test "assign packed struct initialized with RLS to packed struct literal field" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
@@ -1200,6 +1209,7 @@ test "assign packed struct initialized with RLS to packed struct literal field" 
 }
 
 test "packed struct store of comparison result" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
 

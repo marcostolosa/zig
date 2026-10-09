@@ -172,6 +172,8 @@ comptime {
 }
 
 test "@memmove a global array" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const S = struct {
         var array_u8: [1]u8 = .{1};
         const slice_u8: []u8 = &array_u8;

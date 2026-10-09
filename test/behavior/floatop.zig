@@ -137,6 +137,7 @@ test "cmp f64" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_c and builtin.cpu.arch.isAarch64() and builtin.os.tag == .netbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/36765
     if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch.isAarch64() and builtin.os.tag == .netbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/36765
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // Fails on lavapipe
 
     try testCmp(f64);
     try comptime testCmp(f64);
@@ -247,6 +248,7 @@ test "vector cmp f64" {
     if (builtin.zig_backend == .stage2_c and builtin.cpu.arch.isAarch64() and builtin.os.tag == .netbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/36765
     if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch.isAarch64() and builtin.os.tag == .netbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/36765
     if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch == .hexagon) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // Fails on lavapipe
 
     try testCmpVector(f64);
     try comptime testCmpVector(f64);
@@ -1024,6 +1026,7 @@ test "@abs f16" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // Fails on lavapipe
 
     try testFabs(f16);
     try comptime testFabs(f16);
@@ -1032,6 +1035,7 @@ test "@abs f16" {
 test "@abs f32/f64" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // Fails on lavapipe
 
     try testFabs(f32);
     try comptime testFabs(f32);

@@ -8929,9 +8929,7 @@ fn checkMergeAllowed(sema: *Sema, block: *Block, src: LazySrcLoc, peer_ty: Type)
     }
 
     const as = peer_ty.ptrAddressSpace(zcu);
-    if (!target_util.shouldBlockPointerOps(target, as)) {
-        return;
-    }
+    if (!target_util.addrSpaceIsLogical(target, as)) return;
 
     return sema.failWithOwnedErrorMsg(block, msg: {
         const msg = try sema.errMsg(src, "value with non-mergable pointer type '{f}' depends on runtime control flow", .{peer_ty.fmt(zcu)});
@@ -22184,7 +22182,7 @@ fn ptrCastFull(
     try sema.validateRuntimeValue(block, operand_src, operand);
     try sema.checkLogicalPtrCast(block, src, operand_ty, dest_ty);
 
-    const can_cast_to_int = !target_util.shouldBlockPointerOps(zcu.getTarget(), operand_ty.ptrAddressSpace(zcu));
+    const can_cast_to_int = !target_util.addrSpaceIsLogical(zcu.getTarget(), operand_ty.ptrAddressSpace(zcu));
     const need_null_check = can_cast_to_int and block.wantSafety() and operand_ty.ptrAllowsZero(zcu) and !dest_ty.ptrAllowsZero(zcu);
     const need_align_check = can_cast_to_int and block.wantSafety() and dest_align.compare(.gt, src_align);
 
@@ -22730,7 +22728,7 @@ fn checkLogicalPtrOperation(sema: *Sema, block: *Block, src: LazySrcLoc, ty: Typ
     if (zcu.intern_pool.indexToKey(ty.toIntern()) == .ptr_type) {
         const target = zcu.getTarget();
         const as = ty.ptrAddressSpace(zcu);
-        if (target_util.shouldBlockPointerOps(target, as)) {
+        if (target_util.addrSpaceIsLogical(target, as)) {
             return sema.failWithOwnedErrorMsg(block, msg: {
                 const msg = try sema.errMsg(src, "illegal operation on logical pointer of type '{f}'", .{ty.fmt(zcu)});
                 errdefer msg.destroy(sema.gpa);
@@ -22761,11 +22759,7 @@ fn checkLogicalPtrCast(
     const dest_child: Type = .fromInterned(dest_info.child);
 
     if (block.isComptime() or block.is_typeof) return;
-    switch (zcu.getTarget().os.tag) {
-        .vulkan, .opengl => {},
-        else => return,
-    }
-    if (src_info.flags.address_space == .physical_storage_buffer) return;
+    if (!target_util.addrSpaceIsLogical(zcu.getTarget(), src_info.flags.address_space)) return;
     if (!dest_child.hasRuntimeBits(zcu)) return;
 
     var cur = src_child;

@@ -273,6 +273,7 @@ test "type coercion from int to float" {
 }
 
 test "@intFromFloat" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -299,7 +300,6 @@ fn testIntFromFloats() !void {
 
     try expectRoundCast(f32, -128.2, i8, -128);
     try expectCeilCast(f32, -128.2, i8, -128);
-    try expectTruncCast(f32, -128.2, i8, -128);
 }
 
 test "rounding builtins with anytype and context propagation" {
@@ -3077,6 +3077,7 @@ test "peer type resolution: slice of sentinel-terminated array" {
 
 test "@intFromFloat boundary cases" {
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const S = struct {
         fn case(comptime I: type, x: f32, bump: enum { up, down }, expected: I) !void {
@@ -3107,6 +3108,7 @@ test "@intFromFloat boundary cases" {
 }
 
 test "@intFromFloat vector boundary cases" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 

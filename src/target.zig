@@ -633,38 +633,27 @@ pub fn addrSpaceCastIsValid(
     }
 }
 
-/// Returns whether pointer operations (arithmetic, indexing, etc.) should be blocked
-/// for the given address space on the target architecture.
-///
-/// Under SPIR-V with Vulkan
-/// (a) all physical pointers (.physical_storage_buffer, .global) always support pointer operations,
-/// (b) by default logical pointers (.constant, .input, .output, etc.) never support operations
-/// (c) some logical pointers (.storage_buffer, .shared) do support operations when
-///     the VariablePointers capability is enabled (which enables OpPtrAccessChain).
-pub fn shouldBlockPointerOps(target: *const std.Target, as: AddressSpace) bool {
-    if (target.os.tag != .vulkan and target.os.tag != .opengl) return false;
-
-    return switch (as) {
-        // TODO: Vulkan doesn't support pointers in the generic address space, we
-        // should remove this case but this requires a change in defaultAddressSpace().
-        .generic => true,
-        // For now, all global pointers are represented using StorageBuffer or CrossWorkgroup,
-        // so these are real pointers.
-        // Physical pointers always support operations
-        .global, .physical_storage_buffer => false,
-        // Logical pointers that support operations with VariablePointers capability
-        .shared => !target.cpu.features.isEnabled(@backingInt(std.Target.spirv.Feature.variable_pointers)),
-        .storage_buffer => !target.cpu.features.isEnabled(@backingInt(std.Target.spirv.Feature.variable_pointers)),
-        // Logical pointers that never support operations
-        .constant,
-        .local,
-        .private,
-        .input,
-        .output,
-        .uniform,
-        .push_constant,
-        => true,
-        else => unreachable,
+/// Returns true if the given address space memory model is logical (i.e. arithmetic pointer
+/// operations are illegal).
+pub fn addrSpaceIsLogical(target: *const std.Target, as: AddressSpace) bool {
+    const features = &target.cpu.features;
+    return switch (target.os.tag) {
+        .vulkan, .opengl => switch (as) {
+            .generic,
+            .constant,
+            .local,
+            .private,
+            .input,
+            .output,
+            .uniform,
+            .push_constant,
+            => true,
+            .shared => !features.isEnabled(@backingInt(std.Target.spirv.Feature.variable_pointers)),
+            .storage_buffer => !features.isEnabled(@backingInt(std.Target.spirv.Feature.variable_pointers)),
+            .physical_storage_buffer => false,
+            else => unreachable,
+        },
+        else => false,
     };
 }
 

@@ -203,6 +203,7 @@ fn testAbsUnsignedBigInt() !void {
 test "@abs floats" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // Fails on lavapipe
 
     try comptime testAbsFloats(f16);
     if (builtin.zig_backend != .stage2_riscv64) try testAbsFloats(f16);

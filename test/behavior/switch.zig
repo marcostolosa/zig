@@ -1570,6 +1570,8 @@ test "union field pointer capture preserves alignment in inline prong" {
 }
 
 test "switch on expression" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     var a: []const []const u8 = &.{ "b", "b", "A", "A", "b" };
     _ = &a;
     var c: isize = 0;

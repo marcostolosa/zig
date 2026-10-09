@@ -135,9 +135,6 @@
         .issue_12706 = .{
             .path = "issue_12706",
         },
-        .strip_empty_loop = .{
-            .path = "strip_empty_loop",
-        },
         .strip_struct_init = .{
             .path = "strip_struct_init",
         },

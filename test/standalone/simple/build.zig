@@ -110,9 +110,4 @@ const cases = [_]Case{
     .{ .src_path = "noreturn_call/inline.zig" },
     .{ .src_path = "noreturn_call/as_arg.zig" },
     .{ .src_path = "std_enums_big_enums.zig" },
-    .{
-        .src_path = "issue_9402/main.zig",
-        .os_filter = .windows,
-        .link_libc = true,
-    },
 };

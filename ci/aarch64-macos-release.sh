@@ -61,6 +61,7 @@ stage3-release/bin/zig build install test docs \
   -Denable-llvm \
   -Dno-lib \
   -Denable-macos-sdk \
+  -Denable-ios-sdk \
   -Dskip-spirv \
   -Dskip-wasm \
   -Dskip-freebsd \

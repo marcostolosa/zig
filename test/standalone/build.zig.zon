@@ -33,9 +33,6 @@
         .compile_asm = .{
             .path = "compile_asm",
         },
-        .issue_5825 = .{
-            .path = "issue_5825",
-        },
         .pkg_import = .{
             .path = "pkg_import",
         },

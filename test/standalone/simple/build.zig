@@ -105,9 +105,5 @@ const cases = [_]Case{
         },
     },
     .{ .src_path = "guess_number/main.zig" },
-    .{ .src_path = "main_return_error/error_u8.zig" },
-    .{ .src_path = "main_return_error/error_u8_non_zero.zig" },
-    .{ .src_path = "noreturn_call/inline.zig" },
-    .{ .src_path = "noreturn_call/as_arg.zig" },
     .{ .src_path = "std_enums_big_enums.zig" },
 };

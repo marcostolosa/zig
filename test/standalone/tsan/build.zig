@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const supports_skip_non_native = true;
+
 const targets: []const std.Target.Query = &.{
     .{ .cpu_arch = .aarch64, .os_tag = .freebsd, .abi = .none },
     .{ .cpu_arch = .x86_64, .os_tag = .freebsd, .abi = .none },
@@ -32,6 +34,8 @@ const targets: []const std.Target.Query = &.{
 };
 
 pub fn build(b: *std.Build) !void {
+    const skip_non_native = b.option(bool, "skip_non_native", "Skip non-native targets") orelse false;
+
     const test_step = b.step("test", "Test the program");
     b.default_step = test_step;
 
@@ -39,6 +43,8 @@ pub fn build(b: *std.Build) !void {
 
     for (targets) |query| {
         const target = b.resolveTargetQuery(query);
+
+        if (skip_non_native and !std.zig.target.isNative(&target.query, &target.result, &b.graph.host.result)) continue;
 
         switch (target.result.os.tag) {
             .macos => {

@@ -2374,6 +2374,7 @@ pub fn addErrorTraceTests(b: *std.Build, options: ErrorTracesContext.Options) *S
 pub fn addStandaloneTests(
     b: *std.Build,
     optimize_modes: []const OptimizeMode,
+    skip_non_native: bool,
     enable_macos_sdk: bool,
     enable_ios_sdk: bool,
     enable_symlinks_windows: bool,
@@ -2388,6 +2389,7 @@ pub fn addStandaloneTests(
         .simple_skip_release_safe = mem.findScalar(OptimizeMode, optimize_modes, .safe) == null,
         .simple_skip_release_fast = mem.findScalar(OptimizeMode, optimize_modes, .fast) == null,
         .simple_skip_release_small = mem.findScalar(OptimizeMode, optimize_modes, .small) == null,
+        .skip_non_native = skip_non_native,
     });
     const test_cases_dep_step = test_cases_dep.builder.default_step;
     test_cases_dep_step.name = test_cases_dep_name;

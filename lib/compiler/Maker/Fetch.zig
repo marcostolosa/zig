@@ -718,11 +718,10 @@ pub fn run(f: *Fetch) RunError!void {
         var sf: SingleFetch = .{
             .parent_package_root = f.parent_package_root,
             .parent_manifest_ast = f.parent_manifest_ast,
-            .error_bundle = undefined,
+            .error_bundle = try .init(gpa),
             .uri = uri,
             .uri_token_loc = tok,
         };
-        try sf.error_bundle.init(gpa);
 
         f.initResource(&sf, &resource, &resource_buffer) catch |err| switch (err) {
             error.FetchFailed => {

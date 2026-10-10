@@ -1710,6 +1710,11 @@ pub fn futexWake(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, m
 
 /// Mutex is a synchronization primitive which enforces atomic access to a
 /// shared region of code known as the "critical section".
+///
+/// Mutex is not an extern struct because locking and unlocking go through the
+/// futex calls of `Io`, which are not required to work across processes or
+/// compilation units. Code that needs a fixed layout can build its own lock on
+/// a `u32` with the same futex calls.
 pub const Mutex = struct {
     state: std.atomic.Value(State),
 

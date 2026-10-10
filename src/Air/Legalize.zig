@@ -1571,15 +1571,20 @@ fn scalarizeBitcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!?
             return null;
         }
 
-        // We track the validity of 3 different bitcast operations:
+        // We track the validity of 4 different bitcast operations:
         // * operand -> dest
+        // * vec -> dest (only if the operand is an array and can be turned into a vector with array_to_vector)
         // * operand -> uint
         // * uint -> dest
-        // If operand->dest turns out to be valid, we don't need to scalarize. Otherwise, knowing
-        // the validity of the other operations helps us lower the scalarization efficiently.
+        // If operand->dest turns out to be valid, we don't need to scalarize.
+        // If vec->dest turns out to be valid, we don't need to scalarize, by using a
+        // array_to_vector before the bitcast. Otherwise, knowing the validity of
+        // the other operations helps us lower the scalarization efficiently.
         var operand_to_dest: bool = true;
         var operand_to_int: bool = true;
         var int_to_dest: bool = true;
+
+        var operand_to_vec_to_dest: bool = operand_tag == .array and operand_ty.sentinel(zcu) == null;
 
         if (l.features.has(.scalarize_bit_cast_array)) {
             if (operand_tag == .array) {
@@ -1589,6 +1594,7 @@ fn scalarizeBitcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!?
             if (dest_tag == .array) {
                 operand_to_dest = false;
                 int_to_dest = false;
+                operand_to_vec_to_dest = false;
             }
         }
 
@@ -1604,6 +1610,8 @@ fn scalarizeBitcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!?
                     operand_to_dest = false;
                 }
             }
+
+            operand_to_vec_to_dest = operand_to_vec_to_dest and dest_tag == .vector and operand_ty.arrayLen(zcu) == dest_ty.vectorLen(zcu);
         }
 
         if (l.features.has(.scalarize_bit_cast_padded_elems)) {
@@ -1612,6 +1620,7 @@ fn scalarizeBitcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!?
                 if (elem_ty.bitSize(zcu) != 8 * elem_ty.abiSize(zcu)) {
                     operand_to_int = false;
                     operand_to_dest = false;
+                    operand_to_vec_to_dest = false;
                 }
             }
             if (dest_tag == .array or dest_tag == .vector) {
@@ -1619,12 +1628,48 @@ fn scalarizeBitcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!?
                 if (elem_ty.bitSize(zcu) != 8 * elem_ty.abiSize(zcu)) {
                     int_to_dest = false;
                     operand_to_dest = false;
+                    operand_to_vec_to_dest = false;
                 }
             }
         }
 
         if (operand_to_dest) {
             return null; // no scalarization needed!
+        }
+
+        if (operand_to_vec_to_dest) {
+            const elem_ty = operand_ty.childType(zcu);
+            const elem_tag = elem_ty.zigTypeTag(zcu);
+
+            switch (elem_tag) {
+                .int, .float, .bool => {
+                    // array_to_vector + bitcast
+                    var inst_buf: [3]Air.Inst.Index = undefined;
+                    var main_block: Block = .init(&inst_buf);
+                    try l.air_instructions.ensureUnusedCapacity(zcu.gpa, inst_buf.len);
+
+                    const vec_type = try pt.vectorType(.{
+                        .len = @intCast(operand_ty.arrayLen(zcu)),
+                        .child = elem_ty.toIntern(),
+                    });
+                    const operand_as_vec = main_block.addTyOp(l, .array_to_vector, vec_type, ty_op.operand).toRef();
+
+                    const result = if (vec_type.eql(dest_ty)) res: {
+                        _ = main_block.stealCapacity(1);
+                        break :res operand_as_vec;
+                    } else main_block.addTyOp(l, l.air_instructions.items(.tag)[@backingInt(orig_inst)], dest_ty, operand_as_vec).toRef();
+
+                    main_block.addBr(l, orig_inst, result);
+
+                    return .{ .ty_pl = .{
+                        .ty = dest_ty,
+                        .payload = try l.addBlockBody(main_block.body()),
+                    } };
+                },
+
+                // cannot create vector with this child type
+                else => {},
+            }
         }
 
         // We need a scalarization, but before breaking from the block, check if we can do it

@@ -965,3 +965,378 @@ test "parse with zero-bit field" {
 
     try testAllParseFunctions(Inner, expected, str);
 }
+
+const ScannerParseTest = struct {
+    testNum: u8,
+    testString: []const u8,
+    testArr: []f32,
+    testSecondNum: u8,
+};
+
+const diagnostics_test_multi_line =
+    \\ {
+    \\      "testNum": 34,
+    \\      "testString": "test string",
+    \\      "testSecondNum": "bad value",
+    \\      "testArr": []
+    \\ }
+;
+
+const DiagnosticCase = struct {
+    T: type,
+    err: anyerror,
+    msgs: []const []const u8,
+    doc: []const u8,
+};
+
+const diagnostic_cases = [_]DiagnosticCase{
+    .{
+        .T = ScannerParseTest,
+        .err = error.UnexpectedToken,
+        .msgs = &.{
+            "input.json:1:32: UnexpectedToken",
+            "expected: string, found: number",
+        },
+        .doc = "{ \"testNum\": 32, \"testString\": 32 }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.UnexpectedToken,
+        .msgs = &.{
+            "input.json:1:51: UnexpectedToken",
+            "expected: array, found: object",
+        },
+        .doc = "{ \"testNum\": 32, \"testString\": \"test\", \"testArr\": {} }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.SyntaxError,
+        .msgs = &.{
+            "input.json:1:54: SyntaxError",
+            "in json.static_test.ScannerParseTest",
+        },
+        .doc = "{ \"testNum\": 32, \"testString\": \"test\", \"testArr\": [3]] }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.InvalidCharacter,
+        .msgs = &.{
+            "input.json:4:35: InvalidCharacter",
+            "\"testSecondNum\": \"bad value\",",
+            "failed to parse. expected: u8 found: bad value",
+        },
+        .doc = diagnostics_test_multi_line,
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.MissingField,
+        .msgs = &.{
+            "input.json:1:18: MissingField",
+            "missing field: json.static_test.ScannerParseTest.testString",
+        },
+        .doc = "{ \"testNum\": 32 }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.Overflow,
+        .msgs = &.{
+            "input.json:1:16: Overflow",
+            "failed to parse. expected: u8 found: -2",
+        },
+        .doc = "{ \"testNum\": -2 }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.InvalidCharacter,
+        .msgs = &.{
+            "input.json:1:61: InvalidCharacter",
+            "...stString\": \"test\", \"testArr\": [3, \"test\"] }",
+        },
+        .doc = "{ \"testNum\": 32, \"testString\": \"test\", \"testArr\": [3, \"test\"] }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.Overflow,
+        .msgs = &.{
+            "input.json:1:17: Overflow",
+            "failed to parse. expected: u8 found: 320",
+        },
+        .doc = "{ \"testNum\": 320 }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.UnknownField,
+        .msgs = &.{
+            "input.json:1:25: UnknownField",
+            "found unknown field. found: thisFieldDoesntExist",
+        },
+        .doc = "{ \"thisFieldDoesntExist\": 320 }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.DuplicateField,
+        .msgs = &.{
+            "input.json:1:27: DuplicateField",
+            "duplicate field name: testNum",
+        },
+        .doc = "{ \"testNum\": 32, \"testNum\": 32 }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.InvalidNumber,
+        .msgs = &.{
+            "input.json:1:17: InvalidNumber",
+            "failed to parse. expected: u8 found: 3.2",
+        },
+        .doc = "{ \"testNum\": 3.2 }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.InvalidNumber,
+        .msgs = &.{
+            "input.json:1:19: InvalidNumber",
+            "failed to parse. expected: u8 found: 300.2",
+        },
+        .doc = "{ \"testNum\": 300.2 }",
+    },
+};
+
+const dynamic_parsed_cases = [_]DiagnosticCase{
+    .{
+        .T = ScannerParseTest,
+        .err = error.UnexpectedToken,
+        .msgs = &.{
+            "expected: string, found: number",
+            "input.json: UnexpectedToken",
+        },
+        .doc = "{ \"testNum\": 32, \"testString\": 32 }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.UnexpectedToken,
+        .msgs = &.{
+            "expected: array, found: object",
+            "input.json: UnexpectedToken",
+        },
+        .doc = "{ \"testNum\": 32, \"testString\": \"test\", \"testArr\": {} }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.InvalidCharacter,
+        .msgs = &.{
+            "input.json: InvalidCharacter",
+            "failed to parse. expected: u8 found: bad value",
+        },
+        .doc = diagnostics_test_multi_line,
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.MissingField,
+        .msgs = &.{
+            "missing field: json.static_test.ScannerParseTest.testString",
+            "input.json: MissingField",
+        },
+        .doc = "{ \"testNum\": 32 }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.Overflow,
+        .msgs = &.{
+            "input.json: Overflow",
+            "failed to parse. expected: u8 found: -2",
+        },
+        .doc = "{ \"testNum\": -2 }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.InvalidCharacter,
+        .msgs = &.{
+            "input.json: InvalidCharacter",
+            "in json.static_test.ScannerParseTest",
+        },
+        .doc = "{ \"testNum\": 32, \"testString\": \"test\", \"testArr\": [3, \"test\"] }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.Overflow,
+        .msgs = &.{
+            "input.json: Overflow",
+            "failed to parse. expected: u8 found: 320",
+        },
+        .doc = "{ \"testNum\": 320 }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.UnknownField,
+        .msgs = &.{
+            "input.json: UnknownField",
+            "found unknown field. found: thisFieldDoesntExist",
+        },
+        .doc = "{ \"thisFieldDoesntExist\": 320 }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.InvalidNumber,
+        .msgs = &.{
+            "input.json: InvalidNumber",
+            "failed to parse. expected: u8 found: 3.2",
+        },
+        .doc = "{ \"testNum\": 3.2 }",
+    },
+    .{
+        .T = ScannerParseTest,
+        .err = error.InvalidNumber,
+        .msgs = &.{
+            "input.json: InvalidNumber",
+            "failed to parse. expected: u8 found: 300.2",
+        },
+        .doc = "{ \"testNum\": 300.2 }",
+    },
+};
+
+test "diagnostics" {
+    inline for (diagnostic_cases) |case| {
+        try testAllDiagnostics(case.T, case.err, case.msgs, case.doc);
+    }
+
+    inline for (dynamic_parsed_cases) |case| {
+        try testDynamicParsedDiagnostics(case.T, case.err, case.msgs, case.doc);
+    }
+}
+
+fn testAllDiagnostics(comptime T: type, expectedError: anyerror, expectedErrorMsgs: []const []const u8, doc: []const u8) !void {
+    const allocator = testing.allocator;
+    var arena = ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    {
+        var diags = std.json.Diagnostics{};
+
+        var buf: [4096]u8 = undefined;
+        var writer: std.Io.Writer = .fixed(&buf);
+
+        if (parseFromSlice(T, arena.allocator(), doc, .{ .diagnostics = &diags })) |parsed| {
+            parsed.deinit();
+            return error.expectedParseFailure;
+        } else |err| {
+            diags.dump(&writer, err, "input.json") catch {};
+            try writer.flush();
+            const output = writer.buffered();
+            try std.testing.expectEqual(expectedError, err);
+            for (expectedErrorMsgs) |expectedErrorMsg| {
+                try std.testing.expect(std.mem.containsAtLeast(u8, output, 1, expectedErrorMsg));
+            }
+        }
+    }
+    {
+        var diags = std.json.Diagnostics{};
+
+        var buf: [4096]u8 = undefined;
+        var writer: std.Io.Writer = .fixed(&buf);
+
+        if (parseFromSliceLeaky(T, arena.allocator(), doc, .{ .diagnostics = &diags })) |_| {
+            return error.expectedParseFailure;
+        } else |err| {
+            diags.dump(&writer, err, "input.json") catch {};
+            try writer.flush();
+            const output = writer.buffered();
+            try std.testing.expectEqual(expectedError, err);
+            for (expectedErrorMsgs) |expectedErrorMsg| {
+                try std.testing.expect(std.mem.containsAtLeast(u8, output, 1, expectedErrorMsg));
+            }
+        }
+    }
+    {
+        var diags = std.json.Diagnostics{};
+
+        var buf: [4096]u8 = undefined;
+        var writer: std.Io.Writer = .fixed(&buf);
+
+        var stream: std.Io.Reader = .fixed(doc);
+        var json_reader: Scanner.Reader = .init(std.testing.allocator, &stream);
+        defer json_reader.deinit();
+        if (parseFromTokenSource(T, testing.allocator, &json_reader, .{
+            .diagnostics = &diags,
+        })) |parsed| {
+            parsed.deinit();
+            return error.expectedParseFailure;
+        } else |err| {
+            diags.dump(&writer, err, "input.json") catch {};
+            try writer.flush();
+            const output = writer.buffered();
+            try std.testing.expectEqual(expectedError, err);
+            for (expectedErrorMsgs) |expectedErrorMsg| {
+                try std.testing.expect(std.mem.containsAtLeast(u8, output, 1, expectedErrorMsg));
+            }
+        }
+    }
+    {
+        var scanner = Scanner.initCompleteInput(allocator, doc);
+        defer scanner.deinit();
+
+        var diags = std.json.Diagnostics{};
+
+        scanner.enableDiagnostics(&diags);
+
+        var buf: [4096]u8 = undefined;
+        var writer: std.Io.Writer = .fixed(&buf);
+
+        if (innerParse(T, arena.allocator(), &scanner, .{ .max_value_len = scanner.input.len, .diagnostics = &diags, .allocate = .alloc_if_needed })) |_| {
+            return error.expectedParseFailure;
+        } else |err| {
+            diags.dump(&writer, err, "input.json") catch {};
+            try writer.flush();
+            const output = writer.buffered();
+            try std.testing.expectEqual(expectedError, err);
+            for (expectedErrorMsgs) |expectedErrorMsg| {
+                try std.testing.expect(std.mem.containsAtLeast(u8, output, 1, expectedErrorMsg));
+            }
+        }
+    }
+}
+
+fn testDynamicParsedDiagnostics(comptime T: type, expectedError: anyerror, expectedErrorMsgs: []const []const u8, doc: []const u8) !void {
+    const allocator = testing.allocator;
+    var arena = ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const parsed_dynamic = try parseFromSlice(Value, arena.allocator(), doc, .{ .allocate = .alloc_if_needed });
+    defer parsed_dynamic.deinit();
+    {
+        var diags = std.json.Diagnostics{};
+
+        var buf: [4096]u8 = undefined;
+        var writer: std.Io.Writer = .fixed(&buf);
+
+        if (parseFromValue(T, testing.allocator, parsed_dynamic.value, .{ .diagnostics = &diags })) |parsed| {
+            parsed.deinit();
+            return error.expectedParseFailure;
+        } else |err| {
+            diags.dump(&writer, err, "input.json") catch {};
+            try writer.flush();
+            const output = writer.buffered();
+            try std.testing.expectEqual(expectedError, err);
+            for (expectedErrorMsgs) |expectedErrorMsg| {
+                try std.testing.expect(std.mem.containsAtLeast(u8, output, 1, expectedErrorMsg));
+            }
+        }
+    }
+    {
+        var diags = std.json.Diagnostics{};
+
+        var buf: [4096]u8 = undefined;
+        var writer: std.Io.Writer = .fixed(&buf);
+
+        if (parseFromValueLeaky(T, arena.allocator(), parsed_dynamic.value, .{ .diagnostics = &diags, .allocate = .alloc_if_needed })) |_| {
+            return error.expectedParseFailure;
+        } else |err| {
+            diags.dump(&writer, err, "input.json") catch {};
+            try writer.flush();
+            const output = writer.buffered();
+            try std.testing.expectEqual(expectedError, err);
+            for (expectedErrorMsgs) |expectedErrorMsg| {
+                try std.testing.expect(std.mem.containsAtLeast(u8, output, 1, expectedErrorMsg));
+            }
+        }
+    }
+}

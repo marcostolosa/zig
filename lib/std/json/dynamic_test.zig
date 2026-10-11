@@ -379,3 +379,40 @@ test "negative zero" {
 fn smallBufferJsonReader(allocator: Allocator, io_reader: anytype) Scanner.Reader {
     return .init(allocator, io_reader);
 }
+
+const ScannerParseTest = struct {
+    testNum: u8,
+};
+
+test "diagnostics - parseFromTokenSource" {
+    var diags = std.json.Diagnostics{};
+
+    var buf: [4096]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+
+    var out_buffer: [1000]u8 = undefined;
+    var fixed_writer: Writer = .fixed(&out_buffer);
+    var jw: json.Stringify = .{ .writer = &fixed_writer, .options = .{} };
+
+    try jw.beginObject();
+
+    try jw.objectField("testNum");
+    try jw.write(false);
+
+    try jw.endObject();
+
+    var fbs: std.Io.Reader = .fixed(fixed_writer.buffered());
+    var json_reader: Scanner.Reader = .init(testing.allocator, &fbs);
+    defer json_reader.deinit();
+
+    if (parseFromTokenSource(ScannerParseTest, testing.allocator, &json_reader, .{ .diagnostics = &diags })) |parsed| {
+        defer parsed.deinit();
+        return error.expectedParseFailure;
+    } else |err| {
+        diags.dump(&writer, err, "input.json") catch {};
+        try writer.flush();
+        const output = writer.buffered();
+        try std.testing.expectEqual(error.UnexpectedToken, err);
+        try std.testing.expect(std.mem.containsAtLeast(u8, output, 1, "expected: int, found: bool"));
+    }
+}

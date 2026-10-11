@@ -36,7 +36,7 @@ test "for ranges" {
     try expectEqual(3, sum); // 0 + 1 + 2
 
     // To iterate over consecutive integers, use bounded range syntax.
-    // Unbounded range is always a compile error.
+    // A lone unbounded range is a compile error.
     sum = 0;
     for (0..5) |i| {
         sum += i;
@@ -50,8 +50,8 @@ test "multi object for" {
     var count: usize = 0;
 
     // Iterate over multiple objects.
-    // All lengths must be equal at the start of the loop, otherwise detectable
-    // illegal behavior occurs.
+    // All bounded objects must have equal lengths.
+    // There must be at least one bounded object.
     for (items, items2) |i, j| {
         count += i + j;
     }

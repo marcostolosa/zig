@@ -433,7 +433,7 @@ pub fn HashMap(
         ///
         /// TODO: answer the question in these doc comments, does this
         /// increase the unused capacity by one?
-        pub fn removeByPtr(self: *Self, key_ptr: *K) void {
+        pub fn removeByPtr(self: *Self, key_ptr: *const K) void {
             self.unmanaged.removeByPtr(key_ptr);
         }
 
@@ -1266,7 +1266,7 @@ pub fn HashMapUnmanaged(
         ///
         /// TODO: answer the question in these doc comments, does this
         /// increase the unused capacity by one?
-        pub fn removeByPtr(self: *Self, key_ptr: *K) void {
+        pub fn removeByPtr(self: *Self, key_ptr: *const K) void {
             // if @sizeOf(K) == 0 then there is at most one item in the hash
             // map, which is assumed to exist as key_ptr must be valid.  This
             // item must be at index 0.

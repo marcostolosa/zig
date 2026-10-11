@@ -4965,7 +4965,6 @@ test "std.zon parse specific node with zoir" {
     var zoir = try ZonGen.generate(gpa, ast, .{ .parse_str_lits = false });
     defer zoir.deinit(gpa);
 
-    // Get node of first field in the struct
     const root_node: std.zig.Zoir.Node = std.zig.Zoir.Node.Index.get(.root, &zoir);
 
     try std.testing.expect(root_node == .struct_literal);

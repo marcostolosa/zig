@@ -1079,7 +1079,9 @@ pub const Step = extern struct {
             incremental: DefaultingBool,
             function_sections: DefaultingBool,
             data_sections: DefaultingBool,
-            _: u3 = 0,
+            link_z_nodelete: bool,
+            link_z_origin: bool,
+            link_z_nocopyreloc: bool,
         };
 
         pub fn isDynamicLibrary(compile: *const Compile) bool {

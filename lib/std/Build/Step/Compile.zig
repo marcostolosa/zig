@@ -148,6 +148,15 @@ link_z_max_page_size: ?u64 = null,
 /// Force a fatal error if any undefined symbols remain.
 link_z_defs: bool = false,
 
+/// Indicate that the object cannot be deleted from a process.
+link_z_nodelete: bool = false,
+
+/// Indicate that the object must have its origin processed.
+link_z_origin: bool = false,
+
+/// Disable the creation of copy relocations.
+link_z_nocopyreloc: bool = false,
+
 /// (Darwin) Install name for the dylib
 install_name: ?[]const u8 = null,
 

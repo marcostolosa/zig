@@ -650,6 +650,9 @@ fn lowerZigArgs(
         "-z", try arena.print("max-page-size={d}", .{size}),
     };
     if (conf_comp.flags.link_z_defs) (try zig_args.addManyAsArray(gpa, 2)).* = .{ "-z", "defs" };
+    if (conf_comp.flags4.link_z_nodelete) (try zig_args.addManyAsArray(gpa, 2)).* = .{ "-z", "nodelete" };
+    if (conf_comp.flags4.link_z_origin) (try zig_args.addManyAsArray(gpa, 2)).* = .{ "-z", "origin" };
+    if (conf_comp.flags4.link_z_nocopyreloc) (try zig_args.addManyAsArray(gpa, 2)).* = .{ "-z", "nocopyreloc" };
 
     try zig_args.ensureUnusedCapacity(gpa, 2);
     if (conf_comp.libc_file.value) |libc_file| {

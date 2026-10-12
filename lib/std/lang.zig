@@ -209,6 +209,7 @@ pub const CallingConvention = union(enum(u8)) {
     x86_64_vectorcall: CommonOptions,
     x86_64_interrupt: CommonOptions,
     x86_64_preserve_none: CommonOptions,
+    x86_64_preserve_most: CommonOptions,
 
     // Calling conventions for the `x86` architecture.
     x86_sysv: X86RegparmOptions,
@@ -237,6 +238,7 @@ pub const CallingConvention = union(enum(u8)) {
     aarch64_vfabi: CommonOptions,
     aarch64_vfabi_sve: CommonOptions,
     aarch64_preserve_none: CommonOptions,
+    aarch64_preserve_most: CommonOptions,
 
     /// The standard `alpha` calling convention.
     alpha_osf: CommonOptions,
@@ -261,11 +263,13 @@ pub const CallingConvention = union(enum(u8)) {
     riscv64_lp64: CommonOptions,
     riscv64_lp64_v: CommonOptions,
     riscv64_interrupt: RiscvInterruptOptions,
+    riscv64_preserve_most: CommonOptions,
 
     // Calling conventions for the `riscv32` architecture.
     riscv32_ilp32: CommonOptions,
     riscv32_ilp32_v: CommonOptions,
     riscv32_interrupt: RiscvInterruptOptions,
+    riscv32_preserve_most: CommonOptions,
 
     // Calling conventions for the `sparc64` architecture.
     sparc64_sysv: CommonOptions,
@@ -322,9 +326,13 @@ pub const CallingConvention = union(enum(u8)) {
 
     /// The standard `loongarch64` calling convention.
     loongarch64_lp64: CommonOptions,
+    loongarch64_preserve_none: CommonOptions,
+    loongarch64_preserve_most: CommonOptions,
 
     /// The standard `loongarch32` calling convention.
     loongarch32_ilp32: CommonOptions,
+    loongarch32_preserve_none: CommonOptions,
+    loongarch32_preserve_most: CommonOptions,
 
     // Calling conventions for the `m68k` architecture.
     m68k_sysv: CommonOptions,
@@ -615,10 +623,6 @@ pub const AddressSpace = enum(u5) {
 
     /// This address space only addresses the "lookup" ram
     lut,
-
-    // Web Assembly
-    externref,
-    funcref,
 };
 
 /// This data structure is used by the Zig language code generation and

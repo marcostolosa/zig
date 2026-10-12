@@ -15,7 +15,6 @@ const Compilation = @import("Compilation.zig");
 const LibCInstallation = std.zig.LibCInstallation;
 
 const trace = @import("tracy.zig").trace;
-const wasi_libc = @import("libs/wasi_libc.zig");
 
 const Zcu = @import("Zcu.zig");
 const InternPool = @import("InternPool.zig");
@@ -2587,6 +2586,9 @@ fn resolveFrameworkInput(
     framework_directory: Directory,
     framework_query: UnresolvedInput.FrameworkQuery,
 ) Allocator.Error!ResolveLibInputResult {
+    try resolved_inputs.ensureUnusedCapacity(gpa, 1);
+    try archive_dedup.ensureUnusedCapacity(gpa, 1);
+
     const sep = std.fs.path.sep_str;
 
     tbd: {

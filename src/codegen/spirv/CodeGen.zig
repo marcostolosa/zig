@@ -845,8 +845,6 @@ pub fn storageClass(cg: *const CodeGen, as: std.lang.AddressSpace) spec.StorageC
         .cog,
         .lut,
         .hub,
-        .externref,
-        .funcref,
         => unreachable,
     };
 }
@@ -1684,15 +1682,24 @@ fn constantPtr(cg: *CodeGen, ptr_val: Value) !Id {
     return cg.derivePtr(ptr_val.typeOf(zcu).ptrAddressSpace(zcu), derivation);
 }
 
+/// Emits the pointer type that one step of a pointer derivation results in, along with its
+/// pointee type. A derivation is the sequence of steps that builds a comptime-known pointer: a
+/// base address, such as a declaration, an anonymous value or an integer, followed by field,
+/// element and cast steps, each of which is lowered on its own.
+/// This function emits instructions on every call, and they stay in the module whether or not they
+/// are read, so it should only be called where the resulting type is used: a buffer struct emitted
+/// without `Block` fails validation even when nothing refers to it.
+fn derivedPtrType(cg: *CodeGen, @"addrspace": std.lang.AddressSpace, derivation: Value.PointerDerivation) !Id {
+    return cg.ptrType(
+        try cg.pointeeType(@"addrspace", derivation.elem_ty, false),
+        cg.storageClass(@"addrspace"),
+    );
+}
+
 fn derivePtr(cg: *CodeGen, @"addrspace": std.lang.AddressSpace, derivation: Value.PointerDerivation) !Id {
     const gpa = cg.gpa;
     const zcu = cg.zcu;
     const target = zcu.getTarget();
-
-    const result_ty_id = try cg.ptrType(
-        try cg.pointeeType(@"addrspace", derivation.elem_ty, false),
-        cg.storageClass(@"addrspace"),
-    );
 
     switch (derivation.addr) {
         .comptime_alloc, .comptime_field => unreachable,
@@ -1708,6 +1715,7 @@ fn derivePtr(cg: *CodeGen, @"addrspace": std.lang.AddressSpace, derivation: Valu
             // TODO: This can probably be an OpSpecConstantOp Bitcast, but
             // that is not implemented by Mesa yet. Therefore, just generate it
             // as a runtime operation.
+            const result_ty_id = try cg.derivedPtrType(@"addrspace", derivation);
             const result_ptr_id = cg.allocId();
             const value_id = try cg.constInt(.usize, int);
             try cg.body.emit(gpa, .OpConvertUToPtr, .{
@@ -1727,10 +1735,10 @@ fn derivePtr(cg: *CodeGen, @"addrspace": std.lang.AddressSpace, derivation: Valu
 
             if (ip.isFunctionType(nav_ty.toIntern())) {
                 if (is_extern) return try cg.resolveExternFn(nav_index);
-                return try cg.constUndef(result_ty_id);
+                return try cg.constUndef(try cg.derivedPtrType(@"addrspace", derivation));
             }
             if (!nav_ty.hasRuntimeBits(zcu) and nav_ty.zigTypeTag(zcu) != .spirv) {
-                return cg.constUndef(result_ty_id);
+                return cg.constUndef(try cg.derivedPtrType(@"addrspace", derivation));
             }
             if (!is_extern) {
                 return cg.todo("pointer to constant '{f}'", .{nav.fqn.fmt(ip)});
@@ -1739,19 +1747,19 @@ fn derivePtr(cg: *CodeGen, @"addrspace": std.lang.AddressSpace, derivation: Valu
             const as = nav.resolved.?.@"addrspace";
             assert(as != .generic);
 
-            const storage_class = cg.storageClass(as);
             const var_id = try cg.resolveNav(nav_index);
-            const nav_ty_id = try cg.resolveType(nav_ty, .indirect);
-            const decl_ptr_ty_id = try cg.ptrType(nav_ty_id, storage_class);
             if (cg.needsLayout(as, nav_ty)) {
                 try cg.block_var_ids.put(gpa, var_id, {});
             }
-
-            if (decl_ptr_ty_id == result_ty_id) return var_id;
             switch (target.os.tag) {
                 .vulkan, .opengl => return var_id,
                 else => {},
             }
+
+            const nav_ty_id = try cg.resolveType(nav_ty, .indirect);
+            const decl_ptr_ty_id = try cg.ptrType(nav_ty_id, cg.storageClass(as));
+            const result_ty_id = try cg.derivedPtrType(@"addrspace", derivation);
+            if (decl_ptr_ty_id == result_ty_id) return var_id;
 
             const casted_ptr_id = cg.allocId();
             try cg.body.emit(gpa, .OpBitcast, .{
@@ -1772,7 +1780,7 @@ fn derivePtr(cg: *CodeGen, @"addrspace": std.lang.AddressSpace, derivation: Valu
             }
 
             if (!uav_ty.hasRuntimeBits(zcu) and uav_ty.zigTypeTag(zcu) != .spirv) {
-                return cg.constUndef(result_ty_id);
+                return cg.constUndef(try cg.derivedPtrType(@"addrspace", derivation));
             }
 
             if (cg.storageClass(@"addrspace") != .function) {
@@ -1789,7 +1797,7 @@ fn derivePtr(cg: *CodeGen, @"addrspace": std.lang.AddressSpace, derivation: Valu
         .opt_payload => @panic("TODO"),
         .field => |derived| return cg.structFieldPtr(
             @"addrspace",
-            result_ty_id,
+            try cg.derivedPtrType(@"addrspace", derivation),
             derivation.elem_ty,
             derived.parent.elem_ty,
             try cg.derivePtr(@"addrspace", derived.parent.*),
@@ -1801,7 +1809,7 @@ fn derivePtr(cg: *CodeGen, @"addrspace": std.lang.AddressSpace, derivation: Valu
                 .many => .many_ptr,
             },
             @"addrspace",
-            derived.parent.elem_ty,
+            derivation.elem_ty,
             try cg.derivePtr(@"addrspace", derived.parent.*),
             try cg.constInt(.usize, derived.elem_index),
         ),
@@ -1841,12 +1849,13 @@ fn derivePtr(cg: *CodeGen, @"addrspace": std.lang.AddressSpace, derivation: Valu
                         const zero = try cg.constInt(.u32, 0);
                         const ids = try cg.id_scratch.addManyAsSlice(gpa, depth);
                         @memset(ids, zero);
-                        return cg.accessChainId(result_ty_id, parent_ptr_id, ids);
+                        return cg.accessChainId(try cg.derivedPtrType(@"addrspace", derivation), parent_ptr_id, ids);
                     } else {
                         return parent_ptr_id;
                     }
                 }
                 if (target.os.tag == .opencl) {
+                    const result_ty_id = try cg.derivedPtrType(@"addrspace", derivation);
                     const result_ptr_id = cg.allocId();
                     try cg.body.emit(gpa, .OpBitcast, .{
                         .id_result_type = result_ty_id,
@@ -3423,8 +3432,8 @@ fn vectorization(cg: *CodeGen, args: anytype) Vectorization {
     return v;
 }
 
-/// This function builds an OpSConvert of OpUConvert depending on the
-/// signedness of the types.
+/// This function builds the conversion between two numeric types: OpFConvert, OpSConvert or
+/// OpUConvert within floats or integers, and OpConvert{S,U}ToF or OpConvertFTo{S,U} across them.
 fn buildConvert(cg: *CodeGen, dst_ty: Type, src: Temporary) !Temporary {
     const zcu = cg.zcu;
 
@@ -3453,8 +3462,16 @@ fn buildConvert(cg: *CodeGen, dst_ty: Type, src: Temporary) !Temporary {
     const op_result_ty_id = try cg.resolveType(op_result_ty, .direct);
 
     const opcode: Opcode = blk: {
-        if (dst_ty.scalarType(zcu).isAnyFloat()) break :blk .OpFConvert;
-        if (dst_ty.scalarType(zcu).isSignedInt(zcu)) break :blk .OpSConvert;
+        if (dst_scalar.isAnyFloat()) {
+            if (src_scalar.isAnyFloat()) break :blk .OpFConvert;
+            if (src_scalar.isSignedInt(zcu)) break :blk .OpConvertSToF;
+            break :blk .OpConvertUToF;
+        }
+        if (src_scalar.isAnyFloat()) {
+            if (dst_scalar.isSignedInt(zcu)) break :blk .OpConvertFToS;
+            break :blk .OpConvertFToU;
+        }
+        if (dst_scalar.isSignedInt(zcu)) break :blk .OpSConvert;
         break :blk .OpUConvert;
     };
 
@@ -5801,6 +5818,23 @@ fn bitCast(
         // TODO: Some more cases are missing here
         //   See fn bitCast in llvm.zig
 
+        // An elementwise vector bitcast is a scalar bitcast per lane, which also normalizes lanes
+        // of strange integers.
+        if (src_ty.isVector(zcu) and dst_ty.isVector(zcu) and
+            src_ty.vectorLen(zcu) == dst_ty.vectorLen(zcu) and
+            src_ty.childType(zcu).isNumeric(zcu) and dst_ty.childType(zcu).isNumeric(zcu))
+        {
+            const src_elem_ty = src_ty.childType(zcu);
+            const dst_elem_ty = dst_ty.childType(zcu);
+            const scratch_top = cg.id_scratch.items.len;
+            defer cg.id_scratch.shrinkRetainingCapacity(scratch_top);
+            for (0..src_ty.vectorLen(zcu)) |i| {
+                const src_lane_id = try cg.extractVectorComponent(src_elem_ty, src_id, @intCast(i));
+                try cg.id_scratch.append(gpa, try cg.bitCast(dst_elem_ty, src_elem_ty, src_lane_id));
+            }
+            break :blk try cg.constructComposite(dst_ty_id, cg.id_scratch.items[scratch_top..]);
+        }
+
         if (src_ty.zigTypeTag(zcu) == .int and dst_ty.isPtrAtRuntime(zcu)) {
             if (target.os.tag != .opencl) {
                 if (dst_ty.ptrAddressSpace(zcu) != .physical_storage_buffer) {
@@ -6139,50 +6173,19 @@ fn intFromPtr(cg: *CodeGen, operand_id: Id) !Id {
 }
 
 fn airFloatFromInt(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
-    const gpa = cg.gpa;
     const ty_op = cg.air.instructions.items(.data)[@backingInt(inst)].ty_op;
-    const operand_ty = cg.typeOf(ty_op.operand);
-    const operand_id = try cg.resolve(ty_op.operand);
+    const operand = try cg.temporary(ty_op.operand);
     const result_ty = cg.typeOfIndex(inst);
-    const operand_info = cg.arithmeticTypeInfo(operand_ty);
-    const result_id = cg.allocId();
-    const result_ty_id = try cg.resolveType(result_ty, .direct);
-    switch (operand_info.signedness) {
-        .signed => try cg.body.emit(gpa, .OpConvertSToF, .{
-            .id_result_type = result_ty_id,
-            .id_result = result_id,
-            .signed_value = operand_id,
-        }),
-        .unsigned => try cg.body.emit(gpa, .OpConvertUToF, .{
-            .id_result_type = result_ty_id,
-            .id_result = result_id,
-            .unsigned_value = operand_id,
-        }),
-    }
-    return result_id;
+    const result = try cg.buildConvert(result_ty, operand);
+    return try result.materialize(cg);
 }
 
 fn airIntFromFloat(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
-    const gpa = cg.gpa;
     const ty_op = cg.air.instructions.items(.data)[@backingInt(inst)].ty_op;
-    const operand_id = try cg.resolve(ty_op.operand);
+    const operand = try cg.temporary(ty_op.operand);
     const result_ty = cg.typeOfIndex(inst);
-    const result_info = cg.arithmeticTypeInfo(result_ty);
-    const result_ty_id = try cg.resolveType(result_ty, .direct);
-    const result_id = cg.allocId();
-    switch (result_info.signedness) {
-        .signed => try cg.body.emit(gpa, .OpConvertFToS, .{
-            .id_result_type = result_ty_id,
-            .id_result = result_id,
-            .float_value = operand_id,
-        }),
-        .unsigned => try cg.body.emit(gpa, .OpConvertFToU, .{
-            .id_result_type = result_ty_id,
-            .id_result = result_id,
-            .float_value = operand_id,
-        }),
-    }
-    return result_id;
+    const result = try cg.buildConvert(result_ty, operand);
+    return try result.materialize(cg);
 }
 
 fn airFloatCast(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
@@ -6903,14 +6906,14 @@ fn structFieldPtr(
             return cg.accessChain(result_ptr_ty_id, object_ptr, &.{field_index});
         },
         .@"struct" => switch (object_ty.containerLayout(zcu)) {
-            .@"packed" => unreachable,
+            .@"packed" => return cg.todo("implement field access for packed structs", .{}),
             .auto, .@"extern" => {
                 const member_index = cg.memberIndex(object_ty, field_index);
                 return try cg.accessChain(result_ptr_ty_id, object_ptr, &.{member_index});
             },
         },
         .@"union" => switch (object_ty.containerLayout(zcu)) {
-            .@"packed" => unreachable,
+            .@"packed" => return cg.todo("implement field access for packed unions", .{}),
             .auto => {
                 if (!field_ty.hasRuntimeBits(zcu)) return try cg.constUndef(result_ptr_ty_id);
                 return try cg.accessChain(result_ptr_ty_id, object_ptr, &.{field_index});
@@ -8483,6 +8486,9 @@ fn airDbgInlineBlock(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
 
 fn airDbgVar(cg: *CodeGen, inst: Air.Inst.Index) !void {
     const pl_op = cg.air.instructions.items(.data)[@backingInt(inst)].pl_op;
+    // A comptime-known value has no runtime variable of its own to name, and lowering it only to
+    // name it can fail, as for a slice of a global constant.
+    if (pl_op.operand.toInterned() != null) return;
     const target_id = switch (try cg.resolvePtr(pl_op.operand)) {
         .tracked => return,
         .id => |id| id,

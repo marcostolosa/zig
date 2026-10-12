@@ -102,7 +102,7 @@ single_exports: std.array_hash_map.Auto(AnalUnit, Export.Index) = .empty,
 multi_exports: std.array_hash_map.Auto(AnalUnit, extern struct {
     index: u32,
     len: u32,
-}) = .{},
+}) = .empty,
 
 /// Key is the digest returned by `Builtin.hash`; value is the corresponding module.
 builtin_modules: std.array_hash_map.Auto(Cache.BinDigest, *Module) = .empty,
@@ -3050,7 +3050,7 @@ pub fn loadZirCache(gpa: Allocator, io: Io, cache_file: Io.File) !Zir {
 }
 
 pub fn loadZirCacheBody(gpa: Allocator, header: Zir.Header, cache_br: *Io.Reader) !Zir {
-    var instructions: std.MultiArrayList(Zir.Inst) = .{};
+    var instructions: std.MultiArrayList(Zir.Inst) = .empty;
     errdefer instructions.deinit(gpa);
 
     try instructions.setCapacity(gpa, header.instructions_len);
@@ -4683,6 +4683,7 @@ pub fn callconvSupported(zcu: *Zcu, cc: std.lang.CallingConvention) union(enum) 
                 .x86_64_regcall_v4_win,
                 .x86_64_interrupt,
                 .x86_64_preserve_none,
+                .x86_64_preserve_most,
                 .x86_fastcall,
                 .x86_thiscall,
                 .x86_vectorcall,
@@ -4692,6 +4693,7 @@ pub fn callconvSupported(zcu: *Zcu, cc: std.lang.CallingConvention) union(enum) 
                 .aarch64_vfabi,
                 .aarch64_vfabi_sve,
                 .aarch64_preserve_none,
+                .aarch64_preserve_most,
                 .arm_aapcs,
                 .csky_interrupt,
                 .riscv64_lp64_v,
@@ -4711,6 +4713,12 @@ pub fn callconvSupported(zcu: *Zcu, cc: std.lang.CallingConvention) union(enum) 
                 .avr_interrupt,
                 .avr_signal,
                 .ez80_tiflags,
+                .loongarch32_preserve_none,
+                .loongarch64_preserve_none,
+                .riscv32_preserve_most,
+                .riscv64_preserve_most,
+                .loongarch32_preserve_most,
+                .loongarch64_preserve_most,
                 .naked,
                 => true, // incoming stack alignment supported
 

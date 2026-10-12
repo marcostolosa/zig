@@ -24,7 +24,7 @@ test {
 
 /// Whether to use libc for the POSIX API layer.
 const use_libc = builtin.link_libc or switch (native_os) {
-    .windows, .wasi => true,
+    .windows => true,
     else => false,
 };
 
@@ -50,10 +50,13 @@ else switch (native_os) {
         pub const ino_t = u64;
         pub const IFNAMESIZE = {};
         pub const SIG = void;
+        pub const cmsghdr = void;
+        pub const cmsg_align = {};
 
         // https://github.com/pspdev/newlib/blob/9e0a073634ad73e8e088f2e071c55a9fe5d39709/newlib/libc/sys/psp/sys/dirent.h#L19
         pub const NAME_MAX = 255;
     },
+    .wasi => @import("posix/wasi.zig"),
     else => struct {
         pub const pid_t = void;
         pub const pollfd = void;
@@ -66,6 +69,8 @@ else switch (native_os) {
         pub const ino_t = void;
         pub const IFNAMESIZE = {};
         pub const SIG = void;
+        pub const cmsghdr = void;
+        pub const cmsg_align = {};
     },
 };
 
@@ -150,6 +155,8 @@ pub const blkcnt_t = system.blkcnt_t;
 pub const blksize_t = system.blksize_t;
 pub const clock_t = system.clock_t;
 pub const clockid_t = system.clockid_t;
+pub const cmsghdr = system.cmsghdr;
+pub const cmsg_align = system.cmsg_align;
 pub const timerfd_clockid_t = system.timerfd_clockid_t;
 pub const cpu_set_t = system.cpu_set_t;
 pub const dev_t = system.dev_t;
@@ -441,7 +448,7 @@ pub const OpenError = std.Io.File.OpenError || error{WouldBlock};
 pub fn openat(dir_fd: fd_t, file_path: []const u8, flags: O, mode: mode_t) OpenError!fd_t {
     if (native_os == .windows) {
         @compileError("Windows does not support POSIX; use Windows-specific API or cross-platform std.fs API");
-    } else if (native_os == .wasi and !builtin.link_libc) {
+    } else if (native_os == .wasi) {
         @compileError("use std.Io instead");
     }
     const file_path_c = try toPosixPath(file_path);
@@ -457,7 +464,7 @@ pub fn openat(dir_fd: fd_t, file_path: []const u8, flags: O, mode: mode_t) OpenE
 pub fn openatZ(dir_fd: fd_t, file_path: [*:0]const u8, flags: O, mode: mode_t) OpenError!fd_t {
     if (native_os == .windows) {
         @compileError("Windows does not support POSIX; use Windows-specific API or cross-platform std.fs API");
-    } else if (native_os == .wasi and !builtin.link_libc) {
+    } else if (native_os == .wasi) {
         return openat(dir_fd, mem.sliceTo(file_path, 0), flags, mode);
     }
 

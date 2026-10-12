@@ -9,7 +9,7 @@ const Io = std.Io;
 const tests = @import("test/tests.zig");
 const DevEnv = @import("src/dev.zig").Env;
 
-const zig_version: std.SemanticVersion = .{ .major = 0, .minor = 17, .patch = 0 };
+const zig_version: std.SemanticVersion = .{ .major = 0, .minor = 18, .patch = 0 };
 const stack_size = 46 * 1024 * 1024;
 
 const IoMode = enum { threaded, evented };
@@ -206,7 +206,7 @@ pub fn build(b: *std.Build) !void {
 
     const mem_leak_frames: u32 = b.option(u32, "mem-leak-frames", "How many stack frames to print when a memory leak occurs. Tests get 2x this amount.") orelse blk: {
         if (strip == true) break :blk @as(u32, 0);
-        if (optimize != .debug) break :blk 0;
+        if (optimize) |opt| if (opt != .debug) break :blk 0;
         break :blk 4;
     };
 
@@ -255,7 +255,7 @@ pub fn build(b: *std.Build) !void {
         exe.root_module.link_libc = true;
     }
 
-    const is_debug = optimize == .debug;
+    const is_debug = if (optimize) |opt| opt == .debug else true;
     const enable_debug_extensions = b.option(bool, "debug-extensions", "Enable commands and options useful for debugging the compiler") orelse is_debug;
     const enable_logging = b.option(bool, "log", "Enable debug logging with --debug-log") orelse is_debug;
 
@@ -636,6 +636,7 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(tests.addStandaloneTests(
         b,
         optimize_modes,
+        skip_non_native,
         enable_macos_sdk,
         enable_ios_sdk,
         enable_symlinks_windows,
@@ -700,15 +701,6 @@ pub fn build(b: *std.Build) !void {
         .skip_libc = skip_libc,
     }));
     test_step.dependOn(tests.addCliTests(b));
-    if (tests.addDebuggerTests(b, .{
-        .test_filters = test_filters,
-        .test_target_filters = test_target_filters,
-        .gdb = b.option([]const u8, "gdb", "path to gdb binary"),
-        .lldb = b.option([]const u8, "lldb", "path to lldb binary"),
-        .optimize_modes = optimize_modes,
-        .skip_single_threaded = skip_single_threaded,
-        .skip_libc = skip_libc,
-    })) |test_debugger_step| test_step.dependOn(test_debugger_step);
     if (tests.addLlvmIrTests(b, .{
         .enable_llvm = enable_llvm,
         .test_filters = test_filters,
@@ -784,7 +776,6 @@ pub fn build(b: *std.Build) !void {
         .optimize_modes = optimize_modes,
         .test_filters = test_filters,
         .test_target_filters = test_target_filters,
-        .skip_wasm = skip_wasm,
         .max_rss = 4_300_000_000,
     })) |test_libc_nsz_step| test_step.dependOn(test_libc_nsz_step);
 
@@ -795,7 +786,7 @@ pub fn build(b: *std.Build) !void {
             .target = b.graph.host,
         }),
     });
-    test_step.dependOn(try tests.addIncrementalTests(b, runner, .{
+    const runner_opts: tests.RunnerOptions = .{
         .test_filters = test_filters,
         .test_target_filters = test_target_filters,
         .skip_non_native = skip_non_native,
@@ -807,7 +798,21 @@ pub fn build(b: *std.Build) !void {
         .skip_darwin = skip_darwin,
         .skip_linux = skip_linux,
         .skip_llvm = skip_llvm,
-    }));
+        .gdb = b.option([]const u8, "gdb", "path to gdb binary"),
+        .lldb = b.option([]const u8, "lldb", "path to lldb binary"),
+    };
+
+    const test_incremental_step = b.step("test-incremental", "Run the incremental compilation tests");
+    try tests.addRunnerTests(b, runner, test_incremental_step, "test/incremental", tests.incremental_matrix, runner_opts);
+    test_step.dependOn(test_incremental_step);
+
+    const test_debugger_step = b.step("test-debugger", "Run the debugger tests");
+    if (runner_opts.gdb == null and runner_opts.lldb == null) {
+        test_debugger_step.dependOn(&b.addFail("test-debugger requires -Dgdb and/or -Dlldb").step);
+    } else {
+        try tests.addRunnerTests(b, runner, test_debugger_step, "test/debugger", tests.debugger_matrix, runner_opts);
+        test_step.dependOn(test_debugger_step);
+    }
 }
 
 fn addWasiUpdateStep(b: *std.Build, version: [:0]const u8) !void {
@@ -879,7 +884,7 @@ fn addWasiUpdateStep(b: *std.Build, version: [:0]const u8) !void {
 }
 
 const AddCompilerModOptions = struct {
-    optimize: std.lang.Optimize,
+    optimize: ?std.lang.Optimize,
     target: std.Build.ResolvedTarget,
     strip: ?bool = null,
     valgrind: ?bool = null,
@@ -1358,20 +1363,23 @@ const clang_libs = [_][]const u8{
     "clangStaticAnalyzerCheckers",
     "clangStaticAnalyzerCore",
     "clangCrossTU",
-    "clangFrontend",
     "clangDriver",
+    "clangScalableStaticAnalysisAnalyses",
+    "clangScalableStaticAnalysisCore",
+    "clangScalableStaticAnalysisFrontend",
+    "clangScalableStaticAnalysisSourceTransformation",
+    "clangDependencyScanning",
+    "clangFrontend",
     "clangOptions",
     "clangSerialization",
     "clangSema",
     "clangAnalysisLifetimeSafety",
     "clangAnalysis",
     "clangASTMatchers",
-    "clangAST",
     "clangParse",
-    "clangSema",
     "clangAPINotes",
-    "clangBasic",
     "clangEdit",
+    "clangUnifiedSymbolResolution",
     "clangLex",
     "clangRewriteFrontend",
     "clangRewrite",
@@ -1383,6 +1391,7 @@ const clang_libs = [_][]const u8{
     "clangSupport",
     "clangInstallAPI",
     "clangAST",
+    "clangBasic",
 };
 const lld_libs = [_][]const u8{
     "lldMinGW",

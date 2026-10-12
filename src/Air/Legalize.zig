@@ -208,6 +208,8 @@ pub const Feature = enum {
     expand_ptr_elem_val,
     /// Replace `array_to_slice` with a `ptr_cast` followed by a `slice`.
     expand_array_to_slice,
+    /// Replace `is_[non_]err` with `alloc` and `store` followed by `is_[non_]err_ptr`.
+    expand_is_err,
 
     /// Replace all arithmetic operations on 16-bit floating-point types with calls to soft-float
     /// routines in compiler_rt, including `fptrunc`/`fpext`/`float_from_int`/`int_from_float`
@@ -811,11 +813,12 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             .is_non_null,
             .is_null_ptr,
             .is_non_null_ptr,
-            .is_err,
-            .is_non_err,
             .is_err_ptr,
             .is_non_err_ptr,
             => {},
+            .is_err, .is_non_err => if (l.features.has(.expand_is_err)) {
+                continue :inst l.replaceInst(inst, .block, try l.isErrBlockPayload(inst));
+            },
             .load => if (l.features.has(.expand_packed_load)) {
                 const ty_op = l.air_instructions.items(.data)[@backingInt(inst)].ty_op;
                 const ptr_info = l.typeOf(ty_op.operand).ptrInfo(zcu);
@@ -3097,6 +3100,33 @@ fn arrayToSliceBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.I
         .ty = slice_ty,
         .payload = try l.addBlockBody(main_block.body()),
     } };
+}
+
+fn isErrBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Inst.Data {
+    const pt = l.pt;
+    const zcu = pt.zcu;
+    const gpa = zcu.gpa;
+
+    var inst_buf: [4]Air.Inst.Index = undefined;
+    var main_block: Block = .init(&inst_buf);
+    try l.air_instructions.ensureUnusedCapacity(gpa, inst_buf.len);
+
+    const operand = l.air_instructions.items(.data)[@backingInt(orig_inst)].un_op;
+    const ty = l.typeOf(operand);
+    const ptr = main_block.addTy(l, .alloc, try pt.singleMutPtrType(ty)).toRef();
+    _ = main_block.addBinOp(l, .store, ptr, operand);
+
+    const query_tag: Air.Inst.Tag =
+        switch (l.air_instructions.items(.tag)[@backingInt(orig_inst)]) {
+            .is_err => .is_err_ptr,
+            .is_non_err => .is_non_err_ptr,
+            else => unreachable,
+        };
+
+    const result = main_block.addUnOp(l, query_tag, ptr).toRef();
+    main_block.addBr(l, orig_inst, result);
+
+    return .{ .ty_pl = .{ .ty = .bool, .payload = try l.addBlockBody(main_block.body()) } };
 }
 
 /// Given a `std.math.big.int.Const`, converts it to a `Value` which is a float of type `float_ty`

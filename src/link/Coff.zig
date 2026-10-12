@@ -5326,7 +5326,7 @@ fn loadArchive(coff: *Coff, path: std.Build.Cache.Path, fr: *Io.File.Reader) Loa
                 });
 
             const ext = ".dll";
-            if (!std.mem.endsWith(u8, lib_name, ext))
+            if (!std.ascii.endsWithIgnoreCase(lib_name, ext))
                 return diags.failParse(
                     path,
                     "unexpected extension for import '{s} ('{s}'): '{s}'",

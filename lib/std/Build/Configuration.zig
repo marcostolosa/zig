@@ -665,7 +665,7 @@ pub const Step = extern struct {
             pub const Tag = enum(u2) { none, bytes, lazy_path };
         };
         pub const TrimWhitespace = enum(u2) { none, all, leading, trailing };
-        pub const StdIo = enum(u2) { infer_from_args, inherit, check, zig_test };
+        pub const StdIo = enum(u3) { infer_from_args, inherit, check, zig_test, protocol };
 
         pub const ExpectTermStatus = enum(u2) { exited, signal, stopped, unknown };
 
@@ -675,7 +675,6 @@ pub const Step = extern struct {
             skip_foreign_checks: bool,
             failing_to_execute_foreign_is_an_error: bool,
             has_side_effects: bool,
-            test_runner_mode: bool,
             color: Color,
             stdin: StdIn.Tag,
             stdio: StdIo,
@@ -1402,14 +1401,14 @@ pub const Step = extern struct {
         output_file: GeneratedFileIndex,
         include_dirs: Storage.UnionList(.flags, .include_dirs, Module.IncludeDir),
         system_libs: Storage.FlagLengthPrefixedList(.flags, .system_libs, SystemLib.Index),
-        c_macros: Storage.FlagLengthPrefixedList(.flags, .c_macros, String),
+        cc_argv: Storage.FlagLengthPrefixedList(.flags, .cc_argv, String),
         target: ResolvedTarget.OptionalIndex,
 
         pub const Flags = packed struct(u32) {
             tag: Tag = .translate_c,
             include_dirs: bool,
             system_libs: bool,
-            c_macros: bool,
+            cc_argv: bool,
             link_libc: bool,
             optimize: Module.Optimize,
             _: u20 = 0,
@@ -1576,6 +1575,7 @@ pub const LazyPath = union(@This().Tag) {
             install_lib,
             install_bin,
             install_include,
+            libc_runtimes,
         };
     };
 };

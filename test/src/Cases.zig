@@ -495,7 +495,7 @@ pub fn lowerToBuildSteps(
 
         if (case.case.? == .Error and options.skip_compile_errors) continue;
 
-        if (options.skip_non_native and !@import("../tests.zig").isNative(&case.target, &b.graph.host.result))
+        if (options.skip_non_native and !std.zig.target.isNative(&case.target.query, &case.target.result, &b.graph.host.result))
             continue;
 
         if (options.skip_spirv and case.target.query.cpu_arch != null and case.target.query.cpu_arch.?.isSpirV()) continue;
@@ -626,6 +626,7 @@ pub fn lowerToBuildSteps(
                     if (getExternalExecutor(io, &case.target.result, .{
                         .host_cpu_arch = host.result.cpu.arch,
                         .host_os_tag = host.result.os.tag,
+                        .link_mode = .dynamic, // TODO: this emulates old behavior until this file is deleted
                         .link_libc = true,
                     }) != .native) {
                         // We wouldn't be able to run the compiled C code.

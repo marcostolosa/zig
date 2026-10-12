@@ -40,7 +40,6 @@ const Zcu = @import("../Zcu.zig");
 const codegen = @import("../codegen.zig");
 const link = @import("../link.zig");
 const trace = @import("../tracy.zig").trace;
-const wasi_libc = @import("../libs/wasi_libc.zig");
 const Value = @import("../Value.zig");
 
 base: link.File,
@@ -972,10 +971,8 @@ pub const ZcuFunc = union {
                         const name_string = wasm.getExistingString(name_slice).?;
                         return .{
                             .binding = switch (ext.linkage) {
-                                .internal => .local,
                                 .strong => .strong,
                                 .weak => .weak,
-                                .link_once => @panic("TODO: COMDAT"),
                             },
                             .visibility_hidden = switch (ext.visibility) {
                                 .default => false,
@@ -1952,10 +1949,8 @@ pub const ObjectDataImport = extern struct {
                         const name_string = wasm.getExistingString(name_slice).?;
                         return .{
                             .binding = switch (ext.linkage) {
-                                .internal => .local,
                                 .strong => .strong,
                                 .weak => .weak,
-                                .link_once => @panic("TODO: COMDAT"),
                             },
                             .visibility_hidden = switch (ext.visibility) {
                                 .default => false,
@@ -2591,10 +2586,8 @@ pub const ZcuImportIndex = enum(u32) {
         const name_string = wasm.getExistingString(name_slice).?;
         return .{
             .binding = switch (ext.linkage) {
-                .internal => .local,
                 .strong => .strong,
                 .weak => .weak,
-                .link_once => @panic("TODO: COMDAT"),
             },
             .visibility_hidden = switch (ext.visibility) {
                 .default => false,
@@ -3245,6 +3238,7 @@ pub const Feature = packed struct(u8) {
         @"tail-call",
         @"shared-mem",
         @"wide-arithmetic",
+        @"relaxed-atomics",
 
         pub fn fromCpuFeature(feature: std.Target.wasm.Feature) Tag {
             return switch (feature) {
@@ -3262,6 +3256,7 @@ pub const Feature = packed struct(u8) {
                 .nontrapping_bulk_memory_len0 => .@"nontrapping-bulk-memory-len0", // Zig extension.
                 .nontrapping_fptoint => .@"nontrapping-fptoint",
                 .reference_types => .@"reference-types",
+                .relaxed_atomics => .@"relaxed-atomics",
                 .relaxed_simd => .@"relaxed-simd",
                 .sign_ext => .@"sign-ext",
                 .simd128 => .simd128,
@@ -3287,6 +3282,7 @@ pub const Feature = packed struct(u8) {
                 .@"nontrapping-bulk-memory-len0" => .nontrapping_bulk_memory_len0, // Zig extension.
                 .@"nontrapping-fptoint" => .nontrapping_fptoint,
                 .@"reference-types" => .reference_types,
+                .@"relaxed-atomics" => .relaxed_atomics,
                 .@"relaxed-simd" => .relaxed_simd,
                 .@"sign-ext" => .sign_ext,
                 .simd128 => .simd128,
@@ -3788,8 +3784,8 @@ pub fn loadInput(wasm: *Wasm, input: link.Input) !void {
         const argv = &wasm.dump_argv_list;
         switch (input) {
             .res => unreachable,
-            .dso_exact => unreachable,
             .dso => unreachable,
+            .tbd => unreachable,
             .object, .archive => |obj| {
                 try argv.append(gpa, try obj.path.toString(comp.arena));
             },
@@ -3798,8 +3794,8 @@ pub fn loadInput(wasm: *Wasm, input: link.Input) !void {
 
     switch (input) {
         .res => unreachable,
-        .dso_exact => unreachable,
         .dso => unreachable,
+        .tbd => unreachable,
         .object => |obj| try parseObject(wasm, obj),
         .archive => |obj| try parseArchive(wasm, obj),
     }

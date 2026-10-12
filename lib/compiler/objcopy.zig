@@ -234,9 +234,9 @@ fn cmdObjCopy(arena: Allocator, io: Io, args: []const []const u8) !void {
                     // The build system already knows what the output is at this point, we
                     // only need to communicate that the process has finished.
                     // Use the empty error bundle to indicate that the update is done.
-                    try server.serveErrorBundle(std.zig.ErrorBundle.empty);
+                    try server.serveErrorBundle(.error_bundle, std.zig.ErrorBundle.empty);
                 },
-                else => fatal("unsupported message: {s}", .{@tagName(hdr.tag)}),
+                else => fatal("unsupported message: {t}", .{hdr.tag}),
             }
         }
     }
@@ -409,7 +409,7 @@ const BinaryElfOutput = struct {
             const shstrtab_shdr = (try section_headers.next()).?;
 
             try in.seekTo(shstrtab_shdr.sh_offset);
-            break :blk try in.interface.readAlloc(allocator, shstrtab_shdr.sh_size);
+            break :blk try in.interface.readAllocAll(allocator, shstrtab_shdr.sh_size);
         };
 
         errdefer if (self.shstrtab) |shstrtab| allocator.free(shstrtab);
@@ -669,6 +669,7 @@ fn padFile(out: *File.Writer, opt_size: ?u64) !void {
     const io = out.io;
     const size = opt_size orelse return;
     try out.file.setLength(io, size);
+    try out.seekTo(size);
 }
 
 test "HexWriter.Record.Address has correct payload and checksum" {

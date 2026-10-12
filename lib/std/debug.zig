@@ -271,9 +271,6 @@ pub const sys_can_stack_trace = switch (builtin.cpu.arch) {
     .bpfeb,
     => false,
 
-    // https://codeberg.org/ziglang/zig/issues/31127
-    .avr => false,
-
     else => true,
 };
 
@@ -438,7 +435,6 @@ pub const CpuContextPtr = if (cpu_context.Native == noreturn) noreturn else *con
 /// fast and small mode. Outside of a test block, this assert
 /// function is the correct function to use.
 pub fn assert(ok: bool) void {
-    @disableInstrumentation();
     if (!ok) unreachable; // assertion failure
 }
 

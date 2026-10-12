@@ -49,7 +49,13 @@ scanned_config: *const ScannedConfig,
 /// system watching does not need to make any special cases, and to avoid more
 /// OS-specific logic in file system watching implementation.
 steps: []Step,
-generated_files: []Path,
+/// Reserved space for all the file paths that are determined at runtime when the associated Step logic runs.
+/// Each element is individually allocated so that steps can access the data without synchronization, and so
+/// that steps can be arbitrarily re-run independently from each other.
+/// Each element is optional because a step might populate any number of generated file paths before ultimately
+/// failing. An element being non-null does not imply that the generated file was successfully generated. Only
+/// the Step success state indicates that information.
+generated_files: []GeneratedFile,
 run_args: ?[]const []const u8,
 
 available_rss: u64,
@@ -120,6 +126,38 @@ const ErrorStyle = enum {
 const MultilineErrors = enum { indent, newline, none };
 const Summary = enum { all, new, failures, line, none };
 const PrintConfiguration = enum { none, zon, path };
+
+const GeneratedFile = struct {
+    data: ?[]const u8,
+
+    const Unpacked = struct {
+        prefix: Server.Message.PathPrefix,
+        sub_path: []const u8,
+    };
+
+    fn unpack(gf: GeneratedFile) ?Unpacked {
+        const slice = gf.data orelse return null;
+        return .{
+            .prefix = @fromBackingInt(slice[0]),
+            .sub_path = slice[1..],
+        };
+    }
+
+    fn toPath(gf: GeneratedFile, graph: *const Graph) ?Path {
+        const unpacked = unpack(gf) orelse return null;
+        return .{
+            .root_dir = prefixToDirectory(graph, unpacked.prefix),
+            .sub_path = unpacked.sub_path,
+        };
+    }
+
+    fn clear(gf: *GeneratedFile, gpa: Allocator) void {
+        if (gf.data) |data| {
+            gpa.free(data);
+            gf.data = null;
+        }
+    }
+};
 
 /// Used to build the -M flags to pass to build-exe.
 pub const CliModule = struct {
@@ -702,6 +740,9 @@ pub fn main(init: process.Init.Minimal) !void {
         var configure_source_files: Cache.Manifest.SelfContainedFiles = .empty;
         defer configure_source_files.deinit(gpa);
 
+        var configure_error_bundle: std.zig.ErrorBundle = .empty;
+        defer configure_error_bundle.deinit(gpa);
+
         // If this fails, we can still start the server and wait for user
         // to request a rebuild. If it returns error.FailedButCacheIntact
         // we can even still do file system watching and automatically
@@ -724,6 +765,7 @@ pub fn main(init: process.Init.Minimal) !void {
             .print_configuration = print_configuration,
             .forks = forks.items,
             .src_files = &configure_source_files,
+            .error_bundle = if (protocol_server != null) &configure_error_bundle else null,
         })) |scanned_config| {
             if (help_menu) {
                 scanned_config.printUsage(&graph, initStdoutWriter(io)) catch |err| switch (err) {
@@ -1010,8 +1052,8 @@ pub fn main(init: process.Init.Minimal) !void {
                 _ = io.lockStderr(&.{}, graph.stderr_mode) catch {};
                 process.exit(1);
             }
-            if (protocol_server != null) {
-                fatal("(zig build system) TODO send error messages to client when build.zig compilation fails", .{});
+            if (protocol_server) |s| {
+                try s.serveErrorBundle(.bsp_configuration_failed, configure_error_bundle);
             }
             if (watch_flag and can_fs_watch) {
                 fatal("(zig build system) TODO set up fs watching even when build.zig compilation fails", .{});
@@ -1049,6 +1091,7 @@ const ConfigureOptions = struct {
     print_configuration: PrintConfiguration,
     forks: []Fork,
     src_files: *Cache.Manifest.SelfContainedFiles,
+    error_bundle: ?*std.zig.ErrorBundle = null,
 };
 
 fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
@@ -1354,11 +1397,15 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                         f.cli_module = m;
                     }
 
-                    // Each build.zig module needs access to each of its
-                    // dependencies' build.zig modules by name.
+                    // Each build.zig module needs access to each of its dependencies' build.zig modules by
+                    // name. Also, ensure build.zig.zon files are added to the configuration cache manifest.
                     for (fetches) |f| {
-                        const mod = f.cli_module orelse continue;
                         if (!f.have_manifest) continue;
+                        if (config_man) |man| {
+                            const manifest_path = try f.package_root.join(arena, Package.Manifest.basename);
+                            _ = try man.addInputPath(manifest_path, .{});
+                        }
+                        const mod = f.cli_module orelse continue;
                         const man = &f.manifest;
                         const dep_names = man.dependencies.keys();
                         try mod.deps.ensureUnusedCapacity(arena, @intCast(dep_names.len));
@@ -1429,6 +1476,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                 .arch_os_abi = target_arch_os_abi,
                 .progress_node = compile_prog_node,
                 .skip_log_cmdline_on_compile_errors = !graph.verbose,
+                .error_bundle = options.error_bundle,
             })) |r| r.path else |err| return err;
             defer gpa.free(configure_exe_path.sub_path);
 
@@ -1717,7 +1765,7 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
         .name_tok = 0,
         .lazy_status = .eager,
         .remote_package_root = undefined,
-        .parent_package_root = undefined,
+        .parent_package_root = if (build_root_initialized) .{ .root_dir = build_root.directory } else .cwd(),
         .parent_manifest_ast = null,
         .prog_node = root_prog_node,
         .job_queue = &job_queue,
@@ -2340,7 +2388,8 @@ fn prepare(
     // Extra step at the end which is the autogenerated placeholder
     // step which indicates that we need to reconfigure.
     maker.steps = try arena.alloc(Step, c.steps.len + 1);
-    maker.generated_files = try arena.alloc(Path, c.generated_files_len);
+    maker.generated_files = try arena.alloc(GeneratedFile, c.generated_files_len);
+    @memset(maker.generated_files, .{ .data = null });
 
     // The last element is a reserved special pseudostep which contains the
     // watch inputs for the configurer executable.
@@ -2670,7 +2719,9 @@ fn makeSteps(
 
 fn deinit(maker: *Maker) void {
     const gpa = maker.gpa;
-    for (maker.steps) |*step| step.deinit(gpa);
+    const io = maker.graph.io;
+    for (maker.steps) |*step| step.deinit(gpa, io);
+    for (maker.generated_files) |*gf| gf.clear(gpa);
     maker.memory_blocked_steps.deinit(gpa);
     maker.initial_steps.deinit(gpa);
     maker.step_stack.deinit(gpa);
@@ -2782,7 +2833,8 @@ fn makeStep(
         if (maker.web_server) |ws| {
             ws.updateStepStatus(step_index, if (success) .success else .failure);
         }
-        if (maker.protocol_server != null) {
+        if (maker.protocol_server) |s| {
+            // https://codeberg.org/ziglang/zig/issues/36938
             maker.protocol_server_mutex.lockUncancelable(io);
             defer maker.protocol_server_mutex.unlock(io);
 
@@ -2795,11 +2847,8 @@ fn makeStep(
                 .dependency_skipped, .skipped => .skipped,
                 .skipped_oom => .skipped_oom,
             };
-            serveBuildStepCompleted(
-                maker,
-                step_index,
-                status,
-            ) catch |err| std.debug.panic("TODO propagate error when failing to send protocol message: {t}", .{err});
+            serveBuildStepCompleted(maker, step_index, status, s) catch |err|
+                std.debug.panic("TODO propagate error when failing to send protocol message: {t}", .{err});
         }
 
         if (!success) std.Progress.setStatus(.failure_working);
@@ -3361,7 +3410,7 @@ fn cleanTmpFiles(maker: *Maker, steps: []const Configuration.Step.Index) void {
         if (wf.flags.mode != .tmp) continue;
         const step = maker.stepByIndex(step_index);
         if (step.state != .success) continue;
-        const tmp_path = generatedPath(maker, wf.generated_directory).*;
+        const tmp_path = generatedPath(maker, wf.generated_directory);
         tmp_path.root_dir.handle.deleteTree(io, tmp_path.subPathOrDot()) catch |err|
             log.warn("failed to delete temporary path {f}: {t}", .{ tmp_path, err });
     }
@@ -3386,10 +3435,12 @@ fn serveBuildStepCompleted(
     maker: *Maker,
     step_index: Configuration.Step.Index,
     status: Server.Message.BuildStepCompleted.Status,
+    s: *Server,
 ) !void {
-    const s: *Server = maker.protocol_server.?;
     const step = maker.stepByIndex(step_index);
     const error_bundle = step.result_error_bundle;
+
+    const gf_size = countGeneratedFiles(maker.generated_files, step_index, &maker.scanned_config.configuration);
 
     const body: Server.Message.BuildStepCompleted = .{
         .step_index = step_index,
@@ -3398,17 +3449,170 @@ fn serveBuildStepCompleted(
             .extra_len = @intCast(error_bundle.extra.len),
             .string_bytes_len = @intCast(error_bundle.string_bytes.len),
         },
+        .generated_files_len = gf_size.count,
     };
     const eb_bytes_len = @sizeOf(u32) * error_bundle.extra.len + error_bundle.string_bytes.len;
-    const bytes_len = @sizeOf(Server.Message.BuildStepCompleted) + eb_bytes_len;
+    const bytes_len = @sizeOf(Server.Message.BuildStepCompleted) + eb_bytes_len +
+        (gf_size.count * @sizeOf(Server.Message.GeneratedFile)) + gf_size.size;
     try s.serveMessageHeader(.{
         .tag = .bsp_step_completed,
         .bytes_len = @intCast(bytes_len),
     });
     try s.out.writeStruct(body, .little);
+
     try s.out.writeSliceEndian(u32, error_bundle.extra, .little);
     try s.out.writeAll(error_bundle.string_bytes);
+
+    try writeGeneratedFiles(maker.generated_files, step_index, &maker.scanned_config.configuration, s.out);
+    try writeGeneratedFilesData(maker.generated_files, step_index, &maker.scanned_config.configuration, s.out);
+
     try s.out.flush();
+}
+
+fn walkGeneratedFiles(
+    step_index: Configuration.Step.Index,
+    conf: *const Configuration,
+    comptime Context: type,
+    context: Context,
+) void {
+    const conf_step = step_index.ptr(conf);
+    switch (conf_step.extended.get(conf.extra)) {
+        .check_file,
+        .fail,
+        .fmt,
+        .install_artifact,
+        .install_dir,
+        .install_file,
+        .top_level,
+        .update_source_files,
+        => {},
+
+        .compile => |compile| {
+            walkGeneratedFilesOne(context, compile.emit_directory.value);
+            walkGeneratedFilesOne(context, compile.generated_docs.value);
+            walkGeneratedFilesOne(context, compile.generated_asm.value);
+            walkGeneratedFilesOne(context, compile.generated_bin.value);
+            walkGeneratedFilesOne(context, compile.generated_pdb.value);
+            walkGeneratedFilesOne(context, compile.generated_implib.value);
+            walkGeneratedFilesOne(context, compile.generated_llvm_bc.value);
+            walkGeneratedFilesOne(context, compile.generated_llvm_ir.value);
+            walkGeneratedFilesOne(context, compile.generated_h.value);
+        },
+        .config_header => |config_header| {
+            walkGeneratedFilesOne(context, config_header.generated_dir);
+        },
+        .find_program => |find_program| {
+            walkGeneratedFilesOne(context, find_program.found_path);
+        },
+        .obj_copy => |obj_copy| {
+            walkGeneratedFilesOne(context, obj_copy.output_file);
+            walkGeneratedFilesOne(context, obj_copy.debug_file.value);
+        },
+        .options => |options| {
+            walkGeneratedFilesOne(context, options.generated_file);
+        },
+        .run => |run| {
+            if (run.captured_stdout.value) |v| walkGeneratedFilesOne(context, v.generated_file);
+            if (run.captured_stderr.value) |v| walkGeneratedFilesOne(context, v.generated_file);
+            for (run.args.slice) |arg|
+                walkGeneratedFilesOne(context, arg.get(conf).generated.value);
+        },
+        .translate_c => |translate_c| {
+            walkGeneratedFilesOne(context, translate_c.output_file);
+        },
+        .write_file => |write_file| {
+            walkGeneratedFilesOne(context, write_file.generated_directory);
+        },
+    }
+}
+
+fn walkGeneratedFilesOne(
+    context: anytype,
+    opt: ?Configuration.GeneratedFileIndex,
+) void {
+    context.visit(opt orelse return);
+}
+
+fn countGeneratedFiles(
+    generated_files: []const GeneratedFile,
+    step_index: Configuration.Step.Index,
+    conf: *const Configuration,
+) struct { count: u32, size: u32 } {
+    const Visitor = struct {
+        generated_files: []const GeneratedFile,
+        count: u32,
+        size: u32,
+
+        fn visit(this: *@This(), i: Configuration.GeneratedFileIndex) void {
+            const data = this.generated_files[@backingInt(i)].data orelse return;
+            this.count += 1;
+            this.size = @intCast(this.size + data.len);
+        }
+    };
+    var v: Visitor = .{
+        .generated_files = generated_files,
+        .count = 0,
+        .size = 0,
+    };
+    walkGeneratedFiles(step_index, conf, *Visitor, &v);
+    return .{
+        .count = v.count,
+        .size = v.size,
+    };
+}
+
+fn writeGeneratedFiles(
+    generated_files: []const GeneratedFile,
+    step_index: Configuration.Step.Index,
+    conf: *const Configuration,
+    writer: *Io.Writer,
+) Io.Writer.Error!void {
+    const Visitor = struct {
+        generated_files: []const GeneratedFile,
+        writer: *Io.Writer,
+        result: Io.Writer.Error!void,
+
+        fn visit(this: *@This(), i: Configuration.GeneratedFileIndex) void {
+            const unpacked = this.generated_files[@backingInt(i)].unpack() orelse return;
+            const payload: Server.Message.GeneratedFile = .{
+                .index = i,
+                .path_len = @intCast(unpacked.sub_path.len),
+            };
+            this.result = this.writer.writeAll(@ptrCast((&payload)[0..1]));
+        }
+    };
+    var v: Visitor = .{
+        .generated_files = generated_files,
+        .writer = writer,
+        .result = {},
+    };
+    walkGeneratedFiles(step_index, conf, *Visitor, &v);
+    return v.result;
+}
+
+fn writeGeneratedFilesData(
+    generated_files: []const GeneratedFile,
+    step_index: Configuration.Step.Index,
+    conf: *const Configuration,
+    writer: *Io.Writer,
+) Io.Writer.Error!void {
+    const Visitor = struct {
+        generated_files: []const GeneratedFile,
+        writer: *Io.Writer,
+        result: Io.Writer.Error!void,
+
+        fn visit(this: *@This(), i: Configuration.GeneratedFileIndex) void {
+            const data = this.generated_files[@backingInt(i)].data orelse return;
+            this.result = this.writer.writeAll(data);
+        }
+    };
+    var v: Visitor = .{
+        .generated_files = generated_files,
+        .writer = writer,
+        .result = {},
+    };
+    walkGeneratedFiles(step_index, conf, *Visitor, &v);
+    return v.result;
 }
 
 fn initStdoutWriter(io: Io) *Writer {
@@ -3427,9 +3631,9 @@ pub fn resolveLazyPath(
     const c = &maker.scanned_config.configuration;
     return switch (lazy_path) {
         .source_path => |sp| try packagePath(maker, arena, sp.owner, sp.sub_path.slice(c)),
-        .relative => |relative| relativePath(maker, arena, relative),
+        .relative => |relative| try relativePath(maker, arena, relative, stepByIndex(maker, asking_step_index)),
         .generated => |gen| {
-            const base = generatedPath(maker, gen.index).*;
+            const base = generatedPath(maker, gen.index);
             var file_path = base;
             for (0..gen.flags.up) |_| {
                 file_path.sub_path = Dir.path.dirname(file_path.sub_path) orelse {
@@ -3480,8 +3684,65 @@ pub fn resolveLazyPathIndexAbs(
     return resolveLazyPathAbs(maker, arena, lazy_path_index.get(c), asking_step_index);
 }
 
-pub fn generatedPath(maker: *const Maker, index: Configuration.GeneratedFileIndex) *Path {
+pub fn generatedFile(maker: *const Maker, index: Configuration.GeneratedFileIndex) *GeneratedFile {
     return &maker.generated_files[@backingInt(index)];
+}
+
+pub fn generatedPath(maker: *const Maker, index: Configuration.GeneratedFileIndex) Path {
+    return generatedFile(maker, index).toPath(maker.graph).?;
+}
+
+pub fn setGeneratedPath(
+    maker: *Maker,
+    index: Configuration.GeneratedFileIndex,
+    prefix: Server.Message.PathPrefix,
+    sub_paths: []const []const u8,
+) Allocator.Error!Path {
+    const gpa = maker.gpa;
+    const graph = maker.graph;
+    assert(sub_paths.len != 0);
+
+    var buffer: std.ArrayList(u8) = .empty;
+    defer buffer.deinit(gpa);
+    try buffer.append(gpa, @backingInt(prefix));
+    for (sub_paths) |sub_path| {
+        try buffer.ensureUnusedCapacity(gpa, sub_path.len + 1);
+        buffer.appendSliceAssumeCapacity(sub_path);
+        while (Dir.path.isSep(buffer.items[buffer.items.len - 1]))
+            buffer.items.len -= 1;
+        buffer.appendAssumeCapacity(Dir.path.sep);
+    }
+    assert(buffer.pop().? == Dir.path.sep);
+    try buffer.shrinkToLen(gpa);
+
+    const sub_path = buffer.toOwnedSliceAssert();
+    const ptr = generatedFile(maker, index);
+    ptr.clear(gpa);
+    ptr.* = .{ .data = sub_path };
+    return .{
+        .root_dir = prefixToDirectory(graph, prefix),
+        .sub_path = sub_path[1..],
+    };
+}
+
+/// Prefer to use `setGeneratedPath` where possible to keep parent directory information intact.
+pub fn setGeneratedPathPath(
+    maker: *Maker,
+    index: Configuration.GeneratedFileIndex,
+    path: Path,
+) Allocator.Error!Path {
+    const graph = maker.graph;
+    if (path.root_dir.eql(graph.local_cache_root)) {
+        return setGeneratedPath(maker, index, .local_cache, &.{path.sub_path});
+    } else if (path.root_dir.eql(graph.global_cache_root)) {
+        return setGeneratedPath(maker, index, .global_cache, &.{path.sub_path});
+    } else if (path.root_dir.eql(graph.zig_lib_directory)) {
+        return setGeneratedPath(maker, index, .zig_lib, &.{path.sub_path});
+    } else if (path.root_dir.eql(graph.build_root_directory)) {
+        return setGeneratedPath(maker, index, .build_root, &.{path.sub_path});
+    } else {
+        return setGeneratedPath(maker, index, .cwd, &.{path.sub_path});
+    }
 }
 
 pub fn packagePath(
@@ -3507,7 +3768,12 @@ pub fn packagePath(
     };
 }
 
-pub fn relativePath(maker: *const Maker, arena: Allocator, relative: Configuration.LazyPath.Relative) Allocator.Error!Path {
+pub fn relativePath(
+    maker: *const Maker,
+    arena: Allocator,
+    relative: Configuration.LazyPath.Relative,
+    asking_step: *Step,
+) error{ OutOfMemory, MakeFailed }!Path {
     const graph = maker.graph;
     const c = &maker.scanned_config.configuration;
     const sub_path = relative.sub_path.slice(c);
@@ -3528,12 +3794,12 @@ pub fn relativePath(maker: *const Maker, arena: Allocator, relative: Configurati
             .root_dir = graph.build_root_directory,
             .sub_path = sub_path,
         },
-        .zig_exe => .{
-            .root_dir = .cwd(),
-            .sub_path = if (sub_path.len == 0)
-                graph.zig_exe
-            else
-                try Io.Dir.path.join(arena, &.{ graph.zig_exe, sub_path }),
+        .zig_exe => {
+            assert(sub_path.len == 0);
+            return .{
+                .root_dir = .cwd(),
+                .sub_path = graph.zig_exe,
+            };
         },
         .zig_lib => .{
             .root_dir = graph.zig_lib_directory,
@@ -3543,6 +3809,10 @@ pub fn relativePath(maker: *const Maker, arena: Allocator, relative: Configurati
         .install_lib => try maker.install_paths.lib.join(arena, sub_path),
         .install_bin => try maker.install_paths.bin.join(arena, sub_path),
         .install_include => try maker.install_paths.include.join(arena, sub_path),
+        .libc_runtimes => if (maker.graph.libc_runtimes_dir) |libc_runtimes_dir| .{
+            .root_dir = .cwd(),
+            .sub_path = try Dir.path.join(arena, &.{ libc_runtimes_dir, sub_path }),
+        } else asking_step.fail(maker, "unknown LazyPath: \"--libc-runtimes\" not specified", .{}),
     };
 }
 
@@ -3595,7 +3865,7 @@ pub fn installGenerated(
     dest_dir: Configuration.InstallDestDir,
     asking_step_index: Configuration.Step.Index,
 ) !Dir.PrevStatus {
-    const src_path = generatedPath(maker, source).*;
+    const src_path = generatedPath(maker, source);
     const dest_dir_path = try resolveInstallDir(maker, arena, dest_dir);
     const dest_path = try dest_dir_path.join(arena, src_path.basename());
     return installPath(maker, arena, src_path, dest_path, asking_step_index);
@@ -3864,8 +4134,7 @@ const Fork = struct {
         fork.arena_allocator = .init(gpa);
         const arena = fork.arena_allocator.allocator();
 
-        var error_bundle: std.zig.ErrorBundle.Wip = undefined;
-        try error_bundle.init(gpa);
+        var error_bundle: std.zig.ErrorBundle.Wip = try .init(gpa);
         defer error_bundle.deinit();
 
         const manifest_path = try fork.path.join(arena, Package.Manifest.basename);
@@ -3966,8 +4235,7 @@ fn loadManifest(
     errdefer manifest.deinit(gpa);
 
     if (manifest.errors.len > 0) {
-        var wip_errors: std.zig.ErrorBundle.Wip = undefined;
-        try wip_errors.init(gpa);
+        var wip_errors: std.zig.ErrorBundle.Wip = try .init(gpa);
         defer wip_errors.deinit();
 
         const src_path = try wip_errors.addString(Package.Manifest.basename);
@@ -4132,15 +4400,22 @@ fn confPathDepToCachePath(
                 else => |index| try Dir.path.join(arena, &.{ index.get(c).?.root_path.slice(c), sub_path }),
             },
         },
+        .zig_exe => {
+            assert(sub_path.len == 0);
+            return .{
+                .root_dir = .cwd(),
+                .sub_path = graph.zig_exe,
+            };
+        },
         .zig_lib => .{
             .root_dir = graph.zig_lib_directory,
             .sub_path = sub_path,
         },
-        .zig_exe => @panic("TODO"),
         .install_prefix => @panic("TODO"),
         .install_lib => @panic("TODO"),
         .install_bin => @panic("TODO"),
         .install_include => @panic("TODO"),
+        .libc_runtimes => @panic("TODO"),
     };
 }
 
@@ -4164,4 +4439,14 @@ fn nextEnumArg(args: []const []const u8, i: *usize, comptime E: type) E {
     const arg = args[i.* - 1];
     const next_arg = nextArg(args, i) orelse fatalEnumHint(E, arg, null);
     return stringToEnum(E, next_arg) orelse fatalEnumHint(E, arg, next_arg);
+}
+
+fn prefixToDirectory(graph: *const Graph, prefix: Server.Message.PathPrefix) Cache.Directory {
+    return switch (prefix) {
+        .cwd => .cwd(),
+        .zig_lib => graph.zig_lib_directory,
+        .local_cache => graph.local_cache_root,
+        .global_cache => graph.global_cache_root,
+        .build_root => graph.build_root_directory,
+    };
 }

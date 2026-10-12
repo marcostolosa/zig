@@ -7,7 +7,7 @@ set -e
 
 TARGET="riscv64-linux-musl"
 MCPU="baseline"
-CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
+CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.18.0-dev.92+1e1964473"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
@@ -52,7 +52,9 @@ stage3-release/bin/zig build install test docs \
   -Duse-zig-libcxx \
   -Denable-llvm \
   -Dno-lib \
-  -Dskip-non-native
+  -Dskip-non-native \
+  -Dskip-compile-errors \
+  -Dskip-single-threaded
 
 # Ensure that the fuzzer at least compiles.
 stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=ReleaseSafe

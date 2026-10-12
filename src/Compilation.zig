@@ -29,7 +29,6 @@ const openbsd = @import("libs/openbsd.zig");
 const mingw = @import("libs/mingw.zig");
 const libunwind = @import("libs/libunwind.zig");
 const libcxx = @import("libs/libcxx.zig");
-const wasi_libc = @import("libs/wasi_libc.zig");
 const clangMain = @import("main.zig").clangMain;
 const Zcu = @import("Zcu.zig");
 const Sema = @import("Sema.zig");
@@ -83,7 +82,7 @@ zigc_strat: RtStrat,
 /// Resolved into known paths, any GNU ld scripts already resolved.
 link_inputs: []const link.Input,
 /// Needed only for passing -F args to clang.
-framework_dirs: []const []const u8,
+framework_dirs: []const Cache.Directory,
 /// These are only for DLLs dependencies fulfilled by the `.def` files shipped
 /// with Zig. Static libraries are provided as `link.Input` values.
 windows_libs: std.array_hash_map.String(void),
@@ -294,8 +293,6 @@ const QueuedJobs = struct {
     freebsd_crt_file: [@typeInfo(freebsd.CrtFile).@"enum".field_names.len]bool = @splat(false),
     netbsd_crt_file: [@typeInfo(netbsd.CrtFile).@"enum".field_names.len]bool = @splat(false),
     openbsd_crt_file: [@typeInfo(openbsd.CrtFile).@"enum".field_names.len]bool = @splat(false),
-    /// one of WASI libc static objects
-    wasi_libc_crt_file: [@typeInfo(wasi_libc.CrtFile).@"enum".field_names.len]bool = @splat(false),
     /// one of the mingw-w64 static objects
     mingw_crt_file: [@typeInfo(mingw.CrtFile).@"enum".field_names.len]bool = @splat(false),
     /// all of the glibc shared objects
@@ -1217,7 +1214,6 @@ pub const MiscTask = enum {
     libtsan,
     libubsan,
     libfuzzer,
-    wasi_libc_crt_file,
     compiler_rt,
     libzigc,
     link_depfile,
@@ -1229,10 +1225,6 @@ pub const MiscTask = enum {
     @"musl Scrt1.o",
     @"musl libc.a",
     @"musl libc.so",
-
-    @"wasi crt1-reactor.o",
-    @"wasi crt1-command.o",
-    @"wasi libc.a",
 
     @"glibc Scrt1.o",
     @"glibc libc_nonshared.a",
@@ -1319,7 +1311,7 @@ pub const cache_helpers = struct {
         }
     }
 
-    pub fn hashCSource(man: *Cache.Manifest, c_source: CSourceFile) !void {
+    pub fn hashCSource(man: *Cache.Manifest, c_source: CSourceFile) Allocator.Error!void {
         _ = try man.addInputPath(.initCwd(c_source.src_path), .{});
         // Hash the extra flags, with special care to call addFile for file parameters.
         // TODO this logic can likely be improved by utilizing clang_options_data.zig.
@@ -1350,7 +1342,6 @@ pub const ClangPreprocessorMode = enum {
     version,
 };
 
-pub const Framework = link.File.MachO.Framework;
 pub const SystemLib = link.SystemLib;
 
 pub const CacheMode = enum {
@@ -1487,6 +1478,7 @@ pub const CreateOptions = struct {
     /// The ELF implementation no longer uses this data, however the MachO and COFF
     /// implementations still do.
     lib_directories: []const Cache.Directory = &.{},
+    framework_directories: []const Cache.Directory = &.{},
     rpath_list: []const []const u8 = &[0][]const u8{},
     symbol_wrap_set: std.array_hash_map.String(void) = .empty,
     c_source_files: []const CSourceFile = &.{},
@@ -1494,8 +1486,6 @@ pub const CreateOptions = struct {
     manifest_file: ?[]const u8 = null,
     rc_includes: std.zig.RcIncludes = .any,
     link_inputs: []const link.Input = &.{},
-    framework_dirs: []const []const u8 = &[0][]const u8{},
-    frameworks: []const Framework = &.{},
     windows_lib_names: []const []const u8 = &.{},
     /// This means that if the output mode is an executable it will be a
     /// Position Independent Executable. If the output mode is not an
@@ -1679,6 +1669,7 @@ pub const CreateDiagnostic = union(enum) {
     illegal_zig_import,
     cross_libc_unavailable,
     find_native_libc: std.zig.LibCInstallation.FindError,
+    libc_installation_missing_cc_dir,
     libc_installation_missing_crt_dir,
     create_cache_path: CreateCachePath,
     open_output_bin: link.File.OpenError,
@@ -1694,6 +1685,7 @@ pub const CreateDiagnostic = union(enum) {
             .illegal_zig_import => try w.writeAll("this compiler implementation does not support importing the root source file of a provided module"),
             .cross_libc_unavailable => try w.writeAll("unable to provide libc for this target"),
             .find_native_libc => |err| try w.print("failed to find libc installation: {t}", .{err}),
+            .libc_installation_missing_cc_dir => try w.writeAll("libc installation is missing cc directory"),
             .libc_installation_missing_crt_dir => try w.writeAll("libc installation is missing crt directory"),
             .create_cache_path => |cache| try w.print("failed to create path '{s}' in {t} cache directory: {t}", .{
                 cache.sub,
@@ -2144,7 +2136,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             .ubsan_rt_strat = ubsan_rt_strat,
             .zigc_strat = zigc_strat,
             .link_inputs = options.link_inputs,
-            .framework_dirs = options.framework_dirs,
+            .framework_dirs = options.framework_directories,
             .llvm_opt_bisect_limit = options.llvm_opt_bisect_limit,
             .skip_linker_dependencies = options.skip_linker_dependencies,
             .queued_jobs = .{},
@@ -2206,10 +2198,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             .z_relro = options.linker_z_relro,
             .z_common_page_size = options.linker_z_common_page_size,
             .z_max_page_size = options.linker_z_max_page_size,
-            .darwin_sdk_layout = libc_dirs.darwin_sdk_layout,
-            .frameworks = options.frameworks,
             .lib_directories = options.lib_directories,
-            .framework_dirs = options.framework_dirs,
             .rpath_list = options.rpath_list,
             .symbol_wrap_set = options.symbol_wrap_set,
             .repro = options.linker_repro orelse (options.root_mod.optimize_mode != .debug),
@@ -2427,11 +2416,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             // If linking against host libc installation, instead queue up jobs
             // for loading those files in the linker.
             if (comp.config.link_libc and is_exe_or_dyn_lib) {
-                // If the "is darwin" check is moved below the libc_installation check below,
-                // error.LibCInstallationMissingCrtDir is returned from lci.resolveCrtPaths().
-                if (target.isDarwinLibC()) {
-                    // TODO delete logic from MachO flush() and queue up tasks here instead.
-                } else if (comp.libc_installation) |lci| {
+                if (comp.libc_installation) |lci| {
                     const basenames = LibCInstallation.CrtBasenames.get(.{
                         .target = target,
                         .link_libc = comp.config.link_libc,
@@ -2441,6 +2426,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                     });
                     const paths = lci.resolveCrtPaths(arena, basenames, target) catch |err| switch (err) {
                         error.OutOfMemory => |e| return e,
+                        error.LibCInstallationMissingCcDir => return diag.fail(.libc_installation_missing_cc_dir),
                         error.LibCInstallationMissingCrtDir => return diag.fail(.libc_installation_missing_crt_dir),
                     };
 
@@ -2453,6 +2439,18 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                     }
                     // Loads the libraries provided by `target_util.libcFullLinkFlags(target)`.
                     comp.oneshot_prelink_tasks.appendAssumeCapacity(.load_host_libc);
+                } else if (target.isDarwinLibC()) {
+                    try comp.oneshot_prelink_tasks.appendSlice(gpa, &.{
+                        .{ .load_tbd = .{
+                            .root_dir = comp.dirs.zig_lib,
+                            .sub_path = "libc" ++ fs.path.sep_str ++ "darwin" ++ fs.path.sep_str ++ "libSystem.tbd",
+                        } },
+                        .{ .load_darwin_sdk_settings = .{
+                            .root_dir = comp.dirs.zig_lib,
+                            .sub_path = "libc" ++ fs.path.sep_str ++ "darwin" ++ fs.path.sep_str ++ "SDKSettings.json",
+                        } },
+                    });
+                    // TODO delete logic from MachO flush() and queue up tasks here instead.
                 } else if (target.isMuslLibC()) {
                     if (!std.zig.target.canBuildLibC(target)) return diag.fail(.cross_libc_unavailable);
 
@@ -2496,11 +2494,6 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                     }
 
                     comp.queued_jobs.openbsd_shared_objects = true;
-                } else if (target.isWasiLibC()) {
-                    if (!std.zig.target.canBuildLibC(target)) return diag.fail(.cross_libc_unavailable);
-
-                    comp.queued_jobs.wasi_libc_crt_file[@backingInt(wasi_libc.execModelCrtFile(comp.config.wasi_exec_model))] = true;
-                    comp.queued_jobs.wasi_libc_crt_file[@backingInt(wasi_libc.CrtFile.libc_a)] = true;
                 } else if (target.isMinGW()) {
                     if (!std.zig.target.canBuildLibC(target)) return diag.fail(.cross_libc_unavailable);
 
@@ -2891,12 +2884,13 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
         }
     }
 
-    for (comp.link_inputs) |input| if (input.path()) |path| {
+    for (comp.link_inputs) |input| {
+        const path = input.path();
         try comp.appendFileSystemInput(try .fromUnresolved(arena, comp.dirs, &.{
             path.root_dir.path orelse ".",
             path.sub_path,
         }));
-    };
+    }
 
     // For compiling Win32 resources, we rely on the cache hash system to avoid duplicating work.
     // Add a Job for each Win32 resource file.
@@ -3405,7 +3399,10 @@ fn addNonIncrementalStuffToCacheManifest(comp: *Compilation, man: *Cache.Manifes
     man.hash.add(comp.zigc_strat);
     man.hash.add(comp.rc_includes);
     man.hash.addListOfBytes(comp.force_undefined_symbols.keys());
-    man.hash.addListOfBytes(comp.framework_dirs);
+    man.hash.add(comp.framework_dirs.len);
+    for (comp.framework_dirs) |framework_dir| {
+        man.hash.addBytes(framework_dir.path orelse ".");
+    }
     man.hash.addListOfBytes(comp.windows_libs.keys());
 
     man.hash.addListOfBytes(comp.global_cc_argv);
@@ -3471,7 +3468,6 @@ fn addNonIncrementalStuffToCacheManifest(comp: *Compilation, man: *Cache.Manifes
     man.hash.add(opts.growable_table);
 
     // Mach-O specific stuff
-    try link.File.MachO.hashAddFrameworks(man, opts.frameworks);
     try man.addInputPathOptional(opts.entitlements, .{});
     man.hash.addOptional(opts.pagezero_size);
     man.hash.addOptional(opts.headerpad_size);
@@ -3481,7 +3477,6 @@ fn addNonIncrementalStuffToCacheManifest(comp: *Compilation, man: *Cache.Manifes
     man.hash.add(opts.discard_local_symbols);
     man.hash.addOptional(opts.compatibility_version);
     man.hash.addOptionalBytes(opts.install_name);
-    man.hash.addOptional(opts.darwin_sdk_layout);
 
     // COFF specific stuff
     man.hash.addOptional(opts.subsystem);
@@ -3834,8 +3829,7 @@ pub fn getAllErrorsAlloc(comp: *Compilation) error{OutOfMemory}!ErrorBundle {
     const gpa = comp.gpa;
     const io = comp.io;
 
-    var bundle: ErrorBundle.Wip = undefined;
-    try bundle.init(gpa);
+    var bundle: ErrorBundle.Wip = try .init(gpa);
     defer bundle.deinit();
 
     for (comp.failed_c_objects.values()) |diag_bundle| {
@@ -4420,7 +4414,7 @@ fn performAllTheWork(
     comp.windows_libs_num_done = @intCast(comp.windows_libs.count());
     try misc_group.await(io);
 
-    comp.link_queue.wait(io);
+    try comp.link_queue.wait(io);
 }
 
 fn dispatchPrelinkWork(comp: *Compilation, main_progress_node: std.Progress.Node) void {
@@ -4592,13 +4586,6 @@ fn dispatchPrelinkWork(comp: *Compilation, main_progress_node: std.Progress.Node
         if (comp.queued_jobs.openbsd_crt_file[i]) {
             const tag: openbsd.CrtFile = @fromBackingInt(@intCast(i));
             prelink_group.async(io, buildOpenBSDCrtFile, .{ comp, tag, main_progress_node });
-        }
-    }
-
-    for (0..@typeInfo(wasi_libc.CrtFile).@"enum".field_names.len) |i| {
-        if (comp.queued_jobs.wasi_libc_crt_file[i]) {
-            const tag: wasi_libc.CrtFile = @fromBackingInt(@intCast(i));
-            prelink_group.async(io, buildWasiLibcCrtFile, .{ comp, tag, main_progress_node });
         }
     }
 
@@ -5046,7 +5033,8 @@ pub fn translateC(
     var argv = std.array_list.Managed([]const u8).init(arena);
     {
         const target = &owner_mod.resolved_target.result;
-        try argv.appendSlice(&.{ "--zig-integration", "-x", "c" });
+        const zig_lib = try arena.print("--zig-lib={f}", .{comp.dirs.zig_lib});
+        try argv.appendSlice(&.{ "--zig-integration", zig_lib, "--", "-x", "c" });
 
         const resource_path = try comp.dirs.zig_lib.join(arena, &.{ "compiler", "aro", "include" });
         try argv.appendSlice(&.{ "-isystem", resource_path });
@@ -5148,16 +5136,16 @@ fn workerUpdateCObject(
     comp: *Compilation,
     c_object: *CObject,
     progress_node: std.Progress.Node,
-) void {
+) Io.Cancelable!void {
     comp.updateCObject(c_object, progress_node) catch |err| switch (err) {
-        error.AlreadyReported => return,
-        else => {
-            comp.reportRetryableCObjectError(c_object, err) catch |oom| switch (oom) {
-                // Swallowing this error is OK because it's implied to be OOM when
-                // there is a missing failed_c_objects error message.
-                error.OutOfMemory => {},
-            };
+        error.OutOfMemory => switch (comp.failCObjRetryable(c_object, "failed to update C object: out of memory", .{})) {
+            // Swallowing this error is OK because it's implied to be OOM when
+            // there is a missing failed_c_objects error message.
+            error.OutOfMemory => return,
+            error.AlreadyReported => return,
         },
+        error.Canceled => |e| return e,
+        error.AlreadyReported => return,
     };
 }
 
@@ -5357,17 +5345,6 @@ fn buildMingwImportLib(comp: *Compilation, lib_name: []const u8, is_prelink: boo
         );
 }
 
-fn buildWasiLibcCrtFile(comp: *Compilation, crt_file: wasi_libc.CrtFile, prog_node: std.Progress.Node) void {
-    if (wasi_libc.buildCrtFile(comp, crt_file, prog_node)) |_| {
-        comp.queued_jobs.wasi_libc_crt_file[@backingInt(crt_file)] = false;
-    } else |err| switch (err) {
-        error.AlreadyReported => return,
-        else => comp.lockAndSetMiscFailure(.wasi_libc_crt_file, "unable to build WASI libc {s}: {s}", .{
-            @tagName(crt_file), @errorName(err),
-        }),
-    }
-}
-
 fn buildLibUnwind(comp: *Compilation, prog_node: std.Progress.Node) void {
     if (libunwind.buildStaticLib(comp, prog_node)) |_| {
         comp.queued_jobs.libunwind = false;
@@ -5420,15 +5397,6 @@ fn buildLibZigC(comp: *Compilation, prog_node: std.Progress.Node) void {
     };
 }
 
-fn reportRetryableCObjectError(comp: *Compilation, c_object: *CObject, err: anyerror) error{OutOfMemory}!void {
-    c_object.status = .failure_retryable;
-
-    switch (comp.failCObj(c_object, "{t}", .{err})) {
-        error.AlreadyReported => return,
-        else => |e| return e,
-    }
-}
-
 fn reportRetryableWin32ResourceError(
     comp: *Compilation,
     win32_resource: *Win32Resource,
@@ -5438,8 +5406,7 @@ fn reportRetryableWin32ResourceError(
 
     win32_resource.status = .failure_retryable;
 
-    var bundle: ErrorBundle.Wip = undefined;
-    try bundle.init(comp.gpa);
+    var bundle: ErrorBundle.Wip = try .init(comp.gpa);
     errdefer bundle.deinit();
     try bundle.addRootErrorMessage(.{
         .msg = try bundle.printString("{s}", .{@errorName(err)}),
@@ -5463,7 +5430,11 @@ fn reportRetryableWin32ResourceError(
     }
 }
 
-fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Progress.Node) !void {
+fn updateCObject(
+    comp: *Compilation,
+    c_object: *CObject,
+    c_obj_prog_node: std.Progress.Node,
+) (Allocator.Error || Io.Cancelable || error{AlreadyReported})!void {
     if (comp.config.c_frontend == .aro) {
         return comp.failCObj(c_object, "aro does not support compiling C objects yet", .{});
     }
@@ -5617,7 +5588,14 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
         // We can't know the digest until we do the C compiler invocation,
         // so we need a temporary filename.
         const out_obj_path = try comp.tmpFilePath(arena, o_basename);
-        var zig_cache_tmp_dir = try comp.dirs.local_cache.handle.createDirPathOpen(io, "tmp", .{});
+        var zig_cache_tmp_dir = comp.dirs.local_cache.handle.createDirPathOpen(io, "tmp", .{}) catch |err| switch (err) {
+            error.Canceled => |e| return e,
+            else => |e| return comp.failCObjRetryable(
+                c_object,
+                "failed to open '{f}{c}tmp': {t}",
+                .{ comp.dirs.local_cache, fs.path.sep, e },
+            ),
+        };
         defer zig_cache_tmp_dir.close(io);
 
         const out_diag_path = if (comp.clang_passthrough_mode or !ext.clangSupportsDiagnostics())
@@ -5667,23 +5645,18 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
             else => log.warn("failed to delete {q}: {t}", .{ dep_file_path, err }),
         };
         if (std.process.can_spawn) {
+            var diags: EvalZigLlvmProcessDiagnostics = undefined;
+            const result = comp.evalZigLlvmProcess(arena, &diags, argv.items) catch |err| switch (err) {
+                else => |e| return e,
+                error.EvalZigLlvmFail => return comp.failCObj(
+                    c_object,
+                    "failed to evaluate zig clang '{s}': {f}",
+                    .{ argv.items[0], diags },
+                ),
+            };
+
             if (comp.clang_passthrough_mode) {
-                var child = std.process.spawn(io, .{
-                    .argv = argv.items,
-                    .stdin = .inherit,
-                    .stdout = .inherit,
-                    .stderr = .inherit,
-                }) catch |err| {
-                    return comp.failCObj(c_object, "failed to spawn zig clang (passthrough mode) {s}: {t}", .{
-                        argv.items[0], err,
-                    });
-                };
-                const term = child.wait(io) catch |err| {
-                    return comp.failCObj(c_object, "failed to wait zig clang (passthrough mode) {s}: {t}", .{
-                        argv.items[0], err,
-                    });
-                };
-                switch (term) {
+                switch (result.term) {
                     .exited => |code| {
                         if (code != 0) {
                             std.process.exit(code);
@@ -5696,40 +5669,27 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
                     else => std.process.abort(),
                 }
             } else {
-                var child = try std.process.spawn(io, .{
-                    .argv = argv.items,
-                    .stdin = .ignore,
-                    .stdout = .ignore,
-                    .stderr = .pipe,
-                });
-
-                var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
-                const stderr = try stderr_reader.interface.allocRemaining(arena, .limited(std.math.maxInt(u32)));
-
-                const term = child.wait(io) catch |err|
-                    return comp.failCObj(c_object, "failed to spawn zig clang {s}: {t}", .{ argv.items[0], err });
-
-                switch (term) {
+                switch (result.term) {
                     .exited => |code| if (code != 0) if (out_diag_path) |diag_file_path| {
                         const bundle = CObject.Diag.Bundle.parse(gpa, io, diag_file_path) catch |err| {
-                            log.err("{}: failed to parse clang diagnostics: {s}", .{ err, stderr });
+                            log.err("{}: failed to parse clang diagnostics: {s}", .{ err, result.stderr });
                             return comp.failCObj(c_object, "clang exited with code {d}", .{code});
                         };
                         return comp.failCObjWithOwnedDiagBundle(c_object, bundle);
                     } else {
-                        log.err("clang failed with stderr: {s}", .{stderr});
+                        log.err("clang failed with stderr: {s}", .{result.stderr});
                         return comp.failCObj(c_object, "clang exited with code {d}", .{code});
                     },
                     .signal => |sig| {
-                        log.err("clang failed with stderr: {s}", .{stderr});
+                        log.err("clang failed with stderr: {s}", .{result.stderr});
                         return comp.failCObj(c_object, "clang terminated with signal {t}", .{sig});
                     },
                     .stopped => |sig| {
-                        log.err("clang failed with stderr: {s}", .{stderr});
+                        log.err("clang failed with stderr: {s}", .{result.stderr});
                         return comp.failCObj(c_object, "clang stopped with signal {t}", .{sig});
                     },
                     .unknown => {
-                        log.err("clang terminated with stderr: {s}", .{stderr});
+                        log.err("clang terminated with stderr: {s}", .{result.stderr});
                         return comp.failCObj(c_object, "clang terminated unexpectedly", .{});
                     },
                 }
@@ -5749,14 +5709,27 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
             };
         }
 
-        if (out_dep_path) |dep_file_path| {
-            const dep_basename = fs.path.basename(dep_file_path);
+        if (out_dep_path) |raw_dep_file_path| {
+            const dep_file_path: std.Build.Cache.Path = .{
+                .root_dir = .{
+                    .handle = zig_cache_tmp_dir,
+                    .path = "tmp",
+                },
+                .sub_path = fs.path.basename(raw_dep_file_path),
+            };
 
             if (comp.file_system_inputs != null) {
                 // TODO instead of this rely on passing the manifest contents directly
 
                 // Use the same file size limit as the cache code does for dependency files.
-                const dep_file_contents = try zig_cache_tmp_dir.readFileAlloc(io, dep_basename, gpa, .unlimited);
+                const dep_file_contents = dep_file_path.root_dir.handle.readFileAlloc(io, dep_file_path.sub_path, gpa, .unlimited) catch |err| switch (err) {
+                    error.OutOfMemory, error.Canceled => |e| return e,
+                    else => |e| return comp.failCObjRetryable(
+                        c_object,
+                        "failed to read '{f}': {t}",
+                        .{ dep_file_path, e },
+                    ),
+                };
                 defer gpa.free(dep_file_contents);
 
                 var str_buf: std.ArrayList(u8) = .empty;
@@ -5771,36 +5744,65 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
                             try token.resolve(gpa, &str_buf);
                             break :p try .fromUnresolved(arena, comp.dirs, &.{str_buf.items});
                         },
-                        else => |err_token| {
-                            log.err("failed parsing {s}: {f}", .{ dep_basename, err_token });
-                            return error.InvalidDepFile;
-                        },
+                        else => |err_token| return comp.failCObjRetryable(
+                            c_object,
+                            "failed parsing '{f}': {f}",
+                            .{ dep_file_path, err_token },
+                        ),
                     };
                     try comp.appendFileSystemInput(input_path);
                 }
             }
 
             // Add the files depended on to the cache system.
-            var diagnostic: Cache.Manifest.AddDiscoveredDepFileDiagnostic = undefined;
-            try man.addDiscoveredDepFile(.{
-                .root_dir = .{
-                    .handle = zig_cache_tmp_dir,
-                    .path = "tmp",
-                },
-                .sub_path = dep_basename,
-            }, &diagnostic);
+            var diags: Cache.Manifest.AddDiscoveredDepFileDiagnostic = undefined;
+            man.addDiscoveredDepFile(dep_file_path, &diags) catch |err| switch (err) {
+                error.OutOfMemory,
+                error.Canceled,
+                => |e| return e,
+
+                error.InvalidDepFile => return comp.failCObjRetryable(
+                    c_object,
+                    "failed to parse '{f}': {f}",
+                    .{ dep_file_path, diags.dep_tokenizer },
+                ),
+                error.FileSystemFailure => return comp.failCObjRetryable(
+                    c_object,
+                    "failed to parse '{f}': {f}",
+                    .{ dep_file_path, diags.add_discovered_path },
+                ),
+                else => |e| return comp.failCObjRetryable(
+                    c_object,
+                    "failed to read '{f}': {t}",
+                    .{ dep_file_path, e },
+                ),
+            };
             switch (comp.cache_use) {
                 .whole => |whole| {
                     if (whole.cache_manifest) |whole_cache_manifest| {
                         try whole.cache_manifest_mutex.lock(io);
                         defer whole.cache_manifest_mutex.unlock(io);
-                        try whole_cache_manifest.addDiscoveredDepFile(.{
-                            .root_dir = .{
-                                .handle = zig_cache_tmp_dir,
-                                .path = "tmp",
-                            },
-                            .sub_path = dep_basename,
-                        }, &diagnostic);
+                        whole_cache_manifest.addDiscoveredDepFile(dep_file_path, &diags) catch |err| switch (err) {
+                            error.OutOfMemory,
+                            error.Canceled,
+                            => |e| return e,
+
+                            error.InvalidDepFile => return comp.failCObjRetryable(
+                                c_object,
+                                "failed to parse '{f}': {f}",
+                                .{ dep_file_path, diags.dep_tokenizer },
+                            ),
+                            error.FileSystemFailure => return comp.failCObjRetryable(
+                                c_object,
+                                "failed to parse '{f}': {f}",
+                                .{ dep_file_path, diags.add_discovered_path },
+                            ),
+                            else => |e| return comp.failCObjRetryable(
+                                c_object,
+                                "failed to read '{f}': {t}",
+                                .{ dep_file_path, e },
+                            ),
+                        };
                     }
                 },
                 .incremental, .none => {},
@@ -5825,10 +5827,33 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
 
         // Rename into place.
         const o_sub_path = try fs.path.join(arena, &.{ "o", &digest });
-        var o_dir = try comp.dirs.local_cache.handle.createDirPathOpen(io, o_sub_path, .{});
+        var o_dir = comp.dirs.local_cache.handle.createDirPathOpen(io, o_sub_path, .{}) catch |err| switch (err) {
+            error.Canceled => |e| return e,
+            else => |e| return comp.failCObjRetryable(
+                c_object,
+                "failed to create '{f}{c}{s}': {t}",
+                .{ comp.dirs.local_cache, fs.path.sep, o_sub_path, e },
+            ),
+        };
         defer o_dir.close(io);
         const tmp_basename = fs.path.basename(out_obj_path);
-        try Io.Dir.rename(zig_cache_tmp_dir, tmp_basename, o_dir, o_basename, io);
+        Io.Dir.rename(zig_cache_tmp_dir, tmp_basename, o_dir, o_basename, io) catch |err| switch (err) {
+            error.Canceled => |e| return e,
+            else => |e| return comp.failCObjRetryable(
+                c_object,
+                "failed to rename 'tmp{c}{s}' into '{f}{c}{s}{c}{s}': {t}",
+                .{
+                    fs.path.sep,
+                    tmp_basename,
+                    comp.dirs.local_cache,
+                    fs.path.sep,
+                    o_sub_path,
+                    fs.path.sep,
+                    o_basename,
+                    e,
+                },
+            ),
+        };
         break :d digest;
     };
 
@@ -6332,9 +6357,7 @@ fn addCommonCCArgs(
             switch (target.os.tag) {
                 // LLVM doesn't distinguish between Solaris and illumos, but the illumos GCC fork
                 // defines this macro.
-                .illumos => try argv.append("__illumos__"),
-                // This macro has not yet been upstreamed by SerenityOS to Clang.
-                .serenity => try argv.append("__serenity__"),
+                .illumos => try argv.append("-D__illumos__"),
                 // Homebrew targets without LLVM support; use communities's preferred macros.
                 .@"3ds" => try argv.append("-D__3DS__"),
                 .wiiu => try argv.append("-D__WIIU__"),
@@ -6450,7 +6473,7 @@ fn addCommonCCArgs(
 
             try argv.ensureUnusedCapacity(comp.framework_dirs.len * 2);
             for (comp.framework_dirs) |framework_dir| {
-                try argv.appendSlice(&.{ "-F", framework_dir });
+                try argv.appendSlice(&.{ "-F", framework_dir.path orelse "." });
             }
         }
     }
@@ -6523,6 +6546,9 @@ fn addCommonCCArgs(
                         .off => {},
                         .trap => {
                             try argv.append("-fsanitize-trap=undefined");
+
+                            // Same reasoning as below.
+                            try argv.append("-fno-sanitize=function");
                         },
                         .full => {
                             // This check requires implementing the Itanium C++ ABI.
@@ -6668,80 +6694,6 @@ pub fn addCCArgs(
 
     try comp.addCommonCCArgs(arena, argv, ext, out_dep_path, mod, comp.config.c_frontend);
 
-    // Only assembly files support these flags.
-    switch (ext) {
-        .assembly,
-        .assembly_with_cpp,
-        => {
-            // The Clang assembler does not accept the list of CPU features like the
-            // compiler frontend does. Therefore we must hard-code the -m flags for
-            // all CPU features here.
-            switch (target.cpu.arch) {
-                .riscv32, .riscv32be, .riscv64, .riscv64be => {
-                    const RvArchFeat = struct { char: u8, feat: std.Target.riscv.Feature };
-                    const letters = [_]RvArchFeat{
-                        .{ .char = 'm', .feat = .m },
-                        .{ .char = 'a', .feat = .a },
-                        .{ .char = 'f', .feat = .f },
-                        .{ .char = 'd', .feat = .d },
-                        .{ .char = 'c', .feat = .c },
-                    };
-                    const prefix: []const u8 = if (target.cpu.arch == .riscv64) "rv64" else "rv32";
-                    const prefix_len = 4;
-                    assert(prefix.len == prefix_len);
-                    var march_buf: [prefix_len + letters.len + 1]u8 = undefined;
-                    var march_index: usize = prefix_len;
-                    @memcpy(march_buf[0..prefix.len], prefix);
-
-                    if (target.cpu.has(.riscv, .e)) {
-                        march_buf[march_index] = 'e';
-                    } else {
-                        march_buf[march_index] = 'i';
-                    }
-                    march_index += 1;
-
-                    for (letters) |letter| {
-                        if (target.cpu.has(.riscv, letter.feat)) {
-                            march_buf[march_index] = letter.char;
-                            march_index += 1;
-                        }
-                    }
-
-                    const march_arg = try std.fmt.allocPrint(arena, "-march={s}", .{
-                        march_buf[0..march_index],
-                    });
-                    try argv.append(march_arg);
-
-                    if (target.cpu.has(.riscv, .relax)) {
-                        try argv.append("-mrelax");
-                    } else {
-                        try argv.append("-mno-relax");
-                    }
-                    if (target.cpu.has(.riscv, .save_restore)) {
-                        try argv.append("-msave-restore");
-                    } else {
-                        try argv.append("-mno-save-restore");
-                    }
-                },
-                .mips, .mipsel, .mips64, .mips64el => {
-                    if (target.cpu.model.llvm_name) |llvm_name| {
-                        try argv.append(try std.fmt.allocPrint(arena, "-march={s}", .{llvm_name}));
-                    }
-                },
-                else => {
-                    // TODO
-                },
-            }
-
-            if (target_util.clangAssemblerSupportsMcpuArg(target)) {
-                if (target.cpu.model.llvm_name) |llvm_name| {
-                    try argv.append(try std.fmt.allocPrint(arena, "-mcpu={s}", .{llvm_name}));
-                }
-            }
-        },
-        else => {},
-    }
-
     // Non-preprocessed assembly files don't support these flags.
     if (ext != .assembly) {
         if (target_util.clangSupportsNoImplicitFloatArg(target) and target.abi.float() == .soft) {
@@ -6802,43 +6754,46 @@ pub fn addCCArgs(
         .ll,
         .bc,
         => {
-            const xclang_flag = switch (ext) {
-                .assembly, .assembly_with_cpp => "-Xclangas",
-                else => "-Xclang",
+            const xclang_flags: []const []const u8 = switch (ext) {
+                .assembly => &.{"-Xclangas"},
+                .assembly_with_cpp => &.{ "-Xclang", "-Xclangas" }, // preprocessor needs the features too
+                else => &.{"-Xclang"},
             };
 
-            if (target_util.clangSupportsTargetCpuArg(target)) {
-                if (target.cpu.model.llvm_name) |llvm_name| {
-                    try argv.appendSlice(&[_][]const u8{
-                        xclang_flag, "-target-cpu", xclang_flag, llvm_name,
-                    });
+            for (xclang_flags) |xclang| {
+                if (target_util.clangSupportsTargetCpuArg(target)) {
+                    if (target.cpu.model.llvm_name) |llvm_name| {
+                        try argv.appendSlice(&[_][]const u8{
+                            xclang, "-target-cpu", xclang, llvm_name,
+                        });
+                    }
                 }
-            }
 
-            // It would be really nice if there was a more compact way to communicate this info to Clang.
-            const all_features_list = target.cpu.arch.allFeaturesList();
-            try argv.ensureUnusedCapacity(all_features_list.len * 4);
-            for (all_features_list, 0..) |feature, index_usize| {
-                const index = @as(std.Target.Cpu.Feature.Set.Index, @intCast(index_usize));
-                const is_enabled = target.cpu.features.isEnabled(index);
+                // It would be really nice if there was a more compact way to communicate this info to Clang.
+                const all_features_list = target.cpu.arch.allFeaturesList();
+                try argv.ensureUnusedCapacity(all_features_list.len * 4);
+                for (all_features_list, 0..) |feature, index_usize| {
+                    const index = @as(std.Target.Cpu.Feature.Set.Index, @intCast(index_usize));
+                    const is_enabled = target.cpu.features.isEnabled(index);
 
-                if (feature.llvm_name) |llvm_name| {
-                    // We communicate these to Clang through the dedicated options.
-                    if (std.mem.startsWith(u8, llvm_name, "soft-float") or
-                        std.mem.startsWith(u8, llvm_name, "hard-float") or
-                        (target.cpu.arch.isPowerPC() and std.mem.startsWith(u8, llvm_name, "64bit")) or
-                        (target.cpu.arch.isX86() and std.mem.startsWith(u8, llvm_name, "x32")) or
-                        (target.cpu.arch == .s390x and std.mem.eql(u8, llvm_name, "backchain")))
-                        continue;
+                    if (feature.llvm_name) |llvm_name| {
+                        // We communicate these to Clang through the dedicated options.
+                        if (std.mem.startsWith(u8, llvm_name, "soft-float") or
+                            std.mem.startsWith(u8, llvm_name, "hard-float") or
+                            (target.cpu.arch.isPowerPC() and std.mem.startsWith(u8, llvm_name, "64bit")) or
+                            (target.cpu.arch.isX86() and std.mem.startsWith(u8, llvm_name, "x32")) or
+                            (target.cpu.arch == .s390x and std.mem.eql(u8, llvm_name, "backchain")))
+                            continue;
 
-                    // Ignore these until we figure out how to handle the concept of omitting features.
-                    // See https://github.com/ziglang/zig/issues/23539
-                    if (target_util.isDynamicAMDGCNFeature(target, feature)) continue;
+                        // Ignore these until we figure out how to handle the concept of omitting features.
+                        // See https://github.com/ziglang/zig/issues/23539
+                        if (target_util.isDynamicAMDGCNFeature(target, feature)) continue;
 
-                    argv.appendSliceAssumeCapacity(&[_][]const u8{ xclang_flag, "-target-feature", xclang_flag });
-                    const plus_or_minus = "-+"[@intFromBool(is_enabled)];
-                    const arg = try std.fmt.allocPrint(arena, "{c}{s}", .{ plus_or_minus, llvm_name });
-                    argv.appendAssumeCapacity(arg);
+                        argv.appendSliceAssumeCapacity(&[_][]const u8{ xclang, "-target-feature", xclang });
+                        const plus_or_minus = "-+"[@intFromBool(is_enabled)];
+                        const arg = try std.fmt.allocPrint(arena, "{c}{s}", .{ plus_or_minus, llvm_name });
+                        argv.appendAssumeCapacity(arg);
+                    }
                 }
             }
         },
@@ -6847,6 +6802,16 @@ pub fn addCCArgs(
 
     try argv.appendSlice(comp.global_cc_argv);
     try argv.appendSlice(mod.cc_argv);
+}
+
+fn failCObjRetryable(
+    comp: *Compilation,
+    c_object: *CObject,
+    comptime format: []const u8,
+    args: anytype,
+) error{ OutOfMemory, AlreadyReported } {
+    defer c_object.status = .failure_retryable;
+    return comp.failCObj(c_object, format, args);
 }
 
 fn failCObj(
@@ -6897,8 +6862,7 @@ fn failCObjWithOwnedDiagBundle(
 
 fn failWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, comptime format: []const u8, args: anytype) error{ OutOfMemory, AlreadyReported } {
     @branchHint(.cold);
-    var bundle: ErrorBundle.Wip = undefined;
-    try bundle.init(comp.gpa);
+    var bundle: ErrorBundle.Wip = try .init(comp.gpa);
     errdefer bundle.deinit();
     try bundle.addRootErrorMessage(.{
         .msg = try bundle.printString(format, args),
@@ -7656,7 +7620,7 @@ pub fn toCrtFile(comp: *Compilation) Allocator.Error!CrtFile {
 pub fn getCrtPaths(
     comp: *Compilation,
     arena: Allocator,
-) error{ OutOfMemory, LibCInstallationMissingCrtDir }!LibCInstallation.CrtPaths {
+) error{ OutOfMemory, LibCInstallationMissingCcDir, LibCInstallationMissingCrtDir }!LibCInstallation.CrtPaths {
     const target = &comp.root_mod.resolved_target.result;
     return getCrtPathsInner(arena, target, comp.config, comp.libc_installation, &comp.crt_files);
 }
@@ -7667,7 +7631,7 @@ fn getCrtPathsInner(
     config: Config,
     libc_installation: ?*const LibCInstallation,
     crt_files: *std.StringHashMapUnmanaged(CrtFile),
-) error{ OutOfMemory, LibCInstallationMissingCrtDir }!LibCInstallation.CrtPaths {
+) error{ OutOfMemory, LibCInstallationMissingCcDir, LibCInstallationMissingCrtDir }!LibCInstallation.CrtPaths {
     const basenames = LibCInstallation.CrtBasenames.get(.{
         .target = target,
         .link_libc = config.link_libc,
@@ -7723,4 +7687,166 @@ pub fn compilerRtOptMode(comp: Compilation) std.lang.Optimize {
 /// compiler-rt, libcxx, libc, libunwind, etc.
 pub fn compilerRtStrip(comp: Compilation) bool {
     return comp.root_mod.strip;
+}
+
+pub const EvalZigLlvmProcessDiagnostics = union(enum) {
+    spawn_err: std.process.SpawnError,
+    read_stderr_err: Io.File.Reader.Error,
+    write_rsp_file_err: struct {
+        path: []const u8,
+        err: (Io.File.OpenError || Io.File.Writer.Error),
+    },
+    pub fn format(diags: EvalZigLlvmProcessDiagnostics, w: *Writer) Writer.Error!void {
+        switch (diags) {
+            .spawn_err => |err| try w.print(
+                "failed to spawn: {t}",
+                .{err},
+            ),
+            .read_stderr_err => |err| try w.print(
+                "failed to read stderr: {t}",
+                .{err},
+            ),
+            .write_rsp_file_err => |write_rsp_file| try w.print(
+                "failed to write '{s}': {t}",
+                .{ write_rsp_file.path, write_rsp_file.err },
+            ),
+        }
+    }
+};
+pub const EvalZigLlvmProcessResult = struct {
+    term: std.process.Child.Term,
+    stderr: []const u8,
+};
+
+/// Assumes that `opts.argv` is a Zig LLVM wrapper subcommand (e.g. `zig clang ...`), and attempts
+/// to spawn it; first trying to spawn it directly, but upon `error.NameTooLong`, falling back to
+/// writing a response file and passing it to the command (e.g. `zig clang @path/to/args.rsp`).
+pub fn evalZigLlvmProcess(
+    comp: *const Compilation,
+    arena: Allocator,
+    diags: *EvalZigLlvmProcessDiagnostics,
+    argv: []const []const u8,
+) error{ EvalZigLlvmFail, OutOfMemory, Canceled }!EvalZigLlvmProcessResult {
+    const io = comp.io;
+
+    if (std.process.spawn(io, .{
+        .argv = argv,
+        .stdin = if (comp.clang_passthrough_mode) .inherit else .ignore,
+        .stdout = if (comp.clang_passthrough_mode) .inherit else .ignore,
+        .stderr = if (comp.clang_passthrough_mode) .inherit else .pipe,
+    })) |child| {
+        return comp.finishEvalZigLlvmProcess(arena, child, diags);
+    } else |err| switch (err) {
+        error.Canceled => |e| return e,
+        error.NameTooLong => {}, // fallback logic below
+        else => |e| {
+            diags.* = .{ .spawn_err = e };
+            return error.EvalZigLlvmFail;
+        },
+    }
+
+    // Main command line was too long; try a response file.
+    const rand_int: u64 = r: {
+        var x: u64 = undefined;
+        io.random(@ptrCast(&x));
+        break :r x;
+    };
+    const rsp_cache_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int) ++ ".rsp";
+
+    const rsp_file = comp.dirs.local_cache.handle.createFile(io, rsp_cache_sub_path, .{}) catch |err| switch (err) {
+        error.Canceled => |e| return e,
+        else => |e| {
+            diags.* = .{ .write_rsp_file_err = .{
+                .path = try arena.dupe(u8, rsp_cache_sub_path),
+                .err = e,
+            } };
+            return error.EvalZigLlvmFail;
+        },
+    };
+    defer comp.dirs.local_cache.handle.deleteFile(io, rsp_cache_sub_path) catch |err|
+        log.warn("failed to delete response file {s}: {t}", .{ rsp_cache_sub_path, err });
+
+    {
+        defer rsp_file.close(io);
+        var buf: [1024]u8 = undefined;
+        var rsp_fw = rsp_file.writer(io, &buf);
+        writeResponseFile(argv[2..], &rsp_fw.interface) catch |err| switch (err) {
+            error.WriteFailed => switch (rsp_fw.err.?) {
+                error.Canceled => |e| return e,
+                else => |e| {
+                    diags.* = .{ .write_rsp_file_err = .{
+                        .path = try arena.dupe(u8, rsp_cache_sub_path),
+                        .err = e,
+                    } };
+                    return error.EvalZigLlvmFail;
+                },
+            },
+        };
+    }
+
+    const rsp_arg = try arena.print("@{s}{c}{s}", .{
+        comp.dirs.local_cache.path orelse ".",
+        fs.path.sep,
+        rsp_cache_sub_path,
+    });
+
+    if (std.process.spawn(io, .{
+        .argv = &.{ argv[0], argv[1], rsp_arg },
+        .stdin = if (comp.clang_passthrough_mode) .inherit else .ignore,
+        .stdout = if (comp.clang_passthrough_mode) .inherit else .ignore,
+        .stderr = if (comp.clang_passthrough_mode) .inherit else .pipe,
+    })) |child| {
+        return comp.finishEvalZigLlvmProcess(arena, child, diags);
+    } else |err| switch (err) {
+        error.Canceled => |e| return e,
+        else => |e| {
+            diags.* = .{ .spawn_err = e };
+            return error.EvalZigLlvmFail;
+        },
+    }
+}
+fn writeResponseFile(args: []const []const u8, w: *Writer) Writer.Error!void {
+    for (args) |arg| {
+        try w.writeByte('"');
+        for (arg) |c| {
+            switch (c) {
+                '\"', '\\' => try w.writeByte('\\'),
+                else => {},
+            }
+            try w.writeByte(c);
+        }
+        try w.writeAll("\"\n");
+    }
+    try w.flush();
+}
+fn finishEvalZigLlvmProcess(
+    comp: *const Compilation,
+    arena: Allocator,
+    child_arg: std.process.Child,
+    diags: *EvalZigLlvmProcessDiagnostics,
+) error{ EvalZigLlvmFail, OutOfMemory, Canceled }!EvalZigLlvmProcessResult {
+    const io = comp.io;
+    var child = child_arg;
+    defer child.kill(io);
+    if (comp.clang_passthrough_mode) {
+        const term = child.wait(io) catch |err| {
+            diags.* = .{ .spawn_err = err };
+            return error.EvalZigLlvmFail;
+        };
+        return .{ .stderr = &.{}, .term = term };
+    }
+    var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
+    const stderr = stderr_reader.interface.allocRemaining(arena, .unlimited) catch |err| switch (err) {
+        error.StreamTooLong => unreachable, // unlimited
+        error.OutOfMemory => |e| return e,
+        error.ReadFailed => {
+            diags.* = .{ .read_stderr_err = stderr_reader.err.? };
+            return error.EvalZigLlvmFail;
+        },
+    };
+    const term = child.wait(io) catch |err| {
+        diags.* = .{ .spawn_err = err };
+        return error.EvalZigLlvmFail;
+    };
+    return .{ .stderr = stderr, .term = term };
 }

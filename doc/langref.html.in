@@ -320,6 +320,7 @@
           <a href="https://ziglang.org/documentation/0.14.1/">0.14.1</a> |
           <a href="https://ziglang.org/documentation/0.15.2/">0.15.2</a> |
           <a href="https://ziglang.org/documentation/0.16.0/">0.16.0</a> |
+          <a href="https://ziglang.org/documentation/0.17.0/">0.17.0</a> |
           master
         </nav>
         <nav aria-labelledby="table-of-contents">
@@ -1608,6 +1609,23 @@ unwrapped == 1234{#endsyntax#}</pre>
           </td>
         </tr>
         <tr>
+          <td>Forwarding Error Unwrap</td>
+          <td><pre>{#syntax#}try a{#endsyntax#}</pre></td>
+          <td>
+            <ul>
+              <li>{#link|Error Unions|Errors#}</li>
+            </ul>
+          </td>
+          <td>
+            Equivalent to:
+            <pre>{#syntax#}a catch |err| return err{#endsyntax#}</pre>
+          </td>
+          <td>
+            <pre>{#syntax#}const value: anyerror!u32 = 5678;
+try value == 5678{#endsyntax#}</pre>
+          </td>
+        </tr>
+        <tr>
           <td>Logical And</td>
           <td><pre>{#syntax#}a and b{#endsyntax#}</pre></td>
           <td>
@@ -1870,7 +1888,7 @@ const B = error{Two};
       <pre>{#syntax#}x() x[] x.y x.* x.?
 a!b
 x{}
-!x -x -%x ~x &x ?x
+!x -x -%x ~x &x ?x try
 * / % *% *| ||
 + - ++ +% -% +| -|
 << >> <<|

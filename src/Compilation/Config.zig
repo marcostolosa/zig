@@ -147,6 +147,7 @@ pub const ResolveError = error{
     TargetRequiresPie,
     SanitizeThreadRequiresPie,
     SanitizeThreadRequiresLlvmBackend,
+    FuzzRequiresLlvmBackend,
     BackendLacksErrorTracing,
     LlvmLibraryUnavailable,
     LldUnavailable,
@@ -196,7 +197,8 @@ pub fn resolve(options: Options) ResolveError!Config {
         break :b options.use_lib_llvm orelse true;
     };
 
-    const root_optimize_mode = options.root_optimize_mode orelse .debug;
+    const root_optimize_mode = options.root_optimize_mode orelse
+        @as(std.lang.OptimizeMode, if (options.any_fuzz) .safe else .debug);
 
     // Make a decision on whether to use Clang or Aro for translate-c and compiling C files.
     const c_frontend: CFrontend = b: {
@@ -349,6 +351,12 @@ pub fn resolve(options: Options) ResolveError!Config {
             break :b true;
         }
 
+        if (options.any_fuzz) {
+            // Fuzzing instrumentation requires the LLVM backend.
+            if (options.use_llvm == false) return error.FuzzRequiresLlvmBackend;
+            break :b true;
+        }
+
         if (options.use_llvm) |x| break :b x;
 
         // If we cannot use LLVM libraries, then our own backends will be a
@@ -413,6 +421,12 @@ pub fn resolve(options: Options) ResolveError!Config {
         // assume no LLD.
         if (options.use_new_linker == true) break :b false;
 
+        if (options.use_new_linker == null and
+            target_util.preferNewLinkerOverLld(target))
+        {
+            break :b false;
+        }
+
         // If we have no zig code to compile, no need for the self-hosted linker.
         if (!options.have_zcu) break :b true;
 
@@ -447,6 +461,8 @@ pub fn resolve(options: Options) ResolveError!Config {
         }
 
         if (options.use_new_linker) |x| break :b x;
+
+        if (target_util.preferNewLinkerOverLld(target)) break :b true;
 
         break :b options.incremental;
     };

@@ -1415,12 +1415,14 @@ pub const Manifest = struct {
             return .{ .metadata_changed = file_off };
         }
 
+        const prev_digest: BinDigest = disk_file.digest;
+
         if (input_path.contents.get(m.all_input_content.items)) |file_or_dir_contents| {
             var hasher = hasher_init;
             hasher.update(file_or_dir_contents);
             hasher.final(&disk_file.digest);
 
-            if (mem.eql(u8, &disk_file.digest, &input_file.digest)) return .hit;
+            if (mem.eql(u8, &disk_file.digest, &prev_digest)) return .hit;
             return .{ .contents_changed = file_off };
         }
 
@@ -1471,7 +1473,7 @@ pub const Manifest = struct {
                 .populated => unreachable,
             };
 
-            if (mem.eql(u8, &disk_file.digest, &input_file.digest)) return .hit;
+            if (mem.eql(u8, &disk_file.digest, &prev_digest)) return .hit;
             return .{ .contents_changed = file_off };
         } else {
             const opened_file = if (input_path.have_handle)
@@ -1525,7 +1527,7 @@ pub const Manifest = struct {
                 .populated => unreachable,
             }
 
-            if (mem.eql(u8, &disk_file.digest, &input_file.digest)) return .hit;
+            if (mem.eql(u8, &disk_file.digest, &prev_digest)) return .hit;
             return .{ .contents_changed = file_off };
         }
     }

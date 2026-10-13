@@ -7902,11 +7902,11 @@ pub const Stat = switch (native_os) {
         ctim: timespec,
         size: c_ulong,
         blocks: i64,
-        blksize: u32,
+        _old_blksize: u32,
         flags: u32,
         gen: u32,
         lspare: i32,
-        qspare1: i64,
+        blksize: blksize_t,
         qspare2: i64,
         pub fn atime(self: @This()) timespec {
             return self.atim;

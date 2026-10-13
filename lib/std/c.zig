@@ -11124,7 +11124,7 @@ pub const ptrace = switch (native_os) {
 
 pub extern "c" fn sem_init(sem: *sem_t, pshared: c_int, value: c_uint) c_int;
 pub extern "c" fn sem_destroy(sem: *sem_t) c_int;
-pub extern "c" fn sem_open(name: [*:0]const u8, flag: c_int, mode: mode_t, value: c_uint) *sem_t;
+pub extern "c" fn sem_open(name: [*:0]const u8, flag: c_int, ...) *sem_t;
 pub extern "c" fn sem_close(sem: *sem_t) c_int;
 pub extern "c" fn sem_post(sem: *sem_t) c_int;
 pub extern "c" fn sem_wait(sem: *sem_t) c_int;

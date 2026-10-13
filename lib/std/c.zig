@@ -11291,21 +11291,33 @@ pub extern "c" fn setsid() pid_t;
 /// These are implementation defined but share identical values in at least musl and glibc:
 /// - https://git.musl-libc.org/cgit/musl/tree/include/locale.h?id=ab31e9d6a0fa7c5c408856c89df2dfb12c344039#n18
 /// - https://sourceware.org/git/?p=glibc.git;a=blob;f=locale/bits/locale.h;h=0fcbb66114be5fef0577dc9047256eb508c45919;hb=c90cfce849d010474e8cccf3e5bff49a2c8b141f#l26
-pub const LC = enum(c_int) {
-    CTYPE = 0,
-    NUMERIC = 1,
-    TIME = 2,
-    COLLATE = 3,
-    MONETARY = 4,
-    MESSAGES = 5,
-    ALL = 6,
-    PAPER = 7,
-    NAME = 8,
-    ADDRESS = 9,
-    TELEPHONE = 10,
-    MEASUREMENT = 11,
-    IDENTIFICATION = 12,
-    _,
+pub const LC = switch (native_os) {
+    .serenity => enum(c_int) {
+        ALL = 0,
+        NUMERIC = 1,
+        CTYPE = 2,
+        COLLATE = 3,
+        TIME = 4,
+        MONETARY = 5,
+        MESSAGES = 6,
+        _,
+    },
+    else => enum(c_int) {
+        CTYPE = 0,
+        NUMERIC = 1,
+        TIME = 2,
+        COLLATE = 3,
+        MONETARY = 4,
+        MESSAGES = 5,
+        ALL = 6,
+        PAPER = 7,
+        NAME = 8,
+        ADDRESS = 9,
+        TELEPHONE = 10,
+        MEASUREMENT = 11,
+        IDENTIFICATION = 12,
+        _,
+    },
 };
 
 pub extern "c" fn setlocale(category: LC, locale: ?[*:0]const u8) ?[*:0]const u8;

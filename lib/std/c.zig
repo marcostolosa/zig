@@ -319,7 +319,7 @@ pub const clockid_t = switch (native_os) {
         THREAD_CPUTIME_ID = 0x20000000,
         PROCESS_CPUTIME_ID = 0x40000000,
     },
-    .dragonfly => enum(u32) {
+    .dragonfly => enum(c_ulong) {
         REALTIME = 0,
         VIRTUAL = 1,
         PROF = 2,

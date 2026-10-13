@@ -266,11 +266,19 @@ pub const winsize = extern struct {
     ypixel: u16,
 };
 
-pub const LOCK = struct {
-    pub const SH = 1;
-    pub const EX = 2;
-    pub const NB = 4;
-    pub const UN = 8;
+pub const LOCK = switch (native_os) {
+    .serenity => struct {
+        pub const SH = 0;
+        pub const EX = 1;
+        pub const UN = 2;
+        pub const NB = 4;
+    },
+    else => struct {
+        pub const SH = 1;
+        pub const EX = 2;
+        pub const NB = 4;
+        pub const UN = 8;
+    },
 };
 
 pub const LOG = struct {

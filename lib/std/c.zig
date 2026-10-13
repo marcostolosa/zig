@@ -10845,7 +10845,7 @@ pub const malloc_size = switch (native_os) {
     else => {},
 };
 pub const malloc_usable_size = switch (native_os) {
-    .freebsd, .linux, .serenity => private.malloc_usable_size,
+    .freebsd, .linux => private.malloc_usable_size,
     else => {},
 };
 pub const posix_memalign = switch (native_os) {

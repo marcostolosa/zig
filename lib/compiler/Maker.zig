@@ -3452,6 +3452,10 @@ fn constructGraphAndCheckForDependencyLoop(
 /// invalidated.
 pub fn invalidateResult(maker: *Maker, step: *Step) error{MustReconfigure}!bool {
     if (step == &maker.steps[maker.steps.len - 1]) return error.MustReconfigure;
+    switch (step.extended) {
+        .run => return error.MustReconfigure,
+        else => {},
+    }
     if (step.state == .precheck_done) return false;
     assert(step.pending_deps == 0);
     step.state = .precheck_done;

@@ -6794,7 +6794,10 @@ fn forExpr(
                 return astgen.failTok(capture_token, "pointer modifier invalid on discard", .{});
             }
             // Skip over the comma, and on to the next capture (or the ending pipe character).
-            capture_token = ident_tok + 2;
+            capture_token = ident_tok + 1;
+            if (tree.tokenTag(capture_token) == .comma) {
+                capture_token += 1;
+            }
 
             try emitDbgNode(parent_gz, input);
             if (tree.nodeTag(input) == .for_range) {
@@ -6904,7 +6907,10 @@ fn forExpr(
             const ident_tok = capture_token + @intFromBool(capture_is_ref);
             const capture_name = tree.tokenSlice(ident_tok);
             // Skip over the comma, and on to the next capture (or the ending pipe character).
-            capture_token = ident_tok + 2;
+            capture_token = ident_tok + 1;
+            if (tree.tokenTag(capture_token) == .comma) {
+                capture_token += 1;
+            }
 
             if (mem.eql(u8, capture_name, "_")) continue;
 

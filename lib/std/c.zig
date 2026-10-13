@@ -174,6 +174,7 @@ pub const blksize_t = switch (native_os) {
     .emscripten => emscripten.blksize_t,
     // https://github.com/SerenityOS/serenity/blob/b98f537f117b341788023ab82e0c11ca9ae29a57/Kernel/API/POSIX/sys/types.h#L42
     .serenity => u64,
+    .dragonfly => i64,
     else => i32,
 };
 

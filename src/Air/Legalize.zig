@@ -204,8 +204,10 @@ pub const Feature = enum {
     expand_array_splat,
     /// Replace `array_to_vector` with an `array_elem_val` per element followed by an `aggregate_init`.
     expand_array_to_vector,
-    /// Replace `ptr_elem_val` with an `ptr_elem_ptr` followed by a `load`.
+    /// Replace `ptr_elem_val` with a `ptr_elem_ptr` followed by a `load`.
     expand_ptr_elem_val,
+    /// Replace `slice_elem_val` with a `slice_elem_ptr` followed by a `load`.
+    expand_slice_elem_val,
     /// Replace `array_to_slice` with a `ptr_cast` followed by a `slice`.
     expand_array_to_slice,
 
@@ -865,12 +867,14 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             .ptr_slice_len_ptr,
             .ptr_slice_ptr_ptr,
             .array_elem_val,
-            .slice_elem_val,
             .slice_elem_ptr,
             .ptr_elem_ptr,
             => {},
             .ptr_elem_val => if (l.features.has(.expand_ptr_elem_val)) {
                 continue :inst l.replaceInst(inst, .block, try l.ptrElemValBlockPayload(inst));
+            },
+            .slice_elem_val => if (l.features.has(.expand_slice_elem_val)) {
+                continue :inst l.replaceInst(inst, .block, try l.sliceElemValBlockPayload(inst));
             },
             .array_to_vector => if (l.features.has(.expand_array_to_vector)) {
                 continue :inst l.replaceInst(inst, .block, try l.arrayToVectorBlockPayload(inst));
@@ -2981,15 +2985,14 @@ fn packedAggregateInitBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Erro
     } };
 }
 
-fn ptrElemValBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Inst.Data {
+fn elemValBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index, new_inst_tag: Air.Inst.Tag) Error!Air.Inst.Data {
     const pt = l.pt;
     const zcu = pt.zcu;
     const gpa = zcu.gpa;
 
     const orig_bin_op = l.air_instructions.items(.data)[@backingInt(orig_inst)].bin_op;
 
-    const ptr_val = orig_bin_op.lhs;
-    const ptr_ty = try l.typeOf(ptr_val).elemPtrType(null, pt);
+    const ptr_ty = try l.typeOf(orig_bin_op.lhs).elemPtrType(null, pt);
     const val_ty = ptr_ty.childType(zcu);
 
     var inst_buf: [3]Air.Inst.Index = undefined;
@@ -2997,12 +3000,12 @@ fn ptrElemValBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Ins
     try l.air_instructions.ensureUnusedCapacity(gpa, inst_buf.len);
 
     const ptr = main_block.add(l, .{
-        .tag = .ptr_elem_ptr,
+        .tag = new_inst_tag,
         .data = .{
             .ty_pl = .{
                 .ty = ptr_ty,
                 .payload = try l.addExtra(Air.Bin, .{
-                    .lhs = ptr_val,
+                    .lhs = orig_bin_op.lhs,
                     .rhs = orig_bin_op.rhs,
                 }),
             },
@@ -3019,6 +3022,12 @@ fn ptrElemValBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Ins
             .payload = try l.addBlockBody(main_block.body()),
         },
     };
+}
+fn ptrElemValBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Inst.Data {
+    return elemValBlockPayload(l, orig_inst, .ptr_elem_ptr);
+}
+fn sliceElemValBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Inst.Data {
+    return elemValBlockPayload(l, orig_inst, .slice_elem_ptr);
 }
 
 fn arrayToVectorBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Inst.Data {

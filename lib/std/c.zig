@@ -11209,10 +11209,11 @@ pub extern "c" fn dn_expand(
     length: c_int,
 ) c_int;
 
-pub const PTHREAD_PROCESS_PRIVATE: c_int = if (native_os.isDarwin())
-    2
-else
-    0;
+pub const PTHREAD_PROCESS_PRIVATE = switch (native_os) {
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => 2,
+    .serenity => 1,
+    else => 0,
+};
 
 pub const PTHREAD_PROCESS_SHARED = switch (native_os) {
     .serenity => 2,

@@ -4117,11 +4117,18 @@ pub const dl_phdr_info = switch (native_os) {
         subs: u64,
     },
     // https://github.com/SerenityOS/serenity/blob/45d81dceed81df0c8ef75b440b20cc0938195faa/Userland/Libraries/LibC/link.h#L15-L20
-    .openbsd, .haiku, .dragonfly, .netbsd, .serenity => extern struct {
+    .openbsd, .haiku, .dragonfly, .netbsd => extern struct {
         addr: usize,
         name: ?[*:0]const u8,
         phdr: [*]std.elf.ElfN.Phdr,
         phnum: std.elf.Half,
+    },
+    // https://github.com/SerenityOS/serenity/blob/45d81dceed81df0c8ef75b440b20cc0938195faa/Userland/Libraries/LibC/link.h#L15-L20
+    .serenity => extern struct {
+        addr: usize,
+        name: ?[*:0]const u8,
+        phdr: [*]std.elf.ElfN.Phdr,
+        phnum: u32,
     },
     else => void,
 };

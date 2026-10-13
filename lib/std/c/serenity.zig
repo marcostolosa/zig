@@ -1,10 +1,12 @@
 const std = @import("../std.zig");
 const assert = std.debug.assert;
 const builtin = @import("builtin");
+const MAP = std.c.MAP;
 const O = std.c.O;
 const clockid_t = std.c.clockid_t;
 const pid_t = std.c.pid_t;
 const timespec = std.c.timespec;
+const page_size = std.heap.page_size_min;
 
 comptime {
     assert(builtin.os.tag == .serenity); // Prevent access of std.c symbols on wrong OS.
@@ -64,6 +66,8 @@ pub extern "c" fn perf_register_string(string: [*]const u8, string_length: usize
 pub extern "c" fn get_stack_bounds(user_stack_base: *usize, user_stack_size: *usize) c_int;
 
 pub extern "c" fn anon_create(size: usize, options: O) c_int;
+
+pub extern "c" fn mremap(old_address: ?*align(page_size) anyopaque, old_size: usize, new_size: usize, flags: MAP) *anyopaque;
 
 pub extern "c" fn getkeymap(name_buffer: [*]u8, name_buffer_size: usize, map: [*]u32, shift_map: [*]u32, alt_map: [*]u32, altgr_map: [*]u32, shift_altgr_map: [*]u32) c_int;
 pub extern "c" fn setkeymap(name: [*]const u8, map: [*]const u32, shift_map: [*]const u32, alt_map: [*]const u32, altgr_map: [*]const u32, shift_altgr_map: [*]const u32) c_int;

@@ -10912,7 +10912,10 @@ pub extern "c" fn write(fd: fd_t, buf: [*]const u8, nbyte: usize) isize;
 pub extern "c" fn pwrite(fd: fd_t, buf: [*]const u8, nbyte: usize, offset: off_t) isize;
 pub extern "c" fn mmap(addr: ?*align(page_size) anyopaque, len: usize, prot: PROT, flags: MAP, fd: fd_t, offset: off_t) *anyopaque;
 pub extern "c" fn munmap(addr: *align(page_size) const anyopaque, len: usize) c_int;
-pub extern "c" fn mremap(addr: ?*align(page_size) const anyopaque, old_len: usize, new_len: usize, flags: MREMAP, ...) *anyopaque;
+pub const mremap = switch (native_os) {
+    .serenity => serenity.mremap,
+    else => private.mremap,
+};
 pub extern "c" fn mprotect(addr: *align(page_size) anyopaque, len: usize, prot: PROT) c_int;
 pub extern "c" fn link(oldpath: [*:0]const u8, newpath: [*:0]const u8) c_int;
 pub extern "c" fn linkat(oldfd: fd_t, oldpath: [*:0]const u8, newfd: fd_t, newpath: [*:0]const u8, flags: c_uint) c_int;
@@ -11859,6 +11862,7 @@ const private = struct {
     extern "c" fn gettimeofday(noalias tv: ?*timeval, noalias tz: ?*timezone) c_int;
     extern "c" fn ioctl(fd: fd_t, request: c_int, ...) c_int;
     extern "c" fn msync(addr: *align(page_size) const anyopaque, len: usize, flags: c_int) c_int;
+    extern "c" fn mremap(addr: ?*align(page_size) const anyopaque, old_len: usize, new_len: usize, flags: MREMAP, ...) *anyopaque;
     extern "c" fn nanosleep(rqtp: *const timespec, rmtp: ?*timespec) c_int;
     extern "c" fn pipe2(fds: *[2]fd_t, flags: O) c_int;
     extern "c" fn readdir(dir: *DIR) ?*dirent;

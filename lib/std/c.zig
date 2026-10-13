@@ -4093,6 +4093,9 @@ pub const clock_t = switch (native_os) {
 pub const cpu_set_t = switch (native_os) {
     .linux => linux.cpu_set_t,
     .emscripten => emscripten.cpu_set_t,
+    .dragonfly => extern struct {
+        ary: [4]u64,
+    },
     else => void,
 };
 pub const dl_phdr_info = switch (native_os) {

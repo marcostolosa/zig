@@ -11069,6 +11069,10 @@ pub const pthread_cancelstate = switch (native_os) {
         ENABLE = 0,
         DISABLE = 1,
     },
+    .serenity => enum(c_int) {
+        ENABLE = 1,
+        DISABLE = 2,
+    },
     else => void,
 };
 pub extern "c" fn pthread_setcancelstate(pthread_cancelstate, ?*pthread_cancelstate) E;

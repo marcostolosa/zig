@@ -217,7 +217,7 @@ pub const passwd = switch (native_os) {
 };
 
 pub const group = switch (native_os) {
-    .linux, .freebsd, .openbsd, .dragonfly, .netbsd, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => extern struct {
+    .linux, .freebsd, .openbsd, .dragonfly, .netbsd, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos, .serenity => extern struct {
         name: ?[*:0]const u8,
         passwd: ?[*:0]const u8,
         gid: gid_t,

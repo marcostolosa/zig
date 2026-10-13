@@ -7337,13 +7337,12 @@ pub const RTLD = switch (native_os) {
     },
     // https://github.com/SerenityOS/serenity/blob/36a26d7fa80bc9c72b19442912d8967f448368ff/Userland/Libraries/LibC/dlfcn.h#L13-L17
     .serenity => packed struct(c_int) {
-        DEFAULT: bool = false,
-        _1: u1,
+        _0: u1,
         LAZY: bool = false,
         NOW: bool = false,
         GLOBAL: bool = false,
         LOCAL: bool = false,
-        _: @Int(.unsigned, @bitSizeOf(c_int) - 6) = 0,
+        _: @Int(.unsigned, @bitSizeOf(c_int) - 5) = 0,
     },
     else => void,
 };

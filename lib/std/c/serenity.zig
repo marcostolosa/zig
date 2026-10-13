@@ -43,6 +43,7 @@ pub const PERF_EVENT = packed struct(c_int) {
     SYSCALL: bool = false,
     SIGNPOST: bool = false,
     FILESYSTEM: bool = false,
+    _: @Int(.unsigned, @bitSizeOf(c_int) - 17) = 0,
 };
 
 // https://github.com/SerenityOS/serenity/blob/abc150085f532f123b598949218893cb272ccc4c/Userland/Libraries/LibC/serenity.h

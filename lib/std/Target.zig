@@ -19,9 +19,7 @@ pub const Os = struct {
         freestanding,
         other,
 
-        contiki,
         fuchsia,
-        hermit,
         managarm,
 
         haiku,
@@ -178,9 +176,7 @@ pub const Os = struct {
                 .ashetos,
                 => .none,
 
-                .contiki,
                 .fuchsia,
-                .hermit,
 
                 .rtems,
 
@@ -419,22 +415,10 @@ pub const Os = struct {
                 .ashetos,
                 => .{ .none = {} },
 
-                .contiki => .{
-                    .semver = .{
-                        .min = .{ .major = 5, .minor = 0, .patch = 0 },
-                        .max = .{ .major = 5, .minor = 1, .patch = 0 },
-                    },
-                },
                 .fuchsia => .{
                     .semver = .{
                         .min = .{ .major = 27, .minor = 0, .patch = 0 },
                         .max = .{ .major = 30, .minor = 0, .patch = 0 },
-                    },
-                },
-                .hermit => .{
-                    .semver = .{
-                        .min = .{ .major = 0, .minor = 8, .patch = 0 },
-                        .max = .{ .major = 0, .minor = 13, .patch = 2 },
                     },
                 },
 
@@ -954,8 +938,6 @@ pub const Abi = enum {
 
             .ashetos => .eabi,
 
-            .contiki,
-            .hermit,
             .illumos,
             .managarm,
             .plan9,
@@ -1850,6 +1832,7 @@ pub const Cpu = struct {
                 .x86_64_vectorcall,
                 .x86_64_interrupt,
                 .x86_64_preserve_none,
+                .x86_64_preserve_most,
                 => &.{.x86_64},
 
                 .x86_sysv,
@@ -1877,6 +1860,7 @@ pub const Cpu = struct {
                 .aarch64_vfabi,
                 .aarch64_vfabi_sve,
                 .aarch64_preserve_none,
+                .aarch64_preserve_most,
                 => &.{ .aarch64, .aarch64_be },
 
                 .alpha_osf,
@@ -1899,11 +1883,13 @@ pub const Cpu = struct {
                 .riscv64_lp64,
                 .riscv64_lp64_v,
                 .riscv64_interrupt,
+                .riscv64_preserve_most,
                 => &.{ .riscv64, .riscv64be },
 
                 .riscv32_ilp32,
                 .riscv32_ilp32_v,
                 .riscv32_interrupt,
+                .riscv32_preserve_most,
                 => &.{ .riscv32, .riscv32be },
 
                 .sparc64_sysv,
@@ -1962,10 +1948,12 @@ pub const Cpu = struct {
 
                 .loongarch64_lp64,
                 .loongarch64_preserve_none,
+                .loongarch64_preserve_most,
                 => &.{.loongarch64},
 
                 .loongarch32_ilp32,
                 .loongarch32_preserve_none,
+                .loongarch32_preserve_most,
                 => &.{.loongarch32},
 
                 .m68k_sysv,
@@ -2336,9 +2324,7 @@ pub fn requiresLibC(target: *const Target) bool {
         .psp,
         .vita,
         .mesa3d,
-        .contiki,
         .amdpal,
-        .hermit,
         .hurd,
         .wasi,
         .uefi,
@@ -2464,6 +2450,7 @@ pub const DynamicLinker = struct {
     pub fn kind(os: Os.Tag) Kind {
         return switch (os) {
             .fuchsia,
+            .managarm,
 
             .haiku,
             .illumos,
@@ -2482,15 +2469,13 @@ pub const DynamicLinker = struct {
             .visionos,
             .watchos,
             => .arch_os,
+
             .hurd,
             .linux,
             => .arch_os_abi,
+
             .freestanding,
             .other,
-
-            .contiki,
-            .hermit,
-            .managarm, // Needs to be double-checked.
 
             .plan9,
             .rtems,
@@ -2549,6 +2534,13 @@ pub const DynamicLinker = struct {
                 .thumb,
                 .x86_64,
                 => init("ld.so.1"), // Fuchsia is unusual in that `DT_INTERP` is just a basename.
+                else => none,
+            },
+
+            .managarm => switch (cpu.arch) {
+                .aarch64 => init("/lib/aarch64-managarm-mlibc-ld.so"),
+                .riscv64 => init("/lib/riscv64-managarm-mlibc-ld.so"),
+                .x86_64 => init("/lib/x86_64-managarm-mlibc-ld.so"),
                 else => none,
             },
 
@@ -2922,9 +2914,6 @@ pub const DynamicLinker = struct {
             .freestanding,
             .other,
 
-            .contiki,
-            .hermit,
-
             .plan9,
             .rtems,
 
@@ -2958,8 +2947,6 @@ pub const DynamicLinker = struct {
 
             // TODO go over each item in this list and either move it to the above list, or
             // implement the standard dynamic linker path code for it.
-            .managarm,
-
             .ps3,
             .ps4,
             .ps5,
@@ -3312,7 +3299,6 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) ?u16 {
         },
 
         .fuchsia,
-        .hermit,
 
         .haiku,
         .hurd,
@@ -3564,7 +3550,6 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) ?u16 {
         .opengl => null,
 
         .ps3,
-        .contiki,
         .managarm,
         => @panic("specify the C integer and float type sizes for this OS"),
     };

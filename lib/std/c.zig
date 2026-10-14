@@ -5212,7 +5212,7 @@ pub const sockaddr = switch (native_os) {
         /// address family
         family: sa_family_t,
         /// actually longer; address value
-        data: [14]u8,
+        data: [30]u8,
 
         pub const SS_MAXSIZE = 128;
         pub const storage = extern struct {

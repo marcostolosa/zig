@@ -5231,7 +5231,7 @@ pub const sockaddr = switch (native_os) {
             family: sa_family_t = AF.INET,
             port: in_port_t,
             addr: u32,
-            zero: [8]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
+            zero: [24]u8 = @splat(0),
         };
 
         pub const in6 = extern struct {

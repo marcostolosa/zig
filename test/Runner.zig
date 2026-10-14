@@ -64,9 +64,7 @@ fn fail(runner: *Runner, comptime fmt: []const u8, args: anytype) FailError {
     return runner.failString(try runner.eb_wip.printString(fmt, args));
 }
 fn failString(runner: *Runner, msg: std.zig.ErrorBundle.String) FailError {
-    try runner.eb_wip.addRootErrorMessage(.{
-        .msg = msg,
-    });
+    try runner.eb_wip.addRootErrorMessage(.{ .msg = msg });
     return error.AlreadyReported;
 }
 
@@ -505,33 +503,34 @@ pub const SourceReader = struct {
         src_loc: []const u8,
         msg: std.zig.ErrorBundle.String,
     ) FailError {
+        try s.eb_wip.addRootErrorMessage(.{ .msg = msg, .src_loc = try s.srcLoc(src_loc) });
+        return error.AlreadyReported;
+    }
+    fn srcLoc(
+        s: *SourceReader,
+        src_loc: []const u8,
+    ) std.mem.Allocator.Error!std.zig.ErrorBundle.SourceLocationIndex {
         const line: u32, const column: u32, const source_line = src_loc: {
-            const pos = src_loc.ptr - s.interface.buffer.ptr;
-            const end = std.mem.findScalarPos(u8, s.interface.buffer, pos, '\n') orelse
-                s.interface.buffer.len;
-            const start = if (std.mem.findScalarLast(u8, s.interface.buffer[0..end], '\n')) |newline|
-                newline + 1
-            else
-                0;
+            const buffer = s.interface.buffer[0..s.interface.end];
+            const pos = src_loc.ptr - buffer.ptr;
+            const end = std.mem.findScalarPos(u8, buffer, pos, '\n') orelse buffer.len;
+            const start =
+                if (std.mem.findScalarLast(u8, buffer[0..end], '\n')) |newline| newline + 1 else 0;
             break :src_loc .{
-                @intCast(s.line + std.mem.countScalar(u8, s.interface.buffer[0..start], '\n')),
+                @intCast(s.line + std.mem.countScalar(u8, buffer[0..start], '\n')),
                 @intCast(pos - start),
-                s.interface.buffer[start..end],
+                buffer[start..end],
             };
         };
-        try s.eb_wip.addRootErrorMessage(.{
-            .msg = msg,
-            .src_loc = try s.eb_wip.addSourceLocation(.{
-                .src_path = s.src_path,
-                .line = line,
-                .column = column,
-                .span_start = column,
-                .span_main = column,
-                .span_end = @intCast(column + src_loc.len),
-                .source_line = try s.eb_wip.addString(source_line),
-            }),
+        return s.eb_wip.addSourceLocation(.{
+            .src_path = s.src_path,
+            .line = line,
+            .column = column,
+            .span_start = column,
+            .span_main = column,
+            .span_end = @intCast(column + src_loc.len),
+            .source_line = try s.eb_wip.addString(source_line),
         });
-        return error.AlreadyReported;
     }
 };
 pub const DelimitedReader = struct {
@@ -585,10 +584,66 @@ const Update = struct {
     manifest_sr: SourceReader,
     compiler: ?Compiler,
     src_dir: std.Io.Dir,
+    eb_wip: *std.zig.ErrorBundle.Wip,
+    cmd_src_loc: std.zig.ErrorBundle.SourceLocationIndex,
+    src_loc: ?std.zig.ErrorBundle.SourceLocationIndex,
+    num: usize,
+    name: []const u8,
     prog_node: std.Progress.Node,
     mtime: std.Io.Timestamp,
-    num: usize,
     allow_skip: bool,
+
+    fn checkMatches(
+        update: *const Update,
+        what: []const u8,
+        expected: []const u8,
+        actual: []const u8,
+    ) FailError!void {
+        var expected_match_it = std.mem.splitSequence(u8, expected, "#...");
+        var pos: usize = 0;
+        while (expected_match_it.next()) |expected_match| : (pos += expected_match.len) {
+            var context_len: usize = expected_match.len;
+            pos = while (true) : (context_len -= 1) break std.mem.findPos(
+                u8,
+                actual,
+                pos,
+                expected_match[0..context_len],
+            ) orelse continue;
+            const actual_match = actual[pos..];
+            std.testing.expectEqualStrings(
+                expected_match,
+                actual_match[0..@min(actual_match.len, expected_match.len)],
+            ) catch |err| switch (err) {
+                error.TestExpectedEqual => {
+                    std.testing.failPrint("\n=============== full output: =========\n", .{});
+                    std.testing.failPrintWithVisibleNewlines(actual_match);
+                    std.testing.failPrint("\n======================================\n", .{});
+                    return update.fail("{s} did not match expected", .{what});
+                },
+            };
+        }
+    }
+
+    fn fail(update: *const Update, comptime fmt: []const u8, args: anytype) FailError {
+        return update.failString(try update.eb_wip.printString(fmt, args));
+    }
+    fn failString(update: *const Update, msg: std.zig.ErrorBundle.String) FailError {
+        var notes_buffer: [1]std.zig.ErrorBundle.ErrorMessage = undefined;
+        var notes_len: u32 = 0;
+        if (update.src_loc) |src_loc| {
+            notes_buffer[notes_len] = .{
+                .msg = try update.eb_wip.addString("after this update"),
+                .src_loc = src_loc,
+            };
+            notes_len += 1;
+        }
+        try update.eb_wip.addRootErrorMessageWithNotes(.{
+            .msg = msg,
+            .src_loc = update.cmd_src_loc,
+            .notes_len = 1,
+        }, notes_buffer[0..notes_len]);
+        return error.AlreadyReported;
+    }
 };
 
 const TestError = error{
@@ -626,9 +681,13 @@ fn testOne(runner: *Runner, test_index: u32) (error{ServerWriteFailed} || TestEr
             error.Canceled => |e| return e,
             else => |e| return runner.fail("unable to create {q}: {t}", .{ target_query, e }),
         },
+        .eb_wip = &runner.eb_wip,
+        .cmd_src_loc = undefined,
+        .src_loc = null,
+        .num = 0,
+        .name = undefined,
         .prog_node = .none,
         .mtime = .now(runner.io, .real),
-        .num = 0,
         .allow_skip = true,
     };
     defer {
@@ -654,6 +713,7 @@ fn testOne(runner: *Runner, test_index: u32) (error{ServerWriteFailed} || TestEr
                 return update.manifest_sr.fail(unexpected, "unexpected argument {q}", .{unexpected});
             continue;
         }
+        update.cmd_src_loc = try update.manifest_sr.srcLoc(cmd_src_loc);
         const cmd = std.meta.stringToEnum(Command, std.mem.cutPrefix(u8, cmd_src_loc, "#") orelse
             return update.manifest_sr.fail(cmd_src_loc, "expected command", .{})) orelse
             return update.manifest_sr.fail(cmd_src_loc, "unknown command", .{});
@@ -666,7 +726,7 @@ fn testOne(runner: *Runner, test_index: u32) (error{ServerWriteFailed} || TestEr
         defer if (contents_file) |file| file.close(runner.io);
         var contents_buffer: [512]u8 = undefined;
         var contents_impl: union(enum) {
-            ending: std.Io.Reader,
+            r: std.Io.Reader,
             dr: DelimitedReader,
             fr: std.Io.File.Reader,
         } = undefined;
@@ -678,42 +738,75 @@ fn testOne(runner: *Runner, test_index: u32) (error{ServerWriteFailed} || TestEr
                     "unexpected argument {q}",
                     .{unexpected},
                 );
-                contents_impl = .{ .ending = .ending_instance };
-                break :contents_r &contents_impl.ending;
+                contents_impl = .{ .r = .ending_instance };
+                break :contents_r &contents_impl.r;
             },
             else => {
-                const contents_path = line_it.rest();
-                if (contents_path.len == 0) {
-                    contents_impl = .{ .ending = .ending_instance };
-                    break :contents_r &contents_impl.ending;
+                const contents = line_it.rest();
+                if (contents.len == 0) {
+                    contents_impl = .{ .r = .ending_instance };
+                    break :contents_r &contents_impl.r;
                 }
+                contents: switch (contents[0]) {
+                    else => return update.manifest_sr.fail(contents, "invalid contents syntax", .{}),
+                    '"' => {
+                        if (contents.len < 2 or contents[contents.len - 1] != '"') continue :contents 0;
+                        var contents_fw: std.Io.Writer = .fixed(&contents_buffer);
+                        switch (std.zig.string_literal.parseWrite(
+                            &contents_fw,
+                            contents,
+                        ) catch |err| switch (err) {
+                            error.WriteFailed => return update.manifest_sr.fail(
+                                contents,
+                                "contents string too long, use inline or file syntax instead",
+                                .{},
+                            ),
+                        }) {
+                            .success => {
+                                contents_impl = .{ .r = .fixed(contents_fw.buffered()) };
+                                break :contents_r &contents_impl.r;
+                            },
+                            .failure => |err| return update.manifest_sr.fail(
+                                contents[err.offset()..][0..0],
+                                "{f}",
+                                .{err.fmt(contents)},
+                            ),
+                        }
+                    },
+                    '{' => {
+                        if (contents.len != 1) continue :contents 0;
 
-                if (std.mem.eql(u8, contents_path, "{")) {
-                    contents_impl = .{
-                        .dr = .init(&update.manifest_sr.interface, "#}", &contents_buffer),
-                    };
-                    skip_delimiter = true;
-                    break :contents_r &contents_impl.dr.interface;
-                }
+                        contents_impl = .{
+                            .dr = .init(&update.manifest_sr.interface, "#}", &contents_buffer),
+                        };
+                        skip_delimiter = true;
+                        break :contents_r &contents_impl.dr.interface;
+                    },
+                    '@' => {
+                        const args_test = runner.args.@"test" orelse return update.manifest_sr.fail(
+                            contents,
+                            "contents file requires directory test",
+                            .{},
+                        );
+                        const contents_path = contents[1..];
+                        try runner.discoverInput(args_test.input_dir, contents_path);
 
-                const args_test = runner.args.@"test" orelse return update.manifest_sr.fail(
-                    contents_path,
-                    "contents file requires directory test",
-                    .{},
-                );
-                try runner.discoverInput(args_test.input_dir, contents_path);
-
-                contents_file =
-                    args_test.dir.openFile(runner.io, contents_path, .{}) catch |err| switch (err) {
-                        error.Canceled => |e| return e,
-                        else => |e| return update.manifest_sr.fail(
+                        contents_file = args_test.dir.openFile(
+                            runner.io,
                             contents_path,
-                            "unable to open contents file: {t}",
-                            .{e},
-                        ),
-                    };
-                contents_impl = .{ .fr = contents_file.?.reader(runner.io, &contents_buffer) };
-                break :contents_r &contents_impl.fr.interface;
+                            .{},
+                        ) catch |err| switch (err) {
+                            error.Canceled => |e| return e,
+                            else => |e| return update.manifest_sr.fail(
+                                contents_path,
+                                "unable to open contents file: {t}",
+                                .{e},
+                            ),
+                        };
+                        contents_impl = .{ .fr = contents_file.?.reader(runner.io, &contents_buffer) };
+                        break :contents_r &contents_impl.fr.interface;
+                    },
+                }
             },
         };
 
@@ -724,28 +817,41 @@ fn testOne(runner: *Runner, test_index: u32) (error{ServerWriteFailed} || TestEr
             error.SkipTest,
             => |e| return e,
             error.ContentsReadFailed => switch (contents_impl) {
-                .ending => unreachable,
+                .r => unreachable,
                 .dr => switch (manifest_fr.err orelse return error.OutOfMemory) {
                     error.Canceled => |e| return e,
-                    else => |e| return runner.fail("unable to read manifest: {t}", .{e}),
+                    else => |e| return update.fail("unable to read manifest: {t}", .{e}),
                 },
                 .fr => |fr| switch (fr.err.?) {
                     error.Canceled => |e| return e,
-                    else => |e| return runner.fail("unable to read contents file: {t}", .{e}),
+                    else => |e| return update.fail("unable to read contents file: {t}", .{e}),
                 },
             },
         };
     } else |err| switch (err) {
         error.ReadFailed => switch (manifest_fr.err orelse return error.OutOfMemory) {
             error.Canceled => |e| return e,
-            else => |e| return runner.fail("unable to read manifest: {t}", .{e}),
+            else => |e| return update.fail("unable to read manifest: {t}", .{e}),
         },
         error.StreamTooLong => unreachable,
-        error.EndOfStream => if (skip_delimiter)
-            return runner.fail("manifest missing \"#}}\" delimiter", .{}),
+        error.EndOfStream => {
+            const final_line = update.manifest_sr.interface.buffered();
+            switch (final_line.len) {
+                0 => if (skip_delimiter) return update.manifest_sr.fail(
+                    final_line[0..0],
+                    "missing \"#}}\" delimiter",
+                    .{},
+                ),
+                else => return update.manifest_sr.fail(
+                    final_line[final_line.len..],
+                    "missing trailing newline",
+                    .{},
+                ),
+            }
+        },
     }
     if (update.compiler) |*comp| {
-        if (comp.state != .idle) return runner.fail("missing \"#check\"", .{});
+        if (comp.state != .idle) return update.fail("missing \"#check\"", .{});
         try comp.exit();
     }
 }
@@ -781,21 +887,27 @@ fn handleCommand(
         }, contents_r, target: {
             var component_it = std.mem.splitBackwardsScalar(u8, update.target_query, '-');
             const pic_str = component_it.next() orelse
-                return runner.fail("target {q} missing pic", .{update.target_query});
+                return update.fail("target {q} missing pic", .{update.target_query});
             const pic = std.meta.stringToEnum(Compiler.Target.Pic, pic_str) orelse
-                return runner.fail("target {q} unknown pic {q}", .{ update.target_query, pic_str });
+                return update.fail("target {q} unknown pic {q}", .{ update.target_query, pic_str });
             const linker_str = component_it.next() orelse
-                return runner.fail("target {q} missing linker", .{update.target_query});
+                return update.fail("target {q} missing linker", .{update.target_query});
             const linker = std.meta.stringToEnum(Compiler.Target.Linker, linker_str) orelse
-                return runner.fail("target {q} unknown linker {q}", .{ update.target_query, linker_str });
+                return update.fail("target {q} unknown linker {q}", .{
+                    update.target_query, linker_str,
+                });
             const backend_str = component_it.next() orelse
-                return runner.fail("target {q} missing backend", .{update.target_query});
+                return update.fail("target {q} missing backend", .{update.target_query});
             const backend = std.meta.stringToEnum(Compiler.Target.Backend, backend_str) orelse
-                return runner.fail("target {q} unknown backend {q}", .{ update.target_query, backend_str });
+                return update.fail("target {q} unknown backend {q}", .{
+                    update.target_query, backend_str,
+                });
             const cache_mode_str = component_it.next() orelse
-                return runner.fail("target {q} missing cache mode", .{update.target_query});
+                return update.fail("target {q} missing cache mode", .{update.target_query});
             const cache_mode = std.meta.stringToEnum(Compiler.Target.CacheMode, cache_mode_str) orelse
-                return runner.fail("target {q} unknown cache mode {q}", .{ update.target_query, cache_mode_str });
+                return update.fail("target {q} unknown cache mode {q}", .{
+                    update.target_query, cache_mode_str,
+                });
             const triple = component_it.rest();
             break :target .{
                 .triple = triple,
@@ -808,13 +920,13 @@ fn handleCommand(
                             .cbe => "c",
                         },
                     }) catch |err| switch (err) {
-                        error.ParseFailed => return runner.fail("unable to parse triple {q}", .{
+                        error.ParseFailed => return update.fail("unable to parse triple {q}", .{
                             triple,
                         }),
                     },
                 ) catch |err| switch (err) {
                     error.Canceled => |e| return e,
-                    else => |e| return runner.fail("unable to resolve target {q}: {t}", .{ triple, e }),
+                    else => |e| return update.fail("unable to resolve target {q}: {t}", .{ triple, e }),
                 },
                 .cache_mode = cache_mode,
                 .backend = backend,
@@ -868,25 +980,24 @@ fn handleCommand(
             else => |e| return update.manifest_sr.fail(arg.?, "unable to delete file: {t}", .{e}),
         },
         .update => {
+            update.src_loc = update.cmd_src_loc;
             const comp = &(update.compiler orelse return update.manifest_sr.fail(
                 cmd_src_loc,
                 "missing \"#exe\", \"#lib\", or \"#obj\"",
                 .{},
             ));
             update.prog_node.end();
-            update.prog_node = runner.prog_node.start(
-                switch (contents_r.readSliceShort(&name_buffer) catch |err| switch (err) {
-                    error.ReadFailed => return error.ContentsReadFailed,
-                }) {
-                    0 => switch (update.num) {
-                        0 => "initial update",
-                        else => |num| std.mem.print(&name_buffer, "update {d}", .{num}) catch
-                            &name_buffer,
-                    },
-                    else => |name_len| name_buffer[0..name_len],
+            const arena = runner.arena.allocator();
+            update.name = switch (contents_r.readSliceShort(&name_buffer) catch |err| switch (err) {
+                error.ReadFailed => return error.ContentsReadFailed,
+            }) {
+                0 => switch (update.num) {
+                    0 => "initial update",
+                    else => |num| try arena.print("update {d}", .{num}),
                 },
-                0,
-            );
+                else => |name_len| try arena.dupe(u8, name_buffer[0..name_len]),
+            };
+            update.prog_node = runner.prog_node.start(update.name, 0);
             _ = contents_r.discardRemaining() catch |err| switch (err) {
                 error.ReadFailed => return error.ContentsReadFailed,
             };
@@ -895,7 +1006,7 @@ fn handleCommand(
             comp.client.serveBodylessMessage(.update) catch |err| switch (err) {
                 error.WriteFailed => switch (comp.fw.err.?) {
                     error.Canceled => |e| return e,
-                    else => |e| return runner.fail("unable to send message to compiler: {t}", .{e}),
+                    else => |e| return update.fail("unable to send message to compiler: {t}", .{e}),
                 },
             };
             comp.state = .update;
@@ -934,7 +1045,7 @@ fn handleCommand(
                         unreachable;
                     const digest = body_r.takeArray(std.Build.Cache.bin_digest_len) catch
                         unreachable;
-                    try comp.checkSuccess(check, expected, update.src_dir, digest);
+                    try comp.checkSuccess(update, check, expected, digest);
                 },
                 .error_bundle => {
                     const eb = std.zig.Server.allocErrorBundle(
@@ -942,7 +1053,7 @@ fn handleCommand(
                         message.body,
                     ) catch |err| switch (err) {
                         error.OutOfMemory => |e| return e,
-                        error.EndOfStream => return runner.fail("error bundle truncated", .{}),
+                        error.EndOfStream => return update.fail("error bundle truncated", .{}),
                     };
                     switch (check) {
                         .errors => {
@@ -958,7 +1069,7 @@ fn handleCommand(
                             const actual = error_aw.written();
                             std.mem.replaceScalar(u8, actual, '\\', '/');
                             std.testing.expectEqualStrings(expected, actual) catch |err| switch (err) {
-                                error.TestExpectedEqual => return runner.fail(
+                                error.TestExpectedEqual => return update.fail(
                                     "errors did not match expected",
                                     .{},
                                 ),
@@ -969,7 +1080,7 @@ fn handleCommand(
                                 error.Canceled => {},
                                 else => {},
                             };
-                            return runner.fail("unexpected compile errors", .{});
+                            return update.fail("unexpected compile errors", .{});
                         },
                     }
                     comp.state = .idle;
@@ -977,17 +1088,15 @@ fn handleCommand(
                 },
             };
 
-            const buffered_stderr = stderr.buffered();
-            if (buffered_stderr.len > 0) {
+            const stderr_buffered = stderr.buffered();
+            if (stderr_buffered.len > 0) {
                 if (comp.allow_compiler_stderr) {
-                    std.log.info("stderr:\n{s}", .{buffered_stderr});
-                } else {
-                    return runner.fail("unexpected stderr:\n{s}", .{buffered_stderr});
-                }
+                    std.log.info("#update {q} stderr:\n{s}", .{ update.name, stderr_buffered });
+                } else return update.fail("unexpected stderr:\n{s}", .{stderr_buffered});
             }
 
             try comp.exit();
-            return runner.fail("compiler failed to send terminating error_bundle", .{});
+            return update.fail("compiler failed to send terminating error_bundle", .{});
         },
     }
     assert(contents_r.discardRemaining() catch |err| switch (err) {
@@ -1219,9 +1328,9 @@ const Compiler = struct {
     const Check = enum { errors, stdout, exit, gdb, lldb };
     fn checkSuccess(
         comp: *Compiler,
+        update: *const Update,
         check: Check,
         expected: []const u8,
-        src_dir: std.Io.Dir,
         digest: *const std.Build.Cache.BinDigest,
     ) TestError!void {
         const runner = comp.runner;
@@ -1238,9 +1347,9 @@ const Compiler = struct {
         const debug_success = 99;
 
         const tmp_dir_path = ".zig-cache" ++ std.Io.Dir.path.sep_str ++ "tmp";
-        src_dir.createDirPath(io, tmp_dir_path) catch |err| switch (err) {
+        update.src_dir.createDirPath(io, tmp_dir_path) catch |err| switch (err) {
             error.Canceled => |e| return e,
-            else => |e| return runner.fail("unable to create dir path {q}: {t}", .{
+            else => |e| return update.fail("unable to create dir path {q}: {t}", .{
                 tmp_dir_path, e,
             }),
         };
@@ -1256,12 +1365,13 @@ const Compiler = struct {
             .gdb => {
                 const script_path = tmp_dir_path ++ std.Io.Dir.path.sep_str ++ "gdb";
                 argv.appendSliceAssumeCapacity(&.{ "gdb", "--batch", "--command", script_path, "--args" });
-                const script_file = src_dir.createFile(io, script_path, .{}) catch |err| switch (err) {
-                    error.Canceled => |e| return e,
-                    else => |e| return runner.fail("unable to create debugger script {q}: {t}", .{
-                        script_path, e,
-                    }),
-                };
+                const script_file =
+                    update.src_dir.createFile(io, script_path, .{}) catch |err| switch (err) {
+                        error.Canceled => |e| return e,
+                        else => |e| return update.fail("unable to create debugger script {q}: {t}", .{
+                            script_path, e,
+                        }),
+                    };
                 errdefer script_file.close(io);
                 var script_fw = script_file.writer(io, &script_buffer);
                 script_fw.interface.writeAll(
@@ -1271,7 +1381,9 @@ const Compiler = struct {
                 ) catch |err| switch (err) {
                     error.WriteFailed => switch (script_fw.err.?) {
                         error.Canceled => |e| return e,
-                        else => |e| return runner.fail("unable to write debugger script {q}: {t}", .{ script_path, e }),
+                        else => |e| return update.fail("unable to write debugger script {q}: {t}", .{
+                            script_path, e,
+                        }),
                     },
                 };
                 break :script .{ script_path, script_file, script_fw };
@@ -1280,13 +1392,13 @@ const Compiler = struct {
                 const script_path = tmp_dir_path ++ std.Io.Dir.path.sep_str ++ "lldb";
                 argv.appendSliceAssumeCapacity(&.{ "lldb", "--batch", "--source", script_path, "--" });
                 try environ_map.put("LANG", "C.UTF-8"); // affects output formatting
-                const script_file = src_dir.createFile(io, script_path, .{}) catch |err| switch (err) {
-                    error.Canceled => |e| return e,
-                    else => |e| return runner.fail("unable to create debugger script {q}: {t}", .{
-                        script_path,
-                        e,
-                    }),
-                };
+                const script_file =
+                    update.src_dir.createFile(io, script_path, .{}) catch |err| switch (err) {
+                        error.Canceled => |e| return e,
+                        else => |e| return update.fail("unable to create debugger script {q}: {t}", .{
+                            script_path, e,
+                        }),
+                    };
                 errdefer script_file.close(io);
                 var script_fw = script_file.writer(io, &script_buffer);
                 script_fw.interface.writeAll(
@@ -1298,7 +1410,9 @@ const Compiler = struct {
                 ) catch |err| switch (err) {
                     error.WriteFailed => switch (script_fw.err.?) {
                         error.Canceled => |e| return e,
-                        else => |e| return runner.fail("unable to write debugger script {q}: {t}", .{ script_path, e }),
+                        else => |e| return update.fail("unable to write debugger script {q}: {t}", .{
+                            script_path, e,
+                        }),
                     },
                 };
                 break :script .{ script_path, script_file, script_fw };
@@ -1312,7 +1426,7 @@ const Compiler = struct {
         const bin_path = switch (comp.target.backend.?) {
             .sema => return,
             .selfhosted, .llvm => out_path,
-            .cbe => try comp.compileC(src_dir, out_path),
+            .cbe => try comp.compileC(update.src_dir, out_path),
         };
 
         const need_cross_libc =
@@ -1347,7 +1461,7 @@ const Compiler = struct {
                         &path_buffer,
                     ) catch |err| switch (err) {
                         error.Canceled => |e| return e,
-                        else => |e| return runner.fail("unable to get libc runtimes path: {t}", .{e}),
+                        else => |e| return update.fail("unable to get libc runtimes path: {t}", .{e}),
                     }];
                     argv.appendSliceAssumeCapacity(&.{ "-L", try std.Io.Dir.path.join(arena, &.{
                         libc_runtimes_path,
@@ -1386,7 +1500,10 @@ const Compiler = struct {
         if (!runner.args.quiet) std.log.info("{f}", .{std.zig.SubprocessCommand{
             .argv = argv.items,
             .cwd = cwd_path: {
-                break :cwd_path path_buffer[0 .. src_dir.realPath(io, &path_buffer) catch |err| switch (err) {
+                break :cwd_path path_buffer[0 .. update.src_dir.realPath(
+                    io,
+                    &path_buffer,
+                ) catch |err| switch (err) {
                     error.Canceled => |e| return e,
                     else => break :cwd_path null,
                 }];
@@ -1401,9 +1518,9 @@ const Compiler = struct {
         }) catch &name_buffer, 0);
         defer run_prog_node.end();
 
-        const bin_file = src_dir.openFile(io, bin_path, .{}) catch |err| switch (err) {
+        const bin_file = update.src_dir.openFile(io, bin_path, .{}) catch |err| switch (err) {
             error.Canceled => |e| return e,
-            else => |e| return runner.fail("unable to open {q}: {t}", .{ bin_path, e }),
+            else => |e| return update.fail("unable to open {q}: {t}", .{ bin_path, e }),
         };
         defer bin_file.close(io);
         const result = std.process.run(gpa, io, .{
@@ -1430,7 +1547,7 @@ const Compiler = struct {
                     , .{cmd}) catch |err| switch (err) {
                         error.WriteFailed => switch (script_fw.err.?) {
                             error.Canceled => |e| return e,
-                            else => |e| return runner.fail("unable to write debugger script {q}: {t}", .{
+                            else => |e| return update.fail("unable to write debugger script {q}: {t}", .{
                                 script_path, e,
                             }),
                         },
@@ -1442,14 +1559,14 @@ const Compiler = struct {
                     , .{debug_success}) catch |err| switch (err) {
                         error.WriteFailed => switch (script_fw.err.?) {
                             error.Canceled => |e| return e,
-                            else => |e| return runner.fail("unable to write debugger script {q}: {t}", .{
+                            else => |e| return update.fail("unable to write debugger script {q}: {t}", .{
                                 script_path, e,
                             }),
                         },
                     };
                     script_fw.flush() catch |err| switch (err) {
                         error.Canceled => |e| return e,
-                        else => |e| return runner.fail("unable to write debugger script {q}: {t}", .{
+                        else => |e| return update.fail("unable to write debugger script {q}: {t}", .{
                             script_path, e,
                         }),
                     };
@@ -1467,7 +1584,7 @@ const Compiler = struct {
                 },
             },
             .argv = argv.items,
-            .cwd = .{ .dir = src_dir },
+            .cwd = .{ .dir = update.src_dir },
             .environ_map = &environ_map,
             .progress_node = run_prog_node,
         }) catch |err| if (use_executor) {
@@ -1477,7 +1594,7 @@ const Compiler = struct {
                 .{ bin_path, comp.target.triple, err },
             );
             return;
-        } else return runner.fail("unable to run the generated executable {q}: {t}", .{
+        } else return update.fail("unable to run the generated executable {q}: {t}", .{
             bin_path, err,
         });
         defer {
@@ -1488,7 +1605,7 @@ const Compiler = struct {
             .exited => |code| switch (check) {
                 .errors => unreachable,
                 .stdout => {
-                    if (code != 0) return runner.fail(
+                    if (code != 0) return update.fail(
                         "generated executable {q} failed with code {d}",
                         .{ bin_path, code },
                     );
@@ -1496,67 +1613,49 @@ const Compiler = struct {
                         expected,
                         result.stdout,
                     ) catch |err| switch (err) {
-                        error.TestExpectedEqual => return runner.fail("stdout did not match expected", .{}),
+                        error.TestExpectedEqual => return update.fail(
+                            "stdout did not match expected",
+                            .{},
+                        ),
                     };
                 },
                 .exit => {
-                    var actual_code_buffer: [std.fmt.count("{d}", .{std.math.maxInt(u8)})]u8 = undefined;
+                    var actual_code_buffer: [std.fmt.count("{d}", .{std.math.maxInt(u8)})]u8 =
+                        undefined;
                     std.testing.expectEqualStrings(
                         expected,
                         std.mem.print(&actual_code_buffer, "{d}", .{code}) catch unreachable,
                     ) catch |err| switch (err) {
-                        error.TestExpectedEqual => return runner.fail(
+                        error.TestExpectedEqual => return update.fail(
                             "exit code did not match expected",
                             .{},
                         ),
                     };
                 },
                 .gdb, .lldb => {
-                    if (code != debug_success) return runner.fail(
+                    if (code != debug_success) return update.fail(
                         "debugging {q} failed with code {d}",
                         .{ bin_path, code },
                     );
-                    var expected_match_it = std.mem.splitSequence(u8, expected, "#...");
-                    var pos: usize = 0;
-                    while (expected_match_it.next()) |expected_match| : (pos += expected_match.len) {
-                        var context_len: usize = expected_match.len;
-                        pos = while (true) : (context_len -= 1) break std.mem.findPos(
-                            u8,
-                            result.stdout,
-                            pos,
-                            expected_match[0..context_len],
-                        ) orelse continue;
-                        const actual_match = result.stdout[pos..];
-                        std.testing.expectEqualStrings(
-                            expected_match,
-                            actual_match[0..@min(actual_match.len, expected_match.len)],
-                        ) catch |err| switch (err) {
-                            error.TestExpectedEqual => {
-                                std.testing.failPrint("\n=============== full output: =========\n", .{});
-                                std.testing.failPrintWithVisibleNewlines(actual_match);
-                                std.testing.failPrint("\n======================================\n", .{});
-                                return runner.fail("stdout did not match expected", .{});
-                            },
-                        };
-                    }
+                    try update.checkMatches("stdout", expected, result.stdout);
                 },
             },
-            .signal => |sig| return runner.fail(
+            .signal => |sig| return update.fail(
                 "generated executable {q} terminated with signal {t}",
                 .{ bin_path, sig },
             ),
-            .stopped => |sig| return runner.fail(
+            .stopped => |sig| return update.fail(
                 "generated executable {q} stopped with signal {t}",
                 .{ bin_path, sig },
             ),
-            .unknown => return runner.fail(
+            .unknown => return update.fail(
                 "generated executable {q} terminated unexpectedly",
                 .{bin_path},
             ),
         }
         if (!use_executor and result.stderr.len > 0) {
-            std.log.err("generated executable {q} had unexpected stderr:\n{s}", .{
-                bin_path, result.stderr,
+            std.log.err("#update {q} generated executable {q} had unexpected stderr:\n{s}", .{
+                update.name, bin_path, result.stderr,
             });
         }
     }

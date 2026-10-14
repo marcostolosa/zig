@@ -2201,137 +2201,6 @@ const RunnerTarget = struct {
     pic: enum { nopic, pic, pie },
 };
 
-pub const incremental_matrix: []const RunnerTarget = &.{
-    // Avoid adding more CBE or LLVM targets without good reason: they're a lot slower than others
-    // to run due to the output (C source code or LLVM IR) being built non-incrementally (by Clang
-    // or LLVM). We just have a couple here to make sure that it works.
-    .{
-        .target = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .musl,
-        },
-        .cache_mode = .incremental,
-        .backend = .cbe,
-        .linker = .old,
-        .pic = .nopic,
-    },
-    .{
-        .target = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .none,
-        },
-        .cache_mode = .incremental,
-        .backend = .llvm,
-        .linker = .lld,
-        .pic = .nopic,
-    },
-
-    .{
-        .target = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .none,
-        },
-        .cache_mode = .incremental,
-        .backend = .selfhosted,
-        .linker = .new,
-        .pic = .nopic,
-    },
-    .{
-        .target = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .windows,
-            .abi = .none,
-        },
-        .cache_mode = .incremental,
-        .backend = .selfhosted,
-        .linker = .old,
-        .pic = .pic,
-    },
-    .{
-        .target = .{
-            .cpu_arch = .wasm32,
-            .os_tag = .wasi,
-            .abi = .none,
-        },
-        .cache_mode = .incremental,
-        .backend = .selfhosted,
-        .linker = .old,
-        .pic = .nopic,
-    },
-};
-
-pub const debugger_matrix: []const RunnerTarget = &.{
-    .{
-        .target = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .none,
-        },
-        .cache_mode = .whole,
-        .backend = .selfhosted,
-        .linker = .old,
-        .pic = .nopic,
-    },
-    .{
-        .target = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .none,
-        },
-        .cache_mode = .whole,
-        .backend = .selfhosted,
-        .linker = .old,
-        .pic = .pic,
-    },
-    .{
-        .target = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .none,
-        },
-        .cache_mode = .whole,
-        .backend = .selfhosted,
-        .linker = .new,
-        .pic = .nopic,
-    },
-    .{
-        .target = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .none,
-        },
-        .cache_mode = .whole,
-        .backend = .selfhosted,
-        .linker = .new,
-        .pic = .pic,
-    },
-    .{
-        .target = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .none,
-        },
-        .cache_mode = .incremental,
-        .backend = .selfhosted,
-        .linker = .new,
-        .pic = .nopic,
-    },
-    .{
-        .target = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .none,
-        },
-        .cache_mode = .incremental,
-        .backend = .selfhosted,
-        .linker = .new,
-        .pic = .pic,
-    },
-};
-
 pub fn addStackTraceTests(b: *std.Build, options: StackTracesContext.Options) *Step {
     const step = b.step("test-stack-traces", "Run the stack trace tests");
 
@@ -3224,21 +3093,24 @@ pub fn addRunnerTests(
     defer tests_dir.close(b.graph.io);
     var test_it = tests_dir.iterate();
     while (try test_it.next(b.graph.io)) |@"test"| {
+        switch (@"test".kind) {
+            else => continue,
+            .file => {
+                if (std.mem.eql(u8, @"test".name, "matrix.zon")) continue;
+                if (isEditorFileName(@"test".name)) continue;
+            },
+            .directory => {},
+        }
+
         for (options.test_filters) |filter| {
             if (std.mem.find(u8, @"test".name, filter) != null) break;
         } else if (options.test_filters.len > 0) continue;
-
-        const test_path = tests_path.path(b, @"test".name);
-        switch (@"test".kind) {
-            else => continue,
-            .file => if (isEditorFileName(@"test".name)) continue,
-            .directory => {},
-        }
 
         const run = b.addRunArtifact(runner);
         run.setName(@"test".name);
         run.enableProtocolMode();
 
+        const test_path = tests_path.path(b, @"test".name);
         switch (@"test".kind) {
             else => continue,
             .file => run.addFileArg(test_path),

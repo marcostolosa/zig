@@ -1,0 +1,68 @@
+.{
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .none,
+        },
+        .cache_mode = .whole,
+        .backend = .selfhosted,
+        .linker = .old,
+        .pic = .nopic,
+    },
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .none,
+        },
+        .cache_mode = .whole,
+        .backend = .selfhosted,
+        .linker = .old,
+        .pic = .pic,
+    },
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .none,
+        },
+        .cache_mode = .whole,
+        .backend = .selfhosted,
+        .linker = .new,
+        .pic = .nopic,
+    },
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .none,
+        },
+        .cache_mode = .whole,
+        .backend = .selfhosted,
+        .linker = .new,
+        .pic = .pic,
+    },
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .none,
+        },
+        .cache_mode = .incremental,
+        .backend = .selfhosted,
+        .linker = .new,
+        .pic = .nopic,
+    },
+    .{
+        .target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .none,
+        },
+        .cache_mode = .incremental,
+        .backend = .selfhosted,
+        .linker = .new,
+        .pic = .pic,
+    },
+}

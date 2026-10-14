@@ -793,7 +793,7 @@ pub fn build(b: *std.Build) !void {
     const runner = b.addExecutable(.{
         .name = "runner",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("test/src/Runner.zig"),
+            .root_source_file = b.path("test/Runner.zig"),
             .target = b.graph.host,
         }),
     });
@@ -813,17 +813,15 @@ pub fn build(b: *std.Build) !void {
         .lldb = b.option([]const u8, "lldb", "path to lldb binary"),
     };
 
-    const test_incremental_step = b.step("test-incremental", "Run the incremental compilation tests");
-    try tests.addRunnerTests(b, runner, test_incremental_step, "test/incremental", tests.incremental_matrix, runner_opts);
-    test_step.dependOn(test_incremental_step);
-
     const test_debugger_step = b.step("test-debugger", "Run the debugger tests");
-    if (runner_opts.gdb == null and runner_opts.lldb == null) {
-        test_debugger_step.dependOn(&b.addFail("test-debugger requires -Dgdb and/or -Dlldb").step);
-    } else {
-        try tests.addRunnerTests(b, runner, test_debugger_step, "test/debugger", tests.debugger_matrix, runner_opts);
+    if (runner_opts.gdb != null or runner_opts.lldb != null) {
+        try tests.addRunnerTests(b, runner, test_debugger_step, "test/debugger", @import("test/debugger/matrix.zon"), runner_opts);
         test_step.dependOn(test_debugger_step);
-    }
+    } else test_debugger_step.dependOn(&b.addFail("test-debugger requires -Dgdb and/or -Dlldb").step);
+
+    const test_incremental_step = b.step("test-incremental", "Run the incremental compilation tests");
+    try tests.addRunnerTests(b, runner, test_incremental_step, "test/incremental", @import("test/incremental/matrix.zon"), runner_opts);
+    test_step.dependOn(test_incremental_step);
 }
 
 fn addWasiUpdateStep(b: *std.Build, version: [:0]const u8) !void {

@@ -11063,6 +11063,10 @@ pub const pthread_cancelstate = switch (native_os) {
         ENABLE = 1,
         DISABLE = 0,
     },
+    .haiku => enum(c_int) {
+        ENABLE = 0,
+        DISABLE = 1,
+    },
     .linux => if (native_abi.isMusl()) enum(c_int) {
         ENABLE = 0,
         DISABLE = 1,

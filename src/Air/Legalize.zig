@@ -328,7 +328,7 @@ pub const Features = std.enums.EnumSet(Feature);
 pub const Error = std.mem.Allocator.Error;
 
 pub fn legalize(air: *Air, pt: Zcu.PerThread, features: *const Features) Error!void {
-    assert(!features.eql(.empty)); // backend asked to run legalize, but no features were enabled
+    if (features.eql(.empty)) @panic("backend asked to run legalize, but no features were enabled");
     var l: Legalize = .{
         .pt = pt,
         .air_instructions = air.instructions.toMultiArrayList(),

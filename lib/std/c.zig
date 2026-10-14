@@ -5246,7 +5246,7 @@ pub const sockaddr = switch (native_os) {
         pub const un = extern struct {
             len: u8 = @sizeOf(un),
             family: sa_family_t = AF.UNIX,
-            path: [104]u8,
+            path: [126]u8,
         };
     },
     .openbsd => extern struct {

@@ -4413,13 +4413,12 @@ fn serve(
         switch (hdr.tag) {
             .exit => return cleanExit(io),
             .update => {
-                file_system_inputs.clearRetainingCapacity();
-
                 if (arg_mode == .translate_c) {
                     var arena_instance = std.heap.ArenaAllocator.init(gpa);
                     defer arena_instance.deinit();
                     const arena = arena_instance.allocator();
                     var output: Compilation.TranslateCResult = undefined;
+                    file_system_inputs.clearRetainingCapacity();
                     try cmdTranslateC(comp, arena, &output, file_system_inputs, main_progress_node, environ_map);
                     defer output.deinit(gpa);
 
@@ -4437,7 +4436,6 @@ fn serve(
 
                     continue;
                 }
-
                 try comp.makeBinFileWritable();
                 try comp.update(main_progress_node);
                 try comp.makeBinFileExecutable();
@@ -4463,7 +4461,6 @@ fn serve(
                 //);
             },
             .hot_update => {
-                file_system_inputs.clearRetainingCapacity();
                 if (child_pid) |pid| {
                     try comp.hotCodeSwap(main_progress_node, pid);
                     try serveUpdateResults(&server, comp);

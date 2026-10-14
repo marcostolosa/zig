@@ -75,7 +75,6 @@ pub const Case = struct {
 
     emit_asm: bool = false,
     emit_bin: bool = true,
-    emit_h: bool = false,
     is_test: bool = false,
     expect_exact: bool = false,
     backend: Backend = .auto,

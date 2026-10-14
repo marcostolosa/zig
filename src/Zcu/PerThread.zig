@@ -148,6 +148,12 @@ pub fn update(
         comp.link_queue.finishZcuQueue(comp);
     }
 
+    if (zcu.illegal_module_root) |_| {
+        // We cannot run AstGen because we failed to set up the module roots. We can return early
+        // because this is a guaranteed compile error.
+        return;
+    }
+
     {
         const tracy_trace = traceNamed(@src(), "astgen");
         defer tracy_trace.end();
@@ -203,11 +209,9 @@ pub fn update(
         // On the other hand, it's fine to directly iterate `zcu.embed_table.keys()` here
         // because `workerUpdateEmbedFile` can't invalidate it. The different here is that one
         // `@embedFile` can't trigger analysis of a new `@embedFile`!
-        for (0.., zcu.embed_table.keys()) |ef_index_usize, ef| {
+        for (0.., zcu.embed_table.keys()) |ef_index_usize, *ef| {
             const ef_index: Zcu.EmbedFile.Index = @fromBackingInt(@intCast(ef_index_usize));
-            astgen_group.async(io, workerUpdateEmbedFile, .{
-                comp, ef_index, ef,
-            });
+            astgen_group.async(io, workerUpdateEmbedFile, .{ comp, ef_index, ef });
         }
 
         try astgen_group.await(io);
@@ -219,8 +223,8 @@ pub fn update(
     // they belong to.
     const any_fatal_files = try pt.computeAliveFiles();
 
-    // If the cache mode is `whole`, add every alive source file to the manifest.
     switch (comp.cache_use) {
+        .none => {},
         .whole => |whole| if (whole.cache_manifest) |man| {
             for (zcu.alive_files.keys()) |file_index| {
                 const file = zcu.fileByIndex(file_index);
@@ -250,7 +254,11 @@ pub fn update(
                 };
             }
         },
-        .none, .incremental => {},
+        .incremental => {
+            // Do not include file contents in the cache manifest because we
+            // want the hash to be the same regardless of the contents of the
+            // source files so that incremental can do its thing.
+        },
     }
 
     if (comp.time_report) |*tr| {
@@ -2494,11 +2502,7 @@ pub fn doImport(
 }
 /// This is called once during `Compilation.create` and never again. "builtin" modules don't yet
 /// exist, so are not added to `module_roots` here. They must be added when they are created.
-pub fn populateModuleRootTable(pt: Zcu.PerThread) error{
-    OutOfMemory,
-    /// One of the specified modules had its root source file at an illegal path.
-    IllegalZigImport,
-}!void {
+pub fn populateModuleRootTable(pt: Zcu.PerThread) Allocator.Error!void {
     const zcu = pt.zcu;
     const comp = zcu.comp;
     const gpa = comp.gpa;
@@ -2507,7 +2511,7 @@ pub fn populateModuleRootTable(pt: Zcu.PerThread) error{
     // We'll initially add [mod, undefined] pairs, and when we reach the pair while
     // iterating, rewrite the undefined value.
     const roots = &zcu.module_roots;
-    roots.clearRetainingCapacity();
+    assert(roots.count() == 0);
 
     // Start with:
     // * `std_mod`, which is the main root of analysis
@@ -2542,7 +2546,9 @@ pub fn populateModuleRootTable(pt: Zcu.PerThread) error{
         errdefer path.deinit(gpa);
 
         if (try path.isIllegalZigImport(gpa, zcu.comp.dirs)) {
-            return error.IllegalZigImport;
+            // One of the specified modules had its root source file at an illegal path.
+            zcu.illegal_module_root = mod;
+            return;
         }
 
         const gop = try zcu.import_table.getOrPutAdapted(gpa, path, Zcu.ImportTableAdapter{ .zcu = zcu });
@@ -2781,15 +2787,21 @@ fn updateBuiltinModule(pt: Zcu.PerThread, opts: Builtin) Allocator.Error!struct 
     const gpa = comp.gpa;
     const io = comp.io;
 
-    const gop = try zcu.builtin_modules.getOrPut(gpa, opts.hash());
-    if (gop.found_existing) return .{ // the `File` is up-to-date
-        .file = zcu.module_roots.get(gop.value_ptr.*).?.unwrap().?,
-        .module_root = gop.value_ptr.*,
+    const mod: *Module = mod: {
+        const gop = try zcu.builtin_modules.getOrPut(gpa, opts.hash());
+        if (!gop.found_existing) {
+            errdefer _ = zcu.builtin_modules.pop();
+            gop.value_ptr.* = try .createBuiltin(comp.arena, opts, comp.dirs);
+        }
+        const mod = gop.value_ptr.*;
+        assert(std.mem.eql(u8, &mod.getBuiltinOptions(comp.config).hash(), gop.key_ptr)); // builtin is its own builtin
+        break :mod mod;
     };
-    errdefer _ = zcu.builtin_modules.pop();
 
-    const mod: *Module = try .createBuiltin(comp.arena, opts, comp.dirs);
-    assert(std.mem.eql(u8, &mod.getBuiltinOptions(comp.config).hash(), gop.key_ptr)); // builtin is its own builtin
+    if (zcu.module_roots.get(mod)) |file| {
+        // We have already loaded this builtin.zig before!
+        return .{ .file = file.unwrap().?, .module_root = mod };
+    }
 
     const path = try mod.root.join(gpa, comp.dirs, "builtin.zig");
     errdefer path.deinit(gpa);
@@ -2827,7 +2839,6 @@ fn updateBuiltinModule(pt: Zcu.PerThread, opts: Builtin) Allocator.Error!struct 
         .root_type = .none,
     });
 
-    gop.value_ptr.* = mod;
     file_gop.key_ptr.* = file_index;
     zcu.module_roots.putAssumeCapacityNoClobber(mod, file_index.toOptional());
     try opts.populateFile(gpa, file);
@@ -2883,22 +2894,19 @@ pub fn embedFile(
             return @fromBackingInt(@intCast(gop.index));
         }
         errdefer _ = zcu.embed_table.pop();
-        gop.key_ptr.* = try pt.newEmbedFile(path);
+        try pt.initEmbedFile(gop.key_ptr, path);
         return @fromBackingInt(@intCast(gop.index));
     }
 
-    const embed_file: *Zcu.EmbedFile, const embed_file_idx: Zcu.EmbedFile.Index = ef: {
+    const embed_file, const embed_file_idx: Zcu.EmbedFile.Index = ef: {
         const path = try cur_file.path.upJoin(gpa, zcu.comp.dirs, import_string);
         errdefer path.deinit(gpa);
         const gop = try zcu.embed_table.getOrPutAdapted(gpa, path, Zcu.EmbedTableAdapter{});
-        if (gop.found_existing) {
-            path.deinit(gpa); // we're not using this key
-            break :ef .{ gop.key_ptr.*, @fromBackingInt(@intCast(gop.index)) };
-        } else {
+        if (!gop.found_existing) {
             errdefer _ = zcu.embed_table.pop();
-            gop.key_ptr.* = try pt.newEmbedFile(path);
-            break :ef .{ gop.key_ptr.*, @fromBackingInt(@intCast(gop.index)) };
-        }
+            try pt.initEmbedFile(gop.key_ptr, path);
+        } else path.deinit(gpa); // we're not using this key
+        break :ef .{ gop.key_ptr, @fromBackingInt(@intCast(gop.index)) };
     };
 
     switch (embed_file.path.isNested(cur_file.mod.?.root)) {
@@ -2913,7 +2921,7 @@ pub fn updateEmbedFile(
     pt: Zcu.PerThread,
     ef: *Zcu.EmbedFile,
     /// If not `null`, the interned file data is stored here, if it was loaded.
-    /// `newEmbedFile` uses this to add the file to the `whole` cache manifest.
+    /// `initEmbedFile` uses this to add the file to the `whole` cache manifest.
     ip_str_out: ?*?InternPool.String,
 ) Allocator.Error!void {
     pt.updateEmbedFileInner(ef, ip_str_out) catch |err| switch (err) {
@@ -3000,17 +3008,13 @@ fn updateEmbedFileInner(
 }
 
 /// Assumes that `path` is allocated into `gpa`. Takes ownership of `path` on success.
-fn newEmbedFile(pt: Zcu.PerThread, path: Compilation.Path) EmbedFileError!*Zcu.EmbedFile {
+fn initEmbedFile(pt: Zcu.PerThread, ef: *Zcu.EmbedFile, path: Compilation.Path) EmbedFileError!void {
     const zcu = pt.zcu;
     const comp = zcu.comp;
     const io = comp.io;
-    const gpa = comp.gpa;
     const ip = &zcu.intern_pool;
 
-    const new_file = try gpa.create(Zcu.EmbedFile);
-    errdefer gpa.destroy(new_file);
-
-    new_file.* = .{
+    ef.* = .{
         .path = path,
         .val = .none,
         .err = null,
@@ -3018,7 +3022,7 @@ fn newEmbedFile(pt: Zcu.PerThread, path: Compilation.Path) EmbedFileError!*Zcu.E
     };
 
     var opt_ip_str: ?InternPool.String = null;
-    try pt.updateEmbedFile(new_file, &opt_ip_str);
+    try pt.updateEmbedFile(ef, &opt_ip_str);
 
     try comp.appendFileSystemInput(path);
 
@@ -3031,19 +3035,17 @@ fn newEmbedFile(pt: Zcu.PerThread, path: Compilation.Path) EmbedFileError!*Zcu.E
         const man = whole.cache_manifest orelse break :cache;
         const ip_str = opt_ip_str orelse break :cache; // this will be a compile error
 
-        const array_len = Value.fromInterned(new_file.val).typeOf(zcu).childType(zcu).arrayLen(zcu);
+        const array_len = Value.fromInterned(ef.val).typeOf(zcu).childType(zcu).arrayLen(zcu);
         const contents = ip_str.toSlice(array_len, ip);
 
         try whole.cache_manifest_mutex.lock(io);
         defer whole.cache_manifest_mutex.unlock(io);
 
-        path.addToCacheManifestAsDiscovered(man, &comp.dirs, contents, new_file.stat) catch |err| switch (err) {
+        path.addToCacheManifestAsDiscovered(man, &comp.dirs, contents, ef.stat) catch |err| switch (err) {
             error.FileSystemFailure => unreachable, // contents and stat are both provided
             else => |e| return e,
         };
     }
-
-    return new_file;
 }
 
 pub fn scanNamespace(
@@ -3242,9 +3244,9 @@ const ScanDeclIter = struct {
                 // Perhaps we should add all test indiscriminately and filter at the end of the update.
                 if (!comp.config.is_test) break :a false;
                 if (file.mod != zcu.main_mod) break :a false;
-                if (is_named and comp.test_filters.len > 0) {
+                if (is_named and zcu.test_filters.len > 0) {
                     const fqn_slice = fqn.toSlice(ip);
-                    for (comp.test_filters) |test_filter| {
+                    for (zcu.test_filters) |test_filter| {
                         if (std.mem.find(u8, fqn_slice, test_filter) != null) break;
                     } else break :a false;
                 }

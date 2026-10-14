@@ -9032,12 +9032,16 @@ pub const termios = switch (native_os) {
     },
     .haiku => extern struct {
         iflag: tc_iflag_t,
+        ispeed: u16,
         oflag: tc_oflag_t,
+        ospeed: u16,
         cflag: tc_cflag_t,
+        ispeed_high: u16,
         lflag: tc_lflag_t,
+        ospeed_high: u16,
         line: cc_t,
-        ispeed: speed_t,
-        ospeed: speed_t,
+        _pad1: u8 = 0,
+        _pad2: u8 = 0,
         cc: [NCCS]cc_t,
     },
     .illumos => extern struct {

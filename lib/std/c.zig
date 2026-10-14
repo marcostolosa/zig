@@ -1978,9 +1978,16 @@ pub const RLIM = switch (native_os) {
     .linux => linux.RLIM,
     .emscripten => emscripten.RLIM,
     // https://github.com/SerenityOS/serenity/blob/aae106e37b48f2158e68902293df1e4bf7b80c0f/Userland/Libraries/LibC/sys/resource.h#L52
-    .openbsd, .haiku, .dragonfly, .netbsd, .freebsd, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos, .serenity => struct {
+    .openbsd, .dragonfly, .netbsd, .freebsd, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos, .serenity => struct {
         /// No limit
         pub const INFINITY: rlim_t = (1 << 63) - 1;
+
+        pub const SAVED_MAX = INFINITY;
+        pub const SAVED_CUR = INFINITY;
+    },
+    .haiku => struct {
+        /// No limit
+        pub const INFINITY: rlim_t = 0xffffffff;
 
         pub const SAVED_MAX = INFINITY;
         pub const SAVED_CUR = INFINITY;

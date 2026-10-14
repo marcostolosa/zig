@@ -4911,7 +4911,7 @@ pub const sigset_t = switch (native_os) {
 pub const sigval = switch (native_os) {
     .linux => linux.sigval,
     // https://github.com/SerenityOS/serenity/blob/ec492a1a0819e6239ea44156825c4ee7234ca3db/Kernel/API/POSIX/signal.h#L22-L25
-    .openbsd, .dragonfly, .freebsd, .serenity => extern union {
+    .openbsd, .dragonfly, .freebsd, .haiku, .serenity => extern union {
         int: c_int,
         ptr: ?*anyopaque,
     },

@@ -9114,7 +9114,7 @@ pub const tc_iflag_t = switch (native_os) {
         IMAXBEL: bool = false,
         _: u18 = 0,
     },
-    .haiku => packed struct(u32) {
+    .haiku => packed struct(u16) {
         IGNBRK: bool = false,
         BRKINT: bool = false,
         IGNPAR: bool = false,
@@ -9128,7 +9128,7 @@ pub const tc_iflag_t = switch (native_os) {
         IXON: bool = false,
         IXANY: bool = false,
         IXOFF: bool = false,
-        _: u19 = 0,
+        _: u3 = 0,
     },
     .illumos => packed struct(u32) {
         IGNBRK: bool = false,
@@ -9243,7 +9243,23 @@ pub const tc_oflag_t = switch (native_os) {
         _: u14 = 0,
     },
     // https://github.com/SerenityOS/serenity/blob/d277cdfd4c7ed21d5248a83217ae03b9f890c3c8/Kernel/API/POSIX/termios.h#L69-L97
-    .haiku, .emscripten, .serenity => packed struct(u32) {
+    .haiku => packed struct(u16) {
+        OPOST: bool = false,
+        OLCUC: bool = false,
+        ONLCR: bool = false,
+        OCRNL: bool = false,
+        ONOCR: bool = false,
+        ONLRET: bool = false,
+        OFILL: bool = false,
+        OFDEL: bool = false,
+        NLDLY: u1 = 0,
+        CRDLY: u2 = 0,
+        TABDLY: u2 = 0,
+        BSDLY: u1 = 0,
+        VTDLY: u1 = 0,
+        FFDLY: u1 = 0,
+    },
+    .emscripten, .serenity => packed struct(u32) {
         OPOST: bool = false,
         OLCUC: bool = false,
         ONLCR: bool = false,
@@ -9356,7 +9372,7 @@ pub const tc_cflag_t = switch (native_os) {
         MDMBUF: bool = false,
         _: u11 = 0,
     },
-    .haiku => packed struct(u32) {
+    .haiku => packed struct(u16) {
         _0: u5 = 0,
         CSIZE: CSIZE = .CS7,
         CSTOPB: bool = false,
@@ -9368,7 +9384,7 @@ pub const tc_cflag_t = switch (native_os) {
         XLOBLK: bool = false,
         CTSFLOW: bool = false,
         RTSFLOW: bool = false,
-        _: u17 = 0,
+        _: u1 = 0,
     },
     .illumos => packed struct(u32) {
         _0: u4 = 0,
@@ -9490,7 +9506,7 @@ pub const tc_lflag_t = switch (native_os) {
         _30: u1 = 0,
         NOFLSH: bool = false,
     },
-    .haiku => packed struct(u32) {
+    .haiku => packed struct(u16) {
         ISIG: bool = false,
         ICANON: bool = false,
         XCASE: bool = false,
@@ -9506,7 +9522,7 @@ pub const tc_lflag_t = switch (native_os) {
         ECHOKE: bool = false,
         FLUSHO: bool = false,
         PENDIN: bool = false,
-        _: u17 = 0,
+        _: u1 = 0,
     },
     .illumos => packed struct(u32) {
         ISIG: bool = false,

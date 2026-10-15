@@ -11,6 +11,7 @@ comptime {
         symbol(&iswalnum, "iswalnum");
         symbol(&iswblank, "iswblank");
         symbol(&iswdigit, "iswdigit");
+        symbol(&iswgraph, "iswgraph");
         symbol(&iswprint, "iswprint");
         symbol(&iswspace, "iswspace");
         symbol(&iswxdigit, "iswxdigit");
@@ -18,6 +19,7 @@ comptime {
         symbol(&__iswalnum_l, "__iswalnum_l");
         symbol(&__iswblank_l, "__iswblank_l");
         symbol(&__iswdigit_l, "__iswdigit_l");
+        symbol(&__iswgraph_l, "__iswgraph_l");
         symbol(&__iswprint_l, "__iswprint_l");
         symbol(&__iswspace_l, "__iswspace_l");
         symbol(&__iswxdigit_l, "__iswxdigit_l");
@@ -25,6 +27,7 @@ comptime {
         symbol(&__iswalnum_l, "iswalnum_l");
         symbol(&__iswblank_l, "iswblank_l");
         symbol(&__iswdigit_l, "iswdigit_l");
+        symbol(&__iswgraph_l, "iswgraph_l");
         symbol(&__iswprint_l, "iswprint_l");
         symbol(&__iswspace_l, "iswspace_l");
         symbol(&__iswxdigit_l, "iswxdigit_l");
@@ -58,6 +61,16 @@ fn iswdigit(wc: wint_t) callconv(.c) c_int {
 fn __iswdigit_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {
     _ = locale;
     return iswdigit(wc);
+}
+
+fn iswgraph(wc: wint_t) callconv(.c) c_int {
+    if (wc > std.math.maxInt(u8)) return 0;
+    return @intFromBool(iswspace(wc) == 0 and iswprint(wc) != 0);
+}
+
+fn __iswgraph_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {
+    _ = locale;
+    return iswgraph(wc);
 }
 
 fn iswprint(wc: wint_t) callconv(.c) c_int {

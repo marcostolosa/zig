@@ -530,7 +530,6 @@ const src_files = [_][]const u8{
     "musl/src/ctype/__ctype_toupper_loc.c",
     "musl/src/ctype/iswalnum.c",
     "musl/src/ctype/iswalpha.c",
-    "musl/src/ctype/iswblank.c",
     "musl/src/ctype/iswcntrl.c",
     "musl/src/ctype/iswctype.c",
     "musl/src/ctype/iswdigit.c",

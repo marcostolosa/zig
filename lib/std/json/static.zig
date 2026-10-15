@@ -765,7 +765,7 @@ pub fn innerParseFromValue(
             if (unionInfo.tag_type == null) @compileError("Unable to parse into untagged union '" ++ @typeName(T) ++ "'");
 
             if (source != .object) {
-                if (options.diagnostics) |diag| diag.setMessage("union (object with one field), found: " ++ @tagName(source));
+                if (options.diagnostics) |diag| diag.setMessageFmt("union (object with one field), found: {s}", .{@tagName(source)});
                 return error.UnexpectedToken;
             }
             if (source.object.count() != 1) {
@@ -782,7 +782,6 @@ pub fn innerParseFromValue(
                     if (u_field_type == void) {
                         // void isn't really a json type, but we can support void payload union tags with {} as a value.
 
-                        if (kv.value_ptr.* != .object) return error.UnexpectedToken;
                         switch (kv.value_ptr.*) {
                             .object => {},
                             else => |t| return typeError(options.diagnostics, t, "void payload ('{}')"),

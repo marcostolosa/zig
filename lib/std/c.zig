@@ -11239,15 +11239,11 @@ pub extern "c" fn getaddrinfo(
 
 pub extern "c" fn freeaddrinfo(res: *addrinfo) void;
 
-pub extern "c" fn getnameinfo(
-    noalias addr: *const sockaddr,
-    addrlen: socklen_t,
-    noalias host: ?[*]u8,
-    hostlen: if (native_os == .dragonfly) usize else socklen_t,
-    noalias serv: ?[*]u8,
-    servlen: if (native_os == .dragonfly) usize else socklen_t,
-    flags: NI,
-) EAI;
+pub const getnameinfo = switch (native_os) {
+    .dragonfly => dragonfly.getnameinfo,
+    .freebsd => freebsd.getnameinfo,
+    else => private.getnameinfo,
+};
 
 pub extern "c" fn gai_strerror(errcode: EAI) [*:0]const u8;
 
@@ -11909,6 +11905,15 @@ const private = struct {
     extern "c" fn realpath(noalias file_name: [*:0]const u8, noalias resolved_name: [*]u8) ?[*:0]u8;
     extern "c" fn recvmsg(sockfd: fd_t, msg: *msghdr, flags: u32) isize;
     extern "c" fn sched_yield() c_int;
+    extern "c" fn getnameinfo(
+        noalias addr: *const sockaddr,
+        addrlen: socklen_t,
+        noalias host: ?[*]u8,
+        hostlen: socklen_t,
+        noalias serv: ?[*]u8,
+        servlen: socklen_t,
+        flags: NI,
+    ) EAI;
     extern "c" fn sendfile(out_fd: fd_t, in_fd: fd_t, offset: ?*off_t, count: usize) isize;
     extern "c" fn sendmmsg(sockfd: fd_t, msgvec: [*]mmsghdr, n: c_uint, flags: u32) c_int;
     extern "c" fn sigaction(sig: SIG, noalias act: ?*const Sigaction, noalias oact: ?*Sigaction) c_int;

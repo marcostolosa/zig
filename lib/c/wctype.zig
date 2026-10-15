@@ -11,14 +11,17 @@ comptime {
         symbol(&iswalnum, "iswalnum");
         symbol(&iswblank, "iswblank");
         symbol(&iswdigit, "iswdigit");
+        symbol(&iswprint, "iswprint");
 
         symbol(&__iswalnum_l, "__iswalnum_l");
         symbol(&__iswblank_l, "__iswblank_l");
         symbol(&__iswdigit_l, "__iswdigit_l");
+        symbol(&__iswprint_l, "__iswprint_l");
 
         symbol(&__iswalnum_l, "iswalnum_l");
         symbol(&__iswblank_l, "iswblank_l");
         symbol(&__iswdigit_l, "iswdigit_l");
+        symbol(&__iswprint_l, "iswprint_l");
     }
 }
 
@@ -49,4 +52,20 @@ fn iswdigit(wc: wint_t) callconv(.c) c_int {
 fn __iswdigit_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {
     _ = locale;
     return iswdigit(wc);
+}
+
+fn iswprint(wc: wint_t) callconv(.c) c_int {
+    const wc_unsigned: @Int(.unsigned, @bitSizeOf(wint_t)) = @bitCast(wc);
+    if (wc_unsigned < 0xff)
+        return @intFromBool((wc_unsigned +% 1 & 0x7f) >= 0x21);
+    if (wc_unsigned < 0x2028 or wc_unsigned -% 0x202a < 0xd800 -% 0x202a or wc_unsigned -% 0xe000 < 0xfff9 -% 0xe000)
+        return 1;
+    if (wc_unsigned -% 0xfffc > 0x10ffff -% 0xfffc or (wc_unsigned & 0xfffe) == 0xfffe)
+        return 0;
+    return 1;
+}
+
+fn __iswprint_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {
+    _ = locale;
+    return iswprint(wc);
 }

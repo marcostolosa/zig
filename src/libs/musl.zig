@@ -534,7 +534,6 @@ const src_files = [_][]const u8{
     "musl/src/ctype/iswgraph.c",
     "musl/src/ctype/iswlower.c",
     "musl/src/ctype/iswpunct.c",
-    "musl/src/ctype/iswspace.c",
     "musl/src/ctype/iswupper.c",
     "musl/src/ctype/towctrans.c",
     "musl/src/ctype/wcswidth.c",

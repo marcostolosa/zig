@@ -12,18 +12,21 @@ comptime {
         symbol(&iswblank, "iswblank");
         symbol(&iswdigit, "iswdigit");
         symbol(&iswprint, "iswprint");
+        symbol(&iswspace, "iswspace");
         symbol(&iswxdigit, "iswxdigit");
 
         symbol(&__iswalnum_l, "__iswalnum_l");
         symbol(&__iswblank_l, "__iswblank_l");
         symbol(&__iswdigit_l, "__iswdigit_l");
         symbol(&__iswprint_l, "__iswprint_l");
+        symbol(&__iswspace_l, "__iswspace_l");
         symbol(&__iswxdigit_l, "__iswxdigit_l");
 
         symbol(&__iswalnum_l, "iswalnum_l");
         symbol(&__iswblank_l, "iswblank_l");
         symbol(&__iswdigit_l, "iswdigit_l");
         symbol(&__iswprint_l, "iswprint_l");
+        symbol(&__iswspace_l, "iswspace_l");
         symbol(&__iswxdigit_l, "iswxdigit_l");
     }
 }
@@ -71,6 +74,17 @@ fn iswprint(wc: wint_t) callconv(.c) c_int {
 fn __iswprint_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {
     _ = locale;
     return iswprint(wc);
+}
+
+const spaces = [_]wchar_t{ ' ', '\t', '\n', '\r', 11, 12, 0x0085, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x205f, 0x3000, 0 };
+
+fn iswspace(wc: wint_t) callconv(.c) c_int {
+    return @intFromBool(wc != 0 and std.c.wcschr(@ptrCast(&spaces[0]), @bitCast(wc)) != null);
+}
+
+fn __iswspace_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {
+    _ = locale;
+    return iswspace(wc);
 }
 
 fn iswxdigit(wc: wint_t) callconv(.c) c_int {

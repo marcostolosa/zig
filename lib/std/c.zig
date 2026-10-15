@@ -11429,6 +11429,8 @@ pub extern "c" fn iswspace(c: wint_t) c_int;
 pub extern "c" fn iswupper(c: wint_t) c_int;
 pub extern "c" fn iswxdigit(c: wint_t) c_int;
 
+pub extern "c" fn wcschr(str: [*:0]const wchar_t, val: wchar_t) ?[*:0]wchar_t;
+
 // Math
 pub extern "c" fn atan(x: f64) f64;
 pub extern "c" fn copysign(x: f64, y: f64) f64;

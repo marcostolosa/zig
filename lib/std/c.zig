@@ -11235,9 +11235,9 @@ pub extern "c" fn getnameinfo(
     noalias addr: *const sockaddr,
     addrlen: socklen_t,
     noalias host: ?[*]u8,
-    hostlen: socklen_t,
+    hostlen: if (native_os == .dragonfly) usize else socklen_t,
     noalias serv: ?[*]u8,
-    servlen: socklen_t,
+    servlen: if (native_os == .dragonfly) usize else socklen_t,
     flags: NI,
 ) EAI;
 

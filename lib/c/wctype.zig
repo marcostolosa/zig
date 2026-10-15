@@ -7,7 +7,7 @@ const wchar_t = std.c.wchar_t;
 const symbol = @import("../c.zig").symbol;
 
 comptime {
-    if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
+    if (builtin.target.isMuslLibC()) {
         symbol(&iswalnum, "iswalnum");
         symbol(&iswblank, "iswblank");
         symbol(&iswdigit, "iswdigit");

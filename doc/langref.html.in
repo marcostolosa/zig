@@ -7336,10 +7336,7 @@ fn readU32Be() u32 {}
             <pre>{#syntax#}addrspace{#endsyntax#}</pre>
           </th>
           <td>
-            The {#syntax#}addrspace{#endsyntax#} keyword.
-            <ul>
-              <li>TODO add documentation for addrspace</li>
-            </ul>
+            The {#syntax#}addrspace{#endsyntax#} keyword specifies a custom hardware memory address space for pointers.
           </td>
         </tr>
         <tr>
@@ -7415,8 +7412,8 @@ fn readU32Be() u32 {}
             <pre>{#syntax#}break{#endsyntax#}</pre>
           </th>
           <td>
-            {#syntax#}break{#endsyntax#} can be used with a block label to return a value from the block.
-            It can also be used to exit a loop before iteration completes naturally.
+            {#syntax#}break{#endsyntax#} can be used to exit a loop before iteration completes naturally.
+            It can also be used with a block label to return a value from the block.
             <ul>
               <li>See also {#link|Blocks#}, {#link|while#}, {#link|for#}</li>
             </ul>
@@ -7511,7 +7508,7 @@ fn readU32Be() u32 {}
             <pre>{#syntax#}enum{#endsyntax#}</pre>
           </th>
           <td>
-            {#syntax#}enum{#endsyntax#} defines an enum type.
+            {#syntax#}enum{#endsyntax#} defines an enum type that can be assigned to a variable or used directly.
             <ul>
               <li>See also {#link|enum#}</li>
             </ul>
@@ -7533,7 +7530,7 @@ fn readU32Be() u32 {}
             <pre>{#syntax#}error{#endsyntax#}</pre>
           </th>
           <td>
-            {#syntax#}error{#endsyntax#} defines an error type.
+            {#syntax#}error{#endsyntax#} defines an error type that can be assigned to a variable or used directly.
             <ul>
               <li>See also {#link|Errors#}</li>
             </ul>
@@ -7579,7 +7576,7 @@ fn readU32Be() u32 {}
             <pre>{#syntax#}for{#endsyntax#}</pre>
           </th>
           <td>
-            A {#syntax#}for{#endsyntax#} expression can be used to iterate over the elements of a slice, array, or tuple.
+            A {#syntax#}for{#endsyntax#} expression can be used to iterate over a range or the elements of a slice, array, or tuple.
             <ul>
               <li>See also {#link|for#}</li>
             </ul>
@@ -7622,10 +7619,7 @@ fn readU32Be() u32 {}
             <pre>{#syntax#}noalias{#endsyntax#}</pre>
           </th>
           <td>
-            The {#syntax#}noalias{#endsyntax#} keyword.
-            <ul>
-              <li>TODO add documentation for noalias</li>
-            </ul>
+            The {#syntax#}noalias{#endsyntax#} keyword guarantees that a pointer is the only reference to its underlying memory address.
           </td>
         </tr>
         <tr>
@@ -7662,7 +7656,7 @@ fn readU32Be() u32 {}
             <pre>{#syntax#}opaque{#endsyntax#}</pre>
           </th>
           <td>
-            {#syntax#}opaque{#endsyntax#} defines an opaque type.
+            {#syntax#}opaque{#endsyntax#} defines an opaque type that can be assigned to a variable or used directly.
             <ul>
               <li>See also {#link|opaque#}</li>
             </ul>
@@ -7727,7 +7721,7 @@ fn readU32Be() u32 {}
             <pre>{#syntax#}return{#endsyntax#}</pre>
           </th>
           <td>
-            {#syntax#}return{#endsyntax#} exits a function with a value.
+            {#syntax#}return{#endsyntax#} exits a function, optionally with a value.
             <ul>
               <li>See also {#link|Functions#}</li>
             </ul>
@@ -7738,7 +7732,7 @@ fn readU32Be() u32 {}
             <pre>{#syntax#}struct{#endsyntax#}</pre>
           </th>
           <td>
-            {#syntax#}struct{#endsyntax#} defines a struct.
+            {#syntax#}struct{#endsyntax#} defines a struct type that can be assigned to a variable or used directly.
             <ul>
               <li>See also {#link|struct#}</li>
             </ul>
@@ -7807,7 +7801,7 @@ fn readU32Be() u32 {}
             <pre>{#syntax#}union{#endsyntax#}</pre>
           </th>
           <td>
-            {#syntax#}union{#endsyntax#} defines a union.
+            {#syntax#}union{#endsyntax#} defines a union type that can be assigned to a variable or used directly.
             <ul>
               <li>See also {#link|union#}</li>
             </ul>
@@ -7832,7 +7826,7 @@ fn readU32Be() u32 {}
             <pre>{#syntax#}var{#endsyntax#}</pre>
           </th>
           <td>
-            {#syntax#}var{#endsyntax#} declares a variable that may be modified.
+            {#syntax#}var{#endsyntax#} declares a variable that will be modified.
             <ul>
               <li>See also {#link|Variables#}</li>
             </ul>

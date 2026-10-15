@@ -164,38 +164,6 @@ pub fn exeFromCompiledC(ctx: *Cases, name: []const u8, target_query: std.Target.
     return &ctx.cases.items[ctx.cases.items.len - 1];
 }
 
-pub fn addObjLlvm(ctx: *Cases, name: []const u8, target: std.Build.ResolvedTarget) *Case {
-    const can_emit_asm = switch (target.result.cpu.arch) {
-        .csky,
-        .xtensa,
-        => false,
-        else => true,
-    };
-    const can_emit_bin = switch (target.result.cpu.arch) {
-        .arc,
-        .csky,
-        .nvptx,
-        .nvptx64,
-        .xcore,
-        .xtensa,
-        => false,
-        else => true,
-    };
-
-    ctx.cases.append(.{
-        .name = name,
-        .target = target,
-        .files = .init(ctx.arena),
-        .case = null,
-        .output_mode = .Obj,
-        .deps = std.array_list.Managed(DepModule).init(ctx.arena),
-        .backend = .llvm,
-        .emit_bin = can_emit_bin,
-        .emit_asm = can_emit_asm,
-    }) catch @panic("out of memory");
-    return &ctx.cases.items[ctx.cases.items.len - 1];
-}
-
 pub fn addObj(
     ctx: *Cases,
     name: []const u8,

@@ -3,6 +3,256 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Runner = @This();
 
+/// These are passed as `<target>-<cache_mode>-<backend>-<linker>-<pic>` strings.
+///
+/// If only one specific test is failing on a target, instead of entirely disabling the target here, you
+/// can skip the target for that specific test only by adding a line like this to top of the manifest:
+///
+///     #skip x86_64-linux-none-baseline-whole-selfhosted-new-pic
+pub const Target = struct {
+    cpu: Cpu = .{ .native = .{} },
+    os: Os = .native,
+    abi: Abi = .default,
+    ofmt: ObjectFormat = .default,
+    dynamic_linker: DynamicLinker = .default,
+
+    cache_mode: enum { whole, incremental },
+    backend: enum { selfhosted, llvm, llvmir, cbe },
+    linker: enum { lld, old, new },
+    pic: enum { nopic, pic, pie },
+
+    pub const Cpu = Cpu: {
+        @setEvalBranchQuota(3_000);
+        const Arch = std.Target.Cpu.Arch;
+        const arch_info = @typeInfo(Arch).@"enum";
+        const field_names = .{"native"} ++ arch_info.field_names;
+        var field_types: [field_names.len]type = undefined;
+        field_types[0] = struct {
+            model: Model = .native,
+
+            pub const Model = enum { native, baseline };
+        };
+        for (field_types[1..], field_names[1..]) |*field_type, field_name| {
+            const arch = @field(Arch, field_name);
+            const models = arch.allCpuModels();
+            const family = @field(std.Target, @tagName(arch.family()));
+            field_type.* = struct {
+                model: Model = .baseline,
+                features: struct {
+                    add: []const Feature = &.{},
+                    remove: []const Feature = &.{},
+                    comptime {
+                        _ = &family; // hack around compiler bug
+                    }
+                } = .{},
+
+                pub const Model = Model: {
+                    const explicit_models = @typeInfo(family.cpu).@"struct".decl_names;
+                    var model_names: []const []const u8 = &.{"native"};
+                    if (!@hasDecl(family.cpu, "baseline")) model_names = model_names ++ .{"baseline"};
+                    model_names = model_names ++ explicit_models;
+                    const TagInt = std.math.IntFittingRange(0, model_names.len - 1);
+                    var model_values: [model_names.len]TagInt = undefined;
+                    var model_index = 0;
+                    {
+                        var model_value = explicit_models.len;
+                        model_values[model_index] = model_value;
+                        model_index += 1;
+                        model_value += 1;
+                        if (!@hasDecl(family.cpu, "baseline")) {
+                            model_values[model_index] = model_value;
+                            model_index += 1;
+                            model_value += 1;
+                        }
+                    }
+                    for (model_values[model_index..], 0..) |*model_value, value| model_value.* = value;
+                    break :Model @Enum(TagInt, .exhaustive, model_names, &model_values);
+                };
+
+                pub const Feature = family.Feature;
+
+                pub fn updateQuery(cpu: *const @This(), query: *std.Target.Query) void {
+                    query.cpu_model = switch (cpu.model) {
+                        .native => .native,
+                        .baseline => .baseline,
+                        else => |model| .{ .explicit = models[@backingInt(model)] },
+                    };
+                    for (cpu.features.add) |add_feature|
+                        query.cpu_features_add.addFeature(@backingInt(add_feature));
+                    for (cpu.features.remove) |remove_feature|
+                        query.cpu_features_sub.addFeature(@backingInt(remove_feature));
+                }
+            };
+        }
+        const TagInt = std.math.IntFittingRange(0, field_names.len - 1);
+        var field_values: [field_names.len]TagInt = undefined;
+        field_values[0] = field_names.len - 1;
+        for (field_values[1..], arch_info.field_values) |*field_value, value| field_value.* = value;
+        const Tag = @Enum(TagInt, .exhaustive, field_names, &field_values);
+        break :Cpu @Union(.auto, Tag, field_names, &field_types, &@splat(.{}));
+    };
+
+    pub const Os = Os: {
+        const os_info = @typeInfo(std.Target.Os.Tag).@"enum";
+        const field_names = .{"native"} ++ os_info.field_names;
+        var field_types: [field_names.len]type = undefined;
+        field_types[0] = void;
+        for (field_types[1..], field_names[1..]) |*field_type, field_name| {
+            const version: enum {
+                none,
+                semver,
+                windows,
+            } = switch (@field(std.Target.Os.Tag, field_name).versionRangeTag()) {
+                .none => .none,
+                .semver, .hurd, .linux => .semver,
+                .windows => .windows,
+            };
+            field_type.* = struct {
+                version: ?Version = null,
+
+                pub const Version = switch (version) {
+                    .none => struct {},
+                    .semver => struct {
+                        min: std.SemanticVersion,
+                        max: ?std.SemanticVersion = null,
+                    },
+                    .windows => struct {
+                        min: std.Target.Os.WindowsVersion,
+                        max: ?std.Target.Os.WindowsVersion = null,
+                    },
+                };
+
+                pub fn updateQuery(os: *const @This(), query: *std.Target.Query) void {
+                    if (os.version) |v| switch (version) {
+                        .none => {},
+                        .semver => {
+                            query.os_version_min = .{ .semver = v.min };
+                            if (v.max) |max| query.os_version_max = .{ .semver = max };
+                        },
+                        .windows => {
+                            query.os_version_min = .{ .windows = v.min };
+                            if (v.max) |max| query.os_version_max = .{ .windows = max };
+                        },
+                    };
+                }
+            };
+        }
+        const TagInt = std.math.IntFittingRange(0, field_names.len - 1);
+        var field_values: [field_names.len]TagInt = undefined;
+        field_values[0] = field_names.len - 1;
+        for (field_values[1..], os_info.field_values) |*field_value, value| field_value.* = value;
+        const Tag = @Enum(TagInt, .exhaustive, field_names, &field_values);
+        break :Os @Union(.auto, Tag, field_names, &field_types, &@splat(.{}));
+    };
+
+    pub const Abi = Abi: {
+        const abi_info = @typeInfo(std.Target.Abi).@"enum";
+        const field_names = .{"default"} ++ abi_info.field_names;
+        var field_types: [field_names.len]type = undefined;
+        field_types[0] = void;
+        for (field_types[1..], field_names[1..]) |*field_type, field_name| {
+            const abi_tag = @field(std.Target.Abi, field_name);
+            const version: enum { none, libc, android } = if (abi_tag.isAndroid())
+                .android
+            else if (abi_tag.isGnu() or abi_tag.isMusl())
+                .libc
+            else
+                .none;
+            field_type.* = struct {
+                version: ?Version = null,
+
+                pub const Version = switch (version) {
+                    .none => struct {},
+                    .libc => std.SemanticVersion,
+                    .android => u32,
+                };
+
+                pub fn updateQuery(abi: *const @This(), query: *std.Target.Query) void {
+                    if (abi.version) |v| switch (version) {
+                        .none => {},
+                        .libc => query.glibc_version = v,
+                        .android => query.android_api_level = v,
+                    };
+                }
+            };
+        }
+        const TagInt = std.math.IntFittingRange(0, field_names.len - 1);
+        var field_values: [field_names.len]TagInt = undefined;
+        field_values[0] = field_names.len - 1;
+        for (field_values[1..], abi_info.field_values) |*field_value, value| field_value.* = value;
+        const Tag = @Enum(TagInt, .exhaustive, field_names, &field_values);
+        break :Abi @Union(.auto, Tag, field_names, &field_types, &@splat(.{}));
+    };
+
+    pub const ObjectFormat = ObjectFormat: {
+        const ofmt_info = @typeInfo(std.Target.ObjectFormat).@"enum";
+        const field_names = .{"default"} ++ ofmt_info.field_names;
+        const TagInt = std.math.IntFittingRange(0, field_names.len - 1);
+        var field_values: [field_names.len]TagInt = undefined;
+        field_values[0] = field_names.len - 1;
+        for (field_values[1..], ofmt_info.field_values) |*field_value, value| field_value.* = value;
+        break :ObjectFormat @Enum(TagInt, .exhaustive, field_names, &field_values);
+    };
+
+    pub const DynamicLinker = union(enum) {
+        default,
+        none,
+        explicit: []const u8,
+    };
+
+    pub fn toQuery(target: *const Target) std.Target.Query {
+        var query: std.Target.Query = .{};
+        query.cpu_arch = switch (target.cpu) {
+            .native => null,
+            else => |_, arch| @fromBackingInt(@backingInt(arch)),
+        };
+        switch (target.cpu) {
+            .native => |native| query.cpu_model = switch (native.model) {
+                .native => .native,
+                .baseline => .baseline,
+            },
+            inline else => |cpu| cpu.updateQuery(&query),
+        }
+        query.os_tag = switch (target.os) {
+            .native => null,
+            else => |_, os| @fromBackingInt(@backingInt(os)),
+        };
+        switch (target.os) {
+            .native => {},
+            inline else => |os| os.updateQuery(&query),
+        }
+        query.abi = switch (target.abi) {
+            .default => null,
+            else => |_, abi| @fromBackingInt(@backingInt(abi)),
+        };
+        switch (target.abi) {
+            .default => {},
+            inline else => |abi| abi.updateQuery(&query),
+        }
+        query.ofmt = switch (target.ofmt) {
+            .default => null,
+            else => |ofmt| @fromBackingInt(@backingInt(ofmt)),
+        };
+        query.dynamic_linker = switch (target.dynamic_linker) {
+            .default => null,
+            .none => .none,
+            .explicit => |dynamic_linker| .init(dynamic_linker),
+        };
+        return query;
+    }
+
+    pub fn format(target: *const Target, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        try w.print("{f}-{f}-{t}-{t}-{t}-{t}", .{
+            std.fmt.alt(&target.toQuery(), .printZigTriple),
+            std.fmt.alt(&target.toQuery(), .printCpu),
+            target.cache_mode,
+            target.backend,
+            target.linker,
+            target.pic,
+        });
+    }
+};
+
 gpa: std.mem.Allocator,
 arena: *std.heap.ArenaAllocator,
 environ_map: std.process.Environ.Map,
@@ -908,22 +1158,69 @@ fn handleCommand(
                 return update.fail("target {q} unknown cache mode {q}", .{
                     update.target_query, cache_mode_str,
                 });
-            const triple = component_it.rest();
+            const triple_cpu = component_it.rest();
+            var triple_len: usize = 0;
+            for (0..3) |_| {
+                triple_len = if (std.mem.findScalarPos(u8, triple_cpu, triple_len, '-')) |dash_pos|
+                    dash_pos + 1
+                else
+                    return update.fail("target {q} missing cpu", .{update.target_query});
+                if (std.mem.eql(u8, triple_cpu[0..triple_len], "native-")) break;
+            }
+            const triple = triple_cpu[0 .. triple_len - 1];
+            const cpu = triple_cpu[triple_len..];
+            var query_parse_diags: std.Target.Query.ParseOptions.Diagnostics = undefined;
             break :target .{
                 .triple = triple,
                 .resolved = std.zig.system.resolveTargetQuery(
                     runner.io,
-                    std.Build.parseTargetQuery(.{
+                    std.Target.Query.parse(.{
                         .arch_os_abi = triple,
+                        .cpu_features = cpu,
                         .object_format = switch (backend) {
                             .sema, .selfhosted, .llvm => null,
                             .llvmir => "llvmir",
                             .cbe => "c",
                         },
+                        .diagnostics = &query_parse_diags,
                     }) catch |err| switch (err) {
-                        error.ParseFailed => return update.fail("unable to parse triple {q}", .{
-                            triple,
-                        }),
+                        error.UnknownArchitecture => return update.fail(
+                            "unable to resolve target {q}: unknown architecture: {q}",
+                            .{ update.target_query, query_parse_diags.unknown_architecture_name.? },
+                        ),
+                        error.MissingOperatingSystem => return update.fail(
+                            "unable to resolve target {q}: missing operating system",
+                            .{update.target_query},
+                        ),
+                        error.UnknownOperatingSystem => return update.fail(
+                            "unable to resolve target {q}: unknown operating system: {q}",
+                            .{ update.target_query, query_parse_diags.os_name.? },
+                        ),
+                        error.InvalidOperatingSystemVersion => return update.fail(
+                            "unable to resolve target {q}: invalid operating system version",
+                            .{update.target_query},
+                        ),
+                        error.UnknownApplicationBinaryInterface => return update.fail(
+                            "unable to resolve target {q}: unknown abi",
+                            .{update.target_query},
+                        ),
+                        error.InvalidAbiVersion => return update.fail(
+                            "unable to resolve target {q}: invalid abi version",
+                            .{update.target_query},
+                        ),
+                        error.UnexpectedExtraField => unreachable, // validated above
+                        error.UnknownCpuModel => return update.fail(
+                            "unable to resolve target {q}: unknown cpu: {q}",
+                            .{ update.target_query, query_parse_diags.cpu_name.? },
+                        ),
+                        error.UnknownCpuFeature => return update.fail(
+                            "unable to resolve target {q}: unknown cpu feature: {q}",
+                            .{ update.target_query, query_parse_diags.unknown_feature_name.? },
+                        ),
+                        error.UnknownObjectFormat => return update.fail(
+                            "unable to resolve target {q}: unknown object format",
+                            .{update.target_query},
+                        ),
                     },
                 ) catch |err| switch (err) {
                     error.Canceled => |e| return e,
@@ -1265,7 +1562,7 @@ const Compiler = struct {
     mr_buffer: std.Io.File.MultiReader.Buffer(2),
     mr: std.Io.File.MultiReader,
     client: std.zig.Client,
-    target: Target,
+    target: Compiler.Target,
     out_name: []const u8,
     config: ?std.zig.Server.Message.Config,
 

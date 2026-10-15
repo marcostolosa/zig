@@ -504,12 +504,6 @@ pub fn build(b: *std.Build) !void {
         .skip_linux = skip_linux,
         .skip_llvm = skip_llvm,
         .skip_libc = skip_libc,
-    }, .{
-        .enable_llvm = enable_llvm,
-        .llvm_has_m68k = llvm_has_m68k,
-        .llvm_has_csky = llvm_has_csky,
-        .llvm_has_arc = llvm_has_arc,
-        .llvm_has_xtensa = llvm_has_xtensa,
     });
     test_step.dependOn(test_cases_step);
 
@@ -804,6 +798,10 @@ pub fn build(b: *std.Build) !void {
         .skip_darwin = skip_darwin,
         .skip_linux = skip_linux,
         .skip_llvm = skip_llvm,
+        .llvm_has_m68k = llvm_has_m68k,
+        .llvm_has_csky = llvm_has_csky,
+        .llvm_has_arc = llvm_has_arc,
+        .llvm_has_xtensa = llvm_has_xtensa,
         .gdb = b.option([]const u8, "gdb", "path to gdb binary"),
         .lldb = b.option([]const u8, "lldb", "path to lldb binary"),
     };
@@ -821,6 +819,10 @@ pub fn build(b: *std.Build) !void {
     const test_llvm_ir_step = b.step("test-llvm-ir", "Run the LLVM IR tests");
     try tests.addRunnerTests(b, runner, test_llvm_ir_step, "test/llvm-ir", @import("test/llvm-ir/matrix.zon"), runner_opts);
     test_step.dependOn(test_llvm_ir_step);
+
+    const test_llvm_targets_step = b.step("test-llvm-targets", "Run the LLVM targets tests");
+    try tests.addRunnerTests(b, runner, test_llvm_targets_step, "test/llvm-targets", @import("test/llvm-targets/matrix.zon"), runner_opts);
+    test_step.dependOn(test_llvm_targets_step);
 }
 
 fn addWasiUpdateStep(b: *std.Build, version: [:0]const u8) !void {

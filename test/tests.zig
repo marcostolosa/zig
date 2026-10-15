@@ -2186,19 +2186,6 @@ const link_targets = blk: {
     };
 };
 
-/// These are passed to `src/Runner.zig` as `<target>-<cache_mode>-<backend>-<linker>-<pic>` strings.
-///
-/// If only one specific test is failing on a target, instead of entirely disabling the target here, you
-/// can skip the target for that specific test only by adding a line like this to top of the manifest:
-///   #skip x86_64-linux-selfhosted
-const RunnerTarget = struct {
-    target: std.Target.Query,
-    cache_mode: enum { whole, incremental },
-    backend: enum { selfhosted, llvm, llvmir, cbe },
-    linker: enum { lld, old, new },
-    pic: enum { nopic, pic, pie },
-};
-
 pub fn addStackTraceTests(b: *std.Build, options: StackTracesContext.Options) *Step {
     const step = b.step("test-stack-traces", "Run the stack trace tests");
 
@@ -3037,7 +3024,6 @@ pub fn addCases(
     b: *std.Build,
     parent_step: *Step,
     case_test_options: @import("src/Cases.zig").CaseTestOptions,
-    build_options: @import("cases.zig").BuildOptions,
 ) !void {
     const arena = b.allocator;
     const gpa = b.allocator;
@@ -3051,7 +3037,7 @@ pub fn addCases(
     defer dir.close(io);
 
     cases.addFromDir(dir, "test/cases", b);
-    try @import("cases.zig").addCases(&cases, build_options, b);
+    try @import("cases.zig").addCases(&cases, b);
 
     cases.lowerToBuildSteps(
         b,
@@ -3060,6 +3046,7 @@ pub fn addCases(
     );
 }
 
+pub const RunnerTarget = @import("Runner.zig").Target;
 pub const RunnerOptions = struct {
     test_filters: []const []const u8,
     test_target_filters: []const []const u8,
@@ -3072,10 +3059,13 @@ pub const RunnerOptions = struct {
     skip_darwin: bool,
     skip_linux: bool,
     skip_llvm: bool,
+    llvm_has_m68k: bool,
+    llvm_has_csky: bool,
+    llvm_has_arc: bool,
+    llvm_has_xtensa: bool,
     gdb: ?[]const u8,
     lldb: ?[]const u8,
 };
-
 pub fn addRunnerTests(
     b: *std.Build,
     runner: *std.Build.Step.Compile,
@@ -3119,7 +3109,7 @@ pub fn addRunnerTests(
         _ = run.addPrefixedOutputDirectoryArg("--src=", "src");
 
         for (matrix) |test_target| {
-            const resolved_target = b.resolveTargetQuery(test_target.target);
+            const resolved_target = b.resolveTargetQuery(test_target.toQuery());
 
             if (options.skip_non_native and !std.zig.target.isNative(&resolved_target.query, &resolved_target.result, &b.graph.host.result))
                 continue;
@@ -3135,15 +3125,18 @@ pub fn addRunnerTests(
             if (options.skip_darwin and target.os.tag.isDarwin()) continue;
             if (options.skip_linux and target.os.tag == .linux) continue;
 
-            if (options.skip_llvm and test_target.backend == .llvm) continue;
+            if (test_target.backend == .llvm) {
+                if (options.skip_llvm) continue;
+                switch (target.cpu.arch) {
+                    else => {},
+                    .m68k => if (!options.llvm_has_m68k) continue,
+                    .csky => if (!options.llvm_has_csky) continue,
+                    .arc => if (!options.llvm_has_arc) continue,
+                    .xtensa => if (!options.llvm_has_xtensa) continue,
+                }
+            }
 
-            const target_str = b.fmt("{s}-{t}-{t}-{t}-{t}", .{
-                resolved_target.query.zigTriple(b.allocator) catch @panic("OOM"),
-                test_target.cache_mode,
-                test_target.backend,
-                test_target.linker,
-                test_target.pic,
-            });
+            const target_str = b.fmt("{f}", .{test_target});
 
             for (options.test_target_filters) |filter| {
                 if (std.mem.find(u8, target_str, filter) != null) break;

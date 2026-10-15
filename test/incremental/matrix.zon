@@ -3,22 +3,18 @@
     // to run due to the output (C source code or LLVM IR) being built non-incrementally (by Clang
     // or LLVM). We just have a couple here to make sure that it works.
     .{
-        .target = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .musl,
-        },
+        .cpu = .{ .x86_64 = .{} },
+        .os = .{ .linux = .{} },
+        .abi = .{ .musl = .{} },
         .cache_mode = .incremental,
         .backend = .cbe,
         .linker = .old,
         .pic = .nopic,
     },
     .{
-        .target = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .none,
-        },
+        .cpu = .{ .x86_64 = .{} },
+        .os = .{ .linux = .{} },
+        .abi = .{ .none = .{} },
         .cache_mode = .incremental,
         .backend = .llvm,
         .linker = .lld,
@@ -26,33 +22,27 @@
     },
 
     .{
-        .target = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .none,
-        },
+        .cpu = .{ .x86_64 = .{} },
+        .os = .{ .linux = .{} },
+        .abi = .{ .none = .{} },
         .cache_mode = .incremental,
         .backend = .selfhosted,
         .linker = .new,
         .pic = .nopic,
     },
     .{
-        .target = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .windows,
-            .abi = .none,
-        },
+        .cpu = .{ .x86_64 = .{} },
+        .os = .{ .windows = .{} },
+        .abi = .{ .none = .{} },
         .cache_mode = .incremental,
         .backend = .selfhosted,
         .linker = .old,
         .pic = .pic,
     },
     .{
-        .target = .{
-            .cpu_arch = .wasm32,
-            .os_tag = .wasi,
-            .abi = .none,
-        },
+        .cpu = .{ .wasm32 = .{} },
+        .os = .{ .wasi = .{} },
+        .abi = .{ .none = .{} },
         .cache_mode = .incremental,
         .backend = .selfhosted,
         .linker = .old,

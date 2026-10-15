@@ -11884,7 +11884,7 @@ const private = struct {
     extern "c" fn fork() c_int;
     extern "c" fn fstat(fd: fd_t, buf: *Stat) c_int;
     extern "c" fn fstatat(dirfd: fd_t, path: [*:0]const u8, buf: *Stat, flag: u32) c_int;
-    extern "c" fn getdirentries(fd: fd_t, buf_ptr: [*]u8, nbytes: usize, basep: *i64) isize;
+    extern "c" fn getdirentries(fd: fd_t, buf_ptr: [*]u8, nbytes: usize, basep: *i64) if (native_os == .dragonfly) c_int else isize;
     extern "c" fn getdents(fd: c_int, buf_ptr: [*]u8, nbytes: usize) switch (native_os) {
         else => c_int,
         .freebsd => isize,

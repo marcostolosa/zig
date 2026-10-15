@@ -12,16 +12,19 @@ comptime {
         symbol(&iswblank, "iswblank");
         symbol(&iswdigit, "iswdigit");
         symbol(&iswprint, "iswprint");
+        symbol(&iswxdigit, "iswxdigit");
 
         symbol(&__iswalnum_l, "__iswalnum_l");
         symbol(&__iswblank_l, "__iswblank_l");
         symbol(&__iswdigit_l, "__iswdigit_l");
         symbol(&__iswprint_l, "__iswprint_l");
+        symbol(&__iswxdigit_l, "__iswxdigit_l");
 
         symbol(&__iswalnum_l, "iswalnum_l");
         symbol(&__iswblank_l, "iswblank_l");
         symbol(&__iswdigit_l, "iswdigit_l");
         symbol(&__iswprint_l, "iswprint_l");
+        symbol(&__iswxdigit_l, "iswxdigit_l");
     }
 }
 
@@ -68,4 +71,14 @@ fn iswprint(wc: wint_t) callconv(.c) c_int {
 fn __iswprint_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {
     _ = locale;
     return iswprint(wc);
+}
+
+fn iswxdigit(wc: wint_t) callconv(.c) c_int {
+    if (wc > std.math.maxInt(u8)) return 0;
+    return std.c.isxdigit(@intCast(wc));
+}
+
+fn __iswxdigit_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {
+    _ = locale;
+    return iswxdigit(wc);
 }

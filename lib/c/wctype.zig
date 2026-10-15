@@ -35,7 +35,8 @@ comptime {
 }
 
 fn iswalnum(wc: wint_t) callconv(.c) c_int {
-    return @intFromBool(iswdigit(wc) != 0 or std.c.iswalpha(wc) != 0);
+    if (wc > std.math.maxInt(u8)) return 0;
+    return @intFromBool(std.ascii.isAlphanumeric(@intCast(wc)));
 }
 
 fn __iswalnum_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {
@@ -55,7 +56,7 @@ fn __iswblank_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {
 
 fn iswdigit(wc: wint_t) callconv(.c) c_int {
     if (wc > std.math.maxInt(u8)) return 0;
-    return std.c.isdigit(@intCast(wc));
+    return @intFromBool(std.ascii.isDigit(@intCast(wc)));
 }
 
 fn __iswdigit_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {
@@ -101,7 +102,7 @@ fn __iswspace_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {
 
 fn iswxdigit(wc: wint_t) callconv(.c) c_int {
     if (wc > std.math.maxInt(u8)) return 0;
-    return std.c.isxdigit(@intCast(wc));
+    return @intFromBool(std.ascii.isHex(@intCast(wc)));
 }
 
 fn __iswxdigit_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {

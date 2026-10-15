@@ -9,10 +9,13 @@ const symbol = @import("../c.zig").symbol;
 comptime {
     if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
         symbol(&iswblank, "iswblank");
+        symbol(&iswdigit, "iswdigit");
 
         symbol(&__iswblank_l, "__iswblank_l");
+        symbol(&__iswdigit_l, "__iswdigit_l");
 
         symbol(&__iswblank_l, "iswblank_l");
+        symbol(&__iswdigit_l, "iswdigit_l");
     }
 }
 
@@ -24,4 +27,14 @@ fn iswblank(wc: wint_t) callconv(.c) c_int {
 fn __iswblank_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {
     _ = locale;
     return iswblank(wc);
+}
+
+fn iswdigit(wc: wint_t) callconv(.c) c_int {
+    if (wc > std.math.maxInt(u8)) return 0;
+    return std.c.isdigit(@intCast(wc));
+}
+
+fn __iswdigit_l(wc: wint_t, locale: *anyopaque) callconv(.c) c_int {
+    _ = locale;
+    return iswdigit(wc);
 }

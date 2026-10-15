@@ -11041,7 +11041,10 @@ pub extern "c" fn sendto(
     addrlen: socklen_t,
 ) isize;
 pub extern "c" fn sendmsg(sockfd: fd_t, msg: *const msghdr_const, flags: u32) isize;
-pub extern "c" fn sendmmsg(sockfd: fd_t, msgvec: [*]mmsghdr, n: c_uint, flags: u32) c_int;
+pub const sendmmsg = switch (native_os) {
+    .freebsd => freebsd.sendmmsg,
+    else => private.sendmmsg,
+};
 
 pub extern "c" fn recv(
     sockfd: fd_t,
@@ -11907,6 +11910,7 @@ const private = struct {
     extern "c" fn recvmsg(sockfd: fd_t, msg: *msghdr, flags: u32) isize;
     extern "c" fn sched_yield() c_int;
     extern "c" fn sendfile(out_fd: fd_t, in_fd: fd_t, offset: ?*off_t, count: usize) isize;
+    extern "c" fn sendmmsg(sockfd: fd_t, msgvec: [*]mmsghdr, n: c_uint, flags: u32) c_int;
     extern "c" fn sigaction(sig: SIG, noalias act: ?*const Sigaction, noalias oact: ?*Sigaction) c_int;
     extern "c" fn sigdelset(set: ?*sigset_t, signo: SIG) c_int;
     extern "c" fn sigaddset(set: ?*sigset_t, signo: SIG) c_int;

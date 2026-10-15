@@ -21,6 +21,7 @@ const timespec = std.c.timespec;
 const uid_t = std.c.uid_t;
 const sf_hdtr = std.c.sf_hdtr;
 const clockid_t = std.c.clockid_t;
+const mmsghdr = std.c.mmsghdr;
 
 comptime {
     assert(builtin.os.tag == .freebsd); // Prevent access of std.c symbols on wrong OS.
@@ -40,6 +41,8 @@ pub extern "c" fn sendfile(
     sbytes: ?*off_t,
     flags: u32,
 ) c_int;
+
+pub extern "c" fn sendmmsg(sockfd: fd_t, msgvec: [*]mmsghdr, vlen: usize, flags: u32) isize;
 
 pub const UMTX_OP = enum(c_int) {
     LOCK = 0,

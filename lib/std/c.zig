@@ -4847,12 +4847,15 @@ pub const siginfo_t = switch (native_os) {
     },
     .haiku => extern struct {
         signo: SIG,
-        code: i32,
-        errno: i32,
+        code: c_int,
+        errno: c_int,
 
         pid: pid_t,
         uid: uid_t,
         addr: *allowzero anyopaque,
+        status: c_int,
+        band: c_long,
+        value: sigval,
     },
     .openbsd => extern struct {
         signo: SIG,

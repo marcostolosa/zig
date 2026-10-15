@@ -4096,6 +4096,7 @@ pub const cpu_set_t = switch (native_os) {
     .dragonfly => extern struct {
         ary: [4]u64,
     },
+    .freebsd => [1024 / @bitSizeOf(c_ulong)]c_ulong,
     else => void,
 };
 pub const dl_phdr_info = switch (native_os) {

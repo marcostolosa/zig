@@ -4484,7 +4484,8 @@ pub const rlim_t = switch (native_os) {
     .linux => linux.rlim_t,
     .emscripten => emscripten.rlim_t,
     .openbsd, .netbsd, .illumos, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => u64,
-    .haiku, .dragonfly, .freebsd => i64,
+    .dragonfly, .freebsd => i64,
+    .haiku => c_ulong,
     // https://github.com/SerenityOS/serenity/blob/aae106e37b48f2158e68902293df1e4bf7b80c0f/Userland/Libraries/LibC/sys/resource.h#L54
     .serenity => usize,
     else => void,

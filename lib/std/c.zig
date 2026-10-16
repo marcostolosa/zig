@@ -4881,9 +4881,9 @@ pub const siginfo_t = switch (native_os) {
         data: extern union {
             proc: extern struct {
                 pid: pid_t,
+                uid: uid_t,
                 pdata: extern union {
                     kill: extern struct {
-                        uid: uid_t,
                         value: sigval,
                     },
                     cld: extern struct {

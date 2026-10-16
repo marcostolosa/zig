@@ -290,11 +290,7 @@ pub const MAX_PAGE_SHIFT = switch (builtin.cpu.arch) {
     .sparc64 => 13,
 };
 
-pub const PTHREAD_STACK_MIN = switch (builtin.cpu.arch) {
-    .sparc64 => 1 << 13,
-    .mips64 => 1 << 14,
-    else => 1 << 12,
-};
+pub const PTHREAD_STACK_MIN = 1 << MAX_PAGE_SHIFT;
 
 // https://github.com/openbsd/src/blob/718a31b40d39fc6064de6355eb144e74633133fc/sys/netinet/in.h#L283
 pub const IP = struct {

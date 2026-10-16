@@ -285,9 +285,23 @@ pub const E = enum(u16) {
     _,
 };
 
-pub const MAX_PAGE_SHIFT = switch (builtin.cpu.arch) {
-    .x86 => 12,
-    .sparc64 => 13,
+pub const MAX_PAGE_SHIFT = switch (builtin.target.cpu.arch) {
+    .alpha,
+    .sparc64,
+    => 13,
+    .arm,
+    .aarch64,
+    .hppa,
+    .m88k,
+    .powerpc,
+    .powerpc64,
+    .riscv64,
+    .sh,
+    .x86,
+    .x86_64,
+    => 12,
+    .mips64,
+    => 14,
 };
 
 pub const PTHREAD_STACK_MIN = 1 << MAX_PAGE_SHIFT;

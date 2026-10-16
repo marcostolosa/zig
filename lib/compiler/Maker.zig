@@ -1844,20 +1844,36 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
             }
         }
 
-        const node_replace = if (dep.lazy) try arena.print(
-            \\.{{
-            \\            .url = "{f}",
-            \\            .hash = "{f}",
-            \\            .lazy = true
-            \\        }}
-        , .{
-            std.zig.fmtString(saved_path_or_url),
-            std.zig.fmtString(package_hash_slice),
-        }) else new_node_init;
+        const is_local = if (Io.Dir.cwd().access(io, path_or_url, .{})) |_| true else |_| false;
+        const is_url = !is_local and if (std.Uri.parse(path_or_url)) |_| true else |_| false;
 
         log.warn("overwriting existing dependency named {q}", .{name});
 
-        try fixups.replace_nodes_with_string.put(gpa, dep.node, node_replace);
+        if (dep.location == .path and is_url) {
+            const node_replace = if (dep.lazy) try arena.print(
+                \\.{{
+                \\            .url = "{f}",
+                \\            .hash = "{f}",
+                \\            .lazy = true
+                \\        }}
+            , .{
+                std.zig.fmtString(saved_path_or_url),
+                std.zig.fmtString(package_hash_slice),
+            }) else new_node_init;
+
+            try fixups.replace_nodes_with_string.put(gpa, dep.node, node_replace);
+        } else {
+            const location_replace = try arena.print("{q}", .{saved_path_or_url});
+            try fixups.replace_nodes_with_string.put(gpa, dep.location_node, location_replace);
+
+            if (dep.hash_node.unwrap()) |hash_node| {
+                const hash_replace = try arena.print("{q}", .{package_hash_slice});
+                try fixups.replace_nodes_with_string.put(gpa, hash_node, hash_replace);
+            } else if (is_url) {
+                const hash_field = try arena.print(".hash = {q},\n", .{ package_hash_slice });
+                try fixups.append_string_after_node.put(gpa, dep.location_node, hash_field);
+            }
+        }
     } else if (manifest.dependencies.count() > 0) {
         // Add fixup for adding another dependency.
         const deps = manifest.dependencies.values();

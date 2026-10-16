@@ -11339,6 +11339,16 @@ pub extern "c" fn setsid() pid_t;
 pub const LC = switch (native_os) {
     .serenity => enum(c_int) {
         ALL = 0,
+        COLLATE = 1,
+        CTYPE = 2,
+        MONETARY = 3,
+        NUMERIC = 4,
+        TIME = 5,
+        MESSAGES = 6,
+        _,
+    },
+    .serenity => enum(c_int) {
+        ALL = 0,
         NUMERIC = 1,
         CTYPE = 2,
         COLLATE = 3,

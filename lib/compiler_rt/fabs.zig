@@ -48,13 +48,8 @@ pub fn fabs_f128(a: f128) f128 {
     return generic_fabs(a);
 }
 
-pub fn fabsl(x: c_longdouble) callconv(.c) c_longdouble {
-    switch (@typeInfo(c_longdouble).float.bits) {
-        64 => return fabs_f64(x),
-        80 => return fabs_f80(x),
-        128 => return fabs_f128(x),
-        else => comptime unreachable,
-    }
+pub fn fabsl(a: compiler_rt.f80.Abi) callconv(.c) compiler_rt.f80.Abi {
+    return compiler_rt.f80.toAbi(fabs_f80(compiler_rt.f80.fromAbi(a)));
 }
 
 inline fn generic_fabs(x: anytype) @TypeOf(x) {

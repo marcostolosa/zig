@@ -261,13 +261,8 @@ pub fn fmod_f128(a: f128, b: f128) f128 {
     return amod;
 }
 
-pub fn fmodl(a: c_longdouble, b: c_longdouble) callconv(.c) c_longdouble {
-    switch (@typeInfo(c_longdouble).float.bits) {
-        64 => return fmod_f64(a, b),
-        80 => return fmod_f80(a, b),
-        128 => return fmod_f128(a, b),
-        else => comptime unreachable,
-    }
+pub fn fmodl(a: compiler_rt.f80.Abi, b: compiler_rt.f80.Abi) callconv(.c) compiler_rt.f80.Abi {
+    return compiler_rt.f80.toAbi(fmod_f80(compiler_rt.f80.fromAbi(a), compiler_rt.f80.fromAbi(b)));
 }
 
 inline fn generic_fmod(comptime T: type, x: T, y: T) T {

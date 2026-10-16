@@ -70,13 +70,8 @@ pub fn floor_f128(x: f128) f128 {
     return impl(f128, .floor, x);
 }
 
-pub fn floorl(x: c_longdouble) callconv(.c) c_longdouble {
-    switch (@typeInfo(c_longdouble).float.bits) {
-        64 => return floor_f64(x),
-        80 => return floor_f80(x),
-        128 => return floor_f128(x),
-        else => comptime unreachable,
-    }
+pub fn floorl(x: compiler_rt.f80.Abi) callconv(.c) compiler_rt.f80.Abi {
+    return compiler_rt.f80.toAbi(floor_f80(compiler_rt.f80.fromAbi(x)));
 }
 
 fn __ceilh(x: compiler_rt.f16.Abi) callconv(.c) compiler_rt.f16.Abi {
@@ -114,13 +109,8 @@ pub fn ceil_f128(x: f128) f128 {
     return impl(f128, .ceil, x);
 }
 
-pub fn ceill(x: c_longdouble) callconv(.c) c_longdouble {
-    switch (@typeInfo(c_longdouble).float.bits) {
-        64 => return ceil_f64(x),
-        80 => return ceil_f80(x),
-        128 => return ceil_f128(x),
-        else => comptime unreachable,
-    }
+pub fn ceill(x: compiler_rt.f80.Abi) callconv(.c) compiler_rt.f80.Abi {
+    return compiler_rt.f80.toAbi(ceil_f80(compiler_rt.f80.fromAbi(x)));
 }
 
 inline fn impl(comptime T: type, comptime op: enum { floor, ceil }, x: T) T {

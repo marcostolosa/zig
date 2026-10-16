@@ -152,13 +152,8 @@ pub fn round_f128(x_: f128) f128 {
     }
 }
 
-pub fn roundl(x: c_longdouble) callconv(.c) c_longdouble {
-    switch (@typeInfo(c_longdouble).float.bits) {
-        64 => return round_f64(x),
-        80 => return round_f80(x),
-        128 => return round_f128(x),
-        else => comptime unreachable,
-    }
+pub fn roundl(x: compiler_rt.f80.Abi) callconv(.c) compiler_rt.f80.Abi {
+    return compiler_rt.f80.toAbi(round_f80(compiler_rt.f80.fromAbi(x)));
 }
 
 test round_f16 {

@@ -636,13 +636,8 @@ pub fn log_f128(x: f128) f128 {
     return impl.proc1(.{ .poly = poly, .tab = tab }, x);
 }
 
-pub fn logl(x: c_longdouble) callconv(.c) c_longdouble {
-    switch (@typeInfo(c_longdouble).float.bits) {
-        64 => return log_f64(x),
-        80 => return log_f80(x),
-        128 => return log_f128(x),
-        else => comptime unreachable,
-    }
+pub fn logl(a: compiler_rt.f80.Abi) callconv(.c) compiler_rt.f80.Abi {
+    return compiler_rt.f80.toAbi(log_f80(compiler_rt.f80.fromAbi(a)));
 }
 
 test "logf() special" {

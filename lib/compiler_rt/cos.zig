@@ -183,13 +183,8 @@ pub fn cos_f128(x: f128) f128 {
     };
 }
 
-pub fn cosl(x: c_longdouble) callconv(.c) c_longdouble {
-    switch (@typeInfo(c_longdouble).float.bits) {
-        64 => return cos_f64(x),
-        80 => return cos_f80(x),
-        128 => return cos_f128(x),
-        else => comptime unreachable,
-    }
+pub fn cosl(x: compiler_rt.f80.Abi) callconv(.c) compiler_rt.f80.Abi {
+    return compiler_rt.f80.toAbi(cos_f80(compiler_rt.f80.fromAbi(x)));
 }
 
 fn testCosSpecial(comptime T: type) !void {

@@ -233,13 +233,10 @@ pub fn sincos_f128(x: f128) struct { f128, f128 } {
     };
 }
 
-pub fn sincosl(x: c_longdouble, r_sin: *c_longdouble, r_cos: *c_longdouble) callconv(.c) void {
-    r_sin.*, r_cos.* = switch (@typeInfo(c_longdouble).float.bits) {
-        64 => sincos_f64(x),
-        80 => sincos_f80(x),
-        128 => sincos_f128(x),
-        else => comptime unreachable,
-    };
+pub fn sincosl(x: compiler_rt.f80.Abi, r_sin: *compiler_rt.f80.Abi, r_cos: *compiler_rt.f80.Abi) callconv(.c) void {
+    const s, const c = sincos_f80(compiler_rt.f80.fromAbi(x));
+    r_sin.* = compiler_rt.f80.toAbi(s);
+    r_cos.* = compiler_rt.f80.toAbi(c);
 }
 
 fn testSincosSpecial(comptime T: type) !void {

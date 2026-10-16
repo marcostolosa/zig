@@ -166,13 +166,8 @@ pub fn fma_f128(x: f128, y: f128, z: f128) f128 {
     }
 }
 
-pub fn fmal(x: c_longdouble, y: c_longdouble, z: c_longdouble) callconv(.c) c_longdouble {
-    switch (@typeInfo(c_longdouble).float.bits) {
-        64 => return fma_f64(x, y, z),
-        80 => return fma_f80(x, y, z),
-        128 => return fma_f128(x, y, z),
-        else => comptime unreachable,
-    }
+pub fn fmal(a: compiler_rt.f80.Abi, b: compiler_rt.f80.Abi, c: compiler_rt.f80.Abi) callconv(.c) compiler_rt.f80.Abi {
+    return compiler_rt.f80.toAbi(fma_f80(compiler_rt.f80.fromAbi(a), compiler_rt.f80.fromAbi(b), compiler_rt.f80.fromAbi(c)));
 }
 
 const dd = struct {

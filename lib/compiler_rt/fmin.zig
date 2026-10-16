@@ -49,13 +49,8 @@ pub fn fmin_f128(x: f128, y: f128) f128 {
     return generic_fmin(f128, x, y);
 }
 
-pub fn fminl(x: c_longdouble, y: c_longdouble) callconv(.c) c_longdouble {
-    switch (@typeInfo(c_longdouble).float.bits) {
-        64 => return fmin_f64(x, y),
-        80 => return fmin_f80(x, y),
-        128 => return fmin_f128(x, y),
-        else => comptime unreachable,
-    }
+pub fn fminl(x: compiler_rt.f80.Abi, y: compiler_rt.f80.Abi) callconv(.c) compiler_rt.f80.Abi {
+    return compiler_rt.f80.toAbi(fmin_f80(compiler_rt.f80.fromAbi(x), compiler_rt.f80.fromAbi(y)));
 }
 
 inline fn generic_fmin(comptime T: type, x: T, y: T) T {

@@ -494,13 +494,8 @@ fn _Qp_sqrt(c: *f128, a: *f128) callconv(.c) void {
     c.* = sqrt(@floatCast(a.*));
 }
 
-pub fn sqrtl(x: c_longdouble) callconv(.c) c_longdouble {
-    switch (@typeInfo(c_longdouble).float.bits) {
-        64 => return sqrt_f64(x),
-        80 => return sqrt_f80(x),
-        128 => return sqrt_f128(x),
-        else => comptime unreachable,
-    }
+pub fn sqrtl(x: compiler_rt.f80.Abi) callconv(.c) compiler_rt.f80.Abi {
+    return compiler_rt.f80.toAbi(sqrt_f80(compiler_rt.f80.fromAbi(x)));
 }
 
 const rsqrt_tab: [128]u16 = .{

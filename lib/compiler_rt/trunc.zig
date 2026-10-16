@@ -109,13 +109,8 @@ pub fn trunc_f128(x: f128) f128 {
     }
 }
 
-pub fn truncl(x: c_longdouble) callconv(.c) c_longdouble {
-    switch (@typeInfo(c_longdouble).float.bits) {
-        64 => return trunc_f64(x),
-        80 => return trunc_f80(x),
-        128 => return trunc_f128(x),
-        else => comptime unreachable,
-    }
+pub fn truncl(x: compiler_rt.f80.Abi) callconv(.c) compiler_rt.f80.Abi {
+    return compiler_rt.f80.toAbi(trunc_f80(compiler_rt.f80.fromAbi(x)));
 }
 
 test trunc_f16 {

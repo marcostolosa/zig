@@ -175,13 +175,8 @@ fn exp2q(x: compiler_rt.f128.Abi) callconv(.c) compiler_rt.f128.Abi {
 }
 pub const exp2_f128 = @import("exp_f128.zig").exp2;
 
-pub fn exp2l(x: c_longdouble) callconv(.c) c_longdouble {
-    switch (@typeInfo(c_longdouble).float.bits) {
-        64 => return exp2_f64(x),
-        80 => return exp2_f80(x),
-        128 => return exp2_f128(x),
-        else => comptime unreachable,
-    }
+pub fn exp2l(x: compiler_rt.f80.Abi) callconv(.c) compiler_rt.f80.Abi {
+    return compiler_rt.f80.toAbi(exp2_f80(compiler_rt.f80.fromAbi(x)));
 }
 
 const exp2ft = [_]f64{

@@ -11242,6 +11242,7 @@ pub extern "c" fn freeaddrinfo(res: *addrinfo) void;
 pub const getnameinfo = switch (native_os) {
     .dragonfly => dragonfly.getnameinfo,
     .freebsd => freebsd.getnameinfo,
+    .openbsd => openbsd.getnameinfo,
     else => private.getnameinfo,
 };
 

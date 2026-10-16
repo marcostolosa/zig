@@ -11106,7 +11106,7 @@ pub const pthread_cancelstate = switch (native_os) {
         ENABLE = 1,
         DISABLE = 0,
     },
-    .dragonfly, .freebsd, .haiku => enum(c_int) {
+    .dragonfly, .freebsd, .haiku, .openbsd => enum(c_int) {
         ENABLE = 0,
         DISABLE = 1,
     },

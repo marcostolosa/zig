@@ -1209,3 +1209,12 @@ test "modify slice through coerced array pointer" {
         assert(slice[2] == 0);
     }
 }
+
+test "referencing field pointers of constant slice pointers" {
+    const a: []const u8 = &.{ 1, 2, 3, 4 };
+    const b = &a;
+    var s: *const usize = undefined;
+    const p: *volatile *const usize = &s;
+    p.* = &b.len;
+    assert(p.*.* == 4);
+}

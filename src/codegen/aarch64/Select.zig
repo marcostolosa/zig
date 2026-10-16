@@ -11015,8 +11015,23 @@ pub const Value = struct {
                                         .field => |field| {
                                             var base_ptr = ip.indexToKey(field.base).ptr;
                                             const agg_ty: ZigType = .fromInterned(ip.indexToKey(base_ptr.ty).ptr_type.child);
-                                            base_ptr.byte_offset += agg_ty.structFieldOffset(@intCast(field.index), zcu) + ptr.byte_offset;
-                                            continue :constant_key .{ .ptr = base_ptr };
+                                            switch (ip.indexToKey(agg_ty.toIntern())) {
+                                                .ptr_type => |ptr_ty| {
+                                                    assert(ptr_ty.flags.size == .slice);
+                                                    const field_offset: u64 = switch (field.index) {
+                                                        Constant.slice_ptr_index => 0,
+                                                        Constant.slice_len_index => 8,
+                                                        else => unreachable,
+                                                    };
+                                                    base_ptr.byte_offset += ptr.byte_offset + field_offset;
+                                                    continue :constant_key .{ .ptr = base_ptr };
+                                                },
+                                                .struct_type, .tuple_type, .union_type => {
+                                                    base_ptr.byte_offset += agg_ty.structFieldOffset(@intCast(field.index), zcu) + ptr.byte_offset;
+                                                    continue :constant_key .{ .ptr = base_ptr };
+                                                },
+                                                else => unreachable,
+                                            }
                                         },
                                         .comptime_alloc, .comptime_field, .arr_elem => unreachable,
                                     };

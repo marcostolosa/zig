@@ -1340,3 +1340,67 @@ fn testDynamicParsedDiagnostics(comptime T: type, expectedError: anyerror, expec
         }
     }
 }
+
+const DiagnosticsTestEnum = union(enum) { int: i32, str: []const u8, nothing: void };
+
+fn testEnumDiagnostics(comptime T: type, expectedError: anyerror, expectedErrorMsgs: []const []const u8, doc: []const u8) !void {
+    var diags = std.json.Diagnostics{};
+    const value = try std.json.parseFromSlice(std.json.Value, testing.allocator, doc, .{});
+    defer value.deinit();
+    if (std.json.parseFromValue(T, testing.allocator, value.value, .{ .diagnostics = &diags })) |_| {
+        return error.expectedParseFailure;
+    } else |err| {
+        try std.testing.expectEqual(expectedError, err);
+    }
+
+    for (expectedErrorMsgs) |expectedErrorMsg| {
+        try testing.expectEqualStrings(expectedErrorMsg, diags.message);
+    }
+}
+
+const union_enum_test_cases = [_]DiagnosticCase{
+    .{
+        .T = DiagnosticsTestEnum,
+        .err = error.UnexpectedToken,
+        .msgs = &.{"union (object with one field), found: integer"},
+        .doc = "1",
+    },
+    .{
+        .T = DiagnosticsTestEnum,
+        .err = error.UnexpectedToken,
+        .msgs = &.{"tagged union requires only one field"},
+        .doc = "{}",
+    },
+    .{
+        .T = DiagnosticsTestEnum,
+        .err = error.UnknownField,
+        .msgs = &.{"unrecognized tag name"},
+        .doc = "{\"nope\": 1}",
+    },
+    .{
+        .T = DiagnosticsTestEnum,
+        .err = error.UnexpectedToken,
+        .msgs = &.{"void payload '{}' should have no fields"},
+        .doc = "{\"nothing\": {\"a\": 1}}",
+    },
+    .{
+        .T = DiagnosticsTestEnum,
+        .err = error.UnexpectedToken,
+        .msgs = &.{"expected: void payload ('{}'), found: number"},
+        .doc = "{\"nothing\": 1}",
+    },
+};
+
+test "union diagnostics" {
+    var diags = std.json.Diagnostics{};
+    const value = try std.json.parseFromSlice(std.json.Value, testing.allocator, "{\"int\": 5}", .{});
+    defer value.deinit();
+
+    const parsed = try std.json.parseFromValue(DiagnosticsTestEnum, testing.allocator, value.value, .{ .diagnostics = &diags });
+    defer parsed.deinit();
+    try testing.expectEqual(@as(i32, 5), parsed.value.int);
+
+    inline for (union_enum_test_cases) |case| {
+        try testEnumDiagnostics(case.T, case.err, case.msgs, case.doc);
+    }
+}

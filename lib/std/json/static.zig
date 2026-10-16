@@ -846,6 +846,7 @@ pub fn innerParseFromValue(
                 ) |f_name, f_type, f_attrs, i| {
                     if (f_attrs.@"comptime") @compileError("comptime fields are not supported: " ++ @typeName(T) ++ "." ++ f_name);
                     if (std.mem.eql(u8, f_name, field_name)) {
+                        errdefer if (options.diagnostics) |diag| diag.recordContext(@typeName(T) ++ "." ++ f_name);
                         assert(!fields_seen[i]); // Can't have duplicate keys in a Value.object.
                         @field(r, f_name) = try innerParseFromValue(f_type, allocator, kv.value_ptr.*, options);
                         fields_seen[i] = true;

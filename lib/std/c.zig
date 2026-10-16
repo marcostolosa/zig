@@ -11440,6 +11440,9 @@ pub const clock_nanosleep = switch (native_os) {
 };
 
 pub const ioctl = switch (native_os) {
+    .dragonfly => dragonfly.ioctl,
+    .freebsd => freebsd.ioctl,
+    .openbsd => openbsd.ioctl,
     .windows => {},
     else => private.ioctl,
 };
@@ -11907,7 +11910,7 @@ const private = struct {
     };
     extern "c" fn getrusage(who: c_int, usage: *rusage) c_int;
     extern "c" fn gettimeofday(noalias tv: ?*timeval, noalias tz: ?*timezone) c_int;
-    extern "c" fn ioctl(fd: fd_t, request: if (native_os == .dragonfly) c_ulong else c_int, ...) c_int;
+    extern "c" fn ioctl(fd: fd_t, request: c_int, ...) c_int;
     extern "c" fn msync(addr: *align(page_size) const anyopaque, len: usize, flags: c_int) c_int;
     extern "c" fn mremap(addr: ?*align(page_size) const anyopaque, old_len: usize, new_len: usize, flags: MREMAP, ...) *anyopaque;
     extern "c" fn nanosleep(rqtp: *const timespec, rmtp: ?*timespec) c_int;

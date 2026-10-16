@@ -8,8 +8,11 @@ const pid_t = std.c.pid_t;
 const sockaddr = std.c.sockaddr;
 const socklen_t = std.c.socklen_t;
 const uid_t = std.c.uid_t;
+const fd_t = std.c.fd_t;
 const NI = std.c.NI;
 const EAI = std.c.EAI;
+
+pub extern "c" fn ioctl(fd: fd_t, request: c_ulong, ...) c_int;
 
 pub extern "c" fn lwp_gettid() c_int;
 pub extern "c" fn ptrace(request: c_int, pid: pid_t, addr: caddr_t, data: c_int) c_int;

@@ -30,6 +30,8 @@ comptime {
     assert(builtin.os.tag == .freebsd); // Prevent access of std.c symbols on wrong OS.
 }
 
+pub extern "c" fn ioctl(fd: fd_t, request: c_ulong, ...) c_int;
+
 pub extern "c" fn ptrace(request: c_int, pid: pid_t, addr: caddr_t, data: c_int) c_int;
 
 pub extern "c" fn kinfo_getfile(pid: pid_t, cntp: *c_int) ?[*]kinfo_file;

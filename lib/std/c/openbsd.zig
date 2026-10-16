@@ -9,6 +9,7 @@ const passwd = std.c.passwd;
 const timespec = std.c.timespec;
 const uid_t = std.c.uid_t;
 const pid_t = std.c.pid_t;
+const fd_t = std.c.fd_t;
 const sockaddr = std.c.sockaddr;
 const socklen_t = std.c.socklen_t;
 const NI = std.c.NI;
@@ -17,6 +18,9 @@ const EAI = std.c.EAI;
 comptime {
     assert(builtin.os.tag == .openbsd); // Prevent access of std.c symbols on wrong OS.
 }
+
+pub extern "c" fn ioctl(fd: fd_t, request: c_ulong, ...) c_int;
+
 pub extern "c" fn getnameinfo(
     noalias addr: *const sockaddr,
     addrlen: socklen_t,

@@ -4,7 +4,7 @@ const symbol = @import("../c.zig").symbol;
 const c = std.c;
 
 comptime {
-    if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
+    if (builtin.target.isMuslLibC()) {
         symbol(&basename, "basename");
         symbol(&basename, "__xpg_basename");
     }

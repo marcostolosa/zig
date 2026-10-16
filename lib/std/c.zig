@@ -9819,7 +9819,7 @@ pub const MINSIGSTKSZ = switch (native_os) {
     },
     .illumos => 2048,
     .haiku, .netbsd => 8192,
-    .openbsd => 1 << openbsd.MAX_PAGE_SHIFT,
+    .openbsd => 3 << openbsd.MAX_PAGE_SHIFT,
     // https://github.com/SerenityOS/serenity/blob/ec492a1a0819e6239ea44156825c4ee7234ca3db/Kernel/API/POSIX/signal.h#L58
     .serenity => 4096,
     else => {},
@@ -9829,7 +9829,7 @@ pub const SIGSTKSZ = switch (native_os) {
     .netbsd, .freebsd => MINSIGSTKSZ + 32768,
     .illumos => 8192,
     .haiku => 16384,
-    .openbsd => MINSIGSTKSZ + (1 << openbsd.MAX_PAGE_SHIFT) * 4,
+    .openbsd => MINSIGSTKSZ + (1 << openbsd.MAX_PAGE_SHIFT) * (if (openbsd.MAX_PAGE_SHIFT < 14) 4 else 2),
     // https://github.com/SerenityOS/serenity/blob/ec492a1a0819e6239ea44156825c4ee7234ca3db/Kernel/API/POSIX/signal.h#L59
     .serenity => 32768,
     else => {},

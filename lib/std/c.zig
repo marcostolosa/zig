@@ -9607,7 +9607,7 @@ pub const tc_lflag_t = switch (native_os) {
 
 pub const speed_t = switch (native_os) {
     .linux => linux.speed_t,
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos, .openbsd => enum(u64) {
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos, .openbsd => enum(if (native_os == .openbsd) c_uint else u64) {
         B0 = 0,
         B50 = 50,
         B75 = 75,

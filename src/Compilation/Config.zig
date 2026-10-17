@@ -59,7 +59,7 @@ export_memory: bool,
 shared_memory: bool,
 is_test: bool,
 debug_format: DebugFormat,
-root_optimize_mode: std.lang.OptimizeMode,
+root_optimize_mode: std.lang.Optimize,
 root_strip: bool,
 root_error_tracing: bool,
 dll_export_fns: bool,
@@ -80,7 +80,7 @@ pub const Options = struct {
     is_test: bool,
     have_zcu: bool,
     emit_bin: bool,
-    root_optimize_mode: ?std.lang.OptimizeMode = null,
+    root_optimize_mode: ?std.lang.Optimize = null,
     root_strip: ?bool = null,
     root_error_tracing: ?bool = null,
     link_mode: ?std.lang.LinkMode = null,
@@ -147,6 +147,7 @@ pub const ResolveError = error{
     TargetRequiresPie,
     SanitizeThreadRequiresPie,
     SanitizeThreadRequiresLlvmBackend,
+    FuzzRequiresLlvmBackend,
     BackendLacksErrorTracing,
     LlvmLibraryUnavailable,
     LldUnavailable,
@@ -196,7 +197,8 @@ pub fn resolve(options: Options) ResolveError!Config {
         break :b options.use_lib_llvm orelse true;
     };
 
-    const root_optimize_mode = options.root_optimize_mode orelse .Debug;
+    const root_optimize_mode = options.root_optimize_mode orelse
+        @as(std.lang.OptimizeMode, if (options.any_fuzz) .safe else .debug);
 
     // Make a decision on whether to use Clang or Aro for translate-c and compiling C files.
     const c_frontend: CFrontend = b: {
@@ -349,6 +351,12 @@ pub fn resolve(options: Options) ResolveError!Config {
             break :b true;
         }
 
+        if (options.any_fuzz) {
+            // Fuzzing instrumentation requires the LLVM backend.
+            if (options.use_llvm == false) return error.FuzzRequiresLlvmBackend;
+            break :b true;
+        }
+
         if (options.use_llvm) |x| break :b x;
 
         // If we cannot use LLVM libraries, then our own backends will be a
@@ -357,7 +365,7 @@ pub fn resolve(options: Options) ResolveError!Config {
         if (!use_lib_llvm and options.emit_bin) break :b false;
 
         // Prefer LLVM for release builds.
-        if (root_optimize_mode != .Debug) break :b true;
+        if (root_optimize_mode != .debug) break :b true;
 
         // load_dynamic_library standalone test not passing on this combination
         // https://github.com/ziglang/zig/issues/24080
@@ -413,6 +421,12 @@ pub fn resolve(options: Options) ResolveError!Config {
         // assume no LLD.
         if (options.use_new_linker == true) break :b false;
 
+        if (options.use_new_linker == null and
+            target_util.preferNewLinkerOverLld(target))
+        {
+            break :b false;
+        }
+
         // If we have no zig code to compile, no need for the self-hosted linker.
         if (!options.have_zcu) break :b true;
 
@@ -447,6 +461,8 @@ pub fn resolve(options: Options) ResolveError!Config {
         }
 
         if (options.use_new_linker) |x| break :b x;
+
+        if (target_util.preferNewLinkerOverLld(target)) break :b true;
 
         break :b options.incremental;
     };
@@ -486,7 +502,7 @@ pub fn resolve(options: Options) ResolveError!Config {
 
     const root_strip = b: {
         if (options.root_strip) |x| break :b x;
-        if (root_optimize_mode == .ReleaseSmall) break :b true;
+        if (root_optimize_mode == .small) break :b true;
         if (!target_util.hasDebugInfo(target)) break :b true;
         break :b false;
     };
@@ -512,8 +528,8 @@ pub fn resolve(options: Options) ResolveError!Config {
         if (root_strip) break :b false;
         if (!backend_supports_error_tracing) break :b false;
         break :b switch (root_optimize_mode) {
-            .Debug => true,
-            .ReleaseSafe, .ReleaseFast, .ReleaseSmall => false,
+            .debug => true,
+            .safe, .fast, .small => false,
         };
     };
 

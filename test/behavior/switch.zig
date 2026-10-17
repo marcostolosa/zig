@@ -252,6 +252,7 @@ fn poll() void {
 }
 
 test "switch on global mutable var isn't constant-folded" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     while (state < 2) {
@@ -270,7 +271,6 @@ test "switch prong with variable" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try switchProngWithVarFn(SwitchProngWithVarEnum{ .One = 13 });
     try switchProngWithVarFn(SwitchProngWithVarEnum{ .Two = 13.0 });
@@ -294,7 +294,6 @@ fn switchProngWithVarFn(a: SwitchProngWithVarEnum) !void {
 test "switch on enum using pointer capture" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     try testSwitchEnumPtrCapture();
     try comptime testSwitchEnumPtrCapture();
@@ -570,7 +569,6 @@ test "switch with null and T peer types and inferred result location type" {
 test "switch prongs with cases with identical payload types" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const Union = union(enum) {
         A: usize,
@@ -726,7 +724,6 @@ test "switch on error set with single else" {
 test "switch capture copies its payload" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest() !void {
@@ -777,10 +774,10 @@ test "enum value without tag name used as switch item" {
         b = 2,
         _,
     };
-    var e: E = @enumFromInt(0);
+    var e: E = @fromBackingInt(@intCast(0));
     _ = &e;
     switch (e) {
-        @as(E, @enumFromInt(0)) => {},
+        @as(E, @fromBackingInt(@intCast(0))) => {},
         .a => return error.TestFailed,
         .b => return error.TestFailed,
         _ => return error.TestFailed,
@@ -788,7 +785,6 @@ test "enum value without tag name used as switch item" {
 }
 
 test "switch item sizeof" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     const S = struct {
         fn doTheTest() !void {
             var a: usize = 0;
@@ -817,8 +813,6 @@ test "comptime inline switch" {
 }
 
 test "switch capture peer type resolution" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const U = union(enum) {
         a: u32,
         b: u64,
@@ -835,7 +829,6 @@ test "switch capture peer type resolution" {
 
 test "switch capture peer type resolution for in-memory coercible payloads" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const T1 = c_int;
     const t1_info = @typeInfo(T1).int;
@@ -1117,7 +1110,7 @@ test "decl literals as switch cases" {
         bar = 3,
         _,
 
-        const foo: @This() = @enumFromInt(0xa);
+        const foo: @This() = @fromBackingInt(@intCast(0xa));
 
         fn doTheTest(e: @This()) !void {
             switch (e) {
@@ -1132,13 +1125,13 @@ test "decl literals as switch cases" {
     try comptime E.doTheTest(.foo);
 }
 
-// TODO audit after #15909 and/or #19855 are decided/implemented.
+// TODO audit after https://github.com/ziglang/zig/issues/15909 is fully decided.
 // When we do that, consider adding an 'error{}' case if possible.
 test "switch with uninstantiable union fields" {
     const U = union(enum) {
         ok: void,
         a: noreturn,
-        b: noreturn,
+        b: enum {},
 
         fn doTheTest(u: @This()) void {
             switch (u) {
@@ -1166,8 +1159,6 @@ test "switch with uninstantiable union fields" {
 }
 
 test "switch with tag capture" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const U = union(enum) {
         a,
         b: i32,
@@ -1185,7 +1176,7 @@ test "switch with tag capture" {
                 .a => |nothing, tag| {
                     comptime assert(nothing == {});
                     comptime assert(tag == .a);
-                    try expect(@intFromEnum(tag) == @intFromEnum(@This().a));
+                    try expect(@backingInt(tag) == @backingInt(@This().a));
                 },
                 .b, .d => |_, tag| {
                     try expect(tag == .b or tag == .d);
@@ -1226,8 +1217,8 @@ test "switch with complex item expressions" {
             try doTheSwitch(2000, 10);
             try doTheSwitch(2000, 5);
 
-            try doTheOtherSwitch(@enumFromInt(123));
-            try doTheOtherSwitch(@enumFromInt(456));
+            try doTheOtherSwitch(@fromBackingInt(@intCast(123)));
+            try doTheOtherSwitch(@fromBackingInt(@intCast(456)));
         }
         fn doTheSwitch(x: u32, comptime factor: u32) !void {
             const ok = switch (x) {
@@ -1252,8 +1243,8 @@ test "switch with complex item expressions" {
         const E = enum(u32) { _ };
         fn doTheOtherSwitch(e: E) !void {
             const ok = switch (e) {
-                @enumFromInt(123) => true,
-                @enumFromInt(456) => true,
+                @fromBackingInt(@intCast(123)) => true,
+                @fromBackingInt(@intCast(456)) => true,
                 else => false,
             };
             try expect(ok);
@@ -1267,7 +1258,7 @@ test "switch with complex item expressions" {
 test "switch evaluation order" {
     const eu: anyerror!u32 = 0;
     _ = eu catch |err| switch (err) {
-        if (true) @compileError("unreachable") => unreachable,
+        if (true) comptime unreachable => unreachable,
         else => unreachable,
     };
 }
@@ -1576,4 +1567,17 @@ test "union field pointer capture preserves alignment in inline prong" {
     try U.doTheTest(&.{ .b = 123 });
     try comptime U.doTheTest(&.{ .a = 123 });
     try comptime U.doTheTest(&.{ .b = 123 });
+}
+
+test "switch on expression" {
+    var a: []const []const u8 = &.{ "b", "b", "A", "A", "b" };
+    _ = &a;
+    var c: isize = 0;
+    for (a[1..]) |b| {
+        switch (b[0] % 2) {
+            0 => c += 1,
+            else => c -= 1,
+        }
+    }
+    try expect(c == 0);
 }

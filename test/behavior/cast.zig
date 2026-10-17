@@ -9,8 +9,6 @@ const maxInt = std.math.maxInt;
 const native_endian = builtin.target.cpu.arch.endian();
 
 test "int to ptr cast" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const x = @as(usize, 13);
     const y = @as(*u8, @ptrFromInt(x));
     const z = @intFromPtr(y);
@@ -18,8 +16,6 @@ test "int to ptr cast" {
 }
 
 test "integer literal to pointer cast" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const vga_mem = @as(*u16, @ptrFromInt(0xB8000));
     try expect(@intFromPtr(vga_mem) == 0xB8000);
 }
@@ -71,8 +67,6 @@ test "implicit cast comptime_int to comptime_float" {
 }
 
 test "comptime_int @floatFromInt" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     {
         const result = @as(f16, @floatFromInt(1234));
         try expect(@TypeOf(result) == f16);
@@ -120,6 +114,7 @@ test "@floatFromInt" {
             try expect(@as(i32, @floor(f)) == k);
             try expect(@as(i32, @ceil(f)) == k);
             try expect(@as(i32, @trunc(f)) == k);
+            try expect(@as(i32, @trunc(@floor(f))) == k);
         }
     };
     try S.doTheTest();
@@ -134,7 +129,6 @@ test "@intFromFloat > 128 bits" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
 
     try testIntFromFloat(f16, 1024, u140, 1024);
     try testIntFromFloat(f16, -1024, i140, -1024);
@@ -160,7 +154,6 @@ test "@floatFromInt > 128 bits" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
 
     try testFloatFromInt(u140, 1024, f16, 1024);
     try testFloatFromInt(i140, -1024, f16, -1024);
@@ -182,8 +175,8 @@ test "@floatFromInt(f80)" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_c and builtin.cpu.arch.isArm()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest(comptime Int: type) !void {
@@ -199,6 +192,7 @@ test "@floatFromInt(f80)" {
             try expect(@as(Int, @floor(f)) == k);
             try expect(@as(Int, @ceil(f)) == k);
             try expect(@as(Int, @trunc(f)) == k);
+            try expect(@as(Int, @trunc(@floor(f))) == k);
         }
     };
     try S.doTheTest(i31);
@@ -207,7 +201,7 @@ test "@floatFromInt(f80)" {
     try S.doTheTest(i64);
     try S.doTheTest(i80);
     try S.doTheTest(i128);
-    // try S.doTheTest(i256); // TODO missing compiler_rt symbols
+    try S.doTheTest(i256);
     try comptime S.doTheTest(i31);
     try comptime S.doTheTest(i32);
     try comptime S.doTheTest(i45);
@@ -281,6 +275,7 @@ test "type coercion from int to float" {
 test "@intFromFloat" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+
     try testIntFromFloats();
     try comptime testIntFromFloats();
 }
@@ -440,7 +435,7 @@ test "*usize to *void" {
 
 test "@enumFromInt passed a comptime_int to an enum with one item" {
     const E = enum { A };
-    const x = @as(E, @enumFromInt(0));
+    const x = @as(E, @fromBackingInt(@intCast(0)));
     try expect(x == E.A);
 }
 
@@ -498,7 +493,7 @@ test "array coercion to undefined at runtime" {
 
     @setRuntimeSafety(true);
 
-    if (builtin.mode != .Debug and builtin.mode != .ReleaseSafe) {
+    if (builtin.mode != .debug and builtin.mode != .safe) {
         return error.SkipZigTest;
     }
 
@@ -537,8 +532,6 @@ test "return u8 coercing into ?u32 return type" {
 }
 
 test "cast from ?[*]T to ??[*]T" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const a: ??[*]u8 = @as(?[*]u8, null);
     try expect(a != null and a.? == null);
 }
@@ -1422,7 +1415,6 @@ test "comptime float casts" {
 }
 
 test "pointer reinterpret const float to int" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     // The hex representation is 0x3fe3333333333303.
@@ -1472,11 +1464,6 @@ fn foobar(func: PFN_void) !void {
 
 test "cast function with an opaque parameter" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
-    if (builtin.zig_backend == .stage2_c) {
-        // https://github.com/ziglang/zig/issues/16845
-        return error.SkipZigTest;
-    }
 
     const Container = struct {
         const Ctx = opaque {};
@@ -1724,9 +1711,7 @@ test "cast f16 to wider types" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_c and builtin.cpu.arch.isArm()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.target.cpu.arch == .x86_64 and builtin.target.os.tag == .macos) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest() !void {
@@ -1812,6 +1797,7 @@ test "cast compatible optional types" {
 
 test "coerce undefined single-item pointer of array to error union of slice" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const a = @as([*]u8, undefined)[0..0];
     var b: error{a}![]const u8 = a;
@@ -1831,21 +1817,15 @@ test "pointer to empty struct literal to mutable slice" {
 
 test "coerce between pointers of compatible differently-named floats" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_c and builtin.os.tag == .windows and !builtin.link_libc) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-
-    if (builtin.zig_backend == .stage2_llvm and builtin.os.tag == .windows) {
-        // https://github.com/ziglang/zig/issues/12396
-        return error.SkipZigTest;
-    }
 
     const F = switch (@typeInfo(c_longdouble).float.bits) {
         64 => f64,
         80 => f80,
         128 => f128,
-        else => @compileError("unreachable"),
+        else => comptime unreachable,
     };
     var f1: F = 12.34;
     const f2: *c_longdouble = &f1;
@@ -1854,8 +1834,6 @@ test "coerce between pointers of compatible differently-named floats" {
 }
 
 test "peer type resolution of const and non-const pointer to array" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const a = @as(*[1024]u8, @ptrFromInt(42));
     const b = @as(*const [1024]u8, @ptrFromInt(42));
     try std.testing.expect(@TypeOf(a, b) == *const [1024]u8);
@@ -1920,8 +1898,6 @@ test "optional pointer coerced to optional allowzero pointer" {
 }
 
 test "optional slice coerced to allowzero many pointer" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const a: ?[]const u32 = null;
     const b: [*]allowzero const u8 = @ptrCast(a);
     const c = @intFromPtr(b);
@@ -2709,7 +2685,7 @@ test "cast builtins can wrap result in optional" {
     const S = struct {
         const MyEnum = enum(u32) { _ };
         fn a() ?MyEnum {
-            return @enumFromInt(123);
+            return @fromBackingInt(@intCast(123));
         }
         fn b() ?u32 {
             return @intFromFloat(42.50);
@@ -2728,7 +2704,7 @@ test "cast builtins can wrap result in optional" {
             comptime assert(@TypeOf(rb) == u32);
             comptime assert(@TypeOf(rc) == *const f32);
 
-            try expect(@intFromEnum(ra) == 123);
+            try expect(@backingInt(ra) == 123);
             try expect(rb == 42);
             try expect(@as(*const u32, @ptrCast(rc)).* == 1);
         }
@@ -2747,7 +2723,7 @@ test "cast builtins can wrap result in error union" {
         const MyEnum = enum(u32) { _ };
         const E = error{ImpossibleError};
         fn a() E!MyEnum {
-            return @enumFromInt(123);
+            return @fromBackingInt(@intCast(123));
         }
         fn b() E!u32 {
             return @intFromFloat(42.50);
@@ -2766,7 +2742,7 @@ test "cast builtins can wrap result in error union" {
             comptime assert(@TypeOf(rb) == u32);
             comptime assert(@TypeOf(rc) == *const f32);
 
-            try expect(@intFromEnum(ra) == 123);
+            try expect(@backingInt(ra) == 123);
             try expect(rb == 42);
             try expect(@as(*const u32, @ptrCast(rc)).* == 1);
         }
@@ -2785,7 +2761,7 @@ test "cast builtins can wrap result in error union and optional" {
         const MyEnum = enum(u32) { _ };
         const E = error{ImpossibleError};
         fn a() E!?MyEnum {
-            return @enumFromInt(123);
+            return @fromBackingInt(@intCast(123));
         }
         fn b() E!?u32 {
             return @intFromFloat(42.50);
@@ -2804,7 +2780,7 @@ test "cast builtins can wrap result in error union and optional" {
             comptime assert(@TypeOf(rb) == u32);
             comptime assert(@TypeOf(rc) == *const f32);
 
-            try expect(@intFromEnum(ra) == 123);
+            try expect(@backingInt(ra) == 123);
             try expect(rb == 42);
             try expect(@as(*const u32, @ptrCast(rc)).* == 1);
         }
@@ -2941,6 +2917,36 @@ test "@intFromFloat on vector" {
 
     try S.doTheTest();
     try comptime S.doTheTest();
+}
+
+test "@floatFromInt and @intFromFloat on vectors of any length" {
+    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+
+    const S = struct {
+        fn doTheTest(comptime len: comptime_int) !void {
+            var signed: @Vector(len, i32) = std.simd.iota(i32, len) - @as(@Vector(len, i32), @splat(4));
+            _ = &signed;
+            const from_signed: @Vector(len, f32) = @floatFromInt(signed);
+            inline for (0..len) |i| try expect(from_signed[i] == @as(f32, @floatFromInt(@as(i32, i) - 4)));
+            const to_signed: @Vector(len, i32) = @intFromFloat(from_signed);
+            inline for (0..len) |i| try expect(to_signed[i] == @as(i32, i) - 4);
+
+            var unsigned: @Vector(len, u32) = std.simd.iota(u32, len) * @as(@Vector(len, u32), @splat(3));
+            _ = &unsigned;
+            const from_unsigned: @Vector(len, f32) = @floatFromInt(unsigned);
+            inline for (0..len) |i| try expect(from_unsigned[i] == @as(f32, @floatFromInt(i * 3)));
+            const to_unsigned: @Vector(len, u32) = @intFromFloat(from_unsigned);
+            inline for (0..len) |i| try expect(to_unsigned[i] == i * 3);
+        }
+    };
+
+    inline for (.{ 1, 2, 3, 4, 8 }) |len| {
+        try S.doTheTest(len);
+        try comptime S.doTheTest(len);
+    }
 }
 
 test "@intFromBool on vector" {

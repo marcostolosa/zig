@@ -32,7 +32,7 @@ pub const Annotation = struct {
 
 pub fn fileSourceLineNumbersHtml(
     file_index: Walk.File.Index,
-    out: *std.ArrayListUnmanaged(u8),
+    out: *std.ArrayList(u8),
     root_node: Ast.Node.Index,
 ) !void {
     const ast = file_index.get_ast();
@@ -62,7 +62,7 @@ pub fn fileSourceHtml(
     var cursor: usize = ast.tokenStart(start_token);
 
     var indent: usize = 0;
-    if (std.mem.lastIndexOf(u8, ast.source[0..cursor], "\n")) |newline_index| {
+    if (std.mem.findLast(u8, ast.source[0..cursor], "\n")) |newline_index| {
         for (ast.source[newline_index + 1 .. cursor]) |c| {
             if (c == ' ') {
                 indent += 1;

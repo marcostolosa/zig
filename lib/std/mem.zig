@@ -9,6 +9,7 @@ const assert = debug.assert;
 const math = std.math;
 const testing = std.testing;
 const Endian = std.lang.Endian;
+const AbsorbSentinel = std.meta.AbsorbSentinel;
 
 /// The standard library currently thoroughly depends on byte size
 /// being 8 bits.  (see the use of u8 throughout allocation code as
@@ -32,12 +33,12 @@ pub const Alignment = enum(math.Log2Int(usize)) {
     _,
 
     pub fn toByteUnits(a: Alignment) usize {
-        return @as(usize, 1) << @intFromEnum(a);
+        return @as(usize, 1) << @backingInt(a);
     }
 
     pub fn fromByteUnits(n: usize) Alignment {
         assert(std.math.isPowerOfTwo(n));
-        return @enumFromInt(@ctz(n));
+        return @fromBackingInt(@intCast(@ctz(n)));
     }
 
     pub fn fromByteUnitsOptional(maybe_n: ?usize) ?Alignment {
@@ -49,36 +50,36 @@ pub const Alignment = enum(math.Log2Int(usize)) {
     }
 
     pub fn order(lhs: Alignment, rhs: Alignment) std.math.Order {
-        return std.math.order(@intFromEnum(lhs), @intFromEnum(rhs));
+        return std.math.order(@backingInt(lhs), @backingInt(rhs));
     }
 
     pub fn compare(lhs: Alignment, op: std.math.CompareOperator, rhs: Alignment) bool {
-        return std.math.compare(@intFromEnum(lhs), op, @intFromEnum(rhs));
+        return std.math.compare(@backingInt(lhs), op, @backingInt(rhs));
     }
 
     pub fn max(lhs: Alignment, rhs: Alignment) Alignment {
-        return @enumFromInt(@max(@intFromEnum(lhs), @intFromEnum(rhs)));
+        return @fromBackingInt(@intCast(@max(@backingInt(lhs), @backingInt(rhs))));
     }
 
     pub fn min(lhs: Alignment, rhs: Alignment) Alignment {
-        return @enumFromInt(@min(@intFromEnum(lhs), @intFromEnum(rhs)));
+        return @fromBackingInt(@intCast(@min(@backingInt(lhs), @backingInt(rhs))));
     }
 
     /// Return next address with this alignment.
     pub fn forward(a: Alignment, address: usize) usize {
-        const x = (@as(usize, 1) << @intFromEnum(a)) - 1;
+        const x = (@as(usize, 1) << @backingInt(a)) - 1;
         return (address + x) & ~x;
     }
 
     /// Return previous address with this alignment.
     pub fn backward(a: Alignment, address: usize) usize {
-        const x = (@as(usize, 1) << @intFromEnum(a)) - 1;
+        const x = (@as(usize, 1) << @backingInt(a)) - 1;
         return address & ~x;
     }
 
     /// Return whether address is aligned to this amount.
     pub fn check(a: Alignment, address: usize) bool {
-        return @ctz(address) >= @intFromEnum(a);
+        return @ctz(address) >= @backingInt(a);
     }
 };
 
@@ -268,6 +269,39 @@ pub fn copyBackwards(comptime T: type, dest: []T, source: []const T) void {
     }
 }
 
+/// Copy `source` into `dest`, excluding the sentinel.
+///
+/// Asserts no overlap. Asserts `dest.len` greater or equal to source len. Returns number of elements copied,
+/// not counting the sentinel.
+pub fn copySentinel(comptime T: type, comptime s: T, dest: []T, source: [*:s]const T) usize {
+    const i = findSentinel(T, s, source);
+    @memcpy(dest[0..i], source[0..i]);
+    return i;
+}
+
+test copySentinel {
+    var dst: [11]u8 = @splat(0xff);
+    const n = copySentinel(u8, 0, &dst, "hello this\x00is my null-terminated string");
+    try testing.expectEqualStrings("hello this\xff", &dst);
+    try testing.expectEqual(n, 10);
+}
+
+/// Copy `source` into `dest`, including the sentinel.
+///
+/// Asserts no overlap. Asserts `dest.len` greater or equal to source len, including room for the sentinel.
+/// Returns number of elements copied, including the sentinel.
+pub fn copySentinelInclusive(comptime T: type, comptime s: T, dest: []T, source: [*:s]const T) usize {
+    const i = findSentinel(T, s, source) + 1;
+    @memcpy(dest[0..i], source[0..i]);
+    return i;
+}
+
+test copySentinelInclusive {
+    var dst: [12]u8 = @splat(0xff);
+    const n = copySentinelInclusive(u8, 0, &dst, "hello this\x00is my null-terminated string");
+    try testing.expectEqualStrings("hello this\x00\xff", &dst);
+    try testing.expectEqual(n, 11);
+}
 /// Generally, Zig users are encouraged to explicitly initialize all fields of a struct explicitly rather than using this function.
 /// However, it is recognized that there are sometimes use cases for initializing all fields to a "zero" value. For example, when
 /// interfacing with a C API where this practice is more common and relied upon. If you are performing code review and see this
@@ -280,7 +314,7 @@ pub fn zeroes(comptime T: type) T {
             return @as(T, 0);
         },
         .@"enum" => {
-            return @as(T, @enumFromInt(0));
+            return @as(T, @fromBackingInt(@intCast(0)));
         },
         .void => {
             return {};
@@ -732,9 +766,23 @@ test lessThan {
     try testing.expect(lessThan(u8, "", "a"));
 }
 
+/// Returns `true` if `lhs < rhs`; `false` otherwise, operating on null-terminated arrays.
+pub fn lessThanZ(comptime T: type, lhs: [*:0]const T, rhs: [*:0]const T) bool {
+    return orderZ(T, lhs, rhs) == .lt;
+}
+
+test lessThanZ {
+    try testing.expect(lessThanZ(u8, "abcd", "bee"));
+    try testing.expect(!lessThanZ(u8, "abc", "abc"));
+    try testing.expect(lessThanZ(u8, "abc", "abc0"));
+    try testing.expect(!lessThanZ(u8, "", ""));
+    try testing.expect(lessThanZ(u8, "", "a"));
+}
+
 const use_vectors = switch (builtin.zig_backend) {
     // These backends don't support vectors yet.
     .stage2_aarch64,
+    .stage2_loongarch,
     .stage2_powerpc,
     .stage2_riscv64,
     => false,
@@ -756,7 +804,8 @@ pub fn eql(comptime T: type, a: []const T, b: []const T) bool {
     }
 
     if (a.len != b.len) return false;
-    if (a.len == 0 or a.ptr == b.ptr) return true;
+    if (a.len == 0) return true;
+    if (@typeInfo(T) != .float and a.ptr == b.ptr) return true;
 
     for (a, b) |a_elem, b_elem| {
         if (a_elem != b_elem) return false;
@@ -781,6 +830,9 @@ test eql {
 
     try testing.expect(eql(void, &.{ {}, {} }, &.{ {}, {} }));
     try testing.expect(!eql(void, &.{{}}, &.{ {}, {} }));
+
+    const x: [3]f64 = .{ 42.0, math.nan(f64), 3.1415 };
+    try testing.expect(!eql(f64, &x, &x));
 }
 
 /// std.mem.eql heavily optimized for slices of bytes.
@@ -850,20 +902,25 @@ pub const indexOfDiff = findDiff;
 /// Compares two slices and returns the index of the first inequality.
 /// Returns null if the slices are equal.
 pub fn findDiff(comptime T: type, a: []const T, b: []const T) ?usize {
-    const shortest = @min(a.len, b.len);
-    if (a.ptr == b.ptr)
-        return if (a.len == b.len) null else shortest;
-    var index: usize = 0;
-    while (index < shortest) : (index += 1) if (a[index] != b[index]) return index;
-    return if (a.len == b.len) null else shortest;
+    const shorter = @min(a.len, b.len);
+    if (@typeInfo(T) != .float and a.ptr == b.ptr) {
+        return if (a.len == b.len) null else shorter;
+    }
+    for (a[0..shorter], b[0..shorter], 0..) |a_elem, b_elem, i| {
+        if (a_elem != b_elem) return i;
+    }
+    return if (a.len == b.len) null else shorter;
 }
 
 test findDiff {
-    try testing.expectEqual(findDiff(u8, "one", "one"), null);
-    try testing.expectEqual(findDiff(u8, "one two", "one"), 3);
-    try testing.expectEqual(findDiff(u8, "one", "one two"), 3);
-    try testing.expectEqual(findDiff(u8, "one twx", "one two"), 6);
-    try testing.expectEqual(findDiff(u8, "xne", "one"), 0);
+    try testing.expectEqual(null, findDiff(u8, "one", "one"));
+    try testing.expectEqual(3, findDiff(u8, "one two", "one"));
+    try testing.expectEqual(3, findDiff(u8, "one", "one two"));
+    try testing.expectEqual(6, findDiff(u8, "one twx", "one two"));
+    try testing.expectEqual(0, findDiff(u8, "xne", "one"));
+
+    const x: [3]f64 = .{ 42.0, math.nan(f64), 3.1415 };
+    try testing.expectEqual(1, findDiff(f64, &x, &x));
 }
 
 /// Takes a sentinel-terminated pointer and returns a slice preserving pointer attributes.
@@ -1519,7 +1576,7 @@ pub fn findLast(comptime T: type, haystack: []const T, needle: []const T) ?usize
     if (needle.len == 0) return haystack.len;
 
     if (!std.meta.hasUniqueRepresentation(T) or haystack.len < 52 or needle.len <= 4)
-        return lastIndexOfLinear(T, haystack, needle);
+        return findLastLinear(T, haystack, needle);
 
     const haystack_bytes = sliceAsBytes(haystack);
     const needle_bytes = sliceAsBytes(needle);
@@ -1574,26 +1631,26 @@ pub fn findPos(comptime T: type, haystack: []const T, start_index: usize, needle
 
 test find {
     try testing.expect(find(u8, "one two three four five six seven eight nine ten eleven", "three four").? == 8);
-    try testing.expect(lastIndexOf(u8, "one two three four five six seven eight nine ten eleven", "three four").? == 8);
+    try testing.expect(findLast(u8, "one two three four five six seven eight nine ten eleven", "three four").? == 8);
     try testing.expect(find(u8, "one two three four five six seven eight nine ten eleven", "two two") == null);
-    try testing.expect(lastIndexOf(u8, "one two three four five six seven eight nine ten eleven", "two two") == null);
+    try testing.expect(findLast(u8, "one two three four five six seven eight nine ten eleven", "two two") == null);
 
     try testing.expect(find(u8, "one two three four five six seven eight nine ten", "").? == 0);
-    try testing.expect(lastIndexOf(u8, "one two three four five six seven eight nine ten", "").? == 48);
+    try testing.expect(findLast(u8, "one two three four five six seven eight nine ten", "").? == 48);
 
     try testing.expect(find(u8, "one two three four", "four").? == 14);
-    try testing.expect(lastIndexOf(u8, "one two three two four", "two").? == 14);
+    try testing.expect(findLast(u8, "one two three two four", "two").? == 14);
     try testing.expect(find(u8, "one two three four", "gour") == null);
-    try testing.expect(lastIndexOf(u8, "one two three four", "gour") == null);
+    try testing.expect(findLast(u8, "one two three four", "gour") == null);
     try testing.expect(find(u8, "foo", "foo").? == 0);
-    try testing.expect(lastIndexOf(u8, "foo", "foo").? == 0);
+    try testing.expect(findLast(u8, "foo", "foo").? == 0);
     try testing.expect(find(u8, "foo", "fool") == null);
-    try testing.expect(lastIndexOf(u8, "foo", "lfoo") == null);
-    try testing.expect(lastIndexOf(u8, "foo", "fool") == null);
+    try testing.expect(findLast(u8, "foo", "lfoo") == null);
+    try testing.expect(findLast(u8, "foo", "fool") == null);
 
     try testing.expect(find(u8, "foo foo", "foo").? == 0);
-    try testing.expect(lastIndexOf(u8, "foo foo", "foo").? == 4);
-    try testing.expect(lastIndexOfAny(u8, "boo, cat", "abo").? == 6);
+    try testing.expect(findLast(u8, "foo foo", "foo").? == 4);
+    try testing.expect(findLastAny(u8, "boo, cat", "abo").? == 6);
     try testing.expect(findScalarLast(u8, "boo", 'o').? == 2);
 }
 
@@ -1615,13 +1672,13 @@ test "find multibyte" {
         // make haystack and needle long enough to trigger Boyer-Moore-Horspool algorithm
         const haystack = [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee, 0x00ff } ++ @as([100]u16, @splat(0));
         const needle = [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee };
-        try testing.expectEqual(lastIndexOf(u16, &haystack, &needle), 0);
+        try testing.expectEqual(findLast(u16, &haystack, &needle), 0);
 
         // check for misaligned false positives (little and big endian)
         const needleLE = [_]u16{ 0xbbbb, 0xcccc, 0xdddd, 0xeeee, 0xffff };
-        try testing.expectEqual(lastIndexOf(u16, &haystack, &needleLE), null);
+        try testing.expectEqual(findLast(u16, &haystack, &needleLE), null);
         const needleBE = [_]u16{ 0xaacc, 0xbbdd, 0xccee, 0xddff, 0xee00 };
-        try testing.expectEqual(lastIndexOf(u16, &haystack, &needleBE), null);
+        try testing.expectEqual(findLast(u16, &haystack, &needleBE), null);
     }
 }
 
@@ -2215,33 +2272,54 @@ test writeVarPackedInt {
     try testing.expectEqual(T{ .a = 1, .b = value, .c = 4 }, st);
 }
 
-/// Swap the byte order of all the members of the fields of a struct
-/// (Changing their endianness)
-pub fn byteSwapAllFields(comptime S: type, ptr: *S) void {
-    byteSwapAllFieldsAligned(S, .of(S), ptr);
+/// Deprecated: use `byteSwap` instead.
+pub const byteSwapAllFields = byteSwap;
+
+/// Deprecated: use `byteSwapAligned` instead.
+pub const byteSwapAllFieldsAligned = byteSwapAligned;
+
+/// Reverses the byte order.
+/// Handles structs, unions, arrays, enums, floats, and integers recursively.
+/// The order of extern struct fields and array elements remains unchanged and
+/// will be byte swapped recursively.
+/// Useful for converting between little-endian and big-endian representations.
+pub fn byteSwap(comptime S: type, ptr: *S) void {
+    byteSwapAligned(S, .of(S), ptr);
 }
 
-/// Swap the byte order of all the members of the fields of a struct
-/// (Changing their endianness)
-pub fn byteSwapAllFieldsAligned(comptime S: type, comptime a: Alignment, ptr: *align(a.toByteUnits()) S) void {
+/// Reverses the byte order.
+/// Handles structs, unions, arrays, enums, floats, and integers recursively.
+/// The order of extern struct fields and array elements remains unchanged and
+/// will be byte swapped recursively.
+/// Useful for converting between little-endian and big-endian representations.
+pub fn byteSwapAligned(
+    comptime S: type,
+    comptime a: Alignment,
+    ptr: *align(a.toByteUnits()) S,
+) void {
     switch (@typeInfo(S)) {
         .@"struct" => |@"struct"| {
             if (@"struct".backing_integer) |Int| {
                 ptr.* = @bitCast(@byteSwap(@as(Int, @bitCast(ptr.*))));
-            } else inline for (@"struct".field_types, @"struct".field_names, @"struct".field_attrs) |f_type, f_name, f_attr| {
-                switch (@typeInfo(f_type)) {
-                    .@"struct" => byteSwapAllFieldsAligned(f_type, .fromByteUnits(f_attr.@"align" orelse @alignOf(f_type)), &@field(ptr, f_name)),
-                    .@"union", .array => byteSwapAllFieldsAligned(f_type, .fromByteUnits(f_attr.@"align" orelse @alignOf(f_type)), &@field(ptr, f_name)),
-                    .@"enum" => {
-                        @field(ptr, f_name) = @enumFromInt(@byteSwap(@intFromEnum(@field(ptr, f_name))));
-                    },
-                    .bool => {},
-                    .float => |float| {
-                        @field(ptr, f_name) = @bitCast(@byteSwap(@as(@Int(.unsigned, float.bits), @bitCast(@field(ptr, f_name)))));
-                    },
-                    else => {
-                        @field(ptr, f_name) = @byteSwap(@field(ptr, f_name));
-                    },
+            } else {
+                if (@"struct".layout != .@"extern") {
+                    @compileError("byteSwapAligned expects a packed or extern struct");
+                }
+                inline for (@"struct".field_types, @"struct".field_names, @"struct".field_attrs) |f_type, f_name, f_attr| {
+                    switch (@typeInfo(f_type)) {
+                        .@"struct" => byteSwapAligned(f_type, .fromByteUnits(f_attr.@"align" orelse @alignOf(f_type)), &@field(ptr, f_name)),
+                        .@"union", .array => byteSwapAligned(f_type, .fromByteUnits(f_attr.@"align" orelse @alignOf(f_type)), &@field(ptr, f_name)),
+                        .@"enum" => {
+                            @field(ptr, f_name) = @fromBackingInt(@byteSwap(@backingInt(@field(ptr, f_name))));
+                        },
+                        .bool => {},
+                        .float => |float| {
+                            @field(ptr, f_name) = @bitCast(@byteSwap(@as(@Int(.unsigned, float.bits), @bitCast(@field(ptr, f_name)))));
+                        },
+                        else => {
+                            @field(ptr, f_name) = @byteSwap(@field(ptr, f_name));
+                        },
+                    }
                 }
             }
         },
@@ -2249,7 +2327,7 @@ pub fn byteSwapAllFieldsAligned(comptime S: type, comptime a: Alignment, ptr: *a
             ptr.* = @bitCast(@byteSwap(@as(Int, @bitCast(ptr.*))));
         } else {
             if (@"union".layout != .@"extern") {
-                @compileError("byteSwapAllFields expects a packed or extern union");
+                @compileError("byteSwapAligned expects a packed or extern union");
             }
 
             const first_size = @bitSizeOf(@"union".field_types[0]);
@@ -2266,13 +2344,21 @@ pub fn byteSwapAllFieldsAligned(comptime S: type, comptime a: Alignment, ptr: *a
         .array => |array| {
             byteSwapAllElements(array.child, ptr);
         },
+        .@"enum" => {
+            ptr.* = @fromBackingInt(@byteSwap(@backingInt(ptr.*)));
+        },
+        .bool => {},
+        .float => |float| {
+            const int_repr: @Int(.unsigned, float.bits) = @bitCast(ptr.*);
+            ptr.* = @bitCast(@byteSwap(int_repr));
+        },
         else => {
             ptr.* = @byteSwap(ptr.*);
         },
     }
 }
 
-test byteSwapAllFields {
+test byteSwap {
     const T = extern struct {
         f0: u8,
         f1: u16,
@@ -2304,6 +2390,9 @@ test byteSwapAllFields {
         } align(4),
         f2: u32,
     };
+    const E = enum(u32) {
+        _,
+    };
     var s = T{
         .f0 = 0x12,
         .f1 = 0x1234,
@@ -2327,10 +2416,14 @@ test byteSwapAllFields {
         .f1 = .{ .f0 = 0x123456789ABCDEF0 },
         .f2 = 0x87654321,
     };
-    byteSwapAllFields(T, &s);
-    byteSwapAllFields(K, &k);
-    byteSwapAllFields(P, &p);
-    byteSwapAllFields(A, &a);
+    var e: E = @fromBackingInt(0x12345678);
+    var f: f32 = @bitCast(@as(u32, 0x4640e400));
+    byteSwap(T, &s);
+    byteSwap(K, &k);
+    byteSwap(P, &p);
+    byteSwap(A, &a);
+    byteSwap(E, &e);
+    byteSwap(f32, &f);
     try std.testing.expectEqual(T{
         .f0 = 0x12,
         .f1 = 0x3412,
@@ -2354,28 +2447,15 @@ test byteSwapAllFields {
         .f1 = .{ .f0 = 0xF0DEBC9A78563412 },
         .f2 = 0x21436587,
     }, a);
+    try std.testing.expectEqual(@as(E, @fromBackingInt(0x78563412)), e);
+    try std.testing.expectEqual(@as(f32, @bitCast(@as(u32, 0x00e44046))), f);
 }
 
 /// Reverses the byte order of all elements in a slice.
 /// Handles structs, unions, arrays, enums, floats, and integers recursively.
 /// Useful for converting between little-endian and big-endian representations.
 pub fn byteSwapAllElements(comptime Elem: type, slice: []Elem) void {
-    for (slice) |*elem| {
-        switch (@typeInfo(@TypeOf(elem.*))) {
-            .@"struct", .@"union", .array => byteSwapAllFields(@TypeOf(elem.*), elem),
-            .@"enum" => {
-                elem.* = @enumFromInt(@byteSwap(@intFromEnum(elem.*)));
-            },
-            .bool => {},
-            .float => |float| {
-                const int_repr: @Int(.unsigned, float.bits) = @bitCast(elem.*);
-                elem.* = @bitCast(@byteSwap(int_repr));
-            },
-            else => {
-                elem.* = @byteSwap(elem.*);
-            },
-        }
-    }
+    for (slice) |*elem| byteSwap(Elem, elem);
 }
 
 /// Returns an iterator that iterates over the slices of `buffer` that are not
@@ -3453,8 +3533,8 @@ pub fn SplitBackwardsIterator(comptime T: type, comptime delimiter_type: Delimit
         pub fn next(self: *Self) ?[]const T {
             const end = self.index orelse return null;
             const start = if (switch (delimiter_type) {
-                .sequence => lastIndexOf(T, self.buffer[0..end], self.delimiter),
-                .any => lastIndexOfAny(T, self.buffer[0..end], self.delimiter),
+                .sequence => findLast(T, self.buffer[0..end], self.delimiter),
+                .any => findLastAny(T, self.buffer[0..end], self.delimiter),
                 .scalar => findScalarLast(T, self.buffer[0..end], self.delimiter),
             }) |delim_start| blk: {
                 self.index = delim_start;
@@ -4706,22 +4786,28 @@ test "sliceAsBytes preserves pointer attributes" {
     try testing.expectEqual(in_attrs.@"align", out_attrs.@"align");
 }
 
-fn AbsorbSentinelReturnType(comptime Slice: type) type {
-    const info = @typeInfo(Slice).pointer;
-    assert(info.size == .slice);
-    return @Pointer(.slice, info.attrs, info.child, null);
-}
-
 /// If the provided slice is not sentinel terminated, do nothing and return that slice.
 /// If it is sentinel-terminated, return a non-sentinel-terminated slice with the
 /// length increased by one to include the absorbed sentinel element.
-pub fn absorbSentinel(slice: anytype) AbsorbSentinelReturnType(@TypeOf(slice)) {
+pub fn absorbSentinel(slice: anytype) AbsorbSentinel(@TypeOf(slice)) {
     const info = @typeInfo(@TypeOf(slice)).pointer;
-    comptime assert(info.size == .slice);
-    if (info.sentinel_ptr == null) {
-        return slice;
-    } else {
-        return slice.ptr[0 .. slice.len + 1];
+    switch (info.size) {
+        .slice => {
+            if (info.sentinel_ptr == null) {
+                return slice;
+            } else {
+                return slice.ptr[0 .. slice.len + 1];
+            }
+        },
+        .one => {
+            const child_info = @typeInfo(info.child).array;
+            if (child_info.sentinel_ptr == null) {
+                return slice;
+            } else {
+                return slice[0 .. child_info.len + 1];
+            }
+        },
+        else => unreachable,
     }
 }
 
@@ -4730,21 +4816,28 @@ test absorbSentinel {
         var buffer: [3:0]u8 = .{ 1, 2, 3 };
         const foo: [:0]const u8 = &buffer;
         const bar: []const u8 = &buffer;
+        const baz: *const [3:0]u8 = &buffer;
         try testing.expectEqual([]const u8, @TypeOf(absorbSentinel(foo)));
         try testing.expectEqual([]const u8, @TypeOf(absorbSentinel(bar)));
+        try testing.expectEqual(*const [4]u8, @TypeOf(absorbSentinel(baz)));
         try testing.expectEqualSlices(u8, &.{ 1, 2, 3, 0 }, absorbSentinel(foo));
         try testing.expectEqualSlices(u8, &.{ 1, 2, 3 }, absorbSentinel(bar));
+        try testing.expectEqualSlices(u8, &.{ 1, 2, 3, 0 }, absorbSentinel(baz));
     }
     {
         var buffer: [3:0]u8 = .{ 1, 2, 3 };
         const foo: [:0]u8 = &buffer;
         const bar: []u8 = &buffer;
+        const baz: *[3:0]u8 = &buffer;
         try testing.expectEqual([]u8, @TypeOf(absorbSentinel(foo)));
         try testing.expectEqual([]u8, @TypeOf(absorbSentinel(bar)));
+        try testing.expectEqual(*[4]u8, @TypeOf(absorbSentinel(baz)));
         var expected_foo = [_]u8{ 1, 2, 3, 0 };
         try testing.expectEqualSlices(u8, &expected_foo, absorbSentinel(foo));
         var expected_bar = [_]u8{ 1, 2, 3 };
         try testing.expectEqualSlices(u8, &expected_bar, absorbSentinel(bar));
+        var expected_baz = [_]u8{ 1, 2, 3, 0 };
+        try testing.expectEqualSlices(u8, &expected_baz, absorbSentinel(baz));
     }
 }
 
@@ -4780,60 +4873,56 @@ pub fn alignForwardLog2(addr: usize, log2_alignment: u8) usize {
 pub fn doNotOptimizeAway(val: anytype) void {
     if (@inComptime()) return;
 
-    const max_gp_register_bits = @bitSizeOf(c_long);
-    const t = @typeInfo(@TypeOf(val));
-    switch (t) {
+    if (builtin.zig_backend == .stage2_c and builtin.abi == .msvc) {
+        _ = @atomicRmw(*const anyopaque, @as(*volatile *const anyopaque, &struct {
+            var escape: *const anyopaque = undefined;
+        }.escape), .Xchg, &val, .acq_rel); // TODO: syncscope("singlethreaded")
+        return;
+    }
+
+    switch (@typeInfo(@TypeOf(val))) {
         .void, .null, .comptime_int, .comptime_float => return,
-        .@"enum" => doNotOptimizeAway(@intFromEnum(val)),
+        .@"enum" => doNotOptimizeAway(@backingInt(val)),
         .bool => doNotOptimizeAway(@intFromBool(val)),
-        .int => {
-            const bits = t.int.bits;
-            if (bits <= max_gp_register_bits and builtin.zig_backend != .stage2_c) {
+        .int => |int| {
+            // SPIR-V targets do not have registers per se, they have values
+            // tied to IDs that can be passed to valid instructions. Some
+            // SPIR-V targets do not define c_long, so we just allow any sized
+            // integer on these targets
+            const val_fits_in_gp_register = builtin.target.cpu.arch.isSpirV() or fits: {
+                const max_gp_register_bits = @bitSizeOf(c_long);
+                break :fits int.bits <= max_gp_register_bits;
+            };
+            if (val_fits_in_gp_register) {
                 const val2 = @as(
-                    @Int(t.int.signedness, @max(8, std.math.ceilPowerOfTwoAssert(u16, bits))),
+                    @Int(int.signedness, @max(8, std.math.ceilPowerOfTwoAssert(u16, int.bits))),
                     val,
                 );
                 asm volatile (""
                     :
                     : [_] "r" (val2),
                 );
-            } else doNotOptimizeAway(&val);
-        },
-        .float => {
-            if ((t.float.bits == 32 or t.float.bits == 64) and builtin.zig_backend != .stage2_c) {
-                asm volatile (""
-                    :
-                    : [_] "rm" (val),
-                );
-            } else doNotOptimizeAway(&val);
-        },
-        .pointer => {
-            if (builtin.zig_backend == .stage2_c) {
-                doNotOptimizeAwayC(val);
             } else {
-                asm volatile (""
-                    :
-                    : [_] "m" (val),
-                    : .{ .memory = true });
+                doNotOptimizeAway(&val);
             }
         },
-        .array => {
-            if (t.array.len * @sizeOf(t.array.child) <= 64) {
-                for (val) |v| doNotOptimizeAway(v);
-            } else doNotOptimizeAway(&val);
+        .float => |float| switch (float.bits) {
+            else => comptime unreachable,
+            16, 80, 128 => doNotOptimizeAway(&val),
+            32, 64 => asm volatile (""
+                :
+                : [_] "rm" (val),
+            ),
         },
+        .pointer => asm volatile (""
+            :
+            : [_] "m" (val),
+            : .{ .memory = true }),
+        .array => |array| if (array.len * @sizeOf(array.child) <= 64) {
+            for (val) |v| doNotOptimizeAway(v);
+        } else doNotOptimizeAway(&val),
         else => doNotOptimizeAway(&val),
     }
-}
-
-/// .stage2_c doesn't support asm blocks yet, so use volatile stores instead
-var deopt_target: if (builtin.zig_backend == .stage2_c) u8 else void = undefined;
-fn doNotOptimizeAwayC(ptr: anytype) void {
-    const dest = @as(*volatile u8, @ptrCast(&deopt_target));
-    for (asBytes(ptr)) |b| {
-        dest.* = b;
-    }
-    dest.* = 0;
 }
 
 test doNotOptimizeAway {
@@ -4994,12 +5083,9 @@ pub fn alignInSlice(slice: anytype, comptime new_alignment: usize) ?AlignedSlice
 }
 
 test "read/write(Var)PackedInt" {
-    switch (builtin.cpu.arch) {
-        // This test generates too much code to execute on WASI.
-        // LLVM backend fails with "too many locals: locals exceed maximum"
-        .wasm32, .wasm64 => return error.SkipZigTest,
-        else => {},
-    }
+    // This test generates too much code to execute on WASI.
+    // LLVM backend fails with "too many locals: locals exceed maximum"
+    if (builtin.cpu.arch.isWasm()) return error.SkipZigTest;
 
     const foreign_endian: Endian = if (native_endian == .big) .little else .big;
     const expect = std.testing.expect;

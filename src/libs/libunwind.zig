@@ -118,11 +118,14 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
         // defines will be correct.
         try cflags.append("-D_LIBUNWIND_IS_NATIVE_ONLY");
 
-        if (comp.root_mod.optimize_mode == .Debug) {
+        if (comp.root_mod.optimize_mode == .debug) {
             try cflags.append("-D_DEBUG");
         }
         if (!comp.config.any_non_single_threaded) {
             try cflags.append("-D_LIBUNWIND_HAS_NO_THREADS");
+        }
+        if (target.os.tag == .haiku) {
+            try cflags.append("-D_LIBUNWIND_USE_HAIKU_BSD_LIB");
         }
         if (target.cpu.arch.isArm() and target.abi.float() == .hard) {
             try cflags.append("-DCOMPILER_RT_ARMHF_TARGET");

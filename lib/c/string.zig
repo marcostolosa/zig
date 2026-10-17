@@ -6,7 +6,7 @@ const c = std.c;
 comptime {
     symbol(&strndup, "strndup");
 
-    if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
+    if (builtin.target.isMuslLibC()) {
         // memcpy implemented in compiler_rt
         // memmove implemented in compiler_rt
         // memset implemented in compiler_rt
@@ -53,7 +53,7 @@ comptime {
         symbol(&__strcoll_l, "strcoll_l");
         symbol(&__strxfrm_l, "strxfrm_l");
 
-        // These symbols are not in the public ABI of musl/wasi. However they depend on these exports internally.
+        // These symbols are not in the public ABI of musl. However it depends on these exports internally.
         symbol(&stpcpy, "__stpcpy");
         symbol(&stpncpy, "__stpncpy");
         symbol(&strchrnul, "__strchrnul");
@@ -68,8 +68,12 @@ comptime {
 }
 
 fn memchr(ptr: *const anyopaque, value: c_int, len: usize) callconv(.c) ?*anyopaque {
+    const b: u8 = @truncate(@as(c_uint, @bitCast(value)));
     const bytes: [*]const u8 = @ptrCast(ptr);
-    return @constCast(bytes[std.mem.findScalar(u8, bytes[0..len], @truncate(@as(c_uint, @bitCast(value)))) orelse return null ..]);
+    for (0..len) |i| {
+        if (bytes[i] == b) return @constCast(&bytes[i]);
+    }
+    return null;
 }
 
 fn strcpy(noalias dst: [*]c_char, noalias src: [*:0]const c_char) callconv(.c) [*]c_char {
@@ -224,7 +228,10 @@ fn stpncpy(noalias dst: [*]c_char, noalias src: [*:0]const c_char, max: usize) c
 }
 
 fn strnlen(str: [*:0]const c_char, max: usize) callconv(.c) usize {
-    return std.mem.findScalar(u8, @ptrCast(str[0..max]), 0) orelse max;
+    for (0..max) |i| {
+        if (str[i] == 0) return i;
+    }
+    return max;
 }
 
 fn memmem(haystack: *const anyopaque, haystack_len: usize, needle: *const anyopaque, needle_len: usize) callconv(.c) ?*anyopaque {

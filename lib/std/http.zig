@@ -20,6 +20,8 @@ pub const Version = enum {
 /// https://datatracker.ietf.org/doc/html/rfc7231#section-4 Initial definition
 ///
 /// https://datatracker.ietf.org/doc/html/rfc5789#section-2 PATCH
+///
+/// https://datatracker.ietf.org/doc/html/rfc10008#name-query-method QUERY
 pub const Method = enum {
     GET,
     HEAD,
@@ -30,12 +32,13 @@ pub const Method = enum {
     OPTIONS,
     TRACE,
     PATCH,
+    QUERY,
 
     /// Returns true if a request of this method is allowed to have a body
     /// Actual behavior from servers may vary and should still be checked
     pub fn requestHasBody(m: Method) bool {
         return switch (m) {
-            .POST, .PUT, .PATCH => true,
+            .POST, .PUT, .PATCH, .QUERY => true,
             .GET, .HEAD, .DELETE, .CONNECT, .OPTIONS, .TRACE => false,
         };
     }
@@ -44,7 +47,7 @@ pub const Method = enum {
     /// Actual behavior from clients may vary and should still be checked
     pub fn responseHasBody(m: Method) bool {
         return switch (m) {
-            .GET, .POST, .PUT, .DELETE, .CONNECT, .OPTIONS, .PATCH => true,
+            .GET, .POST, .PUT, .DELETE, .CONNECT, .OPTIONS, .PATCH, .QUERY => true,
             .HEAD, .TRACE => false,
         };
     }
@@ -56,7 +59,7 @@ pub const Method = enum {
     /// https://datatracker.ietf.org/doc/html/rfc7231#section-4.2.1
     pub fn safe(m: Method) bool {
         return switch (m) {
-            .GET, .HEAD, .OPTIONS, .TRACE => true,
+            .GET, .HEAD, .OPTIONS, .TRACE, .QUERY => true,
             .POST, .PUT, .DELETE, .CONNECT, .PATCH => false,
         };
     }
@@ -70,7 +73,7 @@ pub const Method = enum {
     /// https://datatracker.ietf.org/doc/html/rfc7231#section-4.2.2
     pub fn idempotent(m: Method) bool {
         return switch (m) {
-            .GET, .HEAD, .PUT, .DELETE, .OPTIONS, .TRACE => true,
+            .GET, .HEAD, .PUT, .DELETE, .OPTIONS, .TRACE, .QUERY => true,
             .CONNECT, .POST, .PATCH => false,
         };
     }
@@ -83,7 +86,7 @@ pub const Method = enum {
     /// https://datatracker.ietf.org/doc/html/rfc7231#section-4.2.3
     pub fn cacheable(m: Method) bool {
         return switch (m) {
-            .GET, .HEAD => true,
+            .GET, .HEAD, .QUERY => true,
             .POST, .PUT, .DELETE, .CONNECT, .OPTIONS, .TRACE, .PATCH => false,
         };
     }
@@ -247,7 +250,7 @@ pub const Status = enum(u10) {
     };
 
     pub fn class(self: Status) Class {
-        return switch (@intFromEnum(self)) {
+        return switch (@backingInt(self)) {
             100...199 => .informational,
             200...299 => .success,
             300...399 => .redirect,
@@ -307,6 +310,11 @@ pub const Connection = enum {
     close,
 };
 
+pub const Side = enum {
+    request,
+    response,
+};
+
 pub const Header = struct {
     name: []const u8,
     value: []const u8,
@@ -330,6 +338,8 @@ pub const Reader = struct {
     trailers: []const u8 = &.{},
     body_err: ?BodyError = null,
     max_head_len: usize,
+    /// Whether this is a reader over a request, sent by a client; or a response, sent by a server.
+    side: Side,
 
     pub const RemainingChunkLen = enum(u64) {
         head = 0,
@@ -338,11 +348,11 @@ pub const Reader = struct {
         _,
 
         pub fn init(integer: u64) RemainingChunkLen {
-            return @enumFromInt(integer);
+            return @fromBackingInt(@intCast(integer));
         }
 
         pub fn int(rcl: RemainingChunkLen) u64 {
-            return @intFromEnum(rcl);
+            return @backingInt(rcl);
         }
     };
 
@@ -455,8 +465,17 @@ pub const Reader = struct {
                     };
                     return &reader.interface;
                 } else {
-                    reader.state = .body_none;
-                    return reader.in;
+                    return switch (reader.side) {
+                        .response => resp: {
+                            reader.state = .body_none;
+                            break :resp reader.in;
+                        },
+                        .request => req: {
+                            // RFC7230: If a request has no Content-Length and no Transfer-Encoding, it has no message body.
+                            reader.state = .ready;
+                            break :req .ending;
+                        },
+                    };
                 }
             },
         }
@@ -597,8 +616,8 @@ pub const Reader = struct {
                 continue :len .head;
             },
             else => |remaining_chunk_len| {
-                const n = try in.stream(w, limit.min(.limited64(@intFromEnum(remaining_chunk_len) - 2)));
-                chunk_len_ptr.* = .init(@intFromEnum(remaining_chunk_len) - n);
+                const n = try in.stream(w, limit.min(.limited64(@backingInt(remaining_chunk_len) - 2)));
+                chunk_len_ptr.* = .init(@backingInt(remaining_chunk_len) - n);
                 return n;
             },
         }
@@ -743,6 +762,9 @@ pub const BodyWriter = struct {
     http_protocol_output: *Writer,
     state: State,
     writer: Writer,
+    /// Associated `Client.Request`, if applicable, used to tell the request
+    /// that the body has been written and the connection is safe to reuse.
+    client_request: ?*Client.Request = null,
 
     pub const Error = Writer.Error;
 
@@ -821,8 +843,13 @@ pub const BodyWriter = struct {
                 assert(len == 0); // Trips when end() called before all bytes written.
                 w.state = .end;
             },
-            .none => {},
             .chunk_len => return endChunkedUnflushed(w, .{}),
+            // Don't clear payload_pending to prevent an unframed request from
+            // returning to the pool
+            .none => return,
+        }
+        if (w.client_request) |request| {
+            request.payload_pending = false;
         }
     }
 
@@ -858,26 +885,27 @@ pub const BodyWriter = struct {
     /// * `endUnflushed`
     /// * `end`
     pub fn endChunkedUnflushed(w: *BodyWriter, options: EndChunkedOptions) Error!void {
-        if (w.isEliding()) {
-            w.state = .end;
-            return;
-        }
-        const bw = w.http_protocol_output;
-        switch (w.state.chunk_len) {
-            0 => {},
-            1 => unreachable, // Wrote more data than specified in chunk header.
-            2 => try bw.writeAll("\r\n"),
-            else => unreachable, // An earlier write call indicated more data would follow.
-        }
-        try bw.writeAll("0\r\n");
-        for (options.trailers) |trailer| {
-            try bw.writeAll(trailer.name);
-            try bw.writeAll(": ");
-            try bw.writeAll(trailer.value);
+        if (!w.isEliding()) {
+            const bw = w.http_protocol_output;
+            switch (w.state.chunk_len) {
+                0 => {},
+                1 => unreachable, // Wrote more data than specified in chunk header.
+                2 => try bw.writeAll("\r\n"),
+                else => unreachable, // An earlier write call indicated more data would follow.
+            }
+            try bw.writeAll("0\r\n");
+            for (options.trailers) |trailer| {
+                try bw.writeAll(trailer.name);
+                try bw.writeAll(": ");
+                try bw.writeAll(trailer.value);
+                try bw.writeAll("\r\n");
+            }
             try bw.writeAll("\r\n");
         }
-        try bw.writeAll("\r\n");
         w.state = .end;
+        if (w.client_request) |request| {
+            request.payload_pending = false;
+        }
     }
 
     pub fn contentLengthDrain(w: *Writer, data: []const []const u8, splat: usize) Error!usize {

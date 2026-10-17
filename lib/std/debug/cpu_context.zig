@@ -42,7 +42,7 @@ pub fn fromPosixSignalContext(ctx_ptr: ?*const anyopaque) ?Native {
     // Deal with some special cases first.
     if (native_arch.isArc() and native_os == .linux) {
         var native: Native = .{
-            .r = [_]u32{ uc.mcontext.r31, uc.mcontext.r30, 0, uc.mcontext.r28 } ++
+            .r = [_]Arc.Gpr{ uc.mcontext.r31, uc.mcontext.r30, 0, uc.mcontext.r28 } ++
                 uc.mcontext.r27_26 ++
                 uc.mcontext.r25_13 ++
                 uc.mcontext.r12_0,
@@ -100,15 +100,29 @@ pub fn fromPosixSignalContext(ctx_ptr: ?*const anyopaque) ?Native {
             .i = frame.i,
             .pc = uc.mcontext.pc,
         };
+    } else if (native_arch.isSparc() and native_os == .netbsd) {
+        // The kernel flushes all user windows before delivering a signal.
+        const save: *const [16]usize = @ptrFromInt(uc.mcontext.o[6] +% if (native_arch == .sparc64) 2047 else 0);
+
+        return .{
+            .g = [_]Sparc.Gpr{0} ++ uc.mcontext.g1_7,
+            .o = uc.mcontext.o,
+            .l = save[0..8].*,
+            .i = save[8..16].*,
+            .pc = uc.mcontext.pc,
+        };
+    } else if (native_arch == .sparc64 and native_os == .openbsd) {
+        // https://codeberg.org/ziglang/zig/issues/30958
+        return null;
     }
 
     // Only unified conversions from here.
     return switch (native_arch) {
         .arm, .armeb, .thumb, .thumbeb => .{
-            .r = uc.mcontext.r ++ [_]u32{uc.mcontext.pc},
+            .r = uc.mcontext.r ++ [_]Arm.Gpr{uc.mcontext.pc},
         },
         .aarch64, .aarch64_be => .{
-            .x = uc.mcontext.x ++ [_]u64{uc.mcontext.lr},
+            .x = uc.mcontext.x ++ [_]Aarch64.Gpr{uc.mcontext.lr},
             .sp = uc.mcontext.sp,
             .pc = uc.mcontext.pc,
         },
@@ -118,9 +132,9 @@ pub fn fromPosixSignalContext(ctx_ptr: ?*const anyopaque) ?Native {
         },
         .csky => .{
             .r = uc.mcontext.r0_13 ++
-                [_]u32{ uc.mcontext.r14, uc.mcontext.r15 } ++
+                [_]Csky.Gpr{ uc.mcontext.r14, uc.mcontext.r15 } ++
                 uc.mcontext.r16_30 ++
-                [_]u32{uc.mcontext.r31},
+                [_]Csky.Gpr{uc.mcontext.r31},
             .pc = uc.mcontext.pc,
         },
         .hexagon, .loongarch32, .loongarch64, .mips, .mipsel, .mips64, .mips64el, .or1k => .{
@@ -349,6 +363,7 @@ const Alpha = extern struct {
             \\ stq $28, 0x0e0($0)
             \\ stq $29, 0x0e8($0)
             \\ stq $30, 0x0f0($0)
+            \\ stq $31, 0x0f8($0)
             \\
             \\ br $1, 1f
             \\1:
@@ -463,10 +478,11 @@ const Arm = struct {
             \\ stm r0, {r0-r12}
             \\ str r13, [r0, #0x34]
             \\ str r14, [r0, #0x38]
-            \\ str r15, [r0, #0x3c]
+            \\ mov r1, pc
+            \\ str r1, [r0, #0x3c]
             :
             : [r] "{r0}" (&ctx.r),
-            : .{ .memory = true });
+            : .{ .r1 = true, .memory = true });
         return ctx;
     }
 
@@ -636,8 +652,8 @@ const Hexagon = extern struct {
 /// This is an `extern struct` so that inline assembly in `current` can use field offsets.
 const Kvx = extern struct {
     r: [64]Gpr,
-    ra: Gpr,
     pc: Gpr,
+    ra: Gpr,
 
     pub const Gpr = u64;
 
@@ -716,38 +732,38 @@ const Lanai = extern struct {
     pub inline fn current() Lanai {
         var ctx: Lanai = undefined;
         asm volatile (
-            \\ st %%r0, 0[r9]
-            \\ st %%r1, 4[r9]
-            \\ st %%r2, 8[r9]
-            \\ st %%r3, 12[r9]
-            \\ st %%r4, 16[r9]
-            \\ st %%r5, 20[r9]
-            \\ st %%r6, 24[r9]
-            \\ st %%r7, 28[r9]
-            \\ st %%r8, 32[r9]
-            \\ st %%r9, 36[r9]
-            \\ st %%r10, 40[r9]
-            \\ st %%r11, 44[r9]
-            \\ st %%r12, 48[r9]
-            \\ st %%r13, 52[r9]
-            \\ st %%r14, 56[r9]
-            \\ st %%r15, 60[r9]
-            \\ st %%r16, 64[r9]
-            \\ st %%r17, 68[r9]
-            \\ st %%r18, 72[r9]
-            \\ st %%r19, 76[r9]
-            \\ st %%r20, 80[r9]
-            \\ st %%r21, 84[r9]
-            \\ st %%r22, 88[r9]
-            \\ st %%r23, 92[r9]
-            \\ st %%r24, 96[r9]
-            \\ st %%r25, 100[r9]
-            \\ st %%r26, 104[r9]
-            \\ st %%r27, 108[r9]
-            \\ st %%r28, 112[r9]
-            \\ st %%r29, 116[r9]
-            \\ st %%r30, 120[r9]
-            \\ st %%r31, 124[r9]
+            \\ st %%r0, 0[%%r9]
+            \\ st %%r1, 4[%%r9]
+            \\ st %%r2, 8[%%r9]
+            \\ st %%r3, 12[%%r9]
+            \\ st %%r4, 16[%%r9]
+            \\ st %%r5, 20[%%r9]
+            \\ st %%r6, 24[%%r9]
+            \\ st %%r7, 28[%%r9]
+            \\ st %%r8, 32[%%r9]
+            \\ st %%r9, 36[%%r9]
+            \\ st %%r10, 40[%%r9]
+            \\ st %%r11, 44[%%r9]
+            \\ st %%r12, 48[%%r9]
+            \\ st %%r13, 52[%%r9]
+            \\ st %%r14, 56[%%r9]
+            \\ st %%r15, 60[%%r9]
+            \\ st %%r16, 64[%%r9]
+            \\ st %%r17, 68[%%r9]
+            \\ st %%r18, 72[%%r9]
+            \\ st %%r19, 76[%%r9]
+            \\ st %%r20, 80[%%r9]
+            \\ st %%r21, 84[%%r9]
+            \\ st %%r22, 88[%%r9]
+            \\ st %%r23, 92[%%r9]
+            \\ st %%r24, 96[%%r9]
+            \\ st %%r25, 100[%%r9]
+            \\ st %%r26, 104[%%r9]
+            \\ st %%r27, 108[%%r9]
+            \\ st %%r28, 112[%%r9]
+            \\ st %%r29, 116[%%r9]
+            \\ st %%r30, 120[%%r9]
+            \\ st %%r31, 124[%%r9]
             :
             : [ctx] "{r9}" (&ctx),
             : .{ .memory = true });
@@ -763,7 +779,7 @@ const Lanai = extern struct {
 
     pub fn dwarfRegisterBytes(ctx: *Lanai, register_num: u16) DwarfRegisterError![]u8 {
         switch (register_num) {
-            0...31 => return @ptrCast(&ctx.s[register_num]),
+            0...31 => return @ptrCast(&ctx.r[register_num]),
 
             else => return error.InvalidRegister,
         }
@@ -1039,6 +1055,7 @@ const Mips = extern struct {
                 \\ sd $fp, 240($t0)
                 \\ sd $ra, 248($t0)
                 \\ bal 1f
+                \\  nop
                 \\1:
                 \\ sd $ra, 256($t0)
                 \\ .set pop
@@ -1080,6 +1097,7 @@ const Mips = extern struct {
                 \\ sw $fp, 120($t4)
                 \\ sw $ra, 124($t4)
                 \\ bal 1f
+                \\  nop
                 \\1:
                 \\ sw $ra, 128($t4)
                 \\ .set pop
@@ -1164,6 +1182,7 @@ const Or1k = extern struct {
             \\ l.sw 120(r15), r30
             \\ l.sw 124(r15), r31
             \\ l.jal 1f
+            \\  l.nop
             \\1:
             \\ l.sw 128(r15), r9
             :
@@ -1512,7 +1531,7 @@ const S390x = extern struct {
 
 /// This is an `extern struct` so that inline assembly in `current` can use field offsets.
 const Sparc = extern struct {
-    g: [8]Gpr,
+    g: [8]Gpr align(8), // Align to make `std` safe on 32-bit.
     o: [8]Gpr,
     l: [8]Gpr,
     i: [8]Gpr,
@@ -1525,61 +1544,63 @@ const Sparc = extern struct {
 
         var ctx: Sparc = undefined;
         asm volatile (if (Gpr == u64)
-                \\ stx %g0, [%l0 + 0]
-                \\ stx %g1, [%l0 + 8]
-                \\ stx %g2, [%l0 + 16]
-                \\ stx %g3, [%l0 + 24]
-                \\ stx %g4, [%l0 + 32]
-                \\ stx %g5, [%l0 + 40]
-                \\ stx %g6, [%l0 + 48]
-                \\ stx %g7, [%l0 + 56]
-                \\ stx %o0, [%l0 + 64]
-                \\ stx %o1, [%l0 + 72]
-                \\ stx %o2, [%l0 + 80]
-                \\ stx %o3, [%l0 + 88]
-                \\ stx %o4, [%l0 + 96]
-                \\ stx %o5, [%l0 + 104]
-                \\ stx %o6, [%l0 + 112]
-                \\ stx %o7, [%l0 + 120]
-                \\ stx %l0, [%l0 + 128]
-                \\ stx %l1, [%l0 + 136]
-                \\ stx %l2, [%l0 + 144]
-                \\ stx %l3, [%l0 + 152]
-                \\ stx %l4, [%l0 + 160]
-                \\ stx %l5, [%l0 + 168]
-                \\ stx %l6, [%l0 + 176]
-                \\ stx %l7, [%l0 + 184]
-                \\ stx %i0, [%l0 + 192]
-                \\ stx %i1, [%l0 + 200]
-                \\ stx %i2, [%l0 + 208]
-                \\ stx %i3, [%l0 + 216]
-                \\ stx %i4, [%l0 + 224]
-                \\ stx %i5, [%l0 + 232]
-                \\ stx %i6, [%l0 + 240]
-                \\ stx %i7, [%l0 + 248]
+                \\ stx %%g0, [%%l0 + 0]
+                \\ stx %%g1, [%%l0 + 8]
+                \\ stx %%g2, [%%l0 + 16]
+                \\ stx %%g3, [%%l0 + 24]
+                \\ stx %%g4, [%%l0 + 32]
+                \\ stx %%g5, [%%l0 + 40]
+                \\ stx %%g6, [%%l0 + 48]
+                \\ stx %%g7, [%%l0 + 56]
+                \\ stx %%o0, [%%l0 + 64]
+                \\ stx %%o1, [%%l0 + 72]
+                \\ stx %%o2, [%%l0 + 80]
+                \\ stx %%o3, [%%l0 + 88]
+                \\ stx %%o4, [%%l0 + 96]
+                \\ stx %%o5, [%%l0 + 104]
+                \\ stx %%o6, [%%l0 + 112]
+                \\ stx %%o7, [%%l0 + 120]
+                \\ stx %%l0, [%%l0 + 128]
+                \\ stx %%l1, [%%l0 + 136]
+                \\ stx %%l2, [%%l0 + 144]
+                \\ stx %%l3, [%%l0 + 152]
+                \\ stx %%l4, [%%l0 + 160]
+                \\ stx %%l5, [%%l0 + 168]
+                \\ stx %%l6, [%%l0 + 176]
+                \\ stx %%l7, [%%l0 + 184]
+                \\ stx %%i0, [%%l0 + 192]
+                \\ stx %%i1, [%%l0 + 200]
+                \\ stx %%i2, [%%l0 + 208]
+                \\ stx %%i3, [%%l0 + 216]
+                \\ stx %%i4, [%%l0 + 224]
+                \\ stx %%i5, [%%l0 + 232]
+                \\ stx %%i6, [%%l0 + 240]
+                \\ stx %%i7, [%%l0 + 248]
                 \\ call 1f
+                \\  nop
                 \\1:
-                \\ stx %o7, [%l0 + 256]
+                \\ stx %%o7, [%%l0 + 256]
             else
-                \\ std %g0, [%l0 + 0]
-                \\ std %g2, [%l0 + 8]
-                \\ std %g4, [%l0 + 16]
-                \\ std %g6, [%l0 + 24]
-                \\ std %o0, [%l0 + 32]
-                \\ std %o2, [%l0 + 40]
-                \\ std %o4, [%l0 + 48]
-                \\ std %o6, [%l0 + 56]
-                \\ std %l0, [%l0 + 64]
-                \\ std %l2, [%l0 + 72]
-                \\ std %l4, [%l0 + 80]
-                \\ std %l6, [%l0 + 88]
-                \\ std %i0, [%l0 + 96]
-                \\ std %i2, [%l0 + 104]
-                \\ std %i4, [%l0 + 112]
-                \\ std %i6, [%l0 + 120]
+                \\ std %%g0, [%%l0 + 0]
+                \\ std %%g2, [%%l0 + 8]
+                \\ std %%g4, [%%l0 + 16]
+                \\ std %%g6, [%%l0 + 24]
+                \\ std %%o0, [%%l0 + 32]
+                \\ std %%o2, [%%l0 + 40]
+                \\ std %%o4, [%%l0 + 48]
+                \\ std %%o6, [%%l0 + 56]
+                \\ std %%l0, [%%l0 + 64]
+                \\ std %%l2, [%%l0 + 72]
+                \\ std %%l4, [%%l0 + 80]
+                \\ std %%l6, [%%l0 + 88]
+                \\ std %%i0, [%%l0 + 96]
+                \\ std %%i2, [%%l0 + 104]
+                \\ std %%i4, [%%l0 + 112]
+                \\ std %%i6, [%%l0 + 120]
                 \\ call 1f
+                \\  nop
                 \\1:
-                \\ st %o7, [%l0 + 128]
+                \\ st %%o7, [%%l0 + 128]
             :
             : [ctx] "{l0}" (&ctx),
             : .{ .o7 = true, .memory = true });
@@ -1608,7 +1629,11 @@ const Sparc = extern struct {
             8...15 => return @ptrCast(&ctx.o[register_num - 8]),
             16...23 => return @ptrCast(&ctx.l[register_num - 16]),
             24...31 => return @ptrCast(&ctx.i[register_num - 24]),
-            32 => return @ptrCast(&ctx.pc),
+            65 => return @ptrCast(&ctx.pc),
+
+            32...63 => return error.UnsupportedRegister, // F0-F31
+            64 => return error.UnsupportedRegister, // Y
+            72...87 => return error.UnsupportedRegister, // D0-D15
 
             else => return error.InvalidRegister,
         }
@@ -1689,9 +1714,8 @@ const Ve = extern struct {
             \\ st %%s61, 488(, %%s8)
             \\ st %%s62, 496(, %%s8)
             \\ st %%s63, 504(, %%s8)
-            \\ br.l 1f
-            \\1:
-            \\ st %%lr, 512(, %%s8)
+            \\ sic %%s10
+            \\ st %%s10, 512(, %%s8)
             :
             : [ctx] "{s8}" (&ctx),
             : .{ .s10 = true, .memory = true });
@@ -1758,7 +1782,7 @@ const X86_16 = struct {
         switch (register_num) {
             4 => return @ptrCast(ctx.regs.getPtr(.sp)),
             5 => return @ptrCast(ctx.regs.getPtr(.bp)),
-            6 => return @ptrCast(ctx.regs.getPtr(.ip)),
+            8 => return @ptrCast(ctx.regs.getPtr(.ip)),
             41 => return @ptrCast(ctx.regs.getPtr(.cs)),
             42 => return @ptrCast(ctx.regs.getPtr(.ss)),
             else => return error.InvalidRegister,
@@ -2020,6 +2044,8 @@ const signal_ucontext_t = switch (native_os) {
         .mips64el,
         .or1k,
         .s390x,
+        .sh,
+        .sheb,
         .x86,
         .x86_64,
         .xtensa,
@@ -2545,7 +2571,17 @@ const signal_ucontext_t = switch (native_os) {
             },
         },
         // https://github.com/openbsd/src/blob/42468faed8369d07ae49ae02dd71ec34f59b66cd/sys/arch/sparc64/include/signal.h
-        .sparc64 => @compileError("sparc64-openbsd ucontext_t missing"),
+        .sparc64 => extern struct {
+            _cookie: i64,
+            mcontext: extern struct {
+                sp: u64,
+                pc: u64,
+                _npc: i64,
+                _tstate: i64,
+                g1: u64,
+                o0: u64,
+            },
+        },
         // https://github.com/openbsd/src/blob/42468faed8369d07ae49ae02dd71ec34f59b66cd/sys/arch/sh/include/signal.h
         .sh => extern struct {
             pc: u32,
@@ -2682,8 +2718,22 @@ const signal_ucontext_t = switch (native_os) {
                 pc: usize,
             },
             // https://github.com/NetBSD/src/blob/861008c62187bf7bc0aac4d81e52ed6eee4d0c74/sys/arch/sparc/include/mcontext.h
-            .sparc => @compileError("sparc-netbsd mcontext_t missing"),
-            .sparc64 => @compileError("sparc64-netbsd mcontext_t missing"),
+            .sparc => extern struct {
+                _psr: i32 align(8),
+                pc: u32,
+                _npc: i32,
+                _y: i32,
+                g1_7: [7]u32,
+                o: [8]u32,
+            },
+            .sparc64 => extern struct {
+                _ccr: i64 align(16),
+                pc: u64,
+                _npc: i64,
+                _y: i64,
+                g1_7: [7]u64,
+                o: [8]u64,
+            },
             // https://github.com/NetBSD/src/blob/861008c62187bf7bc0aac4d81e52ed6eee4d0c74/sys/arch/sh3/include/mcontext.h
             .sh, .sheb => extern struct {
                 _gbr: i32,

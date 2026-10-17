@@ -13,12 +13,12 @@ const hash_map = @This();
 ///
 /// See `AutoContext` for a description of the hash and equal implementations.
 pub fn Auto(comptime K: type, comptime V: type) type {
-    return ArrayHashMap(K, V, AutoContext(K), !autoEqlIsCheap(K));
+    return Custom(K, V, AutoContext(K), !autoEqlIsCheap(K));
 }
 
 /// An `ArrayHashMap` with strings as keys.
 pub fn String(comptime V: type) type {
-    return ArrayHashMap([]const u8, V, StringContext, true);
+    return Custom([]const u8, V, StringContext, true);
 }
 
 pub const StringContext = struct {
@@ -87,7 +87,7 @@ pub fn Custom(
     return struct {
         /// It is permitted to access this field directly.
         /// After any modification to the keys, consider calling `reIndex`.
-        entries: DataList = .{},
+        entries: DataList = .empty,
 
         /// When entries length is less than `linear_scan_max`, this remains `null`.
         /// Once entries length grows big enough, this field is allocated. There is
@@ -100,7 +100,7 @@ pub fn Custom(
 
         /// A map containing no keys or values.
         pub const empty: Self = .{
-            .entries = .{},
+            .entries = .empty,
             .index_header = null,
         };
 
@@ -165,7 +165,7 @@ pub fn Custom(
         const Oom = Allocator.Error;
 
         pub fn init(gpa: Allocator, key_list: []const K, value_list: []const V) Oom!Self {
-            var self: Self = .{};
+            var self: Self = .empty;
             errdefer self.deinit(gpa);
             try self.reinit(gpa, key_list, value_list);
             return self;
@@ -200,17 +200,18 @@ pub fn Custom(
         /// cause an existing key or value pointer to become invalidated will
         /// instead trigger an assertion.
         ///
-        /// An additional call to `lockPointers` in such state also triggers an
-        /// assertion.
+        /// `lockPointers` may be called multiple times. This allows multiple
+        /// independent users of the hash map to keep it locked simultaneously.
         ///
-        /// `unlockPointers` returns the hash map to the previous state.
+        /// `unlockPointers` restores the hash map to its previous state when
+        /// called the same number of times as `lockPointers`.
         pub fn lockPointers(self: *Self) void {
-            self.pointer_stability.lock();
+            self.pointer_stability.lockShared();
         }
 
-        /// Undoes a call to `lockPointers`.
+        /// Undoes one call to `lockPointers`.
         pub fn unlockPointers(self: *Self) void {
-            self.pointer_stability.unlock();
+            self.pointer_stability.unlockShared();
         }
 
         /// Clears the map but retains the backing allocation for future use.
@@ -835,7 +836,7 @@ pub fn Custom(
             return self.cloneContext(gpa, undefined);
         }
         pub fn cloneContext(self: Self, gpa: Allocator, ctx: Context) Oom!Self {
-            var other: Self = .{};
+            var other: Self = .empty;
             other.entries = try self.entries.clone(gpa);
             errdefer other.entries.deinit(gpa);
 
@@ -2130,7 +2131,7 @@ test "0 sized key and 0 sized value" {
 test "setKey storehash true" {
     const gpa = std.testing.allocator;
 
-    var map: ArrayHashMap(i32, i32, AutoContext(i32), true) = .empty;
+    var map: Custom(i32, i32, AutoContext(i32), true) = .empty;
     defer map.deinit(gpa);
 
     try map.put(gpa, 12, 34);
@@ -2146,7 +2147,7 @@ test "setKey storehash true" {
 test "setKey storehash false" {
     const gpa = std.testing.allocator;
 
-    var map: ArrayHashMap(i32, i32, AutoContext(i32), false) = .empty;
+    var map: Custom(i32, i32, AutoContext(i32), false) = .empty;
     defer map.deinit(gpa);
 
     try map.put(gpa, 12, 34);
@@ -2162,7 +2163,7 @@ test "setKey storehash false" {
 test "setKey storehash false with index" {
     const gpa = std.testing.allocator;
 
-    const T = ArrayHashMap(usize, usize, AutoContext(usize), false);
+    const T = Custom(usize, usize, AutoContext(usize), false);
 
     var map: T = .empty;
     defer map.deinit(gpa);
@@ -2180,9 +2181,9 @@ test "setKey storehash false with index" {
 test "setKey storehash true with index" {
     const gpa = std.testing.allocator;
 
-    const T = ArrayHashMap(usize, usize, AutoContext(usize), false);
+    const T = Custom(usize, usize, AutoContext(usize), false);
 
-    var map: ArrayHashMap(usize, usize, AutoContext(usize), true) = .empty;
+    var map: Custom(usize, usize, AutoContext(usize), true) = .empty;
     defer map.deinit(gpa);
 
     for (0..T.linear_scan_max + 1) |i| try map.put(gpa, i, i);

@@ -386,23 +386,6 @@ pub const Subsystem = enum {
     efi_boot_service_driver,
     efi_rom,
     efi_runtime_driver,
-
-    /// Deprecated; use '.console' instead. To be removed after 0.16.0 is tagged.
-    pub const Console: Subsystem = .console;
-    /// Deprecated; use '.windows' instead. To be removed after 0.16.0 is tagged.
-    pub const Windows: Subsystem = .windows;
-    /// Deprecated; use '.posix' instead. To be removed after 0.16.0 is tagged.
-    pub const Posix: Subsystem = .posix;
-    /// Deprecated; use '.native' instead. To be removed after 0.16.0 is tagged.
-    pub const Native: Subsystem = .native;
-    /// Deprecated; use '.efi_application' instead. To be removed after 0.16.0 is tagged.
-    pub const EfiApplication: Subsystem = .efi_application;
-    /// Deprecated; use '.efi_boot_service_driver' instead. To be removed after 0.16.0 is tagged.
-    pub const EfiBootServiceDriver: Subsystem = .efi_boot_service_driver;
-    /// Deprecated; use '.efi_rom' instead. To be removed after 0.16.0 is tagged.
-    pub const EfiRom: Subsystem = .efi_rom;
-    /// Deprecated; use '.efi_runtime_driver' instead. To be removed after 0.16.0 is tagged.
-    pub const EfiRuntimeDriver: Subsystem = .efi_runtime_driver;
 };
 
 pub const CompressDebugSections = enum(u2) { none, zlib, zstd };
@@ -505,6 +488,8 @@ test fmtId {
     try expectFmt("@\"11\\\"23\"", "{f}", .{fmtId("11\"23")});
     try expectFmt("@\"11\\x0f23\"", "{f}", .{fmtId("11\x0F23")});
 
+    try expectFmt("@\"\\r\\\"\\n\\xff😎\\xe2\\x80\\xa8\"", "{f}", .{fmtId("\r\"\n\xFF😎\u{2028}")});
+
     // These are technically not currently legal in Zig.
     try expectFmt("@\"\"", "{f}", .{fmtId("")});
     try expectFmt("@\"\\x00\"", "{f}", .{fmtId("\x00")});
@@ -555,20 +540,216 @@ test fmtChar {
 }
 
 /// Print the string as escaped contents of a double quoted string.
+///
+/// The following transformations are made:
+/// * escaped: '\n', '\r', '\t', '\\', '"'
+/// * hex-encoded:
+///   * ascii control characters
+///   * invalid UTF-8 sequences
+///   * non-ascii line endings (U+0085, U+2028, U+2029)
+///   * byte order marks (U+FEFF)
+///
+/// Everything else is passed through unmodified.
 pub fn stringEscape(bytes: []const u8, w: *Writer) Writer.Error!void {
-    for (bytes) |byte| switch (byte) {
-        '\n' => try w.writeAll("\\n"),
-        '\r' => try w.writeAll("\\r"),
-        '\t' => try w.writeAll("\\t"),
-        '\\' => try w.writeAll("\\\\"),
-        '"' => try w.writeAll("\\\""),
-        '\'' => try w.writeByte('\''),
-        ' ', '!', '#'...'&', '('...'[', ']'...'~' => try w.writeByte(byte),
-        else => {
+    var remaining = bytes.len;
+    while (remaining > 0) {
+        remaining -= try stringEscapeInner(bytes[bytes.len - remaining ..], w);
+
+        // Escape the first byte and try again.
+        // Needing to escape the rest is not guaranteed.
+        if (remaining > 0) {
             try w.writeAll("\\x");
-            try w.printInt(byte, 16, .lower, .{ .width = 2, .fill = '0' });
-        },
-    };
+            try w.printInt(bytes[bytes.len - remaining], 16, .lower, .{ .width = 2, .fill = '0' });
+            remaining -= 1;
+        }
+    }
+}
+
+/// Returns the number of bytes consumed from `bytes`, which may be less than `bytes.len`.
+fn stringEscapeInner(bytes: []const u8, w: *Writer) Writer.Error!usize {
+    var i: usize = 0;
+    while (i < bytes.len) {
+        const byte = bytes[i];
+        switch (byte) {
+            '\t' => {
+                try w.writeAll("\\t");
+            },
+            '\n' => {
+                try w.writeAll("\\n");
+            },
+            '\r' => {
+                try w.writeAll("\\r");
+            },
+            '\\' => {
+                try w.writeAll("\\\\");
+            },
+            '"' => {
+                try w.writeAll("\\\"");
+            },
+            0...8, 11, 12, 14...0x1f, 0x7f => {
+                try w.writeAll("\\x");
+                try w.printInt(byte, 16, .lower, .{ .width = 2, .fill = '0' });
+            },
+            0x20, 0x21, 0x23...0x5b, 0x5d...0x7e => {
+                try w.writeByte(byte);
+            },
+            0x80...0xff => {
+                const len, const escape = blk: {
+                    const len = std.unicode.utf8ByteSequenceLength(byte) catch break :blk .{ 1, true };
+                    if (i + len > bytes.len) {
+                        return i;
+                    }
+                    const sequence = bytes[i..][0..len];
+                    const code_point = std.unicode.utf8Decode(sequence) catch |err| switch (err) {
+                        error.Utf8CodepointTooLarge => break :blk .{ len, true },
+                        else => break :blk .{ 1, true },
+                    };
+                    switch (code_point) {
+                        '\u{feff}', '\u{0085}', '\u{2028}', '\u{2029}' => break :blk .{ len, true },
+                        else => break :blk .{ len, false },
+                    }
+                };
+
+                const sequence = bytes[i..][0..len];
+                if (escape) {
+                    for (sequence) |b| {
+                        try w.writeAll("\\x");
+                        try w.printInt(b, 16, .lower, .{ .width = 2, .fill = '0' });
+                    }
+                } else {
+                    try w.writeAll(sequence);
+                }
+                i += len;
+                continue;
+            },
+        }
+        i += 1;
+    }
+    return i;
+}
+
+pub const StringEscapeWriter = struct {
+    out: *Writer,
+    writer: Writer,
+
+    pub const min_buffer_len = 4;
+
+    pub fn init(out: *Writer, buffer: []u8) @This() {
+        assert(buffer.len >= min_buffer_len);
+        return .{
+            .out = out,
+            .writer = .{
+                .vtable = &.{ .drain = @This().drain, .flush = @This().flush },
+                .buffer = buffer,
+            },
+        };
+    }
+
+    fn drain(w: *Writer, data: []const []const u8, splat: usize) Io.Writer.Error!usize {
+        var n: usize = try drainBufferRemaining(w, "");
+        for (data[0 .. data.len - 1]) |bytes| {
+            n += try drainBufferRemaining(w, bytes);
+        }
+        const pattern = data[data.len - 1];
+        for (0..splat) |_| {
+            n += try drainBufferRemaining(w, pattern);
+        }
+        return n;
+    }
+
+    fn flush(w: *Writer) Io.Writer.Error!void {
+        const sew: *StringEscapeWriter = @alignCast(@fieldParentPtr("writer", w));
+        const out = sew.out;
+        while (w.end != 0) {
+            _ = try drainBufferRemaining(w, "");
+
+            // Escape the first byte and try again.
+            // Needing to escape the rest is not guaranteed.
+            const remaining = w.buffered();
+            if (remaining.len > 0) {
+                try out.writeAll("\\x");
+                try out.printInt(remaining[0], 16, .lower, .{ .width = 2, .fill = '0' });
+                _ = w.consume(1);
+            }
+        }
+    }
+
+    /// Drain from the buffer first, taking from `bytes` as necessary to complete any
+    /// incomplete UTF-8 sequences. Then, consume whatever is remaining of `bytes`,
+    /// storing a possible trailing incomplete UTF-8 sequence in the buffer.
+    ///
+    /// On success, `w.buffered().len` is guaranteed to be < 4.
+    fn drainBufferRemaining(w: *Writer, bytes: []const u8) Io.Writer.Error!usize {
+        const sew: *StringEscapeWriter = @alignCast(@fieldParentPtr("writer", w));
+        const out = sew.out;
+        var remaining_bytes = bytes;
+        while (w.end != 0) {
+            const n = try stringEscapeInner(w.buffered(), out);
+            _ = w.consume(n);
+
+            if (w.end != 0) {
+                if (remaining_bytes.len == 0) return bytes.len;
+                const len = std.unicode.utf8ByteSequenceLength(w.buffer[0]) catch unreachable;
+                const missing = len - w.end;
+                const available = remaining_bytes.len;
+                const copy_len = @min(missing, available);
+                const start = len - missing;
+                @memcpy(w.buffer[start..][0..copy_len], remaining_bytes[0..copy_len]);
+                w.end = start + copy_len;
+                remaining_bytes = remaining_bytes[copy_len..];
+            }
+        }
+
+        const n = try stringEscapeInner(remaining_bytes, out);
+        if (n < remaining_bytes.len) {
+            const remaining = remaining_bytes.len - n;
+            @memcpy(w.buffer[0..remaining], remaining_bytes[n..]);
+            w.end = remaining;
+        }
+
+        return bytes.len;
+    }
+};
+
+test stringEscape {
+    const bytes = "\x7f\t\n\r\\\"abc\xff\u{feff}\u{0085}\u{2028}\u{2029}\xed\xa0\x80\xf4\x90\x80\x80\xf4\x90a";
+    const escaped = "\\x7f\\t\\n\\r\\\\\\\"abc\\xff\\xef\\xbb\\xbf\\xc2\\x85\\xe2\\x80\\xa8\\xe2\\x80\\xa9\\xed\\xa0\\x80\\xf4\\x90\\x80\\x80\\xf4\\x90a";
+
+    var out_buf: [escaped.len]u8 = undefined;
+    var out: Io.Writer = .fixed(&out_buf);
+
+    try stringEscape(bytes, &out);
+    try std.testing.expectEqualStrings(escaped, out.buffered());
+}
+
+test StringEscapeWriter {
+    const bytes = "\x7f\t\n\r\\\"abc\xff\u{feff}\u{0085}\u{2028}\u{2029}\xed\xa0\x80\xf4\x90\x80\x80\xf4\x90a";
+    const escaped = "\\x7f\\t\\n\\r\\\\\\\"abc\\xff\\xef\\xbb\\xbf\\xc2\\x85\\xe2\\x80\\xa8\\xe2\\x80\\xa9\\xed\\xa0\\x80\\xf4\\x90\\x80\\x80\\xf4\\x90a";
+
+    var sew_buf: [StringEscapeWriter.min_buffer_len]u8 = undefined;
+    {
+        var out_buf: [escaped.len]u8 = undefined;
+        var out: Io.Writer = .fixed(&out_buf);
+        var w: StringEscapeWriter = .init(&out, &sew_buf);
+
+        const n = try w.writer.write(bytes);
+        try w.writer.flush();
+
+        try std.testing.expectEqual(bytes.len, n);
+        try std.testing.expectEqualStrings(escaped, out.buffered());
+    }
+    {
+        var out_buf: [escaped.len]u8 = undefined;
+        var out: Io.Writer = .fixed(&out_buf);
+        var w: StringEscapeWriter = .init(&out, &sew_buf);
+
+        for (bytes) |byte| {
+            try w.writer.writeByte(byte);
+        }
+        try w.writer.flush();
+
+        try std.testing.expectEqualStrings(escaped, out.buffered());
+    }
 }
 
 /// Print as escaped contents of a single-quoted string.
@@ -668,8 +849,7 @@ pub fn readSourceFileToEndAlloc(gpa: Allocator, file_reader: *Io.File.Reader) ![
 }
 
 pub fn printAstErrorsToStderr(gpa: Allocator, io: Io, tree: Ast, path: []const u8, color: Color) !void {
-    var wip_errors: ErrorBundle.Wip = undefined;
-    try wip_errors.init(gpa);
+    var wip_errors: ErrorBundle.Wip = try .init(gpa);
     defer wip_errors.deinit();
 
     try putAstErrorsIntoBundle(gpa, tree, path, &wip_errors);
@@ -780,11 +960,11 @@ pub const EnvVar = enum {
     ZIG_LIBC,
     ZIG_BUILD_ERROR_STYLE,
     ZIG_BUILD_MULTILINE_ERRORS,
+    ZIG_BUILD_SUMMARY,
     ZIG_VERBOSE_LINK,
     ZIG_VERBOSE_CC,
     ZIG_VERBOSE_CMD,
     ZIG_DEBUG_CMD,
-    ZIG_DEBUG_MAKER,
     ZIG_IS_DETECTING_LIBC_PATHS,
     ZIG_IS_AVOIDING_CALLING_ITSELF,
 
@@ -906,7 +1086,6 @@ pub const SimpleComptimeReason = enum(u32) {
     slice_single_item_ptr_bounds,
     stored_to_comptime_field,
     stored_to_comptime_var,
-    casted_to_comptime_enum,
     casted_to_comptime_int,
     casted_to_comptime_float,
     std_lang_decl,
@@ -989,7 +1168,6 @@ pub const SimpleComptimeReason = enum(u32) {
             .slice_single_item_ptr_bounds => "slice of single-item pointer must have comptime-known bounds",
             .stored_to_comptime_field     => "value stored to a comptime field must be comptime-known",
             .stored_to_comptime_var       => "value stored to a comptime variable must be comptime-known",
-            .casted_to_comptime_enum      => "value casted to enum with 'comptime_int' tag type must be comptime-known",
             .casted_to_comptime_int       => "value casted to 'comptime_int' must be comptime-known",
             .casted_to_comptime_float     => "value casted to 'comptime_float' must be comptime-known",
             .std_lang_decl                => "'std.lang' declaration values must be comptime-known",
@@ -1145,6 +1323,7 @@ pub const ClangCliParam = struct {
         static,
         dynamic,
         version,
+        patchable_function_entry,
     };
 
     pub fn matchEql(self: @This(), arg: []const u8) u2 {
@@ -1303,14 +1482,20 @@ pub const Directories = struct {
     /// `local_cache.path` is resolved (`resolvePath`) or `null` for cwd.
     /// This may be the same as `global_cache`.
     local_cache: Cache.Directory,
+    /// The directory that contains build.zig. This path is provided by the
+    /// build system, when the build system is used, otherwise, it is `null`
+    /// for cwd.
+    build_root: Cache.Directory,
 
     pub fn deinit(dirs: *Directories, io: Io) void {
         // The local and global caches could be the same.
         const close_local = dirs.local_cache.handle.handle != dirs.global_cache.handle.handle;
+        const close_build_root = dirs.build_root.handle.handle != Io.Dir.cwd().handle;
 
         dirs.global_cache.handle.close(io);
         if (close_local) dirs.local_cache.handle.close(io);
         dirs.zig_lib.handle.close(io);
+        if (close_build_root) dirs.build_root.handle.close(io);
     }
 
     /// Returns a `Directories` where `local_cache` is replaced with `global_cache`, intended for
@@ -1322,6 +1507,7 @@ pub const Directories = struct {
             .zig_lib = dirs.zig_lib,
             .global_cache = dirs.global_cache,
             .local_cache = dirs.global_cache,
+            .build_root = dirs.build_root,
         };
     }
 
@@ -1331,12 +1517,10 @@ pub const Directories = struct {
         global,
     };
 
-    /// Uses `std.process.fatal` on error conditions.
-    pub fn init(
-        arena: Allocator,
-        io: Io,
+    pub const InitOptions = struct {
         override_zig_lib: ?[]const u8,
         override_global_cache: ?[]const u8,
+        build_root: ?[]const u8,
         local_cache_strat: LocalCacheStrategy,
         preopens: std.process.Preopens,
         self_exe_path: switch (builtin.target.os.tag) {
@@ -1345,27 +1529,37 @@ pub const Directories = struct {
         },
         environ_map: *const std.process.Environ.Map,
         cwd: []const u8,
-    ) Directories {
+    };
+
+    /// Uses `std.process.fatal` on error conditions.
+    pub fn init(arena: Allocator, io: Io, options: InitOptions) Directories {
         const wasi = builtin.target.os.tag == .wasi;
+        const cwd = options.cwd;
 
         const zig_lib: Cache.Directory = d: {
-            if (override_zig_lib) |path| break :d openUnresolved(arena, io, cwd, path, .@"zig lib");
-            if (wasi) break :d getPreopen(preopens, "/lib");
-            break :d findZigLibDirFromSelfExe(arena, io, cwd, self_exe_path) catch |err| {
-                fatal("unable to find zig installation directory from executable path {q}: {t}", .{ self_exe_path, err });
+            if (options.override_zig_lib) |path| break :d openUnresolved(arena, io, cwd, path, .@"zig lib");
+            if (wasi) break :d getPreopen(options.preopens, "/lib");
+            break :d findZigLibDirFromSelfExe(arena, io, cwd, options.self_exe_path) catch |err| {
+                fatal("unable to find zig installation directory from executable path {q}: {t}", .{
+                    options.self_exe_path, err,
+                });
             };
         };
+        const build_root: Cache.Directory = if (options.build_root) |s|
+            openUnresolved(arena, io, cwd, s, .@"build root")
+        else
+            .cwd();
 
         const global_cache: Cache.Directory = d: {
-            if (override_global_cache) |path| break :d openUnresolved(arena, io, cwd, path, .@"global cache");
-            if (wasi) break :d getPreopen(preopens, "/cache");
-            const path = resolveGlobalCacheDir(arena, environ_map) catch |err| {
+            if (options.override_global_cache) |path| break :d openUnresolved(arena, io, cwd, path, .@"global cache");
+            if (wasi) break :d getPreopen(options.preopens, "/cache");
+            const path = resolveGlobalCacheDir(arena, options.environ_map) catch |err| {
                 fatal("unable to resolve zig cache directory: {t}", .{err});
             };
             break :d openUnresolved(arena, io, cwd, path, .@"global cache");
         };
 
-        const local_cache = getLocalCacheDirectory(arena, io, cwd, global_cache, local_cache_strat);
+        const local_cache = getLocalCacheDirectory(arena, io, cwd, global_cache, options.local_cache_strat);
 
         if (mem.eql(u8, zig_lib.path orelse "", global_cache.path orelse "")) {
             fatal("zig lib directory '{f}' cannot be equal to global cache directory '{f}'", .{ zig_lib, global_cache });
@@ -1379,6 +1573,7 @@ pub const Directories = struct {
             .zig_lib = zig_lib,
             .global_cache = global_cache,
             .local_cache = local_cache,
+            .build_root = build_root,
         };
     }
 
@@ -1415,14 +1610,14 @@ pub const Directories = struct {
         io: Io,
         cwd: []const u8,
         unresolved_path: []const u8,
-        thing: enum { @"zig lib", @"global cache", @"local cache" },
+        thing: enum { @"zig lib", @"global cache", @"local cache", @"build root" },
     ) Cache.Directory {
         const path = resolvePath(arena, cwd, &.{unresolved_path}) catch |err| {
             fatal("unable to resolve {t} directory: {t}", .{ thing, err });
         };
         const nonempty_path = if (path.len == 0) "." else path;
         const handle_or_err = switch (thing) {
-            .@"zig lib" => Dir.cwd().openDir(io, nonempty_path, .{}),
+            .@"zig lib", .@"build root" => Dir.cwd().openDir(io, nonempty_path, .{}),
             .@"global cache", .@"local cache" => Dir.cwd().createDirPathOpen(io, nonempty_path, .{}),
         };
         return .{
@@ -1579,7 +1774,7 @@ pub fn resolvePath(
     // Heuristic for a fast path: if no component is absolute and ".." never appears, we just need to resolve `paths`.
     for (paths) |p| {
         if (Dir.path.isAbsolute(p)) break; // absolute path
-        if (mem.indexOf(u8, p, "..") != null) break; // may contain up-dir
+        if (mem.find(u8, p, "..") != null) break; // may contain up-dir
     } else {
         // no absolute path, no "..".
         const res = try Dir.path.resolve(gpa, paths);
@@ -1639,6 +1834,9 @@ pub const BuildExeSubprocessOptions = struct {
     cpu_features: ?[]const u8 = null,
     progress_node: std.Progress.Node = .none,
     skip_log_cmdline_on_compile_errors: bool = false,
+    /// If this is provided, compilation errors are sent here. Otherwise, they are printed to stderr.
+    /// Must be an initialized `ErrorBundle`; if it is updated then it is cleared first.
+    error_bundle: ?*ErrorBundle = null,
 };
 
 pub const BuildExeSubprocessError = error{
@@ -1677,65 +1875,64 @@ pub fn buildExeSubprocess(
     };
     defer child.kill(io);
 
-    var stderr_task = io.concurrent(readStreamAlloc, .{ gpa, io, child.stderr.?, .unlimited }) catch
-        @panic("TODO use multireader instead");
-    defer if (stderr_task.cancel(io)) |slice| gpa.free(slice) else |_| {};
+    var multi_reader_buffer: Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: Io.File.MultiReader = undefined;
+    multi_reader.init(gpa, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
+    const stdout = multi_reader.reader(0);
+    const stderr = multi_reader.reader(1);
 
-    var stdout_buffer: [512]u8 = undefined;
-    var stdout_reader: Io.File.Reader = .initStreaming(child.stdout.?, io, &stdout_buffer);
-    const stdout = &stdout_reader.interface;
+    var stdin_buffer: [8]u8 = undefined;
+    var stdin_writer = child.stdin.?.writerStreaming(io, &stdin_buffer);
 
-    {
-        var w = child.stdin.?.writer(io, &.{});
-        w.interface.writeStruct(Client.Message.Header{ .tag = .update, .bytes_len = 0 }, .little) catch |err| switch (err) {
-            error.WriteFailed => {
-                log.err("{t} writing to command: {f}", .{ w.err.?, cmd });
-                return error.AlreadyReported;
-            },
-        };
-        w.interface.writeStruct(Client.Message.Header{ .tag = .exit, .bytes_len = 0 }, .little) catch |err| switch (err) {
-            error.WriteFailed => {
-                log.err("{t} writing to command: {f}", .{ w.err.?, cmd });
-                return error.AlreadyReported;
-            },
-        };
-    }
+    var client: Client = .{
+        .in = stdout,
+        .out = &stdin_writer.interface,
+    };
 
-    const Header = Server.Message.Header;
+    (blk: {
+        client.serveMessageHeader(.{ .tag = .update, .bytes_len = 0 }) catch |err| break :blk err;
+        client.serveMessageHeader(.{ .tag = .exit, .bytes_len = 0 }) catch |err| break :blk err;
+        client.out.flush() catch |err| break :blk err;
+    }) catch |err| switch (err) {
+        error.WriteFailed => {
+            if (stdin_writer.err.? == error.Canceled) return error.Canceled;
+            log.err("{t} writing to command: {f}", .{ stdin_writer.err.?, cmd });
+            return error.AlreadyReported;
+        },
+    };
 
     var result: ?Cache.Path = null;
     defer if (result) |r| gpa.free(r.sub_path);
 
-    var result_error_bundle: ErrorBundle = .empty;
-    defer result_error_bundle.deinit(gpa);
+    var default_error_bundle: ErrorBundle = .empty;
+    defer default_error_bundle.deinit(gpa);
 
-    var body_buffer: std.ArrayList(u8) = .empty;
-    defer body_buffer.deinit(gpa);
+    const error_bundle = options.error_bundle orelse &default_error_bundle;
 
     var received_fs_inputs = false;
     var cache_hit = false;
 
+    var eos_err: error{EndOfStream}!void = {};
+
     while (true) {
-        const header = stdout.takeStruct(Header, .little) catch |err| switch (err) {
-            error.ReadFailed => {
-                log.err("{t} reading from command: {f}", .{ stdout_reader.err.?, cmd });
-                return error.AlreadyReported;
+        const header = client.receiveMessageWithMultiReader(&multi_reader, .none) catch |err| switch (err) {
+            error.Timeout => unreachable,
+            error.EndOfStream => |e| {
+                if (client.in.bufferedLen() == 0) break;
+                // Better to report the crash with stderr below, but we set
+                // this in case the child exits successfully while violating
+                // this protocol.
+                eos_err = e;
+                break;
             },
-            error.EndOfStream => break,
-        };
-        body_buffer.clearRetainingCapacity();
-        stdout.appendExact(gpa, &body_buffer, header.bytes_len) catch |err| switch (err) {
-            error.ReadFailed => {
-                log.err("{t} reading from command: {f}", .{ stdout_reader.err.?, cmd });
-                return error.AlreadyReported;
-            },
-            error.OutOfMemory => |e| return e,
-            error.EndOfStream => {
-                log.err("unexpected end of stream from command: {f}", .{cmd});
+            error.Canceled, error.OutOfMemory => |e| return e,
+            else => |e| {
+                log.err("{t} reading from command: {f}", .{ e, cmd });
                 return error.AlreadyReported;
             },
         };
-        const body = body_buffer.items;
+        const body = stdout.take(header.bytes_len) catch unreachable;
 
         switch (header.tag) {
             .zig_version => {
@@ -1745,8 +1942,8 @@ pub fn buildExeSubprocess(
                 }
             },
             .error_bundle => {
-                result_error_bundle.deinit(gpa);
-                result_error_bundle = Server.allocErrorBundle(gpa, body) catch |err| switch (err) {
+                error_bundle.deinit(gpa);
+                error_bundle.* = Server.allocErrorBundle(gpa, body) catch |err| switch (err) {
                     error.EndOfStream => break,
                     else => |e| return e,
                 };
@@ -1766,13 +1963,13 @@ pub fn buildExeSubprocess(
                 received_fs_inputs = true;
                 var it = mem.splitScalar(u8, body, 0);
                 while (it.next()) |prefixed_path| {
-                    const prefix: Server.Message.PathPrefix = @enumFromInt(prefixed_path[0] - 1);
-                    const sub_path = try gpa.dupe(u8, prefixed_path[1..]);
-                    var keep = false;
-                    defer if (!keep) gpa.free(sub_path);
-                    keep = man.addPrefixedPathPost(.{
-                        .prefix = @intFromEnum(prefix),
-                        .sub_path = sub_path,
+                    const prefix: Server.Message.PathPrefix = @fromBackingInt(@intCast(prefixed_path[0] - 1));
+                    const sub_path = prefixed_path[1..];
+                    man.addDiscoveredPath(.{
+                        .discovered_path = .{ .prefixed = .{
+                            .prefix = @intCast(@backingInt(prefix)),
+                            .sub_path = sub_path,
+                        } },
                     }) catch |err| switch (err) {
                         error.Canceled, error.OutOfMemory => |e| return e,
                         else => |e| {
@@ -1786,15 +1983,14 @@ pub fn buildExeSubprocess(
         }
     }
 
-    const stderr_contents = stderr_task.await(io) catch |err| switch (err) {
-        error.Canceled, error.OutOfMemory => |e| return e,
-        else => |e| c: {
-            log.warn("{t} reading stderr from command: {f}", .{ e, cmd });
-            break :c "";
-        },
-    };
+    const stderr_contents = stderr.buffered();
     if (stderr_contents.len > 0)
         log.warn("unexpected stderr from {s} command:\n{s}", .{ options.argv[0], stderr_contents });
+
+    eos_err catch {
+        log.err("unexpected end of stream from command: {f}", .{cmd});
+        return error.AlreadyReported;
+    };
 
     // Send EOF to stdin.
     child.stdin.?.close(io);
@@ -1814,8 +2010,8 @@ pub fn buildExeSubprocess(
         return error.AlreadyReported;
     }
 
-    if (result_error_bundle.errorMessageCount() > 0) {
-        result_error_bundle.renderToStderr(io, .{}, .auto) catch |err| switch (err) {
+    if (default_error_bundle.errorMessageCount() > 0) {
+        default_error_bundle.renderToStderr(io, .{}, .auto) catch |err| switch (err) {
             error.Canceled => |e| return e,
             else => |e| {
                 log.err("failed rendering error bundle: {t}", .{e});
@@ -1823,8 +2019,13 @@ pub fn buildExeSubprocess(
             },
         };
         if (!options.skip_log_cmdline_on_compile_errors) log.err("command reported {d} compilation errors: {f}", .{
-            result_error_bundle.errorMessageCount(), cmd,
+            default_error_bundle.errorMessageCount(), cmd,
         });
+        if (received_fs_inputs) return error.FailedButCacheIntact;
+        return error.AlreadyReported;
+    }
+
+    if (error_bundle.errorMessageCount() > 0) {
         if (received_fs_inputs) return error.FailedButCacheIntact;
         return error.AlreadyReported;
     }
@@ -1850,14 +2051,6 @@ pub fn buildExeSubprocess(
         .received_fs_inputs = received_fs_inputs,
         .cache_hit = cache_hit,
         .path = try base_path.join(gpa, bin_name),
-    };
-}
-
-fn readStreamAlloc(gpa: Allocator, io: Io, file: Io.File, limit: Io.Limit) ![]u8 {
-    var file_reader: Io.File.Reader = .initStreaming(file, io, &.{});
-    return file_reader.interface.allocRemaining(gpa, limit) catch |err| switch (err) {
-        error.ReadFailed => return file_reader.err.?,
-        else => |e| return e,
     };
 }
 

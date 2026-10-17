@@ -39,13 +39,14 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&run_def.step);
 
         if (default_target.result.os.tag == .linux) {
-            const gnu_target = b.resolveTargetQuery(.{ .abi = .gnu });
+            // glibc tests must be run on glibc hosts because it can't be statically linked
+            if (default_target.result.abi.isGnu()) {
+                const gnu_target = b.resolveTargetQuery(.{ .abi = .gnu });
+                const run_gnu = run_exe(b, optimize, &case, gnu_target, true);
+                test_step.dependOn(&run_gnu.step);
+            }
             const musl_target = b.resolveTargetQuery(.{ .abi = .musl });
-
-            const run_gnu = run_exe(b, optimize, &case, gnu_target, true);
             const run_musl = run_exe(b, optimize, &case, musl_target, true);
-
-            test_step.dependOn(&run_gnu.step);
             test_step.dependOn(&run_musl.step);
         } else {
             const run_libc = run_exe(b, optimize, &case, default_target, true);
@@ -54,7 +55,7 @@ pub fn build(b: *std.Build) void {
     }
 }
 
-fn run_exe(b: *std.Build, optimize: std.builtin.OptimizeMode, case: *const Case, target: std.Build.ResolvedTarget, link_libc: bool) *std.Build.Step.Run {
+fn run_exe(b: *std.Build, optimize: std.builtin.Optimize, case: *const Case, target: std.Build.ResolvedTarget, link_libc: bool) *std.Build.Step.Run {
     const exe_name = b.fmt("test-posix-{s}{s}{s}", .{
         std.fs.path.stem(case.src_path),
         if (link_libc) "-libc" else "",

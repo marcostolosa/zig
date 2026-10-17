@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Test it");
     b.default_step = test_step;
 
-    const optimize: std.builtin.OptimizeMode = .Debug;
+    const optimize: std.builtin.Optimize = .debug;
     const target = b.graph.host;
 
     const obj = b.addObject(.{
@@ -13,6 +13,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("base64.zig"),
             .optimize = optimize,
             .target = target,
+            .link_libc = true,
         }),
     });
 

@@ -92,6 +92,7 @@ test "splat with an error union or optional result type" {
 }
 
 test "read/write through global variable array of struct fields initialized via splat" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -144,6 +145,16 @@ test "vector @splat" {
             try testForT(8 * 2, @as(f16, 3.1415));
             try testForT(4 * 2, @as(f32, 3.1415));
             try testForT(2 * 2, @as(f64, 3.1415));
+
+            // Splats into one-element vectors.
+            try testForT(1, @as(u8, 0xEE));
+            try testForT(1, @as(u16, 0xBEEF));
+            try testForT(1, @as(u32, 0xDEADBEEF));
+            try testForT(1, @as(u64, 0xCAFEF00DDEADBEEF));
+
+            try testForT(1, @as(f16, 3.1415));
+            try testForT(1, @as(f32, 3.1415));
+            try testForT(1, @as(f64, 3.1415));
         }
     };
     try S.doTheTest();

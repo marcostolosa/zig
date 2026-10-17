@@ -9,7 +9,7 @@ pub fn syscall0(
 ) u32 {
     return asm volatile ("brki r14, 0x8"
         : [ret] "={r3}" (-> u32),
-        : [number] "{r12}" (@intFromEnum(number)),
+        : [number] "{r12}" (@backingInt(number)),
         : .{ .r4 = true, .memory = true });
 }
 
@@ -19,7 +19,7 @@ pub fn syscall1(
 ) u32 {
     return asm volatile ("brki r14, 0x8"
         : [ret] "={r3}" (-> u32),
-        : [number] "{r12}" (@intFromEnum(number)),
+        : [number] "{r12}" (@backingInt(number)),
           [arg1] "{r5}" (arg1),
         : .{ .r4 = true, .memory = true });
 }
@@ -31,7 +31,7 @@ pub fn syscall2(
 ) u32 {
     return asm volatile ("brki r14, 0x8"
         : [ret] "={r3}" (-> u32),
-        : [number] "{r12}" (@intFromEnum(number)),
+        : [number] "{r12}" (@backingInt(number)),
           [arg1] "{r5}" (arg1),
           [arg2] "{r6}" (arg2),
         : .{ .r4 = true, .memory = true });
@@ -45,7 +45,7 @@ pub fn syscall3(
 ) u32 {
     return asm volatile ("brki r14, 0x8"
         : [ret] "={r3}" (-> u32),
-        : [number] "{r12}" (@intFromEnum(number)),
+        : [number] "{r12}" (@backingInt(number)),
           [arg1] "{r5}" (arg1),
           [arg2] "{r6}" (arg2),
           [arg3] "{r7}" (arg3),
@@ -61,7 +61,7 @@ pub fn syscall4(
 ) u32 {
     return asm volatile ("brki r14, 0x8"
         : [ret] "={r3}" (-> u32),
-        : [number] "{r12}" (@intFromEnum(number)),
+        : [number] "{r12}" (@backingInt(number)),
           [arg1] "{r5}" (arg1),
           [arg2] "{r6}" (arg2),
           [arg3] "{r7}" (arg3),
@@ -79,7 +79,7 @@ pub fn syscall5(
 ) u32 {
     return asm volatile ("brki r14, 0x8"
         : [ret] "={r3}" (-> u32),
-        : [number] "{r12}" (@intFromEnum(number)),
+        : [number] "{r12}" (@backingInt(number)),
           [arg1] "{r5}" (arg1),
           [arg2] "{r6}" (arg2),
           [arg3] "{r7}" (arg3),
@@ -99,7 +99,7 @@ pub fn syscall6(
 ) u32 {
     return asm volatile ("brki r14, 0x8"
         : [ret] "={r3}" (-> u32),
-        : [number] "{r12}" (@intFromEnum(number)),
+        : [number] "{r12}" (@backingInt(number)),
           [arg1] "{r5}" (arg1),
           [arg2] "{r6}" (arg2),
           [arg3] "{r7}" (arg3),
@@ -130,11 +130,11 @@ pub fn clone() callconv(.naked) u32 {
         \\ brki r14, 0x8
         \\ beqi r3, 1f
         \\
-        \\ // parent
+        \\ # parent
         \\ rtsd r15, 8
         \\  nop
         \\
-        \\ // child
+        \\ # child
         \\1:
         \\ ori r15, r0, 0
         \\ ori r19, r0, 0
@@ -144,6 +144,7 @@ pub fn clone() callconv(.naked) u32 {
         \\ brald r15, r3
         \\  nop
         \\
+        \\ ori r5, r3, 0
         \\ ori r12, r0, 1 # SYS_exit
         \\ brki r14, 0x8
     );
@@ -153,7 +154,7 @@ pub fn restore() callconv(.naked) noreturn {
     asm volatile (
         \\ brki r14, 0x8
         :
-        : [number] "{r7}" (@intFromEnum(SYS.sigreturn)),
+        : [number] "{r7}" (@backingInt(SYS.sigreturn)),
     );
 }
 
@@ -161,7 +162,7 @@ pub fn restore_rt() callconv(.naked) noreturn {
     asm volatile (
         \\ brki r14, 0x8
         :
-        : [number] "{r7}" (@intFromEnum(SYS.rt_sigreturn)),
+        : [number] "{r7}" (@backingInt(SYS.rt_sigreturn)),
     );
 }
 

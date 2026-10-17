@@ -332,7 +332,7 @@ fn schedule(k: *Kqueue, thread: *Thread, ready_queue: Fiber.Queue) void {
                 .flags = std.c.EV.ADD | std.c.EV.ONESHOT,
                 .fflags = std.c.NOTE.TRIGGER,
                 .data = 0,
-                .udata = @intFromEnum(Completion.UserData.wakeup),
+                .udata = @backingInt(Completion.UserData.wakeup),
             },
         };
         // If an error occurs it only pessimises scheduling.
@@ -439,7 +439,7 @@ fn idle(k: *Kqueue, thread: *Thread) void {
             @panic(@errorName(err)); // TODO
         };
         var maybe_ready_queue: ?Fiber.Queue = null;
-        for (events_buffer[0..n]) |event| switch (@as(Completion.UserData, @enumFromInt(event.udata))) {
+        for (events_buffer[0..n]) |event| switch (@as(Completion.UserData, @fromBackingInt(@intCast(event.udata)))) {
             .unused => unreachable, // bad submission queued?
             .wakeup => {},
             .cleanup => @panic("failed to notify other threads that we are exiting"),
@@ -522,7 +522,7 @@ const SwitchMessage = struct {
                         .flags = std.c.EV.ADD | std.c.EV.ONESHOT,
                         .fflags = std.c.NOTE.TRIGGER,
                         .data = 0,
-                        .udata = @intFromEnum(Completion.UserData.exit),
+                        .udata = @backingInt(Completion.UserData.exit),
                     },
                 };
                 _ = kevent(each_thread.kq_fd, &changes, &.{}, null) catch |err| {
@@ -646,14 +646,11 @@ pub fn io(k: *Kqueue) Io {
 
             .netListenIp = netListenIp,
             .netListenUnix = netListenUnix,
-            .netAccept = netAccept,
             .netBindIp = netBindIp,
             .netConnectIp = netConnectIp,
             .netConnectUnix = netConnectUnix,
-            .netClose = netClose,
             .netShutdown = netShutdown,
             .netRead = netRead,
-            .netWrite = netWrite,
             .netSend = netSend,
             .netReceive = netReceive,
             .netInterfaceNameResolve = netInterfaceNameResolve,
@@ -1010,13 +1007,6 @@ fn netListenIp(
     _ = options;
     @panic("TODO");
 }
-fn netAccept(userdata: ?*anyopaque, server: net.Socket.Handle, options: net.Server.AcceptOptions) net.Server.AcceptError!net.Socket {
-    const k: *Kqueue = @ptrCast(@alignCast(userdata));
-    _ = k;
-    _ = server;
-    _ = options;
-    @panic("TODO");
-}
 fn netBindIp(
     userdata: ?*anyopaque,
     address: *const net.IpAddress,
@@ -1270,23 +1260,6 @@ fn netRead(userdata: ?*anyopaque, fd: net.Socket.Handle, data: [][]u8) net.Strea
     }
 }
 
-fn netWrite(userdata: ?*anyopaque, dest: net.Socket.Handle, header: []const u8, data: []const []const u8, splat: usize) net.Stream.Writer.Error!usize {
-    const k: *Kqueue = @ptrCast(@alignCast(userdata));
-    _ = k;
-    _ = dest;
-    _ = header;
-    _ = data;
-    _ = splat;
-    @panic("TODO");
-}
-
-fn netClose(userdata: ?*anyopaque, handles: []const net.Socket.Handle) void {
-    const k: *Kqueue = @ptrCast(@alignCast(userdata));
-    _ = k;
-    _ = handles;
-    @panic("TODO");
-}
-
 fn netShutdown(userdata: ?*anyopaque, handle: net.Socket.Handle, how: net.ShutdownHow) net.ShutdownError!void {
     const k: *Kqueue = @ptrCast(@alignCast(userdata));
     _ = k;
@@ -1422,6 +1395,7 @@ fn posixBind(
             .INTR => continue,
             .CANCELED => return error.Canceled,
 
+            .ACCES => return error.AccessDenied,
             .ADDRINUSE => return error.AddressInUse,
             .BADF => |err| return errnoBug(err), // File descriptor used after closed.
             .INVAL => |err| return errnoBug(err), // invalid parameters

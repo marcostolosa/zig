@@ -198,6 +198,8 @@ pub const IpAddress = union(enum) {
     }
 
     pub const ListenError = error{
+        /// The address is protected and the current user does not have permission to bind it.
+        AccessDenied,
         /// The address is already taken. Can occur when bound port is 0 but
         /// all ephemeral ports are already in use.
         AddressInUse,
@@ -254,6 +256,8 @@ pub const IpAddress = union(enum) {
     }
 
     pub const BindError = error{
+        /// The address is protected and the current user does not have permission to bind it.
+        AccessDenied,
         /// The address is already taken. Can occur when bound port is 0 but
         /// all ephemeral ports are already in use.
         AddressInUse,
@@ -372,7 +376,7 @@ pub const Ip4Address = struct {
 
     /// Given an `IpAddress`, converts it to an `Ip4Address` directly, or from
     /// an IPv4-mapped IPv6 address, or returns `null`.
-    pub fn fromAny(addr: IpAddress) ?Ip6Address {
+    pub fn fromAny(addr: IpAddress) ?Ip4Address {
         return switch (addr) {
             .ip4 => |ip4| ip4,
             .ip6 => |ip6| fromIp6(ip6),
@@ -497,18 +501,34 @@ pub const Ip6Address = struct {
             overflow: usize,
         };
 
-        pub fn parse(text: []const u8) Parsed {
+        pub fn parse(text_in: []const u8) Parsed {
+            var text: []const u8 = text_in; // so we can alias v4_amended if needed
             if (text.len < 2) return .incomplete;
-            const ip4_prefix = "::ffff:";
-            if (std.ascii.startsWithIgnoreCase(text, ip4_prefix)) {
-                const parsed = Ip4Address.parse(text[ip4_prefix.len..], 0) catch
-                    return .{ .invalid_ip4_mapping = ip4_prefix.len };
-                const b = parsed.bytes;
-                return .{ .success = .{
-                    .bytes = .{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, b[0], b[1], b[2], b[3] },
-                    .interface_name = null,
-                } };
+
+            // Pre-processing for trailing :IPv4 - If there is no "%iface", and
+            // the part after the last ':' has a '.', parse it as ipv4 and
+            // convert to IPv6 ASCII text in v4_amended as the new "text"
+            var v4_amended: [(8 * 4) + 7]u8 = undefined;
+            if (std.mem.findScalar(u8, text, '%') == null) {
+                const first_parts, const last_part = std.mem.cutScalarLast(u8, text, ':') orelse
+                    return .incomplete;
+                if (std.mem.findScalar(u8, last_part, '.')) |_| {
+                    if (first_parts.len > (6 * 4) + 5) // hhhh:hhhh:hhhh:hhhh:hhhh:hhhh
+                        return .{ .invalid_ip4_mapping = first_parts.len };
+                    const parsed = Ip4Address.parse(last_part, 0) catch
+                        return .{ .invalid_ip4_mapping = first_parts.len + 1 };
+                    @memcpy(v4_amended[0..first_parts.len], first_parts);
+                    const v4_part = v4_amended[first_parts.len..][0..10];
+                    v4_part[0] = ':';
+                    @memcpy(v4_part[1..3], &std.fmt.hex(parsed.bytes[0]));
+                    @memcpy(v4_part[3..5], &std.fmt.hex(parsed.bytes[1]));
+                    v4_part[5] = ':';
+                    @memcpy(v4_part[6..8], &std.fmt.hex(parsed.bytes[2]));
+                    @memcpy(v4_part[8..10], &std.fmt.hex(parsed.bytes[3]));
+                    text = v4_amended[0 .. first_parts.len + 10];
+                }
             }
+
             // Has to be u16 elements to handle 3-digit hex numbers from compression.
             var parts: [8]u16 = @splat(0);
             var parts_i: u8 = 0;
@@ -604,59 +624,60 @@ pub const Ip6Address = struct {
 
         pub fn format(u: *const Unresolved, w: *Io.Writer) Io.Writer.Error!void {
             const bytes = &u.bytes;
-            if (std.mem.eql(u8, bytes[0..12], &[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff })) {
-                try w.print("::ffff:{d}.{d}.{d}.{d}", .{ bytes[12], bytes[13], bytes[14], bytes[15] });
-            } else {
-                const parts: [8]u16 = .{
-                    std.mem.readInt(u16, bytes[0..2], .big),
-                    std.mem.readInt(u16, bytes[2..4], .big),
-                    std.mem.readInt(u16, bytes[4..6], .big),
-                    std.mem.readInt(u16, bytes[6..8], .big),
-                    std.mem.readInt(u16, bytes[8..10], .big),
-                    std.mem.readInt(u16, bytes[10..12], .big),
-                    std.mem.readInt(u16, bytes[12..14], .big),
-                    std.mem.readInt(u16, bytes[14..16], .big),
-                };
+            if (std.mem.eql(u8, bytes[0..12], &[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff }))
+                return w.print("::ffff:{d}.{d}.{d}.{d}", .{ bytes[12], bytes[13], bytes[14], bytes[15] });
+            if (std.mem.eql(u8, bytes[0..12], &[_]u8{ 0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0 }))
+                return w.print("64:ff9b::{d}.{d}.{d}.{d}", .{ bytes[12], bytes[13], bytes[14], bytes[15] });
 
-                // Find the longest zero run
-                var longest_start: usize = 8;
-                var longest_len: usize = 0;
-                var current_start: usize = 0;
-                var current_len: usize = 0;
+            const parts: [8]u16 = .{
+                std.mem.readInt(u16, bytes[0..2], .big),
+                std.mem.readInt(u16, bytes[2..4], .big),
+                std.mem.readInt(u16, bytes[4..6], .big),
+                std.mem.readInt(u16, bytes[6..8], .big),
+                std.mem.readInt(u16, bytes[8..10], .big),
+                std.mem.readInt(u16, bytes[10..12], .big),
+                std.mem.readInt(u16, bytes[12..14], .big),
+                std.mem.readInt(u16, bytes[14..16], .big),
+            };
 
-                for (parts, 0..) |part, i| {
-                    if (part == 0) {
-                        if (current_len == 0) {
-                            current_start = i;
-                        }
-                        current_len += 1;
-                        if (current_len > longest_len) {
-                            longest_start = current_start;
-                            longest_len = current_len;
-                        }
-                    } else {
-                        current_len = 0;
+            // Find the longest zero run
+            var longest_start: usize = 8;
+            var longest_len: usize = 0;
+            var current_start: usize = 0;
+            var current_len: usize = 0;
+
+            for (parts, 0..) |part, i| {
+                if (part == 0) {
+                    if (current_len == 0) {
+                        current_start = i;
                     }
+                    current_len += 1;
+                    if (current_len > longest_len) {
+                        longest_start = current_start;
+                        longest_len = current_len;
+                    }
+                } else {
+                    current_len = 0;
                 }
+            }
 
-                // Only compress if the longest zero run is 2 or more
-                if (longest_len < 2) {
-                    longest_start = 8;
-                    longest_len = 0;
+            // Only compress if the longest zero run is 2 or more
+            if (longest_len < 2) {
+                longest_start = 8;
+                longest_len = 0;
+            }
+
+            var i: usize = 0;
+            while (parts.len - i != 0) : (i += 1) {
+                if (i == longest_start) {
+                    // Emit "::" for the longest zero run
+                    try w.writeAll(if (i == 0) "::" else ":");
+                    i += longest_len - 1; // Skip the compressed range
+                    continue;
                 }
-
-                var i: usize = 0;
-                while (parts.len - i != 0) : (i += 1) {
-                    if (i == longest_start) {
-                        // Emit "::" for the longest zero run
-                        try w.writeAll(if (i == 0) "::" else ":");
-                        i += longest_len - 1; // Skip the compressed range
-                        continue;
-                    }
-                    try w.print("{x}", .{parts[i]});
-                    if (i != parts.len - 1) {
-                        try w.writeAll(":");
-                    }
+                try w.print("{x}", .{parts[i]});
+                if (i != parts.len - 1) {
+                    try w.writeAll(":");
                 }
             }
             if (u.interface_name) |n| try w.print("%{s}", .{n});
@@ -901,6 +922,7 @@ pub const UnixAddress = struct {
         ReadOnlyFileSystem,
         WouldBlock,
         NetworkDown,
+        ConnectionRefused,
     } || Io.Cancelable || Io.UnexpectedError;
 
     pub fn connect(ua: *const UnixAddress, io: Io) ConnectError!Stream {
@@ -1076,59 +1098,80 @@ pub const Socket = struct {
 
     /// Leaves `address` in a valid state.
     pub fn close(s: *const Socket, io: Io) void {
-        io.vtable.netClose(io.userdata, (&s.handle)[0..1]);
+        io.vtable.netClose(io.userdata, s[0..1]);
     }
 
     pub fn closeMany(io: Io, sockets: []const Socket) void {
         io.vtable.netClose(io.userdata, sockets);
     }
 
-    pub const SendError = error{
-        /// The socket type requires that message be sent atomically, and the
-        /// size of the message to be sent made this impossible. The message
-        /// was not transmitted, or was partially transmitted.
-        MessageOversize,
-        /// The output queue for a network interface was full. This generally indicates that the
-        /// interface has stopped sending, but may be caused by transient congestion. (Normally,
-        /// this does not occur in Linux. Packets are just silently dropped when a device queue
-        /// overflows.)
-        ///
-        /// This is also caused when there is not enough kernel memory available.
-        SystemResources,
-        /// No route to network.
-        NetworkUnreachable,
-        /// Network reached but no route to host.
-        HostUnreachable,
-        /// The local network interface used to reach the destination is offline.
-        NetworkDown,
-        /// The destination address is not listening. Can still occur for
-        /// connectionless messages.
-        ConnectionRefused,
-        /// Operating system or protocol does not support the address family.
-        AddressFamilyUnsupported,
-        /// Another TCP Fast Open is already in progress.
-        FastOpenAlreadyInProgress,
-        /// Network session was unexpectedly closed by recipient.
-        ConnectionResetByPeer,
-        /// Local end has been shut down on a connection-oriented socket, or
-        /// the socket was never connected.
-        SocketUnconnected,
-        /// An attempt was made to send to a network/broadcast address as
-        /// though it was a unicast address.
-        AccessDenied,
-    } || Io.UnexpectedError || Io.Cancelable;
+    pub const SendError = Io.Operation.NetSend.Error || Io.Cancelable;
 
     /// Transfers `data` to `dest`, connectionless, in one packet.
     pub fn send(s: *const Socket, io: Io, dest: *const IpAddress, data: []const u8) SendError!void {
         var message: OutgoingMessage = .{ .address = dest, .data_ptr = data.ptr, .data_len = data.len };
-        const err, const n = io.vtable.netSend(io.userdata, s.handle, (&message)[0..1], .{});
-        if (n != 1) return err.?;
+        const maybe_err, const count = (try io.operate(.{ .net_send = .{
+            .socket_handle = s.handle,
+            .messages = (&message)[0..1],
+            .flags = .{},
+        } })).net_send;
+        if (maybe_err) |err| {
+            assert(count == 0);
+            return err;
+        } else {
+            assert(count == 1);
+        }
         if (message.data_len != data.len) return error.MessageOversize;
     }
 
+    pub const SendTimeoutError = SendError || Io.Timeout.Error || Io.ConcurrentError;
+
+    pub fn sendTimeout(
+        s: *const Socket,
+        io: Io,
+        dest: *const IpAddress,
+        data: []const u8,
+        timeout: Io.Timeout,
+    ) SendTimeoutError!void {
+        var message: OutgoingMessage = .{ .address = dest, .data_ptr = data.ptr, .data_len = data.len };
+        const maybe_err, const count = (try io.operateTimeout(.{ .net_send = .{
+            .socket_handle = s.handle,
+            .messages = (&message)[0..1],
+            .flags = .{},
+        } }, timeout)).net_send;
+        if (maybe_err) |err| return err;
+        assert(1 == count);
+        if (message.data_len != data.len) return error.MessageOversize;
+    }
+
+    /// Deprecated; use `sendManyTimeout` with a timeout of `.none`.
+    ///
+    /// If this function returns an error, some (but not all) of `messages` may
+    /// still have been sent. This condition is not reported by this function,
+    /// but is reported by `sendManyTimeout`.
     pub fn sendMany(s: *const Socket, io: Io, messages: []OutgoingMessage, flags: SendFlags) SendError!void {
-        const err, const n = io.vtable.netSend(io.userdata, s.handle, messages, flags);
-        if (n != messages.len) return err.?;
+        const result = try io.operate(.{ .net_send = .{
+            .socket_handle = s.handle,
+            .messages = messages,
+            .flags = flags,
+        } });
+        const maybe_send_err, _ = result.net_send;
+        return maybe_send_err orelse {};
+    }
+
+    pub fn sendManyTimeout(
+        s: *const Socket,
+        io: Io,
+        messages: []OutgoingMessage,
+        flags: SendFlags,
+        timeout: Io.Timeout,
+    ) struct { ?SendTimeoutError, usize } {
+        const result = io.operateTimeout(.{ .net_send = .{
+            .socket_handle = s.handle,
+            .messages = messages,
+            .flags = flags,
+        } }, timeout) catch |err| return .{ err, 0 };
+        return result.net_send;
     }
 
     pub const ReceiveError = Io.Operation.NetReceive.Error || Io.Cancelable;
@@ -1243,17 +1286,40 @@ pub const Stream = struct {
 
     const max_iovecs_len = 8;
 
+    pub const ReadResult = struct {
+        data_len: usize,
+        control_len: usize = 0,
+        /// Whether only some of the control data was received.
+        ///
+        /// When control data is truncated, the extra data essentially
+        /// disappears into the ether. This is indicative of a design problem,
+        /// such as the control buffer being too small.
+        control_truncated: bool = false,
+    };
+
     /// This is a low-level API that calls the `Io` interface function directly.
     /// For a higher level API, see `reader`.
     pub fn read(s: *const Stream, io: Io, data: [][]u8) Reader.Error!usize {
-        return (try io.operate(.{ .net_read = .{
+        return (try (try io.operate(.{ .net_read = .{
             .socket_handle = s.socket.handle,
             .data = data,
+        } })).net_read).data_len;
+    }
+
+    /// Read with control data.
+    ///
+    /// This is a low-level API that calls the `Io` interface function directly.
+    /// For a higher level API, see `reader`.
+    pub fn readWithControl(s: *const Stream, io: Io, data: [][]u8, control: []u8) Reader.Error!ReadResult {
+        return try (try io.operate(.{ .net_read = .{
+            .socket_handle = s.socket.handle,
+            .data = data,
+            .control = control,
         } })).net_read;
     }
 
     pub fn close(s: *const Stream, io: Io) void {
-        io.vtable.netClose(io.userdata, (&s.socket.handle)[0..1]);
+        io.vtable.netClose(io.userdata, (&s.socket)[0..1]);
     }
 
     pub fn shutdown(s: *const Stream, io: Io, how: ShutdownHow) ShutdownError!void {
@@ -1263,12 +1329,25 @@ pub const Stream = struct {
     pub const Reader = struct {
         io: Io,
         interface: Io.Reader,
+        control_buffer: []align(cmsg_align) u8,
+        control_len: usize,
+        control_truncated: bool,
         stream: Stream,
         err: ?Error,
 
         pub const Error = Io.Operation.NetRead.Error || Io.Cancelable;
 
         pub fn init(stream: Stream, io: Io, buffer: []u8) Reader {
+            return initWithControl(stream, io, buffer, &.{});
+        }
+
+        /// Same as `init`, but also provides a buffer for storing control data.
+        pub fn initWithControl(
+            stream: Stream,
+            io: Io,
+            buffer: []u8,
+            control_buffer: []align(cmsg_align) u8,
+        ) Reader {
             return .{
                 .io = io,
                 .interface = .{
@@ -1280,6 +1359,9 @@ pub const Stream = struct {
                     .seek = 0,
                     .end = 0,
                 },
+                .control_buffer = control_buffer,
+                .control_len = 0,
+                .control_truncated = false,
                 .stream = stream,
                 .err = null,
             };
@@ -1300,55 +1382,49 @@ pub const Stream = struct {
             const dest_n, const data_size = try io_r.writableVector(&iovecs_buffer, data);
             const dest = iovecs_buffer[0..dest_n];
             assert(dest[0].len > 0);
-            const n = r.stream.read(io, dest) catch |err| {
+            const result = r.stream.readWithControl(io, dest, r.control_buffer[r.control_len..]) catch |err| {
                 r.err = err;
                 return error.ReadFailed;
             };
-            if (n == 0) {
+            r.control_len += result.control_len;
+            r.control_truncated = r.control_truncated or result.control_truncated;
+            if (result.data_len == 0) {
                 return error.EndOfStream;
             }
-            if (n > data_size) {
-                r.interface.end += n - data_size;
+            if (result.data_len > data_size) {
+                r.interface.end += result.data_len - data_size;
                 return data_size;
             }
-            return n;
+            return result.data_len;
+        }
+
+        /// Access raw buffered control data.
+        pub fn controlSlice(r: *const Reader) []align(cmsg_align) u8 {
+            return r.control_buffer[0..r.control_len];
+        }
+
+        /// Iterate over buffered control messages.
+        pub fn controlIterator(r: *const Reader) cmsg.Iterator {
+            return .{ .control = r.controlSlice() };
+        }
+
+        /// Clear buffered control data.
+        pub fn clearControl(r: *Reader) void {
+            r.control_len = 0;
+            r.control_truncated = false;
         }
     };
 
     pub const Writer = struct {
         io: Io,
         interface: Io.Writer,
+        /// Will be sent on next drain, then set back to an empty slice.
+        control: []const u8 = &.{},
         stream: Stream,
         err: ?Error = null,
         write_file_err: ?WriteFileError = null,
 
-        pub const Error = error{
-            /// Another TCP Fast Open is already in progress.
-            FastOpenAlreadyInProgress,
-            /// Network session was unexpectedly closed by recipient.
-            ConnectionResetByPeer,
-            /// The output queue for a network interface was full. This generally indicates that the
-            /// interface has stopped sending, but may be caused by transient congestion. (Normally,
-            /// this does not occur in Linux. Packets are just silently dropped when a device queue
-            /// overflows.)
-            ///
-            /// This is also caused when there is not enough kernel memory available.
-            SystemResources,
-            /// No route to network.
-            NetworkUnreachable,
-            /// Network reached but no route to host.
-            HostUnreachable,
-            /// The local network interface used to reach the destination is down.
-            NetworkDown,
-            /// The destination address is not listening.
-            ConnectionRefused,
-            /// The passed address didn't have the correct address family in its sa_family field.
-            AddressFamilyUnsupported,
-            /// Local end has been shut down on a connection-oriented socket, or
-            /// the socket was never connected.
-            SocketUnconnected,
-            SocketNotBound,
-        } || Io.UnexpectedError || Io.Cancelable;
+        pub const Error = Io.Operation.NetWrite.Error || Io.Cancelable;
 
         pub const WriteFileError = Error || error{
             /// The `Io` implementation cannot offer a more efficient
@@ -1381,10 +1457,21 @@ pub const Stream = struct {
             const io = w.io;
             const buffered = io_w.buffered();
             const handle = w.stream.socket.handle;
-            const n = io.vtable.netWrite(io.userdata, handle, buffered, data, splat) catch |err| {
+            const result = io.operate(.{ .net_write = .{
+                .socket_handle = handle,
+                .header = buffered,
+                .data = data,
+                .splat = splat,
+                .control = w.control,
+            } }) catch |err| {
                 w.err = err;
                 return error.WriteFailed;
             };
+            const n = result.net_write catch |err| {
+                w.err = err;
+                return error.WriteFailed;
+            };
+            w.control = &.{};
             return io_w.consume(n);
         }
 
@@ -1415,9 +1502,66 @@ pub const Stream = struct {
         return .init(stream, io, buffer);
     }
 
+    /// Same as `reader`, but also provides a buffer for storing control data.
+    pub fn readerWithControl(
+        stream: Stream,
+        io: Io,
+        buffer: []u8,
+        control_buffer: []align(cmsg_align) u8,
+    ) Reader {
+        return .initWithControl(stream, io, buffer, control_buffer);
+    }
+
     pub fn writer(stream: Stream, io: Io, buffer: []u8) Writer {
         return .init(stream, io, buffer);
     }
+};
+
+pub const cmsg_align = if (@TypeOf(std.posix.cmsg_align) == void) 1 else std.posix.cmsg_align;
+/// Utility Functions for interacting with POSIX socket control messages.
+/// See also https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/sys_socket.h.html
+pub const cmsg = struct {
+    const cmsghdr = std.posix.cmsghdr;
+
+    /// Equivalent to `CMSG_SPACE` in C.
+    pub fn space(data_len: usize) usize {
+        return std.mem.alignForward(usize, @sizeOf(cmsghdr), cmsg_align) +
+            std.mem.alignForward(usize, data_len, cmsg_align);
+    }
+
+    /// Equivalent to `CMSG_LEN` in C.
+    pub fn len(data_len: @FieldType(cmsghdr, "len")) @TypeOf(data_len) {
+        return std.mem.alignForward(@TypeOf(data_len), @sizeOf(cmsghdr), cmsg_align) + data_len;
+    }
+
+    /// Equivalent to `CMSG_DATA` in C.
+    pub fn data(header: *align(cmsg_align) cmsghdr) []align(cmsg_align) u8 {
+        const bytes: [*]u8 = @ptrCast(header);
+        return @alignCast(bytes[0..header.len][std.mem.alignForward(usize, @sizeOf(cmsghdr), cmsg_align)..]);
+    }
+
+    /// Equivalent to `CMSG_FIRSTHDR` and `CMSG_NXTHDR` in C.
+    pub const Iterator = struct {
+        control: []align(cmsg_align) u8,
+
+        pub const Message = struct {
+            header: *align(cmsg_align) cmsghdr,
+            data: []align(cmsg_align) u8,
+        };
+
+        pub fn next(it: *Iterator) ?Message {
+            if (it.control.len < @sizeOf(cmsghdr)) return null;
+            const header: *align(cmsg_align) cmsghdr = @ptrCast(it.control.ptr);
+            if (it.control.len < header.len) return null;
+            const next_header = std.mem.alignForward(usize, header.len, cmsg_align);
+            if (it.control.len < next_header) {
+                it.control = &.{};
+            } else {
+                it.control = @alignCast(it.control[next_header..]);
+            }
+            return .{ .header = header, .data = data(header) };
+        }
+    };
 };
 
 pub const Server = struct {
@@ -1429,30 +1573,7 @@ pub const Server = struct {
         s.* = undefined;
     }
 
-    pub const AcceptError = error{
-        /// The per-process limit on the number of open file descriptors has been reached.
-        ProcessFdQuotaExceeded,
-        /// The system-wide limit on the total number of open files has been reached.
-        SystemFdQuotaExceeded,
-        /// Not enough free memory. This often means that the memory allocation is limited
-        /// by the socket buffer limits, not by the system memory.
-        SystemResources,
-        /// Either `listen` was never called, or `shutdown` was called (possibly while
-        /// this call was blocking). This allows `shutdown` to be used as a concurrent
-        /// cancellation mechanism.
-        SocketNotListening,
-        /// The network subsystem has failed.
-        NetworkDown,
-        /// No connection is already queued and ready to be accepted, and
-        /// the socket is configured as non-blocking.
-        WouldBlock,
-        /// An incoming connection was indicated, but was subsequently terminated by the
-        /// remote peer prior to accepting the call.
-        ConnectionAborted,
-        /// Firewall rules forbid connection.
-        BlockedByFirewall,
-        ProtocolFailure,
-    } || Io.UnexpectedError || Io.Cancelable;
+    pub const AcceptError = Io.Operation.NetAccept.Error || Io.Cancelable;
 
     pub const AcceptOptions = switch (native_os) {
         .windows => struct { mode: Socket.Mode, protocol: ?Protocol },
@@ -1461,7 +1582,10 @@ pub const Server = struct {
 
     /// Blocks until a client connects to the server.
     pub fn accept(s: *Server, io: Io) AcceptError!Stream {
-        return .{ .socket = try io.vtable.netAccept(io.userdata, s.socket.handle, s.options) };
+        return .{ .socket = try (try io.operate(.{ .net_accept = .{
+            .socket_handle = s.socket.handle,
+            .options = s.options,
+        } })).net_accept };
     }
 };
 
@@ -1475,6 +1599,13 @@ test "parsing IPv6 addresses" {
     try testIp6Parse("fe80::abcd:ef12%3");
     try testIp6Parse("ff02::");
     try testIp6Parse("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff");
+    try testIp6Parse("::ffff:192.0.2.1"); // IPv4 Mapped
+    try testIp6Parse("64:ff9b::192.0.2.1"); // RFC 6052 Well-Known Prefix
+    try testIp6Parse("fe80::e0e:76ff:fed4:cf22%iface.123"); // edge case for :ipv4 parsing
+    try testIp6ParseTransform("::c000:201", "::192.0.2.1"); // Deprecated "IPv4 Compatible"
+    try testIp6ParseTransform("::ffff:192.0.2.1", "::ffff:c000:201"); // Non-canonical in Mapped
+    try testIp6ParseTransform("2001:db8::c000:201", "2001:db8::192.0.2.1"); // arbitrary prefix
+    try testIp6ParseTransform("2001:db8::201", "2001:db8::0.0.2.1"); // Compression+:IPv4 edge case
 }
 test "IpAddress.setPort works" {
     var addr: IpAddress = .{ .ip4 = undefined };
@@ -1495,7 +1626,7 @@ fn testIp6ParseTransform(expected: []const u8, input: []const u8) !void {
         },
     };
     var buffer: [100]u8 = undefined;
-    const result = try std.fmt.bufPrint(&buffer, "{f}", .{ua});
+    const result = try std.mem.print(&buffer, "{f}", .{ua});
     try std.testing.expectEqualStrings(expected, result);
 }
 

@@ -9,8 +9,46 @@ pub fn syscall0(
 ) u64 {
     return asm volatile ("ecall"
         : [ret] "={x10}" (-> u64),
-        : [number] "{x17}" (@intFromEnum(number)),
-        : .{ .memory = true });
+        : [number] "{x17}" (@backingInt(number)),
+        : .{
+          .memory = true,
+          .v0 = true,
+          .v1 = true,
+          .v2 = true,
+          .v3 = true,
+          .v4 = true,
+          .v5 = true,
+          .v6 = true,
+          .v7 = true,
+          .v8 = true,
+          .v9 = true,
+          .v10 = true,
+          .v11 = true,
+          .v12 = true,
+          .v13 = true,
+          .v14 = true,
+          .v15 = true,
+          .v16 = true,
+          .v17 = true,
+          .v18 = true,
+          .v19 = true,
+          .v20 = true,
+          .v21 = true,
+          .v22 = true,
+          .v23 = true,
+          .v24 = true,
+          .v25 = true,
+          .v26 = true,
+          .v27 = true,
+          .v28 = true,
+          .v29 = true,
+          .v30 = true,
+          .v31 = true,
+          .vtype = true,
+          .vl = true,
+          .vxsat = true,
+          .vxrm = true,
+        });
 }
 
 pub fn syscall1(
@@ -19,9 +57,47 @@ pub fn syscall1(
 ) u64 {
     return asm volatile ("ecall"
         : [ret] "={x10}" (-> u64),
-        : [number] "{x17}" (@intFromEnum(number)),
+        : [number] "{x17}" (@backingInt(number)),
           [arg1] "{x10}" (arg1),
-        : .{ .memory = true });
+        : .{
+          .memory = true,
+          .v0 = true,
+          .v1 = true,
+          .v2 = true,
+          .v3 = true,
+          .v4 = true,
+          .v5 = true,
+          .v6 = true,
+          .v7 = true,
+          .v8 = true,
+          .v9 = true,
+          .v10 = true,
+          .v11 = true,
+          .v12 = true,
+          .v13 = true,
+          .v14 = true,
+          .v15 = true,
+          .v16 = true,
+          .v17 = true,
+          .v18 = true,
+          .v19 = true,
+          .v20 = true,
+          .v21 = true,
+          .v22 = true,
+          .v23 = true,
+          .v24 = true,
+          .v25 = true,
+          .v26 = true,
+          .v27 = true,
+          .v28 = true,
+          .v29 = true,
+          .v30 = true,
+          .v31 = true,
+          .vtype = true,
+          .vl = true,
+          .vxsat = true,
+          .vxrm = true,
+        });
 }
 
 pub fn syscall2(
@@ -31,10 +107,48 @@ pub fn syscall2(
 ) u64 {
     return asm volatile ("ecall"
         : [ret] "={x10}" (-> u64),
-        : [number] "{x17}" (@intFromEnum(number)),
+        : [number] "{x17}" (@backingInt(number)),
           [arg1] "{x10}" (arg1),
           [arg2] "{x11}" (arg2),
-        : .{ .memory = true });
+        : .{
+          .memory = true,
+          .v0 = true,
+          .v1 = true,
+          .v2 = true,
+          .v3 = true,
+          .v4 = true,
+          .v5 = true,
+          .v6 = true,
+          .v7 = true,
+          .v8 = true,
+          .v9 = true,
+          .v10 = true,
+          .v11 = true,
+          .v12 = true,
+          .v13 = true,
+          .v14 = true,
+          .v15 = true,
+          .v16 = true,
+          .v17 = true,
+          .v18 = true,
+          .v19 = true,
+          .v20 = true,
+          .v21 = true,
+          .v22 = true,
+          .v23 = true,
+          .v24 = true,
+          .v25 = true,
+          .v26 = true,
+          .v27 = true,
+          .v28 = true,
+          .v29 = true,
+          .v30 = true,
+          .v31 = true,
+          .vtype = true,
+          .vl = true,
+          .vxsat = true,
+          .vxrm = true,
+        });
 }
 
 pub fn syscall3(
@@ -45,11 +159,49 @@ pub fn syscall3(
 ) u64 {
     return asm volatile ("ecall"
         : [ret] "={x10}" (-> u64),
-        : [number] "{x17}" (@intFromEnum(number)),
+        : [number] "{x17}" (@backingInt(number)),
           [arg1] "{x10}" (arg1),
           [arg2] "{x11}" (arg2),
           [arg3] "{x12}" (arg3),
-        : .{ .memory = true });
+        : .{
+          .memory = true,
+          .v0 = true,
+          .v1 = true,
+          .v2 = true,
+          .v3 = true,
+          .v4 = true,
+          .v5 = true,
+          .v6 = true,
+          .v7 = true,
+          .v8 = true,
+          .v9 = true,
+          .v10 = true,
+          .v11 = true,
+          .v12 = true,
+          .v13 = true,
+          .v14 = true,
+          .v15 = true,
+          .v16 = true,
+          .v17 = true,
+          .v18 = true,
+          .v19 = true,
+          .v20 = true,
+          .v21 = true,
+          .v22 = true,
+          .v23 = true,
+          .v24 = true,
+          .v25 = true,
+          .v26 = true,
+          .v27 = true,
+          .v28 = true,
+          .v29 = true,
+          .v30 = true,
+          .v31 = true,
+          .vtype = true,
+          .vl = true,
+          .vxsat = true,
+          .vxrm = true,
+        });
 }
 
 pub fn syscall4(
@@ -61,12 +213,50 @@ pub fn syscall4(
 ) u64 {
     return asm volatile ("ecall"
         : [ret] "={x10}" (-> u64),
-        : [number] "{x17}" (@intFromEnum(number)),
+        : [number] "{x17}" (@backingInt(number)),
           [arg1] "{x10}" (arg1),
           [arg2] "{x11}" (arg2),
           [arg3] "{x12}" (arg3),
           [arg4] "{x13}" (arg4),
-        : .{ .memory = true });
+        : .{
+          .memory = true,
+          .v0 = true,
+          .v1 = true,
+          .v2 = true,
+          .v3 = true,
+          .v4 = true,
+          .v5 = true,
+          .v6 = true,
+          .v7 = true,
+          .v8 = true,
+          .v9 = true,
+          .v10 = true,
+          .v11 = true,
+          .v12 = true,
+          .v13 = true,
+          .v14 = true,
+          .v15 = true,
+          .v16 = true,
+          .v17 = true,
+          .v18 = true,
+          .v19 = true,
+          .v20 = true,
+          .v21 = true,
+          .v22 = true,
+          .v23 = true,
+          .v24 = true,
+          .v25 = true,
+          .v26 = true,
+          .v27 = true,
+          .v28 = true,
+          .v29 = true,
+          .v30 = true,
+          .v31 = true,
+          .vtype = true,
+          .vl = true,
+          .vxsat = true,
+          .vxrm = true,
+        });
 }
 
 pub fn syscall5(
@@ -79,13 +269,51 @@ pub fn syscall5(
 ) u64 {
     return asm volatile ("ecall"
         : [ret] "={x10}" (-> u64),
-        : [number] "{x17}" (@intFromEnum(number)),
+        : [number] "{x17}" (@backingInt(number)),
           [arg1] "{x10}" (arg1),
           [arg2] "{x11}" (arg2),
           [arg3] "{x12}" (arg3),
           [arg4] "{x13}" (arg4),
           [arg5] "{x14}" (arg5),
-        : .{ .memory = true });
+        : .{
+          .memory = true,
+          .v0 = true,
+          .v1 = true,
+          .v2 = true,
+          .v3 = true,
+          .v4 = true,
+          .v5 = true,
+          .v6 = true,
+          .v7 = true,
+          .v8 = true,
+          .v9 = true,
+          .v10 = true,
+          .v11 = true,
+          .v12 = true,
+          .v13 = true,
+          .v14 = true,
+          .v15 = true,
+          .v16 = true,
+          .v17 = true,
+          .v18 = true,
+          .v19 = true,
+          .v20 = true,
+          .v21 = true,
+          .v22 = true,
+          .v23 = true,
+          .v24 = true,
+          .v25 = true,
+          .v26 = true,
+          .v27 = true,
+          .v28 = true,
+          .v29 = true,
+          .v30 = true,
+          .v31 = true,
+          .vtype = true,
+          .vl = true,
+          .vxsat = true,
+          .vxrm = true,
+        });
 }
 
 pub fn syscall6(
@@ -99,14 +327,52 @@ pub fn syscall6(
 ) u64 {
     return asm volatile ("ecall"
         : [ret] "={x10}" (-> u64),
-        : [number] "{x17}" (@intFromEnum(number)),
+        : [number] "{x17}" (@backingInt(number)),
           [arg1] "{x10}" (arg1),
           [arg2] "{x11}" (arg2),
           [arg3] "{x12}" (arg3),
           [arg4] "{x13}" (arg4),
           [arg5] "{x14}" (arg5),
           [arg6] "{x15}" (arg6),
-        : .{ .memory = true });
+        : .{
+          .memory = true,
+          .v0 = true,
+          .v1 = true,
+          .v2 = true,
+          .v3 = true,
+          .v4 = true,
+          .v5 = true,
+          .v6 = true,
+          .v7 = true,
+          .v8 = true,
+          .v9 = true,
+          .v10 = true,
+          .v11 = true,
+          .v12 = true,
+          .v13 = true,
+          .v14 = true,
+          .v15 = true,
+          .v16 = true,
+          .v17 = true,
+          .v18 = true,
+          .v19 = true,
+          .v20 = true,
+          .v21 = true,
+          .v22 = true,
+          .v23 = true,
+          .v24 = true,
+          .v25 = true,
+          .v26 = true,
+          .v27 = true,
+          .v28 = true,
+          .v29 = true,
+          .v30 = true,
+          .v31 = true,
+          .vtype = true,
+          .vl = true,
+          .vxsat = true,
+          .vxrm = true,
+        });
 }
 
 pub fn clone() callconv(.naked) u64 {
@@ -116,40 +382,41 @@ pub fn clone() callconv(.naked) u64 {
     // syscall(SYS_clone, flags, stack, ptid, tls, ctid)
     //         a7         a0,    a1,    a2,   a3,  a4
     asm volatile (
-        \\    # Save func and arg to stack
-        \\    addi a1, a1, -16
-        \\    sd a0, 0(a1)
-        \\    sd a3, 8(a1)
+        \\ andi a1, a1, -16
+        \\ # Save func and arg to stack
+        \\ addi a1, a1, -16
+        \\ sd a0, 0(a1)
+        \\ sd a3, 8(a1)
         \\
-        \\    # Call SYS_clone
-        \\    mv a0, a2
-        \\    mv a2, a4
-        \\    mv a3, a5
-        \\    mv a4, a6
-        \\    li a7, 220 # SYS_clone
-        \\    ecall
+        \\ # Call SYS_clone
+        \\ mv a0, a2
+        \\ mv a2, a4
+        \\ mv a3, a5
+        \\ mv a4, a6
+        \\ li a7, 220 # SYS_clone
+        \\ ecall
         \\
-        \\    beqz a0, 1f
-        \\    # Parent
-        \\    ret
+        \\ beqz a0, 1f
+        \\ # Parent
+        \\ ret
         \\
-        \\    # Child
+        \\ # Child
         \\1:
     );
     if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
-        \\    .cfi_undefined ra
+        \\ .cfi_undefined ra
     );
     asm volatile (
-        \\    mv fp, zero
-        \\    mv ra, zero
+        \\ mv fp, zero
+        \\ mv ra, zero
         \\
-        \\    ld a1, 0(sp)
-        \\    ld a0, 8(sp)
-        \\    jalr a1
+        \\ ld a1, 0(sp)
+        \\ ld a0, 8(sp)
+        \\ jalr a1
         \\
-        \\    # Exit
-        \\    li a7, 93 # SYS_exit
-        \\    ecall
+        \\ # Exit
+        \\ li a7, 93 # SYS_exit
+        \\ ecall
     );
 }
 
@@ -158,4 +425,7 @@ pub const time_t = i64;
 pub const VDSO = struct {
     pub const CGT_SYM = "__vdso_clock_gettime";
     pub const CGT_VER = "LINUX_4.15";
+
+    pub const HWPROBE_SYM = "__vdso_riscv_hwprobe";
+    pub const HWPROBE_VER = "LINUX_4.15";
 };

@@ -106,7 +106,7 @@ pub fn hash(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
         },
 
         .bool => hash(hasher, @intFromBool(key), strat),
-        .@"enum" => hash(hasher, @intFromEnum(key), strat),
+        .@"enum" => hash(hasher, @backingInt(key), strat),
         .error_set => hash(hasher, @intFromError(key), strat),
         .@"anyframe", .@"fn" => hash(hasher, @intFromPtr(key), strat),
 
@@ -225,7 +225,7 @@ fn testHashDeepRecursive(key: anytype) u64 {
 
 test "typeContainsSlice" {
     comptime {
-        try testing.expect(!typeContainsSlice(std.meta.Tag(std.builtin.Type)));
+        try testing.expect(!typeContainsSlice(std.meta.Tag(std.lang.Type)));
 
         try testing.expect(typeContainsSlice([]const u8));
         try testing.expect(!typeContainsSlice(u8));

@@ -26,7 +26,7 @@ fully_qualified_name: []const u8,
 deps: Deps = .{},
 
 resolved_target: ResolvedTarget,
-optimize_mode: std.lang.OptimizeMode,
+optimize_mode: std.lang.Optimize,
 code_model: std.lang.CodeModel,
 single_threaded: bool,
 error_tracing: bool,
@@ -42,9 +42,8 @@ sanitize_thread: bool,
 fuzz: bool,
 unwind_tables: std.lang.UnwindTables,
 cc_argv: []const []const u8,
-/// (SPIR-V) whether to generate a structured control flow graph or not
-structured_cfg: bool,
 no_builtin: bool,
+patchable_function_entry: u16,
 
 pub const Deps = std.array_hash_map.String(*Module);
 
@@ -67,7 +66,7 @@ pub const CreateOptions = struct {
     pub const Inherited = struct {
         /// If this is null then `parent` must be non-null.
         resolved_target: ?ResolvedTarget = null,
-        optimize_mode: ?std.lang.OptimizeMode = null,
+        optimize_mode: ?std.lang.Optimize = null,
         code_model: ?std.lang.CodeModel = null,
         single_threaded: ?bool = null,
         error_tracing: ?bool = null,
@@ -85,8 +84,8 @@ pub const CreateOptions = struct {
         sanitize_c: ?std.zig.SanitizeC = null,
         sanitize_thread: ?bool = null,
         fuzz: ?bool = null,
-        structured_cfg: ?bool = null,
         no_builtin: ?bool = null,
+        patchable_function_entry: u16 = 0,
     };
 };
 
@@ -110,6 +109,7 @@ pub const CreateError = error{
     StackCheckUnsupportedByTarget,
     StackProtectorUnsupportedByTarget,
     StackProtectorUnavailableWithoutLibC,
+    PatchableFunctionEntryUnsupportedByBackend,
 };
 
 /// At least one of `parent` and `resolved_target` must be non-null.
@@ -144,7 +144,7 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         if (options.inherited.valgrind) |x| break :b x;
         if (options.parent) |p| break :b p.valgrind;
         if (strip) break :b false;
-        break :b optimize_mode == .Debug;
+        break :b optimize_mode == .debug;
     };
 
     const single_threaded = b: {
@@ -174,7 +174,7 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
     };
 
     const pic = b: {
-        if (target_util.requiresPic(target, options.global.link_libc)) {
+        if (target_util.requiresPic(target)) {
             if (options.inherited.pic == false)
                 return error.TargetRequiresPic;
             break :b true;
@@ -184,7 +184,10 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
                 return error.PieRequiresPic;
             break :b true;
         }
-        if (options.global.link_mode == .dynamic and target_util.requiresPicForDynamicLink(target)) {
+        if (options.global.output_mode == .Lib and
+            options.global.link_mode == .dynamic and
+            target_util.requiresPicForDynamicLink(target))
+        {
             if (options.inherited.pic == false)
                 return error.DynamicLinkingRequiresPic;
             break :b true;
@@ -192,10 +195,9 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         if (options.inherited.pic) |x| break :b x;
         if (options.parent) |p| break :b p.pic;
 
-        // Default to PIC on targets where we default to producing PIEs to make
-        // the common case of linking objects and static libraries into an
-        // executable work out of the box.
-        break :b target_util.defaultPie(target);
+        // Default to PIC for objects and static libraries to make the common
+        // cases of linking those into a PIE or a shared library just work.
+        break :b options.global.output_mode != .Exe;
     };
 
     const red_zone = b: {
@@ -212,7 +214,7 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
     const omit_frame_pointer = b: {
         if (options.inherited.omit_frame_pointer) |x| break :b x;
         if (options.parent) |p| break :b p.omit_frame_pointer;
-        if (optimize_mode == .ReleaseSmall) {
+        if (optimize_mode == .small) {
             // On x86, in most cases, keeping the frame pointer usually results in smaller binary size.
             // This has to do with how instructions for memory access via the stack base pointer register (when keeping the frame pointer)
             // are smaller than instructions for memory access via the stack pointer register (when omitting the frame pointer).
@@ -251,21 +253,21 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
     };
 
     const is_safe_mode = switch (optimize_mode) {
-        .Debug, .ReleaseSafe => true,
-        .ReleaseFast, .ReleaseSmall => false,
+        .debug, .safe => true,
+        .fast, .small => false,
     };
 
     const sanitize_c: std.zig.SanitizeC = b: {
         if (options.inherited.sanitize_c) |x| break :b x;
         if (options.parent) |p| break :b p.sanitize_c;
         break :b switch (optimize_mode) {
-            .Debug => .full,
+            .debug => .full,
             // It's recommended to use the minimal runtime in production
             // environments due to the security implications of the full runtime.
             // The minimal runtime doesn't provide much benefit over simply
             // trapping, however, so we do that instead.
-            .ReleaseSafe => .trap,
-            .ReleaseFast, .ReleaseSmall => .off,
+            .safe => .trap,
+            .fast, .small => .off,
         };
     };
 
@@ -320,22 +322,44 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         break :sp target_util.default_stack_protector_buffer_size;
     };
 
-    const structured_cfg = b: {
-        if (options.inherited.structured_cfg) |x| break :b x;
-        if (options.parent) |p| break :b p.structured_cfg;
-        // We always want a structured control flow in shaders. This option is
-        // only relevant for OpenCL kernels.
-        break :b switch (target.os.tag) {
-            .opencl => false,
-            else => true,
-        };
-    };
-
     const no_builtin = b: {
         if (options.inherited.no_builtin) |x| break :b x;
         if (options.parent) |p| break :b p.no_builtin;
 
         break :b target.cpu.arch.isBpf();
+    };
+
+    const patchable_function_entry = b: {
+        const x = options.inherited.patchable_function_entry;
+        if (x > 0) {
+            switch (zig_backend) {
+                .stage2_llvm,
+                .stage2_x86_64,
+                .stage2_aarch64,
+                .stage2_c,
+                .stage2_riscv64,
+                .stage2_loongarch,
+                => {},
+
+                // Does not apply to this architecture.
+                .stage2_spirv,
+                .zsf_spork8,
+                .stage2_wasm,
+                => return error.PatchableFunctionEntryUnsupportedByBackend,
+
+                // Not implemented.
+                .stage2_sparc64,
+                .stage2_x86,
+                .stage2_arm,
+                .stage2_powerpc,
+                => return error.PatchableFunctionEntryUnsupportedByBackend,
+
+                .other, .stage1, _ => unreachable,
+            }
+            break :b x;
+        }
+        if (options.parent) |p| break :b p.patchable_function_entry;
+        break :b 0;
     };
 
     const llvm_cpu_features: ?[*:0]const u8 = b: {
@@ -353,11 +377,11 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
                 // See https://github.com/ziglang/zig/issues/23539
                 if (target_util.isDynamicAMDGCNFeature(target, feature)) continue;
 
-                if (target.cpu.arch.isPowerPC() and @as(std.Target.powerpc.Feature, @enumFromInt(feature.index)) == .@"64bit") continue;
-                if (target.cpu.arch.isX86() and @as(std.Target.x86.Feature, @enumFromInt(feature.index)) == .x32) continue;
+                if (target.cpu.arch.isPowerPC() and @as(std.Target.powerpc.Feature, @fromBackingInt(@intCast(feature.index))) == .@"64bit") continue;
+                if (target.cpu.arch.isX86() and @as(std.Target.x86.Feature, @fromBackingInt(@intCast(feature.index))) == .x32) continue;
 
                 var is_enabled = target.cpu.features.isEnabled(feature.index);
-                if (target.cpu.arch == .s390x and @as(std.Target.s390x.Feature, @enumFromInt(feature.index)) == .backchain) {
+                if (target.cpu.arch == .s390x and @as(std.Target.s390x.Feature, @fromBackingInt(@intCast(feature.index))) == .backchain) {
                     is_enabled = !omit_frame_pointer;
                 }
 
@@ -411,8 +435,8 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         .fuzz = fuzz,
         .unwind_tables = unwind_tables,
         .cc_argv = options.cc_argv,
-        .structured_cfg = structured_cfg,
         .no_builtin = no_builtin,
+        .patchable_function_entry = patchable_function_entry,
     };
     return mod;
 }
@@ -450,8 +474,8 @@ pub fn createLimited(gpa: Allocator, options: LimitedOptions) Allocator.Error!*M
         .fuzz = undefined,
         .unwind_tables = undefined,
         .cc_argv = undefined,
-        .structured_cfg = undefined,
         .no_builtin = undefined,
+        .patchable_function_entry = undefined,
     };
     return mod;
 }
@@ -489,8 +513,8 @@ pub fn createBuiltin(arena: Allocator, opts: Builtin, dirs: std.zig.Directories)
         .stack_protector = 0,
         .red_zone = false,
         .sanitize_c = .off,
-        .structured_cfg = false,
         .no_builtin = false,
+        .patchable_function_entry = 0,
     };
     return new;
 }

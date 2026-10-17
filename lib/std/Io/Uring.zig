@@ -177,11 +177,11 @@ const Fiber = struct {
             _,
 
             fn subWrap(lhs: Awaiting, rhs: Awaiting) Awaiting {
-                return @enumFromInt(@intFromEnum(lhs) -% @intFromEnum(rhs));
+                return @fromBackingInt(@intCast(@backingInt(lhs) -% @backingInt(rhs)));
             }
 
             fn fromIoUringFd(fd: fd_t) Awaiting {
-                const awaiting: Awaiting = @enumFromInt(fd);
+                const awaiting: Awaiting = @fromBackingInt(@intCast(fd));
                 switch (awaiting) {
                     .nothing, .group => unreachable,
                     _ => return awaiting,
@@ -191,7 +191,7 @@ const Fiber = struct {
             fn toIoUringFd(awaiting: Awaiting) fd_t {
                 switch (awaiting) {
                     .nothing, .group => unreachable,
-                    _ => return @intFromEnum(awaiting),
+                    _ => return @backingInt(awaiting),
                 }
             }
         };
@@ -217,7 +217,7 @@ const Fiber = struct {
         const unblocked: CancelProtection = .{ .user = .unblocked, .acknowledged = false };
 
         fn check(cancel_protection: CancelProtection) Io.CancelProtection {
-            return @enumFromInt(@intFromBool(cancel_protection != unblocked));
+            return @fromBackingInt(@intCast(@intFromBool(cancel_protection != unblocked)));
         }
 
         fn acknowledge(cancel_protection: *CancelProtection) void {
@@ -359,7 +359,7 @@ const Fiber = struct {
             Fiber.CancelStatus,
             &fiber.cancel_status,
             .Or,
-            .{ .requested = true, .awaiting = @enumFromInt(0) },
+            .{ .requested = true, .awaiting = @fromBackingInt(@intCast(0)) },
             .acquire,
         );
         assert(!cancel_status.requested);
@@ -385,7 +385,7 @@ const Fiber = struct {
                     .addr = @intFromPtr(fiber),
                     .len = 0,
                     .rw_flags = 0,
-                    .user_data = @intFromEnum(Completion.Userdata.wakeup),
+                    .user_data = @backingInt(Completion.Userdata.wakeup),
                     .buf_index = 0,
                     .personality = 0,
                     .splice_fd_in = 0,
@@ -397,10 +397,10 @@ const Fiber = struct {
                     .ioprio = 0,
                     .fd = awaiting_io_uring_fd,
                     .off = @intFromPtr(fiber) | 0b01,
-                    .addr = @intFromEnum(linux.IORING_MSG_RING_COMMAND.DATA),
+                    .addr = @backingInt(linux.IORING_MSG_RING_COMMAND.DATA),
                     .len = 0,
                     .rw_flags = 0,
-                    .user_data = @intFromEnum(Completion.Userdata.cleanup),
+                    .user_data = @backingInt(Completion.Userdata.cleanup),
                     .buf_index = 0,
                     .personality = 0,
                     .splice_fd_in = 0,
@@ -537,11 +537,11 @@ const CachedFd = struct {
         _,
 
         fn fromFd(fd: fd_t) Once {
-            return @enumFromInt(@as(u31, @intCast(fd)));
+            return @fromBackingInt(@intCast(@as(u31, @intCast(fd))));
         }
 
         fn toFd(once: Once) fd_t {
-            return @as(u31, @intCast(@intFromEnum(once)));
+            return @as(u31, @intCast(@backingInt(once)));
         }
     };
 
@@ -552,8 +552,8 @@ const CachedFd = struct {
             .uninitialized => {},
             .initializing => unreachable,
             _ => |fd| {
-                assert(@intFromEnum(fd) >= 0);
-                _ = linux.close(@intFromEnum(fd));
+                assert(@backingInt(fd) >= 0);
+                _ = linux.close(@backingInt(fd));
                 cached_fd.* = .init;
             },
         }
@@ -573,7 +573,7 @@ const CachedFd = struct {
                 .initializing => try futexWait(
                     ev,
                     @ptrCast(&cached_fd.once),
-                    @bitCast(@intFromEnum(once)),
+                    @bitCast(@backingInt(once)),
                     .none,
                 ),
                 _ => |fd| {
@@ -756,13 +756,13 @@ pub fn io(ev: *Evented) Io {
             .processSetCurrentDir = processSetCurrentDir,
             .processSetCurrentPath = processSetCurrentPath,
             .processReplace = processReplace,
-            .processReplacePath = processReplacePath,
             .processSpawn = processSpawn,
-            .processSpawnPath = processSpawnPath,
             .childWait = childWait,
             .childKill = childKill,
 
             .progressParentFile = progressParentFile,
+            .inheritParentDir = inheritParentDir,
+            .inheritParentFile = inheritParentFile,
 
             .now = now,
             .clockResolution = clockResolution,
@@ -772,14 +772,11 @@ pub fn io(ev: *Evented) Io {
             .randomSecure = randomSecure,
 
             .netListenIp = netListenIpUnavailable,
-            .netAccept = netAcceptUnavailable,
             .netBindIp = netBindIp,
             .netConnectIp = netConnectIpUnavailable,
             .netListenUnix = netListenUnixUnavailable,
             .netConnectUnix = netConnectUnixUnavailable,
             .netSocketCreatePair = netSocketCreatePairUnavailable,
-            .netSend = netSendUnavailable,
-            .netWrite = netWriteUnavailable,
             .netWriteFile = netWriteFileUnavailable,
             .netClose = netClose,
             .netShutdown = netShutdown,
@@ -806,7 +803,7 @@ pub const InitOptions = struct {
     argv0: Argv0 = .empty,
     /// Affects the following operations:
     /// * `fileIsTty`
-    /// * `processSpawn`, `processSpawnPath`, `processReplace`, `processReplacePath`
+    /// * `processSpawn`, `processReplace`
     environ: process.Environ = .empty,
 };
 
@@ -997,11 +994,11 @@ fn schedule(ev: *Evented, thread: *Thread, ready_queue: Fiber.Queue) bool {
             .flags = linux.IOSQE_CQE_SKIP_SUCCESS,
             .ioprio = 0,
             .fd = idle_search_thread.io_uring.fd,
-            .off = @intFromEnum(Completion.Userdata.wakeup),
-            .addr = @intFromEnum(linux.IORING_MSG_RING_COMMAND.DATA),
+            .off = @backingInt(Completion.Userdata.wakeup),
+            .addr = @backingInt(linux.IORING_MSG_RING_COMMAND.DATA),
             .len = 0,
             .rw_flags = 0,
-            .user_data = @intFromEnum(Completion.Userdata.wakeup),
+            .user_data = @backingInt(Completion.Userdata.wakeup),
             .buf_index = 0,
             .personality = 0,
             .splice_fd_in = 0,
@@ -1102,7 +1099,7 @@ const Completion = struct {
     };
 
     fn errno(completion: Completion) linux.E {
-        return linux.errno(@bitCast(@as(isize, completion.result)));
+        return linux.errno(completion.result);
     }
 };
 
@@ -1135,8 +1132,9 @@ fn mainIdleEntry() callconv(.naked) void {
 
 fn mainIdle(
     ev: *Evented,
-    message: *const SwitchMessage,
+    contexts: *const Io.fiber.Switch,
 ) callconv(.withStackAlign(.c, @max(@alignOf(Thread), @alignOf(Io.fiber.Context)))) noreturn {
+    const message: *const SwitchMessage = @fieldParentPtr("contexts", contexts);
     message.handle(ev);
     ev.idle(&ev.threads.allocated[0]);
     ev.yield(@ptrCast(&ev.main_fiber_buffer), .nothing);
@@ -1164,7 +1162,7 @@ fn idle(ev: *Evented, thread: *Thread) void {
             if (cqes.len == 0) break;
             for (cqes) |cqe| if (cqe.flags & linux.IORING_CQE_F_SKIP == 0) switch (@as(
                 Completion.Userdata,
-                @enumFromInt(cqe.user_data),
+                @fromBackingInt(@intCast(cqe.user_data)),
             )) {
                 .unused => unreachable, // bad submission queued?
                 .wakeup => {},
@@ -1204,7 +1202,7 @@ fn idle(ev: *Evented, thread: *Thread) void {
                             .addr = cqe.user_data & ~@as(usize, 0b11),
                             .len = 0,
                             .rw_flags = 0,
-                            .user_data = @intFromEnum(Completion.Userdata.wakeup),
+                            .user_data = @backingInt(Completion.Userdata.wakeup),
                             .buf_index = 0,
                             .personality = 0,
                             .splice_fd_in = 0,
@@ -1231,7 +1229,8 @@ fn idle(ev: *Evented, thread: *Thread) void {
                             batch_userdata[0] = next;
                         }
                         break :ready_fiber switch (@as(u2, @truncate(next))) {
-                            0b00, 0b01 => @ptrFromInt(next & ~@as(usize, 0b11)),
+                            0b00 => @ptrFromInt(next),
+                            0b01 => null, // the timeout completion already woke this fiber
                             0b10, 0b11 => null,
                         };
                     },
@@ -1337,11 +1336,11 @@ const SwitchMessage = struct {
                     .flags = linux.IOSQE_CQE_SKIP_SUCCESS,
                     .ioprio = 0,
                     .fd = each_thread.io_uring.fd,
-                    .off = @intFromEnum(Completion.Userdata.exit),
-                    .addr = @intFromEnum(linux.IORING_MSG_RING_COMMAND.DATA),
+                    .off = @backingInt(Completion.Userdata.exit),
+                    .addr = @backingInt(linux.IORING_MSG_RING_COMMAND.DATA),
                     .len = 0,
                     .rw_flags = 0,
-                    .user_data = @intFromEnum(Completion.Userdata.cleanup),
+                    .user_data = @backingInt(Completion.Userdata.cleanup),
                     .buf_index = 0,
                     .personality = 0,
                     .splice_fd_in = 0,
@@ -1414,8 +1413,9 @@ const AsyncClosure = struct {
 
     fn call(
         closure: *AsyncClosure,
-        message: *const SwitchMessage,
+        contexts: *const Io.fiber.Switch,
     ) callconv(.withStackAlign(.c, @alignOf(AsyncClosure))) noreturn {
+        const message: *const SwitchMessage = @fieldParentPtr("contexts", contexts);
         const ev = closure.evented;
         const fiber = closure.fiber;
         message.handle(ev);
@@ -1779,8 +1779,9 @@ const Group = struct {
 
         fn call(
             closure: *Group.AsyncClosure,
-            message: *const SwitchMessage,
+            contexts: *const Io.fiber.Switch,
         ) callconv(.withStackAlign(.c, @alignOf(Group.AsyncClosure))) noreturn {
+            const message: *const SwitchMessage = @fieldParentPtr("contexts", contexts);
             const ev = closure.evented;
             const fiber = closure.fiber;
             message.handle(ev);
@@ -1986,7 +1987,7 @@ fn futexWait(
             else => 0,
             .boot => linux.IORING_TIMEOUT_BOOTTIME,
         }),
-        .user_data = @intFromEnum(Completion.Userdata.wakeup),
+        .user_data = @backingInt(Completion.Userdata.wakeup),
         .buf_index = 0,
         .personality = 0,
         .splice_fd_in = 0,
@@ -2052,7 +2053,7 @@ fn futexWake(userdata: ?*anyopaque, ptr: *const u32, max_waiters: u32) void {
         .addr = @intFromPtr(ptr),
         .len = 0,
         .rw_flags = 0,
-        .user_data = @intFromEnum(Completion.Userdata.futex_wake),
+        .user_data = @backingInt(Completion.Userdata.futex_wake),
         .buf_index = 0,
         .personality = 0,
         .splice_fd_in = 0,
@@ -2104,12 +2105,25 @@ fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Oper
                 };
             },
         },
+        .net_send => |o| .{
+            .net_send = r: {
+                _ = o;
+                break :r .{ error.NetworkDown, 0 }; // TODO
+            },
+        },
+        .net_accept => |o| .{
+            .net_accept = r: {
+                _ = o;
+                break :r error.NetworkDown; // TODO
+            },
+        },
         .net_read => |o| .{
             .net_read = r: {
                 _ = o;
                 break :r error.NetworkDown; // TODO
             },
         },
+        .net_write => @panic("TODO implement net_write operation"),
     };
 }
 
@@ -2188,7 +2202,7 @@ fn deviceIoControl(
         switch (linux.errno(rc)) {
             .SUCCESS => return @bitCast(@as(u32, @truncate(rc))),
             .INTR => {},
-            else => |err| return -@as(i32, @intFromEnum(err)),
+            else => |err| return -@as(i32, @backingInt(err)),
         }
     }
 }
@@ -2393,13 +2407,25 @@ fn batchDrainSubmitted(
                 return error.ConcurrencyUnavailable
             else
                 .{ .device_io_control = try ev.deviceIoControl(try maybe_sync.enterSync(ev), o) },
+            .net_accept => |o| {
+                _ = o;
+                @panic("TODO implement batchDrainSubmitted for net_receive");
+            },
             .net_receive => |o| {
                 _ = o;
                 @panic("TODO implement batchDrainSubmitted for net_receive");
             },
+            .net_send => |o| {
+                _ = o;
+                @panic("TODO implement batchDrainSubmitted for net_send");
+            },
             .net_read => |o| {
                 _ = o;
                 @panic("TODO implement batchDrainSubmitted for net_read");
+            },
+            .net_write => |o| {
+                _ = o;
+                @panic("TODO implement batchDrainSubmitted for net_write");
             },
         })) |result| {
             switch (batch.completed.tail) {
@@ -2463,7 +2489,10 @@ fn batchDrainReady(batch: *Io.Batch) Io.Timeout.Error!void {
             if (@as(?Io.Operation.Result, result: switch (pending.tag) {
                 .file_read_streaming => .{
                     .file_read_streaming = switch (completion.errno()) {
-                        .SUCCESS => @as(u32, @bitCast(completion.result)),
+                        .SUCCESS => if (completion.result == 0)
+                            error.EndOfStream
+                        else
+                            @as(u32, @bitCast(completion.result)),
                         .INTR => 0,
                         .CANCELED => break :result null,
                         .INVAL => |err| errnoBug(err),
@@ -2501,8 +2530,11 @@ fn batchDrainReady(batch: *Io.Batch) Io.Timeout.Error!void {
                     },
                 },
                 .device_io_control => unreachable,
+                .net_accept => @panic("TODO"),
                 .net_receive => @panic("TODO"),
+                .net_send => @panic("TODO"),
                 .net_read => @panic("TODO"),
+                .net_write => @panic("TODO"),
             })) |result| {
                 switch (batch.completed.tail) {
                     .none => batch.completed.head = index,
@@ -2547,7 +2579,7 @@ fn batchCancel(userdata: ?*anyopaque, batch: *Io.Batch) void {
             .addr = @intFromPtr(&pending.userdata) | 0b10,
             .len = 0,
             .rw_flags = 0,
-            .user_data = @intFromEnum(Completion.Userdata.wakeup),
+            .user_data = @backingInt(Completion.Userdata.wakeup),
             .buf_index = 0,
             .personality = 0,
             .splice_fd_in = 0,
@@ -3558,7 +3590,7 @@ fn dirHardLink(
         old_sub_path_posix,
         new_dir.handle,
         new_sub_path_posix,
-        if (options.follow_symlinks) 0 else linux.AT.SYMLINK_NOFOLLOW,
+        if (options.follow_symlinks) linux.AT.SYMLINK_FOLLOW else 0,
     );
 }
 
@@ -3990,7 +4022,7 @@ fn fileHardLink(
         "",
         new_dir.handle,
         new_sub_path_posix,
-        linux.AT.EMPTY_PATH | @as(u32, if (options.follow_symlinks) 0 else linux.AT.SYMLINK_NOFOLLOW),
+        linux.AT.EMPTY_PATH | @as(u32, if (options.follow_symlinks) linux.AT.SYMLINK_FOLLOW else 0),
     );
 }
 
@@ -4050,7 +4082,7 @@ fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
     if (memory.len == 0) return;
     switch (linux.errno(linux.munmap(memory.ptr, memory.len))) {
         .SUCCESS => {},
-        else => |err| if (builtin.mode == .Debug)
+        else => |err| if (builtin.mode == .debug)
             std.log.err("failed to unmap {d} bytes at {*}: {t}", .{ memory.len, memory.ptr, err }),
     }
     mm.* = undefined;
@@ -4242,19 +4274,32 @@ fn processReplace(userdata: ?*anyopaque, options: process.ReplaceOptions) proces
 
     var sync: CancelRegion.Sync = try .init(ev);
     defer sync.deinit(ev);
-    return execv(&sync, options.expand_arg0, argv_buf.ptr[0].?, argv_buf.ptr, env_block, PATH);
-}
 
-fn processReplacePath(
-    userdata: ?*anyopaque,
-    dir: Dir,
-    options: process.ReplaceOptions,
-) process.ReplaceError {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = dir;
-    _ = options;
-    @panic("TODO processReplacePath");
+    switch (options.cwd) {
+        .inherit => {},
+        .dir => |cwd_dir| fchdir(&sync, cwd_dir.handle) catch |err| switch (err) {
+            error.NoDevice, error.UnrecognizedVolume => return error.FileSystem,
+            else => |e| return e,
+        },
+        .path => |cwd_path| {
+            var cwd_path_buffer: [PATH_MAX]u8 = undefined;
+            const cwd_path_posix = try pathToPosix(cwd_path, &cwd_path_buffer);
+            chdir(&sync, cwd_path_posix) catch |err| switch (err) {
+                error.SymLinkLoop => return error.FileSystem,
+                else => |e| return e,
+            };
+        },
+    }
+    for (options.inherit_dirs) |dir| try setFdFlags(&sync, dir.handle, 0);
+    for (options.inherit_files) |file| try setFdFlags(&sync, file.handle, 0);
+    if (options.start_suspended) {
+        switch (linux.errno(linux.kill(linux.getpid(), .STOP))) {
+            .SUCCESS => {},
+            .PERM => return error.PermissionDenied,
+            else => return error.Unexpected,
+        }
+    }
+    return processExec(&sync, options.exe, argv_buf.ptr, options.expand_arg0, env_block, PATH);
 }
 
 fn processSpawn(userdata: ?*anyopaque, options: process.SpawnOptions) process.SpawnError!process.Child {
@@ -4289,18 +4334,6 @@ fn processSpawn(userdata: ?*anyopaque, options: process.SpawnOptions) process.Sp
         };
     };
     return child_err;
-}
-
-fn processSpawnPath(
-    userdata: ?*anyopaque,
-    dir: Dir,
-    options: process.SpawnOptions,
-) process.SpawnError!process.Child {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = dir;
-    _ = options;
-    @panic("TODO processSpawnPath");
 }
 
 const prog_fileno = @max(linux.STDIN_FILENO, linux.STDOUT_FILENO, linux.STDERR_FILENO);
@@ -4486,6 +4519,20 @@ fn setUpChild(sync: *CancelRegion.Sync, options: struct {
     PATH: []const u8,
     spawn: process.SpawnOptions,
 }) ForkBailError {
+    // Must happen before clobbering file descriptors below.
+    switch (options.spawn.cwd) {
+        .inherit => {},
+        .dir => |cwd_dir| try fchdir(sync, cwd_dir.handle),
+        .path => |cwd_path| {
+            var cwd_path_buffer: [PATH_MAX]u8 = undefined;
+            const cwd_path_posix = try pathToPosix(cwd_path, &cwd_path_buffer);
+            try chdir(sync, cwd_path_posix);
+        },
+    }
+
+    for (options.spawn.inherit_dirs) |dir| try setFdFlags(sync, dir.handle, 0);
+    for (options.spawn.inherit_files) |file| try setFdFlags(sync, file.handle, 0);
+
     try setUpChildIo(
         sync,
         options.spawn.stdin,
@@ -4508,19 +4555,14 @@ fn setUpChild(sync: *CancelRegion.Sync, options: struct {
         options.dev_null_fd,
     );
 
-    switch (options.spawn.cwd) {
-        .inherit => {},
-        .dir => |cwd_dir| try fchdir(sync, cwd_dir.handle),
-        .path => |cwd_path| {
-            var cwd_path_buffer: [PATH_MAX]u8 = undefined;
-            const cwd_path_posix = try pathToPosix(cwd_path, &cwd_path_buffer);
-            try chdir(sync, cwd_path_posix);
-        },
+    // Must happen after fchdir above because the cwd file descriptor might be
+    // equal to prog_fileno and be clobbered by this operation.
+    if (options.prog_pipe != -1) {
+        if (options.prog_pipe == prog_fileno)
+            try setFdFlags(sync, options.prog_pipe, 0)
+        else
+            try dup2(sync, options.prog_pipe, prog_fileno);
     }
-
-    // Must happen after fchdir above, the cwd file descriptor might be
-    // equal to prog_fileno and be clobbered by this dup2 call.
-    if (options.prog_pipe != -1) try dup2(sync, options.prog_pipe, prog_fileno);
 
     if (options.spawn.gid) |gid| {
         switch (linux.errno(linux.setregid(gid, gid))) {
@@ -4553,18 +4595,18 @@ fn setUpChild(sync: *CancelRegion.Sync, options: struct {
     }
 
     if (options.spawn.start_suspended) {
-        switch (linux.errno(linux.kill(0, .STOP))) {
+        switch (linux.errno(linux.kill(linux.getpid(), .STOP))) {
             .SUCCESS => {},
             .PERM => return error.PermissionDenied,
             else => return error.Unexpected,
         }
     }
 
-    return execv(
+    return processExec(
         sync,
-        options.spawn.expand_arg0,
-        options.argv_buf.ptr[0].?,
+        options.spawn.exe,
         options.argv_buf.ptr,
+        options.spawn.expand_arg0,
         options.env_block,
         options.PATH,
     );
@@ -4583,6 +4625,17 @@ fn setUpChildIo(
         .inherit => {},
         .ignore => try dup2(sync, dev_null_fd, std_fileno),
         .file => |file| try dup2(sync, file.handle, std_fileno),
+    }
+}
+
+fn setFdFlags(sync: *CancelRegion.Sync, fd: fd_t, flags: usize) (Io.Cancelable || Io.UnexpectedError)!void {
+    while (true) {
+        try sync.cancel_region.await(.nothing);
+        switch (linux.errno(linux.fcntl(fd, linux.F.SETFD, flags))) {
+            .SUCCESS => return,
+            .INTR => {},
+            else => |err| return unexpectedErrno(err),
+        }
     }
 }
 
@@ -4605,63 +4658,77 @@ pub fn dup2(sync: *CancelRegion.Sync, old_fd: fd_t, new_fd: fd_t) DupError!void 
     }
 }
 
-fn execv(
+fn processExec(
     sync: *CancelRegion.Sync,
-    arg0_expand: process.ArgExpansion,
-    file: [*:0]const u8,
-    child_argv: [*:null]?[*:0]const u8,
+    exe: process.ReplaceOptions.Exe,
+    argv: [*:null]?[*:0]const u8,
+    expand_arg0: process.ArgExpansion,
     env_block: process.Environ.PosixBlock,
     PATH: []const u8,
 ) process.ReplaceError {
-    const file_slice = std.mem.sliceTo(file, 0);
-    if (std.mem.findScalar(u8, file_slice, '/') != null)
-        return execvPath(sync, file, child_argv, env_block);
+    const arg0_slice = std.mem.span(argv[0].?);
+    exe: switch (exe) {
+        .detect => continue :exe if (std.mem.findScalar(u8, arg0_slice, '/')) |_| .{
+            .path = .cwd(),
+        } else .search,
+        .search => {
+            if (Dir.path.isAbsolute(arg0_slice)) continue :exe .{ .path = .cwd() };
+            var path_buf: [PATH_MAX]u8 = undefined;
+            var it = std.mem.tokenizeScalar(u8, PATH, ':');
+            var err: error{ FileNotFound, NotDir } = error.FileNotFound;
 
-    // Use of PATH_MAX here is valid as the path_buf will be passed
-    // directly to the operating system in posixExecvPath.
-    var path_buf: [PATH_MAX]u8 = undefined;
-    var it = std.mem.tokenizeScalar(u8, PATH, ':');
-    var seen_eacces = false;
-    var err: process.ReplaceError = error.FileNotFound;
-
-    // In case of expanding arg0 we must put it back if we return with an error.
-    const prev_arg0 = child_argv[0];
-    defer switch (arg0_expand) {
-        .expand => child_argv[0] = prev_arg0,
-        .no_expand => {},
-    };
-
-    while (it.next()) |search_path| {
-        const path_len = search_path.len + file_slice.len + 1;
-        if (path_buf.len < path_len + 1) return error.NameTooLong;
-        @memcpy(path_buf[0..search_path.len], search_path);
-        path_buf[search_path.len] = '/';
-        @memcpy(path_buf[search_path.len + 1 ..][0..file_slice.len], file_slice);
-        path_buf[path_len] = 0;
-        const full_path = path_buf[0..path_len :0].ptr;
-        switch (arg0_expand) {
-            .expand => child_argv[0] = full_path,
-            .no_expand => {},
-        }
-        err = execvPath(sync, full_path, child_argv, env_block);
-        switch (err) {
-            error.AccessDenied => seen_eacces = true,
-            error.FileNotFound, error.NotDir => {},
-            else => |e| return e,
-        }
+            while (it.next()) |search_path| {
+                const path_len = search_path.len + arg0_slice.len + 1;
+                if (path_buf.len < path_len + 1) return error.NameTooLong;
+                @memcpy(path_buf[0..search_path.len], search_path);
+                path_buf[search_path.len] = Dir.path.sep;
+                @memcpy(path_buf[search_path.len + 1 ..][0..arg0_slice.len], arg0_slice);
+                path_buf[path_len] = 0;
+                const full_path = path_buf[0..path_len :0].ptr;
+                switch (expand_arg0) {
+                    .expand => argv[0] = full_path,
+                    .no_expand => {},
+                }
+                switch (processExecveat(sync, linux.AT.FDCWD, full_path, argv, env_block)) {
+                    error.AccessDenied => {},
+                    error.FileNotFound, error.NotDir => |e| err = e,
+                    else => |e| return e,
+                }
+            }
+            return err;
+        },
+        .path => |dir| return processExecveat(sync, dir.handle, arg0_slice, argv, env_block),
+        .file => |file| return processExecveat(sync, file.handle, null, argv, env_block),
+        .explicit => |explicit| {
+            var path_buffer: [PATH_MAX]u8 = undefined;
+            const path_posix = try pathToPosix(explicit.path, &path_buffer);
+            return processExecveat(sync, explicit.dir.handle, path_posix, argv, env_block);
+        },
     }
-    if (seen_eacces) return error.AccessDenied;
-    return err;
 }
-/// This function ignores PATH environment variable.
-pub fn execvPath(
+
+fn processExecveat(
     sync: *CancelRegion.Sync,
-    path: [*:0]const u8,
-    child_argv: [*:null]const ?[*:0]const u8,
+    dir: fd_t,
+    path: ?[*:0]const u8,
+    argv: [*:null]const ?[*:0]const u8,
     env_block: process.Environ.PosixBlock,
 ) process.ReplaceError {
     try sync.cancel_region.await(.nothing);
-    switch (linux.errno(linux.execve(path, child_argv, env_block.slice.ptr))) {
+    const rc = if (path) |p|
+        if (dir == linux.AT.FDCWD or Dir.path.isAbsoluteZ(p))
+            linux.execve(p, argv, env_block.slice.ptr)
+        else
+            linux.execveat(dir, p, argv, env_block.slice.ptr, .{
+                .EMPTY_PATH = false,
+                .SYMLINK_NOFOLLOW = false,
+            })
+    else
+        linux.execveat(dir, "", argv, env_block.slice.ptr, .{
+            .EMPTY_PATH = true,
+            .SYMLINK_NOFOLLOW = false,
+        });
+    switch (linux.errno(rc)) {
         .FAULT => |err| return errnoBug(err), // Bad pointer parameter.
         .@"2BIG" => return error.SystemResources,
         .MFILE => return error.ProcessFdQuotaExceeded,
@@ -4679,6 +4746,7 @@ pub fn execvPath(
         .NOTDIR => return error.NotDir,
         .TXTBSY => return error.FileBusy,
         .LIBBAD => return error.InvalidExe,
+        .NOSYS => return error.OperationUnsupported,
         else => |err| return unexpectedErrno(err),
     }
 }
@@ -4701,7 +4769,7 @@ fn childWait(userdata: ?*anyopaque, child: *process.Child) process.Child.WaitErr
             .fd = pid,
             .off = @intFromPtr(&info),
             .addr = 0,
-            .len = @intFromEnum(linux.P.PID),
+            .len = @backingInt(linux.P.PID),
             .rw_flags = 0,
             .user_data = @intFromPtr(maybe_sync.cancel_region.fiber),
             .buf_index = 0,
@@ -4737,11 +4805,11 @@ fn childWait(userdata: ?*anyopaque, child: *process.Child) process.Child.WaitErr
                     }
                 }
                 const status: u32 = @bitCast(info.fields.common.second.sigchld.status);
-                const code: linux.CLD = @enumFromInt(info.code);
+                const code: linux.CLD = @fromBackingInt(@intCast(info.code));
                 return switch (code) {
                     .EXITED => .{ .exited = @truncate(status) },
-                    .KILLED, .DUMPED => .{ .signal = @enumFromInt(status) },
-                    .TRAPPED, .STOPPED => .{ .stopped = @enumFromInt(status) },
+                    .KILLED, .DUMPED => .{ .signal = @fromBackingInt(@intCast(status)) },
+                    .TRAPPED, .STOPPED => .{ .stopped = @fromBackingInt(@intCast(status)) },
                     _, .CONTINUED => .{ .unknown = status },
                 };
             },
@@ -4782,7 +4850,7 @@ fn childKill(userdata: ?*anyopaque, child: *process.Child) void {
             .fd = pid,
             .off = @intFromPtr(&info),
             .addr = 0,
-            .len = @intFromEnum(linux.P.PID),
+            .len = @backingInt(linux.P.PID),
             .rw_flags = 0,
             .user_data = @intFromPtr(maybe_sync.cancel_region.fiber),
             .buf_index = 0,
@@ -4825,6 +4893,28 @@ fn progressParentFile(userdata: ?*anyopaque) std.Progress.ParentFileError!File {
         error.Canceled => unreachable, // blocked
     };
     return ev.environ.zig_progress_file;
+}
+
+fn inheritParentHandle(ev: *Evented, handle: fd_t) Io.InheritParentHandleError!void {
+    var sync: CancelRegion.Sync = try .init(ev);
+    defer sync.deinit(ev);
+    return setFdFlags(&sync, handle, linux.FD_CLOEXEC);
+}
+
+fn inheritParentDir(userdata: ?*anyopaque, handle: Dir.Handle) Io.InheritParentHandleError!Dir {
+    const ev: *Evented = @ptrCast(@alignCast(userdata));
+    try inheritParentHandle(ev, handle);
+    return .{ .handle = handle };
+}
+
+fn inheritParentFile(
+    userdata: ?*anyopaque,
+    handle: File.Handle,
+    flags: File.Flags,
+) Io.InheritParentHandleError!File {
+    const ev: *Evented = @ptrCast(@alignCast(userdata));
+    try inheritParentHandle(ev, handle);
+    return .{ .handle = handle, .flags = flags };
 }
 
 fn scanEnviron(ev: *Evented) Io.Cancelable!void {
@@ -4977,18 +5067,6 @@ fn netListenIpUnavailable(
     return error.NetworkDown;
 }
 
-fn netAcceptUnavailable(
-    userdata: ?*anyopaque,
-    listen_handle: net.Socket.Handle,
-    options: net.Server.AcceptOptions,
-) net.Server.AcceptError!net.Socket {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = listen_handle;
-    _ = options;
-    return error.NetworkDown;
-}
-
 fn netBindIp(
     userdata: ?*anyopaque,
     address: *const net.IpAddress,
@@ -5049,20 +5127,6 @@ fn netSocketCreatePairUnavailable(
     _ = userdata;
     _ = options;
     return error.OperationUnsupported;
-}
-
-fn netSendUnavailable(
-    userdata: ?*anyopaque,
-    handle: net.Socket.Handle,
-    messages: []net.OutgoingMessage,
-    flags: net.SendFlags,
-) struct { ?net.Socket.SendError, usize } {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = handle;
-    _ = messages;
-    _ = flags;
-    return .{ error.NetworkDown, 0 };
 }
 
 fn netReceive(
@@ -5148,26 +5212,11 @@ fn netReceive(
             .PIPE => return .{ error.SocketUnconnected, message_i },
             .OPNOTSUPP => |err| return .{ errnoBug(err), message_i },
             .CONNRESET => return .{ error.ConnectionResetByPeer, message_i },
+            .TIMEDOUT => return .{ error.ConnectionTimedOut, message_i },
             .NETDOWN => return .{ error.NetworkDown, message_i },
             else => |err| return .{ unexpectedErrno(err), message_i },
         }
     }
-}
-
-fn netWriteUnavailable(
-    userdata: ?*anyopaque,
-    handle: net.Socket.Handle,
-    header: []const u8,
-    data: []const []const u8,
-    splat: usize,
-) net.Stream.Writer.Error!usize {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = handle;
-    _ = header;
-    _ = data;
-    _ = splat;
-    return error.NetworkDown;
 }
 
 fn netWriteFileUnavailable(
@@ -5186,9 +5235,9 @@ fn netWriteFileUnavailable(
     return error.Unimplemented;
 }
 
-fn netClose(userdata: ?*anyopaque, handles: []const net.Socket.Handle) void {
+fn netClose(userdata: ?*anyopaque, sockets: []const net.Socket) void {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
-    for (handles) |handle| ev.close(handle);
+    for (sockets) |sock| ev.close(sock.handle);
 }
 
 fn netShutdown(
@@ -5295,6 +5344,7 @@ fn bind(
         switch (cancel_region.errno()) {
             .SUCCESS => return,
             .INTR, .CANCELED => {},
+            .ACCES => return error.AccessDenied,
             .ADDRINUSE => return error.AddressInUse,
             .BADF => |err| return errnoBug(err), // File descriptor used after closed.
             .INVAL => |err| return errnoBug(err), // invalid parameters
@@ -5370,7 +5420,7 @@ fn closeAsync(ev: *Evented, fd: fd_t) void {
         .addr = 0,
         .len = 0,
         .rw_flags = 0,
-        .user_data = @intFromEnum(Completion.Userdata.close),
+        .user_data = @backingInt(Completion.Userdata.close),
         .buf_index = 0,
         .personality = 0,
         .splice_fd_in = 0,
@@ -5542,6 +5592,8 @@ fn linkat(
     new_path: [*:0]const u8,
     flags: u32,
 ) File.HardLinkError!void {
+    // allowed flags: https://man7.org/linux/man-pages/man2/linkat.2.html
+    assert(flags & ~(@as(u32, linux.AT.SYMLINK_FOLLOW | linux.AT.EMPTY_PATH)) == 0);
     while (true) {
         const thread = try cancel_region.awaitIoUring();
         thread.enqueue().* = .{
@@ -5801,7 +5853,7 @@ fn realPath(
 ) File.RealPathError!usize {
     _ = ev;
     var procfs_buf: [std.fmt.count("/proc/self/fd/{d}\x00", .{std.math.minInt(fd_t)})]u8 = undefined;
-    const proc_path = std.fmt.bufPrintSentinel(&procfs_buf, "/proc/self/fd/{d}", .{fd}, 0) catch
+    const proc_path = std.mem.printSentinel(&procfs_buf, "/proc/self/fd/{d}", .{fd}, 0) catch
         unreachable;
     while (true) {
         try sync.cancel_region.await(.nothing);

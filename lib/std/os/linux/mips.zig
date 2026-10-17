@@ -10,11 +10,10 @@ pub fn syscall0(
     return asm volatile (
         \\ syscall
         \\ beq $a3, $zero, 1f
-        \\ blez $v0, 1f
         \\ subu $v0, $zero, $v0
         \\1:
         : [ret] "={$2}" (-> u32),
-        : [number] "{$2}" (@intFromEnum(number)),
+        : [number] "{$2}" (@backingInt(number)),
         : .{ .r1 = true, .r3 = true, .r4 = true, .r5 = true, .r6 = true, .r7 = true, .r8 = true, .r9 = true, .r10 = true, .r11 = true, .r12 = true, .r13 = true, .r14 = true, .r15 = true, .r24 = true, .r25 = true, .hi = true, .lo = true, .memory = true });
 }
 
@@ -25,11 +24,10 @@ pub fn syscall1(
     return asm volatile (
         \\ syscall
         \\ beq $a3, $zero, 1f
-        \\ blez $v0, 1f
         \\ subu $v0, $zero, $v0
         \\1:
         : [ret] "={$2}" (-> u32),
-        : [number] "{$2}" (@intFromEnum(number)),
+        : [number] "{$2}" (@backingInt(number)),
           [arg1] "{$4}" (arg1),
         : .{ .r1 = true, .r3 = true, .r5 = true, .r6 = true, .r7 = true, .r8 = true, .r9 = true, .r10 = true, .r11 = true, .r12 = true, .r13 = true, .r14 = true, .r15 = true, .r24 = true, .r25 = true, .hi = true, .lo = true, .memory = true });
 }
@@ -42,11 +40,10 @@ pub fn syscall2(
     return asm volatile (
         \\ syscall
         \\ beq $a3, $zero, 1f
-        \\ blez $v0, 1f
         \\ subu $v0, $zero, $v0
         \\1:
         : [ret] "={$2}" (-> u32),
-        : [number] "{$2}" (@intFromEnum(number)),
+        : [number] "{$2}" (@backingInt(number)),
           [arg1] "{$4}" (arg1),
           [arg2] "{$5}" (arg2),
         : .{ .r1 = true, .r3 = true, .r6 = true, .r7 = true, .r8 = true, .r9 = true, .r10 = true, .r11 = true, .r12 = true, .r13 = true, .r14 = true, .r15 = true, .r24 = true, .r25 = true, .hi = true, .lo = true, .memory = true });
@@ -61,11 +58,10 @@ pub fn syscall3(
     return asm volatile (
         \\ syscall
         \\ beq $a3, $zero, 1f
-        \\ blez $v0, 1f
         \\ subu $v0, $zero, $v0
         \\1:
         : [ret] "={$2}" (-> u32),
-        : [number] "{$2}" (@intFromEnum(number)),
+        : [number] "{$2}" (@backingInt(number)),
           [arg1] "{$4}" (arg1),
           [arg2] "{$5}" (arg2),
           [arg3] "{$6}" (arg3),
@@ -79,14 +75,16 @@ pub fn syscall4(
     arg3: syscall_arg_t,
     arg4: syscall_arg_t,
 ) u32 {
+    // $7 is both an input and a clobber.
+    var r7_out: syscall_arg_t = undefined;
     return asm volatile (
         \\ syscall
         \\ beq $a3, $zero, 1f
-        \\ blez $v0, 1f
         \\ subu $v0, $zero, $v0
         \\1:
         : [ret] "={$2}" (-> u32),
-        : [number] "{$2}" (@intFromEnum(number)),
+          [r7_out] "={$7}" (r7_out),
+        : [number] "{$2}" (@backingInt(number)),
           [arg1] "{$4}" (arg1),
           [arg2] "{$5}" (arg2),
           [arg3] "{$6}" (arg3),
@@ -105,17 +103,19 @@ pub fn syscall5(
     arg4: syscall_arg_t,
     arg5: syscall_arg_t,
 ) u32 {
+    // $7 is both an input and a clobber.
+    var r7_out: syscall_arg_t = undefined;
     return asm volatile (
         \\ subu $sp, $sp, 24
         \\ sw %[arg5], 16($sp)
         \\ syscall
         \\ addu $sp, $sp, 24
         \\ beq $a3, $zero, 1f
-        \\ blez $v0, 1f
         \\ subu $v0, $zero, $v0
         \\1:
         : [ret] "={$2}" (-> u32),
-        : [number] "{$2}" (@intFromEnum(number)),
+          [r7_out] "={$7}" (r7_out),
+        : [number] "{$2}" (@backingInt(number)),
           [arg1] "{$4}" (arg1),
           [arg2] "{$5}" (arg2),
           [arg3] "{$6}" (arg3),
@@ -133,6 +133,8 @@ pub fn syscall6(
     arg5: syscall_arg_t,
     arg6: syscall_arg_t,
 ) u32 {
+    // $7 is both an input and a clobber.
+    var r7_out: syscall_arg_t = undefined;
     return asm volatile (
         \\ subu $sp, $sp, 24
         \\ sw %[arg5], 16($sp)
@@ -140,11 +142,11 @@ pub fn syscall6(
         \\ syscall
         \\ addu $sp, $sp, 24
         \\ beq $a3, $zero, 1f
-        \\ blez $v0, 1f
         \\ subu $v0, $zero, $v0
         \\1:
         : [ret] "={$2}" (-> u32),
-        : [number] "{$2}" (@intFromEnum(number)),
+          [r7_out] "={$7}" (r7_out),
+        : [number] "{$2}" (@backingInt(number)),
           [arg1] "{$4}" (arg1),
           [arg2] "{$5}" (arg2),
           [arg3] "{$6}" (arg3),
@@ -164,6 +166,8 @@ pub fn syscall7(
     arg6: syscall_arg_t,
     arg7: syscall_arg_t,
 ) u32 {
+    // $7 is both an input and a clobber.
+    var r7_out: syscall_arg_t = undefined;
     return asm volatile (
         \\ subu $sp, $sp, 32
         \\ sw %[arg5], 16($sp)
@@ -172,11 +176,11 @@ pub fn syscall7(
         \\ syscall
         \\ addu $sp, $sp, 32
         \\ beq $a3, $zero, 1f
-        \\ blez $v0, 1f
         \\ subu $v0, $zero, $v0
         \\1:
         : [ret] "={$2}" (-> u32),
-        : [number] "{$2}" (@intFromEnum(number)),
+          [r7_out] "={$7}" (r7_out),
+        : [number] "{$2}" (@backingInt(number)),
           [arg1] "{$4}" (arg1),
           [arg2] "{$5}" (arg2),
           [arg3] "{$6}" (arg3),
@@ -193,15 +197,15 @@ pub fn syscall_pipe(
     return asm volatile (
         \\ syscall
         \\ beq $a3, $zero, 1f
-        \\ blez $v0, 2f
         \\ subu $v0, $zero, $v0
         \\ b 2f
         \\1:
         \\ sw $v0, 0($a0)
         \\ sw $v1, 4($a0)
+        \\ move $v0, $zero
         \\2:
         : [ret] "={$2}" (-> u32),
-        : [number] "{$2}" (@intFromEnum(SYS.pipe)),
+        : [number] "{$2}" (@backingInt(SYS.pipe)),
           [fd] "{$4}" (fd),
         : .{ .r1 = true, .r3 = true, .r5 = true, .r6 = true, .r7 = true, .r8 = true, .r9 = true, .r10 = true, .r11 = true, .r12 = true, .r13 = true, .r14 = true, .r15 = true, .r24 = true, .r25 = true, .hi = true, .lo = true, .memory = true });
 }
@@ -229,7 +233,6 @@ pub fn clone() callconv(.naked) u32 {
         \\ li $v0, 4120 # SYS_clone
         \\ syscall
         \\ beq $a3, $zero, 1f
-        \\ blez $v0, 2f
         \\ subu $v0, $zero, $v0
         \\ b 2f
         \\1:

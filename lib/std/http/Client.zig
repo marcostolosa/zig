@@ -531,7 +531,7 @@ pub const Response = struct {
                 else => return error.HttpHeadersInvalid,
             };
             if (first_line[8] != ' ') return error.HttpHeadersInvalid;
-            const status: http.Status = @enumFromInt(parseInt3(first_line[9..12]));
+            const status: http.Status = @fromBackingInt(@intCast(parseInt3(first_line[9..12])));
             const reason = mem.trimStart(u8, first_line[12..], " ");
 
             res.version = version;
@@ -731,7 +731,7 @@ pub const Response = struct {
     pub fn reader(response: *Response, transfer_buffer: []u8) *Reader {
         response.head.invalidateStrings();
         const req = response.request;
-        if (!req.method.responseHasBody()) return .ending;
+        if (req.method == .HEAD) return .ending;
         const head = &response.head;
         return req.reader.bodyReader(transfer_buffer, head.transfer_encoding, head.content_length);
     }
@@ -807,11 +807,14 @@ pub const Request = struct {
     headers: Headers,
 
     /// Populated in `receiveHead`; used in `deinit` to determine whether to
-    /// discard the body to reuse the connection.
+    /// discard the response body to reuse the connection.
     response_content_length: ?u64 = null,
     /// Populated in `receiveHead`; used in `deinit` to determine whether to
-    /// discard the body to reuse the connection.
+    /// discard the response body to reuse the connection.
     response_transfer_encoding: http.TransferEncoding = .none,
+    /// Used in `deinit` to determine whether the payload has been sent, making
+    /// it safe to reuse the connection.
+    payload_pending: bool = false,
 
     /// These headers are kept including when following a redirect to a
     /// different domain.
@@ -825,9 +828,9 @@ pub const Request = struct {
 
     pub const default_accept_encoding: [@typeInfo(http.ContentEncoding).@"enum".field_names.len]bool = b: {
         var result: [@typeInfo(http.ContentEncoding).@"enum".field_names.len]bool = @splat(false);
-        result[@intFromEnum(http.ContentEncoding.gzip)] = true;
-        result[@intFromEnum(http.ContentEncoding.deflate)] = true;
-        result[@intFromEnum(http.ContentEncoding.identity)] = true;
+        result[@backingInt(http.ContentEncoding.gzip)] = true;
+        result[@backingInt(http.ContentEncoding.deflate)] = true;
+        result[@backingInt(http.ContentEncoding.identity)] = true;
         break :b result;
     };
 
@@ -864,20 +867,20 @@ pub const Request = struct {
 
         pub fn init(n: u16) RedirectBehavior {
             assert(n != std.math.maxInt(u16));
-            return @enumFromInt(n);
+            return @fromBackingInt(@intCast(n));
         }
 
         pub fn subtractOne(rb: *RedirectBehavior) void {
             switch (rb.*) {
                 .not_allowed => unreachable,
                 .unhandled => unreachable,
-                _ => rb.* = @enumFromInt(@intFromEnum(rb.*) - 1),
+                _ => rb.* = @fromBackingInt(@intCast(@backingInt(rb.*) - 1)),
             }
         }
 
         pub fn remaining(rb: RedirectBehavior) u16 {
             assert(rb != .unhandled);
-            return @intFromEnum(rb);
+            return @backingInt(rb);
         }
     };
 
@@ -888,8 +891,9 @@ pub const Request = struct {
             connection.closing = connection.closing or switch (r.reader.state) {
                 .ready => false,
                 .received_head => c: {
-                    if (r.method.requestHasBody()) break :c true;
-                    if (!r.method.responseHasBody()) break :c false;
+                    if (r.payload_pending) break :c true;
+                    if (r.method == .HEAD) break :c false;
+
                     const reader = r.reader.bodyReader(&.{}, r.response_transfer_encoding, r.response_content_length);
                     _ = reader.discardRemaining() catch |err| switch (err) {
                         error.ReadFailed => break :c true,
@@ -912,7 +916,6 @@ pub const Request = struct {
     /// Sends but does not flush a complete request as only HTTP head, no body.
     pub fn sendBodilessUnflushed(r: *Request) Writer.Error!void {
         assert(r.transfer_encoding == .none);
-        assert(!r.method.requestHasBody());
         try sendHead(r);
     }
 
@@ -941,13 +944,14 @@ pub const Request = struct {
     /// See also:
     /// * `sendBody`
     pub fn sendBodyUnflushed(r: *Request, buffer: []u8) Writer.Error!http.BodyWriter {
-        assert(r.method.requestHasBody());
+        r.payload_pending = true;
         try sendHead(r);
         const http_protocol_output = r.connection.?.writer();
         return switch (r.transfer_encoding) {
             .chunked => .{
                 .http_protocol_output = http_protocol_output,
                 .state = .init_chunked,
+                .client_request = r,
                 .writer = .{
                     .buffer = buffer,
                     .vtable = &.{
@@ -959,6 +963,7 @@ pub const Request = struct {
             .content_length => |len| .{
                 .http_protocol_output = http_protocol_output,
                 .state = .{ .content_length = len },
+                .client_request = r,
                 .writer = .{
                     .buffer = buffer,
                     .vtable = &.{
@@ -970,6 +975,7 @@ pub const Request = struct {
             .none => .{
                 .http_protocol_output = http_protocol_output,
                 .state = .none,
+                .client_request = r,
                 .writer = .{
                     .buffer = buffer,
                     .vtable = &.{
@@ -1037,7 +1043,7 @@ pub const Request = struct {
             try w.writeAll("accept-encoding: ");
             for (r.accept_encoding, 0..) |enabled, i| {
                 if (!enabled) continue;
-                const tag: http.ContentEncoding = @enumFromInt(i);
+                const tag: http.ContentEncoding = @fromBackingInt(@intCast(i));
                 if (tag == .identity) continue;
                 const tag_name = @tagName(tag);
                 try w.ensureUnusedCapacity(tag_name.len + 2);
@@ -1188,7 +1194,7 @@ pub const Request = struct {
                 continue;
             }
 
-            if (!r.accept_encoding[@intFromEnum(head.content_encoding)])
+            if (!r.accept_encoding[@backingInt(head.content_encoding)])
                 return error.HttpContentEncodingUnsupported;
 
             r.response_transfer_encoding = head.transfer_encoding;
@@ -1273,6 +1279,7 @@ pub const Request = struct {
             // Populated when `http.Reader.bodyReader` is called.
             .interface = undefined,
             .max_head_len = r.client.read_buffer_size,
+            .side = .response,
         };
         r.redirect_behavior.subtractOne();
     }
@@ -1654,7 +1661,7 @@ pub const RequestOptions = struct {
     ///
     /// This will only follow redirects for repeatable requests (ie. with no
     /// payload or the server has acknowledged the payload).
-    redirect_behavior: Request.RedirectBehavior = @enumFromInt(3),
+    redirect_behavior: Request.RedirectBehavior = @fromBackingInt(@intCast(3)),
 
     /// Must be an already acquired connection.
     connection: ?*Connection = null,
@@ -1744,6 +1751,7 @@ pub fn request(
             // Populated when `http.Reader.bodyReader` is called.
             .interface = undefined,
             .max_head_len = client.read_buffer_size,
+            .side = .response,
         },
         .keep_alive = options.keep_alive,
         .method = method,
@@ -1813,7 +1821,7 @@ pub fn fetch(client: *Client, options: FetchOptions) FetchError!FetchResult {
         if (options.payload != null) .POST else .GET;
 
     const redirect_behavior: Request.RedirectBehavior = options.redirect_behavior orelse
-        if (options.payload == null) @enumFromInt(3) else .unhandled;
+        if (options.payload == null) @fromBackingInt(@intCast(3)) else .unhandled;
 
     var req = try request(client, method, uri, .{
         .redirect_behavior = redirect_behavior,

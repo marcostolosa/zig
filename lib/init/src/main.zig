@@ -45,7 +45,7 @@ test "fuzz example" {
 
 fn testOne(context: void, smith: *std.testing.Smith) !void {
     _ = context;
-    // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
+    // Try running `zig build test --fuzz` and see if it manages to fail this test case!
 
     const gpa = std.testing.allocator;
     var list: std.ArrayList(u8) = .empty;

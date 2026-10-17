@@ -1,6 +1,10 @@
 const std = @import("std");
 
+pub const supports_skip_non_native = true;
+
 pub fn build(b: *std.Build) void {
+    const skip_non_native = b.option(bool, "skip_non_native", "Skip non-native targets") orelse false;
+
     const test_step = b.step("test", "Test it");
     b.default_step = test_step;
 
@@ -10,13 +14,15 @@ pub fn build(b: *std.Build) void {
         .abi = .gnu,
     });
 
+    if (skip_non_native and !std.zig.target.isNative(&target.query, &target.result, &b.graph.host.result)) return;
+
     {
         const exe = b.addExecutable(.{
             .name = "main",
             .root_module = b.createModule(.{
                 .root_source_file = null,
                 .target = target,
-                .optimize = .Debug,
+                .optimize = .debug,
                 .link_libc = true,
             }),
         });
@@ -32,7 +38,7 @@ pub fn build(b: *std.Build) void {
             .root_module = b.createModule(.{
                 .root_source_file = null,
                 .target = target,
-                .optimize = .Debug,
+                .optimize = .debug,
                 .link_libc = true,
             }),
         });
@@ -49,7 +55,7 @@ pub fn build(b: *std.Build) void {
             .root_module = b.createModule(.{
                 .root_source_file = null,
                 .target = target,
-                .optimize = .Debug,
+                .optimize = .debug,
                 .link_libc = true,
             }),
         });
@@ -66,7 +72,7 @@ pub fn build(b: *std.Build) void {
             .root_module = b.createModule(.{
                 .root_source_file = null,
                 .target = target,
-                .optimize = .Debug,
+                .optimize = .debug,
                 .link_libc = true,
             }),
         });
@@ -84,7 +90,7 @@ pub fn build(b: *std.Build) void {
             .root_module = b.createModule(.{
                 .root_source_file = b.path("main.zig"),
                 .target = target,
-                .optimize = .Debug,
+                .optimize = .debug,
             }),
         });
 
@@ -98,7 +104,7 @@ pub fn build(b: *std.Build) void {
             .root_module = b.createModule(.{
                 .root_source_file = b.path("main.zig"),
                 .target = target,
-                .optimize = .Debug,
+                .optimize = .debug,
                 .link_libc = true,
             }),
         });
@@ -113,7 +119,7 @@ pub fn build(b: *std.Build) void {
             .root_module = b.createModule(.{
                 .root_source_file = b.path("wwinmain.zig"),
                 .target = target,
-                .optimize = .Debug,
+                .optimize = .debug,
             }),
         });
         exe.mingw_unicode_entry_point = true;
@@ -129,7 +135,7 @@ pub fn build(b: *std.Build) void {
             .root_module = b.createModule(.{
                 .root_source_file = b.path("wwinmain.zig"),
                 .target = target,
-                .optimize = .Debug,
+                .optimize = .debug,
                 .link_libc = true,
             }),
         });
@@ -143,7 +149,7 @@ pub fn build(b: *std.Build) void {
     const load_dll_exe = b.addExecutable(.{ .name = "load_dll", .root_module = b.createModule(.{
         .root_source_file = b.path("loaddll.zig"),
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
     }) });
 
     {
@@ -153,7 +159,7 @@ pub fn build(b: *std.Build) void {
             .root_module = b.createModule(.{
                 .root_source_file = b.path("dllmain.zig"),
                 .target = target,
-                .optimize = .Debug,
+                .optimize = .debug,
             }),
         });
 
@@ -174,7 +180,7 @@ pub fn build(b: *std.Build) void {
             .root_module = b.createModule(.{
                 .root_source_file = b.path("dllmain.zig"),
                 .target = target,
-                .optimize = .Debug,
+                .optimize = .debug,
                 .link_libc = true,
             }),
         });
@@ -195,7 +201,7 @@ pub fn build(b: *std.Build) void {
             .linkage = .dynamic,
             .root_module = b.createModule(.{
                 .target = target,
-                .optimize = .Debug,
+                .optimize = .debug,
                 .link_libc = true,
             }),
         });

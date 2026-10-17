@@ -28,7 +28,7 @@ environ_map: ?*EnvMap,
 
 /// Named files that will be provided to the parent process.
 /// See `std.process.Preopens`.
-preopens: std.array_hash_map.String(Build.LazyPath),
+preopens: std.array_hash_map.Auto(Configuration.String, Build.LazyPath),
 
 /// Controls the `NO_COLOR` and `CLICOLOR_FORCE` environment variables.
 color: Color = .auto,
@@ -68,9 +68,11 @@ rename_step_with_output_arg: bool,
 /// executed binary will not fail the build if the binary cannot be executed
 /// due to being for a foreign binary to the host system which is running the
 /// build graph.
+///
 /// Command-line arguments such as -fqemu and -fwasmtime may affect whether a
 /// binary is detected as foreign, as well as system configuration such as
 /// Rosetta (macOS) and binfmt_misc (Linux).
+///
 /// If this Run step is considered to have side-effects, then this flag does
 /// nothing.
 skip_foreign_checks: bool,
@@ -90,7 +92,6 @@ captured_stdout: ?*CapturedStdIo,
 captured_stderr: ?*CapturedStdIo,
 
 has_side_effects: bool,
-test_runner_mode: bool = false,
 
 /// If this Run step was produced by a Compile step, it is tracked here.
 producer: ?*Step.Compile,
@@ -125,7 +126,10 @@ pub const StdIo = union(enum) {
     check: std.ArrayList(Check),
     /// This Run step is running a zig unit test binary and will communicate
     /// extra metadata over the IPC protocol.
+    /// Deprecated, use `.protocol`.
     zig_test,
+    /// This Run step is running a binary that will communicate over the IPC protocol.
+    protocol,
 
     pub const Check = union(enum) {
         expect_stderr_exact: []const u8,
@@ -149,6 +153,19 @@ pub const Arg = union(enum) {
     output_directory: *Output,
     /// The arguments passed after "--" on the "zig build" CLI.
     passthru,
+
+    enable_darling: ToggleFlags,
+    enable_qemu: ToggleFlags,
+    enable_rosetta: ToggleFlags,
+    enable_wasmtime: ToggleFlags,
+    enable_wine: ToggleFlags,
+};
+
+pub const ToggleFlags = struct {
+    /// The string to pass when enabled, or null to omit the arg.
+    enabled: ?[]const u8 = null,
+    /// The string to pass when disabled, or null to omit the arg.
+    disabled: ?[]const u8 = null,
 };
 
 pub const DecoratedArtifact = struct {
@@ -224,14 +241,17 @@ pub fn create(owner: *std.Build, name: []const u8) *Run {
 }
 
 pub fn setName(run: *Run, name: []const u8) void {
-    run.step.name = name;
+    run.step.name = run.step.owner.graph.dupeString(name);
     run.rename_step_with_output_arg = false;
 }
 
+/// Deprecated, use `enableProtocolMode`.
 pub fn enableTestRunnerMode(run: *Run) void {
-    if (run.test_runner_mode) return;
     run.stdio = .zig_test;
-    run.test_runner_mode = true;
+}
+
+pub fn enableProtocolMode(run: *Run) void {
+    run.stdio = .protocol;
 }
 
 pub const ArgOptions = struct {
@@ -576,6 +596,46 @@ pub fn addPassthruArgs(run: *Run) void {
     run.argv.append(arena, .passthru) catch @panic("OOM");
 }
 
+/// Appends a custom string to the command line depending on the `-fdarling`
+/// value passed to `zig build`.
+pub fn addThirdPartyEnabledArgDarling(run: *Run, toggle_flags: ToggleFlags) void {
+    const graph = run.step.owner.graph;
+    const arena = graph.arena;
+    run.argv.append(arena, .{ .enable_darling = toggle_flags }) catch @panic("OOM");
+}
+
+/// Appends a custom string to the command line depending on the `-fqemu`
+/// value passed to `zig build`.
+pub fn addThirdPartyEnabledArgQemu(run: *Run, toggle_flags: ToggleFlags) void {
+    const graph = run.step.owner.graph;
+    const arena = graph.arena;
+    run.argv.append(arena, .{ .enable_qemu = toggle_flags }) catch @panic("OOM");
+}
+
+/// Appends a custom string to the command line depending on the `-frosetta`
+/// value passed to `zig build`.
+pub fn addThirdPartyEnabledArgRosetta(run: *Run, toggle_flags: ToggleFlags) void {
+    const graph = run.step.owner.graph;
+    const arena = graph.arena;
+    run.argv.append(arena, .{ .enable_rosetta = toggle_flags }) catch @panic("OOM");
+}
+
+/// Appends a custom string to the command line depending on the `-fwasmtime`
+/// value passed to `zig build`.
+pub fn addThirdPartyEnabledArgWasmtime(run: *Run, toggle_flags: ToggleFlags) void {
+    const graph = run.step.owner.graph;
+    const arena = graph.arena;
+    run.argv.append(arena, .{ .enable_wasmtime = toggle_flags }) catch @panic("OOM");
+}
+
+/// Appends a custom string to the command line depending on the `-fwine`
+/// value passed to `zig build`.
+pub fn addThirdPartyEnabledArgWine(run: *Run, toggle_flags: ToggleFlags) void {
+    const graph = run.step.owner.graph;
+    const arena = graph.arena;
+    run.argv.append(arena, .{ .enable_wine = toggle_flags }) catch @panic("OOM");
+}
+
 pub fn setStdIn(run: *Run, stdin: StdIn) void {
     switch (stdin) {
         .lazy_path => |lazy_path| lazy_path.addStepDependencies(&run.step),
@@ -624,11 +684,12 @@ pub fn removeEnvironmentVariable(run: *Run, key: []const u8) void {
 
 pub fn setPreopen(run: *Run, name: []const u8, resource: Build.LazyPath) void {
     const graph = run.step.owner.graph;
+    const wc = &graph.wip_configuration;
     const arena = graph.arena;
     resource.addStepDependencies(&run.step);
     run.preopens.put(
         arena,
-        graph.dupeString(name),
+        wc.addString(name) catch @panic("OOM"),
         resource.dupe(graph),
     ) catch @panic("OOM");
 }
@@ -694,8 +755,10 @@ pub fn addCheck(run: *Run, new_check: StdIo.Check) void {
 }
 
 pub fn captureStdErr(run: *Run, options: CapturedStdIo.Options) std.Build.LazyPath {
-    assert(run.stdio != .inherit);
-    assert(run.stdio != .zig_test);
+    switch (run.stdio) {
+        .infer_from_args, .check => {},
+        .inherit, .zig_test, .protocol => unreachable,
+    }
 
     const b = run.step.owner;
     const graph = b.graph;
@@ -715,8 +778,10 @@ pub fn captureStdErr(run: *Run, options: CapturedStdIo.Options) std.Build.LazyPa
 }
 
 pub fn captureStdOut(run: *Run, options: CapturedStdIo.Options) std.Build.LazyPath {
-    assert(run.stdio != .inherit);
-    assert(run.stdio != .zig_test);
+    switch (run.stdio) {
+        .infer_from_args, .check => {},
+        .inherit, .zig_test, .protocol => unreachable,
+    }
 
     const b = run.step.owner;
     const graph = b.graph;

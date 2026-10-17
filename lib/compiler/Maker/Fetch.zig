@@ -153,11 +153,11 @@ pub const JobQueue = struct {
     debug_hash: bool,
     mode: Mode,
     /// Set of hashes that will be additionally fetched even if they are marked
-    /// as lazy.
-    unlazy_set: UnlazySet = .{},
+    /// as lazy. Read-only.
+    unlazy_set: UnlazySet = .empty,
     /// Identifies paths that override all packages in the tree with matching
     /// project ids.
-    fork_set: ForkSet = .{},
+    fork_set: ForkSet = .empty,
 
     pub const Mode = enum {
         /// Non-lazy dependencies are always fetched.
@@ -289,11 +289,21 @@ pub const JobQueue = struct {
                 \\
             , .{std.fmt.alt(fetch.package_root, .formatEscapeString)});
 
-            if (fetch.has_build_zig) {
+            if (fetch.has_build_zig) b: {
+                if (fetch.have_manifest) {
+                    const project_id: Package.ProjectId = .init(fetch.manifest.name, fetch.manifest.id);
+                    if (jq.fork_set.getKeyPtrAdapted(project_id, @as(JobQueue.Fork.Adapter, .{}))) |fork| {
+                        try w.print(
+                            \\        pub const build_zig = @import({qf});
+                            \\
+                        , .{fork.path});
+                        break :b;
+                    }
+                }
                 try w.print(
-                    \\        pub const build_zig = @import("{f}");
+                    \\        pub const build_zig = @import({q});
                     \\
-                , .{std.zig.fmtString(hash_slice)});
+                , .{hash_slice});
             }
 
             if (fetch.have_manifest) {
@@ -302,7 +312,7 @@ pub const JobQueue = struct {
                     \\        pub const deps: []const struct { []const u8, []const u8 } = &.{
                     \\
                 );
-                for (manifest.dependencies.keys(), manifest.dependencies.values()) |name, dep| {
+                for (manifest.dependencies.keys(), manifest.dependencies.values()) |name, *dep| {
                     const h = depDigest(fetch.package_root, jq.global_cache, dep) orelse continue;
                     try w.print(
                         "            .{{ \"{f}\", \"{f}\" }},\n",
@@ -335,7 +345,7 @@ pub const JobQueue = struct {
         assert(root_fetch.have_manifest);
         const root_manifest = &root_fetch.manifest;
 
-        for (root_manifest.dependencies.keys(), root_manifest.dependencies.values()) |name, dep| {
+        for (root_manifest.dependencies.keys(), root_manifest.dependencies.values()) |name, *dep| {
             const h = depDigest(root_fetch.package_root, jq.global_cache, dep) orelse continue;
             try w.print(
                 "    .{{ \"{f}\", \"{f}\" }},\n",
@@ -362,7 +372,7 @@ pub const JobQueue = struct {
         var dest_sub_path_buf: ["p/".len + Package.Hash.max_len + ".tar.gz".len]u8 = undefined;
         const dest_path: Path = .{
             .root_dir = jq.global_cache,
-            .sub_path = std.fmt.bufPrint(&dest_sub_path_buf, "p/{s}.tar.gz", .{pkg_hash_slice}) catch unreachable,
+            .sub_path = std.mem.print(&dest_sub_path_buf, "p/{s}.tar.gz", .{pkg_hash_slice}) catch unreachable,
         };
 
         const gpa = jq.http_client.allocator;
@@ -527,7 +537,7 @@ pub fn run(f: *Fetch) RunError!void {
     const arena = f.arena.allocator();
     const gpa = f.arena.child_allocator;
 
-    try eb.init(gpa);
+    eb.* = try .init(gpa);
 
     // Check the global zig package cache to see if the hash already exists. If
     // so, load, parse, and validate the build.zig.zon file therein, and skip
@@ -595,7 +605,7 @@ pub fn run(f: *Fetch) RunError!void {
     if (remote.hash) |expected_hash| {
         const expected_project_id: Package.ProjectId = expected_hash.projectId();
         if (job_queue.fork_set.getKeyPtrAdapted(expected_project_id, @as(JobQueue.Fork.Adapter, .{}))) |fork| {
-            log.debug("using fork {f} for {s}", .{ fork.path, fork.manifest.name });
+            log.debug("using fork {f} for {s}", .{ fork.path, expected_hash.toSlice() });
             fork.uses += 1;
             f.package_root = fork.path;
             f.remote_package_root = f.package_root;
@@ -826,7 +836,7 @@ fn runResource(
             .notes_len = notes_len,
         });
         const notes_start = try eb.reserveNotes(notes_len);
-        eb.extra.items[notes_start] = @intFromEnum(try eb.addErrorMessage(.{
+        eb.extra.items[notes_start] = @backingInt(try eb.addErrorMessage(.{
             .msg = try eb.printString("expected .hash = {q},", .{computed_package_hash.toSlice()}),
         }));
         return error.FetchFailed;
@@ -843,7 +853,7 @@ pub fn computedPackageHash(f: *const Fetch) Package.Hash {
     if (f.have_manifest) {
         const man = &f.manifest;
         var version_buffer: [32]u8 = undefined;
-        const version: []const u8 = std.fmt.bufPrint(&version_buffer, "{f}", .{man.version}) catch &version_buffer;
+        const version: []const u8 = std.mem.print(&version_buffer, "{f}", .{man.version}) catch &version_buffer;
         return .init(f.computed_hash.digest, man.name, version, man.id, saturated_size);
     }
     // In the future build.zig.zon fields will be added to allow overriding these values
@@ -1164,7 +1174,7 @@ const FileType = enum {
         if (cd_header[value_start] != '=') return null;
         value_start += 1;
 
-        var value_end = std.mem.indexOfPos(u8, cd_header, value_start, ";") orelse cd_header.len;
+        var value_end = std.mem.findPos(u8, cd_header, value_start, ";") orelse cd_header.len;
         if (cd_header[value_end - 1] == '\"') {
             value_end -= 1;
         }
@@ -1297,7 +1307,7 @@ fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u
                 .notes_len = notes_len,
             });
             const notes_start = try eb.reserveNotes(notes_len);
-            eb.extra.items[notes_start] = @intFromEnum(try eb.addErrorMessage(.{
+            eb.extra.items[notes_start] = @backingInt(try eb.addErrorMessage(.{
                 .msg = try eb.printString("try .url = \"{f}#{f}\",", .{
                     uri.fmt(.{ .scheme = true, .authority = true, .path = true }),
                     want_oid,
@@ -1306,15 +1316,15 @@ fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u
             return error.FetchFailed;
         }
 
-        var want_oid_buf: [git.Oid.max_formatted_length]u8 = undefined;
-        _ = std.fmt.bufPrint(&want_oid_buf, "{f}", .{want_oid}) catch unreachable;
+        var want_oid_hex_buf: [git.Oid.max_formatted_length]u8 = undefined;
+        const want_oid_hex = std.mem.print(&want_oid_hex_buf, "{f}", .{want_oid}) catch unreachable;
         resource.* = .{ .git = .{
             .session = session,
             .fetch_stream = undefined,
             .want_oid = want_oid,
         } };
         const fetch_stream = &resource.git.fetch_stream;
-        session.fetch(fetch_stream, &.{&want_oid_buf}, reader_buffer) catch |err| {
+        session.fetch(fetch_stream, &.{want_oid_hex}, reader_buffer) catch |err| {
             return f.fail(f.location_tok, try eb.printString("unable to create fetch stream: {t}", .{err}));
         };
         errdefer fetch_stream.deinit(fetch_stream);
@@ -1344,7 +1354,7 @@ fn unpackResource(
                 return f.fail(f.location_tok, try eb.addString("missing 'Content-Type' header"));
 
             // Extract the MIME type, ignoring charset and boundary directives
-            const mime_type_end = std.mem.indexOf(u8, content_type, ";") orelse content_type.len;
+            const mime_type_end = std.mem.find(u8, content_type, ";") orelse content_type.len;
             const mime_type = content_type[0..mime_type_end];
 
             if (ascii.eqlIgnoreCase(mime_type, "application/x-tar"))
@@ -1455,7 +1465,7 @@ fn unpackTarball(f: *Fetch, out_dir: Io.Dir, reader: *Io.Reader) RunError!Unpack
 
     var diagnostics: std.tar.Diagnostics = .{ .allocator = arena };
 
-    std.tar.pipeToFileSystem(io, out_dir, reader, .{
+    std.tar.extract(io, out_dir, reader, .{
         .diagnostics = &diagnostics,
         .strip_components = 0,
         .mode_mode = .ignore,
@@ -1472,7 +1482,7 @@ fn unpackTarball(f: *Fetch, out_dir: Io.Dir, reader: *Io.Reader) RunError!Unpack
             switch (item) {
                 .unable_to_create_file => |i| res.unableToCreateFile(stripRoot(i.file_name, res.root_dir), i.code),
                 .unable_to_create_sym_link => |i| res.unableToCreateSymLink(stripRoot(i.file_name, res.root_dir), i.link_name, i.code),
-                .unsupported_file_type => |i| res.unsupportedFileType(stripRoot(i.file_name, res.root_dir), @intFromEnum(i.file_type)),
+                .unsupported_file_type => |i| res.unsupportedFileType(stripRoot(i.file_name, res.root_dir), @backingInt(i.file_type)),
                 .components_outside_stripped_prefix => unreachable, // unreachable with strip_components = 0
             }
         }
@@ -2033,7 +2043,7 @@ const Filter = struct {
     }
 };
 
-pub fn depDigest(pkg_root: Path, cache_root: Directory, dep: Manifest.Dependency) ?Package.Hash {
+pub fn depDigest(pkg_root: Path, cache_root: Directory, dep: *const Manifest.Dependency) ?Package.Hash {
     if (dep.hash) |h| return .fromSlice(h);
 
     switch (dep.location) {
@@ -2205,21 +2215,21 @@ const UnpackResult = struct {
             if (item.excluded(filter)) continue;
             switch (item) {
                 .unable_to_create_sym_link => |info| {
-                    eb.extra.items[note_i] = @intFromEnum(try eb.addErrorMessage(.{
+                    eb.extra.items[note_i] = @backingInt(try eb.addErrorMessage(.{
                         .msg = try eb.printString("unable to create symlink from '{s}' to '{s}': {s}", .{
                             info.file_name, info.link_name, @errorName(info.code),
                         }),
                     }));
                 },
                 .unable_to_create_file => |info| {
-                    eb.extra.items[note_i] = @intFromEnum(try eb.addErrorMessage(.{
+                    eb.extra.items[note_i] = @backingInt(try eb.addErrorMessage(.{
                         .msg = try eb.printString("unable to create file '{s}': {s}", .{
                             info.file_name, @errorName(info.code),
                         }),
                     }));
                 },
                 .unsupported_file_type => |info| {
-                    eb.extra.items[note_i] = @intFromEnum(try eb.addErrorMessage(.{
+                    eb.extra.items[note_i] = @backingInt(try eb.addErrorMessage(.{
                         .msg = try eb.printString("file '{s}' has unsupported type '{c}'", .{
                             info.file_name, info.file_type,
                         }),

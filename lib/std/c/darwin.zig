@@ -1138,10 +1138,10 @@ pub const mach_msg_return_t = enum(kern_return_t) {
         error_code: mach_msg_return_t,
         resource_error: ?MACH.MSG,
     } {
-        const return_code: mach_msg_return_t = @enumFromInt(@intFromEnum(ret) & ~MACH.MSG.MASK);
+        const return_code: mach_msg_return_t = @fromBackingInt(@intCast(@backingInt(ret) & ~MACH.MSG.MASK));
         switch (return_code) {
             .RCV_HEADER_ERROR, .RCV_BODY_ERROR => {
-                const resource_error: MACH.MSG = @bitCast(@intFromEnum(ret) & MACH.MSG.MASK);
+                const resource_error: MACH.MSG = @bitCast(@backingInt(ret) & MACH.MSG.MASK);
                 return .{
                     .error_code = return_code,
                     .resource_error = resource_error,
@@ -1253,8 +1253,10 @@ pub const posix_spawnattr_t = *opaque {};
 pub const posix_spawn_file_actions_t = *opaque {};
 pub extern "c" fn posix_spawnattr_init(attr: *posix_spawnattr_t) c_int;
 pub extern "c" fn posix_spawnattr_destroy(attr: *posix_spawnattr_t) c_int;
-pub extern "c" fn posix_spawnattr_setflags(attr: *posix_spawnattr_t, flags: POSIX_SPAWN) c_int;
 pub extern "c" fn posix_spawnattr_getflags(attr: *const posix_spawnattr_t, flags: *POSIX_SPAWN) c_int;
+pub extern "c" fn posix_spawnattr_getpgroup(attr: *const posix_spawnattr_t, pgroup: *pid_t) c_int;
+pub extern "c" fn posix_spawnattr_setflags(attr: *posix_spawnattr_t, flags: POSIX_SPAWN) c_int;
+pub extern "c" fn posix_spawnattr_setpgroup(attr: *posix_spawnattr_t, pgroup: pid_t) c_int;
 pub extern "c" fn posix_spawn_file_actions_init(actions: *posix_spawn_file_actions_t) c_int;
 pub extern "c" fn posix_spawn_file_actions_destroy(actions: *posix_spawn_file_actions_t) c_int;
 pub extern "c" fn posix_spawn_file_actions_addclose(actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;

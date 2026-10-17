@@ -75,11 +75,13 @@ pub const Elf = struct {
     entry_name: ?[]const u8,
     hash_style: HashStyle,
     image_base: u64,
-    linker_script: ?[]const u8,
-    version_script: ?[]const u8,
+    linker_script: ?Cache.Path,
+    version_script: ?Cache.Path,
     sort_section: ?SortSection,
     print_icf_sections: bool,
     print_map: bool,
+    nmagic: bool,
+    fatal_warnings: bool,
     emit_relocs: bool,
     z_nodelete: bool,
     z_notext: bool,
@@ -99,8 +101,6 @@ pub const Elf = struct {
     bind_global_refs_locally: bool,
     pub const HashStyle = enum { sysv, gnu, both };
     pub const SortSection = enum { name, alignment };
-    /// Deprecated; use 'std.zig.CompressDebugSections' instead. To be removed after 0.16.0 is tagged.
-    pub const CompressDebugSections = std.zig.CompressDebugSections;
 
     fn init(comp: *Compilation, options: link.File.OpenOptions) !Elf {
         const PtrWidth = enum { p32, p64 };
@@ -137,6 +137,8 @@ pub const Elf = struct {
             .sort_section = options.sort_section,
             .print_icf_sections = options.print_icf_sections,
             .print_map = options.print_map,
+            .nmagic = options.nmagic,
+            .fatal_warnings = options.fatal_warnings,
             .emit_relocs = options.emit_relocs,
             .z_nodelete = options.z_nodelete,
             .z_notext = options.z_notext,
@@ -164,6 +166,8 @@ const Wasm = struct {
     import_table: bool,
     /// When true, will export the function table to the host environment.
     export_table: bool,
+    /// When true, remove maximum size from function table, allowing table to grow.
+    growable_table: bool,
     /// When defined, sets the initial memory size of the memory.
     initial_memory: ?u64,
     /// When defined, sets the maximum memory size of the memory.
@@ -188,6 +192,7 @@ const Wasm = struct {
             },
             .import_table = options.import_table,
             .export_table = options.export_table,
+            .growable_table = options.growable_table,
             .initial_memory = options.initial_memory,
             .max_memory = options.max_memory,
             .global_base = options.global_base,
@@ -208,8 +213,8 @@ pub fn createEmpty(
     const optimize_mode = comp.root_mod.optimize_mode;
 
     const gc_sections: bool = options.gc_sections orelse switch (target.ofmt) {
-        .coff => optimize_mode != .Debug,
-        .elf => optimize_mode != .Debug and output_mode != .Obj,
+        .coff => optimize_mode != .debug,
+        .elf => optimize_mode != .debug and output_mode != .Obj,
         .wasm => output_mode != .Obj,
         else => unreachable,
     };
@@ -271,12 +276,12 @@ pub fn flush(
         .wasm => wasmLink(lld, arena),
     };
     result catch |err| switch (err) {
-        error.OutOfMemory, error.AlreadyReported => |e| return e,
+        error.OutOfMemory, error.AlreadyReported, error.Canceled => |e| return e,
         else => |e| return lld.base.comp.link_diags.fail("failed to link with LLD: {t}", .{e}),
     };
 }
 
-fn linkAsArchive(lld: *Lld, arena: Allocator) !void {
+fn linkAsArchive(lld: *Lld, arena: Allocator) link.Error!void {
     const base = &lld.base;
     const comp = base.comp;
     const directory = base.emit.root_dir; // Just an alias to make it shorter to type.
@@ -300,17 +305,13 @@ fn linkAsArchive(lld: *Lld, arena: Allocator) !void {
     else
         null;
 
-    // This function follows the same pattern as link.Elf.linkWithLLD so if you want some
-    // insight as to what's going on here you can read that function body which is more
-    // well-commented.
-
     var object_files: std.ArrayList([*:0]const u8) = .empty;
 
     try object_files.ensureUnusedCapacity(arena, comp.link_inputs.len);
     for (comp.link_inputs) |input| switch (input) {
-        .res, .dso, .dso_exact => {}, // shared libraries should not be included in static archives
-        .object, .archive => {
-            const path = try input.path().?.toStringZ(arena);
+        .dso, .tbd, .archive => {}, // static archives should not contain shared libraries or other static archives
+        .res, .object => {
+            const path = try input.path().toStringZ(arena);
             object_files.appendAssumeCapacity(path);
         },
     };
@@ -339,8 +340,10 @@ fn linkAsArchive(lld: *Lld, arena: Allocator) !void {
     const llvm_bindings = @import("../codegen/llvm/bindings.zig");
     const llvm = @import("../codegen/llvm.zig");
     const target = &comp.root_mod.resolved_target.result;
-    llvm.initializeLLVMTarget(target.cpu.arch);
-    const bad = llvm_bindings.WriteArchive(
+    llvm.initializeLLVMTarget(comp.io, target.cpu.arch);
+    var err_file_index: usize = undefined;
+    var err_msg: [*:0]u8 = undefined;
+    if (llvm_bindings.WriteArchive(
         full_out_path_z,
         object_files.items.ptr,
         object_files.items.len,
@@ -348,8 +351,19 @@ fn linkAsArchive(lld: *Lld, arena: Allocator) !void {
             .windows => .COFF,
             else => if (target.os.tag.isDarwin()) .DARWIN else .GNU,
         },
-    );
-    if (bad) return error.UnableToWriteArchive;
+        &err_file_index,
+        &err_msg,
+    )) {
+        defer std.c.free(err_msg);
+        if (err_file_index < object_files.items.len) {
+            return comp.link_diags.fail("LLD failed to open input file '{s}': {s}", .{
+                object_files.items[err_file_index],
+                err_msg,
+            });
+        } else {
+            return comp.link_diags.fail("LLD failed to write archive: {s}", .{err_msg});
+        }
+    }
 }
 
 fn addCommonArgs(argv: *std.array_list.Managed([]const u8), coff: bool) !void {
@@ -383,7 +397,7 @@ fn coffLink(lld: *Lld, arena: Allocator) !void {
     const target = &comp.root_mod.resolved_target.result;
     const optimize_mode = comp.root_mod.optimize_mode;
     const entry_name: ?[]const u8 = switch (coff.entry) {
-        // This logic isn't quite right for disabled or enabled. No point in fixing it
+        // This logic isn't quite right for default or enabled. No point in fixing it
         // when the goal is to eliminate dependency on LLD anyway.
         // https://github.com/ziglang/zig/issues/17751
         .disabled, .default, .enabled => null,
@@ -456,9 +470,9 @@ fn coffLink(lld: *Lld, arena: Allocator) !void {
 
         if (comp.config.lto != .none) {
             switch (optimize_mode) {
-                .Debug => {},
-                .ReleaseSmall => try argv.append("-OPT:lldlto=2"),
-                .ReleaseFast, .ReleaseSafe => try argv.append("-OPT:lldlto=3"),
+                .debug => {},
+                .small => try argv.append("-OPT:lldlto=2"),
+                .fast, .safe => try argv.append("-OPT:lldlto=3"),
             }
         }
         if (comp.config.output_mode == .Exe) {
@@ -492,6 +506,8 @@ fn coffLink(lld: *Lld, arena: Allocator) !void {
 
         if (entry_name) |name| {
             try argv.append(try arena.print("-ENTRY:{s}", .{name}));
+        } else if (coff.entry == .disabled) {
+            try argv.append("-NOENTRY");
         }
 
         if (coff.repro) {
@@ -535,7 +551,6 @@ fn coffLink(lld: *Lld, arena: Allocator) !void {
 
         try argv.ensureUnusedCapacity(comp.link_inputs.len);
         for (comp.link_inputs) |link_input| switch (link_input) {
-            .dso_exact => unreachable, // not applicable to PE/COFF
             inline .dso, .res => |x| {
                 argv.appendAssumeCapacity(try x.path.toString(arena));
             },
@@ -546,6 +561,7 @@ fn coffLink(lld: *Lld, arena: Allocator) !void {
                     argv.appendAssumeCapacity(try obj.path.toString(arena));
                 }
             },
+            .tbd => unreachable,
         };
 
         for (comp.c_objects.items) |c_object| {
@@ -865,15 +881,15 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
 
         if (comp.config.lto != .none) {
             switch (comp.root_mod.optimize_mode) {
-                .Debug => {},
-                .ReleaseSmall => try argv.append("--lto-O2"),
-                .ReleaseFast, .ReleaseSafe => try argv.append("--lto-O3"),
+                .debug => {},
+                .small => try argv.append("--lto-O2"),
+                .fast, .safe => try argv.append("--lto-O3"),
             }
         }
         switch (comp.root_mod.optimize_mode) {
-            .Debug => {},
-            .ReleaseSmall => try argv.append("-O2"),
-            .ReleaseFast, .ReleaseSafe => try argv.append("-O3"),
+            .debug => {},
+            .small => try argv.append("-O2"),
+            .fast, .safe => try argv.append("-O3"),
         }
 
         if (elf.entry_name) |name| {
@@ -910,7 +926,7 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
 
         if (elf.linker_script) |linker_script| {
             try argv.append("-T");
-            try argv.append(linker_script);
+            try argv.append(try linker_script.toString(arena));
         }
 
         if (elf.sort_section) |how| {
@@ -932,6 +948,14 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
 
         if (elf.print_map) {
             try argv.append("--print-map");
+        }
+
+        if (elf.nmagic) {
+            try argv.append("--nmagic");
+        }
+
+        if (elf.fatal_warnings) {
+            try argv.append("--fatal-warnings");
         }
 
         if (comp.link_eh_frame_hdr) {
@@ -1005,13 +1029,15 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
             try argv.append("-shared");
         }
 
-        if (comp.config.pie and output_mode == .Exe) {
-            try argv.append("-pie");
+        if (output_mode == .Exe) {
+            // Always be explicit: some lld builds (e.g. OpenBSD's) default
+            // to PIE, which breaks non-PIE executables for other targets.
+            try argv.append(if (comp.config.pie) "-pie" else "-no-pie");
         }
 
         if (is_exe_or_dyn_lib and target.os.tag == .netbsd) {
-            // Add options to produce shared objects with only 2 PT_LOAD segments.
-            // NetBSD expects 2 PT_LOAD segments in a shared object, otherwise
+            // Add options to produce shared objects with only 2 PT.LOAD segments.
+            // NetBSD expects 2 PT.LOAD segments in a shared object, otherwise
             // ld.elf_so fails loading dynamic libraries with "not found" error.
             // See https://github.com/ziglang/zig/issues/9109 .
             try argv.append("--no-rosegment");
@@ -1058,7 +1084,7 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
             }
             if (elf.version_script) |version_script| {
                 try argv.append("-version-script");
-                try argv.append(version_script);
+                try argv.append(try version_script.toString(arena));
             }
             if (elf.allow_undefined_version) {
                 try argv.append("--undefined-version");
@@ -1079,6 +1105,7 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
 
         for (base.comp.link_inputs) |link_input| switch (link_input) {
             .res => unreachable, // Windows-only
+            .tbd => unreachable, // Darwin-only
             .dso => continue,
             .object, .archive => |obj| {
                 if (obj.must_link and !whole_archive) {
@@ -1089,10 +1116,6 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
                     whole_archive = false;
                 }
                 try argv.append(try obj.path.toString(arena));
-            },
-            .dso_exact => |dso_exact| {
-                assert(dso_exact.name[0] == ':');
-                try argv.appendSlice(&.{ "-l", dso_exact.name });
             },
         };
 
@@ -1135,9 +1158,17 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
             argv.appendAssumeCapacity("--as-needed");
             var as_needed = true;
 
+            // When we have a DSO input, in order to trick LLD into putting the basename in its
+            // `DT_NEEDED` entry while still allowing us to tell it the exact path to the shared
+            // object, we pass it on the CLI as "-l:/absolute/path/to/libfoo.so". This will treat
+            // the given path not actually as an absolute path, but as relative to the library
+            // search path, so the root directory must therefore be the only library search path.
+            try argv.append("-L/");
+
             for (base.comp.link_inputs) |link_input| switch (link_input) {
                 .res => unreachable, // Windows-only
-                .object, .archive, .dso_exact => continue,
+                .tbd => unreachable, // Darwin-only
+                .object, .archive => continue,
                 .dso => |dso| {
                     const lib_as_needed = !dso.needed;
                     switch ((@as(u2, @intFromBool(lib_as_needed)) << 1) | @intFromBool(as_needed)) {
@@ -1152,11 +1183,17 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
                         },
                     }
 
-                    // By this time, we depend on these libs being dynamically linked
-                    // libraries and not static libraries (the check for that needs to be earlier),
-                    // but they could be full paths to .so files, in which case we
-                    // want to avoid prepending "-l".
-                    argv.appendAssumeCapacity(try dso.path.toString(arena));
+                    // By this time, we depend on these libs being dynamically linked libraries and
+                    // not static libraries (the check for that needs to be earlier), but they could
+                    // be full file paths, in which case we don't want to use the "-l:" strategy.
+                    switch (dso.fallback_soname) {
+                        .basename => try argv.append(try arena.print("-l:{s}", .{try fs.path.resolve(arena, &.{
+                            comp.dirs.cwd,
+                            dso.path.root_dir.path orelse ".",
+                            dso.path.sub_path,
+                        })})),
+                        .full_path => try argv.append(try dso.path.toString(arena)),
+                    }
                 },
             };
 
@@ -1416,9 +1453,9 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
 
         if (comp.config.lto != .none) {
             switch (comp.root_mod.optimize_mode) {
-                .Debug => {},
-                .ReleaseSmall => try argv.append("-O2"),
-                .ReleaseFast, .ReleaseSafe => try argv.append("-O3"),
+                .debug => {},
+                .small => try argv.append("-O2"),
+                .fast, .safe => try argv.append("-O3"),
             }
         }
 
@@ -1438,6 +1475,10 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
         if (wasm.export_table) {
             assert(!wasm.import_table);
             try argv.append("--export-table");
+        }
+
+        if (wasm.growable_table) {
+            try argv.append("--growable-table");
         }
 
         // For wasm-ld we only need to specify '--no-gc-sections' when the user explicitly
@@ -1526,18 +1567,6 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
             (comp.config.output_mode == .Lib and comp.config.link_mode == .dynamic);
 
         if (comp.config.link_libc and is_exe_or_dyn_lib) {
-            if (target.os.tag == .wasi) {
-                try argv.append(try comp.crtFileAsString(
-                    arena,
-                    wasi_libc.execModelCrtFileFullName(comp.config.wasi_exec_model),
-                ));
-                try argv.append(try comp.crtFileAsString(arena, "libc.a"));
-            }
-
-            if (comp.zigc_static_lib) |zigc| {
-                try argv.append(try zigc.full_object_path.toString(arena));
-            }
-
             if (comp.config.link_libcpp) {
                 try argv.append(try comp.libcxx_static_lib.?.full_object_path.toString(arena));
                 try argv.append(try comp.libcxxabi_static_lib.?.full_object_path.toString(arena));
@@ -1560,7 +1589,7 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
             .dso => |dso| {
                 try argv.append(try dso.path.toString(arena));
             },
-            .dso_exact => unreachable,
+            .tbd => unreachable,
             .res => unreachable,
         };
         if (whole_archive) {
@@ -1602,7 +1631,6 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
 
 fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !void {
     const io = comp.io;
-    const gpa = comp.gpa;
 
     if (comp.verbose_link) {
         // Skip over our own name so that the LLD linker name is the first argv item.
@@ -1619,120 +1647,36 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
         return error.AlreadyReported;
     }
 
-    var stderr: []u8 = &.{};
-    defer gpa.free(stderr);
-
-    // TODO rework this awkward logic to call child.kill() in the failure case
-    const term = (if (comp.clang_passthrough_mode) term: {
-        var child = std.process.spawn(io, .{
-            .argv = argv,
-            .stdin = .inherit,
-            .stdout = .inherit,
-            .stderr = .inherit,
-        }) catch |err| break :term err;
-
-        break :term child.wait(io);
-    } else term: {
-        var child = std.process.spawn(io, .{
-            .argv = argv,
-            .stdin = .ignore,
-            .stdout = .ignore,
-            .stderr = .pipe,
-        }) catch |err| break :term err;
-
-        var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
-        stderr = stderr_reader.interface.allocRemaining(gpa, .unlimited) catch |err| switch (err) {
-            error.StreamTooLong => unreachable, // unlimited
-            error.OutOfMemory => |e| return e,
-            error.ReadFailed => return stderr_reader.err.?,
-        };
-        break :term child.wait(io);
-    }) catch |first_err| term: {
-        const err = switch (first_err) {
-            error.NameTooLong => err: {
-                const s = fs.path.sep_str;
-                const rand_int = r: {
-                    var x: u64 = undefined;
-                    io.random(@ptrCast(&x));
-                    break :r x;
-                };
-                const rsp_path = "tmp" ++ s ++ std.fmt.hex(rand_int) ++ ".rsp";
-
-                const rsp_file = try comp.dirs.local_cache.handle.createFile(io, rsp_path, .{});
-                defer comp.dirs.local_cache.handle.deleteFile(io, rsp_path) catch |err|
-                    log.warn("failed to delete response file {s}: {t}", .{ rsp_path, err });
-                {
-                    defer rsp_file.close(io);
-                    var rsp_file_buffer: [1024]u8 = undefined;
-                    var rsp_file_writer = rsp_file.writer(io, &rsp_file_buffer);
-                    const rsp_writer = &rsp_file_writer.interface;
-                    for (argv[2..]) |arg| {
-                        try rsp_writer.writeByte('"');
-                        for (arg) |c| {
-                            switch (c) {
-                                '\"', '\\' => try rsp_writer.writeByte('\\'),
-                                else => {},
-                            }
-                            try rsp_writer.writeByte(c);
-                        }
-                        try rsp_writer.writeByte('"');
-                        try rsp_writer.writeByte('\n');
-                    }
-                    try rsp_writer.flush();
-                }
-
-                var rsp_child = std.process.spawn(io, .{
-                    .argv = &.{
-                        argv[0],
-                        argv[1],
-                        try arena.print("@{s}", .{
-                            try comp.dirs.local_cache.join(arena, &.{rsp_path}),
-                        }),
-                    },
-                    .stdin = if (comp.clang_passthrough_mode) .inherit else .ignore,
-                    .stdout = if (comp.clang_passthrough_mode) .inherit else .ignore,
-                    .stderr = if (comp.clang_passthrough_mode) .inherit else .pipe,
-                }) catch |err| break :err err;
-                if (comp.clang_passthrough_mode) {
-                    break :term rsp_child.wait(io) catch |err| break :err err;
-                } else {
-                    var stderr_reader = rsp_child.stderr.?.readerStreaming(io, &.{});
-                    stderr = stderr_reader.interface.allocRemaining(gpa, .unlimited) catch |err| switch (err) {
-                        error.StreamTooLong => unreachable, // unlimited
-                        error.OutOfMemory => |e| return e,
-                        error.ReadFailed => return stderr_reader.err.?,
-                    };
-                    break :term rsp_child.wait(io) catch |err| break :err err;
-                }
-            },
-            else => first_err,
-        };
-        log.err("unable to spawn LLD {s}: {t}", .{ argv[0], err });
-        return error.UnableToSpawnSelf;
+    var diags: Compilation.EvalZigLlvmProcessDiagnostics = undefined;
+    const result = comp.evalZigLlvmProcess(arena, &diags, argv) catch |err| switch (err) {
+        else => |e| return e,
+        error.EvalZigLlvmFail => {
+            log.err("failed to evaluate LLD '{s}': {f}", .{ argv[0], diags });
+            return error.UnableToSpawnSelf;
+        },
     };
 
-    const diags = &comp.link_diags;
-    switch (term) {
+    switch (result.term) {
         .exited => |code| if (code != 0) {
             if (comp.clang_passthrough_mode) std.process.exit(code);
-            diags.lockAndParseLldStderr(argv[1], stderr);
+            comp.link_diags.lockAndParseLldStderr(argv[1], result.stderr);
             return error.AlreadyReported;
         },
         .signal => |sig| {
             if (comp.clang_passthrough_mode) std.process.abort();
-            return diags.fail("{s} terminated with signal {t} and stderr:\n{s}", .{ argv[0], sig, stderr });
+            return comp.link_diags.fail("{s} terminated with signal {t} and stderr:\n{s}", .{ argv[0], sig, result.stderr });
         },
         .stopped => |sig| {
             if (comp.clang_passthrough_mode) std.process.abort();
-            return diags.fail("{s} stopped with signal {t} and stderr:\n{s}", .{ argv[0], sig, stderr });
+            return comp.link_diags.fail("{s} stopped with signal {t} and stderr:\n{s}", .{ argv[0], sig, result.stderr });
         },
         .unknown => |code| {
             if (comp.clang_passthrough_mode) std.process.abort();
-            return diags.fail("{s} terminated for unknown reason with code {d} and stderr:\n{s}", .{ argv[0], code, stderr });
+            return comp.link_diags.fail("{s} terminated for unknown reason with code {d} and stderr:\n{s}", .{ argv[0], code, result.stderr });
         },
     }
 
-    if (stderr.len > 0) log.warn("unexpected LLD stderr:\n{s}", .{stderr});
+    if (result.stderr.len > 0) log.warn("unexpected LLD stderr:\n{s}", .{result.stderr});
 }
 
 const builtin = @import("builtin");
@@ -1752,7 +1696,6 @@ const freebsd = @import("../libs/freebsd.zig");
 const glibc = @import("../libs/glibc.zig");
 const netbsd = @import("../libs/netbsd.zig");
 const openbsd = @import("../libs/openbsd.zig");
-const wasi_libc = @import("../libs/wasi_libc.zig");
 const link = @import("../link.zig");
 const lldMain = @import("../main.zig").lldMain;
 const target_util = @import("../target.zig");

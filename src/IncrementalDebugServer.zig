@@ -43,7 +43,7 @@ fn runServer(ids: *IncrementalDebugServer) void {
     const io = ids.zcu.comp.io;
 
     const addr: Io.net.IpAddress = .{ .ip6 = .loopback(port) };
-    var server = addr.listen(io, .{}) catch |err| switch (err) {
+    var server = addr.listen(io, .{ .reuse_address = true }) catch |err| switch (err) {
         error.Canceled => return,
         else => |e| {
             log.err("listen failed ({t}); closing server", .{e});
@@ -95,6 +95,7 @@ fn runServer(ids: *IncrementalDebugServer) void {
                 => |e| log.err("failed to serve '{f}' ({t})", .{ stream.socket.address, e }),
 
                 error.EndOfStream,
+                error.ConnectionTimedOut,
                 error.ConnectionResetByPeer,
                 => log.info("client '{f}' disconnected", .{stream.socket.address}),
 
@@ -130,7 +131,7 @@ fn serveStream(
         try stream_writer.writeAll("zig> ");
         const untrimmed = try stream_reader.takeSentinel('\n');
         const cmd_and_arg = std.mem.trim(u8, untrimmed, " \t\r\n");
-        const cmd: []const u8, const arg: []const u8 = if (std.mem.indexOfScalar(u8, cmd_and_arg, ' ')) |i|
+        const cmd: []const u8, const arg: []const u8 = if (std.mem.findScalar(u8, cmd_and_arg, ' ')) |i|
             .{ cmd_and_arg[0..i], cmd_and_arg[i + 1 ..] }
         else
             .{ cmd_and_arg, "" };
@@ -208,7 +209,7 @@ fn handleCommand(zcu: *Zcu, w: *Io.Writer, cmd_str: []const u8, arg_str: []const
             zcu.incremental_debug_state.units.count(),
         });
     } else if (std.mem.eql(u8, cmd_str, "nav_info")) {
-        const nav_index: InternPool.Nav.Index = @enumFromInt(parseIndex(arg_str) orelse return w.writeAll("malformed nav index"));
+        const nav_index: InternPool.Nav.Index = @fromBackingInt(@intCast(parseIndex(arg_str) orelse return w.writeAll("malformed nav index")));
         const create_gen = zcu.incremental_debug_state.navs.get(nav_index) orelse return w.writeAll("unknown nav index");
         const nav = ip.getNav(nav_index);
         try w.print(
@@ -222,13 +223,12 @@ fn handleCommand(zcu: *Zcu, w: *Io.Writer, cmd_str: []const u8, arg_str: []const
             create_gen,
         });
         if (nav.resolved) |r| {
-            try w.writeAll("status: resolved\n  type: ");
-            try printType(.fromInterned(r.type), zcu, w);
+            try w.print("status: resolved\n  type: {f}", .{Type.fromInterned(r.type).fmt(zcu)});
             try w.writeAll("\n  value: ");
             if (r.value == .none) {
                 try w.writeAll("(unresolved)");
             } else {
-                try printType(.fromInterned(r.type), zcu, w);
+                try w.print("{f}", .{Value.fromInterned(r.value).fmtValue(zcu)});
             }
             try w.writeByte('\n');
         } else {
@@ -242,16 +242,16 @@ fn handleCommand(zcu: *Zcu, w: *Io.Writer, cmd_str: []const u8, arg_str: []const
         var num_results: usize = 0;
         for (zcu.incremental_debug_state.types.keys()) |type_ip_index| {
             const ty: Type = .fromInterned(type_ip_index);
-            const ty_name = ty.containerTypeName(ip).toSlice(ip);
+            const ty_name = ty.containerTypeName(ip).fqn.toSlice(ip);
             const success = switch (@as(u2, @intFromBool(anchor_start)) << 1 | @intFromBool(anchor_end)) {
-                0b00 => std.mem.indexOf(u8, ty_name, query) != null,
+                0b00 => std.mem.find(u8, ty_name, query) != null,
                 0b01 => std.mem.endsWith(u8, ty_name, query),
                 0b10 => std.mem.startsWith(u8, ty_name, query),
                 0b11 => std.mem.eql(u8, ty_name, query),
             };
             if (success) {
                 num_results += 1;
-                try w.print("* type {d} ('{s}')\n", .{ @intFromEnum(type_ip_index), ty_name });
+                try w.print("* type {d} ('{s}')\n", .{ @backingInt(type_ip_index), ty_name });
             }
         }
         try w.print("Found {d} results\n", .{num_results});
@@ -265,14 +265,14 @@ fn handleCommand(zcu: *Zcu, w: *Io.Writer, cmd_str: []const u8, arg_str: []const
             const nav = ip.getNav(nav_index);
             const nav_fqn = nav.fqn.toSlice(ip);
             const success = switch (@as(u2, @intFromBool(anchor_start)) << 1 | @intFromBool(anchor_end)) {
-                0b00 => std.mem.indexOf(u8, nav_fqn, query) != null,
+                0b00 => std.mem.find(u8, nav_fqn, query) != null,
                 0b01 => std.mem.endsWith(u8, nav_fqn, query),
                 0b10 => std.mem.startsWith(u8, nav_fqn, query),
                 0b11 => std.mem.eql(u8, nav_fqn, query),
             };
             if (success) {
                 num_results += 1;
-                try w.print("* nav {d} ('{s}')\n", .{ @intFromEnum(nav_index), nav_fqn });
+                try w.print("* nav {d} ('{s}')\n", .{ @backingInt(nav_index), nav_fqn });
             }
         }
         try w.print("Found {d} results\n", .{num_results});
@@ -286,21 +286,34 @@ fn handleCommand(zcu: *Zcu, w: *Io.Writer, cmd_str: []const u8, arg_str: []const
             const referencer = (ref orelse break :ref "<analysis root>").referencer;
             break :ref printAnalUnit(referencer, &ref_str_buf);
         };
-        const has_err: []const u8 = err: {
-            if (zcu.failed_analysis.contains(unit)) break :err "true";
-            if (zcu.transitive_failed_analysis.contains(unit)) break :err "true (transitive)";
-            break :err "false";
-        };
         try w.print(
             \\last update generation: {d}
             \\current referencer: {s}
-            \\has error: {s}
             \\
         , .{
             unit_info.last_update_gen,
             ref_str,
-            has_err,
         });
+        if (zcu.failed_analysis.get(unit)) |err_msg| {
+            try w.print("analysis result: failure ({q})\n", .{err_msg.msg});
+        } else if (zcu.transitive_failed_analysis.get(unit)) |reason| {
+            switch (reason) {
+                .astgen_error => try w.writeAll("analysis result: transitive failure (astgen error)\n"),
+                .dependency_loop => try w.writeAll("analysis result: transitive failure (dependency loop)\n"),
+                .lost_tracking => try w.writeAll("analysis result: transitive failure (lost tracking for zir inst)\n"),
+                .failed_unit => |other_unit| {
+                    var buf: [32]u8 = undefined;
+                    try w.print("analysis result: transitive failure (failed unit: {s})\n", .{printAnalUnit(other_unit, &buf)});
+                },
+                .func_nav_val_changed => |func_index| try w.print("analysis result: transitive failure (owner nav of func '{d}' changed value)\n", .{@backingInt(func_index)}),
+            }
+        } else {
+            try w.writeAll("analysis result: success\n");
+        }
+        if (unit.unwrap() == .func) {
+            const nav_id = zcu.intern_pool.indexToKey(unit.unwrap().func).func.owner_nav;
+            try w.print("owner nav: {d}\n", .{@backingInt(nav_id)});
+        }
     } else if (std.mem.eql(u8, cmd_str, "unit_dependencies")) {
         const unit = parseAnalUnit(arg_str) orelse return w.writeAll("malformed anal unit");
         const unit_info = zcu.incremental_debug_state.units.get(unit) orelse return w.writeAll("unknown anal unit");
@@ -308,8 +321,8 @@ fn handleCommand(zcu: *Zcu, w: *Io.Writer, cmd_str: []const u8, arg_str: []const
             try w.print("[{d}] ", .{i});
             switch (dependee) {
                 .src_hash, .namespace, .namespace_name, .source_file, .embed_file => try w.print("{f}", .{zcu.fmtDependee(dependee)}),
-                .nav_val, .nav_ty => |nav| try w.print("{t} {d}", .{ dependee, @intFromEnum(nav) }),
-                .type_layout, .struct_defaults, .func_ies => |ip_index| try w.print("{t} {d}", .{ dependee, @intFromEnum(ip_index) }),
+                .nav_val, .nav_ty => |nav| try w.print("{t} {d}", .{ dependee, @backingInt(nav) }),
+                .type_layout, .struct_defaults, .func_ies => |ip_index| try w.print("{t} {d}", .{ dependee, @backingInt(ip_index) }),
                 .memoized_state => |stage| try w.print("memoized_state {s}", .{@tagName(stage)}),
             }
             try w.writeByte('\n');
@@ -326,35 +339,35 @@ fn handleCommand(zcu: *Zcu, w: *Io.Writer, cmd_str: []const u8, arg_str: []const
             opt_cur = if (refs.get(cur).?) |ref| ref.referencer else null;
         }
     } else if (std.mem.eql(u8, cmd_str, "type_info")) {
-        const ip_index: InternPool.Index = @enumFromInt(parseIndex(arg_str) orelse return w.writeAll("malformed ip index"));
+        const ip_index: InternPool.Index = @fromBackingInt(@intCast(parseIndex(arg_str) orelse return w.writeAll("malformed ip index")));
         const create_gen = zcu.incremental_debug_state.types.get(ip_index) orelse return w.writeAll("unknown type");
         try w.print(
             \\name: '{f}'
             \\created on generation: {d}
             \\
         , .{
-            Type.fromInterned(ip_index).containerTypeName(ip).fmt(ip),
+            Type.fromInterned(ip_index).containerTypeName(ip).fqn.fmt(ip),
             create_gen,
         });
     } else if (std.mem.eql(u8, cmd_str, "type_namespace")) {
-        const ip_index: InternPool.Index = @enumFromInt(parseIndex(arg_str) orelse return w.writeAll("malformed ip index"));
+        const ip_index: InternPool.Index = @fromBackingInt(@intCast(parseIndex(arg_str) orelse return w.writeAll("malformed ip index")));
         if (!zcu.incremental_debug_state.types.contains(ip_index)) return w.writeAll("unknown type");
         const ns = zcu.namespacePtr(Type.fromInterned(ip_index).getNamespaceIndex(zcu));
         try w.print("{d} pub decls:\n", .{ns.pub_decls.count()});
         for (ns.pub_decls.keys()) |nav| {
-            try w.print("* nav {d}\n", .{@intFromEnum(nav)});
+            try w.print("* nav {d}\n", .{@backingInt(nav)});
         }
         try w.print("{d} non-pub decls:\n", .{ns.priv_decls.count()});
         for (ns.priv_decls.keys()) |nav| {
-            try w.print("* nav {d}\n", .{@intFromEnum(nav)});
+            try w.print("* nav {d}\n", .{@backingInt(nav)});
         }
         try w.print("{d} comptime decls:\n", .{ns.comptime_decls.items.len});
         for (ns.comptime_decls.items) |id| {
-            try w.print("* comptime {d}\n", .{@intFromEnum(id)});
+            try w.print("* comptime {d}\n", .{@backingInt(id)});
         }
         try w.print("{d} tests:\n", .{ns.test_decls.items.len});
         for (ns.test_decls.items) |nav| {
-            try w.print("* nav {d}\n", .{@intFromEnum(nav)});
+            try w.print("* nav {d}\n", .{@backingInt(nav)});
         }
     } else {
         try w.writeAll("command not found; run 'help' for a command list");
@@ -365,21 +378,21 @@ fn parseIndex(str: []const u8) ?u32 {
     return std.fmt.parseInt(u32, str, 10) catch null;
 }
 fn parseAnalUnit(str: []const u8) ?AnalUnit {
-    const split_idx = std.mem.indexOfScalar(u8, str, ' ') orelse return null;
+    const split_idx = std.mem.findScalar(u8, str, ' ') orelse return null;
     const kind = str[0..split_idx];
     const idx_str = str[split_idx + 1 ..];
     if (std.mem.eql(u8, kind, "comptime")) {
-        return .wrap(.{ .@"comptime" = @enumFromInt(parseIndex(idx_str) orelse return null) });
+        return .wrap(.{ .@"comptime" = @fromBackingInt(@intCast(parseIndex(idx_str) orelse return null)) });
     } else if (std.mem.eql(u8, kind, "nav_val")) {
-        return .wrap(.{ .nav_val = @enumFromInt(parseIndex(idx_str) orelse return null) });
+        return .wrap(.{ .nav_val = @fromBackingInt(@intCast(parseIndex(idx_str) orelse return null)) });
     } else if (std.mem.eql(u8, kind, "nav_ty")) {
-        return .wrap(.{ .nav_ty = @enumFromInt(parseIndex(idx_str) orelse return null) });
+        return .wrap(.{ .nav_ty = @fromBackingInt(@intCast(parseIndex(idx_str) orelse return null)) });
     } else if (std.mem.eql(u8, kind, "type_layout")) {
-        return .wrap(.{ .type_layout = @enumFromInt(parseIndex(idx_str) orelse return null) });
+        return .wrap(.{ .type_layout = @fromBackingInt(@intCast(parseIndex(idx_str) orelse return null)) });
     } else if (std.mem.eql(u8, kind, "struct_defaults")) {
-        return .wrap(.{ .struct_defaults = @enumFromInt(parseIndex(idx_str) orelse return null) });
+        return .wrap(.{ .struct_defaults = @fromBackingInt(@intCast(parseIndex(idx_str) orelse return null)) });
     } else if (std.mem.eql(u8, kind, "func")) {
-        return .wrap(.{ .func = @enumFromInt(parseIndex(idx_str) orelse return null) });
+        return .wrap(.{ .func = @fromBackingInt(@intCast(parseIndex(idx_str) orelse return null)) });
     } else if (std.mem.eql(u8, kind, "memoized_state")) {
         return .wrap(.{ .memoized_state = std.meta.stringToEnum(
             InternPool.MemoizedStateStage,
@@ -391,56 +404,10 @@ fn parseAnalUnit(str: []const u8) ?AnalUnit {
 }
 fn printAnalUnit(unit: AnalUnit, buf: *[32]u8) []const u8 {
     const idx: u32 = switch (unit.unwrap()) {
-        .memoized_state => |stage| return std.fmt.bufPrint(buf, "memoized_state {s}", .{@tagName(stage)}) catch unreachable,
-        inline else => |i| @intFromEnum(i),
+        .memoized_state => |stage| return std.mem.print(buf, "memoized_state {s}", .{@tagName(stage)}) catch unreachable,
+        inline else => |i| @backingInt(i),
     };
-    return std.fmt.bufPrint(buf, "{s} {d}", .{ @tagName(unit.unwrap()), idx }) catch unreachable;
-}
-
-fn printType(ty: Type, zcu: *const Zcu, w: *Io.Writer) Io.Writer.Error!void {
-    const ip = &zcu.intern_pool;
-    switch (ip.indexToKey(ty.toIntern())) {
-        .int_type => |int| try w.print("{c}{d}", .{
-            @as(u8, if (int.signedness == .unsigned) 'u' else 'i'),
-            int.bits,
-        }),
-        .tuple_type => try w.writeAll("(tuple)"),
-        .error_set_type => try w.writeAll("(error set)"),
-        .inferred_error_set_type => try w.writeAll("(inferred error set)"),
-        .func_type => try w.writeAll("(function)"),
-        .anyframe_type => try w.writeAll("(anyframe)"),
-        .vector_type => {
-            try w.print("@Vector({d}, ", .{ty.vectorLen(zcu)});
-            try printType(ty.childType(zcu), zcu, w);
-            try w.writeByte(')');
-        },
-        .array_type => {
-            try w.print("[{d}]", .{ty.arrayLen(zcu)});
-            try printType(ty.childType(zcu), zcu, w);
-        },
-        .opt_type => {
-            try w.writeByte('?');
-            try printType(ty.optionalChild(zcu), zcu, w);
-        },
-        .error_union_type => {
-            try printType(ty.errorUnionSet(zcu), zcu, w);
-            try w.writeByte('!');
-            try printType(ty.errorUnionPayload(zcu), zcu, w);
-        },
-        .ptr_type => {
-            try w.writeAll("*(attrs) ");
-            try printType(ty.childType(zcu), zcu, w);
-        },
-        .simple_type => |simple| try w.writeAll(@tagName(simple)),
-
-        .struct_type,
-        .union_type,
-        .enum_type,
-        .opaque_type,
-        => try w.print("{f}[{d}]", .{ ty.containerTypeName(ip).fmt(ip), @intFromEnum(ty.toIntern()) }),
-
-        else => unreachable,
-    }
+    return std.mem.print(buf, "{s} {d}", .{ @tagName(unit.unwrap()), idx }) catch unreachable;
 }
 
 const std = @import("std");
@@ -452,6 +419,7 @@ const Compilation = @import("Compilation.zig");
 const Zcu = @import("Zcu.zig");
 const InternPool = @import("InternPool.zig");
 const Type = @import("Type.zig");
+const Value = @import("Value.zig");
 const AnalUnit = InternPool.AnalUnit;
 
 const IncrementalDebugServer = @This();

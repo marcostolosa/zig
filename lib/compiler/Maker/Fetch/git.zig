@@ -336,7 +336,7 @@ pub const Repository = struct {
         fn next(iterator: *TreeIterator) !?Entry {
             if (iterator.pos == iterator.data.len) return null;
 
-            const mode_end = mem.indexOfScalarPos(u8, iterator.data, iterator.pos, ' ') orelse return error.InvalidTree;
+            const mode_end = mem.findScalarPos(u8, iterator.data, iterator.pos, ' ') orelse return error.InvalidTree;
             const mode: packed struct {
                 permission: u9,
                 unused: u3,
@@ -351,7 +351,7 @@ pub const Repository = struct {
             };
             iterator.pos = mode_end + 1;
 
-            const name_end = mem.indexOfScalarPos(u8, iterator.data, iterator.pos, 0) orelse return error.InvalidTree;
+            const name_end = mem.findScalarPos(u8, iterator.data, iterator.pos, 0) orelse return error.InvalidTree;
             const name = iterator.data[iterator.pos..name_end :0];
             iterator.pos = name_end + 1;
 
@@ -823,7 +823,7 @@ pub const Session = struct {
             value: ?[]const u8 = null,
 
             fn parse(data: []const u8) Capability {
-                return if (mem.indexOfScalar(u8, data, '=')) |separator_pos|
+                return if (mem.findScalar(u8, data, '=')) |separator_pos|
                     .{ .key = data[0..separator_pos], .value = data[separator_pos + 1 ..] }
                 else
                     .{ .key = data };
@@ -941,17 +941,17 @@ pub const Session = struct {
                 .flush => return null,
                 .data => |data| {
                     const ref_data = Packet.normalizeText(data);
-                    const oid_sep_pos = mem.indexOfScalar(u8, ref_data, ' ') orelse return error.InvalidRefPacket;
+                    const oid_sep_pos = mem.findScalar(u8, ref_data, ' ') orelse return error.InvalidRefPacket;
                     const oid = Oid.parse(it.format, data[0..oid_sep_pos]) catch return error.InvalidRefPacket;
 
-                    const name_sep_pos = mem.indexOfScalarPos(u8, ref_data, oid_sep_pos + 1, ' ') orelse ref_data.len;
+                    const name_sep_pos = mem.findScalarPos(u8, ref_data, oid_sep_pos + 1, ' ') orelse ref_data.len;
                     const name = ref_data[oid_sep_pos + 1 .. name_sep_pos];
 
                     var symref_target: ?[]const u8 = null;
                     var peeled: ?Oid = null;
                     var last_sep_pos = name_sep_pos;
                     while (last_sep_pos < ref_data.len) {
-                        const next_sep_pos = mem.indexOfScalarPos(u8, ref_data, last_sep_pos + 1, ' ') orelse ref_data.len;
+                        const next_sep_pos = mem.findScalarPos(u8, ref_data, last_sep_pos + 1, ' ') orelse ref_data.len;
                         const attribute = ref_data[last_sep_pos + 1 .. next_sep_pos];
                         if (mem.startsWith(u8, attribute, "symref-target:")) {
                             symref_target = attribute["symref-target:".len..];
@@ -1008,7 +1008,7 @@ pub const Session = struct {
         }
         for (wants) |want| {
             var buf: [Packet.max_data_length]u8 = undefined;
-            const arg = std.fmt.bufPrint(&buf, "want {s}\n", .{want}) catch unreachable;
+            const arg = std.mem.print(&buf, "want {s}\n", .{want}) catch unreachable;
             try Packet.write(.{ .data = arg }, &body);
         }
         try Packet.write(.{ .data = "done\n" }, &body);
@@ -1107,7 +1107,7 @@ pub const Session = struct {
                         return error.ReadFailed;
                     }) {
                         .flush => return error.EndOfStream,
-                        .data => |data| switch (@as(StreamCode, @enumFromInt(data[0]))) {
+                        .data => |data| switch (@as(StreamCode, @fromBackingInt(@intCast(data[0])))) {
                             .pack_data => {
                                 input.toss(1);
                                 fs.remaining_len = data.len - 1;

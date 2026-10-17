@@ -267,17 +267,14 @@ const Generator = struct {
                 const bytes = g.p.strings.items[literal.off..][0..literal.len];
                 try g.w.print(
                     \\blk_{d}: {{
-                    \\if (std.mem.startsWith(u8, p.source[p.i..], "
-                , .{suffix});
-                try std.zig.stringEscape(bytes, g.w);
-                try g.w.print(
-                    \\")) {{
+                    \\if (std.mem.startsWith(u8, p.source[p.i..], {q})) {{
+                    \\
                     \\p.i += {d};
                     \\    break :blk_{d} true;
                     \\}}
                     \\break :blk_{d} false;
                     \\}}
-                , .{ bytes.len, suffix, suffix });
+                , .{ suffix, bytes, bytes.len, suffix, suffix });
             },
             .class => |ranges| {
                 try g.w.writeAll("(p.i < p.source.len and switch (p.source[p.i]) {");
@@ -398,7 +395,7 @@ const Parser = struct {
             _,
 
             fn get(index: Index, p: *const Parser) Node {
-                return p.nodes.items[@intFromEnum(index)];
+                return p.nodes.items[@backingInt(index)];
             }
         };
 
@@ -750,7 +747,7 @@ const Parser = struct {
 
     fn addNode(p: *Parser, node: Node) !Node.Index {
         try p.nodes.append(p.gpa, node);
-        return @enumFromInt(p.nodes.items.len - 1);
+        return @fromBackingInt(@intCast(p.nodes.items.len - 1));
     }
 
     fn addExtra(p: *Parser, nodes: []const Node.Index) !Node.Slice {

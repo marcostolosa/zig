@@ -133,7 +133,6 @@ fn releaseConfigured(ws: *WebServer) void {
         for (configured.time_report_msgs) |msg| gpa.free(msg);
         gpa.free(configured.time_report_msgs);
         gpa.free(configured.time_report_update_times);
-        gpa.free(configured.step_names_trailing);
         ws.configured = null;
     }
 }
@@ -257,7 +256,7 @@ pub fn updateStepStatus(
     const ptr = &configured.step_status_bits[step_idx / 4];
     const bit_offset: u3 = @intCast((step_idx % 4) * 2);
     const old_bits: u2 = @truncate(@atomicLoad(u8, ptr, .monotonic) >> bit_offset);
-    const mask = @as(u8, @intFromEnum(new_status) ^ old_bits) << bit_offset;
+    const mask = @as(u8, @backingInt(new_status) ^ old_bits) << bit_offset;
     _ = @atomicRmw(u8, ptr, .Xor, mask, .monotonic);
     ws.notifyUpdate();
 }
@@ -426,16 +425,16 @@ fn serveWebSocket(ws: *WebServer, sock: *http.Server.WebSocket) !noreturn {
             const cur_byte = @atomicLoad(u8, shared, .monotonic);
             if (prev_byte.* == cur_byte) continue;
             const cur: [4]abi.StepUpdate.Status = .{
-                @enumFromInt(@as(u2, @truncate(cur_byte >> 0))),
-                @enumFromInt(@as(u2, @truncate(cur_byte >> 2))),
-                @enumFromInt(@as(u2, @truncate(cur_byte >> 4))),
-                @enumFromInt(@as(u2, @truncate(cur_byte >> 6))),
+                @fromBackingInt(@intCast(@as(u2, @truncate(cur_byte >> 0)))),
+                @fromBackingInt(@intCast(@as(u2, @truncate(cur_byte >> 2)))),
+                @fromBackingInt(@intCast(@as(u2, @truncate(cur_byte >> 4)))),
+                @fromBackingInt(@intCast(@as(u2, @truncate(cur_byte >> 6)))),
             };
             const prev: [4]abi.StepUpdate.Status = .{
-                @enumFromInt(@as(u2, @truncate(prev_byte.* >> 0))),
-                @enumFromInt(@as(u2, @truncate(prev_byte.* >> 2))),
-                @enumFromInt(@as(u2, @truncate(prev_byte.* >> 4))),
-                @enumFromInt(@as(u2, @truncate(prev_byte.* >> 6))),
+                @fromBackingInt(@intCast(@as(u2, @truncate(prev_byte.* >> 0)))),
+                @fromBackingInt(@intCast(@as(u2, @truncate(prev_byte.* >> 2)))),
+                @fromBackingInt(@intCast(@as(u2, @truncate(prev_byte.* >> 4)))),
+                @fromBackingInt(@intCast(@as(u2, @truncate(prev_byte.* >> 6)))),
             };
             for (cur, prev, byte_idx * 4..) |cur_status, prev_status, step_idx| {
                 const msg: abi.StepUpdate = .{ .step_idx = @intCast(step_idx), .bits = .{ .status = cur_status } };
@@ -469,7 +468,7 @@ fn recvWebSocketMessages(ws: *WebServer, sock: *http.Server.WebSocket) void {
         const msg = sock.readSmallMessage() catch return;
         if (msg.opcode != .binary) continue;
         if (msg.data.len == 0) continue;
-        const tag: abi.ToServerTag = @enumFromInt(msg.data[0]);
+        const tag: abi.ToServerTag = @fromBackingInt(@intCast(msg.data[0]));
         switch (tag) {
             _ => continue,
             .rebuild => while (true) {
@@ -501,7 +500,7 @@ fn serveRequest(ws: *WebServer, req: *http.Server.Request) !void {
     if (mem.eql(u8, target, "/main.js")) return serveLibFile(ws, req, "build-web/main.js", "application/javascript");
     if (mem.eql(u8, target, "/style.css")) return serveLibFile(ws, req, "build-web/style.css", "text/css");
     if (mem.eql(u8, target, "/time_report.css")) return serveLibFile(ws, req, "build-web/time_report.css", "text/css");
-    if (mem.eql(u8, target, "/main.wasm")) return serveClientWasm(ws, req, if (debug) .Debug else .ReleaseFast);
+    if (mem.eql(u8, target, "/main.wasm")) return serveClientWasm(ws, req, if (debug) .debug else .fast);
 
     if (ws.fuzz) |*fuzz| {
         if (mem.eql(u8, target, "/sources.tar")) return fuzz.serveSourcesTar(req);
@@ -531,7 +530,7 @@ fn serveLibFile(
 fn serveClientWasm(
     ws: *WebServer,
     req: *http.Server.Request,
-    optimize_mode: std.builtin.OptimizeMode,
+    optimize_mode: std.builtin.Optimize,
 ) !void {
     const gpa = ws.graph.cache.gpa;
 
@@ -603,7 +602,7 @@ pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []cons
     try response.end();
 }
 
-fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.OptimizeMode) !Cache.Path {
+fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optimize) !Cache.Path {
     const root_name = "build-web";
     const arch_os_abi = "wasm32-freestanding";
     const cpu_features = "baseline+atomics+bulk_memory+multivalue+mutable_globals+nontrapping_fptoint+reference_types+sign_ext";

@@ -75,8 +75,8 @@ pub fn TargetInfo(os: std.Target.Os.Tag, arch: std.Target.Cpu.Arch) type {
             else => @import("debug/SelfInfo/Elf.zig"),
         },
         .macho => @import("debug/SelfInfo/MachO.zig"),
-        .plan9, .spirv, .wasm => void,
-        .c, .hex, .raw => unreachable,
+        .plan9, .spirv, .wasm, .raw, .hex => void,
+        .c => unreachable,
     };
 }
 
@@ -151,6 +151,10 @@ pub fn FullPanic(comptime panicFn: fn ([]const u8, ?usize) noreturn) type {
             @branchHint(.cold);
             call("invalid error code", @returnAddress());
         }
+        pub fn unexpectedErrorCode(err: anyerror) noreturn {
+            @branchHint(.cold);
+            std.debug.panicExtra(@returnAddress(), "unexpected error code, found error.{s}", .{@errorName(err)});
+        }
         pub fn integerOutOfBounds() noreturn {
             @branchHint(.cold);
             call("integer does not fit in destination type", @returnAddress());
@@ -207,6 +211,10 @@ pub fn FullPanic(comptime panicFn: fn ([]const u8, ?usize) noreturn) type {
             @branchHint(.cold);
             call("'noreturn' function returned", @returnAddress());
         }
+        pub fn loadUninstantiableType() noreturn {
+            @branchHint(.cold);
+            call("attempt to load uninstantiable type", @returnAddress());
+        }
     };
 }
 
@@ -237,13 +245,12 @@ pub const Symbol = struct {
     };
 };
 
-/// Deprecated because it returns the optimization mode of the standard
-/// library, when the caller probably wants to use the optimization mode of
-/// their own module.
-pub const runtime_safety = switch (builtin.mode) {
-    .Debug, .ReleaseSafe => true,
-    .ReleaseFast, .ReleaseSmall => false,
-};
+/// Deprecated in favor of `std.lang.Optimize.runtimeSafety`, to be removed after 0.18.0
+///
+/// Returns whether the standard library has safety checks enabled. Callsites
+/// likely would rather know whether their own module's optimization mode
+/// (found via `@import("builtin").optimize`) has safety checks enabled.
+pub const runtime_safety = builtin.mode.runtimeSafety();
 
 /// Whether we can unwind the stack on this target, allowing capturing and/or printing the current
 /// stack trace. It is still legal to call `captureCurrentStackTrace`, `writeCurrentStackTrace`, and
@@ -257,15 +264,12 @@ pub const sys_can_stack_trace = switch (builtin.cpu.arch) {
     // because Emscripten's implementation is very slow.
     .wasm32,
     .wasm64,
-    => native_os == .emscripten and builtin.mode == .Debug,
+    => native_os == .emscripten and builtin.mode == .debug,
 
     // `@returnAddress()` is unsupported in LLVM 21.
     .bpfel,
     .bpfeb,
     => false,
-
-    // https://codeberg.org/ziglang/zig/issues/31127
-    .avr => false,
 
     else => true,
 };
@@ -419,19 +423,18 @@ pub const CpuContextPtr = if (cpu_context.Native == noreturn) noreturn else *con
 
 /// Invokes detectable illegal behavior when `ok` is `false`.
 ///
-/// In Debug and ReleaseSafe modes, calls to this function are always
+/// In debug and safe modes, calls to this function are always
 /// generated, and the `unreachable` statement triggers a panic.
 ///
-/// In ReleaseFast and ReleaseSmall modes, calls to this function are optimized
+/// In fast and small modes, calls to this function are optimized
 /// away, and in fact the optimizer is able to use the assertion in its
 /// heuristics.
 ///
 /// Inside a test block, it is best to use the `testing` module rather than
 /// this function, because this function may not detect a test failure in
-/// ReleaseFast and ReleaseSmall mode. Outside of a test block, this assert
+/// fast and small mode. Outside of a test block, this assert
 /// function is the correct function to use.
 pub fn assert(ok: bool) void {
-    @disableInstrumentation();
     if (!ok) unreachable; // assertion failure
 }
 
@@ -491,6 +494,7 @@ threadlocal var panic_stage: usize = 0;
 const use_trap_panic = switch (builtin.zig_backend) {
     .stage2_aarch64,
     .stage2_arm,
+    .stage2_loongarch,
     .stage2_powerpc,
     .stage2_riscv64,
     .stage2_spirv,
@@ -512,6 +516,7 @@ pub fn defaultPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
         .@"3ds",
         .wiiu,
         .@"switch",
+        .gba,
 
         .psx,
         .psp,
@@ -844,7 +849,7 @@ pub fn writeErrorReturnTrace(et: *const std.builtin.StackTrace, t: Io.Terminal) 
     // writing the stack trace.
     const len = @min(et.instruction_addresses.len, et.index);
     const skipped = et.index - len;
-    try writeTrace(et.instruction_addresses[0..len], @enumFromInt(skipped), t, false);
+    try writeTrace(et.instruction_addresses[0..len], @fromBackingInt(@intCast(skipped)), t, false);
 }
 
 /// Write a previously captured stack trace to `writer`, annotated with source locations.
@@ -1077,10 +1082,12 @@ const StackIterator = union(enum) {
         switch (it.*) {
             .ctx_first => |context_ptr| {
                 // After the first frame, start actually unwinding.
-                it.* = if (SelfInfo != void and SelfInfo.can_unwind and fp_usability != .ideal)
-                    .{ .di = .init(context_ptr) }
-                else
-                    .{ .fp = context_ptr.getFp() };
+                if (SelfInfo != void and SelfInfo.can_unwind and fp_usability != .ideal) {
+                    it.* = .{ .di = .init(context_ptr) };
+                } else {
+                    const fp = applyOffset(context_ptr.getFp(), stack_bias) orelse return .end;
+                    it.* = .{ .fp = fp };
+                }
 
                 // The caller expects *return* addresses, where they will subtract 1 to find the address of the call.
                 // However, we have the actual current PC, which should not be adjusted. Compensate by adding 1.
@@ -1090,7 +1097,8 @@ const StackIterator = union(enum) {
                 const di = getSelfDebugInfo() catch unreachable;
                 const ret_addr = di.unwindFrame(io, unwind_context) catch |err| {
                     const pc = unwind_context.pc;
-                    const fp = unwind_context.getFp();
+                    const fp = applyOffset(unwind_context.getFp(), stack_bias) orelse return .end;
+                    unwind_context.deinit();
                     it.* = .{ .fp = fp };
                     return .{ .switch_to_fp = .{
                         .address = pc,
@@ -1637,21 +1645,6 @@ fn handleSegfaultPosix(sig: posix.SIG, info: *const posix.siginfo_t, ctx_ptr: ?*
     };
     const opt_cpu_context: ?cpu_context.Native = cpu_context.fromPosixSignalContext(ctx_ptr);
 
-    if (native_arch.isSPARC()) {
-        // It's unclear to me whether this is a QEMU bug or also real kernel behavior, but in the
-        // former, I observed that the most recent register window wasn't getting spilled on the
-        // stack as expected when a signal arrived. A `flushw` from the signal handler does not
-        // appear to be sufficient either. On the other hand, when doing a synchronous stack trace
-        // and using `flushw`, this all appears to work as expected. So, *probably* a QEMU bug, but
-        // someone with real SPARC hardware should verify.
-        //
-        // In any case, the register save area exists specifically so that register windows can be
-        // spilled asynchronously. This means that it should be perfectly fine for us to manually do
-        // so here.
-        const ctx = opt_cpu_context.?;
-        @as(*[16]usize, @ptrFromInt(ctx.o[6] + StackIterator.stack_bias)).* = ctx.l ++ ctx.i;
-    }
-
     handleSegfault(addr, name, if (opt_cpu_context) |*ctx| ctx else null);
 }
 
@@ -1760,7 +1753,7 @@ test "manage resources correctly" {
 /// In release mode, it is size 0 and all methods are no-ops.
 /// This is a pre-made type with default settings.
 /// For more advanced usage, see `ConfigurableTrace`.
-pub const Trace = ConfigurableTrace(2, 4, builtin.mode == .Debug);
+pub const Trace = ConfigurableTrace(2, 4, builtin.mode == .debug);
 
 pub fn ConfigurableTrace(comptime size: usize, comptime stack_frame_count: usize, comptime is_enabled: bool) type {
     return struct {
@@ -1854,18 +1847,44 @@ pub fn ConfigurableTrace(comptime size: usize, comptime stack_frame_count: usize
 pub const SafetyLock = struct {
     state: State = if (runtime_safety) .unlocked else .unknown,
 
-    pub const State = if (runtime_safety) enum { unlocked, locked } else enum { unknown };
+    pub const State = if (runtime_safety) enum(usize) {
+        unlocked = 0,
+        exclusive = math.maxInt(usize),
+        _, // shared lock count
 
+        fn isShared(state: State) bool {
+            return switch (state) {
+                _ => true,
+                else => false,
+            };
+        }
+    } else enum { unknown };
+
+    /// Exclusive. Use when mutating data.
     pub fn lock(l: *SafetyLock) void {
         if (!runtime_safety) return;
         assert(l.state == .unlocked);
-        l.state = .locked;
+        l.state = .exclusive;
     }
 
     pub fn unlock(l: *SafetyLock) void {
         if (!runtime_safety) return;
-        assert(l.state == .locked);
+        assert(l.state == .exclusive);
         l.state = .unlocked;
+    }
+
+    /// Use when consuming data in a read-only manner.
+    pub fn lockShared(l: *SafetyLock) void {
+        if (!runtime_safety) return;
+        assert(l.state != .exclusive);
+        l.state = @fromBackingInt(@backingInt(l.state) + 1);
+        assert(l.state.isShared()); // Catch overflow to `exclusive`.
+    }
+
+    pub fn unlockShared(l: *SafetyLock) void {
+        if (!runtime_safety) return;
+        assert(l.state.isShared());
+        l.state = @fromBackingInt(@backingInt(l.state) - 1);
     }
 
     pub fn assertUnlocked(l: SafetyLock) void {
@@ -1875,7 +1894,12 @@ pub const SafetyLock = struct {
 
     pub fn assertLocked(l: SafetyLock) void {
         if (!runtime_safety) return;
-        assert(l.state == .locked);
+        assert(l.state == .exclusive);
+    }
+
+    pub fn assertLockedShared(l: SafetyLock) void {
+        if (!runtime_safety) return;
+        assert(l.state.isShared());
     }
 };
 
@@ -1885,6 +1909,12 @@ test SafetyLock {
     safety_lock.lock();
     safety_lock.assertLocked();
     safety_lock.unlock();
+    safety_lock.assertUnlocked();
+    safety_lock.lockShared();
+    safety_lock.assertLockedShared();
+    for (0..3) |_| safety_lock.lockShared();
+    safety_lock.assertLockedShared();
+    for (0..4) |_| safety_lock.unlockShared();
     safety_lock.assertUnlocked();
 }
 

@@ -153,9 +153,9 @@ pub fn main(init: std.process.Init) !void {
     // result, restart the whole process, reparsing the AST and re-generating the list
     // of all possible transformations and shuffling it again.
 
-    var transformations = std.array_list.Managed(Walk.Transformation).init(gpa);
-    defer transformations.deinit();
-    try Walk.findTransformations(arena, &tree, &transformations);
+    var transformations: std.ArrayList(Walk.Transformation) = .empty;
+    defer transformations.deinit(gpa);
+    try Walk.findTransformations(arena, gpa, &tree, &transformations);
     sortTransformations(transformations.items, rng.random());
 
     fresh: while (transformations.items.len > 0) {
@@ -198,7 +198,7 @@ pub fn main(init: std.process.Init) !void {
 
                 if (zir.hasCompileErrors()) {
                     more_fixups.clearRetainingCapacity();
-                    const payload_index = zir.extra[@intFromEnum(Zir.ExtraIndex.compile_errors)];
+                    const payload_index = zir.extra[@backingInt(Zir.ExtraIndex.compile_errors)];
                     assert(payload_index != 0);
                     const header = zir.extraData(Zir.Inst.CompileErrors, payload_index);
                     var extra_index = header.end;
@@ -238,7 +238,7 @@ pub fn main(init: std.process.Init) !void {
                     tree.deinit(gpa);
                     tree = new_tree;
 
-                    try Walk.findTransformations(arena, &tree, &transformations);
+                    try Walk.findTransformations(arena, gpa, &tree, &transformations);
                     sortTransformations(transformations.items, rng.random());
 
                     continue :fresh;
@@ -400,7 +400,7 @@ fn parse(gpa: Allocator, io: Io, file_path: []const u8) !Ast {
         file_path,
         gpa,
         .limited(std.math.maxInt(u32)),
-        .fromByteUnits(1),
+        .@"1",
         0,
     ) catch |err| {
         fatal("unable to open '{s}': {s}", .{ file_path, @errorName(err) });

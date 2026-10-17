@@ -1179,6 +1179,7 @@ const Poly = struct {
 
         const T = switch (builtin.target.cpu.arch) {
             .x86_64, .x86 => u32, // Generates better code on Intel CPUs
+            .riscv64 => u32, // Work around LLVM miscompiling coefficient extraction with u64 batches https://codeberg.org/ziglang/zig/issues/37128
             else => u64, // u128 might be faster on some other CPUs.
         };
 
@@ -1701,7 +1702,7 @@ fn testNistKat(mode: type, hash: []const u8) !void {
     var out: [32]u8 = undefined;
     fw.hasher.final(&out);
     var outHex: [64]u8 = undefined;
-    _ = try std.fmt.bufPrint(&outHex, "{x}", .{&out});
+    _ = try std.mem.print(&outHex, "{x}", .{&out});
     try testing.expectEqualStrings(&outHex, hash);
 }
 

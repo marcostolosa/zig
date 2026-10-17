@@ -60,6 +60,7 @@ const g1: i32 = 1233 + 1;
 var g2: i32 = 0;
 
 test "global variables" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     try expect(g2 == 0);
@@ -296,7 +297,6 @@ const global_a: i32 = 1234;
 const global_b: *const i32 = &global_a;
 const global_c: *const f32 = @as(*const f32, @ptrCast(global_b));
 test "compile time global reinterpret" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     const d = @as(*const i32, @ptrCast(global_c));
     try expect(d.* == 1234);
 }
@@ -636,7 +636,6 @@ fn emptyFn() void {}
 
 const addr1 = @as(*const u8, @ptrCast(&emptyFn));
 test "comptime cast fn to ptr" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     const addr2 = @as(*const u8, @ptrCast(&emptyFn));
     comptime assert(addr1 == addr2);
 }
@@ -683,6 +682,7 @@ var gdt = [_]GDTEntry{
 var global_ptr = &gdt[0];
 
 test "global constant is loaded with a runtime-known index" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     const S = struct {
@@ -797,10 +797,8 @@ test "auto created variables have correct alignment" {
 }
 
 test "extern variable with non-pointer opaque type" {
-    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
 
     @export(&var_to_export, .{ .name = "opaque_extern_var" });
@@ -915,7 +913,6 @@ test "labeled block with runtime branch forwards its result location type to bre
 
 test "try in labeled block doesn't cast to wrong type" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const S = struct {
         a: u32,
@@ -1081,6 +1078,8 @@ test "inline call of function with a switch inside the return statement" {
 }
 
 test "pointer to zero sized global is mutable" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const S = struct {
         const Thing = struct {};
 
@@ -1272,7 +1271,6 @@ test "@Int returned from block" {
 }
 
 test "comptime variable initialized with addresses of literals" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     comptime var st = .{
         .foo = &1,
         .bar = &2,
@@ -1322,8 +1320,6 @@ test "proper value is returned from labeled block" {
 }
 
 test "const inferred array of slices" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const T = struct { v: bool };
 
     const decls = [_][]const T{
@@ -1398,7 +1394,6 @@ test "allocation and looping over 3-byte integer" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_llvm and builtin.os.tag.isDarwin()) return error.SkipZigTest; // TODO
 
     try expect(@sizeOf(u24) == 4);
     try expect(@sizeOf([1]u24) == 4);

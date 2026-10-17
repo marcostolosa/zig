@@ -38,7 +38,7 @@ project(zig
 )
 
 set(ZIG_VERSION_MAJOR 0)
-set(ZIG_VERSION_MINOR 17)
+set(ZIG_VERSION_MINOR 18)
 set(ZIG_VERSION_PATCH 0)
 set(ZIG_VERSION "" CACHE STRING "Override Zig version string. Default is to find out with git.")
 
@@ -133,9 +133,9 @@ else()
     set(ZIG_SYSTEM_LIBCXX "stdc++" CACHE STRING "system libcxx name for build.zig")
 endif()
 
-find_package(llvm 22)
-find_package(clang 22)
-find_package(lld 22)
+find_package(llvm 23)
+find_package(clang 23)
+find_package(lld 23)
 
 if(ZIG_STATIC_ZLIB)
     if (MSVC)
@@ -358,6 +358,17 @@ set(ZIG_STAGE2_SOURCES
     src/codegen/c/type/render_defs.zig
     src/codegen/llvm.zig
     src/codegen/llvm/bindings.zig
+    src/codegen/loongarch/abi.zig
+    src/codegen/loongarch/encoding.zig
+    src/codegen/loongarch/decode_tree.zon
+    src/codegen/loongarch/inst_formats.zon
+    src/codegen/loongarch/Assemble.zig
+    src/codegen/loongarch/Disassemble.zig
+    src/codegen/loongarch/Mir.zig
+    src/codegen/loongarch/bits.zig
+    src/codegen/loongarch/Select.zig
+    src/codegen/loongarch.zig
+    src/codegen/s390x/abi.zig
     src/crash_report.zig
     src/dev.zig
     src/libs/freebsd.zig
@@ -372,6 +383,7 @@ set(ZIG_STAGE2_SOURCES
     src/link/ConstPool.zig
     src/link/Coff.zig
     src/link/Dwarf.zig
+    src/link/Dwarf2.zig
     src/link/Elf.zig
     src/link/Elf/Archive.zig
     src/link/Elf/Atom.zig
@@ -445,7 +457,6 @@ set(ZIG_STAGE2_SOURCES
     src/register_manager.zig
     src/target.zig
     src/tracy.zig
-    src/libs/wasi_libc.zig
 )
 
 if(MSVC)
@@ -600,23 +611,13 @@ if(MSVC)
   set(ZIG2_COMPILE_FLAGS "/Od")
   set(ZIG2_LINK_FLAGS "/STACK:16777216 /FORCE:MULTIPLE")
 else()
-  set(ZIG_WASM2C_COMPILE_FLAGS "-std=c99 -O2")
-  set(ZIG1_COMPILE_FLAGS "-std=c99 -Os -fno-strict-aliasing")
-  set(ZIG2_COMPILE_FLAGS "-std=c99 -O0 -fno-sanitize=undefined -fno-stack-protector -fno-strict-aliasing")
+  set(ZIG_WASM2C_COMPILE_FLAGS "-std=c99")
+  set(ZIG1_COMPILE_FLAGS "-std=c99 -Oz -fno-strict-aliasing")
+  set(ZIG2_COMPILE_FLAGS "-std=c99 -Oz -fno-sanitize=undefined -fno-stack-protector -fno-strict-aliasing")
   # Must match the condition in build.zig.
   if(ZIG_HOST_TARGET_ARCH MATCHES "^(arm|thumb)(eb)?$" OR ZIG_HOST_TARGET_ARCH EQUAL "hexagon" OR ZIG_HOST_TARGET_ARCH MATCHES "^powerpc(64)?(le)?$")
     set(ZIG1_COMPILE_FLAGS "${ZIG1_COMPILE_FLAGS} -ffunction-sections -fdata-sections")
     set(ZIG2_COMPILE_FLAGS "${ZIG2_COMPILE_FLAGS} -ffunction-sections -fdata-sections")
-  endif()
-  if(APPLE)
-    set(ZIG2_LINK_FLAGS "-Wl,-stack_size,0x10000000")
-  elseif(MINGW)
-    set(ZIG2_LINK_FLAGS "-Wl,--stack,0x10000000")
-  # Solaris/illumos ld(1) does not provide a --stack-size option.
-  elseif(CMAKE_HOST_SOLARIS)
-    unset(ZIG2_LINK_FLAGS)
-  else()
-    set(ZIG2_LINK_FLAGS "-Wl,-z,stack-size=0x10000000")
   endif()
   if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
     # Prevent GCC from miscompiling 'zig2.c'. See also 'GCC_BUG_119085_PRESENT' workaround details in 'bootstrap.c'.
@@ -686,7 +687,7 @@ add_custom_command(
 
 set(BUILD_COMPILER_RT_ARGS
   "${PROJECT_SOURCE_DIR}/lib"
-  build-obj -ofmt=c -OReleaseSmall
+  build-obj -ofmt=c -lc -OReleaseSmall
   --name compiler_rt
   -femit-bin="${ZIG_COMPILER_RT_C_SOURCE}"
   -target "${ZIG_HOST_TARGET_TRIPLE}"

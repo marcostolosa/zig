@@ -1447,6 +1447,7 @@ pub const ConnectTcpOptions = struct {
     proxied_host: ?HostName = null,
     proxied_port: ?u16 = null,
     timeout: Io.Timeout = .none,
+    connection: ?*Connection = null,
 };
 
 pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcpError!*Connection {
@@ -1458,14 +1459,30 @@ pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcp
     const proxied_host = options.proxied_host orelse host;
     const proxied_port = options.proxied_port orelse port;
 
-    if (try client.connection_pool.findConnection(io, .{
-        .host = proxied_host,
-        .port = proxied_port,
-        .protocol = protocol,
-    })) |conn| return conn;
+    var stream: std.Io.net.Stream = undefined;
+    if (options.connection == null) {
+        if (try client.connection_pool.findConnection(io, .{
+            .host = proxied_host,
+            .port = proxied_port,
+            .protocol = protocol,
+        })) |conn| return conn;
 
-    var stream = try host.connect(io, port, .{ .mode = .stream });
-    errdefer stream.close(io);
+        stream = try host.connect(io, port, .{ .mode = .stream });
+        errdefer stream.close(io);
+    } else {
+        const old = options.connection.?;
+        stream = old.getStream();
+        // The TLS connection takes over the socket. Remove the plain wrapper
+        // from the pool and free it WITHOUT closing the stream.
+        {
+            const pool = &client.connection_pool;
+            pool.mutex.lockUncancelable(io);
+            defer pool.mutex.unlock(io);
+            pool.used.remove(&old.pool_node);
+        }
+        const plain: *Connection.Plain = @alignCast(@fieldParentPtr("connection", old));
+        plain.destroy();
+    }
 
     switch (protocol) {
         .tls => {
@@ -1732,14 +1749,23 @@ pub fn request(
         std.mem.swap(std.crypto.Certificate.Bundle, &client.ca_bundle, &bundle);
     }
 
-    const connection = options.connection orelse c: {
-        var host_name_buffer: [HostName.max_len]u8 = undefined;
-        const host_name = HostName.fromUri(uri, &host_name_buffer) catch |err| switch (err) {
-            error.UriMissingHost => |e| return e,
-            error.NameTooLong, error.InvalidHostName => return error.InvalidHostName,
-        };
+    var host_name_buffer: [HostName.max_len]u8 = undefined;
+    const host_name = HostName.fromUri(uri, &host_name_buffer) catch |err| switch (err) {
+        error.UriMissingHost => |e| return e,
+        error.NameTooLong, error.InvalidHostName => return error.InvalidHostName,
+    };
+    var connection = options.connection orelse c: {
         break :c try client.connect(host_name, uriPort(uri, protocol), protocol);
     };
+
+    if (protocol == .tls and connection.protocol == .plain) {
+        connection = try client.connectTcpOptions(.{
+            .host = host_name,
+            .port = uriPort(uri, protocol),
+            .protocol = protocol,
+            .connection = connection,
+        });
+    }
 
     return .{
         .uri = uri,

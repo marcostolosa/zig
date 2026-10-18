@@ -822,7 +822,7 @@ fn handleCommand(
                 .pic = pic,
             };
         }) catch |err| switch (err) {
-            error.Canceled, error.OutOfMemory, error.AlreadyReported => |e| return e,
+            error.Canceled, error.OutOfMemory, error.AlreadyReported, error.SkipTest => |e| return e,
             error.ReadFailed => return error.ContentsReadFailed,
         },
         .write => {
@@ -1006,7 +1006,7 @@ fn spawnCompiler(
     output_mode: std.lang.OutputMode,
     args_r: *std.Io.Reader,
     target: Compiler.Target,
-) (std.Io.Reader.ShortError || FailError)!void {
+) (std.Io.Reader.ShortError || TestError)!void {
     const gpa = runner.gpa;
     const arena = runner.arena.allocator();
     if (compiler.*) |*comp| {
@@ -1118,6 +1118,7 @@ fn spawnCompiler(
         .stderr = .pipe,
     }) catch |err| switch (err) {
         error.Canceled, error.OutOfMemory => |e| return e,
+        error.OperationUnsupported => return error.SkipTest,
         else => |e| return runner.fail("unable to spawn compiler: {t}", .{e}),
     };
     compiler.* = .{
@@ -1222,7 +1223,7 @@ const Compiler = struct {
         expected: []const u8,
         src_dir: std.Io.Dir,
         digest: *const std.Build.Cache.BinDigest,
-    ) FailError!void {
+    ) TestError!void {
         const runner = comp.runner;
         const gpa = runner.gpa;
         const arena = runner.arena.allocator();
@@ -1560,7 +1561,7 @@ const Compiler = struct {
         }
     }
 
-    fn compileC(parent_comp: *Compiler, src_dir: std.Io.Dir, c_path: []const u8) FailError![]const u8 {
+    fn compileC(parent_comp: *Compiler, src_dir: std.Io.Dir, c_path: []const u8) TestError![]const u8 {
         const runner = parent_comp.runner;
         const arena = runner.arena.allocator();
         var compiler: ?Compiler = null;
@@ -1577,7 +1578,7 @@ const Compiler = struct {
             .linker = .lld,
             .pic = parent_comp.target.pic,
         }) catch |err| switch (err) {
-            error.Canceled, error.OutOfMemory, error.AlreadyReported => |e| return e,
+            error.Canceled, error.OutOfMemory, error.AlreadyReported, error.SkipTest => |e| return e,
             error.ReadFailed => unreachable, // .fixed
         };
         const comp = &compiler.?;

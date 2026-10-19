@@ -20,7 +20,7 @@ test "simple" {
         },
     };
 
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    var arena: Arena = .init(testing.allocator);
     defer arena.deinit();
 
     const args = try cli.parse(arena.allocator(), SimpleArgs, simple_args_config, &.{

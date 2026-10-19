@@ -1,8 +1,0 @@
-.{
-    .{
-        .cache_mode = .whole,
-        .backend = .llvmir,
-        .linker = .old,
-        .pic = .pic,
-    },
-}

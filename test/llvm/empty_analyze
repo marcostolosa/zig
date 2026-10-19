@@ -40,11 +40,11 @@
 #skip spirv64-vulkan-none-baseline-whole-llvm-lld-pic
 
 #obj {
---name llvm_targets
--Mroot=analyze.zig
+--name test
+-Mroot=test.zig
 -fno-emit-asm -fno-emit-bin
 #}
 
-#write analyze.zig
+#write test.zig
 #update
 #check errors

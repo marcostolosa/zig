@@ -1,6 +1,10 @@
 #skip amdgcn-amdpal-none-baseline-whole-llvm-lld-pic
 #skip amdgcn-mesa3d-none-baseline-whole-llvm-lld-pic
 
+#skip arc-freestanding-none-baseline-whole-llvm-lld-pic
+#skip arc-linux-gnu-baseline-whole-llvm-lld-pic
+#skip arc-linux-none-baseline-whole-llvm-lld-pic
+
 #skip arm-uefi-eabi-baseline-whole-llvm-lld-pic
 #skip arm-uefi-eabihf-baseline-whole-llvm-lld-pic
 
@@ -23,6 +27,12 @@
 
 #skip mipsel-psx-eabi-baseline-whole-llvm-lld-pic
 
+#skip nvptx-cuda-none-baseline-whole-llvm-lld-pic
+#skip nvptx-nvcl-none-baseline-whole-llvm-lld-pic
+
+#skip nvptx64-cuda-none-baseline-whole-llvm-lld-pic
+#skip nvptx64-nvcl-none-baseline-whole-llvm-lld-pic
+
 #skip riscv32-uefi-none-baseline-whole-llvm-lld-pic
 
 #skip riscv32be-freestanding-none-baseline-whole-llvm-lld-pic
@@ -39,17 +49,19 @@
 #skip spirv64-opencl-none-baseline-whole-llvm-lld-pic
 #skip spirv64-vulkan-none-baseline-whole-llvm-lld-pic
 
+#skip xcore-freestanding-none-baseline-whole-llvm-lld-pic
+
 #skip xtensa-freestanding-call0-baseline-whole-llvm-lld-pic
 #skip xtensa-freestanding-none-baseline-whole-llvm-lld-pic
 #skip xtensa-linux-call0-baseline-whole-llvm-lld-pic
 #skip xtensa-linux-none-baseline-whole-llvm-lld-pic
 
 #obj {
---name llvm_targets
--Mroot=assembly.zig
--femit-asm -fno-emit-bin
+--name test
+-Mroot=test.zig
+-fno-emit-asm -femit-bin
 #}
 
-#write assembly.zig
+#write test.zig
 #update
 #check errors

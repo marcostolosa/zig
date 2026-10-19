@@ -17,7 +17,7 @@ pub const Target = struct {
     dynamic_linker: DynamicLinker = .default,
 
     cache_mode: enum { whole, incremental },
-    backend: enum { selfhosted, llvm, llvmir, cbe },
+    backend: enum { selfhosted, llvm, cbe },
     linker: enum { lld, old, new },
     pic: enum { nopic, pic, pie },
 
@@ -942,6 +942,7 @@ fn testOne(runner: *Runner, test_index: u32) (error{ServerWriteFailed} || TestEr
     };
     defer {
         update.manifest_sr.deinit();
+        if (update.compiler) |*comp| comp.deinit();
         update.src_dir.close(runner.io);
         update.prog_node.end();
     }
@@ -1161,11 +1162,12 @@ fn handleCommand(
             const triple_cpu = component_it.rest();
             var triple_len: usize = 0;
             for (0..3) |_| {
+                const component_start = triple_len;
                 triple_len = if (std.mem.findScalarPos(u8, triple_cpu, triple_len, '-')) |dash_pos|
                     dash_pos + 1
                 else
                     return update.fail("target {q} missing cpu", .{update.target_query});
-                if (std.mem.eql(u8, triple_cpu[0..triple_len], "native-")) break;
+                if (std.mem.eql(u8, triple_cpu[component_start..triple_len], "native-")) break;
             }
             const triple = triple_cpu[0 .. triple_len - 1];
             const cpu = triple_cpu[triple_len..];
@@ -1179,7 +1181,6 @@ fn handleCommand(
                         .cpu_features = cpu,
                         .object_format = switch (backend) {
                             .sema, .selfhosted, .llvm => null,
-                            .llvmir => "llvmir",
                             .cbe => "c",
                         },
                         .diagnostics = &query_parse_diags,
@@ -1393,7 +1394,6 @@ fn handleCommand(
                 } else return update.fail("unexpected stderr:\n{s}", .{stderr_buffered});
             }
 
-            try comp.exit();
             return update.fail("compiler failed to send terminating error_bundle", .{});
         },
     }
@@ -1417,9 +1417,27 @@ fn spawnCompiler(
     const gpa = runner.gpa;
     const arena = runner.arena.allocator();
     if (compiler.*) |*comp| {
-        try comp.exit();
+        comp.deinit();
         compiler.* = null;
     }
+    errdefer compiler.* = null;
+
+    compiler.* = .{
+        .runner = runner,
+        .allow_compiler_stderr = true,
+        .output_mode = output_mode,
+        .state = .idle,
+        .child = undefined,
+        .fw = undefined,
+        .mr_buffer = undefined,
+        .mr = undefined,
+        .client = undefined,
+        .target = target,
+        .emit_name = null,
+        .prog_node = .none,
+        .config = null,
+    };
+    const comp = &compiler.*.?;
 
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(gpa);
@@ -1431,20 +1449,19 @@ fn spawnCompiler(
             .Lib => "build-lib",
         },
         "-target",
-        target.triple,
+        comp.target.triple,
         "--cache-dir",
         ".zig-cache",
     });
-    switch (target.cache_mode) {
+    switch (comp.target.cache_mode) {
         .whole => {},
         .incremental => try argv.append(gpa, "-fincremental"),
     }
     var path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
-    if (target.backend) |b| switch (b) {
+    if (comp.target.backend) |b| switch (b) {
         .sema => try argv.append(gpa, "-fno-emit-bin"),
         .selfhosted => try argv.append(gpa, "-fno-llvm"),
         .llvm => try argv.append(gpa, "-fllvm"),
-        .llvmir => try argv.append(gpa, "-ofmt=llvmir"),
         .cbe => try argv.append(gpa, "-ofmt=c"),
     } else try argv.appendSlice(gpa, &.{ "-I", path_buffer[0 .. (runner.args.lib_dir orelse
         return runner.fail("\"--lib=path/to/lib\" arg required with cbe", .{}))
@@ -1452,12 +1469,12 @@ fn spawnCompiler(
         error.Canceled => |e| return e,
         else => |e| return runner.fail("unable to get lib path: {t}", .{e}),
     }] });
-    switch (target.linker) {
+    switch (comp.target.linker) {
         .lld => try argv.appendSlice(gpa, &.{ "-flld", "-fno-new-linker" }),
         .old => try argv.appendSlice(gpa, &.{ "-fno-lld", "-fno-new-linker" }),
         .new => try argv.appendSlice(gpa, &.{ "-fno-lld", "-fnew-linker" }),
     }
-    switch (target.pic) {
+    switch (comp.target.pic) {
         .nopic => try argv.appendSlice(gpa, &.{ "-fno-PIC", "-fno-PIE" }),
         .pic => try argv.appendSlice(gpa, &.{ "-fPIC", "-fno-PIE" }),
         .pie => try argv.appendSlice(gpa, &.{ "-fPIC", "-fPIE" }),
@@ -1466,6 +1483,7 @@ fn spawnCompiler(
     var need: usize = 1;
     var state: enum { positional, @"--name" } = .positional;
     var root_name: ?[]const u8 = null;
+    var emit: ?std.zig.EmitArtifact = .bin;
     while (true) {
         const done = if (args_r.fill(need)) false else |err| switch (err) {
             error.ReadFailed => |e| return e,
@@ -1479,10 +1497,42 @@ fn spawnCompiler(
             switch (state) {
                 .positional => if (std.mem.eql(u8, arg, "--name")) {
                     state = .@"--name";
+                } else if (std.mem.cutPrefix(u8, arg, "-ofmt=")) |ofmt| {
+                    comp.target.resolved.ofmt =
+                        std.meta.stringToEnum(std.Target.ObjectFormat, ofmt) orelse
+                        return runner.fail("invalid object format {q}", .{ofmt});
                 } else if (std.mem.cutPrefix(u8, arg, "-M")) |module| {
                     var module_name_it = std.mem.splitScalar(u8, module, '=');
                     const module_name = module_name_it.next().?;
                     root_name = root_name orelse module_name;
+                } else if (std.mem.eql(u8, arg, "-femit-asm")) {
+                    emit = .@"asm";
+                } else if (std.mem.eql(u8, arg, "-femit-bin")) {
+                    emit = .bin;
+                } else if (std.mem.eql(u8, arg, "-femit-docs")) {
+                    emit = .docs;
+                } else if (std.mem.eql(u8, arg, "-femit-h")) {
+                    emit = .h;
+                } else if (std.mem.eql(u8, arg, "-femit-implib")) {
+                    emit = .implib;
+                } else if (std.mem.eql(u8, arg, "-femit-llvm-bc")) {
+                    emit = .llvm_bc;
+                } else if (std.mem.eql(u8, arg, "-femit-llvm-ir")) {
+                    emit = .llvm_ir;
+                } else if (std.mem.eql(u8, arg, "-fno-emit-asm")) {
+                    if (emit == .@"asm") emit = null;
+                } else if (std.mem.eql(u8, arg, "-fno-emit-bin")) {
+                    if (emit == .bin) emit = null;
+                } else if (std.mem.eql(u8, arg, "-fno-emit-docs")) {
+                    if (emit == .docs) emit = null;
+                } else if (std.mem.eql(u8, arg, "-fno-emit-h")) {
+                    if (emit == .h) emit = null;
+                } else if (std.mem.eql(u8, arg, "-fno-emit-implib")) {
+                    if (emit == .implib) emit = null;
+                } else if (std.mem.eql(u8, arg, "-fno-emit-llvm-bc")) {
+                    if (emit == .llvm_bc) emit = null;
+                } else if (std.mem.eql(u8, arg, "-fno-emit-llvm-ir")) {
+                    if (emit == .llvm_ir) emit = null;
                 },
                 .@"--name" => {
                     root_name = arg;
@@ -1500,27 +1550,27 @@ fn spawnCompiler(
     }
     try argv.append(gpa, "--listen=-");
 
-    const out_name = try std.zig.EmitArtifact.bin.cacheName(arena, .{
+    comp.emit_name = if (emit) |e| try e.cacheName(arena, .{
         .root_name = root_name orelse "root",
-        .cpu_arch = target.resolved.cpu.arch,
-        .os_tag = target.resolved.os.tag,
-        .ofmt = target.resolved.ofmt,
-        .abi = target.resolved.abi,
+        .cpu_arch = comp.target.resolved.cpu.arch,
+        .os_tag = comp.target.resolved.os.tag,
+        .ofmt = comp.target.resolved.ofmt,
+        .abi = comp.target.resolved.abi,
         .output_mode = output_mode,
-    });
+    }) else null;
 
     var name_buffer: [std.Progress.Node.max_name_len]u8 = undefined;
-    const comp_prog_node = runner.prog_node.start(std.mem.print(&name_buffer, "compile {s}", .{
-        out_name,
+    comp.prog_node = runner.prog_node.start(std.mem.print(&name_buffer, "compile {s}", .{
+        comp.emit_name orelse root_name orelse "root",
     }) catch &name_buffer, 0);
-    errdefer comp_prog_node.end();
+    errdefer comp.prog_node.end();
 
-    const child = std.process.spawn(runner.io, .{
+    comp.child = std.process.spawn(runner.io, .{
         .exe = .{ .file = runner.args.zig_exe orelse
             return runner.fail("missing \"--zig=path/to/zig\" arg", .{}) },
         .argv = argv.items,
         .cwd = .{ .dir = src_dir },
-        .progress_node = comp_prog_node,
+        .progress_node = comp.prog_node,
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .pipe,
@@ -1529,31 +1579,14 @@ fn spawnCompiler(
         error.OperationUnsupported => return error.SkipTest,
         else => |e| return runner.fail("unable to spawn compiler: {t}", .{e}),
     };
-    compiler.* = .{
-        .runner = runner,
-        .prog_node = comp_prog_node,
-        .allow_compiler_stderr = true,
-        .output_mode = output_mode,
-        .state = .idle,
-        .child = child,
-        .fw = undefined,
-        .mr_buffer = undefined,
-        .mr = undefined,
-        .client = undefined,
-        .target = target,
-        .out_name = out_name,
-        .config = null,
-    };
-    const comp = &compiler.*.?;
-    comp.fw = child.stdin.?.writerStreaming(runner.io, &.{});
+    comp.fw = comp.child.stdin.?.writerStreaming(runner.io, &.{});
     comp.mr.init(gpa, runner.io, comp.mr_buffer.toStreams(), &.{
-        child.stdout.?, child.stderr.?,
+        comp.child.stdout.?, comp.child.stderr.?,
     });
     comp.client = .{ .in = comp.mr.reader(0), .out = &comp.fw.interface };
 }
 const Compiler = struct {
     runner: *Runner,
-    prog_node: std.Progress.Node,
     allow_compiler_stderr: bool,
     output_mode: std.lang.OutputMode,
     state: enum { idle, update },
@@ -1563,7 +1596,8 @@ const Compiler = struct {
     mr: std.Io.File.MultiReader,
     client: std.zig.Client,
     target: Compiler.Target,
-    out_name: []const u8,
+    emit_name: ?[]const u8,
+    prog_node: std.Progress.Node,
     config: ?std.zig.Server.Message.Config,
 
     const Target = struct {
@@ -1586,8 +1620,6 @@ const Compiler = struct {
             /// Use the LLVM backend.
             /// Corresponds to `-fllvm -flld`.
             llvm,
-            /// Use the LLVM backend without libLLVM.
-            llvmir,
             /// Use the C backend. The output is compiled with `zig cc`.
             /// Corresponds to `-ofmt=c`.
             cbe,
@@ -1597,6 +1629,12 @@ const Compiler = struct {
 
         const Pic = enum { nopic, pic, pie };
     };
+
+    fn deinit(comp: *Compiler) void {
+        comp.child.kill(comp.runner.io);
+        comp.prog_node.end();
+        comp.prog_node = .none;
+    }
 
     fn receiveMessage(comp: *Compiler) FailError!?struct {
         tag: std.zig.Server.Message.Tag,
@@ -1639,6 +1677,11 @@ const Compiler = struct {
         const arena = runner.arena.allocator();
         const io = runner.io;
         const target = &comp.target.resolved;
+        const emit_name = switch (check) {
+            else => comp.emit_name orelse
+                return update.fail("unable to perform {t} check without emitted file", .{check}),
+            .errors => return, // expect no emitted file
+        };
         const config = &comp.config.?;
         var path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
 
@@ -1655,14 +1698,49 @@ const Compiler = struct {
             }),
         };
 
-        var argv: std.ArrayList([]const u8) = .initBuffer(try arena.alloc([]const u8, 5 + 4));
+        const emit_path = emit_path: {
+            const emit_dir_path = ".zig-cache" ++ std.Io.Dir.path.sep_str ++
+                "o" ++ std.Io.Dir.path.sep_str ++ std.Build.Cache.binToHex(digest.*);
+            const emit_path =
+                try std.Io.Dir.path.join(arena, &.{ emit_dir_path, emit_name });
+            break :emit_path switch (comp.target.backend.?) {
+                .sema => return,
+                .selfhosted, .llvm => emit_path,
+                .cbe => try comp.compileC(update.src_dir, emit_path),
+            };
+        };
+
+        const emit_file = update.src_dir.openFile(io, emit_path, .{}) catch |err| switch (err) {
+            error.Canceled => |e| return e,
+            else => |e| return update.fail("unable to open {q}: {t}", .{ emit_path, e }),
+        };
+        defer emit_file.close(io);
+
+        var argv: std.ArrayList([]const u8) = try .initCapacity(arena, 5 + 4);
         var environ_map: std.process.Environ.Map = .init(gpa);
         defer environ_map.deinit();
         try environ_map.putAll(&runner.environ_map);
         var script_buffer: [512]u8 = undefined;
         const script_path, const script_file, var script_fw = script: switch (check) {
-            .errors => return,
-            .stdout, .exit, .llvm => .{ undefined, null, undefined },
+            .errors => unreachable,
+            .stdout, .exit => .{ undefined, null, undefined },
+            .llvm => {
+                var emit_fr = emit_file.reader(io, &.{});
+                const actual = emit_fr.interface.readAllocAll(arena, @intCast(
+                    emit_fr.getSize() catch |err| switch (err) {
+                        error.Canceled => |e| return e,
+                        else => |e| return runner.fail("unable to get size of {q}: {t}", .{ emit_path, e }),
+                    },
+                )) catch |err| switch (switch (err) {
+                    error.OutOfMemory => |e| return e,
+                    error.EndOfStream => |e| e,
+                    error.ReadFailed => emit_fr.err.?,
+                }) {
+                    error.Canceled => |e| return e,
+                    else => |e| return runner.fail("unable to read {q}: {t}", .{ emit_path, e }),
+                };
+                return update.checkMatches("LLVM IR", expected, actual);
+            },
             .gdb => {
                 const script_path = tmp_dir_path ++ std.Io.Dir.path.sep_str ++ "gdb";
                 argv.appendSliceAssumeCapacity(&.{ "gdb", "--batch", "--command", script_path, "--args" });
@@ -1720,15 +1798,6 @@ const Compiler = struct {
             },
         };
         defer if (script_file) |file| file.close(io);
-
-        const out_dir_path = ".zig-cache" ++ std.Io.Dir.path.sep_str ++
-            "o" ++ std.Io.Dir.path.sep_str ++ std.Build.Cache.binToHex(digest.*);
-        const out_path = try std.Io.Dir.path.join(arena, &.{ out_dir_path, comp.out_name });
-        const bin_path = switch (comp.target.backend.?) {
-            .sema => return,
-            .selfhosted, .llvm, .llvmir => out_path,
-            .cbe => try comp.compileC(update.src_dir, out_path),
-        };
 
         const need_cross_libc =
             target.os.tag == .linux and config.flags.link_libc and config.flags.link_mode == .dynamic;
@@ -1796,7 +1865,7 @@ const Compiler = struct {
                 break :use_executor true;
             } else continue :use_executor .bad_os_or_cpu,
         };
-        argv.appendAssumeCapacity(bin_path);
+        argv.appendAssumeCapacity(emit_path);
 
         if (!runner.args.quiet) std.log.info("{f}", .{std.zig.SubprocessCommand{
             .argv = argv.items,
@@ -1815,41 +1884,19 @@ const Compiler = struct {
 
         var name_buffer: [std.Progress.Node.max_name_len]u8 = undefined;
         const run_prog_node = runner.prog_node.start(std.mem.print(&name_buffer, "run {s}", .{
-            comp.out_name,
+            emit_name,
         }) catch &name_buffer, 0);
         defer run_prog_node.end();
 
-        const bin_file = update.src_dir.openFile(io, bin_path, .{}) catch |err| switch (err) {
-            error.Canceled => |e| return e,
-            else => |e| return update.fail("unable to open {q}: {t}", .{ bin_path, e }),
-        };
-        defer bin_file.close(io);
         const result = std.process.run(gpa, io, .{
             .exe = exe: switch (check) {
-                .errors => unreachable,
-                .stdout, .exit => if (use_executor) .search else .{ .file = bin_file },
-                .llvm => {
-                    var bin_fr = bin_file.reader(io, &.{});
-                    const actual = bin_fr.interface.readAllocAll(arena, @intCast(
-                        bin_fr.getSize() catch |err| switch (err) {
-                            error.Canceled => |e| return e,
-                            else => |e| return runner.fail("unable to get size of {q}: {t}", .{ bin_path, e }),
-                        },
-                    )) catch |err| switch (switch (err) {
-                        error.OutOfMemory => |e| return e,
-                        error.EndOfStream => |e| e,
-                        error.ReadFailed => bin_fr.err.?,
-                    }) {
-                        error.Canceled => |e| return e,
-                        else => |e| return runner.fail("unable to read {q}: {t}", .{ bin_path, e }),
-                    };
-                    return update.checkMatches("LLVM IR", expected, actual);
-                },
+                .errors, .llvm => unreachable,
+                .stdout, .exit => if (use_executor) .search else .{ .file = emit_file },
                 .gdb, .lldb => {
                     if (use_executor) {
                         if (!runner.args.quiet) std.log.warn(
                             "skipping debugging of {q} via executor for foreign target {q}",
-                            .{ bin_path, comp.target.triple },
+                            .{ emit_path, comp.target.triple },
                         );
                         return;
                     }
@@ -1895,7 +1942,7 @@ const Compiler = struct {
                     } orelse {
                         if (!runner.args.quiet) std.log.warn(
                             "skipping debugging of {q} because of missing \"--{t}=path/to/{[1]t}\" arg",
-                            .{ bin_path, check },
+                            .{ emit_path, check },
                         );
                         return;
                     } };
@@ -1909,11 +1956,11 @@ const Compiler = struct {
             // Chances are the foreign executor isn't available. Skip this evaluation.
             if (!runner.args.quiet) std.log.warn(
                 "skipping execution of {q} via executor for foreign target {q}: {t}",
-                .{ bin_path, comp.target.triple, err },
+                .{ emit_path, comp.target.triple, err },
             );
             return;
         } else return update.fail("unable to run the generated executable {q}: {t}", .{
-            bin_path, err,
+            emit_path, err,
         });
         defer {
             gpa.free(result.stdout);
@@ -1925,7 +1972,7 @@ const Compiler = struct {
                 .stdout => {
                     if (code != 0) return update.fail(
                         "generated executable {q} failed with code {d}",
-                        .{ bin_path, code },
+                        .{ emit_path, code },
                     );
                     std.testing.expectEqualStrings(
                         expected,
@@ -1953,27 +2000,27 @@ const Compiler = struct {
                 .gdb, .lldb => {
                     if (code != debug_success) return update.fail(
                         "debugging {q} failed with code {d}",
-                        .{ bin_path, code },
+                        .{ emit_path, code },
                     );
                     try update.checkMatches("stdout", expected, result.stdout);
                 },
             },
             .signal => |sig| return update.fail(
                 "generated executable {q} terminated with signal {t}",
-                .{ bin_path, sig },
+                .{ emit_path, sig },
             ),
             .stopped => |sig| return update.fail(
                 "generated executable {q} stopped with signal {t}",
-                .{ bin_path, sig },
+                .{ emit_path, sig },
             ),
             .unknown => return update.fail(
                 "generated executable {q} terminated unexpectedly",
-                .{bin_path},
+                .{emit_path},
             ),
         }
         if (!use_executor and result.stderr.len > 0) {
             std.log.err("#update {q} generated executable {q} had unexpected stderr:\n{s}", .{
-                update.name, bin_path, result.stderr,
+                update.name, emit_path, result.stderr,
             });
         }
     }
@@ -1999,6 +2046,7 @@ const Compiler = struct {
             error.ReadFailed => unreachable, // .fixed
         };
         const comp = &compiler.?;
+        defer comp.deinit();
         comp.client.serveBodylessMessage(.update) catch |err| switch (err) {
             error.WriteFailed => switch (comp.fw.err.?) {
                 error.Canceled => |e| return e,
@@ -2006,7 +2054,7 @@ const Compiler = struct {
             },
         };
         comp.state = .update;
-        var out_path: ?[]const u8 = null;
+        var emit_path: ?[]const u8 = null;
         while (try comp.receiveMessage()) |message| switch (message.tag) {
             else => {}, // Ignore other messages,
             .config => {
@@ -2019,9 +2067,9 @@ const Compiler = struct {
                 _ = body_r.takeStruct(std.zig.Server.Message.EmitDigest, .little) catch unreachable;
                 const digest = body_r.takeArray(std.Build.Cache.bin_digest_len) catch unreachable;
 
-                const out_dir = ".zig-cache" ++ std.Io.Dir.path.sep_str ++
+                const emit_dir = ".zig-cache" ++ std.Io.Dir.path.sep_str ++
                     "o" ++ std.Io.Dir.path.sep_str ++ std.Build.Cache.binToHex(digest.*);
-                out_path = try std.Io.Dir.path.join(arena, &.{ out_dir, comp.out_name });
+                emit_path = try std.Io.Dir.path.join(arena, &.{ emit_dir, comp.emit_name.? });
             },
             .error_bundle => {
                 const eb = std.zig.Server.allocErrorBundle(
@@ -2040,7 +2088,7 @@ const Compiler = struct {
             },
         };
         try comp.exit();
-        return out_path.?;
+        return emit_path.?;
     }
 
     fn exit(comp: *Compiler) FailError!void {
@@ -2058,7 +2106,6 @@ const Compiler = struct {
         if (comp.client.in.bufferedLen() > 0) return runner.fail("unable to receive messages", .{});
         const term = comp.child.wait(runner.io) catch |err|
             return runner.fail("child process failed: {t}", .{err});
-        comp.prog_node.end();
         switch (term) {
             .exited => |code| if (code != 0)
                 return runner.fail("compiler failed with code {d}", .{code}),
@@ -2309,8 +2356,8 @@ pub fn main(init: std.process.Init) (std.mem.Allocator.Error || std.Io.Cancelabl
         };
     }
 
-    var inherit_dirs: std.ArrayList(std.Io.Dir) = .initBuffer(try arena.alloc(std.Io.Dir, 3));
-    var inherit_files: std.ArrayList(std.Io.File) = .initBuffer(try arena.alloc(std.Io.File, 4));
+    var inherit_dirs: std.ArrayList(std.Io.Dir) = try .initCapacity(arena, 3);
+    var inherit_files: std.ArrayList(std.Io.File) = try .initCapacity(arena, 4);
     inherit_files.appendSliceAssumeCapacity(&.{ args.test_file, args.zig_exe });
     inherit_dirs.appendSliceAssumeCapacity(&.{ args.lib_dir, args.src_dir });
     if (args.libc_runtimes_dir) |libc_runtimes_dir| inherit_dirs.appendAssumeCapacity(libc_runtimes_dir);

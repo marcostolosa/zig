@@ -1,5 +1,35 @@
+#skip amdgcn-amdhsa-none-baseline-whole-llvm-lld-pic
+#skip amdgcn-amdpal-none-baseline-whole-llvm-lld-pic
+#skip amdgcn-mesa3d-none-baseline-whole-llvm-lld-pic
+
+#skip nvptx-cuda-none-baseline-whole-llvm-lld-pic
+#skip nvptx-nvcl-none-baseline-whole-llvm-lld-pic
+
+#skip nvptx64-cuda-none-baseline-whole-llvm-lld-pic
+#skip nvptx64-nvcl-none-baseline-whole-llvm-lld-pic
+
+#skip spirv32-opencl-none-baseline-whole-llvm-lld-pic
+#skip spirv32-opengl-none-baseline-whole-llvm-lld-pic
+#skip spirv32-vulkan-none-baseline-whole-llvm-lld-pic
+
+#skip spirv64-amdhsa-none-baseline-whole-llvm-lld-pic
+#skip spirv64-opencl-none-baseline-whole-llvm-lld-pic
+#skip spirv64-vulkan-none-baseline-whole-llvm-lld-pic
+
+#skip wasm32-emscripten-none-baseline-whole-llvm-lld-pic
+#skip wasm32-freestanding-none-baseline-whole-llvm-lld-pic
+#skip wasm32-wasi-none-baseline-whole-llvm-lld-pic
+
+#skip wasm64-emscripten-none-baseline-whole-llvm-lld-pic
+#skip wasm64-freestanding-none-baseline-whole-llvm-lld-pic
+#skip wasm64-wasi-none-baseline-whole-llvm-lld-pic
+
+#skip x86_64-linux-gnux32-baseline-whole-llvm-new-pic
+#skip x86_64-linux-muslx32-baseline-whole-llvm-new-pic
+#skip x86_64-linux-x32-baseline-whole-llvm-new-pic
+
 #obj {
---name test
+--name test -fno-lld -fno-new-linker -ofmt=llvmir
 -Mroot=test.zig
 #}
 

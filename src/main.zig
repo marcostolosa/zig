@@ -3368,7 +3368,7 @@ fn buildOutputType(
     const target = &main_mod.resolved_target.result;
 
     if (target.cpu.arch == .arc or target.cpu.arch.isNvptx()) {
-        if (emit_bin != .no and create_module.resolved_options.use_llvm) {
+        if (emit_bin != .no and target.ofmt != .llvmbc and target.ofmt != .llvmir and create_module.resolved_options.use_llvm) {
             fatal("cannot emit {s} binary with the LLVM backend; only '-femit-asm' is supported", .{
                 @tagName(target.cpu.arch),
             });

@@ -305,3 +305,147 @@ pub fn realloc(uncasted_memory: []u8, alignment: Alignment, new_len: usize, may_
 
     return null;
 }
+
+const testing = std.testing;
+
+/// Returns an `alignment_bytes` aligned address followed by at least `len`
+/// bytes of free address space.
+fn findFreeWindowsRegion(len: usize, alignment_bytes: usize) !usize {
+    var base_addr: ?*anyopaque = null;
+    var region_size: windows.SIZE_T = len + alignment_bytes;
+    const status = ntdll.NtAllocateVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&base_addr), 0, &region_size, .{ .RESERVE = true }, .{ .NOACCESS = true });
+    if (status != .SUCCESS) return error.SkipZigTest;
+    unmapWindows(@intFromPtr(base_addr));
+    return mem.alignForward(usize, @intFromPtr(base_addr), alignment_bytes);
+}
+
+/// Fails unless `len` bytes at `addr` are free address space.
+fn expectFreeWindowsRegion(addr: usize, len: usize) !void {
+    var base_addr: ?*anyopaque = @ptrFromInt(addr);
+    var region_size: windows.SIZE_T = len;
+    const status = ntdll.NtAllocateVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&base_addr), 0, &region_size, .{ .RESERVE = true }, .{ .NOACCESS = true });
+    try testing.expectEqual(windows.NTSTATUS.SUCCESS, status);
+    unmapWindows(addr);
+}
+
+fn expectUsableWindowsBlock(ptr: ?[*]u8, len: usize, alignment_bytes: usize) !void {
+    const block = ptr orelse return error.TestUnexpectedResult;
+    try testing.expect(mem.isAligned(@intFromPtr(block), alignment_bytes));
+    @memset(block[0..len], 0x12);
+    try testing.expectEqual(0x12, block[len - 1]);
+}
+
+test "map on Windows: large alignments" {
+    if (native_os != .windows) return error.SkipZigTest;
+    const page_size = std.heap.pageSize();
+
+    // Interleaving granularity sized allocations makes it likely that some
+    // scratch regions start misaligned and some aligned.
+    var alignment_bytes: usize = 2 * windows_allocation_granularity;
+    while (alignment_bytes <= 16 * 1024 * 1024) : (alignment_bytes *= 2) {
+        for ([_]usize{ 1, 81 * 1024, 300 * 1024 }) |len| {
+            const noise = map(windows_allocation_granularity, .fromByteUnits(page_size)) orelse return error.OutOfMemory;
+            defer unmapWindows(@intFromPtr(noise));
+            const ptr = map(len, .fromByteUnits(alignment_bytes));
+            try expectUsableWindowsBlock(ptr, len, alignment_bytes);
+            unmapWindows(@intFromPtr(ptr.?));
+        }
+    }
+}
+
+test "map on Windows: padded length overflow" {
+    if (native_os != .windows) return error.SkipZigTest;
+    const page_size = std.heap.pageSize();
+    try testing.expectEqual(null, map(maxInt(usize) - page_size - 1, .fromByteUnits(1024 * 1024)));
+}
+
+test "map on Windows: reservation failure" {
+    if (native_os != .windows) return error.SkipZigTest;
+    // Larger than the user mode address space.
+    if (@bitSizeOf(usize) < 64) return error.SkipZigTest;
+    const len: usize = 1 << 48;
+    try testing.expectEqual(null, map(len, .fromByteUnits(std.heap.pageSize())));
+    try testing.expectEqual(null, map(len, .fromByteUnits(1024 * 1024)));
+}
+
+test "mapWindowsAt: commit failure" {
+    if (native_os != .windows) return error.SkipZigTest;
+    // Fits in the address space, but exceeds any realistic commit limit.
+    if (@bitSizeOf(usize) < 64) return error.SkipZigTest;
+    const len: usize = 1 << 44;
+    const alignment_bytes = 1024 * 1024;
+    const addr = try findFreeWindowsRegion(len, alignment_bytes);
+    try testing.expectEqual(null, mapWindowsAt(addr, len, alignment_bytes));
+    try expectFreeWindowsRegion(addr, len);
+}
+
+test "mapWindowsAt: conflicting address" {
+    if (native_os != .windows) return error.SkipZigTest;
+    const len = 81 * 1024;
+    const page_aligned_len = mem.alignForward(usize, len, std.heap.pageSize());
+    const alignment_bytes = 256 * 1024;
+
+    // Take the address the allocator found to be free, as another thread might.
+    const taken_addr = try findFreeWindowsRegion(page_aligned_len, alignment_bytes);
+    var base_addr: ?*anyopaque = @ptrFromInt(taken_addr);
+    var region_size: windows.SIZE_T = page_aligned_len;
+    const status = ntdll.NtAllocateVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&base_addr), 0, &region_size, .{ .RESERVE = true }, .{ .NOACCESS = true });
+    try testing.expectEqual(windows.NTSTATUS.SUCCESS, status);
+    defer unmapWindows(taken_addr);
+
+    const ptr = mapWindowsAt(taken_addr, page_aligned_len, alignment_bytes);
+    if (!windows_has_placeholders) return testing.expectEqual(null, ptr);
+    try expectUsableWindowsBlock(ptr, len, alignment_bytes);
+    defer unmapWindows(@intFromPtr(ptr.?));
+    try testing.expect(@intFromPtr(ptr.?) != taken_addr);
+}
+
+test "mapWindowsPlaceholder: prefix and suffix are released" {
+    if (native_os != .windows or !windows_has_placeholders) return error.SkipZigTest;
+    const len = 81 * 1024;
+    const page_aligned_len = mem.alignForward(usize, len, std.heap.pageSize());
+    const block_len = mem.alignForward(usize, page_aligned_len, windows_allocation_granularity);
+    const alignment_bytes = 256 * 1024;
+    const max_drop_len = alignment_bytes - windows_allocation_granularity;
+
+    // Each prefix length from none to `max_drop_len`; the suffix shrinks accordingly.
+    var prefix_len: usize = 0;
+    while (prefix_len <= max_drop_len) : (prefix_len += windows_allocation_granularity) {
+        const aligned_addr = try findFreeWindowsRegion(alignment_bytes + block_len + max_drop_len, alignment_bytes) + alignment_bytes;
+        const placeholder_addr = aligned_addr - prefix_len;
+        const ptr = mapWindowsPlaceholder(page_aligned_len, alignment_bytes, @ptrFromInt(placeholder_addr));
+        try expectUsableWindowsBlock(ptr, len, alignment_bytes);
+        defer unmapWindows(@intFromPtr(ptr.?));
+        try testing.expectEqual(aligned_addr, @intFromPtr(ptr.?));
+
+        if (prefix_len != 0) try expectFreeWindowsRegion(placeholder_addr, prefix_len);
+        const suffix_len = max_drop_len - prefix_len;
+        if (suffix_len != 0) try expectFreeWindowsRegion(aligned_addr + block_len, suffix_len);
+    }
+}
+
+test "mapWindowsPlaceholder: padded length overflow" {
+    if (native_os != .windows or !windows_has_placeholders) return error.SkipZigTest;
+    const alignment_bytes = 1024 * 1024;
+    const max_drop_len = alignment_bytes - windows_allocation_granularity;
+    // Fits the scratch region, but not once rounded up to allocation granularity.
+    const page_aligned_len = mem.alignBackward(usize, maxInt(usize) - max_drop_len, std.heap.pageSize());
+    try testing.expectEqual(null, mapWindowsPlaceholder(page_aligned_len, alignment_bytes, null));
+}
+
+test "mapWindowsPlaceholder: reservation failure" {
+    if (native_os != .windows or !windows_has_placeholders) return error.SkipZigTest;
+    if (@bitSizeOf(usize) < 64) return error.SkipZigTest;
+    try testing.expectEqual(null, mapWindowsPlaceholder(1 << 48, 1024 * 1024, null));
+}
+
+test "mapWindowsPlaceholder: commit failure" {
+    if (native_os != .windows or !windows_has_placeholders) return error.SkipZigTest;
+    if (@bitSizeOf(usize) < 64) return error.SkipZigTest;
+    const len: usize = 1 << 44;
+    const alignment_bytes = 1024 * 1024;
+    const placeholder_len = len + alignment_bytes - windows_allocation_granularity;
+    const addr = try findFreeWindowsRegion(placeholder_len, alignment_bytes);
+    try testing.expectEqual(null, mapWindowsPlaceholder(len, alignment_bytes, @ptrFromInt(addr)));
+    try expectFreeWindowsRegion(addr, placeholder_len);
+}

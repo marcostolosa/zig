@@ -412,7 +412,7 @@ test PageAllocator {
         // this test can be simplified by passing an explicit misaligned hint to force
         // the fallback path, eliminating the need for noise allocations.
 
-        // Deterministically force execution into the placeholder fallback path.
+        // Deterministically force execution into the large alignment path.
         // Windows places allocations consecutively in 64kiB granularity units.
         // By interleaving 64kiB noise allocations between 256kiB test allocations,
         // we guarantee that at least one test allocation per pair will fail the

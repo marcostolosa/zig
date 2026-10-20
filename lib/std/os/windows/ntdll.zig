@@ -277,6 +277,18 @@ pub extern "ntdll" fn NtAllocateVirtualMemory(
     Protect: PAGE,
 ) callconv(.winapi) NTSTATUS;
 
+/// Available since Windows 10 1803 (redstone 4). Required for placeholder
+/// reservations, which `NtAllocateVirtualMemory` rejects.
+pub extern "ntdll" fn NtAllocateVirtualMemoryEx(
+    ProcessHandle: HANDLE,
+    BaseAddress: *PVOID,
+    RegionSize: *SIZE_T,
+    AllocationType: MEM.ALLOCATE,
+    PageProtection: PAGE,
+    ExtendedParameters: ?[*]MEM.EXTENDED_PARAMETER,
+    ExtendedParameterCount: ULONG,
+) callconv(.winapi) NTSTATUS;
+
 pub extern "ntdll" fn NtFreeVirtualMemory(
     ProcessHandle: HANDLE,
     BaseAddress: *PVOID,

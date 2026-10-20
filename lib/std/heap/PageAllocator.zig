@@ -42,6 +42,13 @@ const stack_direction = builtin.target.stackGrowth();
 /// TODO: Utilize this on Windows.
 var addr_hint: ?[*]align(page_size_min) u8 = null;
 
+/// Windows places every reservation on a boundary of this many bytes.
+const windows_allocation_granularity = 64 * 1024;
+
+/// Placeholder reservations require `NtAllocateVirtualMemoryEx`, which only
+/// exists since Windows 10 1803.
+const windows_has_placeholders = builtin.os.isAtLeast(.windows, .win10_rs4) orelse false;
+
 pub fn map(n: usize, alignment: Alignment) ?[*]u8 {
     const page_size = std.heap.pageSize();
     if (n >= maxInt(usize) - page_size) return null;
@@ -49,55 +56,37 @@ pub fn map(n: usize, alignment: Alignment) ?[*]u8 {
 
     if (native_os == .windows) {
         const current_process = windows.GetCurrentProcess();
-        var base_addr: ?*anyopaque = null;
-        var region_size: windows.SIZE_T = undefined;
-
-        const allocation_granularity = 64 * 1024;
         const page_aligned_len = mem.alignForward(usize, n, page_size);
 
-        // For common small alignments, a plain reserve+commit is sufficient.
-        if (alignment_bytes <= allocation_granularity) {
-            base_addr = null;
-            region_size = page_aligned_len;
-            const fast_status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &region_size, .{ .COMMIT = true, .RESERVE = true }, .{ .READWRITE = true });
-            if (fast_status == .SUCCESS) {
-                return @ptrCast(base_addr);
-            }
-            return null;
-        }
-
-        const max_drop_len = alignment_bytes - allocation_granularity;
-        if (page_aligned_len > maxInt(usize) - max_drop_len) return null;
-        const overalloc_len = page_aligned_len + max_drop_len;
-
-        // Reserve a larger scratch mapping, pick an aligned address within it,
-        // release the scratch mapping, then reserve+commit at the aligned address.
-        base_addr = null;
-        region_size = overalloc_len;
-        const scratch_status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &region_size, .{ .RESERVE = true }, .{ .NOACCESS = true });
-        if (scratch_status != .SUCCESS) return null;
-
-        const scratch_addr = @intFromPtr(base_addr);
-        const aligned_addr = mem.alignForward(usize, scratch_addr, alignment_bytes);
-
-        // The aligned block is guaranteed to fit within the scratch mapping because:
-        // 1. scratch_addr is a multiple of 64KB (Windows guarantee).
-        // 2. The max distance to the next `alignment_bytes` boundary is `alignment_bytes - 64kiB`.
-        // 3. overalloc_len = page_aligned_len + (alignment_bytes - 64kiB).
-
-        var release_base = base_addr;
-        var release_size: windows.SIZE_T = 0;
-        _ = ntdll.NtFreeVirtualMemory(current_process, @ptrCast(&release_base), &release_size, .{ .RELEASE = true });
-
-        base_addr = @ptrFromInt(aligned_addr);
-        region_size = page_aligned_len;
-        const final_status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &region_size, .{ .COMMIT = true, .RESERVE = true }, .{ .READWRITE = true });
-
-        if (final_status == .SUCCESS) {
+        // Every allocation starts on an allocation granularity boundary, so for
+        // common small alignments a plain reserve+commit is sufficient.
+        if (alignment_bytes <= windows_allocation_granularity) {
+            var base_addr: ?*anyopaque = null;
+            var region_size: windows.SIZE_T = page_aligned_len;
+            const status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &region_size, .{ .COMMIT = true, .RESERVE = true }, .{ .READWRITE = true });
+            if (status != .SUCCESS) return null;
             return @ptrCast(base_addr);
         }
 
-        return null;
+        // Reserve a larger scratch region, pick an aligned address within it,
+        // release the scratch region, then reserve+commit at the aligned address.
+        // The aligned block always fits: the scratch region starts on an
+        // allocation granularity boundary, so the next `alignment_bytes`
+        // boundary is at most `max_drop_len` bytes away.
+        const max_drop_len = alignment_bytes - windows_allocation_granularity;
+        if (page_aligned_len > maxInt(usize) - max_drop_len) return null;
+
+        var scratch_addr: ?*anyopaque = null;
+        var scratch_size: windows.SIZE_T = page_aligned_len + max_drop_len;
+        const scratch_status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&scratch_addr), 0, &scratch_size, .{ .RESERVE = true }, .{ .NOACCESS = true });
+        if (scratch_status != .SUCCESS) return null;
+        const aligned_addr = mem.alignForward(usize, @intFromPtr(scratch_addr), alignment_bytes);
+
+        scratch_size = 0;
+        const release_status = ntdll.NtFreeVirtualMemory(current_process, @ptrCast(&scratch_addr), &scratch_size, .{ .RELEASE = true });
+        if (release_status != .SUCCESS) return null;
+
+        return mapWindowsAt(aligned_addr, page_aligned_len, alignment_bytes);
     }
 
     const page_aligned_len = mem.alignForward(usize, n, page_size);
@@ -152,6 +141,87 @@ pub fn map(n: usize, alignment: Alignment) ?[*]u8 {
     return result_ptr;
 }
 
+/// Reserves and commits `page_aligned_len` bytes at `aligned_addr`. Another
+/// thread may have reserved the address since it was found to be free, in
+/// which case this falls back to placeholders where available.
+inline fn mapWindowsAt(aligned_addr: usize, page_aligned_len: usize, alignment_bytes: usize) ?[*]u8 {
+    var base_addr: ?*anyopaque = @ptrFromInt(aligned_addr);
+    var region_size: windows.SIZE_T = page_aligned_len;
+    const status = ntdll.NtAllocateVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&base_addr), 0, &region_size, .{ .COMMIT = true, .RESERVE = true }, .{ .READWRITE = true });
+    if (status == .SUCCESS) return @ptrCast(base_addr);
+    if (windows_has_placeholders and status == .CONFLICTING_ADDRESSES) {
+        return mapWindowsPlaceholder(page_aligned_len, alignment_bytes, null);
+    }
+    return null;
+}
+
+/// Reserves a placeholder large enough to contain an aligned block, releases
+/// the parts before and after the block, then replaces the block's placeholder
+/// with a reservation and commits it. Unlike reserving at a previously
+/// released address, the aligned block is never free for another thread to
+/// take. `placeholder_hint` asks for the placeholder to start at that address.
+fn mapWindowsPlaceholder(page_aligned_len: usize, alignment_bytes: usize, placeholder_hint: ?*anyopaque) ?[*]u8 {
+    comptime assert(windows_has_placeholders);
+    const current_process = windows.GetCurrentProcess();
+
+    // Placeholders can only be split on allocation granularity boundaries.
+    const block_len = mem.alignForward(usize, page_aligned_len, windows_allocation_granularity);
+    const max_drop_len = alignment_bytes - windows_allocation_granularity;
+    if (block_len > maxInt(usize) - max_drop_len) return null;
+
+    var placeholder_addr: ?*anyopaque = placeholder_hint;
+    var placeholder_size: windows.SIZE_T = block_len + max_drop_len;
+    const reserve_status = ntdll.NtAllocateVirtualMemoryEx(current_process, @ptrCast(&placeholder_addr), &placeholder_size, .{ .RESERVE = true, .RESERVE_PLACEHOLDER = true }, .{ .NOACCESS = true }, null, 0);
+    if (reserve_status != .SUCCESS) return null;
+
+    const aligned_addr = mem.alignForward(usize, @intFromPtr(placeholder_addr), alignment_bytes);
+    const prefix_len = aligned_addr - @intFromPtr(placeholder_addr);
+    const suffix_len = max_drop_len - prefix_len;
+
+    if (prefix_len != 0 and !releaseWindowsPlaceholderPart(@intFromPtr(placeholder_addr), prefix_len)) {
+        unmapWindows(@intFromPtr(placeholder_addr));
+        return null;
+    }
+    if (suffix_len != 0 and !releaseWindowsPlaceholderPart(aligned_addr + block_len, suffix_len)) {
+        unmapWindows(aligned_addr);
+        return null;
+    }
+
+    var base_addr: ?*anyopaque = @ptrFromInt(aligned_addr);
+    var region_size: windows.SIZE_T = block_len;
+    const replace_status = ntdll.NtAllocateVirtualMemoryEx(current_process, @ptrCast(&base_addr), &region_size, .{ .RESERVE = true, .REPLACE_PLACEHOLDER = true }, .{ .READWRITE = true }, null, 0);
+    if (replace_status != .SUCCESS) {
+        unmapWindows(aligned_addr);
+        return null;
+    }
+
+    region_size = page_aligned_len;
+    const commit_status = ntdll.NtAllocateVirtualMemory(current_process, @ptrCast(&base_addr), 0, &region_size, .{ .COMMIT = true }, .{ .READWRITE = true });
+    if (commit_status != .SUCCESS) {
+        unmapWindows(aligned_addr);
+        return null;
+    }
+    return @ptrCast(base_addr);
+}
+
+/// Splits `len` bytes starting at `addr` off the placeholder containing them
+/// and releases them. Returns false if the placeholder could not be split.
+fn releaseWindowsPlaceholderPart(addr: usize, len: usize) bool {
+    var base_addr: ?*anyopaque = @ptrFromInt(addr);
+    var region_size: windows.SIZE_T = len;
+    const split_status = ntdll.NtFreeVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&base_addr), &region_size, .{ .RELEASE = true, .PRESERVE_PLACEHOLDER = true });
+    if (split_status != .SUCCESS) return false;
+    unmapWindows(addr);
+    return true;
+}
+
+/// Releases the whole reservation or placeholder starting at `addr`.
+fn unmapWindows(addr: usize) void {
+    var base_addr: ?*anyopaque = @ptrFromInt(addr);
+    var region_size: windows.SIZE_T = 0;
+    _ = ntdll.NtFreeVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&base_addr), &region_size, .{ .RELEASE = true });
+}
+
 fn alloc(context: *anyopaque, n: usize, alignment: Alignment, ra: usize) ?[*]u8 {
     _ = context;
     _ = ra;
@@ -180,9 +250,7 @@ fn free(context: *anyopaque, memory: []u8, alignment: Alignment, return_address:
 
 pub fn unmap(memory: []align(page_size_min) u8) void {
     if (native_os == .windows) {
-        var base_addr: ?*anyopaque = memory.ptr;
-        var region_size: windows.SIZE_T = 0;
-        _ = ntdll.NtFreeVirtualMemory(windows.GetCurrentProcess(), @ptrCast(&base_addr), &region_size, .{ .RELEASE = true });
+        unmapWindows(@intFromPtr(memory.ptr));
     } else {
         const page_aligned_len = mem.alignForward(usize, memory.len, std.heap.pageSize());
         posix.munmap(memory.ptr[0..page_aligned_len]);

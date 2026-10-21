@@ -447,6 +447,7 @@ pub const cpu = struct {
         .features = featureSet(&[_]Feature{
             .mips2,
             .single_float,
+            .vfpu,
         }),
     };
     pub const generic: CpuModel = .{

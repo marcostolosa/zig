@@ -1721,6 +1721,7 @@ const targets = [_]ArchTarget{
                 .features = &.{
                     "mips2",
                     "single_float",
+                    "vfpu",
                 },
             },
         },

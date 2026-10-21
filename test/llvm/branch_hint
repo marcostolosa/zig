@@ -1,0 +1,35 @@
+#skip amdgcn-amdhsa-none-baseline-whole-llvm-debug-lld
+
+#skip nvptx-cuda-none-baseline-whole-llvm-debug-lld
+#skip nvptx-nvcl-none-baseline-whole-llvm-debug-lld
+
+#skip nvptx64-cuda-none-baseline-whole-llvm-debug-lld
+#skip nvptx64-nvcl-none-baseline-whole-llvm-debug-lld
+
+#zig build-obj {
+--name test -ofmt=llvmir -fno-lld -fno-new-linker
+-Mroot=test.zig
+#}
+
+#write test.zig {
+extern fn a() void;
+
+export fn b(cond: bool) void {
+    if (cond) {
+        @branchHint(.likely);
+        a();
+    }
+}
+#}
+
+#update
+#check llvm {
+...
+define ... @test.b(..., i? ... %cond) ... {
+  ...
+  br i1 %cond_as_bool, label %Then, label %Else, !!prof !prof, !...
+  ...
+}
+
+...
+#}

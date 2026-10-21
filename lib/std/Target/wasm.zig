@@ -123,7 +123,9 @@ pub const all_features = blk: {
     result[@backingInt(Feature.relaxed_atomics)] = .{
         .llvm_name = "relaxed-atomics",
         .description = "Enable relaxed-atomics proposal",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .atomics,
+        }),
     };
     result[@backingInt(Feature.relaxed_simd)] = .{
         .llvm_name = "relaxed-simd",

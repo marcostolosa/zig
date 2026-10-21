@@ -2040,6 +2040,10 @@ const targets = [_]ArchTarget{
                 .extra_deps = &.{ "bulk_memory", "call_indirect_overlong" },
             },
             .{
+                .llvm_name = "relaxed-atomics",
+                .extra_deps = &.{"atomics"},
+            },
+            .{
                 .llvm_name = "relaxed-simd",
                 .extra_deps = &.{"simd128"},
             },

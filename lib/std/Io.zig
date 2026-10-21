@@ -48,6 +48,8 @@ pub const Terminal = @import("Io/Terminal.zig");
 pub const RwLock = @import("Io/RwLock.zig");
 pub const Semaphore = @import("Io/Semaphore.zig");
 
+pub const Mode = enum { threaded, evented };
+
 pub const VTable = struct {
     crashHandler: *const fn (?*anyopaque) void,
 

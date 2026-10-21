@@ -2067,6 +2067,7 @@ pub const Cpu = struct {
                 .loongarch64 => &loongarch.cpu.generic_la64,
                 .mips, .mipsel => &mips.cpu.mips32,
                 .mips64, .mips64el => &mips.cpu.mips64,
+                .msp430 => &msp430.cpu.msp430,
                 .nvptx, .nvptx64 => &nvptx.cpu.sm_20,
                 .powerpc, .powerpcle => &powerpc.cpu.ppc,
                 .powerpc64, .powerpc64le => &powerpc.cpu.ppc64,
@@ -2138,7 +2139,6 @@ pub const Cpu = struct {
                     else => &mips.cpu.mips64r2,
                 },
                 .mips64el => &mips.cpu.mips64r2,
-                .msp430 => &msp430.cpu.msp430,
                 .nvptx, .nvptx64 => &nvptx.cpu.sm_52,
                 .powerpc => switch (os.tag) {
                     .openbsd, .wiiu => &powerpc.cpu.@"750",

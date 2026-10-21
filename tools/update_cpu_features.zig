@@ -1774,6 +1774,12 @@ const targets = [_]ArchTarget{
             .name = "MSP430",
             .td_name = "MSP430",
         },
+        .model_overrides = &.{
+            .{
+                .llvm_name = "generic",
+                .omit = true,
+            },
+        },
     },
     .{
         .zig_name = "mips",

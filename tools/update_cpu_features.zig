@@ -1988,6 +1988,75 @@ const targets = [_]ArchTarget{
             .name = "SystemZ",
             .td_name = "SystemZ",
         },
+        .feature_overrides = &.{
+            .{
+                .llvm_name = "message-security-assist-extension7",
+                .extra_deps = &.{"message_security_assist_extension5"},
+            },
+            .{
+                .llvm_name = "message-security-assist-extension8",
+                .extra_deps = &.{"message_security_assist_extension3"},
+            },
+            .{
+                .llvm_name = "message-security-assist-extension9",
+                .extra_deps = &.{
+                    "message_security_assist_extension3",
+                    "message_security_assist_extension4",
+                },
+            },
+            .{
+                .llvm_name = "miscellaneous-extensions-3",
+                .extra_deps = &.{
+                    "distinct_ops",
+                    "fast_serialization",
+                    "high_word",
+                    "interlocked_access1",
+                    "load_store_on_cond",
+                    "population_count",
+                },
+            },
+            .{
+                .llvm_name = "nnp-assist",
+                .extra_deps = &.{"vector"},
+            },
+            .{
+                .llvm_name = "transactional-execution",
+                .extra_deps = &.{
+                    "execution_hint",
+                    "load_and_trap",
+                    "miscellaneous_extensions",
+                    "processor_assist",
+                },
+            },
+            .{
+                .llvm_name = "vector-enhancements-1",
+                .extra_deps = &.{"vector"},
+            },
+            .{
+                .llvm_name = "vector-enhancements-2",
+                .extra_deps = &.{"vector_enhancements_1"},
+            },
+            .{
+                .llvm_name = "vector-enhancements-3",
+                .extra_deps = &.{"vector_enhancements_2"},
+            },
+            .{
+                .llvm_name = "vector-packed-decimal",
+                .extra_deps = &.{"vector"},
+            },
+            .{
+                .llvm_name = "vector-packed-decimal-enhancement",
+                .extra_deps = &.{"vector_packed_decimal"},
+            },
+            .{
+                .llvm_name = "vector-packed-decimal-enhancement-2",
+                .extra_deps = &.{"vector_packed_decimal_enhancement"},
+            },
+            .{
+                .llvm_name = "vector-packed-decimal-enhancement-3",
+                .extra_deps = &.{"vector_packed_decimal_enhancement_2"},
+            },
+        },
     },
     .{
         .zig_name = "ve",

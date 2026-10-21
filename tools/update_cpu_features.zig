@@ -1707,13 +1707,6 @@ const targets = [_]ArchTarget{
             .name = "Mips",
             .td_name = "Mips",
         },
-        .extra_features = &.{
-            .{
-                .zig_name = "notraps",
-                .desc = "Disable trap instructions",
-                .deps = &.{},
-            },
-        },
         .extra_models = &.{
             .{
                 .llvm_name = null,
@@ -1721,13 +1714,15 @@ const targets = [_]ArchTarget{
                 .features = &.{
                     "mips1",
                     "soft_float",
-                    "notraps",
                 },
             },
             .{
                 .llvm_name = null,
                 .zig_name = "allegrex",
-                .features = &.{ "mips2", "single_float", "notraps" },
+                .features = &.{
+                    "mips2",
+                    "single_float",
+                },
             },
         },
     },

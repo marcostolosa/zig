@@ -50,7 +50,6 @@ pub const Feature = enum {
     noabicalls,
     nomadd4,
     nooddspreg,
-    notraps,
     p5600,
     ptr64,
     r5900,
@@ -362,11 +361,6 @@ pub const all_features = blk: {
         .description = "Disable odd numbered single-precision registers",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.notraps)] = .{
-        .llvm_name = null,
-        .description = "Disable trap instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.p5600)] = .{
         .llvm_name = "p5600",
         .description = "The P5600 Processor",
@@ -452,7 +446,6 @@ pub const cpu = struct {
         .llvm_name = null,
         .features = featureSet(&[_]Feature{
             .mips2,
-            .notraps,
             .single_float,
         }),
     };
@@ -608,7 +601,6 @@ pub const cpu = struct {
         .llvm_name = null,
         .features = featureSet(&[_]Feature{
             .mips1,
-            .notraps,
             .soft_float,
         }),
     };

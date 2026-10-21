@@ -125,7 +125,9 @@ pub const all_features = blk: {
     result[@backingInt(Feature.hvx_ieee_fp)] = .{
         .llvm_name = "hvx-ieee-fp",
         .description = "Hexagon HVX IEEE floating point instructions",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .hvxv68,
+        }),
     };
     result[@backingInt(Feature.hvx_length128b)] = .{
         .llvm_name = "hvx-length128b",
@@ -144,7 +146,9 @@ pub const all_features = blk: {
     result[@backingInt(Feature.hvx_qfloat)] = .{
         .llvm_name = "hvx-qfloat",
         .description = "Hexagon HVX QFloating point instructions",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .hvxv68,
+        }),
     };
     result[@backingInt(Feature.hvxv60)] = .{
         .llvm_name = "hvxv60",
@@ -468,67 +472,93 @@ pub const all_features = blk: {
     result[@backingInt(Feature.v55)] = .{
         .llvm_name = "v55",
         .description = "Enable Hexagon V55 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v5,
+        }),
     };
     result[@backingInt(Feature.v60)] = .{
         .llvm_name = "v60",
         .description = "Enable Hexagon V60 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v55,
+        }),
     };
     result[@backingInt(Feature.v62)] = .{
         .llvm_name = "v62",
         .description = "Enable Hexagon V62 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v60,
+        }),
     };
     result[@backingInt(Feature.v65)] = .{
         .llvm_name = "v65",
         .description = "Enable Hexagon V65 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v62,
+        }),
     };
     result[@backingInt(Feature.v66)] = .{
         .llvm_name = "v66",
         .description = "Enable Hexagon V66 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v65,
+        }),
     };
     result[@backingInt(Feature.v67)] = .{
         .llvm_name = "v67",
         .description = "Enable Hexagon V67 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v66,
+        }),
     };
     result[@backingInt(Feature.v68)] = .{
         .llvm_name = "v68",
         .description = "Enable Hexagon V68 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v67,
+        }),
     };
     result[@backingInt(Feature.v69)] = .{
         .llvm_name = "v69",
         .description = "Enable Hexagon V69 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v68,
+        }),
     };
     result[@backingInt(Feature.v71)] = .{
         .llvm_name = "v71",
         .description = "Enable Hexagon V71 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v69,
+        }),
     };
     result[@backingInt(Feature.v73)] = .{
         .llvm_name = "v73",
         .description = "Enable Hexagon V73 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v71,
+        }),
     };
     result[@backingInt(Feature.v75)] = .{
         .llvm_name = "v75",
         .description = "Enable Hexagon V75 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v73,
+        }),
     };
     result[@backingInt(Feature.v79)] = .{
         .llvm_name = "v79",
         .description = "Enable Hexagon V79 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v75,
+        }),
     };
     result[@backingInt(Feature.v81)] = .{
         .llvm_name = "v81",
         .description = "Enable Hexagon V81 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v79,
+        }),
     };
     result[@backingInt(Feature.zreg)] = .{
         .llvm_name = "zreg",
@@ -556,8 +586,6 @@ pub const cpu = struct {
             .nvs,
             .prev65,
             .small_data,
-            .v5,
-            .v55,
             .v60,
         }),
     };
@@ -588,7 +616,6 @@ pub const cpu = struct {
             .nvs,
             .prev65,
             .small_data,
-            .v5,
             .v55,
         }),
     };
@@ -604,8 +631,6 @@ pub const cpu = struct {
             .nvs,
             .prev65,
             .small_data,
-            .v5,
-            .v55,
             .v60,
         }),
     };
@@ -621,9 +646,6 @@ pub const cpu = struct {
             .nvs,
             .prev65,
             .small_data,
-            .v5,
-            .v55,
-            .v60,
             .v62,
         }),
     };
@@ -639,10 +661,6 @@ pub const cpu = struct {
             .nvj,
             .nvs,
             .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
             .v65,
         }),
     };
@@ -658,11 +676,6 @@ pub const cpu = struct {
             .nvj,
             .nvs,
             .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
             .v66,
         }),
     };
@@ -678,12 +691,6 @@ pub const cpu = struct {
             .nvj,
             .nvs,
             .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
             .v67,
         }),
     };
@@ -698,12 +705,6 @@ pub const cpu = struct {
             .nvs,
             .small_data,
             .tinycore,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
             .v67,
         }),
     };
@@ -719,13 +720,6 @@ pub const cpu = struct {
             .nvj,
             .nvs,
             .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
             .v68,
         }),
     };
@@ -741,14 +735,6 @@ pub const cpu = struct {
             .nvj,
             .nvs,
             .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
-            .v68,
             .v69,
         }),
     };
@@ -764,15 +750,6 @@ pub const cpu = struct {
             .nvj,
             .nvs,
             .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
-            .v68,
-            .v69,
             .v71,
         }),
     };
@@ -787,15 +764,6 @@ pub const cpu = struct {
             .nvs,
             .small_data,
             .tinycore,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
-            .v68,
-            .v69,
             .v71,
         }),
     };
@@ -810,16 +778,6 @@ pub const cpu = struct {
             .nvj,
             .nvs,
             .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
-            .v68,
-            .v69,
-            .v71,
             .v73,
         }),
     };
@@ -834,17 +792,6 @@ pub const cpu = struct {
             .nvj,
             .nvs,
             .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
-            .v68,
-            .v69,
-            .v71,
-            .v73,
             .v75,
         }),
     };
@@ -859,18 +806,6 @@ pub const cpu = struct {
             .nvj,
             .nvs,
             .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
-            .v68,
-            .v69,
-            .v71,
-            .v73,
-            .v75,
             .v79,
         }),
     };
@@ -885,19 +820,6 @@ pub const cpu = struct {
             .nvj,
             .nvs,
             .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
-            .v68,
-            .v69,
-            .v71,
-            .v73,
-            .v75,
-            .v79,
             .v81,
         }),
     };

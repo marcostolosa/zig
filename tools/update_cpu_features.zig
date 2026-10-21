@@ -1437,6 +1437,68 @@ const targets = [_]ArchTarget{
             .name = "Hexagon",
             .td_name = "Hexagon",
         },
+        .feature_overrides = &.{
+            .{
+                .llvm_name = "hvx-ieee-fp",
+                .extra_deps = &.{"hvxv68"},
+            },
+            .{
+                .llvm_name = "hvx-qfloat",
+                .extra_deps = &.{"hvxv68"},
+            },
+            .{
+                .llvm_name = "v55",
+                .extra_deps = &.{"v5"},
+            },
+            .{
+                .llvm_name = "v60",
+                .extra_deps = &.{"v55"},
+            },
+            .{
+                .llvm_name = "v62",
+                .extra_deps = &.{"v60"},
+            },
+            .{
+                .llvm_name = "v65",
+                .extra_deps = &.{"v62"},
+            },
+            .{
+                .llvm_name = "v66",
+                .extra_deps = &.{"v65"},
+            },
+            .{
+                .llvm_name = "v67",
+                .extra_deps = &.{"v66"},
+            },
+            .{
+                .llvm_name = "v68",
+                .extra_deps = &.{"v67"},
+            },
+            .{
+                .llvm_name = "v69",
+                .extra_deps = &.{"v68"},
+            },
+            .{
+                .llvm_name = "v71",
+                .extra_deps = &.{"v69"},
+            },
+            .{
+                .llvm_name = "v73",
+                .extra_deps = &.{"v71"},
+            },
+            .{
+                .llvm_name = "v75",
+                .extra_deps = &.{"v73"},
+            },
+            .{
+                .llvm_name = "v79",
+                .extra_deps = &.{"v75"},
+            },
+            .{
+                .llvm_name = "v81",
+                .extra_deps = &.{"v79"},
+            },
+        },
     },
     .{
         .zig_name = "hppa",

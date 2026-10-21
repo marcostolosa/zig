@@ -1332,6 +1332,12 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
         },
+        .model_overrides = &.{
+            .{
+                .llvm_name = "probe",
+                .omit = true,
+            },
+        },
     },
     .{
         .zig_name = "csky",

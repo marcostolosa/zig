@@ -42,11 +42,6 @@ pub const cpu = struct {
         .llvm_name = "generic",
         .features = featureSet(&[_]Feature{}),
     };
-    pub const probe: CpuModel = .{
-        .name = "probe",
-        .llvm_name = "probe",
-        .features = featureSet(&[_]Feature{}),
-    };
     pub const v1: CpuModel = .{
         .name = "v1",
         .llvm_name = "v1",

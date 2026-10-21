@@ -25,7 +25,7 @@ bytes: std.ArrayList(u8),
 
 pub const empty: Bundle = .{ .map = .empty, .bytes = .empty };
 
-pub const VerifyError = Certificate.Parsed.VerifyError || error{
+pub const VerifyError = Certificate.Parsed.VerifyError || Certificate.Parsed.VerifyCaError || error{
     CertificateIssuerNotFound,
 };
 
@@ -38,6 +38,7 @@ pub fn verify(cb: Bundle, subject: Certificate.Parsed, now_sec: i64) VerifyError
     // Every certificate in the bundle is pre-parsed before adding it, ensuring
     // that parsing will succeed here.
     const issuer = issuer_cert.parse() catch unreachable;
+    try issuer.verifyCa();
     try subject.verify(issuer, now_sec);
 }
 

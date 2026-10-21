@@ -178,6 +178,7 @@ pub const InitError = error{
     CertificateHasUnrecognizedObjectId,
     CertificateHasInvalidBitString,
     CertificateHasInvalidExtension,
+    CertificateIssuerNotCa,
     MessageTooLong,
     NegativeIntoUnsigned,
     TargetTooSmall,
@@ -915,9 +916,8 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
 const CertificateChainState = struct {
     trust_chain_established: bool = false,
     cert_index: usize = 0,
-    /// The previous certificate which verifies the next one.
+    intermediates: usize = 0,
     prev_cert: Certificate.Parsed = undefined,
-    /// The first certificate's public key used for the certificate_verify message.
     main_cert_pub_key: CertificatePublicKey = undefined,
 };
 
@@ -957,6 +957,9 @@ fn verifyCertificateChain(
             // Keep track of the public key for the certificate_verify message.
             try state.main_cert_pub_key.init(subject.pub_key_algo, subject.pubKey());
         } else {
+            // Subject issued the previous certificate.
+            // Ensure subject is a CA and that it verifies the previous certificate.
+            try subject.verifyCa();
             try state.prev_cert.verify(subject, now_sec);
         }
 
@@ -1803,4 +1806,65 @@ test "zero-length key_update body" {
             .client_iv = undefined,
         } } },
     ));
+}
+
+/// Encodes `certificate_chain` as the certificate_list of a TLS 1.3 Certificate message.
+fn testCertificateList(
+    buffer: []u8,
+    certificate_chain: []const []const u8,
+) std.Io.Writer.Error!tls.Decoder {
+    var writer: std.Io.Writer = .fixed(buffer);
+    for (certificate_chain) |der| {
+        try writer.writeInt(u24, @intCast(der.len), .big);
+        try writer.writeAll(der);
+        try writer.writeInt(u16, 0, .big);
+    }
+    return .fromTheirSlice(writer.buffered());
+}
+
+test "chain verification rejects a non-CA certificate acting as an issuer" {
+    const gpa = std.testing.allocator;
+    // 2027-01-01T00:00:00Z which is within every certificate's validity window.
+    const now: std.Io.Timestamp = .fromNanoseconds(1798761600 * std.time.ns_per_s);
+
+    var entropy: [240]u8 = @splat(0);
+
+    var ca_bundle: Certificate.Bundle = .empty;
+    defer ca_bundle.deinit(gpa);
+
+    try ca_bundle.bytes.appendSlice(gpa, @embedFile("testdata/non_ca/root_ca.der"));
+    try ca_bundle.parseCert(gpa, 0, now.toSeconds());
+
+    var ca_lock: std.Io.RwLock = .init;
+
+    var certificates_buffer: [4096]u8 = undefined;
+    const certificate_decoder = try testCertificateList(&certificates_buffer, &.{
+        @embedFile("testdata/non_ca/forged_leaf.der"),
+        @embedFile("testdata/non_ca/attacker_leaf.der"),
+    });
+
+    const result = verifyCertificateChain(
+        .{},
+        certificate_decoder,
+        .tls_1_3,
+        .{
+            .host = .{ .explicit = "wedontownit.com" },
+            .ca = .{ .bundle = .{
+                .gpa = gpa,
+                .io = std.testing.io,
+                .lock = &ca_lock,
+                .bundle = &ca_bundle,
+            } },
+
+            .write_buffer = &.{},
+            .read_buffer = &.{},
+            .entropy = &entropy,
+            .realtime_now = now,
+        },
+    );
+
+    try std.testing.expectError(
+        error.CertificateIssuerNotCa,
+        result,
+    );
 }

@@ -142,7 +142,6 @@ pub const ExtensionId = enum {
         .{ &.{ 0x55, 0x1D, 0x07 }, .subject_alt_name },
         .{ &.{ 0x55, 0x1D, 0x0E }, .subject_key_identifier },
         .{ &.{ 0x55, 0x1D, 0x0F }, .key_usage },
-        .{ &.{ 0x55, 0x1D, 0x0A }, .basic_constraints },
         .{ &.{ 0x55, 0x1D, 0x10 }, .private_key_usage_period },
         .{ &.{ 0x55, 0x1D, 0x11 }, .subject_alt_name },
         .{ &.{ 0x55, 0x1D, 0x12 }, .issuer_alt_name },
@@ -190,6 +189,7 @@ pub const Parsed = struct {
     subject_alt_name_slice: Slice,
     validity: Validity,
     version: Version,
+    basic_constraints: BasicConstraints,
 
     pub const PubKeyAlgo = union(AlgorithmCategory) {
         rsaEncryption: void,
@@ -201,6 +201,14 @@ pub const Parsed = struct {
     pub const Validity = struct {
         not_before: u64,
         not_after: u64,
+    };
+
+    /// RFC 5280 4.2.1.9. A certificate without this extension is not a CA.
+    pub const BasicConstraints = struct {
+        ca: bool = false,
+        /// The maximum number of non-self-issued intermediate certificates.
+        /// Null means no limit.
+        path_len_constraint: ?u7 = null,
     };
 
     pub const Slice = der.Element.Slice;
@@ -473,7 +481,8 @@ test "Parsed.checkIpAddress RFC 5280 4.2.1.6 compliance" {
     try expectEqual(false, Parsed.checkIpAddress("127.0.0.1", ""));
 }
 
-pub const ParseError = der.Element.ParseError || ParseVersionError || ParseTimeError || ParseEnumError || ParseBitStringError;
+pub const ParseError = der.Element.ParseError || ParseVersionError || ParseTimeError ||
+    ParseEnumError || ParseBitStringError || ParseExtensionError;
 
 pub fn parse(cert: Certificate) ParseError!Parsed {
     const cert_bytes = cert.buffer;
@@ -551,6 +560,7 @@ pub fn parse(cert: Certificate) ParseError!Parsed {
 
     // Extensions
     var subject_alt_name_slice = der.Element.Slice.empty;
+    var basic_constraints: ?Parsed.BasicConstraints = null;
     ext: {
         if (version == .v1)
             break :ext;
@@ -580,6 +590,11 @@ pub fn parse(cert: Certificate) ParseError!Parsed {
                 try der.Element.parse(cert_bytes, critical_elem.slice.end);
             switch (ext_id) {
                 .subject_alt_name => subject_alt_name_slice = ext_bytes_elem.slice,
+                .basic_constraints => {
+                    // RFC 5280 4.2: a certificate must not include an extension twice.
+                    if (basic_constraints != null) return error.CertificateHasInvalidExtension;
+                    basic_constraints = try parseBasicConstraints(cert, ext_bytes_elem);
+                },
                 else => continue,
             }
         }
@@ -601,7 +616,96 @@ pub fn parse(cert: Certificate) ParseError!Parsed {
         },
         .subject_alt_name_slice = subject_alt_name_slice,
         .version = version,
+        .basic_constraints = basic_constraints orelse .{},
     };
+}
+
+pub const ParseExtensionError = error{
+    CertificateHasInvalidExtension,
+    CertificateFieldHasInvalidLength,
+    CertificateFieldHasWrongDataType,
+};
+
+/// RFC 5280 4.1:
+///    Extension  ::=  SEQUENCE  {
+///     extnID      OBJECT IDENTIFIER,
+///     critical    BOOLEAN DEFAULT FALSE,
+///     extnValue   OCTET STRING }
+///
+/// Parses the extnValue OCTET STRING.
+fn parseExtensionValue(cert: Certificate, elem: der.Element) ParseExtensionError![]const u8 {
+    if (@as(u8, @bitCast(elem.identifier)) != 0x04) return error.CertificateFieldHasWrongDataType;
+    if (elem.slice.start > elem.slice.end or elem.slice.end > cert.buffer.len)
+        return error.CertificateFieldHasInvalidLength;
+    return cert.contents(elem);
+}
+
+/// RFC 5280 4.2.1.9:
+///
+///   BasicConstraints ::= SEQUENCE {
+///      cA                      BOOLEAN DEFAULT FALSE,
+///      pathLenConstraint       INTEGER (0..MAX) OPTIONAL }
+///
+/// Only these DER encodings are accepted:
+///
+///   30 00                     Default BasicConstraints = not a CA
+///   30 03 01 01 ff            CA without pathLenConstraint
+///   30 06 01 01 ff 02 01 xx   CA with pathLenConstraint from 0 to 127
+fn parseBasicConstraints(cert: Certificate, elem: der.Element) ParseExtensionError!Parsed.BasicConstraints {
+    const value = try cert.parseExtensionValue(elem);
+    if (mem.eql(u8, value, "\x30\x00")) return .{};
+    if (mem.eql(u8, value, "\x30\x03\x01\x01\xff")) return .{ .ca = true };
+    if (value.len == 8 and mem.startsWith(u8, value, "\x30\x06\x01\x01\xff\x02\x01")) {
+        // Parse as u7 = [0, 127].
+        if (std.math.cast(u7, value[7])) |path_len| return .{ .ca = true, .path_len_constraint = path_len };
+    }
+    return error.CertificateHasInvalidExtension;
+}
+
+test parseBasicConstraints {
+    const parseValue = struct {
+        fn parseValue(value: []const u8) ParseExtensionError!Parsed.BasicConstraints {
+            const cert: Certificate = .{ .buffer = value, .index = 0 };
+            return parseBasicConstraints(cert, .{
+                .identifier = @bitCast(@as(u8, 0x04)),
+                .slice = .{ .start = 0, .end = @intCast(value.len) },
+            });
+        }
+    }.parseValue;
+    const expectEqual = std.testing.expectEqual;
+    const expectError = std.testing.expectError;
+
+    try expectEqual(Parsed.BasicConstraints{}, try parseValue("\x30\x00"));
+    try expectEqual(
+        Parsed.BasicConstraints{ .ca = true },
+        try parseValue("\x30\x03\x01\x01\xff"),
+    );
+    try expectEqual(
+        Parsed.BasicConstraints{ .ca = true, .path_len_constraint = 0 },
+        try parseValue("\x30\x06\x01\x01\xff\x02\x01\x00"),
+    );
+    try expectEqual(
+        Parsed.BasicConstraints{ .ca = true, .path_len_constraint = 127 },
+        try parseValue("\x30\x06\x01\x01\xff\x02\x01\x7f"),
+    );
+
+    try expectError(error.CertificateHasInvalidExtension, parseValue(""));
+    // Negative path_len_constraint.
+    try expectError(
+        error.CertificateHasInvalidExtension,
+        parseValue("\x30\x06\x01\x01\xff\x02\x01\x80"),
+    );
+    // path_len_constraint above 127.
+    try expectError(
+        error.CertificateHasInvalidExtension,
+        parseValue("\x30\x07\x01\x01\xff\x02\x02\x01\x2c"),
+    );
+    // Default value must not be set explicitly.
+    try expectError(error.CertificateHasInvalidExtension, parseValue("\x30\x03\x01\x01\x00"));
+    // SEQUENCE length = 4 does not match the contents actual length = 3.
+    try expectError(error.CertificateHasInvalidExtension, parseValue("\x30\x04\x01\x01\xff"));
+    // Contains trailing byte.
+    try expectError(error.CertificateHasInvalidExtension, parseValue("\x30\x04\x01\x01\xff\x00"));
 }
 
 pub fn verify(subject: Certificate, issuer: Certificate, now_sec: i64) !void {

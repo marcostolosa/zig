@@ -177,6 +177,7 @@ pub const InitError = error{
     CertificateTimeInvalid,
     CertificateHasUnrecognizedObjectId,
     CertificateHasInvalidBitString,
+    CertificateHasInvalidExtension,
     MessageTooLong,
     NegativeIntoUnsigned,
     TargetTooSmall,

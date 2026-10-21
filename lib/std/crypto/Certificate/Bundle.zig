@@ -296,7 +296,7 @@ pub fn parseCert(cb: *Bundle, gpa: Allocator, decoded_start: u32, now_sec: i64) 
         .buffer = cb.bytes.items,
         .index = decoded_start,
     }) catch |err| switch (err) {
-        error.CertificateHasUnrecognizedObjectId => {
+        error.CertificateHasUnrecognizedObjectId, error.CertificateHasInvalidExtension => {
             cb.bytes.items.len = decoded_start;
             return;
         },

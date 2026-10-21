@@ -291,17 +291,13 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
     var tls_version: tls.ProtocolVersion = undefined;
     var chain: Certificate.Chain = if (Certificate.Chain != void) .empty;
     defer if (Certificate.Chain != void) chain.deinit();
-    // These are used for two purposes:
-    // * Detect whether a certificate is the first one presented, in which case
-    //   we need to verify the host name.
-    var cert_index: usize = 0;
-    // * Flip back and forth between the two cleartext buffers in order to keep
-    //   the previous certificate in memory so that it can be verified by the
-    //   next one.
+    var chain_state: CertificateChainState = .{};
+    // Flip back and forth between the two cleartext buffers in order to keep
+    // the previous certificate in memory so that it can be verified by the
+    // next one.
     var cert_buf_index: usize = 0;
     var write_seq: u64 = 0;
     var read_seq: u64 = 0;
-    var prev_cert: Certificate.Parsed = undefined;
     const CipherState = enum {
         /// No cipher is in use
         cleartext,
@@ -330,9 +326,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
     };
     var handshake_state: HandshakeState = .hello;
     var handshake_cipher: tls.HandshakeCipher = undefined;
-    var main_cert_pub_key: CertificatePublicKey = undefined;
     var tls12_negotiated_group: ?tls.NamedGroup = null;
-    const now_sec = options.realtime_now.toSeconds();
 
     var cleartext_fragment_start: usize = 0;
     var cleartext_fragment_end: usize = 0;
@@ -619,67 +613,20 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                         const certs_size = hsd.decode(u24);
                         const certs = try hsd.sub(certs_size);
 
-                        var certs_decoder = certs;
-                        while (!certs_decoder.eof()) {
-                            try certs_decoder.ensure(3);
-                            const cert_size = certs_decoder.decode(u24);
-                            const certd = try certs_decoder.sub(cert_size);
-
-                            if (tls_version == .tls_1_3) {
-                                try certs_decoder.ensure(2);
-                                const total_ext_size = certs_decoder.decode(u16);
-                                const all_extd = try certs_decoder.sub(total_ext_size);
-                                _ = all_extd;
-                            }
-
-                            const subject_cert: Certificate = .{
-                                .buffer = certd.buf,
-                                .index = @intCast(certd.idx),
-                            };
-                            const subject = try subject_cert.parse();
-                            if (cert_index == 0) {
-                                // Verify the host on the first certificate.
-                                switch (options.host) {
-                                    .no_verification => {},
-                                    .explicit => try subject.verifyHostName(host),
-                                }
-
-                                // Keep track of the public key for the
-                                // certificate_verify message later.
-                                try main_cert_pub_key.init(subject.pub_key_algo, subject.pubKey());
-                            } else {
-                                try prev_cert.verify(subject, now_sec);
-                            }
-
-                            switch (options.ca) {
-                                .no_verification => {
-                                    handshake_state = .trust_chain_established;
-                                    break :cert;
-                                },
-                                .self_signed => {
-                                    try subject.verify(subject, now_sec);
-                                    handshake_state = .trust_chain_established;
-                                    break :cert;
-                                },
-                                .bundle => |ca| if (verify: {
-                                    try ca.lock.lockShared(ca.io);
-                                    defer ca.lock.unlockShared(ca.io);
-                                    break :verify ca.bundle.verify(subject, now_sec);
-                                }) {
-                                    handshake_state = .trust_chain_established;
-                                    break :cert;
-                                } else |err| switch (err) {
-                                    error.CertificateIssuerNotFound => {},
-                                    else => |e| return e,
-                                },
-                            }
-
-                            prev_cert = subject;
-                            cert_index += 1;
+                        const next_chain_state = try verifyCertificateChain(
+                            chain_state,
+                            certs,
+                            tls_version,
+                            options,
+                        );
+                        chain_state = next_chain_state;
+                        if (chain_state.trust_chain_established) {
+                            handshake_state = .trust_chain_established;
+                            break :cert;
                         }
 
                         if (Certificate.Chain != void) {
-                            certs_decoder = certs;
+                            var certs_decoder = certs;
                             while (!certs_decoder.eof()) {
                                 try certs_decoder.ensure(3);
                                 const cert_size = certs_decoder.decode(u24);
@@ -718,7 +665,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                         const key_size = hsd.decode(u8);
                         try hsd.ensure(key_size);
                         const server_pub_key = hsd.slice(key_size);
-                        try main_cert_pub_key.verifySignature(&hsd, &.{ &client_hello_rand, &server_hello_rand, hsd.buf[0..hsd.idx] });
+                        try chain_state.main_cert_pub_key.verifySignature(&hsd, &.{ &client_hello_rand, &server_hello_rand, hsd.buf[0..hsd.idx] });
                         try key_share.exchange(named_group, server_pub_key);
                         handshake_state = .server_hello_done;
                     },
@@ -828,7 +775,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                         switch (handshake_cipher) {
                             inline else => |*p| {
                                 const pad: [64]u8 = @splat(' ');
-                                try main_cert_pub_key.verifySignature(&hsd, &.{
+                                try chain_state.main_cert_pub_key.verifySignature(&hsd, &.{
                                     pad ++ "TLS 1.3, server CertificateVerify\x00",
                                     &p.transcript_hash.peek(),
                                 });
@@ -960,6 +907,85 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
         cleartext_fragment_start = 0;
         cleartext_fragment_end = 0;
     }
+}
+
+/// The server certificate chain can span multiple TLS records.
+/// This struct stores the intermediary state of the chain.
+const CertificateChainState = struct {
+    trust_chain_established: bool = false,
+    cert_index: usize = 0,
+    /// The previous certificate which verifies the next one.
+    prev_cert: Certificate.Parsed = undefined,
+    /// The first certificate's public key used for the certificate_verify message.
+    main_cert_pub_key: CertificatePublicKey = undefined,
+};
+
+fn verifyCertificateChain(
+    chain_state: CertificateChainState,
+    certs: tls.Decoder,
+    tls_version: tls.ProtocolVersion,
+    options: Options,
+) InitError!CertificateChainState {
+    const now_sec = options.realtime_now.toSeconds();
+    var state = chain_state;
+    var certs_decoder = certs;
+    while (!certs_decoder.eof()) {
+        try certs_decoder.ensure(3);
+        const cert_size = certs_decoder.decode(u24);
+        const certd = try certs_decoder.sub(cert_size);
+
+        if (tls_version == .tls_1_3) {
+            try certs_decoder.ensure(2);
+            const total_ext_size = certs_decoder.decode(u16);
+            const all_extd = try certs_decoder.sub(total_ext_size);
+            _ = all_extd;
+        }
+
+        const subject_cert: Certificate = .{
+            .buffer = certd.buf,
+            .index = @intCast(certd.idx),
+        };
+        const subject = try subject_cert.parse();
+        if (state.cert_index == 0) {
+            // Verify the host on the first certificate.
+            switch (options.host) {
+                .no_verification => {},
+                .explicit => |host| try subject.verifyHostName(host),
+            }
+
+            // Keep track of the public key for the certificate_verify message.
+            try state.main_cert_pub_key.init(subject.pub_key_algo, subject.pubKey());
+        } else {
+            try state.prev_cert.verify(subject, now_sec);
+        }
+
+        switch (options.ca) {
+            .no_verification => {
+                state.trust_chain_established = true;
+                return state;
+            },
+            .self_signed => {
+                try subject.verify(subject, now_sec);
+                state.trust_chain_established = true;
+                return state;
+            },
+            .bundle => |ca| if (verify: {
+                try ca.lock.lockShared(ca.io);
+                defer ca.lock.unlockShared(ca.io);
+                break :verify ca.bundle.verify(subject, now_sec);
+            }) {
+                state.trust_chain_established = true;
+                return state;
+            } else |err| switch (err) {
+                error.CertificateIssuerNotFound => {},
+                else => |e| return e,
+            },
+        }
+
+        state.prev_cert = subject;
+        state.cert_index += 1;
+    }
+    return state;
 }
 
 fn drain(w: *Writer, data: []const []const u8, splat: usize) Writer.Error!usize {

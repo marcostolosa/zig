@@ -110,7 +110,6 @@ test "@bitCast packed structs at runtime and comptime" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const Full = packed struct {
         number: u16,
@@ -310,6 +309,36 @@ test "bitcast vector to integer and back" {
 
     const int_again: u16 = @bitCast(vec_again);
     try expect(int_again == 0b1111_1111_1111_1101);
+}
+
+test "bitcast vector elementwise" {
+    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+
+    const S = struct {
+        fn doTheTest(comptime len: comptime_int) !void {
+            var floats: @Vector(len, f32) = std.simd.iota(f32, len) + @as(@Vector(len, f32), @splat(0.5));
+            _ = &floats;
+            const bits: @Vector(len, i32) = @bitCast(floats);
+            inline for (0..len) |i| try expect(bits[i] == @as(i32, @bitCast(@as(f32, @floatFromInt(i)) + 0.5)));
+            const floats_again: @Vector(len, f32) = @bitCast(bits);
+            inline for (0..len) |i| try expect(floats_again[i] == @as(f32, @floatFromInt(i)) + 0.5);
+
+            var unsigned: @Vector(len, u3) = std.simd.iota(u3, len);
+            _ = &unsigned;
+            const signed: @Vector(len, i3) = @bitCast(unsigned);
+            inline for (0..len) |i| try expect(signed[i] == @as(i3, @bitCast(@as(u3, i))));
+            const unsigned_again: @Vector(len, u3) = @bitCast(signed);
+            inline for (0..len) |i| try expect(unsigned_again[i] == i);
+        }
+    };
+
+    inline for (.{ 1, 2, 3, 4, 8 }) |len| {
+        try S.doTheTest(len);
+        try comptime S.doTheTest(len);
+    }
 }
 
 fn bitCastWrapper16(x: f16) u16 {
@@ -601,4 +630,37 @@ test "@bitCast deeply nested arrays to scalar" {
     }} };
     try static.doTheTest(src);
     try comptime static.doTheTest(src);
+}
+
+test "@bitCast between float and vector" {
+    const static = struct {
+        fn doTheTest() !void {
+            {
+                var v: @Vector(5, u16) = undefined;
+                v = .{ 0xf5c3, 0x5c28, 0xc28f, 0xc8f5, 0x4000 };
+                const f: f80 = @bitCast(v);
+                try expect(f == 3.14);
+            }
+            {
+                var f: f80 = undefined;
+                f = 3.14;
+                const v: @Vector(5, u16) = @bitCast(f);
+                try expect(std.mem.eql(u16, &@as([5]u16, v), &.{ 0xf5c3, 0x5c28, 0xc28f, 0xc8f5, 0x4000 }));
+            }
+            {
+                var v: @Vector(4, u32) = undefined;
+                v = .{ 0x51eb851f, 0xeb851eb8, 0x851eb851, 0x400191eb };
+                const f: f128 = @bitCast(v);
+                try expect(f == 6.28);
+            }
+            {
+                var f: f128 = undefined;
+                f = 6.28;
+                const v: @Vector(4, u32) = @bitCast(f);
+                try expect(std.mem.eql(u32, &@as([4]u32, v), &.{ 0x51eb851f, 0xeb851eb8, 0x851eb851, 0x400191eb }));
+            }
+        }
+    };
+    try static.doTheTest();
+    try comptime static.doTheTest();
 }

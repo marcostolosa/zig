@@ -524,7 +524,6 @@ test "function pointer with return type that is error union with payload which i
 }
 
 test "return result loc as peer result loc in inferred error set function" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
@@ -556,7 +555,6 @@ test "return result loc as peer result loc in inferred error set function" {
 }
 
 test "error payload type is correctly resolved" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -783,6 +781,7 @@ const NoReturn = struct {
 };
 
 test "error union of noreturn used with if" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
@@ -796,6 +795,7 @@ test "error union of noreturn used with if" {
 }
 
 test "error union of noreturn used with try" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
@@ -806,6 +806,7 @@ test "error union of noreturn used with try" {
 }
 
 test "error union of noreturn used with catch" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
@@ -1106,7 +1107,6 @@ test "'if' ignores error via local while 'else' ignores error directly" {
 }
 
 test "@errorCast into own inferred error set" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     const static = struct {
         fn foo(b: bool) !void {
             if (b) {
@@ -1137,4 +1137,10 @@ test "@errorCast into other inferred error set" {
     try expect(err == error.Bad);
     const non_err: Ies!u32 = @errorCast(@as(error{}!u32, 123));
     try expect(try non_err == 123);
+}
+
+test "error union with vector type" {
+    var x: anyerror!@Vector(5, f64) = undefined;
+    x = error.Expected;
+    try expect(x == error.Expected);
 }

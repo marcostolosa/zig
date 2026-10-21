@@ -295,10 +295,6 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         .c_source_files = c_source_files.items,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
-        .verbose_air = comp.verbose_air,
-        .verbose_llvm_ir = comp.verbose_llvm_ir,
-        .verbose_llvm_bc = comp.verbose_llvm_bc,
-        .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .skip_linker_dependencies = skip_linker_dependencies,
         .linker_allow_shlib_undefined = linker_allow_shlib_undefined,
@@ -350,6 +346,7 @@ fn addCcArgs(target: *const std.Target, args: *std.array_list.Managed([]const u8
 }
 
 const tsan_sources = [_][]const u8{
+    "tsan_adaptive_delay.cpp",
     "tsan_debugging.cpp",
     "tsan_external.cpp",
     "tsan_fd.cpp",

@@ -254,8 +254,6 @@ test "slicing pointer by length" {
 const x = @as([*]i32, @ptrFromInt(0x1000))[0..0x500];
 const y = x[0x100..];
 test "compile time slice of pointer to hard coded address" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     try expect(@intFromPtr(x) == 0x1000);
     try expect(x.len == 0x500);
 
@@ -387,8 +385,6 @@ test "obtaining a null terminated slice" {
 }
 
 test "empty array to slice" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const S = struct {
         fn doTheTest() !void {
             const empty: []align(16) u8 = &[_]u8{};
@@ -403,6 +399,25 @@ test "empty array to slice" {
 
     try S.doTheTest();
     try comptime S.doTheTest();
+}
+
+test "comptime-known slice of a global constant" {
+    const S = struct {
+        const weights = [_]f32{ 1, 2, 3 };
+
+        inline fn first(comptime w: []const f32) f32 {
+            return w[0];
+        }
+    };
+
+    var from_param: f32 = S.first(&S.weights);
+    _ = &from_param;
+    try expect(from_param == 1);
+
+    const w: []const f32 = &S.weights;
+    var from_local: f32 = w[1];
+    _ = &from_local;
+    try expect(from_local == 2);
 }
 
 test "@ptrCast slice to pointer" {
@@ -808,6 +823,12 @@ test "slice sentinel access at comptime" {
         try expect(slice0.len == 3);
         try expect(slice0[slice0.len] == 0);
     }
+    {
+        const slice0: []const u8 = &[_:0]u8{ '1', '2', '3' };
+
+        try expect(slice0.len == 3);
+        try expect(slice0.ptr[slice0.len] == 0);
+    }
 }
 
 test "slicing array with sentinel as end index" {
@@ -858,6 +879,7 @@ test "slice len modification at comptime" {
 }
 
 test "slice field ptr const" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     const const_slice: []const u8 = "string";
 
     const const_ptr_const_slice = &const_slice;
@@ -1068,6 +1090,14 @@ test "sentinel expression in slice operation has result type" {
     comptime assert(slice.len == 2);
     comptime assert(slice[0] == 1);
     comptime assert(slice[1] == 2);
+
+    const by_len = arr[0..][0..2 :@intCast(sentinel)];
+
+    comptime assert(@TypeOf(by_len) == *const [2:sentinel]u16);
+    comptime assert(by_len[2] == sentinel);
+    comptime assert(by_len.len == 2);
+    comptime assert(by_len[0] == 1);
+    comptime assert(by_len[1] == 2);
 }
 
 test "conditionally return second argument slice" {
@@ -1177,5 +1207,23 @@ test "modify slice through coerced array pointer" {
         const array_ptr: *[3]u16 = slice;
         array_ptr[2] = 0;
         assert(slice[2] == 0);
+    }
+}
+
+test "iterate empty slice of uninstantiable types" {
+    const E = enum {};
+    var slice_enum: []const E = undefined;
+    slice_enum = &.{};
+    for (slice_enum) |elem| {
+        _ = elem;
+        return error.ReachedUnreachable;
+    }
+
+    const U = union { foo: struct { a: u8, b: noreturn }, bar: E };
+    var slice_union: []const U = undefined;
+    slice_union = &.{};
+    for (slice_union) |elem| {
+        _ = elem;
+        return error.ReachedUnreachable;
     }
 }

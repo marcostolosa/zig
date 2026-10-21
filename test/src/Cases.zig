@@ -75,7 +75,6 @@ pub const Case = struct {
 
     emit_asm: bool = false,
     emit_bin: bool = true,
-    emit_h: bool = false,
     is_test: bool = false,
     expect_exact: bool = false,
     backend: Backend = .auto,
@@ -161,38 +160,6 @@ pub fn exeFromCompiledC(ctx: *Cases, name: []const u8, target_query: std.Target.
         .output_mode = .Exe,
         .deps = std.array_list.Managed(DepModule).init(ctx.arena),
         .link_libc = true,
-    }) catch @panic("out of memory");
-    return &ctx.cases.items[ctx.cases.items.len - 1];
-}
-
-pub fn addObjLlvm(ctx: *Cases, name: []const u8, target: std.Build.ResolvedTarget) *Case {
-    const can_emit_asm = switch (target.result.cpu.arch) {
-        .csky,
-        .xtensa,
-        => false,
-        else => true,
-    };
-    const can_emit_bin = switch (target.result.cpu.arch) {
-        .arc,
-        .csky,
-        .nvptx,
-        .nvptx64,
-        .xcore,
-        .xtensa,
-        => false,
-        else => true,
-    };
-
-    ctx.cases.append(.{
-        .name = name,
-        .target = target,
-        .files = .init(ctx.arena),
-        .case = null,
-        .output_mode = .Obj,
-        .deps = std.array_list.Managed(DepModule).init(ctx.arena),
-        .backend = .llvm,
-        .emit_bin = can_emit_bin,
-        .emit_asm = can_emit_asm,
     }) catch @panic("out of memory");
     return &ctx.cases.items[ctx.cases.items.len - 1];
 }
@@ -319,7 +286,7 @@ pub fn addCompile(
 pub fn addFromDir(ctx: *Cases, dir: Io.Dir, path_from_root: []const u8, b: *std.Build) void {
     var current_file: []const u8 = "none";
     ctx.addFromDirInner(dir, path_from_root, &current_file, b) catch |err| {
-        std.debug.panicExtra(@returnAddress(), "test harness failed to process file {q}: {t}\n", .{
+        std.debug.panicExtra(@returnAddress(), "test harness failed to process file {q}: {t}", .{
             current_file, err,
         });
     };
@@ -348,7 +315,7 @@ fn addFromDirInner(
                 try filenames.append(ctx.arena, try ctx.arena.dupe(u8, entry.path));
             },
             .directory => {
-                b.dependOnDirectory(b.path(b.pathJoin(&.{ path_from_root, entry.path })));
+                b.dependOnDirectoryContents(b.path(b.pathJoin(&.{ path_from_root, entry.path })));
             },
             else => continue,
         }
@@ -495,7 +462,7 @@ pub fn lowerToBuildSteps(
 
         if (case.case.? == .Error and options.skip_compile_errors) continue;
 
-        if (options.skip_non_native and !@import("../tests.zig").isNative(&case.target, &b.graph.host.result))
+        if (options.skip_non_native and !std.zig.target.isNative(&case.target.query, &case.target.result, &b.graph.host.result))
             continue;
 
         if (options.skip_spirv and case.target.query.cpu_arch != null and case.target.query.cpu_arch.?.isSpirV()) continue;
@@ -626,6 +593,7 @@ pub fn lowerToBuildSteps(
                     if (getExternalExecutor(io, &case.target.result, .{
                         .host_cpu_arch = host.result.cpu.arch,
                         .host_os_tag = host.result.os.tag,
+                        .link_mode = .dynamic, // TODO: this emulates old behavior until this file is deleted
                         .link_libc = true,
                     }) != .native) {
                         // We wouldn't be able to run the compiled C code.

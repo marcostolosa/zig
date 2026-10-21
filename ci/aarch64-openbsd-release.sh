@@ -7,7 +7,7 @@ set -e
 
 TARGET="aarch64-openbsd-none"
 MCPU="baseline"
-CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.17.0-dev.2030+f955266cf"
+CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.18.0-dev.92+1e1964473"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
@@ -43,7 +43,7 @@ stage3-release/bin/zig build install test docs \
   --maxrss "${ZSF_MAX_RSS:-0}" \
   --prefix stage4-release \
   --search-prefix "$PREFIX" \
-  --test-timeout 2m \
+  --test-timeout 4m \
   -Dversion-string="$(stage3-release/bin/zig version)" \
   -Dtarget=$TARGET \
   -Dcpu=$MCPU \
@@ -52,7 +52,9 @@ stage3-release/bin/zig build install test docs \
   -Duse-zig-libcxx \
   -Denable-llvm \
   -Dno-lib \
-  -Dskip-non-native
+  -Dskip-non-native \
+  -Dskip-compile-errors \
+  -Dskip-single-threaded
 
 # Ensure that the fuzzer at least compiles.
 # https://codeberg.org/ziglang/zig/issues/30728

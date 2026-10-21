@@ -56,6 +56,11 @@ location: Location,
 location_tok: std.zig.Ast.TokenIndex,
 hash_tok: std.zig.Ast.OptionalTokenIndex,
 name_tok: std.zig.Ast.TokenIndex,
+name: []const u8,
+parent_specified_paths: std.array_hash_map.String(void),
+parent_specified_paths_tok: std.zig.Ast.OptionalTokenIndex,
+parent_specified_version: std.SemanticVersion,
+parent_specified_version_tok: std.zig.Ast.OptionalTokenIndex,
 lazy_status: LazyStatus,
 /// Same as `parent_packge_root` except it is unchanged when recursing into
 /// relative file paths (as opposed to URL).
@@ -153,11 +158,11 @@ pub const JobQueue = struct {
     debug_hash: bool,
     mode: Mode,
     /// Set of hashes that will be additionally fetched even if they are marked
-    /// as lazy.
-    unlazy_set: UnlazySet = .{},
+    /// as lazy. Read-only.
+    unlazy_set: UnlazySet = .empty,
     /// Identifies paths that override all packages in the tree with matching
     /// project ids.
-    fork_set: ForkSet = .{},
+    fork_set: ForkSet = .empty,
 
     pub const Mode = enum {
         /// Non-lazy dependencies are always fetched.
@@ -289,11 +294,21 @@ pub const JobQueue = struct {
                 \\
             , .{std.fmt.alt(fetch.package_root, .formatEscapeString)});
 
-            if (fetch.has_build_zig) {
+            if (fetch.has_build_zig) b: {
+                if (fetch.have_manifest) {
+                    const project_id: Package.ProjectId = .init(fetch.manifest.name, fetch.manifest.id);
+                    if (jq.fork_set.getKeyPtrAdapted(project_id, @as(JobQueue.Fork.Adapter, .{}))) |fork| {
+                        try w.print(
+                            \\        pub const build_zig = @import({qf});
+                            \\
+                        , .{fork.path});
+                        break :b;
+                    }
+                }
                 try w.print(
-                    \\        pub const build_zig = @import("{f}");
+                    \\        pub const build_zig = @import({q});
                     \\
-                , .{std.zig.fmtString(hash_slice)});
+                , .{hash_slice});
             }
 
             if (fetch.have_manifest) {
@@ -302,7 +317,7 @@ pub const JobQueue = struct {
                     \\        pub const deps: []const struct { []const u8, []const u8 } = &.{
                     \\
                 );
-                for (manifest.dependencies.keys(), manifest.dependencies.values()) |name, dep| {
+                for (manifest.dependencies.keys(), manifest.dependencies.values()) |name, *dep| {
                     const h = depDigest(fetch.package_root, jq.global_cache, dep) orelse continue;
                     try w.print(
                         "            .{{ \"{f}\", \"{f}\" }},\n",
@@ -335,7 +350,7 @@ pub const JobQueue = struct {
         assert(root_fetch.have_manifest);
         const root_manifest = &root_fetch.manifest;
 
-        for (root_manifest.dependencies.keys(), root_manifest.dependencies.values()) |name, dep| {
+        for (root_manifest.dependencies.keys(), root_manifest.dependencies.values()) |name, *dep| {
             const h = depDigest(root_fetch.package_root, jq.global_cache, dep) orelse continue;
             try w.print(
                 "    .{{ \"{f}\", \"{f}\" }},\n",
@@ -527,7 +542,7 @@ pub fn run(f: *Fetch) RunError!void {
     const arena = f.arena.allocator();
     const gpa = f.arena.child_allocator;
 
-    try eb.init(gpa);
+    eb.* = try .init(gpa);
 
     // Check the global zig package cache to see if the hash already exists. If
     // so, load, parse, and validate the build.zig.zon file therein, and skip
@@ -595,7 +610,7 @@ pub fn run(f: *Fetch) RunError!void {
     if (remote.hash) |expected_hash| {
         const expected_project_id: Package.ProjectId = expected_hash.projectId();
         if (job_queue.fork_set.getKeyPtrAdapted(expected_project_id, @as(JobQueue.Fork.Adapter, .{}))) |fork| {
-            log.debug("using fork {f} for {s}", .{ fork.path, fork.manifest.name });
+            log.debug("using fork {f} for {s}", .{ fork.path, expected_hash.toSlice() });
             fork.uses += 1;
             f.package_root = fork.path;
             f.remote_package_root = f.package_root;
@@ -622,7 +637,7 @@ pub fn run(f: *Fetch) RunError!void {
                     log.debug("FileNotFound: {f}", .{package_root});
                     if (job_queue.read_only and f.lazy_status == .eager) return f.fail(
                         f.name_tok,
-                        try eb.printString("package not found at '{f}'", .{package_root}),
+                        try eb.printString("package not found at {qf}", .{package_root}),
                     );
                 },
                 error.Canceled => |e| return e,
@@ -752,7 +767,7 @@ fn runResource(
         try loadManifest(f, pkg_path);
 
         const filter: Filter = .{
-            .include_paths = if (f.have_manifest) f.manifest.paths else .{},
+            .include_paths = if (f.have_manifest) f.manifest.paths else f.parent_specified_paths,
         };
 
         // Ignore errors that were excluded by manifest, such as failure to
@@ -846,9 +861,15 @@ pub fn computedPackageHash(f: *const Fetch) Package.Hash {
         const version: []const u8 = std.mem.print(&version_buffer, "{f}", .{man.version}) catch &version_buffer;
         return .init(f.computed_hash.digest, man.name, version, man.id, saturated_size);
     }
-    // In the future build.zig.zon fields will be added to allow overriding these values
-    // for naked tarballs.
-    return .init(f.computed_hash.digest, "N", "V", 0xffff, saturated_size);
+    // Previous version of Zig did not use f.name to affect the package hash, so
+    // allow the user to opt in by only doing that if they specify a version.
+    var version_buffer: [Manifest.max_version_len]u8 = undefined;
+    if (f.parent_specified_version_tok != .none) {
+        const v = std.mem.print(&version_buffer, "{f}", .{f.parent_specified_version}) catch unreachable;
+        return .init(f.computed_hash.digest, f.name, v, 0xffff, saturated_size);
+    } else {
+        return .init(f.computed_hash.digest, "N", "V", 0xffff, saturated_size);
+    }
 }
 
 /// `computeHash` gets a free check for the existence of `build.zig`, but when
@@ -892,12 +913,24 @@ fn loadManifest(f: *Fetch, pkg_root: Path) RunError!void {
         error.ErrorsBundled => return error.FetchFailed,
         else => |e| {
             try eb.addRootErrorMessage(.{
-                .msg = try eb.printString("unable to load package manifest '{f}': {t}", .{ manifest_path, e }),
+                .msg = try eb.printString("unable to load package manifest {qf}: {t}", .{ manifest_path, e }),
             });
             return error.FetchFailed;
         },
     };
     f.have_manifest = true;
+
+    if (f.parent_specified_paths_tok.unwrap()) |tok| {
+        return f.fail(tok, try eb.printString("paths provided for package containing {s}", .{
+            Manifest.basename,
+        }));
+    }
+
+    if (f.parent_specified_version_tok.unwrap()) |tok| {
+        return f.fail(tok, try eb.printString("version provided for package containing {s}", .{
+            Manifest.basename,
+        }));
+    }
 }
 
 fn queueJobsForDeps(f: *Fetch) RunError!void {
@@ -998,6 +1031,11 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
                 .location_tok = dep.location_tok,
                 .hash_tok = dep.hash_tok,
                 .name_tok = dep.name_tok,
+                .name = dep_name,
+                .parent_specified_paths = dep.paths,
+                .parent_specified_paths_tok = dep.paths_tok,
+                .parent_specified_version = dep.version,
+                .parent_specified_version_tok = dep.version_tok,
                 .lazy_status = switch (f.job_queue.mode) {
                     .needed => if (dep.lazy) .available else .eager,
                     .all => .eager,
@@ -1743,7 +1781,7 @@ fn computeHash(f: *Fetch, pkg_path: Path, filter: Filter) RunError!ComputedHash 
 
         while (walker.next(io) catch |err| {
             try eb.addRootErrorMessage(.{ .msg = try eb.printString(
-                "unable to walk temporary directory '{f}': {t}",
+                "unable to walk temporary directory {qf}: {t}",
                 .{ pkg_path, err },
             ) });
             return error.FetchFailed;
@@ -1774,7 +1812,7 @@ fn computeHash(f: *Fetch, pkg_path: Path, filter: Filter) RunError!ComputedHash 
                 .file => .file,
                 .sym_link => .link,
                 else => return f.fail(f.location_tok, try eb.printString(
-                    "package contains '{s}' which has illegal file type '{t}'",
+                    "package contains {q} which has illegal file type {t}",
                     .{ entry.path, entry.kind },
                 )),
             };
@@ -1816,10 +1854,9 @@ fn computeHash(f: *Fetch, pkg_path: Path, filter: Filter) RunError!ComputedHash 
                 error.DirNotEmpty => continue,
                 error.FileNotFound => continue,
                 else => |e| {
-                    try eb.addRootErrorMessage(.{ .msg = try eb.printString(
-                        "unable to delete empty directory '{s}': {s}",
-                        .{ sus_dir, @errorName(e) },
-                    ) });
+                    try eb.addRootErrorMessage(.{
+                        .msg = try eb.printString("unable to delete empty directory {q}: {t}", .{ sus_dir, e }),
+                    });
                     return error.FetchFailed;
                 },
             };
@@ -1837,9 +1874,7 @@ fn computeHash(f: *Fetch, pkg_path: Path, filter: Filter) RunError!ComputedHash 
         hashed_file.failure catch |err| {
             any_failures = true;
             try eb.addRootErrorMessage(.{
-                .msg = try eb.printString("unable to hash '{s}': {s}", .{
-                    hashed_file.fs_path, @errorName(err),
-                }),
+                .msg = try eb.printString("unable to hash {q}: {t}", .{ hashed_file.fs_path, err }),
             });
         };
         hasher.update(&hashed_file.hash);
@@ -1849,8 +1884,8 @@ fn computeHash(f: *Fetch, pkg_path: Path, filter: Filter) RunError!ComputedHash 
         deleted_file.failure catch |err| {
             any_failures = true;
             try eb.addRootErrorMessage(.{
-                .msg = try eb.printString("failed to delete excluded path '{s}' from package: {s}", .{
-                    deleted_file.fs_path, @errorName(err),
+                .msg = try eb.printString("failed to delete excluded path {q} from package: {t}", .{
+                    deleted_file.fs_path, err,
                 }),
             });
         };
@@ -2033,7 +2068,7 @@ const Filter = struct {
     }
 };
 
-pub fn depDigest(pkg_root: Path, cache_root: Directory, dep: Manifest.Dependency) ?Package.Hash {
+pub fn depDigest(pkg_root: Path, cache_root: Directory, dep: *const Manifest.Dependency) ?Package.Hash {
     if (dep.hash) |h| return .fromSlice(h);
 
     switch (dep.location) {
@@ -2206,21 +2241,21 @@ const UnpackResult = struct {
             switch (item) {
                 .unable_to_create_sym_link => |info| {
                     eb.extra.items[note_i] = @backingInt(try eb.addErrorMessage(.{
-                        .msg = try eb.printString("unable to create symlink from '{s}' to '{s}': {s}", .{
-                            info.file_name, info.link_name, @errorName(info.code),
+                        .msg = try eb.printString("unable to create symlink from {q} to {q}: {t}", .{
+                            info.file_name, info.link_name, info.code,
                         }),
                     }));
                 },
                 .unable_to_create_file => |info| {
                     eb.extra.items[note_i] = @backingInt(try eb.addErrorMessage(.{
-                        .msg = try eb.printString("unable to create file '{s}': {s}", .{
-                            info.file_name, @errorName(info.code),
+                        .msg = try eb.printString("unable to create file {q}: {t}", .{
+                            info.file_name, info.code,
                         }),
                     }));
                 },
                 .unsupported_file_type => |info| {
                     eb.extra.items[note_i] = @backingInt(try eb.addErrorMessage(.{
-                        .msg = try eb.printString("file '{s}' has unsupported type '{c}'", .{
+                        .msg = try eb.printString("file {q} has unsupported type '{c}'", .{
                             info.file_name, info.file_type,
                         }),
                     }));

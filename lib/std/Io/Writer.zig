@@ -688,7 +688,8 @@ pub fn writeAll(w: *Writer, bytes: []const u8) Error!void {
 ///   string, everything is passed through unmodified, except for the following
 ///   transformations:
 ///   - escaped: '\n', '\r', '\t', '\\', '"'
-///   - hex-encoded: ASCII control characters
+///   - hex-encoded: ASCII control characters, invalid UTF-8 sequences,
+///     non-ASCII line endings (U+0085, U+2028, U+2029), byte order marks (U+FEFF).
 /// - "qf": delegates to the `format` method of the type, while double-quote
 ///   escaping.
 ///
@@ -1560,7 +1561,7 @@ fn printEnumNonexhaustive(w: *Writer, value: anytype) Error!void {
         try w.writeVecAll(&vecs);
         return;
     }
-    try w.writeAll("@enumFromInt(");
+    try w.writeAll("@fromBackingInt(");
     try w.printInt(@backingInt(value), 10, .lower, .{});
     try w.writeByte(')');
 }

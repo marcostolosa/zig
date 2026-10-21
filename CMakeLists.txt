@@ -38,7 +38,7 @@ project(zig
 )
 
 set(ZIG_VERSION_MAJOR 0)
-set(ZIG_VERSION_MINOR 17)
+set(ZIG_VERSION_MINOR 18)
 set(ZIG_VERSION_PATCH 0)
 set(ZIG_VERSION "" CACHE STRING "Override Zig version string. Default is to find out with git.")
 
@@ -133,9 +133,9 @@ else()
     set(ZIG_SYSTEM_LIBCXX "stdc++" CACHE STRING "system libcxx name for build.zig")
 endif()
 
-find_package(llvm 22)
-find_package(clang 22)
-find_package(lld 22)
+find_package(llvm 23)
+find_package(clang 23)
+find_package(lld 23)
 
 if(ZIG_STATIC_ZLIB)
     if (MSVC)
@@ -330,7 +330,7 @@ set(ZIG_STAGE2_SOURCES
     src/Air/Legalize.zig
     src/Air/Liveness.zig
     src/Air/Liveness/Verify.zig
-    src/Air/print.zig
+    src/Air/Print.zig
     src/Builtin.zig
     src/Compilation.zig
     src/Compilation/Config.zig
@@ -457,7 +457,6 @@ set(ZIG_STAGE2_SOURCES
     src/register_manager.zig
     src/target.zig
     src/tracy.zig
-    src/libs/wasi_libc.zig
 )
 
 if(MSVC)
@@ -602,6 +601,17 @@ elseif(ZIG_HOST_TARGET_IS_ANDROID)
   else()
     set(ZIG_HOST_TARGET_ABI "-android")
   endif()
+else()
+  check_symbol_exists(__GLIBC__ "features.h" ZIG_HOST_TARGET_IS_GLIBC)
+  if(ZIG_HOST_TARGET_IS_GLIBC)
+    if(ZIG_HOST_TARGET_ARCH MATCHES "^arm(eb)?$" OR ZIG_HOST_TARGET_ARCH MATCHES "^thumb(eb)?$" OR ZIG_HOST_TARGET_ARCH MATCHES "^powerpc(le)?$")
+      set(ZIG_HOST_TARGET_ABI "-gnueabihf")
+    elseif(ZIG_HOST_TARGET_ARCH MATCHES "^mips(el)?$")
+      set(ZIG_HOST_TARGET_ABI "-gnueabi")
+    else()
+      set(ZIG_HOST_TARGET_ABI "-gnu")
+    endif()
+  endif()
 endif()
 
 set(ZIG_HOST_TARGET_TRIPLE "${ZIG_HOST_TARGET_ARCH}-${ZIG_HOST_TARGET_OS}${ZIG_HOST_TARGET_ABI}" CACHE STRING "Host zig target triple.")
@@ -615,9 +625,6 @@ else()
   set(ZIG_WASM2C_COMPILE_FLAGS "-std=c99")
   set(ZIG1_COMPILE_FLAGS "-std=c99 -Oz -fno-strict-aliasing")
   set(ZIG2_COMPILE_FLAGS "-std=c99 -Oz -fno-sanitize=undefined -fno-stack-protector -fno-strict-aliasing")
-  if(CMAKE_C_COMPILER_ID STREQUAL "Clang" AND ZIG_HOST_TARGET_ARCH STREQUAL "s390x")
-    string(REPLACE -Oz -O0 ZIG2_COMPILE_FLAGS "${ZIG2_COMPILE_FLAGS}") # llvm 22 assertion failure
-  endif()
   # Must match the condition in build.zig.
   if(ZIG_HOST_TARGET_ARCH MATCHES "^(arm|thumb)(eb)?$" OR ZIG_HOST_TARGET_ARCH EQUAL "hexagon" OR ZIG_HOST_TARGET_ARCH MATCHES "^powerpc(64)?(le)?$")
     set(ZIG1_COMPILE_FLAGS "${ZIG1_COMPILE_FLAGS} -ffunction-sections -fdata-sections")
@@ -691,7 +698,7 @@ add_custom_command(
 
 set(BUILD_COMPILER_RT_ARGS
   "${PROJECT_SOURCE_DIR}/lib"
-  build-obj -ofmt=c -OReleaseSmall
+  build-obj -ofmt=c -lc -OReleaseSmall
   --name compiler_rt
   -femit-bin="${ZIG_COMPILER_RT_C_SOURCE}"
   -target "${ZIG_HOST_TARGET_TRIPLE}"

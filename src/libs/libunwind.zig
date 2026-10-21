@@ -124,6 +124,9 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
         if (!comp.config.any_non_single_threaded) {
             try cflags.append("-D_LIBUNWIND_HAS_NO_THREADS");
         }
+        if (target.os.tag == .haiku) {
+            try cflags.append("-D_LIBUNWIND_USE_HAIKU_BSD_LIB");
+        }
         if (target.cpu.arch.isArm() and target.abi.float() == .hard) {
             try cflags.append("-DCOMPILER_RT_ARMHF_TARGET");
         }
@@ -154,10 +157,6 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
         .c_source_files = &c_source_files,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
-        .verbose_air = comp.verbose_air,
-        .verbose_llvm_ir = comp.verbose_llvm_ir,
-        .verbose_llvm_bc = comp.verbose_llvm_bc,
-        .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .skip_linker_dependencies = true,
         .environ_map = comp.environ_map,

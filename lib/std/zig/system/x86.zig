@@ -41,8 +41,7 @@ inline fn hasMask(input: u32, mask: u32) bool {
     return (input & mask) == mask;
 }
 
-pub fn detectNativeCpuAndFeatures(arch: Target.Cpu.Arch, os: Target.Os, query: Target.Query) Target.Cpu {
-    _ = query;
+pub fn detectNativeCpuAndFeatures(arch: Target.Cpu.Arch) Target.Cpu {
     var cpu = Target.Cpu{
         .arch = arch,
         .model = Target.Cpu.Model.generic(arch),
@@ -50,7 +49,7 @@ pub fn detectNativeCpuAndFeatures(arch: Target.Cpu.Arch, os: Target.Os, query: T
     };
 
     // First we detect features, to use as hints when detecting CPU Model.
-    detectNativeFeatures(&cpu, os.tag);
+    detectNativeFeatures(&cpu);
 
     var leaf = cpuid(0, 0);
     const max_leaf = leaf.eax;
@@ -75,6 +74,7 @@ pub fn detectNativeCpuAndFeatures(arch: Target.Cpu.Arch, os: Target.Os, query: T
         if (switch (vendor) {
             0x756e6547 => detectIntelProcessor(&cpu, family, model, brand_id),
             0x68747541 => detectAmdProcessor(&cpu, family, model),
+            0x6f677948 => detectHygonProcessor(family, model),
             else => null,
         }) |m| b: {
             // Some hypervisors are evil liars and will operate in long mode while identifying as a
@@ -90,7 +90,7 @@ pub fn detectNativeCpuAndFeatures(arch: Target.Cpu.Arch, os: Target.Os, query: T
     // Add the CPU model's feature set into the working set, but then
     // override with actual detected features again.
     cpu.features.addFeatureSet(cpu.model.features);
-    detectNativeFeatures(&cpu, os.tag);
+    detectNativeFeatures(&cpu);
 
     cpu.features.populateDependencies(cpu.arch.allFeaturesList());
 
@@ -210,12 +210,28 @@ fn detectAmdProcessor(cpu: *const Target.Cpu, family: u32, model: u32) ?*const T
             0x10...0x1f, 0x60...0x6f, 0x70...0x7f, 0xa0...0xaf => &Target.x86.cpu.znver4,
             else => &Target.x86.cpu.znver3,
         },
-        26 => &Target.x86.cpu.znver5,
+        26 => switch (model) {
+            0x50...0x5f, 0x80...0xcf, 0xd8...0xe7 => &Target.x86.cpu.znver6,
+            else => &Target.x86.cpu.znver5,
+        },
         else => null,
     };
 }
 
-fn detectNativeFeatures(cpu: *Target.Cpu, os_tag: Target.Os.Tag) void {
+fn detectHygonProcessor(family: u32, model: u32) ?*const Target.Cpu.Model {
+    return switch (family) {
+        24 => switch (model) {
+            4 => &Target.x86.cpu.c86_4g_m4,
+            6 => &Target.x86.cpu.c86_4g_m6,
+            7 => &Target.x86.cpu.c86_4g_m7,
+            8 => &Target.x86.cpu.c86_4g_m8,
+            else => null,
+        },
+        else => null,
+    };
+}
+
+fn detectNativeFeatures(cpu: *Target.Cpu) void {
     var leaf = cpuid(0, 0);
 
     const max_level = leaf.eax;
@@ -268,7 +284,7 @@ fn detectNativeFeatures(cpu: *Target.Cpu, os_tag: Target.Os.Tag) void {
     // Darwin lazily saves the AVX512 context on first use: trust that the OS will
     // save the AVX512 context if we use AVX512 instructions, even if the bit is not
     // set right now.
-    const has_avx512_save = if (os_tag.isDarwin())
+    const has_avx512_save = if (builtin.target.os.tag.isDarwin())
         true
     else
         xcr0.zmm_hi256 and xcr0.hi16_zmm;
@@ -341,9 +357,11 @@ fn detectNativeFeatures(cpu: *Target.Cpu, os_tag: Target.Os.Tag) void {
 
         // AMD uses a different bit for prefetchi.
         setFeature(cpu, .prefetchi, bit(leaf.eax, 20));
+        setFeature(cpu, .avx512bmm, bit(leaf.eax, 23) and has_avx512_save);
     } else {
         for ([_]Target.x86.Feature{
             .prefetchi,
+            .avx512bmm,
         }) |feat| {
             setFeature(cpu, feat, false);
         }
@@ -446,6 +464,7 @@ fn detectNativeFeatures(cpu: *Target.Cpu, os_tag: Target.Os.Tag) void {
             setFeature(cpu, .nf, bit(leaf.edx, 21) and has_apx_save);
             setFeature(cpu, .cf, bit(leaf.edx, 21) and has_apx_save);
             setFeature(cpu, .zu, bit(leaf.edx, 21) and has_apx_save);
+            setFeature(cpu, .jmpabs, bit(leaf.edx, 21) and has_apx_save);
 
             break :has_avx10 bit(leaf.edx, 19);
         } else {
@@ -475,6 +494,7 @@ fn detectNativeFeatures(cpu: *Target.Cpu, os_tag: Target.Os.Tag) void {
                 .nf,
                 .cf,
                 .zu,
+                .jmpabs,
             }) |feat| {
                 setFeature(cpu, feat, false);
             }
@@ -560,6 +580,7 @@ fn detectNativeFeatures(cpu: *Target.Cpu, os_tag: Target.Os.Tag) void {
             .nf,
             .cf,
             .zu,
+            .jmpabs,
         }) |feat| {
             setFeature(cpu, feat, false);
         }

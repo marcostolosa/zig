@@ -946,7 +946,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) codegen.Error!void 
             isel: *Select,
             inst: Air.Inst.Index,
             pub fn format(fmt_air: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-                fmt_air.isel.air.writeInst(writer, fmt_air.inst, fmt_air.isel.pt, null);
+                fmt_air.isel.air.writeInst(writer, fmt_air.inst, fmt_air.isel.pt.zcu, null);
             }
         } {
             return .{ .isel = it.isel, .inst = inst };
@@ -7757,6 +7757,11 @@ pub fn layout(
 
     {
         wip_mir_log.debug("{f}<prologue>:", .{nav.fqn.fmt(ip)});
+
+        for (0..mod.patchable_function_entry) |_| {
+            try isel.emit(.nop());
+        }
+
         var save_index: usize = 0;
         while (save_index < saves.len) if (save_index + 2 <= saves.len and
             saves[save_index + 0].class == saves[save_index + 1].class and
@@ -7969,11 +7974,11 @@ fn fmtLoopLive(isel: *Select, loop_inst: Air.Inst.Index) struct {
 }
 
 fn fmtType(isel: *Select, ty: ZigType) ZigType.Formatter {
-    return ty.fmt(isel.pt);
+    return ty.fmt(isel.pt.zcu);
 }
 
 fn fmtConstant(isel: *Select, constant: Constant) @typeInfo(@TypeOf(Constant.fmtValue)).@"fn".return_type.? {
-    return constant.fmtValue(isel.pt);
+    return constant.fmtValue(isel.pt.zcu);
 }
 
 fn block(

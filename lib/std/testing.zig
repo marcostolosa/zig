@@ -592,6 +592,9 @@ pub const TmpDir = struct {
     const random_bytes_count = 12;
     const sub_path_len = std.base64.url_safe.Encoder.calcSize(random_bytes_count);
 
+    /// Deprecated.
+    pub const parent_dir_path: []const u8 = ".zig-cache" ++ std.fs.path.sep_str ++ "tmp";
+
     pub fn cleanup(self: *TmpDir) void {
         self.dir.close(io);
         self.parent_dir.deleteTree(io, &self.sub_path) catch {};
@@ -1146,7 +1149,9 @@ pub fn checkAllAllocationFailures(
 ) !void {
     // Try it once with unlimited memory, make sure it works
     const needed_alloc_count = x: {
-        var failing_allocator_inst = std.testing.FailingAllocator.init(backing_allocator, .{});
+        var failing_allocator_inst = std.testing.FailingAllocator.init(backing_allocator, .{
+            .resize_fail_index = 0,
+        });
 
         try @call(.auto, test_fn, .{failing_allocator_inst.allocator()} ++ extra_args);
         break :x failing_allocator_inst.alloc_index;
@@ -1155,6 +1160,7 @@ pub fn checkAllAllocationFailures(
     for (0..needed_alloc_count) |fail_index| {
         var failing_allocator_inst = std.testing.FailingAllocator.init(backing_allocator, .{
             .fail_index = fail_index,
+            .resize_fail_index = 0,
         });
 
         if (@call(.auto, test_fn, .{failing_allocator_inst.allocator()} ++ extra_args)) |_| {
@@ -1236,6 +1242,24 @@ test "checkAllAllocationFailures provide result type to 'extra_args' argument" {
     );
 }
 
+test "checkAllAllocationFailures does not depend on in-place resizes" {
+    // `std.testing.allocator` never reuses memory, so whether a list can grow in place depends
+    // on where in its bucket it landed, which differs from one run to the next.
+    const S = struct {
+        fn f(gpa: std.mem.Allocator) !void {
+            var a: std.ArrayList(u8) = .empty;
+            defer a.deinit(gpa);
+            var b: std.ArrayList(u8) = .empty;
+            defer b.deinit(gpa);
+            for (0..2000) |i| {
+                try a.append(gpa, @truncate(i));
+                try b.append(gpa, @truncate(i));
+            }
+        }
+    };
+    try checkAllAllocationFailures(std.testing.allocator, S.f, .{});
+}
+
 /// Given a type, references all the declarations inside, so that the semantic analyzer sees them.
 pub fn refAllDecls(comptime T: type) void {
     if (!builtin.is_test) return;
@@ -1303,11 +1327,14 @@ pub const Reader = struct {
 
 /// A `Io.Reader` that gets its data from another `Io.Reader`, and always
 /// writes to its own buffer (and returns 0) during `stream` and `readVec`.
+/// Note: zero length buffers are not supported.
 pub const ReaderIndirect = struct {
     in: *Io.Reader,
     interface: Io.Reader,
 
     pub fn init(in: *Io.Reader, buffer: []u8) ReaderIndirect {
+        assert(buffer.len > 0);
+
         return .{
             .in = in,
             .interface = .{
@@ -1363,11 +1390,14 @@ pub const ReaderIndirect = struct {
 
 /// A `Io.Writer` that writes its data to another `Io.Writer`, and only
 /// writes new data to its own buffer during `drain`.
+/// Note: zero length buffers are not supported.
 pub const WriterIndirect = struct {
     out: *Io.Writer,
     interface: Io.Writer,
 
     pub fn init(out: *Io.Writer, buffer: []u8) WriterIndirect {
+        assert(buffer.len > 0);
+
         return .{
             .out = out,
             .interface = .{

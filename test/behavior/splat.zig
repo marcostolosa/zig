@@ -92,6 +92,7 @@ test "splat with an error union or optional result type" {
 }
 
 test "read/write through global variable array of struct fields initialized via splat" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -144,6 +145,35 @@ test "vector @splat" {
             try testForT(8 * 2, @as(f16, 3.1415));
             try testForT(4 * 2, @as(f32, 3.1415));
             try testForT(2 * 2, @as(f64, 3.1415));
+
+            // Splats into one-element vectors.
+            try testForT(1, @as(u8, 0xEE));
+            try testForT(1, @as(u16, 0xBEEF));
+            try testForT(1, @as(u32, 0xDEADBEEF));
+            try testForT(1, @as(u64, 0xCAFEF00DDEADBEEF));
+
+            try testForT(1, @as(f16, 3.1415));
+            try testForT(1, @as(f32, 3.1415));
+            try testForT(1, @as(f64, 3.1415));
+        }
+    };
+    try S.doTheTest();
+    try comptime S.doTheTest();
+}
+
+test "scalar @splat" {
+    const S = struct {
+        fn testForTypes(R: type, result: R, Op: type, op: Op) !void {
+            try expect(@as(R, result) == @as(Op, @splat(op)));
+        }
+        fn doTheTest() !void {
+            try testForTypes(comptime_float, 3.1415, comptime_float, 3.1415);
+            try testForTypes(f32, 3.1415, comptime_float, 3.1415);
+            try testForTypes(f32, 3.1415, f32, 3.1415);
+            try testForTypes(u8, 31, u8, 31);
+            try testForTypes(u8, 31, u16, 31);
+            try testForTypes(i16, 31, i16, 31);
+            try testForTypes(i16, 31, i8, 31);
         }
     };
     try S.doTheTest();

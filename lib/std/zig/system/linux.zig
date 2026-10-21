@@ -442,16 +442,16 @@ const powerpc = struct {
                 .{ "750GX", &Target.powerpc.cpu.@"750" },
                 .{ "82xx", &Target.powerpc.cpu.@"603e" },
                 .{ "APM821XX", &Target.powerpc.cpu.@"440" },
-                .{ "Cell", &Target.powerpc.cpu.ppc64 }, // TODO: Change with LLVM 23.
+                .{ "Cell", &Target.powerpc.cpu.cell },
                 .{ "e300c1", &Target.powerpc.cpu.@"603e" },
                 .{ "e300c2", &Target.powerpc.cpu.@"603e" },
                 .{ "e300c3", &Target.powerpc.cpu.@"603e" },
                 .{ "e300c4", &Target.powerpc.cpu.@"603e" },
                 .{ "e500mc", &Target.powerpc.cpu.e500mc },
-                .{ "e500v2", &Target.powerpc.cpu.e500 }, // TODO: Change with LLVM 23.
+                .{ "e500v2", &Target.powerpc.cpu.e500v2 },
                 .{ "e500", &Target.powerpc.cpu.e500 },
                 .{ "e5500", &Target.powerpc.cpu.e5500 },
-                .{ "e6500", &Target.powerpc.cpu.e5500 }, // TODO: Change with LLVM 23.
+                .{ "e6500", &Target.powerpc.cpu.e6500 },
                 .{ "G2_LE", &Target.powerpc.cpu.@"603e" },
                 .{ "HX-C2000", &Target.powerpc.cpu.pwr8 },
                 .{ "POWER5+", &Target.powerpc.cpu.pwr5x },
@@ -655,7 +655,6 @@ const riscv = struct {
                     setFeature(&cpu, Target.riscv.Feature.a, ima_support);
                 },
                 RISCV_HWPROBE.KEY.IMA_EXT_0 => {
-                    // https://bugzilla.kernel.org/show_bug.cgi?id=221874
                     const fd_support = set(value, RISCV_HWPROBE.IMA_EXT_0.IMA_FD);
                     setFeature(&cpu, .f, ima_support and fd_support);
                     setFeature(&cpu, .d, ima_support and fd_support);

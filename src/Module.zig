@@ -26,6 +26,7 @@ fully_qualified_name: []const u8,
 deps: Deps = .{},
 
 resolved_target: ResolvedTarget,
+llvm_cpu_features: ?[:0]const u8,
 optimize_mode: std.lang.Optimize,
 code_model: std.lang.CodeModel,
 single_threaded: bool,
@@ -43,6 +44,7 @@ fuzz: bool,
 unwind_tables: std.lang.UnwindTables,
 cc_argv: []const []const u8,
 no_builtin: bool,
+patchable_function_entry: u16,
 
 pub const Deps = std.array_hash_map.String(*Module);
 
@@ -84,6 +86,7 @@ pub const CreateOptions = struct {
         sanitize_thread: ?bool = null,
         fuzz: ?bool = null,
         no_builtin: ?bool = null,
+        patchable_function_entry: u16 = 0,
     };
 };
 
@@ -92,7 +95,6 @@ pub const ResolvedTarget = struct {
     is_native_os: bool,
     is_native_abi: bool,
     is_explicit_dynamic_linker: bool,
-    llvm_cpu_features: ?[*:0]const u8 = null,
 };
 
 pub const CreateError = error{
@@ -107,6 +109,7 @@ pub const CreateError = error{
     StackCheckUnsupportedByTarget,
     StackProtectorUnsupportedByTarget,
     StackProtectorUnavailableWithoutLibC,
+    PatchableFunctionEntryUnsupportedByBackend,
 };
 
 /// At least one of `parent` and `resolved_target` must be non-null.
@@ -171,7 +174,7 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
     };
 
     const pic = b: {
-        if (target_util.requiresPic(target, options.global.link_libc)) {
+        if (target_util.requiresPic(target)) {
             if (options.inherited.pic == false)
                 return error.TargetRequiresPic;
             break :b true;
@@ -181,7 +184,10 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
                 return error.PieRequiresPic;
             break :b true;
         }
-        if (options.global.link_mode == .dynamic and target_util.requiresPicForDynamicLink(target)) {
+        if (options.global.output_mode == .Lib and
+            options.global.link_mode == .dynamic and
+            target_util.requiresPicForDynamicLink(target))
+        {
             if (options.inherited.pic == false)
                 return error.DynamicLinkingRequiresPic;
             break :b true;
@@ -189,10 +195,9 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         if (options.inherited.pic) |x| break :b x;
         if (options.parent) |p| break :b p.pic;
 
-        // Default to PIC on targets where we default to producing PIEs to make
-        // the common case of linking objects and static libraries into an
-        // executable work out of the box.
-        break :b target_util.defaultPie(target);
+        // Default to PIC for objects and static libraries to make the common
+        // cases of linking those into a PIE or a shared library just work.
+        break :b options.global.output_mode != .Exe;
     };
 
     const red_zone = b: {
@@ -324,15 +329,46 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         break :b target.cpu.arch.isBpf();
     };
 
-    const llvm_cpu_features: ?[*:0]const u8 = b: {
-        if (resolved_target.llvm_cpu_features) |x| break :b x;
-        if (!options.global.use_llvm) break :b null;
+    const patchable_function_entry = b: {
+        const x = options.inherited.patchable_function_entry;
+        if (x > 0) {
+            switch (zig_backend) {
+                .stage2_llvm,
+                .stage2_x86_64,
+                .stage2_aarch64,
+                .stage2_c,
+                .stage2_riscv64,
+                .stage2_loongarch,
+                => {},
 
-        var buf = std.array_list.Managed(u8).init(arena);
-        var disabled_features = std.array_list.Managed(u8).init(arena);
-        defer disabled_features.deinit();
+                // Does not apply to this architecture.
+                .stage2_spirv,
+                .zsf_spork8,
+                .stage2_wasm,
+                => return error.PatchableFunctionEntryUnsupportedByBackend,
+
+                // Not implemented.
+                .stage2_sparc64,
+                .stage2_x86,
+                .stage2_arm,
+                .stage2_powerpc,
+                => return error.PatchableFunctionEntryUnsupportedByBackend,
+
+                .other, .stage1, _ => unreachable,
+            }
+            break :b x;
+        }
+        if (options.parent) |p| break :b p.patchable_function_entry;
+        break :b 0;
+    };
+
+    const llvm_cpu_features: ?[:0]const u8 = b: {
+        if (!options.global.use_llvm) break :b null;
+        if (options.inherited.resolved_target == null) break :b options.parent.?.llvm_cpu_features;
 
         // Append disabled features after enabled ones, so that their effects aren't overwritten.
+        var buf = std.array_list.Managed(u8).init(arena);
+        var disabled_features = std.array_list.Managed(u8).init(arena);
         for (target.cpu.arch.allFeaturesList()) |feature| {
             if (feature.llvm_name) |llvm_name| {
                 // Ignore these until we figure out how to handle the concept of omitting features.
@@ -363,10 +399,9 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
 
         try buf.appendSlice(disabled_features.items);
         if (buf.items.len == 0) break :b "";
-        assert(std.mem.endsWith(u8, buf.items, ","));
+        assert(buf.items[buf.items.len - 1] == ',');
         buf.items[buf.items.len - 1] = 0;
-        buf.shrinkAndFree(buf.items.len);
-        break :b buf.items[0 .. buf.items.len - 1 :0].ptr;
+        break :b buf.items[0 .. buf.items.len - 1 :0];
     };
 
     const mod = try arena.create(Module);
@@ -379,8 +414,8 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
             .is_native_os = resolved_target.is_native_os,
             .is_native_abi = resolved_target.is_native_abi,
             .is_explicit_dynamic_linker = resolved_target.is_explicit_dynamic_linker,
-            .llvm_cpu_features = llvm_cpu_features,
         },
+        .llvm_cpu_features = llvm_cpu_features,
         .optimize_mode = optimize_mode,
         .single_threaded = single_threaded,
         .error_tracing = error_tracing,
@@ -398,6 +433,7 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         .unwind_tables = unwind_tables,
         .cc_argv = options.cc_argv,
         .no_builtin = no_builtin,
+        .patchable_function_entry = patchable_function_entry,
     };
     return mod;
 }
@@ -436,6 +472,7 @@ pub fn createLimited(gpa: Allocator, options: LimitedOptions) Allocator.Error!*M
         .unwind_tables = undefined,
         .cc_argv = undefined,
         .no_builtin = undefined,
+        .patchable_function_entry = undefined,
     };
     return mod;
 }
@@ -454,8 +491,8 @@ pub fn createBuiltin(arena: Allocator, opts: Builtin, dirs: std.zig.Directories)
             .is_native_os = false,
             .is_native_abi = false,
             .is_explicit_dynamic_linker = false,
-            .llvm_cpu_features = null,
         },
+        .llvm_cpu_features = null,
         .optimize_mode = opts.optimize_mode,
         .single_threaded = opts.single_threaded,
         .error_tracing = opts.error_tracing,
@@ -474,6 +511,7 @@ pub fn createBuiltin(arena: Allocator, opts: Builtin, dirs: std.zig.Directories)
         .red_zone = false,
         .sanitize_c = .off,
         .no_builtin = false,
+        .patchable_function_entry = 0,
     };
     return new;
 }

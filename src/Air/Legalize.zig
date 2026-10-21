@@ -204,6 +204,10 @@ pub const Feature = enum {
     expand_array_splat,
     /// Replace `array_to_vector` with an `array_elem_val` per element followed by an `aggregate_init`.
     expand_array_to_vector,
+    /// Replace `ptr_elem_val` with an `ptr_elem_ptr` followed by a `load`.
+    expand_ptr_elem_val,
+    /// Replace `array_to_slice` with a `ptr_cast` followed by a `slice`.
+    expand_array_to_slice,
 
     /// Replace all arithmetic operations on 16-bit floating-point types with calls to soft-float
     /// routines in compiler_rt, including `fptrunc`/`fpext`/`float_from_int`/`int_from_float`
@@ -863,12 +867,16 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             .array_elem_val,
             .slice_elem_val,
             .slice_elem_ptr,
-            .ptr_elem_val,
             .ptr_elem_ptr,
-            .array_to_slice,
             => {},
+            .ptr_elem_val => if (l.features.has(.expand_ptr_elem_val)) {
+                continue :inst l.replaceInst(inst, .block, try l.ptrElemValBlockPayload(inst));
+            },
             .array_to_vector => if (l.features.has(.expand_array_to_vector)) {
                 continue :inst l.replaceInst(inst, .block, try l.arrayToVectorBlockPayload(inst));
+            },
+            .array_to_slice => if (l.features.has(.expand_array_to_slice)) {
+                continue :inst l.replaceInst(inst, .block, try l.arrayToSliceBlockPayload(inst));
             },
             inline .reduce, .reduce_optimized => |air_tag| {
                 const reduce = l.air_instructions.items(.data)[@backingInt(inst)].reduce;
@@ -896,7 +904,7 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             .splat => {
                 const ty_op = l.air_instructions.items(.data)[@backingInt(inst)].ty_op;
                 switch (ty_op.ty.zigTypeTag(zcu)) {
-                    .vector => switch (ty_op.ty.vectorLen(zcu)) {
+                    .vector => if (l.features.has(.splat_one_elem_to_bit_cast)) switch (ty_op.ty.vectorLen(zcu)) {
                         0 => unreachable,
                         1 => continue :inst l.replaceInst(inst, .bit_cast, .{ .ty_op = .{
                             .ty = ty_op.ty,
@@ -2973,6 +2981,46 @@ fn packedAggregateInitBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Erro
     } };
 }
 
+fn ptrElemValBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Inst.Data {
+    const pt = l.pt;
+    const zcu = pt.zcu;
+    const gpa = zcu.gpa;
+
+    const orig_bin_op = l.air_instructions.items(.data)[@backingInt(orig_inst)].bin_op;
+
+    const ptr_val = orig_bin_op.lhs;
+    const ptr_ty = try l.typeOf(ptr_val).elemPtrType(null, pt);
+    const val_ty = ptr_ty.childType(zcu);
+
+    var inst_buf: [3]Air.Inst.Index = undefined;
+    var main_block: Block = .init(&inst_buf);
+    try l.air_instructions.ensureUnusedCapacity(gpa, inst_buf.len);
+
+    const ptr = main_block.add(l, .{
+        .tag = .ptr_elem_ptr,
+        .data = .{
+            .ty_pl = .{
+                .ty = ptr_ty,
+                .payload = try l.addExtra(Air.Bin, .{
+                    .lhs = ptr_val,
+                    .rhs = orig_bin_op.rhs,
+                }),
+            },
+        },
+    }).toRef();
+
+    const val = main_block.addTyOp(l, .load, val_ty, ptr).toRef();
+
+    main_block.addBr(l, orig_inst, val);
+
+    return .{
+        .ty_pl = .{
+            .ty = val_ty,
+            .payload = try l.addBlockBody(main_block.body()),
+        },
+    };
+}
+
 fn arrayToVectorBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Inst.Data {
     const pt = l.pt;
     const zcu = pt.zcu;
@@ -3011,6 +3059,42 @@ fn arrayToVectorBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.
 
     return .{ .ty_pl = .{
         .ty = vec_ty,
+        .payload = try l.addBlockBody(main_block.body()),
+    } };
+}
+
+fn arrayToSliceBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Inst.Data {
+    const pt = l.pt;
+    const zcu = pt.zcu;
+    const gpa = zcu.gpa;
+
+    const orig_ty_op = l.air_instructions.items(.data)[@backingInt(orig_inst)].ty_op;
+
+    const slice_ty = orig_ty_op.ty;
+    const ptr_ty = slice_ty.slicePtrFieldType(zcu);
+
+    const array_ptr_ty = l.typeOf(orig_ty_op.operand);
+    const len = array_ptr_ty.childType(zcu).arrayLen(zcu);
+
+    var inst_buf: [3]Air.Inst.Index = undefined;
+    var main_block: Block = .init(&inst_buf);
+    try l.air_instructions.ensureUnusedCapacity(gpa, inst_buf.len);
+
+    const ptr = main_block.addPtrCast(l, ptr_ty, orig_ty_op.operand);
+    const result = main_block.add(l, .{
+        .tag = .slice,
+        .data = .{ .ty_pl = .{
+            .ty = slice_ty,
+            .payload = try l.addExtra(Air.Bin, .{
+                .lhs = ptr,
+                .rhs = try pt.intRef(.usize, len),
+            }),
+        } },
+    }).toRef();
+
+    main_block.addBr(l, orig_inst, result);
+    return .{ .ty_pl = .{
+        .ty = slice_ty,
         .payload = try l.addBlockBody(main_block.body()),
     } };
 }

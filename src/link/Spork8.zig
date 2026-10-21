@@ -22,9 +22,9 @@ const Value = @import("../Value.zig");
 
 base: link.File,
 /// All MIR instructions for all Zcu functions.
-mir_instructions: std.MultiArrayList(Mir.Inst) = .{},
+mir_instructions: std.MultiArrayList(Mir.Inst) = .empty,
 /// Corresponds to `mir_instructions`.
-mir_extra: std.ArrayListUnmanaged(u32) = .empty,
+mir_extra: std.ArrayList(u32) = .empty,
 /// When the key is an enum type, this represents a `@tagName` function.
 zcu_funcs: std.array_hash_map.Auto(InternPool.Index, ZcuFunc) = .empty,
 

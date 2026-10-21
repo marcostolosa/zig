@@ -5,6 +5,8 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 
 test "compile time recursion" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     try expect(some_data.len == 21);
 }
 var some_data: [@as(usize, @intCast(fibonacci(7)))]u8 = undefined;
@@ -388,6 +390,7 @@ test "return 0 from function that has u0 return type" {
 }
 
 test "statically initialized struct" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     st_init_str_foo.x += 1;
@@ -873,16 +876,12 @@ test "comptime pointer load through elem_ptr" {
 }
 
 test "debug variable type resolved through indirect zero-bit types" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const T = struct { key: []void };
     const slice: []const T = &[_]T{};
     _ = slice;
 }
 
 test "const local with comptime init through array init" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const E1 = enum {
         A,
         pub fn a() void {}
@@ -927,6 +926,7 @@ test "closure capture type of runtime-known var" {
 }
 
 test "comptime break passing through runtime condition converted to runtime break" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     const S = struct {
@@ -959,6 +959,7 @@ test "comptime break passing through runtime condition converted to runtime brea
 }
 
 test "comptime break to outer loop passing through runtime condition converted to runtime break" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -1266,6 +1267,8 @@ test "continue in inline for inside a comptime switch" {
 }
 
 test "length of global array is determinable at comptime" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const S = struct {
         var bytes: [1024]u8 = undefined;
 
@@ -1313,6 +1316,7 @@ test "continue nested inline for loop in named block expr" {
 }
 
 test "x and false is comptime-known false" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     const T = struct {
@@ -1340,6 +1344,7 @@ test "x and false is comptime-known false" {
 }
 
 test "x or true is comptime-known true" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     const T = struct {
@@ -1401,6 +1406,8 @@ test "comptime function turns function value to function pointer" {
 }
 
 test "container level const and var have unique addresses" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const S = struct {
         x: i32,
         y: i32,

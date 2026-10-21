@@ -123,7 +123,6 @@ pub const gid_t = u32;
 pub const clock_t = isize;
 pub const time_t = arch_bits.time_t;
 
-pub const tls = @import("linux/tls.zig");
 pub const BPF = @import("linux/bpf.zig");
 pub const IOCTL = @import("linux/ioctl.zig");
 pub const SECCOMP = @import("linux/seccomp.zig");
@@ -960,43 +959,22 @@ pub const RENAME = packed struct(u32) {
     _: u29 = 0,
 };
 
-/// Set by startup code, used by `getauxval`.
-pub var elf_aux_maybe: ?[*]std.elf.Auxv = null;
+/// Available only when libc is *not* linked; use `std.c.getauxval` if libc is linked.
+pub const getauxval = if (builtin.link_libc) {} else struct {
+    /// Provided by compiler-rt and set by `std.start`.
+    extern var __zig_elf_auxv: [*]std.elf.Auxv;
 
-/// Whether an external or internal getauxval implementation is used.
-const extern_getauxval = switch (builtin.zig_backend) {
-    // Calling extern functions is not yet supported with these backends
-    .stage2_arm,
-    .stage2_loongarch,
-    .stage2_powerpc,
-    .stage2_riscv64,
-    .stage2_sparc64,
-    => false,
-    else => !builtin.link_libc,
-};
+    pub fn getauxval(index: usize) usize {
+        @disableInstrumentation();
 
-pub const getauxval = if (extern_getauxval) struct {
-    comptime {
-        const root = @import("root");
-        // Export this only when building an executable, otherwise it is overriding
-        // the libc implementation
-        if (builtin.output_mode == .Exe or @hasDecl(root, "main")) {
-            @export(&getauxvalImpl, .{ .name = "getauxval", .linkage = .weak });
+        var i: usize = 0;
+        while (__zig_elf_auxv[i].a_type != std.elf.AT.NULL) : (i += 1) {
+            if (__zig_elf_auxv[i].a_type == index) return __zig_elf_auxv[i].a_un.a_val;
         }
-    }
-    extern fn getauxval(index: usize) usize;
-}.getauxval else getauxvalImpl;
 
-fn getauxvalImpl(index: usize) callconv(.c) usize {
-    @disableInstrumentation();
-    const auxv = elf_aux_maybe orelse return 0;
-    var i: usize = 0;
-    while (auxv[i].a_type != std.elf.AT.NULL) : (i += 1) {
-        if (auxv[i].a_type == index)
-            return auxv[i].a_un.a_val;
+        return 0;
     }
-    return 0;
-}
+}.getauxval;
 
 // Some architectures (and some syscalls) require 64bit parameters to be passed
 // in a even-aligned register pair.
@@ -1039,10 +1017,9 @@ fn splitValue64(val: i64) [2]u32 {
 }
 
 /// Get the errno from a syscall return value. SUCCESS means no error.
-pub fn errno(r: u64) E {
-    const signed_r: i32 = @bitCast(@as(u32, @truncate(r)));
-    const int = if (signed_r > -4096 and signed_r < 0) -signed_r else 0;
-    return @fromBackingInt(@intCast(int));
+pub fn errno(r: anytype) E {
+    const signed_r: @Int(.signed, @typeInfo(@TypeOf(r)).int.bits) = @bitCast(r);
+    return @fromBackingInt(@intCast(if (signed_r > -4096 and signed_r < 0) -signed_r else 0));
 }
 
 pub fn brk(addr: usize) usize {
@@ -11244,6 +11221,9 @@ pub const cmsghdr = extern struct {
     level: i32,
     type: i32,
 };
+
+// https://github.com/torvalds/linux/blob/72d3fcf802c45d00b300f25b848a93c3a2bd7c7e/include/linux/socket.h#L133
+pub const cmsg_align = @sizeOf(c_long);
 
 pub const riscv_hwprobe = extern struct {
     key: i64,

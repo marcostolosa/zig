@@ -147,6 +147,7 @@ pub const ResolveError = error{
     TargetRequiresPie,
     SanitizeThreadRequiresPie,
     SanitizeThreadRequiresLlvmBackend,
+    FuzzRequiresLlvmBackend,
     BackendLacksErrorTracing,
     LlvmLibraryUnavailable,
     LldUnavailable,
@@ -189,14 +190,15 @@ pub fn resolve(options: Options) ResolveError!Config {
     // *If* the LLVM backend were to be selected, should Zig use the LLVM
     // library to build the LLVM module?
     const use_lib_llvm = b: {
-        if (!build_options.have_llvm) {
+        if (!build_options.have_llvm or target.ofmt == .llvmbc or target.ofmt == .llvmir) {
             if (options.use_lib_llvm == true) return error.LlvmLibraryUnavailable;
             break :b false;
         }
         break :b options.use_lib_llvm orelse true;
     };
 
-    const root_optimize_mode = options.root_optimize_mode orelse .debug;
+    const root_optimize_mode = options.root_optimize_mode orelse
+        @as(std.lang.OptimizeMode, if (options.any_fuzz) .safe else .debug);
 
     // Make a decision on whether to use Clang or Aro for translate-c and compiling C files.
     const c_frontend: CFrontend = b: {
@@ -322,7 +324,7 @@ pub fn resolve(options: Options) ResolveError!Config {
         if (!options.have_zcu) break :b false;
 
         // If emitting to LLVM bitcode object format, must use LLVM backend.
-        if (options.emit_llvm_ir or options.emit_llvm_bc) {
+        if (target.ofmt == .llvmbc or target.ofmt == .llvmir or options.emit_llvm_bc or options.emit_llvm_ir) {
             if (options.use_llvm == false)
                 return error.EmittingLlvmModuleRequiresLlvmBackend;
             if (!target_util.hasLlvmSupport(target, target.ofmt))
@@ -349,6 +351,12 @@ pub fn resolve(options: Options) ResolveError!Config {
             break :b true;
         }
 
+        if (options.any_fuzz) {
+            // Fuzzing instrumentation requires the LLVM backend.
+            if (options.use_llvm == false) return error.FuzzRequiresLlvmBackend;
+            break :b true;
+        }
+
         if (options.use_llvm) |x| break :b x;
 
         // If we cannot use LLVM libraries, then our own backends will be a
@@ -371,7 +379,7 @@ pub fn resolve(options: Options) ResolveError!Config {
     const backend = target_util.zigBackend(target, use_llvm);
 
     if (options.emit_bin and options.have_zcu) {
-        if (!use_lib_llvm and use_llvm) {
+        if (target.ofmt != .llvmbc and target.ofmt != .llvmir and !use_lib_llvm and use_llvm) {
             // Explicit request to use LLVM to produce an object file, but without
             // using LLVM libraries. Impossible.
             return error.EmittingBinaryRequiresLlvmLibrary;
@@ -413,6 +421,12 @@ pub fn resolve(options: Options) ResolveError!Config {
         // assume no LLD.
         if (options.use_new_linker == true) break :b false;
 
+        if (options.use_new_linker == null and
+            target_util.preferNewLinkerOverLld(target))
+        {
+            break :b false;
+        }
+
         // If we have no zig code to compile, no need for the self-hosted linker.
         if (!options.have_zcu) break :b true;
 
@@ -447,6 +461,8 @@ pub fn resolve(options: Options) ResolveError!Config {
         }
 
         if (options.use_new_linker) |x| break :b x;
+
+        if (target_util.preferNewLinkerOverLld(target)) break :b true;
 
         break :b options.incremental;
     };
@@ -497,7 +513,7 @@ pub fn resolve(options: Options) ResolveError!Config {
         break :b switch (target.ofmt) {
             .elf, .macho, .wasm => .{ .dwarf = .@"32" },
             .coff => .code_view,
-            .c => switch (target.os.tag) {
+            .c, .llvmbc, .llvmir => switch (target.os.tag) {
                 .windows, .uefi => .code_view,
                 else => .{ .dwarf = .@"32" },
             },

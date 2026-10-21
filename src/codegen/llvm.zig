@@ -10,6 +10,7 @@ const build_options = @import("build_options");
 const Air = @import("../Air.zig");
 const codegen = @import("../codegen.zig");
 const Compilation = @import("../Compilation.zig");
+const debugLogScopeEnabled = @import("../main.zig").debugLogScopeEnabled;
 const InternPool = @import("../InternPool.zig");
 const link = @import("../link.zig");
 const Module = @import("../Module.zig");
@@ -331,12 +332,10 @@ pub const Object = struct {
     }
 
     pub const EmitOptions = struct {
-        pre_ir_path: ?[]const u8,
-        pre_bc_path: ?[]const u8,
         bin_path: ?[:0]const u8,
         asm_path: ?[:0]const u8,
-        post_ir_path: ?[:0]const u8,
-        post_bc_path: ?[]const u8,
+        opt_ir_path: ?[:0]const u8,
+        opt_bc_path: ?[:0]const u8,
 
         is_debug: bool,
         is_small: bool,
@@ -351,6 +350,7 @@ pub const Object = struct {
         const comp = zcu.comp;
         const io = comp.io;
         const diags = &comp.link_diags;
+        const target = &comp.root_mod.resolved_target.result;
 
         {
             if (o.errors_len_variable != .none) {
@@ -403,7 +403,7 @@ pub const Object = struct {
             const behavior_max = try o.builder.metadataConstant(try o.builder.intConst(.i32, 7));
             const behavior_min = try o.builder.metadataConstant(try o.builder.intConst(.i32, 8));
 
-            if (target_util.llvmMachineAbi(&comp.root_mod.resolved_target.result)) |abi| {
+            if (target_util.llvmMachineAbi(target)) |abi| {
                 module_flags.appendAssumeCapacity(try o.builder.metadataTuple(&.{
                     behavior_error,
                     (try o.builder.metadataString("target-abi")).toMetadata(),
@@ -411,7 +411,7 @@ pub const Object = struct {
                 }));
             }
 
-            const pic_level = target_util.picLevel(&comp.root_mod.resolved_target.result);
+            const pic_level = target_util.picLevel(target);
             if (comp.root_mod.pic) {
                 module_flags.appendAssumeCapacity(try o.builder.metadataTuple(&.{
                     behavior_min,
@@ -434,7 +434,7 @@ pub const Object = struct {
                     (try o.builder.metadataString("Code Model")).toMetadata(),
                     try o.builder.metadataConstant(try o.builder.intConst(.i32, @as(
                         i32,
-                        switch (codeModel(comp.root_mod.code_model, &comp.root_mod.resolved_target.result)) {
+                        switch (codeModel(comp.root_mod.code_model, target)) {
                             .default => unreachable,
                             .tiny => 0,
                             .small => 1,
@@ -480,7 +480,6 @@ pub const Object = struct {
                 }
             }
 
-            const target = &comp.root_mod.resolved_target.result;
             if (target.os.tag == .windows and (target.cpu.arch == .x86_64 or target.cpu.arch == .x86)) {
                 // Add the "RegCallv4" flag so that any functions using `x86_regcallcc` use regcall
                 // v4, which is essentially a requirement on Windows. See corresponding logic in
@@ -493,7 +492,7 @@ pub const Object = struct {
             }
 
             // The frontend should eventually offer options to control these.
-            if (target.cpu.arch.isAarch64() and target.os.tag == .openbsd) {
+            if (target.cpu.arch.isAarch64() and (target.os.tag == .openbsd or target.abi.isAndroid())) {
                 module_flags.appendAssumeCapacity(try o.builder.metadataTuple(&.{
                     behavior_min,
                     (try o.builder.metadataString("branch-target-enforcement")).toMetadata(),
@@ -515,21 +514,26 @@ pub const Object = struct {
 
         const emit_asm_msg = options.asm_path orelse "(none)";
         const emit_bin_msg = options.bin_path orelse "(none)";
-        const post_llvm_ir_msg = options.post_ir_path orelse "(none)";
-        const post_llvm_bc_msg = options.post_bc_path orelse "(none)";
+        const opt_llvm_ir_msg = options.opt_ir_path orelse "(none)";
+        const opt_llvm_bc_msg = options.opt_bc_path orelse "(none)";
         log.debug("emit LLVM object asm={s} bin={s} ir={s} bc={s}", .{
-            emit_asm_msg, emit_bin_msg, post_llvm_ir_msg, post_llvm_bc_msg,
+            emit_asm_msg, emit_bin_msg, opt_llvm_ir_msg, opt_llvm_bc_msg,
         });
+        const log_opt_llvm_ir = debugLogScopeEnabled("opt-llvm-ir");
 
         const context, const module = emit: {
-            if (options.pre_ir_path) |path| {
-                if (std.mem.eql(u8, path, "-")) {
-                    o.builder.dump(io);
-                } else {
-                    o.builder.printToFilePath(io, Io.Dir.cwd(), path) catch |err| {
-                        log.err("failed printing LLVM module to \"{s}\": {t}", .{ path, err });
-                    };
-                }
+            {
+                var p: Builder.Print = .{ .name = comp.root_name, .builder = &o.builder, .err = null };
+                std.log.scoped(.@"llvm-ir").debug("{f}", .{&p});
+                if (p.err) |err| return err;
+            }
+
+            if (target.ofmt == .llvmir) {
+                const path = comp.bin_file.?.emit;
+                o.builder.printToFilePath(io, path.root_dir.handle, path.sub_path) catch |err| {
+                    return diags.fail("failed emitting LLVM module to {qf}: {t}", .{ path, err });
+                };
+                return;
             }
 
             const bitcode = try o.builder.toBitcode(o.gpa, .{
@@ -538,34 +542,26 @@ pub const Object = struct {
             });
             defer o.gpa.free(bitcode);
 
-            if (options.pre_bc_path) |path| {
-                var file = Io.Dir.cwd().createFile(io, path, .{}) catch |err|
-                    return diags.fail("failed to create '{s}': {t}", .{ path, err });
+            if (target.ofmt == .llvmbc) {
+                const path = comp.bin_file.?.emit;
+                var file = path.root_dir.handle.createFile(io, path.sub_path, .{}) catch |err|
+                    return diags.fail("failed to create {qf}: {t}", .{ path, err });
                 defer file.close(io);
 
-                const ptr: [*]const u8 = @ptrCast(bitcode.ptr);
-                file.writeStreamingAll(io, ptr[0..(bitcode.len * 4)]) catch |err|
-                    return diags.fail("failed to write to '{s}': {t}", .{ path, err });
+                file.writeStreamingAll(io, @ptrCast(bitcode)) catch |err|
+                    return diags.fail("failed to write to {qf}: {t}", .{ path, err });
+                return;
             }
 
             if (options.asm_path == null and options.bin_path == null and
-                options.post_ir_path == null and options.post_bc_path == null) return;
-
-            if (options.post_bc_path) |path| {
-                var file = Io.Dir.cwd().createFile(io, path, .{}) catch |err|
-                    return diags.fail("failed to create '{s}': {t}", .{ path, err });
-                defer file.close(io);
-
-                const ptr: [*]const u8 = @ptrCast(bitcode.ptr);
-                file.writeStreamingAll(io, ptr[0..(bitcode.len * 4)]) catch |err|
-                    return diags.fail("failed to write to '{s}': {t}", .{ path, err });
-            }
+                options.opt_ir_path == null and options.opt_bc_path == null and
+                !log_opt_llvm_ir) return;
 
             if (!build_options.have_llvm or !comp.config.use_lib_llvm) {
                 return diags.fail("emitting without libllvm not implemented", .{});
             }
 
-            initializeLLVMTarget(io, comp.root_mod.resolved_target.result.cpu.arch);
+            initializeLLVMTarget(io, target.cpu.arch);
 
             const context: *bindings.Context = .create();
             errdefer context.dispose();
@@ -588,9 +584,9 @@ pub const Object = struct {
         };
         defer context.dispose();
 
-        var target: *bindings.Target = undefined;
+        var llvm_target: *bindings.Target = undefined;
         var error_message: [*:0]const u8 = undefined;
-        if (bindings.Target.getFromTriple(target_triple_sentinel, &target, &error_message).toBool()) {
+        if (bindings.Target.getFromTriple(target_triple_sentinel, &llvm_target, &error_message).toBool()) {
             defer bindings.disposeMessage(error_message);
             return diags.fail("LLVM failed to parse '{s}': {s}", .{ target_triple_sentinel, error_message });
         }
@@ -609,7 +605,7 @@ pub const Object = struct {
         else
             .Static;
 
-        const code_model: bindings.CodeModel = switch (codeModel(comp.root_mod.code_model, &comp.root_mod.resolved_target.result)) {
+        const code_model: bindings.CodeModel = switch (codeModel(comp.root_mod.code_model, target)) {
             .default => .Default,
             .tiny => .Tiny,
             .small => .Small,
@@ -618,24 +614,22 @@ pub const Object = struct {
             .large => .Large,
         };
 
-        const float_abi: bindings.TargetMachine.FloatABI = if (comp.root_mod.resolved_target.result.abi.float() == .hard)
-            .Hard
-        else
-            .Soft;
-
         var target_machine = bindings.TargetMachine.create(
-            target,
+            llvm_target,
             target_triple_sentinel,
-            if (comp.root_mod.resolved_target.result.cpu.model.llvm_name) |s| s.ptr else null,
-            comp.root_mod.resolved_target.llvm_cpu_features.?,
+            if (target.cpu.model.llvm_name) |s| s.ptr else null,
+            comp.root_mod.llvm_cpu_features.?,
             opt_level,
             reloc_mode,
             code_model,
             comp.function_sections,
             comp.data_sections,
-            float_abi,
-            if (target_util.llvmMachineAbi(&comp.root_mod.resolved_target.result)) |s| s.ptr else null,
-            target_util.useEmulatedTls(&comp.root_mod.resolved_target.result),
+            switch (target.abi.float()) {
+                .hard => .Hard,
+                .soft => .Soft,
+            },
+            if (target_util.llvmMachineAbi(target)) |s| s.ptr else null,
+            target_util.useEmulatedTls(target),
         );
         errdefer target_machine.dispose();
 
@@ -645,7 +639,10 @@ pub const Object = struct {
 
         // Unfortunately, LLVM shits the bed when we ask for both binary and assembly.
         // So we call the entire pipeline multiple times if this is requested.
-        // var error_message: [*:0]const u8 = undefined;
+        var time_report_c_str: ?[*:0]u8 = null;
+        defer if (time_report_c_str) |time_report| bindings.disposeMessage(time_report);
+        var llvm_ir_c_str: ?[*:0]u8 = null;
+        defer if (llvm_ir_c_str) |llvm_ir| bindings.disposeMessage(llvm_ir);
         var lowered_options: bindings.TargetMachine.EmitOptions = .{
             .is_debug = options.is_debug,
             .is_small = options.is_small,
@@ -659,11 +656,12 @@ pub const Object = struct {
             .allow_fast_isel = true,
             // LLVM's RISC-V backend for some reason enables the machine outliner by default even
             // though it's clearly not ready and produces multiple miscompilations in our std tests.
-            .allow_machine_outliner = !comp.root_mod.resolved_target.result.cpu.arch.isRISCV(),
+            .allow_machine_outliner = !target.cpu.arch.isRISCV(),
             .asm_filename = null,
             .bin_filename = if (options.bin_path) |x| x.ptr else null,
-            .llvm_ir_filename = if (options.post_ir_path) |x| x.ptr else null,
-            .bitcode_filename = null,
+            .llvm_ir_filename = if (options.opt_ir_path) |x| x.ptr else null,
+            .bitcode_filename = if (options.opt_bc_path) |x| x.ptr else null,
+            .llvm_ir_out = if (log_opt_llvm_ir) &llvm_ir_c_str else null,
 
             // `.coverage` value is only used when `.sancov` is enabled.
             .sancov = options.fuzz or comp.config.san_cov_trace_pc_guard,
@@ -695,32 +693,31 @@ pub const Object = struct {
         };
         if (options.asm_path != null and options.bin_path != null) {
             if (target_machine.emitToFile(module, &error_message, &lowered_options)) {
-                defer bindings.disposeMessage(error_message);
                 return diags.fail("LLVM failed to emit bin={s} ir={s}: {s}", .{
-                    emit_bin_msg, post_llvm_ir_msg, error_message,
+                    emit_bin_msg, opt_llvm_ir_msg, error_message,
                 });
             }
             lowered_options.bin_filename = null;
             lowered_options.llvm_ir_filename = null;
+            lowered_options.bitcode_filename = null;
+            lowered_options.llvm_ir_out = null;
         }
-
-        var time_report_c_str: [*:0]u8 = undefined;
-        if (options.time_report != null) {
-            lowered_options.time_report_out = &time_report_c_str;
-        }
-
+        if (options.time_report) |_| lowered_options.time_report_out = &time_report_c_str;
         lowered_options.asm_filename = if (options.asm_path) |x| x.ptr else null;
         if (target_machine.emitToFile(module, &error_message, &lowered_options)) {
             defer bindings.disposeMessage(error_message);
             return diags.fail("LLVM failed to emit asm={s} bin={s} ir={s} bc={s}: {s}", .{
-                emit_asm_msg, emit_bin_msg, post_llvm_ir_msg, post_llvm_bc_msg, error_message,
+                emit_asm_msg, emit_bin_msg, opt_llvm_ir_msg, opt_llvm_bc_msg, error_message,
             });
         }
-        if (options.time_report) |tr| {
-            defer std.c.free(time_report_c_str);
-            const time_report_data = std.mem.span(time_report_c_str);
-            assert(tr.llvm_pass_timings.len == 0);
-            tr.llvm_pass_timings = try comp.gpa.dupe(u8, time_report_data);
+        if (log_opt_llvm_ir) std.log.scoped(.@"opt-llvm-ir").debug("{s}", .{
+            llvm_ir_c_str orelse return error.OutOfMemory,
+        });
+        if (options.time_report) |time_report| {
+            assert(time_report.llvm_pass_timings.len == 0);
+            time_report.llvm_pass_timings = try comp.gpa.dupe(u8, std.mem.span(
+                time_report_c_str orelse return error.OutOfMemory,
+            ));
         }
     }
 
@@ -1000,11 +997,6 @@ pub const Object = struct {
         try o.flushTypePool(pt);
     }
 
-    fn workaroundPrivateSymbolBugs(target: *const std.Target, resolved: *const InternPool.Nav.Resolved) bool {
-        // https://codeberg.org/ziglang/zig/issues/31865
-        return target.cpu.arch.isAARCH64() and target.ofmt == .coff and resolved.@"threadlocal";
-    }
-
     pub fn updateNav(o: *Object, pt: Zcu.PerThread, nav_id: InternPool.Nav.Index) !void {
         const zcu = o.zcu;
         const ip = &zcu.intern_pool;
@@ -1077,14 +1069,12 @@ pub const Object = struct {
                 false => .default,
             };
             llvm_global.ptr(&o.builder).linkage = switch (@"extern".linkage) {
-                .internal => if (o.builder.strip and !workaroundPrivateSymbolBugs(zcu.getTarget(), &resolved)) .private else .internal,
                 .strong => .external,
                 .weak => .extern_weak,
-                .link_once => unreachable,
             };
             llvm_global.ptr(&o.builder).visibility = .fromSymbolVisibility(@"extern".visibility);
         } else {
-            llvm_global.ptr(&o.builder).linkage = if (o.builder.strip and !workaroundPrivateSymbolBugs(zcu.getTarget(), &resolved)) .private else .internal;
+            llvm_global.ptr(&o.builder).linkage = if (o.builder.strip) .private else .internal;
             llvm_global.ptr(&o.builder).visibility = .default;
             llvm_global.ptr(&o.builder).dll_storage_class = .default;
             llvm_global.ptr(&o.builder).unnamed_addr = .unnamed_addr;
@@ -1246,7 +1236,6 @@ pub const Object = struct {
         // The name, aliasee, and type will be set within this block. Other properties of the
         // alias will be set below.
         const alias_global: Builder.Global.Index = global: {
-
             // WORKAROUND (see https://github.com/llvm/llvm-project/issues/213504, https://github.com/llvm/llvm-project/issues/214835)
             // For NVPTX, LLVM throws "NVPTX aliasee must be a non-kernel function definition" if we try to alias a kernel
             // On AMDGCN, LLVM does not generate an alias for the kernel descriptor symbol on associated functions
@@ -1268,33 +1257,24 @@ pub const Object = struct {
             };
             // There is an existing global with this name, so we can't just create an alias. We
             // need to figure out what to do with the existing global instead.
-            switch (existing_global.ptrConst(&o.builder).kind) {
-                .alias => |alias| {
-                    // We can just repurpose the existing alias.
-                    alias.setAliasee(llvm_global.toConst(), &o.builder);
-                    alias.ptrConst(&o.builder).global.ptr(&o.builder).type = llvm_global.typeOf(&o.builder);
-                    alias.ptrConst(&o.builder).global.ptr(&o.builder).addr_space = llvm_global.ptrConst(&o.builder).addr_space;
-                    break :global existing_global;
+            const alias: Builder.Alias.Index = switch (existing_global.ptrConst(&o.builder).kind) {
+                .alias => |alias| alias: {
+                    // The existing alias is from an earlier export, so if `exp` is weak, ignore it.
+                    if (exp.opts.linkage == .weak) return;
+                    // But otherwise, we can just repurpose the existing alias.
+                    break :alias alias;
                 },
-                .variable, .function => {
-                    // This must be an extern, which is no good to us---we need an alias. The
-                    // extern should refer to the value we're exporting, so replace it with the
-                    // exported value. That will free up the name for us to create a new alias.
-                    // We need to make a new global which is an alias. Replace this existing one
-                    // with the target global, making the name available and fixing references
-                    // to this global to point to the target.
-                    try existing_global.replace(llvm_global, &o.builder);
-                    // The name is now free, so create an alias.
-                    const alias = try o.builder.addAlias(
-                        exp_name,
-                        llvm_global_ty,
-                        llvm_global.ptrConst(&o.builder).addr_space,
-                        llvm_global.toConst(),
-                    );
-                    break :global alias.ptrConst(&o.builder).global;
+                .variable, .function => alias: {
+                    // This is an extern which our export resolves, so we can simply convert this
+                    // global into the alias we want.
+                    break :alias try existing_global.toNewAlias(&o.builder);
                 },
                 .replaced => unreachable, // a replaced global would have lost the name `exp_name`
-            }
+            };
+            alias.setAliasee(llvm_global.toConst(), &o.builder);
+            alias.ptrConst(&o.builder).global.ptr(&o.builder).type = llvm_global_ty;
+            alias.ptrConst(&o.builder).global.ptr(&o.builder).addr_space = llvm_global.ptrConst(&o.builder).addr_space;
+            break :global existing_global;
         };
 
         // We need the alias to *not* be `unnamed_addr` to ensure that the alias address equals
@@ -1304,10 +1284,8 @@ pub const Object = struct {
         if (comp.config.dll_export_fns and exp.opts.visibility != .hidden)
             alias_global.setDllStorageClass(.dllexport, &o.builder);
         alias_global.setLinkage(switch (exp.opts.linkage) {
-            .internal => if (o.builder.strip) .private else .internal, // we still did useful work in replacing an existing symbol if there was one
             .strong => .external,
             .weak => .weak_odr,
-            .link_once => .linkonce_odr,
         }, &o.builder);
         alias_global.setVisibility(switch (exp.opts.visibility) {
             .default => .default,
@@ -1358,6 +1336,7 @@ pub const Object = struct {
     ///
     /// `val` is always a type because `o.type_pool` only contains types.
     pub fn updateConstIncomplete(o: *Object, pt: Zcu.PerThread, index: link.ConstPool.Index, val: InternPool.Index) Allocator.Error!void {
+        _ = pt;
         const zcu = o.zcu;
         assert(zcu.intern_pool.typeOf(val) == .type_type);
 
@@ -1371,7 +1350,7 @@ pub const Object = struct {
         if (!o.builder.strip) {
             assert(val != .anyerror_type);
             const fwd_ref = o.debug_types.items[@backingInt(index)];
-            const name_str = try o.builder.metadataStringFmt("{f}", .{ty.fmt(pt)});
+            const name_str = try o.builder.metadataStringFmt("{f}", .{ty.fmt(zcu)});
             // If `ty` is a function, use a dummy *function* type to prevent existing debug
             // subprograms from becoming ill-formed.
             const debug_incomplete_type = switch (ty.zigTypeTag(zcu)) {
@@ -1462,7 +1441,7 @@ pub const Object = struct {
         const target = zcu.getTarget();
         const ip = &zcu.intern_pool;
 
-        const name = try o.builder.metadataStringFmt("{f}", .{ty.fmt(pt)});
+        const name = try o.builder.metadataStringFmt("{f}", .{ty.fmt(zcu)});
 
         // lldb cannot handle non-byte-sized types, so in the logic below, bit sizes are padded up.
         // For instance, `bool` is considered to be 8 bits, and `u60` is considered to be 64 bits.
@@ -1971,7 +1950,7 @@ pub const Object = struct {
                 const debug_payload_type = try o.builder.debugUnionType(
                     payload_name: {
                         if (layout.tag_size == 0) break :payload_name name;
-                        break :payload_name try o.builder.metadataStringFmt("{f}:Payload", .{ty.fmt(pt)});
+                        break :payload_name try o.builder.metadataStringFmt("{f}:Payload", .{ty.fmt(zcu)});
                     },
                     file,
                     scope,
@@ -2212,12 +2191,21 @@ pub const Object = struct {
                 .value = try o.builder.string(s),
             } }, &o.builder);
         }
-        if (owner_mod.resolved_target.llvm_cpu_features) |s| {
+        if (owner_mod.llvm_cpu_features) |s| {
             try attributes.addFnAttr(.{ .string = .{
                 .kind = try o.builder.string("target-features"),
-                .value = try o.builder.string(std.mem.span(s)),
+                .value = try o.builder.string(s),
             } }, &o.builder);
         }
+
+        if (owner_mod.patchable_function_entry > 0) {
+            const count = owner_mod.patchable_function_entry;
+            try attributes.addFnAttr(.{ .string = .{
+                .kind = try o.builder.string("patchable-function-entry"),
+                .value = try o.builder.fmt("{d}", .{count}),
+            } }, &o.builder);
+        }
+
         if (target.abi.float() == .soft) {
             // `use-soft-float` means "use software routines for floating point computations". In
             // other words, it configures how LLVM lowers basic float instructions like `fcmp`,
@@ -2244,7 +2232,7 @@ pub const Object = struct {
         }
 
         // The frontend should eventually offer options to control these.
-        if (target.cpu.arch.isAarch64() and target.os.tag == .openbsd) {
+        if (target.cpu.arch.isAarch64() and (target.os.tag == .openbsd or target.abi.isAndroid())) {
             try attributes.addFnAttr(.{ .string = .{
                 .kind = try o.builder.string("branch-target-enforcement"),
                 .value = try o.builder.string(""),
@@ -2349,25 +2337,21 @@ pub const Object = struct {
 
         if (fn_info.return_type == .noreturn_type) try attributes.addFnAttr(.noreturn, &o.builder);
 
-        var it = iterateParamTypes(o, fn_info.cc, fn_info.param_types);
-        if (try fnReturnStrat(o, fn_info.cc, .fromInterned(fn_info.return_type)) == .sret) {
+        const ret_strat = try fnReturnStrat(o, fn_info.cc, .fromInterned(fn_info.return_type));
+        var it = iterateParamTypes(o, fn_info.cc, fn_info.param_types, ret_strat);
+        if (ret_strat == .sret) {
             try o.addSRetFnAttributes(
                 attributes,
                 try o.lowerType(.fromInterned(fn_info.return_type), .in_memory),
                 Type.fromInterned(fn_info.return_type).abiAlignment(zcu).toLlvm(),
                 .declaration,
             );
-            it.llvm_index += 1;
         } else if (ccAbiPromoteInt(fn_info.cc, zcu, Type.fromInterned(fn_info.return_type))) |s| switch (s) {
             .signed => try attributes.addRetAttr(.signext, &o.builder),
             .unsigned => try attributes.addRetAttr(.zeroext, &o.builder),
         };
 
-        const err_return_tracing = fn_info.cc == .auto and zcu.comp.config.any_error_tracing;
-        if (err_return_tracing) {
-            try attributes.addParamAttr(it.llvm_index, .nonnull, &o.builder);
-            it.llvm_index += 1;
-        }
+        if (it.errorReturnTraceIndex()) |i| try attributes.addParamAttr(i, .nonnull, &o.builder);
 
         var remaining_inreg_int = cc_info.inreg_int_params;
         var remaining_inreg_float = cc_info.inreg_float_params;
@@ -2478,7 +2462,7 @@ pub const Object = struct {
             .memory_access => {},
             .in_memory => {
                 const zig_align = std.zig.target.intAlignment(target, bits);
-                const llvm_align = o.builder.data_layout.getIntegerSpec(llvm_bit_width).abi_align;
+                const llvm_align = o.builder.data_layout.getIntegerSpec(.{ .fixed = llvm_bit_width }).abi_align;
                 if (zig_align < llvm_align.toByteUnits().?) return o.builder.arrayType(abi_size, .i8);
             },
         }
@@ -3105,17 +3089,14 @@ pub const Object = struct {
         var llvm_params: std.ArrayList(Builder.Type) = .empty;
         defer llvm_params.deinit(o.gpa);
 
-        if (ret_strat == .sret) {
-            try llvm_params.append(o.gpa, .ptr);
-        }
-
-        if (fn_info.cc == .auto and zcu.comp.config.any_error_tracing) {
+        var it = iterateParamTypes(o, fn_info.cc, fn_info.param_types, ret_strat);
+        if (it.sretIndex() != null) try llvm_params.append(o.gpa, .ptr);
+        if (it.errorReturnTraceIndex() != null) {
             // First parameter is a pointer to `std.lang.StackTrace`.
             const llvm_ptr_ty = try o.builder.ptrType(toLlvmAddressSpace(.generic, target));
             try llvm_params.append(o.gpa, llvm_ptr_ty);
         }
 
-        var it = iterateParamTypes(o, fn_info.cc, fn_info.param_types);
         while (try it.next()) |lowering| switch (lowering) {
             .no_bits => continue,
             .byval => {
@@ -4310,6 +4291,7 @@ pub fn toLlvmCallConvTag(cc_tag: std.lang.CallingConvention.Tag, target: *const 
         .x86_64_vectorcall => .x86_vectorcallcc,
         .x86_64_interrupt => .x86_intrcc,
         .x86_64_preserve_none => .preserve_nonecc,
+        .x86_64_preserve_most => .preserve_mostcc,
         .x86_stdcall => .x86_stdcallcc,
         .x86_fastcall => .x86_fastcallcc,
         .x86_thiscall => .x86_thiscallcc,
@@ -4326,6 +4308,7 @@ pub fn toLlvmCallConvTag(cc_tag: std.lang.CallingConvention.Tag, target: *const 
         .aarch64_vfabi => .aarch64_vector_pcs,
         .aarch64_vfabi_sve => .aarch64_sve_vector_pcs,
         .aarch64_preserve_none => .preserve_nonecc,
+        .aarch64_preserve_most => .preserve_mostcc,
         .arm_aapcs => .arm_aapcscc,
         .arm_aapcs_vfp => .arm_aapcs_vfpcc,
         .riscv64_lp64_v => .riscv_vectorcallcc,
@@ -4340,6 +4323,12 @@ pub fn toLlvmCallConvTag(cc_tag: std.lang.CallingConvention.Tag, target: *const 
         .amdgcn_cs => .amdgpu_cs,
         .nvptx_device => .ptx_device,
         .nvptx_kernel => .ptx_kernel,
+        .loongarch32_preserve_none => .preserve_nonecc,
+        .loongarch64_preserve_none => .preserve_nonecc,
+        .riscv32_preserve_most => .preserve_mostcc,
+        .riscv64_preserve_most => .preserve_mostcc,
+        .loongarch32_preserve_most => .preserve_mostcc,
+        .loongarch64_preserve_most => .preserve_mostcc,
 
         // Calling conventions which LLVM uses function attributes for.
         .riscv64_interrupt,
@@ -4428,109 +4417,45 @@ pub fn toLlvmCallConvTag(cc_tag: std.lang.CallingConvention.Tag, target: *const 
 
 /// Convert a zig-address space to an llvm address space.
 pub fn toLlvmAddressSpace(address_space: std.lang.AddressSpace, target: *const std.Target) Builder.AddrSpace {
-    for (llvmAddrSpaceInfo(target)) |info| if (info.zig == address_space) return info.llvm;
-    unreachable;
-}
-
-const AddrSpaceInfo = struct {
-    zig: ?std.lang.AddressSpace,
-    llvm: Builder.AddrSpace,
-    non_integral: bool = false,
-    size: ?u16 = null,
-    abi: ?u16 = null,
-    pref: ?u16 = null,
-    idx: ?u16 = null,
-    force_in_data_layout: bool = false,
-};
-fn llvmAddrSpaceInfo(target: *const std.Target) []const AddrSpaceInfo {
     return switch (target.cpu.arch) {
-        .x86, .x86_64 => &.{
-            .{ .zig = .generic, .llvm = .default },
-            .{ .zig = .gs, .llvm = Builder.AddrSpace.x86.gs },
-            .{ .zig = .fs, .llvm = Builder.AddrSpace.x86.fs },
-            .{ .zig = .ss, .llvm = Builder.AddrSpace.x86.ss },
-            .{ .zig = null, .llvm = Builder.AddrSpace.x86.ptr32_sptr, .size = 32, .abi = 32, .force_in_data_layout = true },
-            .{ .zig = null, .llvm = Builder.AddrSpace.x86.ptr32_uptr, .size = 32, .abi = 32, .force_in_data_layout = true },
-            .{ .zig = null, .llvm = Builder.AddrSpace.x86.ptr64, .size = 64, .abi = 64, .force_in_data_layout = true },
+        .amdgcn => switch (address_space) {
+            .generic => Builder.AddrSpace.amdgpu.flat,
+            .global => Builder.AddrSpace.amdgpu.global,
+            .shared => Builder.AddrSpace.amdgpu.local,
+            .constant => Builder.AddrSpace.amdgpu.constant,
+            .local => Builder.AddrSpace.amdgpu.private,
+            else => unreachable,
         },
-        .nvptx, .nvptx64 => &.{
-            .{ .zig = .generic, .llvm = Builder.AddrSpace.nvptx.generic },
-            .{ .zig = .global, .llvm = Builder.AddrSpace.nvptx.global },
-            .{ .zig = .constant, .llvm = Builder.AddrSpace.nvptx.constant },
-            .{ .zig = .param, .llvm = Builder.AddrSpace.nvptx.param },
-            .{ .zig = .shared, .llvm = Builder.AddrSpace.nvptx.shared },
-            .{ .zig = .local, .llvm = Builder.AddrSpace.nvptx.local },
+        .avr => switch (address_space) {
+            .generic => Builder.AddrSpace.avr.data,
+            .flash => Builder.AddrSpace.avr.program,
+            .flash1 => Builder.AddrSpace.avr.program1,
+            .flash2 => Builder.AddrSpace.avr.program2,
+            .flash3 => Builder.AddrSpace.avr.program3,
+            .flash4 => Builder.AddrSpace.avr.program4,
+            .flash5 => Builder.AddrSpace.avr.program5,
+            else => unreachable,
         },
-        .amdgcn => &.{
-            .{ .zig = .generic, .llvm = Builder.AddrSpace.amdgpu.flat, .force_in_data_layout = true },
-            .{ .zig = .global, .llvm = Builder.AddrSpace.amdgpu.global, .force_in_data_layout = true },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.region, .size = 32, .abi = 32 },
-            .{ .zig = .shared, .llvm = Builder.AddrSpace.amdgpu.local, .size = 32, .abi = 32 },
-            .{ .zig = .constant, .llvm = Builder.AddrSpace.amdgpu.constant, .force_in_data_layout = true },
-            .{ .zig = .local, .llvm = Builder.AddrSpace.amdgpu.private, .size = 32, .abi = 32 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_32bit, .size = 32, .abi = 32 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.buffer_fat_pointer, .non_integral = true, .size = 160, .abi = 256, .idx = 32 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.buffer_resource, .non_integral = true, .size = 128, .abi = 128 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.buffer_strided_pointer, .non_integral = true, .size = 192, .abi = 256, .idx = 32 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_0 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_1 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_2 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_3 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_4 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_5 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_6 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_7 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_8 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_9 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_10 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_11 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_12 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_13 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_14 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.constant_buffer_15 },
-            .{ .zig = null, .llvm = Builder.AddrSpace.amdgpu.streamout_register },
+        .nvptx, .nvptx64 => switch (address_space) {
+            .generic => Builder.AddrSpace.nvptx.generic,
+            .global => Builder.AddrSpace.nvptx.global,
+            .constant => Builder.AddrSpace.nvptx.constant,
+            .param => Builder.AddrSpace.nvptx.entry_param,
+            .shared => Builder.AddrSpace.nvptx.shared,
+            .local => Builder.AddrSpace.nvptx.local,
+            else => unreachable,
         },
-        .avr => &.{
-            .{ .zig = .generic, .llvm = Builder.AddrSpace.avr.data, .abi = 8 },
-            .{ .zig = .flash, .llvm = Builder.AddrSpace.avr.program, .abi = 8 },
-            .{ .zig = .flash1, .llvm = Builder.AddrSpace.avr.program1, .abi = 8 },
-            .{ .zig = .flash2, .llvm = Builder.AddrSpace.avr.program2, .abi = 8 },
-            .{ .zig = .flash3, .llvm = Builder.AddrSpace.avr.program3, .abi = 8 },
-            .{ .zig = .flash4, .llvm = Builder.AddrSpace.avr.program4, .abi = 8 },
-            .{ .zig = .flash5, .llvm = Builder.AddrSpace.avr.program5, .abi = 8 },
+        .x86, .x86_64 => switch (address_space) {
+            .generic => .default,
+            .gs => Builder.AddrSpace.x86.gs,
+            .fs => Builder.AddrSpace.x86.fs,
+            .ss => Builder.AddrSpace.x86.ss,
+            else => unreachable,
         },
-        .wasm32, .wasm64 => &.{
-            .{ .zig = .generic, .llvm = Builder.AddrSpace.wasm.default, .force_in_data_layout = true },
-            .{ .zig = null, .llvm = Builder.AddrSpace.wasm.variable, .non_integral = true },
-            .{ .zig = .externref, .llvm = Builder.AddrSpace.wasm.externref, .non_integral = true, .size = 8, .abi = 8 },
-            .{ .zig = .funcref, .llvm = Builder.AddrSpace.wasm.funcref, .non_integral = true, .size = 8, .abi = 8 },
+        else => switch (address_space) {
+            .generic => .default,
+            else => unreachable,
         },
-        .m68k => &.{
-            .{ .zig = .generic, .llvm = .default, .abi = 16, .pref = 32 },
-        },
-        else => &.{
-            .{ .zig = .generic, .llvm = .default },
-        },
-    };
-}
-
-/// On some targets, global values that are in the generic address space must be generated into a
-/// different address space, and then cast back to the generic address space.
-fn llvmDefaultGlobalAddressSpace(target: *const std.Target) Builder.AddrSpace {
-    return switch (target.cpu.arch) {
-        // On amdgcn, globals must be explicitly allocated and uploaded so that the program can access
-        // them.
-        .amdgcn => Builder.AddrSpace.amdgpu.global,
-        else => .default,
-    };
-}
-
-/// Return the actual address space that a value should be stored in if its a global address space.
-/// When a value is placed in the resulting address space, it needs to be cast back into wanted_address_space.
-fn toLlvmGlobalAddressSpace(wanted_address_space: std.lang.AddressSpace, target: *const std.Target) Builder.AddrSpace {
-    return switch (wanted_address_space) {
-        .generic => llvmDefaultGlobalAddressSpace(target),
-        else => |as| toLlvmAddressSpace(as, target),
     };
 }
 

@@ -1565,6 +1565,7 @@ pub const Verdaux = extern struct {
     name: Word,
     next: Word,
 };
+/// Deprecated, use `std.elf.Verneed`
 pub const Elf32_Verneed = extern struct {
     vn_version: Half,
     vn_cnt: Half,
@@ -1572,12 +1573,20 @@ pub const Elf32_Verneed = extern struct {
     vn_aux: Word,
     vn_next: Word,
 };
+/// Deprecated, use `std.elf.Verneed`
 pub const Elf64_Verneed = extern struct {
     vn_version: Half,
     vn_cnt: Half,
     vn_file: Word,
     vn_aux: Word,
     vn_next: Word,
+};
+pub const Verneed = extern struct {
+    version: Half,
+    cnt: Half,
+    file: Word,
+    aux: Word,
+    next: Word,
 };
 pub const Vernaux = extern struct {
     hash: Word,
@@ -1593,7 +1602,7 @@ pub const Elf32_auxv_t = extern struct {
     },
 };
 pub const Elf64_auxv_t = extern struct {
-    a_type: u64,
+    a_type: if (native_os == .netbsd or native_os == .openbsd) u32 else u64,
     a_un: extern union {
         a_val: u64,
     },

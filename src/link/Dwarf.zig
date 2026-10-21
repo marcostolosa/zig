@@ -1036,7 +1036,7 @@ const Entry = struct {
                 const val_unit, const val_entry = unit_and_entry;
                 if (sec.getUnit(val_unit) == unit and unit.getEntry(val_entry) == entry)
                     log.err("missing Value({f}({d}))", .{
-                        Value.fromInterned(val).fmtValue(.{ .tid = .main, .zcu = zcu }),
+                        Value.fromInterned(val).fmtValue(zcu),
                         @backingInt(val),
                     });
             }
@@ -2120,9 +2120,10 @@ pub const WipNav = struct {
         wip_nav: *WipNav,
         val: Value,
     ) (UpdateError || Writer.Error)!void {
-        const ty = val.typeOf(wip_nav.pt.zcu);
+        const zcu = wip_nav.pt.zcu;
+        const ty = val.typeOf(zcu);
         const diw = &wip_nav.debug_info.writer;
-        const size = ty.abiSize(wip_nav.pt.zcu);
+        const size = ty.abiSize(zcu);
         try diw.writeUleb128(size);
         if (size == 0) return;
         const old_end = diw.end;
@@ -2135,7 +2136,7 @@ pub const WipNav = struct {
         );
         if (old_end + size != diw.end) {
             std.debug.print("{f} [{}]: {} != {}\n", .{
-                ty.fmt(wip_nav.pt),
+                ty.fmt(zcu),
                 ty.toIntern(),
                 size,
                 diw.end - old_end,
@@ -2661,7 +2662,6 @@ fn initWipNavInner(
                 try wip_nav.strp(@"extern".name.toSlice(ip));
                 try wip_nav.refType(.fromInterned(if (maybe_func_type) |func_type| func_type.return_type else @"extern".ty));
                 if (maybe_func_type) |func_type| {
-                    try wip_nav.infoAddrSym(sym_index, 0);
                     try diw.writeByte(@intFromBool(Type.fromInterned(func_type.return_type).isNoReturn(zcu)));
                     if (func_type.param_types.len > 0 or func_type.is_var_args) {
                         for (func_type.param_types.get(ip)) |param_type| {
@@ -2671,7 +2671,7 @@ fn initWipNavInner(
                         if (func_type.is_var_args) try wip_nav.abbrevCode(.is_var_args);
                         try diw.writeUleb128(@backingInt(AbbrevCode.null));
                     }
-                } else try wip_nav.infoExprLoc(.{ .addr_reloc = sym_index });
+                }
             },
             .syntax => switch (ip.isFunctionType(@"extern".ty)) {
                 false => continue :nav_val .{ .undef = @"extern".ty },
@@ -2689,7 +2689,6 @@ fn initWipNavInner(
                     }, &nav, inst_info.file, &decl);
                     try wip_nav.strp(@"extern".name.toSlice(ip));
                     try wip_nav.refType(.fromInterned(func_type.return_type));
-                    try wip_nav.infoAddrSym(sym_index, 0);
                     try diw.writeByte(@intFromBool(Type.fromInterned(func_type.return_type).isNoReturn(zcu)));
                     if (func_type.param_types.len > 0 or func_type.is_var_args) {
                         for (func_type.param_types.get(ip)) |param_type| {
@@ -2816,13 +2815,19 @@ fn initWipNavInner(
         else => {
             const diw = &wip_nav.debug_info.writer;
             try wip_nav.declCommon(.{
-                .decl = .decl_var,
+                .decl = switch (decl.linkage) {
+                    .@"extern" => .decl_extern_var,
+                    else => .decl_var,
+                },
                 .decl_specification = switch (decl.kind) {
                     .unnamed_test, .@"test", .decltest, .@"comptime" => unreachable,
                     .@"const" => .decl_specification_const,
                     .@"var" => .decl_specification_var,
                 },
-                .decl_instance = .decl_instance_var,
+                .decl_instance = switch (decl.linkage) {
+                    .@"extern" => .decl_instance_extern_var,
+                    else => .decl_instance_var,
+                },
             }, &nav, inst_info.file, &decl);
             try wip_nav.strp(switch (decl.linkage) {
                 .normal => nav.fqn,
@@ -2841,20 +2846,24 @@ fn initWipNavInner(
                 .unnamed_test, .@"test", .decltest, .@"comptime" => unreachable,
                 .@"const" => {
                     const const_ty_reloc_index = try wip_nav.refForward();
-                    try wip_nav.infoExprLoc(loc);
+                    if (decl.linkage != .@"extern") try wip_nav.infoExprLoc(loc);
                     try diw.writeUleb128(nav.resolved.?.@"align".toByteUnits() orelse
                         ty.abiAlignment(zcu).toByteUnits().?);
-                    try diw.writeByte(@intFromBool(decl.linkage != .normal));
+                    if (decl.linkage != .@"extern") {
+                        try diw.writeByte(@intFromBool(decl.linkage != .normal));
+                    }
                     wip_nav.finishForward(const_ty_reloc_index);
                     try wip_nav.abbrevCode(.is_const);
                     try wip_nav.refType(ty);
                 },
                 .@"var" => {
                     try wip_nav.refType(ty);
-                    try wip_nav.infoExprLoc(loc);
+                    if (decl.linkage != .@"extern") try wip_nav.infoExprLoc(loc);
                     try diw.writeUleb128(nav.resolved.?.@"align".toByteUnits() orelse
                         ty.abiAlignment(zcu).toByteUnits().?);
-                    try diw.writeByte(@intFromBool(decl.linkage != .normal));
+                    if (decl.linkage != .@"extern") {
+                        try diw.writeByte(@intFromBool(decl.linkage != .normal));
+                    }
                 },
             }
         },
@@ -3340,8 +3349,8 @@ fn updateConstIncompleteInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_inde
     switch (value_index) {
         .generic_poison_type => log.debug("updateValueIncomplete(anytype)", .{}),
         else => log.debug("updateValueIncomplete(@as({f}, {f}))", .{
-            val.typeOf(zcu).fmt(pt),
-            val.fmtValue(pt),
+            val.typeOf(zcu).fmt(zcu),
+            val.fmtValue(zcu),
         }),
     }
 
@@ -3435,7 +3444,7 @@ fn updateConstIncompleteInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_inde
         else => |val_key| switch (val_key.typeOf()) {
             .type_type => {
                 try wip_nav.abbrevCode(.generated_empty_struct_type);
-                try wip_nav.strpFmt("{f}", .{val.toType().fmt(pt)});
+                try wip_nav.strpFmt("{f}", .{val.toType().fmt(zcu)});
                 try wip_nav.debug_info.writer.writeByte(@intFromBool(true));
             },
             else => |ty| {
@@ -3509,8 +3518,8 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
     switch (value_index) {
         .generic_poison_type => log.debug("updateValue(anytype)", .{}),
         else => log.debug("updateValue(@as({f}, {f}))", .{
-            val.typeOf(zcu).fmt(pt),
-            val.fmtValue(pt),
+            val.typeOf(zcu).fmt(zcu),
+            val.fmtValue(zcu),
         }),
     }
 
@@ -3551,7 +3560,7 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
 
         .int_type => |int_type| {
             try wip_nav.abbrevCode(.numeric_type);
-            try wip_nav.strpFmt("{f}", .{val.toType().fmt(pt)});
+            try wip_nav.strpFmt("{f}", .{val.toType().fmt(zcu)});
             try diw.writeByte(switch (int_type.signedness) {
                 inline .signed, .unsigned => |signedness| @field(DW.ATE, @tagName(signedness)),
             });
@@ -3566,7 +3575,7 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
                     .none => if (ptr_type.sentinel == .none) .ptr_type else .ptr_sentinel_type,
                     else => if (ptr_type.sentinel == .none) .ptr_aligned_type else .ptr_aligned_sentinel_type,
                 });
-                try wip_nav.strpFmt("{f}", .{val.toType().fmt(pt)});
+                try wip_nav.strpFmt("{f}", .{val.toType().fmt(zcu)});
                 if (ptr_type.sentinel != .none) try wip_nav.blockValue(.fromInterned(ptr_type.sentinel));
                 if (ptr_type.flags.alignment.toByteUnits()) |a| try diw.writeUleb128(a);
                 try diw.writeByte(@backingInt(ptr_type.flags.address_space));
@@ -3592,7 +3601,7 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
             },
             .slice => {
                 try wip_nav.abbrevCode(.generated_struct_type);
-                try wip_nav.strpFmt("{f}", .{val.toType().fmt(pt)});
+                try wip_nav.strpFmt("{f}", .{val.toType().fmt(zcu)});
                 try diw.writeUleb128(val.toType().abiSize(zcu));
                 try diw.writeUleb128(val.toType().abiAlignment(zcu).toByteUnits().?);
                 try wip_nav.abbrevCode(.generated_field);
@@ -3611,7 +3620,7 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
         .array_type => |array_type| {
             const array_child_type: Type = .fromInterned(array_type.child);
             try wip_nav.abbrevCode(if (array_type.sentinel == .none) .array_type else .array_sentinel_type);
-            try wip_nav.strpFmt("{f}", .{val.toType().fmt(pt)});
+            try wip_nav.strpFmt("{f}", .{val.toType().fmt(zcu)});
             if (array_type.sentinel != .none) try wip_nav.blockValue(.fromInterned(array_type.sentinel));
             try wip_nav.refType(array_child_type);
             try wip_nav.abbrevCode(.array_len);
@@ -3621,7 +3630,7 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
         },
         .vector_type => |vector_type| {
             try wip_nav.abbrevCode(.vector_type);
-            try wip_nav.strpFmt("{f}", .{val.toType().fmt(pt)});
+            try wip_nav.strpFmt("{f}", .{val.toType().fmt(zcu)});
             try wip_nav.refType(.fromInterned(vector_type.child));
             try wip_nav.abbrevCode(.array_len);
             try wip_nav.refType(.usize);
@@ -3632,7 +3641,7 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
             const opt_child_type: Type = .fromInterned(opt_child_type_index);
             const opt_repr = optRepr(opt_child_type, zcu);
             try wip_nav.abbrevCode(.generated_union_type);
-            try wip_nav.strpFmt("{f}", .{val.toType().fmt(pt)});
+            try wip_nav.strpFmt("{f}", .{val.toType().fmt(zcu)});
             try diw.writeUleb128(val.toType().abiSize(zcu));
             try diw.writeUleb128(val.toType().abiAlignment(zcu).toByteUnits().?);
             switch (opt_repr) {
@@ -3713,7 +3722,7 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
             };
 
             try wip_nav.abbrevCode(.generated_union_type);
-            try wip_nav.strpFmt("{f}", .{val.toType().fmt(pt)});
+            try wip_nav.strpFmt("{f}", .{val.toType().fmt(zcu)});
             if (error_union_type.error_set_type != .generic_poison_type and
                 error_union_type.payload_type != .generic_poison_type)
             {
@@ -3785,7 +3794,7 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
             .bool,
             => {
                 try wip_nav.abbrevCode(.numeric_type);
-                try wip_nav.strpFmt("{f}", .{val.toType().fmt(pt)});
+                try wip_nav.strpFmt("{f}", .{val.toType().fmt(zcu)});
                 try diw.writeByte(if (value_index == .bool_type)
                     DW.ATE.boolean
                 else if (val.toType().isRuntimeFloat())
@@ -3815,18 +3824,18 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
             .enum_literal,
             => {
                 try wip_nav.abbrevCode(.void_type);
-                try wip_nav.strpFmt("{f}", .{val.toType().fmt(pt)});
+                try wip_nav.strpFmt("{f}", .{val.toType().fmt(zcu)});
             },
             .anyerror => unreachable, // already did early return above
             .adhoc_inferred_error_set => unreachable,
         },
         .tuple_type => |tuple_type| if (tuple_type.types.len == 0) {
             try wip_nav.abbrevCode(.generated_empty_struct_type);
-            try wip_nav.strpFmt("{f}", .{val.toType().fmt(pt)});
+            try wip_nav.strpFmt("{f}", .{val.toType().fmt(zcu)});
             try diw.writeByte(@intFromBool(false));
         } else {
             try wip_nav.abbrevCode(.generated_struct_type);
-            try wip_nav.strpFmt("{f}", .{val.toType().fmt(pt)});
+            try wip_nav.strpFmt("{f}", .{val.toType().fmt(zcu)});
             try diw.writeUleb128(val.toType().abiSize(zcu));
             try diw.writeUleb128(val.toType().abiAlignment(zcu).toByteUnits().?);
             var field_byte_offset: u64 = 0;
@@ -4148,7 +4157,7 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
         .func_type => |func_type| {
             const is_nullary = func_type.param_types.len == 0 and !func_type.is_var_args;
             try wip_nav.abbrevCode(if (is_nullary) .nullary_func_type else .func_type);
-            try wip_nav.strpFmt("{f}", .{val.toType().fmt(pt)});
+            try wip_nav.strpFmt("{f}", .{val.toType().fmt(zcu)});
             const cc: DW.CC = cc: {
                 if (zcu.getTarget().cCallingConvention()) |cc| {
                     if (@as(std.lang.CallingConvention.Tag, cc) == func_type.cc) {
@@ -4166,6 +4175,7 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
                     .x86_64_vectorcall => .LLVM_vectorcall,
                     .x86_sysv, .x86_win, .x86_mingw => .normal,
                     .x86_64_preserve_none => .LLVM_PreserveNone,
+                    .x86_64_preserve_most => .LLVM_PreserveMost,
                     .x86_stdcall => .BORLAND_stdcall,
                     .x86_fastcall => .BORLAND_msfastcall,
                     .x86_thiscall => .BORLAND_thiscall,
@@ -4180,6 +4190,7 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
                     .aarch64_vfabi => .LLVM_AAPCS,
                     .aarch64_vfabi_sve => .LLVM_AAPCS,
                     .aarch64_preserve_none => .LLVM_PreserveNone,
+                    .aarch64_preserve_most => .LLVM_PreserveMost,
 
                     .arm_aapcs => .LLVM_AAPCS,
                     .arm_aapcs_vfp => .LLVM_AAPCS_VFP,
@@ -4187,6 +4198,14 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
                     .riscv64_lp64_v,
                     .riscv32_ilp32_v,
                     => .LLVM_RISCVVectorCall,
+
+                    .loongarch32_preserve_none => .LLVM_PreserveNone,
+                    .loongarch64_preserve_none => .LLVM_PreserveNone,
+
+                    .riscv32_preserve_most => .LLVM_PreserveMost,
+                    .riscv64_preserve_most => .LLVM_PreserveMost,
+                    .loongarch32_preserve_most => .LLVM_PreserveMost,
+                    .loongarch64_preserve_most => .LLVM_PreserveMost,
 
                     .m68k_rtd => .LLVM_M68kRTD,
 
@@ -4231,7 +4250,7 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
         },
         .error_set_type => |error_set_type| {
             try wip_nav.abbrevCode(if (error_set_type.names.len == 0) .generated_empty_enum_type else .generated_enum_type);
-            try wip_nav.strpFmt("{f}", .{val.toType().fmt(pt)});
+            try wip_nav.strpFmt("{f}", .{val.toType().fmt(zcu)});
             try wip_nav.refType(.fromInterned(try pt.intern(.{ .int_type = .{
                 .signedness = .unsigned,
                 .bits = zcu.errorSetBits(),
@@ -4247,7 +4266,7 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
         },
         .inferred_error_set_type => |func| {
             try wip_nav.abbrevCode(.inferred_error_set_type);
-            try wip_nav.strpFmt("{f}", .{val.toType().fmt(pt)});
+            try wip_nav.strpFmt("{f}", .{val.toType().fmt(zcu)});
             try wip_nav.refType(.fromInterned(switch (ip.funcIesResolvedUnordered(func)) {
                 .none => .anyerror_type,
                 else => |ies| ies,
@@ -5127,6 +5146,7 @@ const AbbrevCode = enum {
     decl_union,
     decl_packed_union,
     decl_var,
+    decl_extern_var,
     decl_const,
     decl_const_runtime_bits,
     decl_const_comptime_state,
@@ -5149,6 +5169,7 @@ const AbbrevCode = enum {
     decl_instance_union,
     decl_instance_packed_union,
     decl_instance_var,
+    decl_instance_extern_var,
     decl_instance_const,
     decl_instance_const_runtime_bits,
     decl_instance_const_comptime_state,
@@ -5349,6 +5370,15 @@ const AbbrevCode = enum {
                 .{ .external, .flag },
             },
         },
+        .decl_extern_var = .{
+            .tag = .variable,
+            .attrs = decl_abbrev_common_attrs ++ .{
+                .{ .linkage_name, .strp },
+                .{ .type, .ref_addr },
+                .{ .alignment, .udata },
+                .{ .external, .flag_present },
+            },
+        },
         .decl_const = .{
             .tag = .constant,
             .attrs = decl_abbrev_common_attrs ++ .{
@@ -5432,7 +5462,6 @@ const AbbrevCode = enum {
             .attrs = decl_abbrev_common_attrs ++ .{
                 .{ .linkage_name, .strp },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
             },
@@ -5443,7 +5472,6 @@ const AbbrevCode = enum {
             .attrs = decl_abbrev_common_attrs ++ .{
                 .{ .linkage_name, .strp },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
             },
@@ -5523,6 +5551,15 @@ const AbbrevCode = enum {
                 .{ .location, .exprloc },
                 .{ .alignment, .udata },
                 .{ .external, .flag },
+            },
+        },
+        .decl_instance_extern_var = .{
+            .tag = .variable,
+            .attrs = decl_instance_abbrev_common_attrs ++ .{
+                .{ .linkage_name, .strp },
+                .{ .location, .exprloc },
+                .{ .alignment, .udata },
+                .{ .external, .flag_present },
             },
         },
         .decl_instance_const = .{
@@ -5608,7 +5645,6 @@ const AbbrevCode = enum {
             .attrs = decl_instance_abbrev_common_attrs ++ .{
                 .{ .linkage_name, .strp },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
             },
@@ -5619,7 +5655,6 @@ const AbbrevCode = enum {
             .attrs = decl_instance_abbrev_common_attrs ++ .{
                 .{ .linkage_name, .strp },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
             },
@@ -6037,7 +6072,6 @@ const AbbrevCode = enum {
                 .{ .ZIG_parent, .ref_addr },
                 .{ .linkage_name, .strp },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
             },
@@ -6049,7 +6083,6 @@ const AbbrevCode = enum {
                 .{ .ZIG_parent, .ref_addr },
                 .{ .linkage_name, .strp },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
             },
@@ -6060,7 +6093,6 @@ const AbbrevCode = enum {
                 .{ .ZIG_parent, .ref_addr },
                 .{ .linkage_name, .strp },
                 .{ .type, .ref_addr },
-                .{ .location, .exprloc },
                 .{ .external, .flag_present },
             },
         },

@@ -22,7 +22,7 @@ ptr_width: PtrWidth,
 
 /// A list of all input files.
 /// First index is a special "null file". Order is otherwise not observed.
-files: std.MultiArrayList(File.Entry) = .{},
+files: std.MultiArrayList(File.Entry) = .empty,
 /// Long-lived list of all file descriptors.
 /// We store them globally rather than per actual File so that we can re-use
 /// one file handle per every object file within an archive.
@@ -33,7 +33,7 @@ objects: std.ArrayList(File.Index) = .empty,
 shared_objects: std.array_hash_map.String(File.Index) = .empty,
 
 /// List of all output sections and their associated metadata.
-sections: std.MultiArrayList(Section) = .{},
+sections: std.MultiArrayList(Section) = .empty,
 /// File offset into the shdr table.
 shdr_table_offset: ?u64 = null,
 
@@ -463,21 +463,21 @@ pub fn deinit(self: *Elf) void {
     self.dump_argv_list.deinit(gpa);
 }
 
-pub fn getNavVAddr(self: *Elf, pt: Zcu.PerThread, nav_index: InternPool.Nav.Index, reloc_info: link.File.RelocInfo) !u64 {
-    return self.zigObjectPtr().?.getNavVAddr(self, pt, nav_index, reloc_info);
+pub fn navSymbol(self: *Elf, nav: InternPool.Nav.Index) link.Error!link.File.SymbolId {
+    return self.zigObjectPtr().?.navSymbol(self, nav);
 }
 
-pub fn lowerUav(
+pub fn relocSymAddr(self: *Elf, reloc_info: link.File.RelocInfo) !void {
+    return self.zigObjectPtr().?.relocSymAddr(self, reloc_info);
+}
+
+pub fn uavSymbol(
     self: *Elf,
     pt: Zcu.PerThread,
     uav: InternPool.Index,
     explicit_alignment: InternPool.Alignment,
 ) !link.File.SymbolId {
-    return self.zigObjectPtr().?.lowerUav(self, pt, uav, explicit_alignment);
-}
-
-pub fn getUavVAddr(self: *Elf, uav: InternPool.Index, reloc_info: link.File.RelocInfo) !u64 {
-    return self.zigObjectPtr().?.getUavVAddr(self, uav, reloc_info);
+    return self.zigObjectPtr().?.uavSymbol(self, pt, uav, explicit_alignment);
 }
 
 /// Returns end pos of collision, if any.
@@ -722,7 +722,7 @@ pub fn loadInput(self: *Elf, input: link.Input) !void {
         const argv = &self.dump_argv_list;
         switch (input) {
             .res => unreachable,
-            .dso_exact => |dso_exact| try argv.appendSlice(gpa, &.{ "-l", dso_exact.name }),
+            .tbd => unreachable,
             .object, .archive => |obj| try argv.append(gpa, try obj.path.toString(comp.arena)),
             .dso => |dso| try argv.append(gpa, try dso.path.toString(comp.arena)),
         }
@@ -730,14 +730,14 @@ pub fn loadInput(self: *Elf, input: link.Input) !void {
 
     switch (input) {
         .res => unreachable,
-        .dso_exact => @panic("TODO"),
+        .tbd => unreachable,
         .object => |obj| try parseObject(self, obj),
         .archive => |obj| if (self.base.isStaticLib()) {
             // Ignore static library inputs when generating a static library.
         } else {
             try parseArchive(gpa, io, diags, &self.file_handles, &self.files, target, debug_fmt_strip, default_sym_version, &self.objects, obj);
         },
-        .dso => |dso| try parseDso(gpa, io, diags, dso, &self.shared_objects, &self.files, target),
+        .dso => |dso| try parseDso(gpa, comp.arena, io, diags, dso, &self.shared_objects, &self.files, target),
     }
 }
 
@@ -860,9 +860,7 @@ fn flushInner(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id) !void {
 
     // Dump the state for easy debugging.
     // State can be dumped via `--debug-log link_state`.
-    if (build_options.enable_logging) {
-        state_log.debug("{f}", .{self.dumpState()});
-    }
+    state_log.debug("{f}", .{self.dumpState()});
 
     // Beyond this point, everything has been allocated a virtual address and we can resolve
     // the relocations, and commit objects to file.
@@ -1108,6 +1106,7 @@ fn parseArchive(
 
 fn parseDso(
     gpa: Allocator,
+    arena: Allocator,
     io: Io,
     diags: *Diags,
     dso: link.Input.Dso,
@@ -1120,11 +1119,16 @@ fn parseDso(
 
     const handle = dso.file;
 
-    const stat = Stat.fromFs(try handle.stat(io));
+    const stat: Stat = .init(try handle.stat(io));
     var header = try SharedObject.parseHeader(gpa, io, diags, dso.path, handle, stat, target);
     defer header.deinit(gpa);
 
-    const soname = header.soname() orelse dso.path.basename();
+    const fallback_soname: []const u8 = switch (dso.fallback_soname) {
+        .full_path => try dso.path.toString(arena),
+        .basename => fs.path.basename(dso.path.sub_path),
+    };
+
+    const soname = header.soname() orelse fallback_soname;
 
     const gop = try shared_objects.getOrPut(gpa, soname);
     if (gop.found_existing) return;
@@ -1156,6 +1160,7 @@ fn parseDso(
             .symbols_extra = .empty,
             .symbols_resolver = .empty,
             .output_symtab_ctx = .{},
+            .fallback_soname = fallback_soname,
         },
     });
     const so = fileLookup(files.*, index, null).?.shared_object;
@@ -1540,7 +1545,6 @@ pub fn writeElfHeader(self: *Elf) !void {
         .msp430 => .STANDALONE,
         else => switch (target.os.tag) {
             .freebsd, .ps4 => .FREEBSD,
-            .hermit => .STANDALONE,
             .illumos => .SOLARIS,
             .openbsd => .OPENBSD,
             else => .NONE,
@@ -4407,7 +4411,7 @@ const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const Hash = std.hash.Wyhash;
 const Path = std.Build.Cache.Path;
-const Stat = std.Build.Cache.File.Stat;
+const Stat = std.Build.Cache.Manifest.Stat;
 
 const codegen = @import("../codegen.zig");
 const eh_frame = @import("Elf/eh_frame.zig");

@@ -436,9 +436,7 @@ pub fn io(ev: *Evented) Io {
             .processSetCurrentDir = processSetCurrentDir,
             .processSetCurrentPath = processSetCurrentPath,
             .processReplace = processReplace,
-            .processReplacePath = processReplacePath,
             .processSpawn = processSpawn,
-            .processSpawnPath = processSpawnPath,
             .childWait = childWait,
             .childKill = childKill,
 
@@ -452,7 +450,6 @@ pub fn io(ev: *Evented) Io {
             .randomSecure = randomSecure,
 
             .netListenIp = netListenIpUnavailable,
-            .netAccept = netAcceptUnavailable,
             .netBindIp = netBindIpUnavailable,
             .netConnectIp = netConnectIpUnavailable,
             .netListenUnix = netListenUnixUnavailable,
@@ -464,6 +461,8 @@ pub fn io(ev: *Evented) Io {
             .netInterfaceNameResolve = netInterfaceNameResolveUnavailable,
             .netInterfaceName = netInterfaceNameUnavailable,
             .netLookup = netLookupUnavailable,
+            .inheritParentDir = Io.failingInheritParentDir,
+            .inheritParentFile = Io.failingInheritParentFile,
         },
     };
 }
@@ -1712,6 +1711,7 @@ fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Oper
         .device_io_control => |*o| return .{ .device_io_control = try deviceIoControl(o) },
         .net_receive => @panic("TODO implement net_receive operation"),
         .net_send => @panic("TODO implement net_send operation"),
+        .net_accept => @panic("TODO implement net_accept operation"),
         .net_read => @panic("TODO implement net_read operation"),
         .net_write => @panic("TODO implement net_write operation"),
     }
@@ -2134,7 +2134,9 @@ fn batchDrainSubmitted(
                     break :result null;
                 },
                 .device_io_control => {},
+                .net_accept => @panic("TODO implement batched net_accept"),
                 .net_receive => @panic("TODO implement batched net_receive"),
+                .net_send => @panic("TODO implement batched net_send"),
                 .net_read => @panic("TODO implement batched net_read"),
                 .net_write => @panic("TODO implement batched net_write"),
             };
@@ -2195,7 +2197,9 @@ fn batchSourceEvent(context: ?*anyopaque) callconv(.c) void {
             } };
         },
         .device_io_control => unreachable,
+        .net_accept => @panic("TODO implement batched net_accept"),
         .net_receive => @panic("TODO implement batched net_receive"),
+        .net_send => @panic("TODO implement batched net_send"),
         .net_read => @panic("TODO implement batched net_read"),
         .net_write => @panic("TODO implement batched net_write"),
     };
@@ -4797,18 +4801,6 @@ fn netListenIpUnavailable(
     const ev: *Evented = @ptrCast(@alignCast(userdata));
     _ = ev;
     _ = address;
-    _ = options;
-    return error.NetworkDown;
-}
-
-fn netAcceptUnavailable(
-    userdata: ?*anyopaque,
-    listen_handle: net.Socket.Handle,
-    options: net.Server.AcceptOptions,
-) net.Server.AcceptError!net.Socket {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = listen_handle;
     _ = options;
     return error.NetworkDown;
 }

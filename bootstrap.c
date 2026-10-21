@@ -168,7 +168,7 @@ int main(int argc, char **argv) {
         if (f == NULL)
             panic("unable to open config.zig for writing");
 
-        const char *zig_version = "0.17.0-dev.bootstrap";
+        const char *zig_version = "0.18.0-dev.bootstrap";
 
         int written = fprintf(f,
             "pub const have_llvm = false;\n"
@@ -179,7 +179,7 @@ int main(int argc, char **argv) {
             "pub const version: [:0]const u8 = \"%s\";\n"
             "pub const semver = @import(\"std\").SemanticVersion.parse(version) catch unreachable;\n"
             "pub const enable_debug_extensions = false;\n"
-            "pub const enable_logging = false;\n"
+            "pub const log_level: @import(\"std\").log.Level = .err;\n"
             "pub const enable_link_snapshots = false;\n"
             "pub const enable_tracy = false;\n"
             "pub const value_tracing = false;\n"
@@ -212,7 +212,7 @@ int main(int argc, char **argv) {
     {
         const char *child_argv[] = {
             "./zig1", "lib", "build-obj",
-            "-ofmt=c", "-OReleaseSmall",
+            "-ofmt=c", "-lc", "-OReleaseSmall",
             "--name", "compiler_rt", "-femit-bin=compiler_rt.c",
             "-target", host_triple,
             "-Mroot=lib/compiler_rt.zig",

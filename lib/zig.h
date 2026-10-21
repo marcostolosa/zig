@@ -261,6 +261,12 @@
 #define zig_no_builtin
 #endif
 
+#if zig_has_attribute(patchable_function_entry)
+#define zig_patchable_function_entry(count) __attribute__((patchable_function_entry(count)))
+#else
+#define zig_patchable_function_entry(count) zig_patchable_function_entry_unavailable
+#endif
+
 #if zig_has_attribute(aligned) || defined(zig_tinyc)
 #define zig_under_align(alignment) __attribute__((aligned(alignment)))
 #elif defined(zig_msvc)
@@ -5874,26 +5880,11 @@ typedef __float128 zig_f128;
 #define zig_make_special_f128(sign, name, arg, repr) sign __builtin_##name##f128(arg)
 #else
 #undef zig_has_f128
-#if defined(zig_x86_64) && defined(ZIG_TARGET_ABI_MSVC)
-#if defined(zig_msvc) && !defined(__clang__)
-#include <emmintrin.h>
-typedef __m128i zig_f128;
-#define zig_init_repr_f128(hi, lo) { .m128i_u64 = { lo, hi } }
-#define zig_lo_repr_f128(arg) (arg).m128i_u64[0]
-#define zig_hi_repr_f128(arg) (arg).m128i_u64[1]
-#else
-typedef __attribute__((__vector_size__(2 * sizeof(uint64_t)))) uint64_t zig_f128;
-#define zig_init_repr_f128(hi, lo) { lo, hi }
-#define zig_lo_repr_f128(arg) (arg)[0]
-#define zig_hi_repr_f128(arg) (arg)[1]
-#endif
-#else
 typedef zig_u128 zig_f128;
 #define zig_init_repr_f128(hi, lo) zig_init_u128(hi, lo)
 #define zig_make_repr_f128(hi, lo) zig_make_u128(hi, lo)
 #define zig_lo_repr_f128(arg) zig_lo_u128(arg)
 #define zig_hi_repr_f128(arg) zig_hi_u128(arg)
-#endif
 #endif
 #ifndef zig_has_f128
 #define zig_has_f128 0
@@ -6181,16 +6172,6 @@ static inline zig_f128 zig_floattitf(zig_i128 arg) {
 static inline zig_f128 zig_floatuntitf(zig_u128 arg) {
     extern zig_f128 __floatuntitf(zig_f128 arg);
     return __floatuntitf(zig_f128_bitCast_u128(arg));
-}
-#elif defined(zig_x86_64) && defined(zig_windows)
-zig_common_float_builtins(128)
-static inline zig_f128 zig_floattitf(zig_i128 arg) {
-    extern zig_f128 __floattitf(zig_i128 arg);
-    return __floattitf(arg);
-}
-static inline zig_f128 zig_floatuntitf(zig_u128 arg) {
-    extern zig_f128 __floatuntitf(uint64_t arg_lo, uint64_t arg_hi);
-    return __floatuntitf(zig_lo_u128(arg), zig_hi_u128(arg));
 }
 #else
 zig_float_builtins(128)
@@ -6750,19 +6731,7 @@ static inline void* zig_e_zig_windows_peb(void) {
 
 #endif
 
-#if defined(zig_loongarch)
-
-static inline void zig_e_zig_loongarch_cpucfg(uint32_t word, uint32_t* result) zig_mangled(zig_e_zig_loongarch_cpucfg, "zig_loongarch_cpucfg");
-
-static inline void zig_e_zig_loongarch_cpucfg(uint32_t word, uint32_t* result) {
-#if defined(zig_gnuc_asm)
-    __asm__("cpucfg %[result], %[word]" : [result] "=r" (*result) : [word] "r" (word));
-#else
-    *result = 0;
-#endif
-}
-
-#elif defined(zig_x86) && !defined(zig_x86_16)
+#if defined(zig_x86) && !defined(zig_x86_16)
 
 static inline void zig_e_zig_x86_cpuid(uint32_t leaf_id, uint32_t subid, uint32_t* eax, uint32_t* ebx, uint32_t* ecx, uint32_t* edx) zig_mangled(zig_e_zig_x86_cpuid, "zig_x86_cpuid");
 static inline uint32_t zig_e_zig_x86_get_xcr0(void) zig_mangled(zig_e_zig_x86_get_xcr0, "zig_x86_get_xcr0");
@@ -6794,10 +6763,7 @@ static inline uint32_t zig_e_zig_x86_get_xcr0(void) {
     __asm__("xgetbv" : "=a" (eax), "=d" (edx) : "c" (0));
     return eax;
 #else
-    *eax = 0;
-    *ebx = 0;
-    *ecx = 0;
-    *edx = 0;
+    return 0;
 #endif
 }
 

@@ -23,26 +23,14 @@ else
     unreachable;
 
 pub inline fn symbol(comptime func: *const anyopaque, comptime name: []const u8) void {
-    @export(func, .{ .name = name, .linkage = linkage, .visibility = visibility });
+    // The function shouldn't be exported at all when testing compiler_rt.
+    // Instead, we just need to reference the function so that it's compiled.
+    if (!builtin.is_test) @export(func, .{
+        .name = name,
+        .linkage = if (ofmt_c) .strong else .weak,
+        .visibility = .hidden,
+    });
 }
-
-/// For now, we prefer weak linkage because some of the routines we implement here may also be
-/// provided by system/dynamic libc. Eventually we should be more disciplined about this on a
-/// per-symbol, per-target basis: https://github.com/ziglang/zig/issues/11883
-pub const linkage: std.builtin.GlobalLinkage = if (builtin.is_test)
-    .internal
-else if (ofmt_c)
-    .strong
-else
-    .weak;
-
-/// Determines the symbol's visibility to other objects.
-/// For WebAssembly this allows the symbol to be resolved to other modules, but will not
-/// export it to the host runtime.
-pub const visibility: std.builtin.SymbolVisibility = if (linkage == .internal or builtin.link_mode == .dynamic)
-    .default
-else
-    .hidden;
 
 pub const test_safety = switch (builtin.zig_backend) {
     .stage2_aarch64 => false,
@@ -174,7 +162,11 @@ comptime {
         symbol(&bcmp, "bcmp");
         _ = @import("compiler_rt/ssp.zig");
         symbol(&strlen, "strlen");
+        symbol(&wcslen, "wcslen");
     }
+
+    _ = @import("compiler_rt/elf.zig");
+    _ = @import("compiler_rt/fmv.zig");
 
     // Temporarily used for uefi until https://github.com/ziglang/zig/issues/21630 is addressed.
     if (!builtin.link_libc and (builtin.os.tag == .windows or builtin.os.tag == .uefi) and (builtin.abi == .none or builtin.abi == .msvc)) {
@@ -185,6 +177,10 @@ comptime {
 var _fltused: c_int = 1;
 
 fn strlen(s: [*:0]const c_char) callconv(.c) usize {
+    return std.mem.len(s);
+}
+
+fn wcslen(s: [*:0]const std.c.wchar_t) callconv(.c) usize {
     return std.mem.len(s);
 }
 
@@ -279,7 +275,6 @@ pub const want_float_exceptions = !builtin.cpu.arch.isWasm();
 ///   arm-linux-musleabihf => true
 ///   arm-linux-gnueabihf => true
 ///   arm-linux-eabihf => false
-///   wasm32-wasi-musl => false
 ///   wasm32-freestanding-none => false
 ///   x86_64-windows-gnu => true
 ///   x86_64-windows-msvc => true
@@ -403,6 +398,14 @@ fn complexAbi(comptime Float: type, comptime float: type) type {
         }
     };
 }
+
+pub const have_c_longdouble = if (builtin.target.cTypeBitSize(.longdouble)) |bits| switch (bits) {
+    else => true,
+    80 => switch (std.zig.target.compilerRtFloatAbi(&builtin.target, bits)) {
+        .soft => false,
+        .hard => true,
+    },
+} else false;
 
 pub fn Complex(comptime Float: type) type {
     return struct { real: Float, imag: Float };

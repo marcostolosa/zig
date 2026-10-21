@@ -3851,7 +3851,7 @@ pub fn loadEnumType(ip: *const InternPool, index: Index) LoadedEnumType {
         .generated_union_tag => info: {
             const owner_union: Index = @fromBackingInt(@intCast(extra_items[extra_index]));
             extra_index += 1;
-            break :info .{ .none, .empty, owner_union };
+            break :info .{ .none, ip.loadUnionType(owner_union).captures, owner_union };
         },
         _ => |n| info: {
             const zir_index: TrackedInst.Index = @fromBackingInt(@intCast(extra_items[extra_index]));
@@ -5080,7 +5080,7 @@ pub const Tag = enum(u8) {
     const TypeSpirv = Key.SpirvType;
 
     const struct_packed_encoding = .{
-        .summary = .@"{.payload.name%summary#\"}",
+        .summary = .@"{.payload.fqn%summary#\"}",
         .payload = TypeStructPacked,
         .trailing = struct {
             type_hash: ?u64,
@@ -5097,7 +5097,7 @@ pub const Tag = enum(u8) {
         },
     };
     const struct_packed_defaults_encoding = .{
-        .summary = .@"{.payload.name%summary#\"}",
+        .summary = .@"{.payload.fqn%summary#\"}",
         .payload = TypeStructPacked,
         .trailing = struct {
             type_hash: ?u64,
@@ -5116,7 +5116,7 @@ pub const Tag = enum(u8) {
         },
     };
     const union_packed_encoding = .{
-        .summary = .@"{.payload.name%summary#\"}",
+        .summary = .@"{.payload.fqn%summary#\"}",
         .payload = TypeUnionPacked,
         .trailing = struct {
             type_hash: ?u64,
@@ -5131,7 +5131,7 @@ pub const Tag = enum(u8) {
         },
     };
     const enum_explicit_encoding = .{
-        .summary = .@"{.payload.name%summary#\"}",
+        .summary = .@"{.payload.fqn%summary#\"}",
         .payload = TypeEnum,
         .trailing = struct {
             owner_union: ?Index,
@@ -5212,7 +5212,7 @@ pub const Tag = enum(u8) {
         },
 
         .type_struct = .{
-            .summary = .@"{.payload.name%summary#\"}",
+            .summary = .@"{.payload.fqn%summary#\"}",
             .payload = TypeStruct,
             .trailing = struct {
                 type_hash: ?u64,
@@ -5236,7 +5236,7 @@ pub const Tag = enum(u8) {
                 .@"trailing.field_defaults.?" = .@"payload.flags.any_field_defaults",
                 .@"trailing.field_defaults.?.len" = .@"payload.fields_len",
                 .@"trailing.field_aligns.?" = .@"payload.flags.any_field_aligns",
-                .@"trailing.field_aligns.?.len" = .@"(payload.fields_len + 3) / 4",
+                .@"trailing.field_aligns.?.len" = .@"(payload.fields_len + 3) & ~@as(u32, 3)",
                 .@"trailing.field_is_comptime_bits.?" = .@"payload.flags.any_comptime_fields",
                 .@"trailing.field_is_comptime_bits.?.len" = .@"(payload.fields_len + 31) / 32",
                 .@"trailing.field_runtime_order.?" = .@"payload.flags.layout == .auto",
@@ -5249,12 +5249,13 @@ pub const Tag = enum(u8) {
         .type_struct_packed_auto_defaults = struct_packed_defaults_encoding,
         .type_struct_packed_explicit_defaults = struct_packed_defaults_encoding,
         .type_union = .{
-            .summary = .@"{.payload.name%summary#\"}",
+            .summary = .@"{.payload.fqn%summary#\"}",
             .payload = TypeUnion,
             .trailing = struct {
                 type_hash: ?u64,
                 captures_len: ?u32,
                 captures: ?[]CaptureValue,
+                reified_field_name: ?[]NullTerminatedString,
                 field_types: []Index,
                 field_aligns: ?[]Alignment,
             },
@@ -5263,15 +5264,17 @@ pub const Tag = enum(u8) {
                 .@"trailing.captures_len.?" = .@"payload.flags.any_captures == .true",
                 .@"trailing.captures.?" = .@"payload.flags.any_captures == .true",
                 .@"trailing.captures.?.len" = .@"trailing.captures_len.?",
+                .@"trailing.reified_field_name.?" = .@"payload.flags.any_captures == .reified",
+                .@"trailing.reified_field_name.?.len" = .@"payload.fields_len",
                 .@"trailing.field_types.len" = .@"payload.fields_len",
-                .@"trailing.field_aligns.?" = .@"payloads.flags.any_field_aligns",
-                .@"trailing.field_aligns.?.len" = .@"(payload.fields_len + 3) / 4",
+                .@"trailing.field_aligns.?" = .@"payload.flags.any_field_aligns",
+                .@"trailing.field_aligns.?.len" = .@"(payload.fields_len + 3) & ~@as(u32, 3)",
             },
         },
         .type_union_packed_auto = union_packed_encoding,
         .type_union_packed_explicit = union_packed_encoding,
         .type_enum_auto = .{
-            .summary = .@"{.payload.name%summary#\"}",
+            .summary = .@"{.payload.fqn%summary#\"}",
             .payload = TypeEnum,
             .trailing = struct {
                 owner_union: ?Index,
@@ -5293,7 +5296,7 @@ pub const Tag = enum(u8) {
         .type_enum_nonexhaustive = enum_explicit_encoding,
         .type_spirv = .{ .payload = Tag.TypeSpirv },
         .type_opaque = .{
-            .summary = .@"{.payload.name%summary#\"}",
+            .summary = .@"{.payload.fqn%summary#\"}",
             .payload = TypeOpaque,
             .trailing = struct { captures: []CaptureValue },
             .config = .{ .@"trailing.captures.len" = .@"payload.captures_len" },
@@ -5386,7 +5389,7 @@ pub const Tag = enum(u8) {
             },
             .config = .{
                 .@"trailing.inferred_error_set.?" = .@"payload.analysis.inferred_error_set",
-                .@"trailing.param_values.len" = .@"payload.ty.payload.params_len",
+                .@"trailing.param_values.len" = .@"@syntheticField(@syntheticField(payload.ty, \"unwrapped\"), \"payload\").params_len",
             },
         },
         .func_coerced = .{
@@ -5400,7 +5403,7 @@ pub const Tag = enum(u8) {
             .summary = .@"@as({.payload.ty%summary}, .{...})",
             .payload = Aggregate,
             .trailing = struct { elements: []Index },
-            .config = .{ .@"trailing.elements.len" = .@"payload.ty.payload.fields_len" },
+            .config = .{ .@"trailing.elements.len" = .@"@syntheticField(@syntheticField(payload.ty, \"unwrapped\"), \"payload\").fields_len" },
         },
         .repeated = .{ .summary = .@"@as({.payload.ty%summary}, @splat({.payload.elem_val%summary}))", .payload = Repeated },
         .bitpack = .{ .summary = .@"@as({.payload.ty%summary}, {})", .payload = Key.Bitpack },
@@ -5433,7 +5436,7 @@ pub const Tag = enum(u8) {
             relocation: std.lang.ExternOptions.Relocation,
             source: Source,
             decoration_type: DecorationType,
-            _: u23 = 0,
+            _: u24 = 0,
 
             pub const Source = enum(u1) { builtin, syntax };
             pub const DecorationType = enum(u2) { none, location, descriptor, flat };
@@ -10588,17 +10591,36 @@ pub fn errorUnionPayload(ip: *const InternPool, ty: Index) Index {
     return ip.indexToKey(ty).error_union_type.payload_type;
 }
 
-pub fn dump(ip: *const InternPool) void {
-    var buffer: [4096]u8 = undefined;
-    const stderr = std.debug.lockStderr(&buffer);
-    defer std.debug.unlockStderr();
-    const w = &stderr.file_writer.interface;
-    dumpDependencyStatsFallible(ip, w) catch return;
-    dumpStatsFallible(ip, w, std.heap.page_allocator) catch return;
-    dumpAllFallible(ip, w) catch return;
-}
+pub const Dump = struct {
+    name: []const u8,
+    arena: std.mem.Allocator,
+    ip: *const InternPool,
+    err: ?Allocator.Error,
 
-fn dumpDependencyStatsFallible(ip: *const InternPool, w: *Io.Writer) !void {
+    pub fn format(d: *Dump, w: *Io.Writer) Io.Writer.Error!void {
+        try w.print("{q}:\n", .{d.name});
+        try d.ip.dumpDependencyStatsFallible(w);
+        d.ip.dumpStatsFallible(d.arena, w) catch |err| switch (err) {
+            error.WriteFailed => |e| return e,
+            error.OutOfMemory => |e| {
+                d.err = e;
+                return error.WriteFailed;
+            },
+        };
+    }
+
+    pub fn formatAll(d: *Dump, w: *Io.Writer) Io.Writer.Error!void {
+        try w.print("{q}:\n", .{d.name});
+        try d.ip.dumpAllFallible(w);
+    }
+
+    pub fn formatGenericInstances(d: *Dump, w: *Io.Writer) Io.Writer.Error!void {
+        try w.print("{q}:\n", .{d.name});
+        d.ip.dumpGenericInstancesFallible(d.arena, w) catch return;
+    }
+};
+
+fn dumpDependencyStatsFallible(ip: *const InternPool, w: *Io.Writer) Io.Writer.Error!void {
     const dep_entries_len = ip.dep_entries.items.len - ip.free_dep_entries.items.len;
     const src_hash_deps_len = ip.src_hash_deps.count();
     const nav_val_deps_len = ip.nav_val_deps.count();
@@ -10665,7 +10687,7 @@ fn dumpDependencyStatsFallible(ip: *const InternPool, w: *Io.Writer) !void {
     });
 }
 
-fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !void {
+fn dumpStatsFallible(ip: *const InternPool, arena: Allocator, w: *Io.Writer) (Allocator.Error || Io.Writer.Error)!void {
     var items_len: usize = 0;
     var extra_len: usize = 0;
     var limbs_len: usize = 0;
@@ -10965,7 +10987,7 @@ fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !vo
     }
 }
 
-fn dumpAllFallible(ip: *const InternPool, w: *Io.Writer) anyerror!void {
+fn dumpAllFallible(ip: *const InternPool, w: *Io.Writer) Io.Writer.Error!void {
     for (ip.locals, 0..) |*local, tid| {
         // Early check for length 0, because `view()` is invalid if capacity is 0
         if (local.mutate.items.len == 0) continue;
@@ -11068,21 +11090,10 @@ fn dumpAllFallible(ip: *const InternPool, w: *Io.Writer) anyerror!void {
     }
 }
 
-pub fn dumpGenericInstances(ip: *const InternPool, allocator: Allocator) void {
-    var buffer: [4096]u8 = undefined;
-    const stderr = std.debug.lockStderr(&buffer);
-    defer std.debug.unlockStderr();
-    const w = &stderr.file_writer.interface;
-    ip.dumpGenericInstancesFallible(allocator, w) catch return;
-}
-
-pub fn dumpGenericInstancesFallible(ip: *const InternPool, allocator: Allocator, w: *Io.Writer) !void {
-    var arena_allocator = std.heap.ArenaAllocator.init(allocator);
-    defer arena_allocator.deinit();
-    const arena = arena_allocator.allocator();
-
+pub fn dumpGenericInstancesFallible(ip: *const InternPool, arena: Allocator, w: *Io.Writer) !void {
     var instances: std.array_hash_map.Auto(Index, std.ArrayList(Index)) = .empty;
     for (ip.locals, 0..) |*local, tid| {
+        if (local.mutate.items.len == 0) continue;
         const items = local.shared.items.view().slice();
         const extra_list = local.shared.extra;
         for (

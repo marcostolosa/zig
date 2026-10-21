@@ -11,7 +11,7 @@ const native_endian = builtin.target.cpu.arch.endian();
 string_bytes: []u8,
 steps: []Step,
 path_deps: []PathDep,
-unlazy_deps: []String,
+unlazy_deps: []UnlazyDep,
 system_integrations: []SystemIntegration,
 available_options: []AvailableOption,
 search_prefixes: []String,
@@ -52,7 +52,7 @@ pub const Wip = struct {
     targets_table: TargetsTable = .empty,
 
     string_bytes: std.ArrayList(u8) = .empty,
-    unlazy_deps: std.ArrayList(String) = .empty,
+    unlazy_deps: std.ArrayList(UnlazyDep) = .empty,
     system_integrations: std.ArrayList(SystemIntegration) = .empty,
     available_options: std.ArrayList(AvailableOption) = .empty,
     steps: std.ArrayList(Step) = .empty,
@@ -214,6 +214,27 @@ pub const Wip = struct {
         const added = try wip.extra.addManyAsSlice(gpa, list.len + 1);
         added[0] = @intCast(list.len);
         for (added[1..], list) |*d, s| d.* = @backingInt(try addString(wip, s));
+        const gop = try wip.dedupe_table.getOrPutContext(gpa, .{
+            .index = revert_index,
+            .len = @intCast(added.len),
+        }, @as(ExtraSlice.Context, .{ .extra = wip.extra.items }));
+
+        if (gop.found_existing) {
+            wip.extra.items.len = revert_index;
+            return @fromBackingInt(@intCast(gop.key_ptr.index));
+        }
+
+        return @fromBackingInt(@intCast(revert_index));
+    }
+
+    pub fn addStringListInterned(wip: *Wip, list: []const String) Allocator.Error!StringList {
+        // Increase size of extra to support the list. Add the string list
+        // there. Then check for duplicate, reverting list if already found.
+        const gpa = wip.gpa;
+        const revert_index: u32 = @intCast(wip.extra.items.len);
+        const added = try wip.extra.addManyAsSlice(gpa, list.len + 1);
+        added[0] = @intCast(list.len);
+        @memcpy(added[1..], @as([]const u32, @ptrCast(list)));
         const gop = try wip.dedupe_table.getOrPutContext(gpa, .{
             .index = revert_index,
             .len = @intCast(added.len),
@@ -474,6 +495,12 @@ pub const AvailableOption = extern struct {
     };
 };
 
+pub const UnlazyDep = extern struct {
+    /// none indicates not associated with any particular step.
+    step: Step.OptionalIndex,
+    list: StringList,
+};
+
 pub const Step = extern struct {
     name: String,
     owner: Package.Index,
@@ -503,6 +530,23 @@ pub const Step = extern struct {
         _,
 
         pub fn ptr(i: Index, c: *const Configuration) *const Step {
+            return &c.steps[@backingInt(i)];
+        }
+    };
+
+    pub const OptionalIndex = enum(u32) {
+        none = max_u32,
+        _,
+
+        pub fn unwrap(this: @This()) ?Index {
+            return switch (this) {
+                .none => null,
+                else => @fromBackingInt(@intCast(@backingInt(this))),
+            };
+        }
+
+        pub fn ptr(i: @This(), c: *const Configuration) ?*const Step {
+            if (i == .none) return null;
             return &c.steps[@backingInt(i)];
         }
     };
@@ -665,7 +709,7 @@ pub const Step = extern struct {
             pub const Tag = enum(u2) { none, bytes, lazy_path };
         };
         pub const TrimWhitespace = enum(u2) { none, all, leading, trailing };
-        pub const StdIo = enum(u2) { infer_from_args, inherit, check, zig_test };
+        pub const StdIo = enum(u3) { infer_from_args, inherit, check, zig_test, protocol };
 
         pub const ExpectTermStatus = enum(u2) { exited, signal, stopped, unknown };
 
@@ -675,7 +719,6 @@ pub const Step = extern struct {
             skip_foreign_checks: bool,
             failing_to_execute_foreign_is_an_error: bool,
             has_side_effects: bool,
-            test_runner_mode: bool,
             color: Color,
             stdin: StdIn.Tag,
             stdio: StdIo,
@@ -1378,17 +1421,21 @@ pub const Step = extern struct {
         flags: @This().Flags,
         generated_file: GeneratedFileIndex,
         contents: Bytes,
-        args: Storage.FlagLengthPrefixedList(.flags, .args, Arg),
+        files: Storage.FlagLengthPrefixedList(.flags, .files, NamedPath),
+        directories: Storage.FlagLengthPrefixedList(.flags, .directories, NamedPath),
+        untracked_paths: Storage.FlagLengthPrefixedList(.flags, .untracked_paths, NamedPath),
 
-        pub const Arg = extern struct {
+        pub const NamedPath = extern struct {
             name: String,
             path: LazyPath.Index,
         };
 
         pub const Flags = packed struct(u32) {
             tag: Tag = .options,
-            args: bool,
-            _: u26 = 0,
+            files: bool,
+            directories: bool,
+            untracked_paths: bool,
+            _: u24 = 0,
         };
     };
 
@@ -1398,14 +1445,14 @@ pub const Step = extern struct {
         output_file: GeneratedFileIndex,
         include_dirs: Storage.UnionList(.flags, .include_dirs, Module.IncludeDir),
         system_libs: Storage.FlagLengthPrefixedList(.flags, .system_libs, SystemLib.Index),
-        c_macros: Storage.FlagLengthPrefixedList(.flags, .c_macros, String),
+        cc_argv: Storage.FlagLengthPrefixedList(.flags, .cc_argv, String),
         target: ResolvedTarget.OptionalIndex,
 
         pub const Flags = packed struct(u32) {
             tag: Tag = .translate_c,
             include_dirs: bool,
             system_libs: bool,
-            c_macros: bool,
+            cc_argv: bool,
             link_libc: bool,
             optimize: Module.Optimize,
             _: u20 = 0,
@@ -1560,6 +1607,13 @@ pub const LazyPath = union(@This().Tag) {
             _: u16 = 0,
         };
 
+        /// The deployed_prefix and related paths exist to support the use-case
+        /// of embedding absolute paths to other build artifacts in the build
+        /// artifacts themselves. For example pkg-config files are artifacts
+        /// which must contain absolute paths to the other library/header
+        /// artifacts they describe. Note that this feature is only supported to
+        /// faciliate interoperability with such legacy systems. In general,
+        /// embedding absolute paths in build artifacts should be avoided.
         pub const Base = enum(u8) {
             cwd,
             local_cache,
@@ -1568,10 +1622,34 @@ pub const LazyPath = union(@This().Tag) {
             build_root,
             zig_exe,
             zig_lib,
+
+            /// Path that artifacts will be written to by the build system.
+            /// Equivalent to $DESTDIR/deployed_prefix if $DESTDIR is set.
             install_prefix,
+            /// Path that artifacts will be written to by the build system.
+            /// Equivalent to $DESTDIR/deployed_lib if $DESTDIR is set.
             install_lib,
+            /// Path that artifacts will be written to by the build system.
+            /// Equivalent to $DESTDIR/deployed_bin if $DESTDIR is set.
             install_bin,
+            /// Path that artifacts will be written to by the build system.
+            /// Equivalent to $DESTDIR/deployed_include if $DESTDIR is set.
             install_include,
+
+            /// Path that artifacts will be deployed to on the target system.
+            /// Unaffected by $DESTDIR.
+            deployed_prefix,
+            /// Path that artifacts will be deployed to on the target system.
+            /// Unaffected by $DESTDIR.
+            deployed_lib,
+            /// Path that artifacts will be deployed to on the target system.
+            /// Unaffected by $DESTDIR.
+            deployed_bin,
+            /// Path that artifacts will be deployed to on the target system.
+            /// Unaffected by $DESTDIR.
+            deployed_include,
+
+            libc_runtimes,
         };
     };
 };
@@ -1652,6 +1730,7 @@ pub const Module = struct {
     rpaths: Storage.UnionList(.flags, .rpaths, RPath),
     link_objects: Storage.UnionList(.flags, .link_objects, LinkObject),
     frameworks: Storage.FlagLengthPrefixedList(.flags, .frameworks, Framework),
+    patchable_function_entry: u32,
 
     pub const Optimize = enum(u3) {
         debug,
@@ -1872,12 +1951,11 @@ pub const PathDep = extern struct {
     pkg: Package.OptionalIndex,
 
     pub const Flags = packed struct(u32) {
-        mode: Mode,
+        is_directory: bool,
+        metadata_only: bool,
         base: LazyPath.Relative.Base,
-        _: u16 = 0,
+        _: u22 = 0,
     };
-
-    pub const Mode = enum(u8) { directory, contents, metadata };
 };
 
 pub const InstallDestDir = enum(u32) {
@@ -2375,9 +2453,7 @@ pub const TargetQuery = struct {
     pub const OsTag = enum(u6) {
         freestanding,
         other,
-        contiki,
         fuchsia,
-        hermit,
         managarm,
         haiku,
         hurd,
@@ -2443,6 +2519,8 @@ pub const TargetQuery = struct {
         coff,
         elf,
         hex,
+        llvmbc,
+        llvmir,
         macho,
         plan9,
         raw,
@@ -3132,7 +3210,7 @@ pub fn load(arena: Allocator, reader: *Io.Reader) LoadError!Configuration {
         .string_bytes = try arena.alloc(u8, header.string_bytes_len),
         .steps = try arena.alloc(Step, header.steps_len),
         .path_deps = try arena.alloc(PathDep, header.path_deps_len),
-        .unlazy_deps = try arena.alloc(String, header.unlazy_deps_len),
+        .unlazy_deps = try arena.alloc(UnlazyDep, header.unlazy_deps_len),
         .system_integrations = try arena.alloc(SystemIntegration, header.system_integrations_len),
         .available_options = try arena.alloc(AvailableOption, header.available_options_len),
         .search_prefixes = try arena.alloc(String, header.search_prefixes_len),

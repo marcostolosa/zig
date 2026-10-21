@@ -702,15 +702,14 @@ pub const param_sets = [_]CaseParameters{
             .abi = .none,
         },
     },
-    // SPARC linking support is currently incomplete.
-    // .{
-    //     .target = .{
-    //         .cpu_arch = .sparc64,
-    //         .os_tag = .linux,
-    //         .abi = .gnu,
-    //     },
-    //     .link_libc = true,
-    // },
+    .{
+        .target = .{
+            .cpu_arch = .sparc64,
+            .os_tag = .linux,
+            .abi = .gnu,
+        },
+        .link_libc = true,
+    },
 
     .{
         .target = .{
@@ -902,37 +901,6 @@ pub const param_sets = [_]CaseParameters{
 
     .{
         .target = .{
-            .cpu_arch = .thumb,
-            .os_tag = .windows,
-            .abi = .msvc,
-        },
-    },
-    .{
-        .target = .{
-            .cpu_arch = .thumb,
-            .os_tag = .windows,
-            .abi = .msvc,
-        },
-        .link_libc = true,
-    },
-    .{
-        .target = .{
-            .cpu_arch = .thumb,
-            .os_tag = .windows,
-            .abi = .gnu,
-        },
-    },
-    .{
-        .target = .{
-            .cpu_arch = .thumb,
-            .os_tag = .windows,
-            .abi = .gnu,
-        },
-        .link_libc = true,
-    },
-
-    .{
-        .target = .{
             .cpu_arch = .x86,
             .os_tag = .windows,
             .abi = .msvc,
@@ -1027,7 +995,7 @@ pub fn addCases(self: *StackTrace) void {
 
         if (!self.options.test_extra_targets and params.extra_target) continue;
 
-        if (self.options.skip_non_native and !tests.isNative(&resolved_target, &b.graph.host.result)) continue;
+        if (self.options.skip_non_native and !std.zig.target.isNative(&resolved_target.query, &resolved_target.result, &b.graph.host.result)) continue;
 
         if (self.options.skip_freebsd and target.os.tag == .freebsd) continue;
         if (self.options.skip_netbsd and target.os.tag == .netbsd) continue;

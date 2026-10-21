@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const crypto = std.crypto;
 const fmt = std.fmt;
@@ -137,8 +138,10 @@ pub fn Ecdsa(comptime C: type, comptime H: type) type {
             /// The function returns a slice, that can be shorter than der_encoded_length_max.
             pub fn toDer(sig: Signature, buf: *[der_encoded_length_max]u8) []u8 {
                 var w: std.Io.Writer = .fixed(buf);
-                const sig_r = mem.trimStart(u8, &sig.r, &.{0});
-                const sig_s = mem.trimStart(u8, &sig.s, &.{0});
+                const trimmed_r = mem.trimStart(u8, &sig.r, &.{0});
+                const trimmed_s = mem.trimStart(u8, &sig.s, &.{0});
+                const sig_r: []const u8 = if (trimmed_r.len == 0) &.{0} else trimmed_r;
+                const sig_s: []const u8 = if (trimmed_s.len == 0) &.{0} else trimmed_s;
                 const r_len = @as(u8, @intCast(sig_r.len + (sig_r[0] >> 7)));
                 const s_len = @as(u8, @intCast(sig_s.len + (sig_s[0] >> 7)));
                 const seq_len = @as(u8, @intCast(2 + r_len + 2 + s_len));
@@ -170,7 +173,8 @@ pub fn Ecdsa(comptime C: type, comptime H: type) type {
                 }
                 const out_slice = out[out.len - expected_len ..];
                 reader.readSliceAll(out_slice) catch return error.InvalidEncoding;
-                if (@intFromBool(has_top_bit) != out[0] >> 7) return error.InvalidEncoding;
+                if (@intFromBool(has_top_bit) != out_slice[0] >> 7) return error.InvalidEncoding;
+                if (expected_len > 1 and out_slice[0] == 0 and out_slice[1] >> 7 == 0) return error.InvalidEncoding;
             }
 
             /// Create a signature from a DER representation.
@@ -256,6 +260,7 @@ pub fn Ecdsa(comptime C: type, comptime H: type) type {
                 const r = try Curve.scalar.Scalar.fromBytes(sig.r, .big);
                 const s = try Curve.scalar.Scalar.fromBytes(sig.s, .big);
                 if (r.isZero() or s.isZero()) return error.IdentityElement;
+                try public_key.p.rejectIdentity();
 
                 return Verifier{
                     .h = Hash.init(.{}),
@@ -287,13 +292,19 @@ pub fn Ecdsa(comptime C: type, comptime H: type) type {
                 const s_inv = self.s.invert();
                 const v1 = z.mul(s_inv).toBytes(.little);
                 const v2 = self.r.mul(s_inv).toBytes(.little);
-                const v1g = try Curve.basePoint.mulPublic(v1, .little);
-                const v2pk = try self.public_key.p.mulPublic(v2, .little);
-                const vxs = v1g.add(v2pk).affineCoordinates().x.toBytes(.big);
-                const vr = reduceToScalar(Curve.Fe.encoded_length, vxs);
-                if (!self.r.equivalent(vr)) {
+                const v = Curve.mulDoubleBasePublic(Curve.basePoint, v1, self.public_key.p, v2, .little) catch
                     return error.SignatureVerificationFailed;
+
+                const Fe = Curve.Fe;
+                const n = Curve.scalar.field_order;
+                comptime std.debug.assert(n < Fe.field_order and Fe.field_order < 2 * n);
+                const r = Fe.fromBytes(self.r.toBytes(.little), .little) catch unreachable;
+                if (v.x.equivalent(r.mul(v.z))) return;
+                if (r.toInt() < Fe.field_order - n) {
+                    const n_fe = comptime Fe.fromInt(n) catch unreachable;
+                    if (v.x.equivalent(r.add(n_fe).mul(v.z))) return;
                 }
+                return error.SignatureVerificationFailed;
             }
 
             /// Verify that the signature is valid for the entire message.
@@ -432,6 +443,8 @@ test "Basic operations over EcdsaP384Sha384" {
 }
 
 test "Basic operations over Secp256k1" {
+    if (builtin.zig_backend == .stage2_llvm and builtin.target.cpu.arch.isPowerpc64()) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/37121
+
     const io = testing.io;
     const Scheme = EcdsaSecp256k1Sha256oSha256;
     const kp = Scheme.KeyPair.generate(io);
@@ -522,6 +535,23 @@ test "Prehashed message operations" {
     const regular_sig = try kp.sign(msg, null);
     try regular_sig.verifyPrehashed(msg_hash, kp.public_key);
     try sig.verify(msg, kp.public_key);
+}
+
+test "DER decoding edge cases" {
+    const Scheme = EcdsaP256Sha256;
+    const negative_r = [_]u8{ 0x30, 0x06, 0x02, 0x01, 0x80, 0x02, 0x01, 0x01 };
+    const padded_r = [_]u8{ 0x30, 0x07, 0x02, 0x02, 0x00, 0x01, 0x02, 0x01, 0x01 };
+    try testing.expectError(error.InvalidEncoding, Scheme.Signature.fromDer(&negative_r));
+    try testing.expectError(error.InvalidEncoding, Scheme.Signature.fromDer(&padded_r));
+
+    const raw: [Scheme.Signature.encoded_length]u8 = @splat(0);
+    const sig = Scheme.Signature.fromBytes(raw);
+    var der: [Scheme.Signature.der_encoded_length_max]u8 = undefined;
+    try testing.expectEqualSlices(
+        u8,
+        &.{ 0x30, 0x06, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00 },
+        sig.toDer(&der),
+    );
 }
 
 const TestVector = struct {

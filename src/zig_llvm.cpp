@@ -285,7 +285,7 @@ ZIG_EXTERN_C bool ZigLLVMTargetMachineEmitToFile(LLVMTargetMachineRef targ_machi
     PipelineTuningOptions pipeline_opts;
     pipeline_opts.LoopUnrolling = !options->is_debug;
     pipeline_opts.SLPVectorization = !options->is_debug;
-    pipeline_opts.LoopVectorization = false; // https://github.com/llvm/llvm-project/issues/186922
+    pipeline_opts.LoopVectorization = !options->is_debug;
     pipeline_opts.LoopInterleaving = !options->is_debug;
     pipeline_opts.MergeFunctions = !options->is_debug;
 
@@ -373,7 +373,7 @@ ZIG_EXTERN_C bool ZigLLVMTargetMachineEmitToFile(LLVMTargetMachineRef targ_machi
     if (options->is_debug)
       opt_level = OptimizationLevel::O0;
     else if (options->is_small)
-      opt_level = OptimizationLevel::Oz;
+      opt_level = OptimizationLevel::O2;
     else
       opt_level = OptimizationLevel::O3;
 
@@ -410,6 +410,10 @@ ZIG_EXTERN_C bool ZigLLVMTargetMachineEmitToFile(LLVMTargetMachineRef targ_machi
     // Code generation phase
     codegen_pm.run(llvm_module);
 
+    if (options->llvm_ir_out != nullptr) {
+        *options->llvm_ir_out = LLVMPrintModuleToString(module_ref);
+    }
+
     if (options->llvm_ir_filename) {
         if (LLVMPrintModuleToFile(module_ref, options->llvm_ir_filename, error_message)) {
             return true;
@@ -430,9 +434,7 @@ ZIG_EXTERN_C bool ZigLLVMTargetMachineEmitToFile(LLVMTargetMachineRef targ_machi
         auto os = raw_string_ostream(out_str);
         TimerGroup::printAll(os);
         TimerGroup::clearAll();
-        auto c_str = (char *)malloc(out_str.length() + 1);
-        strcpy(c_str, out_str.c_str());
-        *options->time_report_out = c_str;
+        *options->time_report_out = LLVMCreateMessage(out_str.c_str());
     }
     return false;
 }

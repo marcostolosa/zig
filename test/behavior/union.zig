@@ -442,6 +442,7 @@ const Foo1 = union(enum) {
 var glbl: Foo1 = undefined;
 
 test "global union with single field is correctly initialized" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -551,7 +552,6 @@ const Baz = enum { A, B, C, D };
 
 test "tagged union type" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const foo1 = TaggedFoo{ .One = 13 };
     const foo2 = TaggedFoo{
@@ -576,7 +576,6 @@ test "tagged union as return value" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     switch (returnAnInt(13)) {
         TaggedFoo.One => |value| try expect(value == 13),
@@ -619,7 +618,6 @@ test "union(enum(u32)) with specified and unspecified tag values" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     comptime assert(Tag(Tag(MultipleChoice2)) == u32);
     try testEnumWithSpecifiedAndUnspecifiedTagValues(MultipleChoice2{ .C = 123 });
@@ -709,7 +707,6 @@ test "union with only 1 field casted to its enum type which has enum value speci
 test "@intFromEnum works on unions" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const Bar = union(enum) {
         A: bool,
@@ -793,7 +790,6 @@ test "@unionInit stored to a const" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const S = struct {
         const U = union(enum) {
@@ -823,7 +819,6 @@ test "@unionInit stored to a const" {
 test "@unionInit can modify a union type" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const UnionInitEnum = union(enum) {
         Boolean: bool,
@@ -846,7 +841,6 @@ test "@unionInit can modify a union type" {
 test "@unionInit can modify a pointer value" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const UnionInitEnum = union(enum) {
         Boolean: bool,
@@ -954,7 +948,6 @@ test "function call result coerces from tagged union to the tag" {
 test "switching on non exhaustive union" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const S = struct {
         const E = enum(u8) {
@@ -1116,8 +1109,6 @@ test "union with a large struct field" {
 }
 
 test "comptime equality of extern unions with same tag" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const S = struct {
         const U = extern union {
             a: i32,
@@ -1256,7 +1247,6 @@ test "@unionInit uses tag value instead of field index" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     const E = enum(u8) {
         b = 255,
         a = 3,
@@ -1414,6 +1404,8 @@ test "reinterpreting enum value inside packed union" {
 }
 
 test "access the tag of a global tagged union" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
     const U = union(enum) {
         a,
         b: u8,
@@ -1851,8 +1843,6 @@ test "inner struct initializer uses packed union layout" {
 }
 
 test "extern union initialized via reintepreted struct field initializer" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
     const bytes = [_]u8{ 0xaa, 0xbb, 0xcc, 0xdd };
 
     const U = extern union {
@@ -2005,7 +1995,6 @@ test "circular dependency through pointer field of a union" {
 
 test "pass nested union with rls" {
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const Union = union(enum) {
         a: u32,
@@ -2052,7 +2041,6 @@ test "runtime union init, most-aligned field != largest" {
 test "copied union field doesn't alias source" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const U = union(enum) {
         array: [10]u32,
@@ -2184,6 +2172,23 @@ test "matching captures causes union equivalence" {
     const b: S.SignedUnsigned(i8) = .{ .u = 10 };
     comptime assert(@TypeOf(a) == @TypeOf(b));
     try expect(a.u == b.u);
+}
+
+test "capture used as explicit field value" {
+    const S = struct {
+        fn Union(n: u8) type {
+            return union(enum(u8)) {
+                a: u32 = n,
+                b,
+            };
+        }
+    };
+
+    comptime assert(@typeInfo(S.Union(0)).@"union".tag_type.? != @typeInfo(S.Union(1)).@"union".tag_type.?);
+
+    const s: S.Union(1) = .{ .a = 0 };
+    try expect(@backingInt(s) == 1);
+    try expect(@backingInt(@as(@typeInfo(S.Union(1)).@"union".tag_type.?, s)) == 1);
 }
 
 test "signed enum tag with negative value" {

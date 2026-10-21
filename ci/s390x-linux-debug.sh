@@ -6,8 +6,8 @@ set -x
 set -e
 
 TARGET="s390x-linux-musl"
-MCPU="z15"
-CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
+MCPU="baseline"
+CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.18.0-dev.92+1e1964473"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 

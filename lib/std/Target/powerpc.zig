@@ -794,15 +794,6 @@ pub const cpu = struct {
             .stfiwx,
         }),
     };
-    pub const e500v2: CpuModel = .{
-        .name = "e500v2",
-        .llvm_name = null,
-        .features = featureSet(&[_]Feature{
-            .efpu2,
-            .isel,
-            .msync,
-        }),
-    };
     pub const e5500: CpuModel = .{
         .name = "e5500",
         .llvm_name = "e5500",

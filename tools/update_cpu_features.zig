@@ -1788,15 +1788,6 @@ const targets = [_]ArchTarget{
             },
             .{
                 .llvm_name = null,
-                .zig_name = "e500v2",
-                .features = &.{
-                    "efpu2",
-                    "isel",
-                    "msync",
-                },
-            },
-            .{
-                .llvm_name = null,
                 .zig_name = "e6500",
                 .features = &.{
                     "64bit_support",

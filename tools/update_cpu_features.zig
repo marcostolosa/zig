@@ -2032,7 +2032,7 @@ const targets = [_]ArchTarget{
                 .extra_deps = &.{"bulk_memory_opt"},
             },
             .{
-                .llvm_name = "f16",
+                .llvm_name = "fp16",
                 .extra_deps = &.{"simd128"},
             },
             .{

@@ -74,7 +74,9 @@ pub const all_features = blk: {
     result[@backingInt(Feature.fp16)] = .{
         .llvm_name = "fp16",
         .description = "Enable FP16 instructions",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .simd128,
+        }),
     };
     result[@backingInt(Feature.gc)] = .{
         .llvm_name = "gc",

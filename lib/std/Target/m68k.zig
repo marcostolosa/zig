@@ -202,6 +202,7 @@ pub const cpu = struct {
         .llvm_name = "M68020",
         .features = featureSet(&[_]Feature{
             .isa_68020,
+            .isa_68881,
         }),
     };
     pub const M68030: CpuModel = .{
@@ -209,6 +210,7 @@ pub const cpu = struct {
         .llvm_name = "M68030",
         .features = featureSet(&[_]Feature{
             .isa_68030,
+            .isa_68881,
         }),
     };
     pub const M68040: CpuModel = .{

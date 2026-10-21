@@ -1785,6 +1785,16 @@ const targets = [_]ArchTarget{
             .name = "M68k",
             .td_name = "M68k",
         },
+        .model_overrides = &.{
+            .{
+                .llvm_name = "M68020",
+                .extra_deps = &.{"isa_68881"},
+            },
+            .{
+                .llvm_name = "M68030",
+                .extra_deps = &.{"isa_68881"},
+            },
+        },
     },
     .{
         .zig_name = "msp430",

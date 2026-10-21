@@ -317,12 +317,17 @@ pub const Parsed = struct {
 
     pub const VerifyCaError = error{
         CertificateIssuerNotCa,
+        CertificatePathLengthExceeded,
     };
 
     /// RFC 5280 6.1.4: Check that `parsed` is allowed to issue the next certificate.
-    pub fn verifyCa(parsed: Parsed) VerifyCaError!void {
+    pub fn verifyCa(parsed: Parsed, intermediates: usize) VerifyCaError!void {
         if (parsed.version != .v3) return error.CertificateIssuerNotCa;
         if (!parsed.basic_constraints.ca) return error.CertificateIssuerNotCa;
+
+        if (parsed.basic_constraints.path_len_constraint) |path_len_max| {
+            if (intermediates > path_len_max) return error.CertificatePathLengthExceeded;
+        }
     }
 
     pub const VerifyHostNameError = error{

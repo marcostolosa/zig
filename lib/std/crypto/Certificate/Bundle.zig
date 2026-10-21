@@ -29,7 +29,7 @@ pub const VerifyError = Certificate.Parsed.VerifyError || Certificate.Parsed.Ver
     CertificateIssuerNotFound,
 };
 
-pub fn verify(cb: Bundle, subject: Certificate.Parsed, now_sec: i64) VerifyError!void {
+pub fn verify(cb: Bundle, subject: Certificate.Parsed, now_sec: i64, intermediates: usize) VerifyError!void {
     const bytes_index = cb.find(subject.issuer()) orelse return error.CertificateIssuerNotFound;
     const issuer_cert: Certificate = .{
         .buffer = cb.bytes.items,
@@ -38,7 +38,7 @@ pub fn verify(cb: Bundle, subject: Certificate.Parsed, now_sec: i64) VerifyError
     // Every certificate in the bundle is pre-parsed before adding it, ensuring
     // that parsing will succeed here.
     const issuer = issuer_cert.parse() catch unreachable;
-    try issuer.verifyCa();
+    try issuer.verifyCa(intermediates);
     try subject.verify(issuer, now_sec);
 }
 

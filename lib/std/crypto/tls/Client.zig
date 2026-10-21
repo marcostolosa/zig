@@ -179,6 +179,7 @@ pub const InitError = error{
     CertificateHasInvalidBitString,
     CertificateHasInvalidExtension,
     CertificateIssuerNotCa,
+    CertificatePathLengthExceeded,
     MessageTooLong,
     NegativeIntoUnsigned,
     TargetTooSmall,
@@ -959,8 +960,13 @@ fn verifyCertificateChain(
         } else {
             // Subject issued the previous certificate.
             // Ensure subject is a CA and that it verifies the previous certificate.
-            try subject.verifyCa();
+            try subject.verifyCa(state.intermediates);
             try state.prev_cert.verify(subject, now_sec);
+            // RFC 5280 6.1.4 (l): "If the certificate was not self-issued, verify that
+            // max_path_length is greater than zero and decrement max_path_length by 1."
+            // We track the number of non-self-issued certificates in `intermediates`
+            // and verify it when passed to subject.verifyCa.
+            if (!mem.eql(u8, subject.issuer(), subject.subject())) state.intermediates += 1;
         }
 
         switch (options.ca) {
@@ -976,7 +982,7 @@ fn verifyCertificateChain(
             .bundle => |ca| if (verify: {
                 try ca.lock.lockShared(ca.io);
                 defer ca.lock.unlockShared(ca.io);
-                break :verify ca.bundle.verify(subject, now_sec);
+                break :verify ca.bundle.verify(subject, now_sec, state.intermediates);
             }) {
                 state.trust_chain_established = true;
                 return state;
@@ -1865,6 +1871,72 @@ test "chain verification rejects a non-CA certificate acting as an issuer" {
 
     try std.testing.expectError(
         error.CertificateIssuerNotCa,
+        result,
+    );
+}
+
+test "chain verification enforces pathLenConstraint" {
+    const gpa = std.testing.allocator;
+    // 2027-01-01T00:00:00Z which is within every certificate's validity window.
+    const now: std.Io.Timestamp = .fromNanoseconds(1798761600 * std.time.ns_per_s);
+
+    var entropy: [240]u8 = @splat(0);
+
+    var ca_bundle: Certificate.Bundle = .empty;
+    defer ca_bundle.deinit(gpa);
+
+    // The root has pathLenConstraint=0. There must be no intermediate CA after it.
+    try ca_bundle.bytes.appendSlice(gpa, @embedFile("testdata/path_len/root_ca.der"));
+    try ca_bundle.parseCert(gpa, 0, now.toSeconds());
+
+    var ca_lock: std.Io.RwLock = .init;
+
+    const options: Options = .{
+        .host = .no_verification,
+        .ca = .{ .bundle = .{
+            .gpa = gpa,
+            .io = std.testing.io,
+            .lock = &ca_lock,
+            .bundle = &ca_bundle,
+        } },
+
+        .write_buffer = &.{},
+        .read_buffer = &.{},
+        .entropy = &entropy,
+        .realtime_now = now,
+    };
+
+    var certificates_buffer: [4096]u8 = undefined;
+
+    // A leaf issued by the root directly.
+    const valid_chain =
+        try testCertificateList(&certificates_buffer, &.{
+            @embedFile("testdata/path_len/leaf.der"),
+        });
+
+    const state = try verifyCertificateChain(
+        .{},
+        valid_chain,
+        .tls_1_3,
+        options,
+    );
+    try std.testing.expect(state.trust_chain_established);
+
+    const invalid_chain =
+        try testCertificateList(&certificates_buffer, &.{
+            @embedFile("testdata/path_len/chain_leaf.der"),
+            @embedFile("testdata/path_len/intermediate_ca.der"),
+        });
+
+    // A leaf issued by an intermediate CA.
+    const result = verifyCertificateChain(
+        .{},
+        invalid_chain,
+        .tls_1_3,
+        options,
+    );
+    try std.testing.expectError(
+        error.CertificatePathLengthExceeded,
         result,
     );
 }

@@ -2060,6 +2060,7 @@ pub const Cpu = struct {
                 .alpha => &alpha.cpu.ev4,
                 .amdgcn => &amdgcn.cpu.gfx600,
                 .avr => &avr.cpu.avr1,
+                .bpfel, .bpfeb => &bpf.cpu.v1,
                 .hppa => &hppa.cpu.ts_1,
                 .hppa64 => &hppa.cpu.pa_8000,
                 .kvx => &kvx.cpu.coolidge_v1,

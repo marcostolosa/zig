@@ -1334,6 +1334,10 @@ const targets = [_]ArchTarget{
         },
         .model_overrides = &.{
             .{
+                .llvm_name = "generic",
+                .omit = true,
+            },
+            .{
                 .llvm_name = "probe",
                 .omit = true,
             },

@@ -204,10 +204,8 @@ pub const cpu = struct {
         .name = "wasm_v3_0",
         .llvm_name = null,
         .features = featureSet(&[_]Feature{
-            .atomics,
             .exception_handling,
             .extended_const,
-            .fp16,
             .gc,
             .multimemory,
             .mutable_globals,

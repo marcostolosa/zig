@@ -2089,10 +2089,8 @@ const targets = [_]ArchTarget{
                 .llvm_name = null,
                 .zig_name = "wasm_v3_0",
                 .features = &.{
-                    "atomics",
                     "exception_handling",
                     "extended_const",
-                    "fp16",
                     "gc",
                     "multimemory",
                     "mutable_globals",

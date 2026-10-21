@@ -2555,15 +2555,10 @@ const targets = [_]ArchTarget{
             },
             .{
                 .llvm_name = "xs1b-generic",
-                .omit = true,
+                .zig_name = "xs1b",
             },
         },
         .extra_models = &.{
-            .{
-                .llvm_name = null,
-                .zig_name = "xs1b",
-                .features = &.{},
-            },
             .{
                 .llvm_name = null,
                 .zig_name = "xs2a",

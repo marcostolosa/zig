@@ -1870,7 +1870,7 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
                 const hash_replace = try arena.print("{q}", .{package_hash_slice});
                 try fixups.replace_nodes_with_string.put(gpa, hash_node, hash_replace);
             } else if (is_url) {
-                const hash_field = try arena.print(".hash = {q},\n", .{ package_hash_slice });
+                const hash_field = try arena.print(".hash = {q},\n", .{package_hash_slice});
                 try fixups.append_string_after_node.put(gpa, dep.location_node, hash_field);
             }
         }

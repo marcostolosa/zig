@@ -601,7 +601,6 @@ pub const cpu = struct {
         .llvm_name = null,
         .features = featureSet(&[_]Feature{
             .mips1,
-            .soft_float,
         }),
     };
     pub const r5900: CpuModel = .{

@@ -1713,7 +1713,6 @@ const targets = [_]ArchTarget{
                 .zig_name = "r3000a",
                 .features = &.{
                     "mips1",
-                    "soft_float",
                 },
             },
             .{

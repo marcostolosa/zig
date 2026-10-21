@@ -44,8 +44,6 @@ pub const Feature = enum {
     java,
     mp,
     mp1e2,
-    soft_tp,
-    stack_size,
     trust,
     vdsp2e3,
     vdsp2e60f,
@@ -277,16 +275,6 @@ pub const all_features = blk: {
         .dependencies = featureSet(&[_]Feature{
             .@"3e7",
         }),
-    };
-    result[@backingInt(Feature.soft_tp)] = .{
-        .llvm_name = "soft-tp",
-        .description = "Disable TLS Pointer register",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.stack_size)] = .{
-        .llvm_name = "stack-size",
-        .description = "Output stack size information",
-        .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.trust)] = .{
         .llvm_name = "trust",

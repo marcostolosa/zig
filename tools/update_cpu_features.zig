@@ -1365,11 +1365,11 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
             .{
-                .llvm_name = "soft_tp",
+                .llvm_name = "soft-tp",
                 .omit = true,
             },
             .{
-                .llvm_name = "stack_size",
+                .llvm_name = "stack-size",
                 .omit = true,
             },
 

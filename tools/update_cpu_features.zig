@@ -1769,6 +1769,14 @@ const targets = [_]ArchTarget{
                     "ual",
                 },
             },
+            .{
+                .llvm_name = null,
+                .zig_name = "la132",
+                .features = &.{
+                    "32bit",
+                    "32s",
+                },
+            },
         },
     },
     .{

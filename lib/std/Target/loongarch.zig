@@ -173,6 +173,14 @@ pub const cpu = struct {
             .@"64bit",
         }),
     };
+    pub const la132: CpuModel = .{
+        .name = "la132",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"32bit",
+            .@"32s",
+        }),
+    };
     pub const la32rv1_0: CpuModel = .{
         .name = "la32rv1_0",
         .llvm_name = null,

@@ -1774,6 +1774,12 @@ const targets = [_]ArchTarget{
             .name = "MSP430",
             .td_name = "MSP430",
         },
+        .feature_overrides = &.{
+            .{
+                .llvm_name = "hwmult32",
+                .extra_deps = &.{"hwmult16"},
+            },
+        },
         .model_overrides = &.{
             .{
                 .llvm_name = "generic",

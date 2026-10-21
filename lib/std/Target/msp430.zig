@@ -33,7 +33,9 @@ pub const all_features = blk: {
     result[@backingInt(Feature.hwmult32)] = .{
         .llvm_name = "hwmult32",
         .description = "Enable 32-bit hardware multiplier",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .hwmult16,
+        }),
     };
     result[@backingInt(Feature.hwmultf5)] = .{
         .llvm_name = "hwmultf5",

@@ -3151,7 +3151,6 @@ fn batchApc(
 /// If `concurrency` is false, `error.ConcurrencyUnavailable` is unreachable.
 fn batchDrainSubmittedWindows(t: *Threaded, b: *Io.Batch, concurrency: bool) (Io.ConcurrentError || Io.Cancelable)!void {
     var index = b.submitted.head;
-    errdefer b.submitted.head = index;
     while (index != .none) {
         const storage = &b.storage[index.toIndex()];
         const submission = storage.submission;
@@ -3167,8 +3166,17 @@ fn batchDrainSubmittedWindows(t: *Threaded, b: *Io.Batch, concurrency: bool) (Io
         b.pending.tail = index;
         const operation_userdata: *WindowsBatchOperationUserdata = .fromErased(&storage.pending.userdata);
         errdefer {
-            operation_userdata.iosb = .{ .u = .{ .Status = .CANCELLED }, .Information = undefined };
-            batchApc(b, &operation_userdata.iosb, 0);
+            // Submission failed, move it from the `pending` list back to `submitted`.
+            const pending = &storage.pending;
+            assert(pending.node.next == .none); // should have been the last append.
+            switch (pending.node.prev) {
+                .none => b.pending.head = .none,
+                else => |prev_index| b.storage[prev_index.toIndex()].pending.node.next = .none,
+            }
+            b.pending.tail = pending.node.prev;
+
+            storage.* = .{ .submission = submission };
+            b.submitted.head = index;
         }
         switch (submission.operation) {
             .file_read_streaming => |o| o: {

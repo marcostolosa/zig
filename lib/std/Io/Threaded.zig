@@ -3057,7 +3057,6 @@ fn batchCancel(userdata: ?*anyopaque, b: *Io.Batch) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     if (is_windows) {
         if (b.pending.head == .none) return;
-        waitForApcOrAlert();
         var index = b.pending.head;
         while (index != .none) {
             const pending = &b.storage[index.toIndex()].pending;

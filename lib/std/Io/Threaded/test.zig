@@ -200,6 +200,57 @@ test "cancel blocked read from pipe" {
     try future.cancel(io);
 }
 
+test "read from pipe using operateTimeout" {
+    var threaded: Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var read_end: Io.File = undefined;
+    var write_end: Io.File = undefined;
+    switch (builtin.target.os.tag) {
+        .wasi => return error.SkipZigTest,
+        .windows => {
+            const pipe = try threaded.windowsCreatePipe(.{
+                .server = .{ .mode = .{ .IO = .ASYNCHRONOUS } },
+                .client = .{ .mode = .{ .IO = .ASYNCHRONOUS } },
+                .inbound = true,
+            });
+            read_end = .{ .handle = pipe[0], .flags = .{ .nonblocking = true } };
+            write_end = .{ .handle = pipe[1], .flags = .{ .nonblocking = true } };
+        },
+        else => {
+            const pipe = try std.Io.Threaded.pipe2(.{ .CLOEXEC = true });
+            read_end = .{ .handle = pipe[0], .flags = .{ .nonblocking = false } };
+            write_end = .{ .handle = pipe[1], .flags = .{ .nonblocking = false } };
+        },
+    }
+    defer Io.File.closeMany(io, &.{ read_end, write_end });
+
+    const message = "Hello, World!\n";
+
+    var read_buffer: [message.len]u8 = undefined;
+    const read_timeout: Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromMilliseconds(100) } };
+
+    try testing.expectError(error.Timeout, io.operateTimeout(.{ .file_read_streaming = .{
+        .file = read_end,
+        .data = &.{&read_buffer},
+    } }, read_timeout));
+
+    try write_end.writeStreamingAll(io, message);
+
+    var read_remaining: []u8 = read_buffer[0..message.len];
+    while (read_remaining.len != 0) {
+        const read_n = try (try io.operateTimeout(.{ .file_read_streaming = .{
+            .file = read_end,
+            .data = &.{read_remaining},
+        } }, read_timeout)).file_read_streaming;
+
+        read_remaining = read_remaining[read_n..];
+    }
+
+    try testing.expectEqualSlices(u8, message, read_buffer[0..message.len]);
+}
+
 test "memory mapping fallback" {
     var threaded: std.Io.Threaded = .init(std.testing.allocator, .{
         .argv0 = .empty,

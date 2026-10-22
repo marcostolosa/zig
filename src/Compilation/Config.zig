@@ -562,7 +562,46 @@ pub fn resolve(options: Options) ResolveError!Config {
 
     const function_sections = b: {
         if (options.function_sections) |x| break :b x;
-        break :b false;
+
+        // Xtensa *really* wants per-function literal pools or branches will start to break once the
+        // program grows past 256 KiB. This can only be accomplished with function sections.
+        if (target.cpu.arch.isXtensa()) break :b true;
+
+        break :b switch (backend) {
+            // LLVM uses short branches on these targets and is not capable of intelligently using
+            // long branches when the output object grows big enough. So on these targets, it makes
+            // for a better user experience to enable function sections by default.
+            //
+            // Rule of thumb: If a target needs thunks to reach +/- 2 GiB, it belongs on this list.
+            .stage2_llvm => switch (target.cpu.arch) {
+                // +/- 128 MiB
+                .aarch64,
+                .aarch64_be,
+                // +/- 32 MiB
+                .arm,
+                .armeb,
+                // +/- 8 MiB
+                .hexagon,
+                // +/- 32 KiB
+                .m68k,
+                // 256 MiB region
+                .mips,
+                .mipsel,
+                .mips64,
+                .mips64el,
+                // +/- 32 MiB
+                .powerpc,
+                .powerpcle,
+                .powerpc64,
+                .powerpc64le,
+                // +/- 4 MiB (Thumb-1), 16 MiB (Thumb-2)
+                .thumb,
+                .thumbeb,
+                => true,
+                else => false,
+            },
+            else => false,
+        };
     };
 
     const data_sections = b: {

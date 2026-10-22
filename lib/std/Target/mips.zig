@@ -175,7 +175,7 @@ pub const all_features = blk: {
     };
     result[@backingInt(Feature.mips1)] = .{
         .llvm_name = "mips1",
-        .description = "Mips I ISA Support [highly experimental]",
+        .description = "Mips I ISA Support",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.mips16)] = .{
@@ -185,14 +185,14 @@ pub const all_features = blk: {
     };
     result[@backingInt(Feature.mips2)] = .{
         .llvm_name = "mips2",
-        .description = "Mips II ISA Support [highly experimental]",
+        .description = "Mips II ISA Support",
         .dependencies = featureSet(&[_]Feature{
             .mips1,
         }),
     };
     result[@backingInt(Feature.mips3)] = .{
         .llvm_name = "mips3",
-        .description = "MIPS III ISA Support [highly experimental]",
+        .description = "MIPS III ISA Support",
         .dependencies = featureSet(&[_]Feature{
             .fp64,
             .gp64,

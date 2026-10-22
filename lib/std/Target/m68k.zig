@@ -86,45 +86,45 @@ pub const all_features = blk: {
 };
 
 pub const cpu = struct {
-    pub const M68000: CpuModel = .{
-        .name = "M68000",
+    pub const m68000: CpuModel = .{
+        .name = "m68000",
         .llvm_name = "M68000",
         .features = featureSet(&[_]Feature{
             .isa_68000,
         }),
     };
-    pub const M68010: CpuModel = .{
-        .name = "M68010",
+    pub const m68010: CpuModel = .{
+        .name = "m68010",
         .llvm_name = "M68010",
         .features = featureSet(&[_]Feature{
             .isa_68010,
         }),
     };
-    pub const M68020: CpuModel = .{
-        .name = "M68020",
+    pub const m68020: CpuModel = .{
+        .name = "m68020",
         .llvm_name = "M68020",
         .features = featureSet(&[_]Feature{
             .isa_68020,
             .isa_68881,
         }),
     };
-    pub const M68030: CpuModel = .{
-        .name = "M68030",
+    pub const m68030: CpuModel = .{
+        .name = "m68030",
         .llvm_name = "M68030",
         .features = featureSet(&[_]Feature{
             .isa_68030,
             .isa_68881,
         }),
     };
-    pub const M68040: CpuModel = .{
-        .name = "M68040",
+    pub const m68040: CpuModel = .{
+        .name = "m68040",
         .llvm_name = "M68040",
         .features = featureSet(&[_]Feature{
             .isa_68040,
         }),
     };
-    pub const M68060: CpuModel = .{
-        .name = "M68060",
+    pub const m68060: CpuModel = .{
+        .name = "m68060",
         .llvm_name = "M68060",
         .features = featureSet(&[_]Feature{
             .isa_68060,

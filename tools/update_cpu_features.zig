@@ -1854,12 +1854,30 @@ const targets = [_]ArchTarget{
             },
 
             .{
+                .llvm_name = "M68000",
+                .zig_name = "m68000",
+            },
+            .{
+                .llvm_name = "M68010",
+                .zig_name = "m68010",
+            },
+            .{
                 .llvm_name = "M68020",
+                .zig_name = "m68020",
                 .extra_deps = &.{"isa_68881"},
             },
             .{
                 .llvm_name = "M68030",
+                .zig_name = "m68030",
                 .extra_deps = &.{"isa_68881"},
+            },
+            .{
+                .llvm_name = "M68040",
+                .zig_name = "m68040",
+            },
+            .{
+                .llvm_name = "M68060",
+                .zig_name = "m68060",
             },
         },
     },

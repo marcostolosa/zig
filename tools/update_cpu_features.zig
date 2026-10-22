@@ -2279,6 +2279,133 @@ const targets = [_]ArchTarget{
             .name = "Sparc",
             .td_name = "Sparc",
         },
+        .feature_overrides = &.{
+            .{
+                .llvm_name = "leon",
+                .flatten = true,
+            },
+
+            .{
+                .llvm_name = "64bit",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "detectroundchange",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-g1",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-g2",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-g3",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-g4",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-g5",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-g6",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-g7",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-i0",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-i1",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-i2",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-i3",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-i4",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-i5",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-l0",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-l1",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-l2",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-l3",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-l4",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-l5",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-l6",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-l7",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-o0",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-o1",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-o2",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-o3",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-o4",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-o5",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "v8plus",
+                .omit = true,
+            },
+        },
     },
     .{
         .zig_name = "s390x",

@@ -1069,7 +1069,8 @@ fn buildOutputType(
                 .zig_test, .zig_test_obj => true,
                 .build, .cc, .cpp, .translate_c, .run => false,
             },
-            // Populated while parsing CLI args.
+            // Both populated while parsing CLI args.
+            .test_evented_io = undefined,
             .output_mode = undefined,
             // Populated in the call to `createModule` for the root module.
             .resolved_target = undefined,
@@ -1491,6 +1492,8 @@ fn buildOutputType(
                         create_module.each_lib_rpath = false;
                     } else if (mem.eql(u8, arg, "--test-cmd-bin")) {
                         try test_exec_args.append(arena, null);
+                    } else if (mem.eql(u8, arg, "--test-evented-io")) {
+                        create_module.opts.test_evented_io = true;
                     } else if (mem.eql(u8, arg, "--test-no-exec")) {
                         test_no_exec = true;
                     } else if (mem.eql(u8, arg, "--time-report")) {
@@ -5100,6 +5103,7 @@ fn jitCmdInner(
             .have_zcu = true,
             .emit_bin = true,
             .is_test = false,
+            .test_evented_io = false,
         });
 
         const root_mod = try Module.create(arena, .{

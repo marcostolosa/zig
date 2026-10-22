@@ -2080,6 +2080,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
 
                 .test_filters = options.test_filters,
                 .test_functions = .empty,
+                .test_io_mode = .threaded,
 
                 .global_assembly = .empty,
 
@@ -4833,6 +4834,7 @@ fn workerDocsWasmFallible(comp: *Compilation, prog_node: std.Progress.Node) SubU
         .output_mode = output_mode,
         .resolved_target = resolved_target,
         .is_test = false,
+        .test_evented_io = false,
         .have_zcu = true,
         .emit_bin = true,
         .root_optimize_mode = optimize_mode,
@@ -7379,6 +7381,7 @@ fn buildOutputFromZig(
         .link_mode = link_mode,
         .resolved_target = comp.root_mod.resolved_target,
         .is_test = false,
+        .test_evented_io = false,
         .have_zcu = true,
         .emit_bin = true,
         .root_optimize_mode = optimize_mode,
@@ -7518,6 +7521,7 @@ pub fn build_crt_file(
         .output_mode = output_mode,
         .resolved_target = comp.root_mod.resolved_target,
         .is_test = false,
+        .test_evented_io = false,
         .have_zcu = false,
         .emit_bin = true,
         .root_optimize_mode = comp.compilerRtOptMode(),

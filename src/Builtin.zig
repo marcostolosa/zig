@@ -4,6 +4,7 @@ output_mode: std.lang.OutputMode,
 link_mode: std.lang.LinkMode,
 unwind_tables: std.lang.UnwindTables,
 is_test: bool,
+test_evented_io: bool,
 single_threaded: bool,
 link_libc: bool,
 link_libcpp: bool,
@@ -282,6 +283,17 @@ pub fn append(opts: @This(), buffer: *std.array_list.Managed(u8)) Allocator.Erro
     if (opts.is_test) {
         try buffer.appendSlice(
             \\pub var test_functions: []const std.lang.TestFn = &.{}; // overwritten later
+            \\
+        );
+    }
+    if (opts.test_evented_io) {
+        try buffer.appendSlice(
+            \\pub const test_io_mode = .evented;
+            \\
+        );
+    } else {
+        try buffer.appendSlice(
+            \\pub const test_io_mode = .threaded;
             \\
         );
     }

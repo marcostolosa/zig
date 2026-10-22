@@ -302,6 +302,7 @@ resolved_references: ?std.array_hash_map.Auto(AnalUnit, ?ResolvedReference),
 
 test_filters: []const []const u8,
 test_functions: std.array_hash_map.Auto(InternPool.Nav.Index, void),
+test_io_mode: std.Io.Mode,
 
 global_assembly: std.array_hash_map.Auto(AnalUnit, []u8),
 

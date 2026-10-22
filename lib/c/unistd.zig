@@ -37,6 +37,7 @@ comptime {
         symbol(&getpidLinux, "getpid");
         symbol(&getppidLinux, "getppid");
         symbol(&getuidLinux, "getuid");
+        symbol(&getresuidLinux, "getresuid");
 
         symbol(&rmdirLinux, "rmdir");
         symbol(&linkLinux, "link");
@@ -172,6 +173,10 @@ fn getsidLinux(pid: linux.pid_t) callconv(.c) linux.pid_t {
 
 fn getuidLinux() callconv(.c) linux.uid_t {
     return linux.getuid();
+}
+
+fn getresuidLinux(ruid: *linux.uid_t, euid: *linux.uid_t, suid: *linux.uid_t) callconv(.c) c_int {
+    return errno(linux.getresuid(ruid, euid, suid));
 }
 
 fn linkLinux(old: [*:0]const c_char, new: [*:0]const c_char) callconv(.c) c_int {

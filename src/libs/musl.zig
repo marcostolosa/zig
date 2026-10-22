@@ -1003,7 +1003,6 @@ const src_files = [_][]const u8{
     "musl/src/misc/getopt.c",
     "musl/src/misc/getopt_long.c",
     "musl/src/misc/getpriority.c",
-    "musl/src/misc/getresgid.c",
     "musl/src/misc/getrlimit.c",
     "musl/src/misc/getrusage.c",
     "musl/src/misc/getsubopt.c",

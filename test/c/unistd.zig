@@ -42,7 +42,6 @@ test "getresuid" {
 
     const linux = std.os.linux;
 
-
     const sentinel = std.math.maxInt(linux.uid_t);
     var real: linux.uid_t = sentinel;
     var effective: linux.uid_t = sentinel;
@@ -67,5 +66,36 @@ test "getresuid error" {
 
     // validate that behaviour is not changed
     try testing.expectEqual(@as(c_int, -1), c.getresuid(bad, bad, bad));
+    try expectErrno(.FAULT);
+}
+
+test "getresgid" {
+    if (!builtin.target.isMuslLibC()) return error.SkipZigTest;
+
+    const linux = std.os.linux;
+
+    const sentinel = std.math.maxInt(linux.gid_t);
+    var real: linux.gid_t = sentinel;
+    var effective: linux.gid_t = sentinel;
+    var saved: linux.gid_t = sentinel;
+
+    try testing.expectEqual(@as(c_int, 0), c.getresgid(&real, &effective, &saved));
+    try testing.expect(real != sentinel);
+    try testing.expect(effective != sentinel);
+    try testing.expect(saved != sentinel);
+    try testing.expectEqual(c.getgid(), real);
+    try testing.expectEqual(c.getegid(), effective);
+
+    // This test process is not setgid, so all three ids agree.
+    try testing.expectEqual(real, effective);
+    try testing.expectEqual(real, saved);
+}
+
+test "getresgid error" {
+    if (!builtin.target.isMuslLibC()) return error.SkipZigTest;
+
+    const bad: *std.os.linux.gid_t = @ptrFromInt(8);
+
+    try testing.expectEqual(@as(c_int, -1), c.getresgid(bad, bad, bad));
     try expectErrno(.FAULT);
 }

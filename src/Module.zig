@@ -378,12 +378,7 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
                 if (target.cpu.arch.isPowerPC() and @as(std.Target.powerpc.Feature, @fromBackingInt(@intCast(feature.index))) == .@"64bit") continue;
                 if (target.cpu.arch.isX86() and @as(std.Target.x86.Feature, @fromBackingInt(@intCast(feature.index))) == .x32) continue;
 
-                var is_enabled = target.cpu.features.isEnabled(feature.index);
-                if (target.cpu.arch == .s390x and @as(std.Target.s390x.Feature, @fromBackingInt(@intCast(feature.index))) == .backchain) {
-                    is_enabled = !omit_frame_pointer;
-                }
-
-                if (is_enabled) {
+                if (target.cpu.features.isEnabled(feature.index)) {
                     try buf.ensureUnusedCapacity(2 + llvm_name.len);
                     buf.appendAssumeCapacity('+');
                     buf.appendSliceAssumeCapacity(llvm_name);
@@ -396,8 +391,13 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
                 }
             }
         }
-
         try buf.appendSlice(disabled_features.items);
+
+        if (target.cpu.arch == .s390x) {
+            try buf.append(if (omit_frame_pointer) '-' else '+');
+            try buf.appendSlice("backchain,");
+        }
+
         if (buf.items.len == 0) break :b "";
         assert(buf.items[buf.items.len - 1] == ',');
         buf.items[buf.items.len - 1] = 0;

@@ -5,7 +5,6 @@ const CpuFeature = std.Target.Cpu.Feature;
 const CpuModel = std.Target.Cpu.Model;
 
 pub const Feature = enum {
-    backchain,
     bear_enhancement,
     concurrent_functions,
     deflate_conversion,
@@ -42,10 +41,8 @@ pub const Feature = enum {
     processor_assist,
     reset_dat_protection,
     reset_reference_bits_multiple,
-    soft_float,
     test_pending_external_interruption,
     transactional_execution,
-    unaligned_symbols,
     vector,
     vector_enhancements_1,
     vector_enhancements_2,
@@ -65,11 +62,6 @@ pub const all_features = blk: {
     const len = @typeInfo(Feature).@"enum".field_names.len;
     std.debug.assert(len <= CpuFeature.Set.needed_bit_count);
     var result: [len]CpuFeature = undefined;
-    result[@backingInt(Feature.backchain)] = .{
-        .llvm_name = "backchain",
-        .description = "Store the address of the caller's frame into the callee's stack frame",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.bear_enhancement)] = .{
         .llvm_name = "bear-enhancement",
         .description = "Assume that the BEAR-enhancement facility is installed",
@@ -266,11 +258,6 @@ pub const all_features = blk: {
         .description = "Assume that the reset-reference-bits-multiple facility is installed",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.soft_float)] = .{
-        .llvm_name = "soft-float",
-        .description = "Use software emulation for floating point",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.test_pending_external_interruption)] = .{
         .llvm_name = "test-pending-external-interruption",
         .description = "Assume that the test-pending-external-interruption facility is installed",
@@ -285,11 +272,6 @@ pub const all_features = blk: {
             .miscellaneous_extensions,
             .processor_assist,
         }),
-    };
-    result[@backingInt(Feature.unaligned_symbols)] = .{
-        .llvm_name = "unaligned-symbols",
-        .description = "Don't apply the ABI minimum alignment to external symbols.",
-        .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.vector)] = .{
         .llvm_name = "vector",

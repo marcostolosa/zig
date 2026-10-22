@@ -2085,6 +2085,19 @@ const targets = [_]ArchTarget{
         },
         .feature_overrides = &.{
             .{
+                .llvm_name = "backchain",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "soft-float",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "unaligned-symbols",
+                .omit = true,
+            },
+
+            .{
                 .llvm_name = "message-security-assist-extension7",
                 .extra_deps = &.{"message_security_assist_extension5"},
             },

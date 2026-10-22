@@ -6779,8 +6779,7 @@ pub fn addCCArgs(
                     if (std.mem.startsWith(u8, llvm_name, "soft-float") or
                         std.mem.startsWith(u8, llvm_name, "hard-float") or
                         (target.cpu.arch.isPowerPC() and std.mem.startsWith(u8, llvm_name, "64bit")) or
-                        (target.cpu.arch.isX86() and std.mem.startsWith(u8, llvm_name, "x32")) or
-                        (target.cpu.arch == .s390x and std.mem.eql(u8, llvm_name, "backchain")))
+                        (target.cpu.arch.isX86() and std.mem.startsWith(u8, llvm_name, "x32")))
                         continue;
 
                     // Ignore these until we figure out how to handle the concept of omitting features.

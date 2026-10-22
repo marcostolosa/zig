@@ -931,7 +931,7 @@ fn addCompilerStep(b: *std.Build, options: AddCompilerModOptions) *std.Build.Ste
     exe.stack_size = stack_size;
 
     // Must match the condition in CMakeLists.txt.
-    const function_data_sections = switch (options.target.result.cpu.arch) {
+    const function_data_sections: ?bool = switch (options.target.result.cpu.arch) {
         .arm,
         .armeb,
         .thumb,
@@ -942,11 +942,11 @@ fn addCompilerStep(b: *std.Build, options: AddCompilerModOptions) *std.Build.Ste
         .powerpc64,
         .powerpc64le,
         => true,
-        else => false,
+        else => null,
     };
 
-    exe.link_function_sections = function_data_sections;
-    exe.link_data_sections = function_data_sections;
+    exe.function_sections = function_data_sections;
+    exe.data_sections = function_data_sections;
 
     return exe;
 }

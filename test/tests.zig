@@ -2651,8 +2651,8 @@ fn addOneModuleTest(
     if (options.build_options) |build_options| {
         these_tests.root_module.addOptions("build_options", build_options);
     }
-    if (test_target.function_sections) |fs| these_tests.link_function_sections = fs;
-    if (test_target.data_sections) |ds| these_tests.link_data_sections = ds;
+    if (test_target.function_sections) |fs| these_tests.function_sections = fs;
+    if (test_target.data_sections) |ds| these_tests.data_sections = ds;
     const single_threaded_suffix = if (test_target.single_threaded == true) "-single" else "";
     const backend_suffix = if (test_target.use_llvm == true)
         "-llvm"

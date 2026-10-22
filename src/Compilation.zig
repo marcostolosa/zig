@@ -92,8 +92,6 @@ windows_libs_num_done: u32,
 version: ?std.SemanticVersion,
 libc_installation: ?*const LibCInstallation,
 skip_linker_dependencies: bool,
-function_sections: bool,
-data_sections: bool,
 link_eh_frame_hdr: bool,
 native_system_include_paths: []const []const u8,
 /// List of symbols forced as undefined in the symbol table
@@ -1486,8 +1484,6 @@ pub const CreateOptions = struct {
     /// executable this field is ignored.
     want_compiler_rt: ?bool = null,
     want_ubsan_rt: ?bool = null,
-    function_sections: bool = false,
-    data_sections: bool = false,
     time_report: bool = false,
     stack_report: bool = false,
     link_eh_frame_hdr: bool = false,
@@ -1945,8 +1941,8 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
         cache.hash.add(options.config.any_sanitize_thread);
         cache.hash.add(options.config.any_sanitize_c);
         cache.hash.add(options.config.any_fuzz);
-        cache.hash.add(options.function_sections);
-        cache.hash.add(options.data_sections);
+        cache.hash.add(options.config.function_sections);
+        cache.hash.add(options.config.data_sections);
         cache.hash.add(link_libc);
         cache.hash.add(options.config.link_libcpp);
         cache.hash.add(options.config.link_libunwind);
@@ -2164,8 +2160,6 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             .llvm_opt_bisect_limit = options.llvm_opt_bisect_limit,
             .skip_linker_dependencies = options.skip_linker_dependencies,
             .queued_jobs = .{},
-            .function_sections = options.function_sections,
-            .data_sections = options.data_sections,
             .native_system_include_paths = options.native_system_include_paths,
             .force_undefined_symbols = options.force_undefined_symbols,
             .link_eh_frame_hdr = link_eh_frame_hdr,
@@ -6727,8 +6721,8 @@ pub fn addCCArgs(
 
         try argv.append(if (mod.no_builtin) "-fno-builtin" else "-fbuiltin");
 
-        try argv.append(if (comp.function_sections) "-ffunction-sections" else "-fno-function-sections");
-        try argv.append(if (comp.data_sections) "-fdata-sections" else "-fno-data-sections");
+        try argv.append(if (comp.config.function_sections) "-ffunction-sections" else "-fno-function-sections");
+        try argv.append(if (comp.config.data_sections) "-fdata-sections" else "-fno-data-sections");
 
         switch (mod.unwind_tables) {
             .none => {
@@ -7350,6 +7344,8 @@ fn buildOutputFromZig(
         .any_error_tracing = false,
         .root_error_tracing = false,
         .lto = if (options.allow_lto) comp.config.lto else .none,
+        .function_sections = true,
+        .data_sections = true,
     }) catch |err| {
         comp.lockAndSetMiscFailure(misc_task_tag, "sub-compilation of {t} failed: failed to resolve compilation config: {t}", .{ misc_task_tag, err });
         return error.AlreadyReported;
@@ -7411,8 +7407,6 @@ fn buildOutputFromZig(
         .root_name = root_name,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
-        .function_sections = true,
-        .data_sections = true,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
@@ -7490,6 +7484,8 @@ pub fn build_crt_file(
             .Lib => if (options.allow_lto) comp.config.lto else .none,
             .Obj, .Exe => .none,
         },
+        .function_sections = options.function_sections,
+        .data_sections = options.data_sections,
     }) catch |err| {
         comp.lockAndSetMiscFailure(misc_task_tag, "sub-compilation of {t} failed: failed to resolve compilation config: {t}", .{ misc_task_tag, err });
         return error.AlreadyReported;
@@ -7541,8 +7537,6 @@ pub fn build_crt_file(
         .root_name = root_name,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
-        .function_sections = options.function_sections,
-        .data_sections = options.data_sections,
         .c_source_files = c_source_files,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,

@@ -65,6 +65,8 @@ root_error_tracing: bool,
 dll_export_fns: bool,
 rdynamic: bool,
 san_cov_trace_pc_guard: bool,
+function_sections: bool,
+data_sections: bool,
 
 pub const CFrontend = enum { clang, aro };
 
@@ -119,6 +121,8 @@ pub const Options = struct {
     dll_export_fns: ?bool = null,
     rdynamic: ?bool = null,
     san_cov_trace_pc_guard: bool = false,
+    function_sections: ?bool = null,
+    data_sections: ?bool = null,
 };
 
 pub const ResolveError = error{
@@ -556,6 +560,16 @@ pub fn resolve(options: Options) ResolveError!Config {
         };
     };
 
+    const function_sections = b: {
+        if (options.function_sections) |x| break :b x;
+        break :b false;
+    };
+
+    const data_sections = b: {
+        if (options.data_sections) |x| break :b x;
+        break :b false;
+    };
+
     return .{
         .output_mode = options.output_mode,
         .have_zcu = options.have_zcu,
@@ -590,6 +604,8 @@ pub fn resolve(options: Options) ResolveError!Config {
         .root_strip = root_strip,
         .dll_export_fns = dll_export_fns,
         .rdynamic = rdynamic,
+        .function_sections = function_sections,
+        .data_sections = data_sections,
     };
 }
 

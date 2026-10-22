@@ -623,8 +623,8 @@ pub const Object = struct {
             opt_level,
             reloc_mode,
             code_model,
-            comp.function_sections,
-            comp.data_sections,
+            comp.config.function_sections,
+            comp.config.data_sections,
             switch (target.abi.float()) {
                 .hard => .Hard,
                 .soft => .Soft,

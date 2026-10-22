@@ -5,7 +5,6 @@ const CpuFeature = std.Target.Cpu.Feature;
 const CpuModel = std.Target.Cpu.Model;
 
 pub const Feature = enum {
-    @"64bit",
     @"64bit_support",
     @"64bitregs",
     allow_unaligned_fp_access,
@@ -98,13 +97,6 @@ pub const all_features = blk: {
     const len = @typeInfo(Feature).@"enum".field_names.len;
     std.debug.assert(len <= CpuFeature.Set.needed_bit_count);
     var result: [len]CpuFeature = undefined;
-    result[@backingInt(Feature.@"64bit")] = .{
-        .llvm_name = "64bit",
-        .description = "Enable 64-bit mode",
-        .dependencies = featureSet(&[_]Feature{
-            .@"64bit_support",
-        }),
-    };
     result[@backingInt(Feature.@"64bit_support")] = .{
         .llvm_name = "64bit-support",
         .description = "Supports 64-bit instructions",

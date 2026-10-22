@@ -1940,6 +1940,10 @@ const targets = [_]ArchTarget{
         },
         .feature_overrides = &.{
             .{
+                .llvm_name = "64bit",
+                .omit = true,
+            },
+            .{
                 .llvm_name = "aix",
                 .omit = true,
             },

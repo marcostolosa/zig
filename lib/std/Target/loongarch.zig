@@ -12,9 +12,6 @@ pub const Feature = enum {
     div32,
     f,
     frecipe,
-    la_global_with_abs,
-    la_global_with_pcrel,
-    la_local_with_abs,
     lam_bh,
     lamcas,
     lasx,
@@ -22,8 +19,6 @@ pub const Feature = enum {
     ld_seq_sa,
     lsx,
     lvz,
-    prefer_w_inst,
-    relax,
     scq,
     ual,
 };
@@ -76,21 +71,6 @@ pub const all_features = blk: {
         .description = "Support frecipe.{s/d} and frsqrte.{s/d} instructions",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.la_global_with_abs)] = .{
-        .llvm_name = "la-global-with-abs",
-        .description = "Expand la.global as la.abs",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.la_global_with_pcrel)] = .{
-        .llvm_name = "la-global-with-pcrel",
-        .description = "Expand la.global as la.pcrel",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.la_local_with_abs)] = .{
-        .llvm_name = "la-local-with-abs",
-        .description = "Expand la.local as la.abs",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.lam_bh)] = .{
         .llvm_name = "lam-bh",
         .description = "Support amswap[_db].{b/h} and amadd[_db].{b/h} instructions",
@@ -128,16 +108,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.lvz)] = .{
         .llvm_name = "lvz",
         .description = "'LVZ' (Loongson Virtualization Extension)",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.prefer_w_inst)] = .{
-        .llvm_name = "prefer-w-inst",
-        .description = "Prefer instructions with W suffix",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.relax)] = .{
-        .llvm_name = "relax",
-        .description = "Enable Linker relaxation",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.scq)] = .{

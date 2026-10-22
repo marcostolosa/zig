@@ -1878,6 +1878,28 @@ const targets = [_]ArchTarget{
             .name = "LoongArch",
             .td_name = "LoongArch",
         },
+        .feature_overrides = &.{
+            .{
+                .llvm_name = "la-global-with-abs",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "la-global-with-pcrel",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "la-local-with-abs",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "prefer-w-inst",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "relax",
+                .omit = true,
+            },
+        },
         .model_overrides = &.{
             .{
                 .llvm_name = "generic",

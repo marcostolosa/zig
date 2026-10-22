@@ -1074,3 +1074,7 @@ pub const list = list: {
 
 const std = @import("std");
 const BuiltinFn = @This();
+
+comptime {
+    std.debug.assert(list.kvs.len == std.enums.values(BuiltinFn.Tag).len); // `Tag` and the entries in `list` must remain in sync
+}

@@ -1349,6 +1349,10 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
             .{
+                .llvm_name = "hard-tp",
+                .omit = true,
+            },
+            .{
                 .llvm_name = "multiple_stld",
                 .omit = true,
             },

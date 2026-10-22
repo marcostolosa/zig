@@ -6776,9 +6776,7 @@ pub fn addCCArgs(
 
                 if (feature.llvm_name) |llvm_name| {
                     // We communicate these to Clang through the dedicated options.
-                    if (std.mem.startsWith(u8, llvm_name, "soft-float") or
-                        std.mem.startsWith(u8, llvm_name, "hard-float") or
-                        (target.cpu.arch.isX86() and std.mem.startsWith(u8, llvm_name, "x32")))
+                    if (std.mem.startsWith(u8, llvm_name, "soft-float") or std.mem.startsWith(u8, llvm_name, "hard-float"))
                         continue;
 
                     // Ignore these until we figure out how to handle the concept of omitting features.

@@ -2315,6 +2315,11 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
             .{
+                .llvm_name = "x32",
+                .omit = true,
+            },
+
+            .{
                 .llvm_name = "sse4.2",
                 .extra_deps = &.{"crc32"},
             },

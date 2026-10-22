@@ -231,7 +231,6 @@ pub const Feature = enum {
     waitpkg,
     wbnoinvd,
     widekl,
-    x32,
     x87,
     xop,
     xsave,
@@ -1514,11 +1513,6 @@ pub const all_features = blk: {
         .dependencies = featureSet(&[_]Feature{
             .kl,
         }),
-    };
-    result[@backingInt(Feature.x32)] = .{
-        .llvm_name = "x32",
-        .description = "64-bit with ILP32 programming model (e.g. x32 ABI)",
-        .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.x87)] = .{
         .llvm_name = "x87",

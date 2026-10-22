@@ -1849,6 +1849,11 @@ const targets = [_]ArchTarget{
         },
         .model_overrides = &.{
             .{
+                .llvm_name = "generic",
+                .omit = true,
+            },
+
+            .{
                 .llvm_name = "M68020",
                 .extra_deps = &.{"isa_68881"},
             },

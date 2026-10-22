@@ -2066,6 +2066,7 @@ pub const Cpu = struct {
                 .kvx => &kvx.cpu.coolidge_v1,
                 .loongarch32 => &loongarch.cpu.generic_la32,
                 .loongarch64 => &loongarch.cpu.generic_la64,
+                .m68k => &m68k.cpu.M68000,
                 .mips, .mipsel => &mips.cpu.mips32,
                 .mips64, .mips64el => &mips.cpu.mips64,
                 .msp430 => &msp430.cpu.msp430,

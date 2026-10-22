@@ -86,13 +86,6 @@ pub const all_features = blk: {
 };
 
 pub const cpu = struct {
-    pub const generic: CpuModel = .{
-        .name = "generic",
-        .llvm_name = "generic",
-        .features = featureSet(&[_]Feature{
-            .isa_68000,
-        }),
-    };
     pub const M68000: CpuModel = .{
         .name = "M68000",
         .llvm_name = "M68000",

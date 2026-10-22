@@ -6673,6 +6673,10 @@ pub fn addCCArgs(
         });
     }
 
+    if (target.cpu.arch == .hexagon) {
+        try argv.append("-G0"); // Unsupported by LLD.
+    }
+
     // We might want to support -mfloat-abi=softfp for Arm and CSKY here in the future.
     if (target_util.clangSupportsFloatAbiArg(target)) {
         const fabi = @tagName(target.abi.float());
@@ -6693,6 +6697,10 @@ pub fn addCCArgs(
 
     // Non-preprocessed assembly files don't support these flags.
     if (ext != .assembly) {
+        if (target.cpu.arch == .hexagon) {
+            try argv.append("-mlong-calls");
+        }
+
         if (target_util.clangSupportsNoImplicitFloatArg(target) and target.abi.float() == .soft) {
             try argv.append("-mno-implicit-float");
         }

@@ -390,6 +390,11 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         }
         try buf.appendSlice(disabled_features.items);
 
+        if (target.cpu.arch == .hexagon) {
+            try buf.appendSlice("+long-calls,");
+            try buf.appendSlice("-small-data,"); // Unsupported by LLD.
+        }
+
         if (target.cpu.arch == .s390x) {
             try buf.append(if (omit_frame_pointer) '-' else '+');
             try buf.appendSlice("backchain,");

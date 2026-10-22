@@ -1449,6 +1449,183 @@ const targets = [_]ArchTarget{
         },
         .feature_overrides = &.{
             .{
+                .llvm_name = "compound",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "duplex",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "long-calls",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "memops",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "noreturn-stack-elim",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "nvj",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "nvs",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "packets",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r6",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r7",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r8",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r9",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r10",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r11",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r12",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r13",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r14",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r15",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r16",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r17",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r18",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r19",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r20",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r21",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r22",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r23",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r24",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r25",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r26",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r27",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserved-r28",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "scs-reg-r16",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "scs-reg-r17",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "scs-reg-r18",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "scs-reg-r19",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "scs-reg-r20",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "scs-reg-r21",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "scs-reg-r22",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "scs-reg-r23",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "scs-reg-r24",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "scs-reg-r25",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "scs-reg-r26",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "scs-reg-r27",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "small-data",
+                .omit = true,
+            },
+
+            .{
                 .llvm_name = "hvx-ieee-fp",
                 .extra_deps = &.{"hvxv68"},
             },

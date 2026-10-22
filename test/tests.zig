@@ -422,23 +422,26 @@ const module_test_targets = blk: {
 
         // Similar to Thumb, we need long calls on Hexagon due to relocation range issues.
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "hexagon-linux-none",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
+            .target = .{
+                .cpu_arch = .hexagon,
+                .os_tag = .linux,
+                .abi = .none,
+            },
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "hexagon-linux-musl",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
+            .target = .{
+                .cpu_arch = .hexagon,
+                .os_tag = .linux,
+                .abi = .musl,
+            },
             .link_libc = true,
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "hexagon-linux-musl",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
+            .target = .{
+                .cpu_arch = .hexagon,
+                .os_tag = .linux,
+                .abi = .musl,
+            },
             .linkage = .dynamic,
             .link_libc = true,
             .extra_target = true,

@@ -6691,10 +6691,6 @@ pub fn addCCArgs(
 
     // Non-preprocessed assembly files don't support these flags.
     if (ext != .assembly) {
-        if (target.cpu.arch == .hexagon) {
-            try argv.append("-mlong-calls");
-        }
-
         if (target_util.clangSupportsNoImplicitFloatArg(target) and target.abi.float() == .soft) {
             try argv.append("-mno-implicit-float");
         }

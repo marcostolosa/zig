@@ -420,7 +420,6 @@ const module_test_targets = blk: {
             .link_libc = true,
         },
 
-        // Similar to Thumb, we need long calls on Hexagon due to relocation range issues.
         .{
             .target = .{
                 .cpu_arch = .hexagon,

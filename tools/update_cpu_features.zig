@@ -3099,6 +3099,12 @@ const targets = [_]ArchTarget{
             .name = "Xtensa",
             .td_name = "Xtensa",
         },
+        .feature_overrides = &.{
+            .{
+                .llvm_name = "forced-atomics",
+                .omit = true,
+            },
+        },
     },
 };
 

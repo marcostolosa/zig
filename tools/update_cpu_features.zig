@@ -1785,6 +1785,68 @@ const targets = [_]ArchTarget{
             .name = "M68k",
             .td_name = "M68k",
         },
+        .feature_overrides = &.{
+            .{
+                .llvm_name = "reserve-a0",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-a1",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-a2",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-a3",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-a4",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-a5",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-a6",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-d0",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-d1",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-d2",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-d3",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-d4",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-d5",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-d6",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-d7",
+                .omit = true,
+            },
+        },
         .model_overrides = &.{
             .{
                 .llvm_name = "M68020",

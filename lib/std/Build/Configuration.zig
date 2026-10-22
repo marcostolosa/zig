@@ -1040,6 +1040,7 @@ pub const Step = extern struct {
             compress_debug_sections: std.zig.CompressDebugSections,
             global_base: bool,
             test_runner: TestRunner.Tag,
+            test_evented_io: bool,
             wasi_exec_model: WasiExecModel,
             win32_manifest: bool,
             win32_module_definition: bool,
@@ -1051,7 +1052,6 @@ pub const Step = extern struct {
             lto: Lto,
             subsystem: Subsystem,
             legalize_all: bool,
-            _: u1 = 0,
         };
 
         pub const Flags4 = packed struct(u32) {

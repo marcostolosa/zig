@@ -2288,6 +2288,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                 hash.add(options.config.use_new_linker);
                 hash.add(options.config.dll_export_fns);
                 hash.add(options.config.is_test);
+                hash.add(options.config.test_evented_io);
                 hash.addListOfBytes(options.test_filters);
                 hash.add(options.skip_linker_dependencies);
                 //hash.add(options.emit_h != .no);
@@ -3370,6 +3371,7 @@ fn addNonIncrementalStuffToCacheManifest(comp: *Compilation, man: *Cache.Manifes
     man.hash.add(comp.config.use_lld);
     man.hash.add(comp.config.use_new_linker);
     man.hash.add(comp.config.is_test);
+    man.hash.add(comp.config.test_evented_io);
     man.hash.add(comp.config.import_memory);
     man.hash.add(comp.config.export_memory);
     man.hash.add(comp.config.shared_memory);

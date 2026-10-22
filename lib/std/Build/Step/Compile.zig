@@ -54,6 +54,7 @@ global_base: ?u64 = null,
 zig_lib_dir: ?LazyPath,
 filters: []const []const u8,
 test_runner: ?TestRunner,
+test_evented_io: bool,
 wasi_exec_model: ?std.builtin.WasiExecModel = null,
 
 installed_headers: std.ArrayList(HeaderInstallation),

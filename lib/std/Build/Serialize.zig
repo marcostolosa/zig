@@ -172,6 +172,7 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                                 .simple => .simple,
                                 .server => .server,
                             } else .default,
+                            .test_evented_io = c.test_evented_io,
                             .wasi_exec_model = .init(c.wasi_exec_model),
                             .win32_manifest = c.win32_manifest != null,
                             .win32_module_definition = c.win32_module_definition != null,

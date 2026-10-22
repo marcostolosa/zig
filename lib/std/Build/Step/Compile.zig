@@ -284,6 +284,7 @@ pub const Options = struct {
     max_rss: u64 = 0,
     filters: []const []const u8 = &.{},
     test_runner: ?TestRunner = null,
+    test_evented_io: bool = false,
     use_llvm: ?bool = null,
     use_lld: ?bool = null,
     zig_lib_dir: ?LazyPath = null,
@@ -430,6 +431,7 @@ pub fn create(owner: *std.Build, options: Options) *Compile {
         .zig_lib_dir = null,
         .filters = options.filters,
         .test_runner = null, // set below
+        .test_evented_io = options.test_evented_io,
         .rdynamic = false,
         .force_undefined_symbols = .empty,
 

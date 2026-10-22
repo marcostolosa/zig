@@ -127,10 +127,16 @@ fn mainServer(init: std.process.Init.Minimal) !void {
                     .canary = 0xc3a701ba,
                     .check_write_after_free = true,
                 });
-                testing.io_instance = .init(testing.allocator, .{
-                    .argv0 = .init(init.args),
-                    .environ = init.environ,
-                });
+                switch (testing.io_mode) {
+                    .threaded => testing.io_instance = .init(testing.allocator, .{
+                        .argv0 = .init(init.args),
+                        .environ = init.environ,
+                    }),
+                    .evented => testing.io_instance.init(testing.allocator, .{
+                        .argv0 = .init(init.args),
+                        .environ = init.environ,
+                    }) catch |err| panic("evented Io init error {t}", .{err}),
+                }
                 log_err_count = 0;
                 const index = try server.receiveBody_u32();
                 const test_fn = builtin.test_functions[index];
@@ -276,10 +282,16 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
             .canary = 0xc3a701ba,
             .check_write_after_free = true,
         });
-        testing.io_instance = .init(testing.allocator, .{
-            .argv0 = .init(init.args),
-            .environ = init.environ,
-        });
+        switch (testing.io_mode) {
+            .threaded => testing.io_instance = .init(testing.allocator, .{
+                .argv0 = .init(init.args),
+                .environ = init.environ,
+            }),
+            .evented => testing.io_instance.init(testing.allocator, .{
+                .argv0 = .init(init.args),
+                .environ = init.environ,
+            }) catch |err| panic("evented Io init error {t}", .{err}),
+        }
         defer {
             testing.io_instance.deinit();
             if (testing.allocator_instance.deinit() != 0) leaks += 1;
@@ -377,7 +389,11 @@ pub fn mainSimple() anyerror!void {
     };
 
     testing.allocator_instance = .init(std.heap.page_allocator, .{});
-    testing.io_instance = .init(testing.allocator, .{});
+    switch (testing.io_mode) {
+        .threaded => testing.io_instance = .init(testing.allocator, .{}),
+        .evented => testing.io_instance.init(testing.allocator, .{}) catch |err|
+            panic("evented Io init error {t}", .{err}),
+    }
 
     var passed: u64 = 0;
     var skipped: u64 = 0;

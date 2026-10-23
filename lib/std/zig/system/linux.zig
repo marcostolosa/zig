@@ -721,7 +721,7 @@ const riscv = struct {
                     setFeature(&cpu, .zicbop, ima_support and set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZICBOP));
                     setFeature(&cpu, .zilsd, ima_support and set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZILSD));
                     setFeature(&cpu, .zclsd, ima_support and set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZCLSD));
-                    setFeature(&cpu, .experimental_zicfilp, ima_support and set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZICFILP));
+                    // setFeature(&cpu, .experimental_zicfilp, ima_support and set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZICFILP));
                 },
                 RISCV_HWPROBE.KEY.MISALIGNED_SCALAR_PERF => {
                     setFeature(&cpu, .unaligned_scalar_mem, value == RISCV_HWPROBE.MISALIGNED_SCALAR.FAST);
@@ -739,7 +739,7 @@ const riscv = struct {
                     setFeature(&cpu, .xsfvfwmaccqqq, ima_support and set(value, RISCV_HWPROBE.SIFIVE_VENDOR_EXT.XSFVFWMACCQQQ));
                 },
                 RISCV_HWPROBE.KEY.IMA_EXT_1 => {
-                    setFeature(&cpu, .experimental_zicfiss, ima_support and set(value, RISCV_HWPROBE.IMA_EXT_1_EXT_ZICFISS));
+                    // setFeature(&cpu, .experimental_zicfiss, ima_support and set(value, RISCV_HWPROBE.IMA_EXT_1_EXT_ZICFISS));
                 },
                 else => unreachable,
             }

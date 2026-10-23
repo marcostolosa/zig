@@ -2344,8 +2344,349 @@ const targets = [_]ArchTarget{
         .branch_quota = 2000,
         .feature_overrides = &.{
             .{
+                .llvm_name = "andes45",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "mips-p8700",
+                .flatten = true,
+            },
+            .{
                 .llvm_name = "sifive7",
                 .flatten = true,
+            },
+            .{
+                .llvm_name = "ventana-veyron",
+                .flatten = true,
+            },
+
+            .{
+                .llvm_name = "exact-asm",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "disable-latency-sched-heuristic",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "disable-misched-load-clustering",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "disable-misched-store-clustering",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "disable-postmisched-load-clustering",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "disable-postmisched-store-clustering",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "enable-select-opt",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "enable-vsetvli-sched-heuristic",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "forced-atomics",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "no-default-unroll",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "no-trailing-seq-cst-fence",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "relax",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x1",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x2",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x3",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x4",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x5",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x6",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x7",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x8",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x9",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x10",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x11",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x12",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x13",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x14",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x15",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x16",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x17",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x18",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x19",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x20",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x21",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x22",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x23",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x24",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x25",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x26",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x27",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x28",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x29",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x30",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-x31",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "save-restore",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "tagged-globals",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "use-postra-scheduler",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "xcheriot",
+                .omit = true,
+            },
+
+            // Future ISA extensions; omit until they are stabilized.
+            .{
+                .llvm_name = "experimental",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-p",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-rvm23u32",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-smpmpmt",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-svukte",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-xqccmt",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-xsfmclic",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-xsfsclic",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-y",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zibi",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zicfilp",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zicfiss",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvabd",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvbc32e",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvdot4a8i",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvfbdota32f",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvfbfa",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvfofp8min",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvfqwbdota8f",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvfqwdota8f",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvfwbdota16bf",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvfwdota16bf",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvkgs",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvqwbdota16i",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvqwbdota8i",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvqwdota16i",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvqwdota8i",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvvfmm",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvvmm",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvvmtls",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvvmttls",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "experimental-zvzip",
+                .omit = true,
+            },
+        },
+        .model_overrides = &.{
+            .{
+                .llvm_name = "generic",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "generic-ooo",
+                .omit = true,
             },
         },
         .extra_models = &.{

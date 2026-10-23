@@ -1076,69 +1076,66 @@ const module_test_targets = blk: {
             .link_libc = true,
         },
 
-        // Calls are normally lowered to branch instructions that only support +/- 16 MB range when
-        // targeting Thumb. This easily becomes insufficient for our test binaries, so use long
-        // calls to avoid out-of-range relocations.
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-linux-eabi",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumb,
+                .os_tag = .linux,
+                .abi = .eabi,
+            },
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-linux-eabihf",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumb,
+                .os_tag = .linux,
+                .abi = .eabihf,
+            },
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-linux-musleabi",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
+            .target = .{
+                .cpu_arch = .thumb,
+                .os_tag = .linux,
+                .abi = .musleabi,
+            },
             .link_libc = true,
-            .pic = false, // Long calls don't work with PIC.
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-linux-musleabihf",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
+            .target = .{
+                .cpu_arch = .thumb,
+                .os_tag = .linux,
+                .abi = .musleabihf,
+            },
             .link_libc = true,
-            .pic = false, // Long calls don't work with PIC.
         },
 
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumbeb-linux-eabi",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumbeb,
+                .os_tag = .linux,
+                .abi = .eabi,
+            },
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumbeb-linux-eabihf",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumbeb,
+                .os_tag = .linux,
+                .abi = .eabihf,
+            },
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumbeb-linux-musleabi",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
+            .target = .{
+                .cpu_arch = .thumbeb,
+                .os_tag = .linux,
+                .abi = .musleabi,
+            },
             .link_libc = true,
-            .pic = false, // Long calls don't work with PIC.
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumbeb-linux-musleabihf",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
+            .target = .{
+                .cpu_arch = .thumbeb,
+                .os_tag = .linux,
+                .abi = .musleabihf,
+            },
             .link_libc = true,
-            .pic = false, // Long calls don't work with PIC.
         },
 
         .{
@@ -1982,33 +1979,33 @@ const c_abi_targets = blk: {
         },
 
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-linux-musleabi",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumb,
+                .os_tag = .linux,
+                .abi = .musleabi,
+            },
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-linux-musleabihf",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumb,
+                .os_tag = .linux,
+                .abi = .musleabihf,
+            },
         },
 
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumbeb-linux-musleabi",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumbeb,
+                .os_tag = .linux,
+                .abi = .musleabi,
+            },
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumbeb-linux-musleabihf",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumbeb,
+                .os_tag = .linux,
+                .abi = .musleabihf,
+            },
         },
 
         .{

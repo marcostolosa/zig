@@ -6,7 +6,6 @@ const CpuModel = std.Target.Cpu.Model;
 
 pub const Feature = enum {
     @"64bit_support",
-    allow_unaligned_fp_access,
     altivec,
     booke,
     bpermd,
@@ -68,6 +67,7 @@ pub const Feature = enum {
     spe,
     stfiwx,
     two_const_nr,
+    unaligned_fp_access,
     vectors_use_two_units,
     vsx,
 };
@@ -84,11 +84,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.@"64bit_support")] = .{
         .llvm_name = "64bit-support",
         .description = "Supports 64-bit instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.allow_unaligned_fp_access)] = .{
-        .llvm_name = "allow-unaligned-fp-access",
-        .description = "CPU does not trap on unaligned FP access",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.altivec)] = .{
@@ -483,6 +478,11 @@ pub const all_features = blk: {
         .description = "Requires two constant Newton-Raphson computation",
         .dependencies = featureSet(&[_]Feature{}),
     };
+    result[@backingInt(Feature.unaligned_fp_access)] = .{
+        .llvm_name = "allow-unaligned-fp-access",
+        .description = "CPU does not trap on unaligned FP access",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
     result[@backingInt(Feature.vectors_use_two_units)] = .{
         .llvm_name = "vectors-use-two-units",
         .description = "Vectors use two units",
@@ -772,7 +772,6 @@ pub const cpu = struct {
         .llvm_name = "ppc64le",
         .features = featureSet(&[_]Feature{
             .@"64bit_support",
-            .allow_unaligned_fp_access,
             .bpermd,
             .cmpb,
             .crypto,
@@ -804,6 +803,7 @@ pub const cpu = struct {
             .recipprec,
             .stfiwx,
             .two_const_nr,
+            .unaligned_fp_access,
         }),
     };
     pub const pwr10: CpuModel = .{
@@ -811,7 +811,6 @@ pub const cpu = struct {
         .llvm_name = "pwr10",
         .features = featureSet(&[_]Feature{
             .@"64bit_support",
-            .allow_unaligned_fp_access,
             .bpermd,
             .cmpb,
             .crypto,
@@ -848,6 +847,7 @@ pub const cpu = struct {
             .recipprec,
             .stfiwx,
             .two_const_nr,
+            .unaligned_fp_access,
         }),
     };
     pub const pwr11: CpuModel = .{
@@ -855,7 +855,6 @@ pub const cpu = struct {
         .llvm_name = "pwr11",
         .features = featureSet(&[_]Feature{
             .@"64bit_support",
-            .allow_unaligned_fp_access,
             .bpermd,
             .cmpb,
             .crypto,
@@ -892,6 +891,7 @@ pub const cpu = struct {
             .recipprec,
             .stfiwx,
             .two_const_nr,
+            .unaligned_fp_access,
         }),
     };
     pub const pwr3: CpuModel = .{
@@ -995,7 +995,6 @@ pub const cpu = struct {
         .llvm_name = "pwr7",
         .features = featureSet(&[_]Feature{
             .@"64bit_support",
-            .allow_unaligned_fp_access,
             .bpermd,
             .cmpb,
             .extdiv,
@@ -1016,6 +1015,7 @@ pub const cpu = struct {
             .recipprec,
             .stfiwx,
             .two_const_nr,
+            .unaligned_fp_access,
             .vsx,
         }),
     };
@@ -1024,7 +1024,6 @@ pub const cpu = struct {
         .llvm_name = "pwr8",
         .features = featureSet(&[_]Feature{
             .@"64bit_support",
-            .allow_unaligned_fp_access,
             .bpermd,
             .cmpb,
             .crypto,
@@ -1056,6 +1055,7 @@ pub const cpu = struct {
             .recipprec,
             .stfiwx,
             .two_const_nr,
+            .unaligned_fp_access,
         }),
     };
     pub const pwr9: CpuModel = .{
@@ -1063,7 +1063,6 @@ pub const cpu = struct {
         .llvm_name = "pwr9",
         .features = featureSet(&[_]Feature{
             .@"64bit_support",
-            .allow_unaligned_fp_access,
             .bpermd,
             .cmpb,
             .crypto,
@@ -1092,6 +1091,7 @@ pub const cpu = struct {
             .recipprec,
             .stfiwx,
             .two_const_nr,
+            .unaligned_fp_access,
             .vectors_use_two_units,
         }),
     };

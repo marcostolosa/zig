@@ -724,10 +724,10 @@ const riscv = struct {
                     // setFeature(&cpu, .experimental_zicfilp, ima_support and set(value, RISCV_HWPROBE.IMA_EXT_0.EXT_ZICFILP));
                 },
                 RISCV_HWPROBE.KEY.MISALIGNED_SCALAR_PERF => {
-                    setFeature(&cpu, .unaligned_scalar_mem, value == RISCV_HWPROBE.MISALIGNED_SCALAR.FAST);
+                    setFeature(&cpu, .unaligned_access, value == RISCV_HWPROBE.MISALIGNED_SCALAR.FAST);
                 },
                 RISCV_HWPROBE.KEY.MISALIGNED_VECTOR_PERF => {
-                    setFeature(&cpu, .unaligned_vector_mem, value == RISCV_HWPROBE.MISALIGNED_VECTOR.FAST);
+                    setFeature(&cpu, .unaligned_vector_access, value == RISCV_HWPROBE.MISALIGNED_VECTOR.FAST);
                 },
                 RISCV_HWPROBE.KEY.VENDOR_EXT_MIPS_0 => {
                     setFeature(&cpu, .xmipsexectl, ima_support and set(value, RISCV_HWPROBE.MIPS_VENDOR_EXT_XMIPSEXECTL));

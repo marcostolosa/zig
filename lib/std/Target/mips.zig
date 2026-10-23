@@ -47,6 +47,7 @@ pub const Feature = enum {
     msa,
     mt,
     nan2008,
+    no_unaligned_access,
     noabicalls,
     nomadd4,
     nooddspreg,
@@ -55,7 +56,6 @@ pub const Feature = enum {
     r5900,
     single_float,
     soft_float,
-    strict_align,
     sym32,
     use_compact_branches,
     use_indirect_jump_hazard,
@@ -346,6 +346,11 @@ pub const all_features = blk: {
         .description = "IEEE 754-2008 NaN encoding",
         .dependencies = featureSet(&[_]Feature{}),
     };
+    result[@backingInt(Feature.no_unaligned_access)] = .{
+        .llvm_name = "strict-align",
+        .description = "Disable unaligned load store for r6",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
     result[@backingInt(Feature.noabicalls)] = .{
         .llvm_name = "noabicalls",
         .description = "Disable SVR4-style position-independent code",
@@ -390,11 +395,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.soft_float)] = .{
         .llvm_name = "soft-float",
         .description = "Does not support floating point instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.strict_align)] = .{
-        .llvm_name = "strict-align",
-        .description = "Disable unaligned load store for r6",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.sym32)] = .{

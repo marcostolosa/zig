@@ -20,7 +20,7 @@ pub const Feature = enum {
     lsx,
     lvz,
     scq,
-    ual,
+    unaligned_access,
 };
 
 pub const featureSet = CpuFeature.FeatureSetFns(Feature).featureSet;
@@ -115,7 +115,7 @@ pub const all_features = blk: {
         .description = "Support sc.q instruction",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.ual)] = .{
+    result[@backingInt(Feature.unaligned_access)] = .{
         .llvm_name = "ual",
         .description = "Allow memory accesses to be unaligned",
         .dependencies = featureSet(&[_]Feature{}),
@@ -156,7 +156,7 @@ pub const cpu = struct {
         .llvm_name = null,
         .features = featureSet(&[_]Feature{
             .@"32bit",
-            .ual,
+            .unaligned_access,
         }),
     };
     pub const la32v1_0: CpuModel = .{
@@ -166,7 +166,7 @@ pub const cpu = struct {
             .@"32bit",
             .@"32s",
             .d,
-            .ual,
+            .unaligned_access,
         }),
     };
     pub const la464: CpuModel = .{
@@ -177,7 +177,7 @@ pub const cpu = struct {
             .lasx,
             .lbt,
             .lvz,
-            .ual,
+            .unaligned_access,
         }),
     };
     pub const la64v1_0: CpuModel = .{
@@ -186,7 +186,7 @@ pub const cpu = struct {
         .features = featureSet(&[_]Feature{
             .@"64bit",
             .lsx,
-            .ual,
+            .unaligned_access,
         }),
     };
     pub const la64v1_1: CpuModel = .{
@@ -201,7 +201,7 @@ pub const cpu = struct {
             .ld_seq_sa,
             .lsx,
             .scq,
-            .ual,
+            .unaligned_access,
         }),
     };
     pub const la664: CpuModel = .{
@@ -218,7 +218,7 @@ pub const cpu = struct {
             .ld_seq_sa,
             .lvz,
             .scq,
-            .ual,
+            .unaligned_access,
         }),
     };
 };

@@ -1017,7 +1017,7 @@ fn generateSystemDefines(comp: *Compilation, w: *Io.Writer) !void {
                 try w.print("#define __ARM_FEATURE_LDREX 0x{x}\n", .{@as(u4, @bitCast(ldrex))});
             }
 
-            if (!target.cpu.has(.arm, .strict_align)) {
+            if (!target.cpu.has(.arm, .no_unaligned_access)) {
                 try define(w, "__ARM_FEATURE_UNALIGNED");
             }
 
@@ -1147,7 +1147,7 @@ fn generateSystemDefines(comp: *Compilation, w: *Io.Writer) !void {
                 try define(w, "__ARM_FEATURE_SM3");
                 try define(w, "__ARM_FEATURE_SM4");
             }
-            if (!target.cpu.has(.aarch64, .strict_align)) {
+            if (!target.cpu.has(.aarch64, .no_unaligned_access)) {
                 try define(w, "__ARM_FEATURE_UNALIGNED");
             }
             if (target.cpu.hasAll(.aarch64, &.{ .neon, .fullfp16 })) {

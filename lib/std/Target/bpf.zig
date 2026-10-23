@@ -5,8 +5,8 @@ const CpuFeature = std.Target.Cpu.Feature;
 const CpuModel = std.Target.Cpu.Model;
 
 pub const Feature = enum {
-    allows_misaligned_mem_access,
     alu32,
+    unaligned_access,
 };
 
 pub const featureSet = CpuFeature.FeatureSetFns(Feature).featureSet;
@@ -18,14 +18,14 @@ pub const all_features = blk: {
     const len = @typeInfo(Feature).@"enum".field_names.len;
     std.debug.assert(len <= CpuFeature.Set.needed_bit_count);
     var result: [len]CpuFeature = undefined;
-    result[@backingInt(Feature.allows_misaligned_mem_access)] = .{
-        .llvm_name = "allows-misaligned-mem-access",
-        .description = "Allows misaligned memory access",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.alu32)] = .{
         .llvm_name = "alu32",
         .description = "Enable ALU32 instructions",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
+    result[@backingInt(Feature.unaligned_access)] = .{
+        .llvm_name = "allows-misaligned-mem-access",
+        .description = "Allows misaligned memory access",
         .dependencies = featureSet(&[_]Feature{}),
     };
     const ti = @typeInfo(Feature);

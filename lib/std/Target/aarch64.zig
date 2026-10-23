@@ -135,6 +135,7 @@ pub const Feature = enum {
     no_lfi_stores,
     no_neg_immediates,
     no_sve_fp_ld1r,
+    no_unaligned_access,
     no_zcz_fpr64,
     nv,
     occmo,
@@ -219,7 +220,6 @@ pub const Feature = enum {
     ssve_fp8fma,
     store_pair_suppress,
     stp_aligned_only,
-    strict_align,
     sve,
     sve2,
     sve2_aes,
@@ -1041,6 +1041,11 @@ pub const all_features = blk: {
         .description = "Avoid using LD1RX instructions for FP",
         .dependencies = featureSet(&[_]Feature{}),
     };
+    result[@backingInt(Feature.no_unaligned_access)] = .{
+        .llvm_name = "strict-align",
+        .description = "Disallow all unaligned memory access",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
     result[@backingInt(Feature.no_zcz_fpr64)] = .{
         .llvm_name = "no-zcz-fpr64",
         .description = "Has no zero-cycle zeroing instructions for FPR64 registers",
@@ -1539,11 +1544,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.stp_aligned_only)] = .{
         .llvm_name = "stp-aligned-only",
         .description = "In order to emit stp, first check if the store will be aligned to 2 * element_size",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.strict_align)] = .{
-        .llvm_name = "strict-align",
-        .description = "Disallow all unaligned memory access",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.sve)] = .{
@@ -4462,11 +4462,11 @@ pub const cpu = struct {
             .arith_bcc_fusion,
             .balance_fp_ops,
             .max_interleave_factor_4,
+            .no_unaligned_access,
             .perfmon,
             .predictable_select_expensive,
             .sha2,
             .store_pair_suppress,
-            .strict_align,
             .use_postra_scheduler,
             .v8_3a,
         }),

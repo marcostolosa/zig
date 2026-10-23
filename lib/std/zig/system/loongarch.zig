@@ -49,7 +49,7 @@ pub fn detectNativeCpuAndFeatures(arch: std.Target.Cpu.Arch) ?std.Target.Cpu {
         else
             std.os.linux.getauxval(std.elf.AT.HWCAP);
 
-        setFeature(&cpu, .ual, (hwcap_bits & HWCAP.UAL) != 0);
+        setFeature(&cpu, .unaligned_access, (hwcap_bits & HWCAP.UAL) != 0);
 
         const has_fpu = (hwcap_bits & HWCAP.FPU) != 0;
         setFeature(&cpu, .f, has_fpu and bit(cfg2, 1));
@@ -62,7 +62,7 @@ pub fn detectNativeCpuAndFeatures(arch: std.Target.Cpu.Arch) ?std.Target.Cpu {
 
         setFeature(&cpu, .lam_bh, (hwcap_bits & HWCAP.LAM_BH) != 0);
     } else {
-        setFeature(&cpu, .ual, false);
+        setFeature(&cpu, .unaligned_access, false);
 
         setFeature(&cpu, .f, false);
         setFeature(&cpu, .d, false);

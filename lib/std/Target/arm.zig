@@ -115,6 +115,7 @@ pub const Feature = enum {
     no_bti_at_return_twice,
     no_movt,
     no_neg_immediates,
+    no_unaligned_access,
     noarm,
     nonpipelined_vfp,
     pacbti,
@@ -140,7 +141,6 @@ pub const Feature = enum {
     slowfpvmlx,
     soft_float,
     splat_vfp_neon,
-    strict_align,
     thumb2,
     thumb_mode,
     trustzone,
@@ -904,6 +904,11 @@ pub const all_features = blk: {
         .description = "Convert immediates and instructions to their negated or complemented equivalent when the immediate does not fit in the encoding.",
         .dependencies = featureSet(&[_]Feature{}),
     };
+    result[@backingInt(Feature.no_unaligned_access)] = .{
+        .llvm_name = "strict-align",
+        .description = "Disallow all unaligned memory access",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
     result[@backingInt(Feature.noarm)] = .{
         .llvm_name = "noarm",
         .description = "Does not support ARM mode execution",
@@ -1033,11 +1038,6 @@ pub const all_features = blk: {
             .dont_widen_vmovs,
         }),
     };
-    result[@backingInt(Feature.strict_align)] = .{
-        .llvm_name = "strict-align",
-        .description = "Disallow all unaligned memory access",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.thumb2)] = .{
         .llvm_name = "thumb2",
         .description = "Enable Thumb2 instructions",
@@ -1067,35 +1067,35 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "ARMv2 architecture",
         .dependencies = featureSet(&[_]Feature{
-            .strict_align,
+            .no_unaligned_access,
         }),
     };
     result[@backingInt(Feature.v2a)] = .{
         .llvm_name = null,
         .description = "ARMv2a architecture",
         .dependencies = featureSet(&[_]Feature{
-            .strict_align,
+            .no_unaligned_access,
         }),
     };
     result[@backingInt(Feature.v3)] = .{
         .llvm_name = null,
         .description = "ARMv3 architecture",
         .dependencies = featureSet(&[_]Feature{
-            .strict_align,
+            .no_unaligned_access,
         }),
     };
     result[@backingInt(Feature.v3m)] = .{
         .llvm_name = null,
         .description = "ARMv3m architecture",
         .dependencies = featureSet(&[_]Feature{
-            .strict_align,
+            .no_unaligned_access,
         }),
     };
     result[@backingInt(Feature.v4)] = .{
         .llvm_name = "armv4",
         .description = "ARMv4 architecture",
         .dependencies = featureSet(&[_]Feature{
-            .strict_align,
+            .no_unaligned_access,
         }),
     };
     result[@backingInt(Feature.v4t)] = .{
@@ -1103,7 +1103,7 @@ pub const all_features = blk: {
         .description = "ARMv4t architecture",
         .dependencies = featureSet(&[_]Feature{
             .has_v4t,
-            .strict_align,
+            .no_unaligned_access,
         }),
     };
     result[@backingInt(Feature.v5t)] = .{
@@ -1111,7 +1111,7 @@ pub const all_features = blk: {
         .description = "ARMv5t architecture",
         .dependencies = featureSet(&[_]Feature{
             .has_v5t,
-            .strict_align,
+            .no_unaligned_access,
         }),
     };
     result[@backingInt(Feature.v5te)] = .{
@@ -1119,7 +1119,7 @@ pub const all_features = blk: {
         .description = "ARMv5te architecture",
         .dependencies = featureSet(&[_]Feature{
             .has_v5te,
-            .strict_align,
+            .no_unaligned_access,
         }),
     };
     result[@backingInt(Feature.v5tej)] = .{
@@ -1127,7 +1127,7 @@ pub const all_features = blk: {
         .description = "ARMv5tej architecture",
         .dependencies = featureSet(&[_]Feature{
             .has_v5te,
-            .strict_align,
+            .no_unaligned_access,
         }),
     };
     result[@backingInt(Feature.v6)] = .{
@@ -1167,8 +1167,8 @@ pub const all_features = blk: {
             .db,
             .has_v6m,
             .mclass,
+            .no_unaligned_access,
             .noarm,
-            .strict_align,
             .thumb_mode,
         }),
     };
@@ -1179,8 +1179,8 @@ pub const all_features = blk: {
             .db,
             .has_v6m,
             .mclass,
+            .no_unaligned_access,
             .noarm,
-            .strict_align,
             .thumb_mode,
         }),
     };
@@ -1441,8 +1441,8 @@ pub const all_features = blk: {
             .has_v8m,
             .hwdiv,
             .mclass,
+            .no_unaligned_access,
             .noarm,
-            .strict_align,
             .thumb_mode,
         }),
     };

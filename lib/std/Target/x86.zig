@@ -215,13 +215,13 @@ pub const Feature = enum {
     sse4_1,
     sse4_2,
     sse4a,
-    sse_unaligned_mem,
     ssse3,
     tagged_globals,
     tbm,
     tsxldtrk,
     tuning_fast_imm_vector_shift,
     uintr,
+    unaligned_sse_access,
     use_glm_div_sqrt_costs,
     use_slm_arith_costs,
     usermsr,
@@ -1424,11 +1424,6 @@ pub const all_features = blk: {
             .sse3,
         }),
     };
-    result[@backingInt(Feature.sse_unaligned_mem)] = .{
-        .llvm_name = "sse-unaligned-mem",
-        .description = "Allow unaligned memory operands with SSE instructions (this may require setting a configuration bit in the processor)",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.ssse3)] = .{
         .llvm_name = "ssse3",
         .description = "Enable SSSE3 instructions",
@@ -1459,6 +1454,11 @@ pub const all_features = blk: {
     result[@backingInt(Feature.uintr)] = .{
         .llvm_name = "uintr",
         .description = "Has UINTR Instructions",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
+    result[@backingInt(Feature.unaligned_sse_access)] = .{
+        .llvm_name = "sse-unaligned-mem",
+        .description = "Allow unaligned memory operands with SSE instructions (this may require setting a configuration bit in the processor)",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.use_glm_div_sqrt_costs)] = .{

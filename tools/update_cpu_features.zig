@@ -441,6 +441,11 @@ const targets = [_]ArchTarget{
                 .llvm_name = "ampere1b",
                 .flatten = true,
             },
+
+            .{
+                .llvm_name = "strict-align",
+                .zig_name = "no_unaligned_access",
+            },
         },
         .model_overrides = &.{
             .{
@@ -770,47 +775,47 @@ const targets = [_]ArchTarget{
             .{
                 .llvm_name = "armv2",
                 .zig_name = "v2",
-                .extra_deps = &.{"strict_align"},
+                .extra_deps = &.{"no_unaligned_access"},
             },
             .{
                 .llvm_name = "armv2a",
                 .zig_name = "v2a",
-                .extra_deps = &.{"strict_align"},
+                .extra_deps = &.{"no_unaligned_access"},
             },
             .{
                 .llvm_name = "armv3",
                 .zig_name = "v3",
-                .extra_deps = &.{"strict_align"},
+                .extra_deps = &.{"no_unaligned_access"},
             },
             .{
                 .llvm_name = "armv3m",
                 .zig_name = "v3m",
-                .extra_deps = &.{"strict_align"},
+                .extra_deps = &.{"no_unaligned_access"},
             },
             .{
                 .llvm_name = "armv4",
                 .zig_name = "v4",
-                .extra_deps = &.{"strict_align"},
+                .extra_deps = &.{"no_unaligned_access"},
             },
             .{
                 .llvm_name = "armv4t",
                 .zig_name = "v4t",
-                .extra_deps = &.{"strict_align"},
+                .extra_deps = &.{"no_unaligned_access"},
             },
             .{
                 .llvm_name = "armv5t",
                 .zig_name = "v5t",
-                .extra_deps = &.{"strict_align"},
+                .extra_deps = &.{"no_unaligned_access"},
             },
             .{
                 .llvm_name = "armv5te",
                 .zig_name = "v5te",
-                .extra_deps = &.{"strict_align"},
+                .extra_deps = &.{"no_unaligned_access"},
             },
             .{
                 .llvm_name = "armv5tej",
                 .zig_name = "v5tej",
-                .extra_deps = &.{"strict_align"},
+                .extra_deps = &.{"no_unaligned_access"},
             },
             .{
                 .llvm_name = "armv6",
@@ -973,6 +978,10 @@ const targets = [_]ArchTarget{
                 .zig_name = "v9a",
             },
             .{
+                .llvm_name = "strict-align",
+                .zig_name = "no_unaligned_access",
+            },
+            .{
                 .llvm_name = "v4t",
                 .zig_name = "has_v4t",
             },
@@ -1098,22 +1107,22 @@ const targets = [_]ArchTarget{
             .{
                 .zig_name = "v2",
                 .desc = "ARMv2 architecture",
-                .deps = &.{"strict_align"},
+                .deps = &.{"no_unaligned_access"},
             },
             .{
                 .zig_name = "v2a",
                 .desc = "ARMv2a architecture",
-                .deps = &.{"strict_align"},
+                .deps = &.{"no_unaligned_access"},
             },
             .{
                 .zig_name = "v3",
                 .desc = "ARMv3 architecture",
-                .deps = &.{"strict_align"},
+                .deps = &.{"no_unaligned_access"},
             },
             .{
                 .zig_name = "v3m",
                 .desc = "ARMv3m architecture",
-                .deps = &.{"strict_align"},
+                .deps = &.{"no_unaligned_access"},
             },
         },
         .model_overrides = &.{
@@ -1336,6 +1345,11 @@ const targets = [_]ArchTarget{
             .{
                 .llvm_name = "dwarfris",
                 .omit = true,
+            },
+
+            .{
+                .llvm_name = "allows-misaligned-mem-access",
+                .zig_name = "unaligned_access",
             },
         },
         .model_overrides = &.{
@@ -1905,6 +1919,11 @@ const targets = [_]ArchTarget{
                 .llvm_name = "relax",
                 .omit = true,
             },
+
+            .{
+                .llvm_name = "ual",
+                .zig_name = "unaligned_access",
+            },
         },
         .model_overrides = &.{
             .{
@@ -1939,7 +1958,7 @@ const targets = [_]ArchTarget{
                     "32bit",
                     "32s",
                     "d",
-                    "ual",
+                    "unaligned_access",
                 },
             },
             .{
@@ -1947,7 +1966,7 @@ const targets = [_]ArchTarget{
                 .zig_name = "la32rv1_0",
                 .features = &.{
                     "32bit",
-                    "ual",
+                    "unaligned_access",
                 },
             },
             .{
@@ -1956,7 +1975,7 @@ const targets = [_]ArchTarget{
                 .features = &.{
                     "64bit",
                     "lsx",
-                    "ual",
+                    "unaligned_access",
                 },
             },
             .{
@@ -1971,7 +1990,7 @@ const targets = [_]ArchTarget{
                     "ld_seq_sa",
                     "lsx",
                     "scq",
-                    "ual",
+                    "unaligned_access",
                 },
             },
             .{
@@ -2111,6 +2130,12 @@ const targets = [_]ArchTarget{
             .name = "Mips",
             .td_name = "Mips",
         },
+        .feature_overrides = &.{
+            .{
+                .llvm_name = "strict-align",
+                .zig_name = "no_unaligned_access",
+            },
+        },
         .extra_models = &.{
             .{
                 .llvm_name = null,
@@ -2239,6 +2264,10 @@ const targets = [_]ArchTarget{
             .{
                 .llvm_name = "fast-MFLR",
                 .zig_name = "fast_mflr",
+            },
+            .{
+                .llvm_name = "allow-unaligned-fp-access",
+                .zig_name = "unaligned_fp_access",
             },
         },
         .model_overrides = &.{
@@ -2677,6 +2706,15 @@ const targets = [_]ArchTarget{
             .{
                 .llvm_name = "experimental-zvzip",
                 .omit = true,
+            },
+
+            .{
+                .llvm_name = "unaligned-scalar-mem",
+                .zig_name = "unaligned_access",
+            },
+            .{
+                .llvm_name = "unaligned-vector-mem",
+                .zig_name = "unaligned_vector_access",
             },
         },
         .model_overrides = &.{
@@ -3208,6 +3246,10 @@ const targets = [_]ArchTarget{
             .{
                 .llvm_name = "sse4.2",
                 .extra_deps = &.{"crc32"},
+            },
+            .{
+                .llvm_name = "sse-unaligned-mem",
+                .zig_name = "unaligned_sse_access",
             },
         },
         .extra_features = &.{

@@ -390,6 +390,11 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         }
         try buf.appendSlice(disabled_features.items);
 
+        if (target.cpu.arch.isArm()) {
+            try buf.append(if (target.cpu.arch.isThumb()) '+' else '-');
+            try buf.appendSlice("thumb-mode,");
+        }
+
         if (target.cpu.arch == .hexagon) {
             try buf.appendSlice("-small-data,"); // Unsupported by LLD.
         }

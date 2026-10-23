@@ -1146,6 +1146,10 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
             .{
+                .llvm_name = "thumb-mode",
+                .omit = true,
+            },
+            .{
                 .llvm_name = "use-mipipeliner",
                 .omit = true,
             },

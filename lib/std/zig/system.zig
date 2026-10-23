@@ -388,13 +388,6 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
                 cpu.features.addFeature(@backingInt(Target.x86.Feature.@"32bit_mode"));
             }
         },
-        .arm, .armeb => {
-            // XXX What do we do if the target has the noarm feature?
-            //     What do we do if the user specifies +thumb_mode?
-        },
-        .thumb, .thumbeb => {
-            cpu.features.addFeature(@backingInt(Target.arm.Feature.thumb_mode));
-        },
         else => {},
     }
     updateCpuFeatures(

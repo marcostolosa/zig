@@ -123,7 +123,6 @@ pub const Feature = enum {
     soft_float,
     splat_vfp_neon,
     thumb2,
-    thumb_mode,
     trustzone,
     v2,
     v2a,
@@ -927,11 +926,6 @@ pub const all_features = blk: {
         .description = "Enable Thumb2 instructions",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.thumb_mode)] = .{
-        .llvm_name = "thumb-mode",
-        .description = "Thumb mode",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.trustzone)] = .{
         .llvm_name = "trustzone",
         .description = "Enable support for TrustZone security extensions",
@@ -1043,7 +1037,6 @@ pub const all_features = blk: {
             .mclass,
             .no_unaligned_access,
             .noarm,
-            .thumb_mode,
         }),
     };
     result[@backingInt(Feature.v6sm)] = .{
@@ -1055,7 +1048,6 @@ pub const all_features = blk: {
             .mclass,
             .no_unaligned_access,
             .noarm,
-            .thumb_mode,
         }),
     };
     result[@backingInt(Feature.v6t2)] = .{
@@ -1087,7 +1079,6 @@ pub const all_features = blk: {
             .hwdiv,
             .mclass,
             .noarm,
-            .thumb_mode,
         }),
     };
     result[@backingInt(Feature.v7m)] = .{
@@ -1099,7 +1090,6 @@ pub const all_features = blk: {
             .hwdiv,
             .mclass,
             .noarm,
-            .thumb_mode,
         }),
     };
     result[@backingInt(Feature.v7r)] = .{
@@ -1156,7 +1146,6 @@ pub const all_features = blk: {
             .mclass,
             .noarm,
             .ras,
-            .thumb_mode,
         }),
     };
     result[@backingInt(Feature.v8_2a)] = .{
@@ -1317,7 +1306,6 @@ pub const all_features = blk: {
             .mclass,
             .no_unaligned_access,
             .noarm,
-            .thumb_mode,
         }),
     };
     result[@backingInt(Feature.v8m_main)] = .{
@@ -1330,7 +1318,6 @@ pub const all_features = blk: {
             .hwdiv,
             .mclass,
             .noarm,
-            .thumb_mode,
         }),
     };
     result[@backingInt(Feature.v8r)] = .{

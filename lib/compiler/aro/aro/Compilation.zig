@@ -918,7 +918,7 @@ fn generateSystemDefines(comp: *Compilation, w: *Io.Writer) !void {
                 }
             }
 
-            if (target.cpu.has(.arm, .thumb2) or target.cpu.has(.arm, .thumb_mode)) {
+            if (target.cpu.has(.arm, .thumb2) or target.cpu.arch.isThumb()) {
                 try define(w, "__thumb__");
             }
             // ARM ISA means we are not M profile

@@ -782,6 +782,7 @@ pub const Step = extern struct {
         error_limit: Storage.FlagOptional(.flags4, .error_limit, u32),
         build_id: Storage.EnumOptional(.flags3, .build_id, .hexstring, String),
         test_runner: Storage.FlagUnion(.flags3, .test_runner, TestRunner),
+        test_io_mode: Storage.FlagOptional(.flags3, .test_io_mode, Io.Mode),
 
         emit_directory: Storage.FlagOptional(.flags4, .emit_directory, GeneratedFileIndex),
         generated_docs: Storage.FlagOptional(.flags4, .generated_docs, GeneratedFileIndex),
@@ -1040,7 +1041,7 @@ pub const Step = extern struct {
             compress_debug_sections: std.zig.CompressDebugSections,
             global_base: bool,
             test_runner: TestRunner.Tag,
-            test_evented_io: bool,
+            test_io_mode: bool,
             wasi_exec_model: WasiExecModel,
             win32_manifest: bool,
             win32_module_definition: bool,

@@ -552,7 +552,7 @@ pub fn getBuiltinOptions(m: Module, global: Compilation.Config) Builtin {
         .link_mode = global.link_mode,
         .unwind_tables = m.unwind_tables,
         .is_test = global.is_test,
-        .test_evented_io = global.test_evented_io,
+        .test_io_mode = global.test_io_mode,
         .single_threaded = m.single_threaded,
         .link_libc = global.link_libc,
         .link_libcpp = global.link_libcpp,

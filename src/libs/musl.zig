@@ -175,7 +175,7 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 .link_mode = .dynamic,
                 .resolved_target = comp.root_mod.resolved_target,
                 .is_test = false,
-                .test_evented_io = false,
+                .test_io_mode = .threaded,
                 .have_zcu = false,
                 .emit_bin = true,
                 .root_optimize_mode = optimize_mode,

@@ -20,7 +20,8 @@ var base_allocator_instance = std.heap.FixedBufferAllocator.init("");
 pub var allocator_instance: std.heap.SafeAllocator = undefined;
 pub const allocator = if (builtin.is_test) allocator_instance.allocator() else @compileError("not testing");
 
-pub const io_mode: Io.Mode = builtin.test_io_mode;
+pub const io_mode: Io.Mode = if (Io.Evented != void) builtin.test_io_mode else .threaded;
+
 pub var io_instance: switch (io_mode) {
     .threaded => Io.Threaded,
     .evented => Io.Evented,

@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) void {
     b.default_step = test_step;
 
     const test_exe = b.addTest(.{
-        .test_evented_io = true,
+        .test_io_mode = .evented,
         .root_module = b.createModule(.{
             .target = b.graph.host,
             .root_source_file = b.path("test.zig"),

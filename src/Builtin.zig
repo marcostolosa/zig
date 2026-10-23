@@ -4,7 +4,7 @@ output_mode: std.lang.OutputMode,
 link_mode: std.lang.LinkMode,
 unwind_tables: std.lang.UnwindTables,
 is_test: bool,
-test_evented_io: bool,
+test_io_mode: std.Io.Mode,
 single_threaded: bool,
 link_libc: bool,
 link_libcpp: bool,
@@ -62,6 +62,7 @@ pub fn append(opts: @This(), buffer: *std.array_list.Managed(u8)) Allocator.Erro
         \\pub const link_mode: std.lang.LinkMode = .{f};
         \\pub const unwind_tables: std.lang.UnwindTables = .{f};
         \\pub const is_test = {};
+        \\pub const test_io_mode = {};
         \\pub const single_threaded = {};
         \\/// Deprecated; to be removed in 0.18.0. Use `target.abi` instead.
         \\pub const abi: std.Target.Abi = .{f};
@@ -78,6 +79,7 @@ pub fn append(opts: @This(), buffer: *std.array_list.Managed(u8)) Allocator.Erro
         std.zig.fmtIdPU(@tagName(opts.link_mode)),
         std.zig.fmtIdPU(@tagName(opts.unwind_tables)),
         opts.is_test,
+        opts.test_io_mode,
         opts.single_threaded,
         std.zig.fmtIdPU(@tagName(target.abi)),
         std.zig.fmtIdPU(@tagName(target.cpu.arch)),
@@ -283,17 +285,6 @@ pub fn append(opts: @This(), buffer: *std.array_list.Managed(u8)) Allocator.Erro
     if (opts.is_test) {
         try buffer.appendSlice(
             \\pub var test_functions: []const std.lang.TestFn = &.{}; // overwritten later
-            \\
-        );
-    }
-    if (opts.test_evented_io) {
-        try buffer.appendSlice(
-            \\pub const test_io_mode = .evented;
-            \\
-        );
-    } else {
-        try buffer.appendSlice(
-            \\pub const test_io_mode = .threaded;
             \\
         );
     }

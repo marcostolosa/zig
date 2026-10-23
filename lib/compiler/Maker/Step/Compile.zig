@@ -602,7 +602,9 @@ fn lowerZigArgs(
         },
     }
 
-    try addBool(gpa, zig_args, "--test-evented-io", conf_comp.flags3.test_evented_io);
+    if (conf_comp.test_io_mode.value) |io_mode| {
+        (try zig_args.addManyAsArray(gpa, 2)).* = .{ "--test-io-mode", @tagName(io_mode) };
+    }
 
     for (graph.debug_log_scopes.items) |log_scope| {
         (try zig_args.addManyAsArray(gpa, 2)).* = .{ "--debug-log", log_scope };

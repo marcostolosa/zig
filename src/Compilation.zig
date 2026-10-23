@@ -1555,6 +1555,7 @@ pub const CreateOptions = struct {
     reference_trace: ?u32 = null,
     test_filters: []const []const u8 = &.{},
     test_runner_path: ?[]const u8 = null,
+    test_io_mode: std.Io.Mode = .threaded,
     subsystem: ?std.zig.Subsystem = null,
     mingw_unicode_entry_point: bool = false,
     /// (Zig compiler development) Enable dumping linker's state as JSON.
@@ -2080,7 +2081,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
 
                 .test_filters = options.test_filters,
                 .test_functions = .empty,
-                .test_io_mode = .threaded,
+                .test_io_mode = options.test_io_mode,
 
                 .global_assembly = .empty,
 
@@ -2288,7 +2289,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                 hash.add(options.config.use_new_linker);
                 hash.add(options.config.dll_export_fns);
                 hash.add(options.config.is_test);
-                hash.add(options.config.test_evented_io);
+                hash.add(options.config.test_io_mode);
                 hash.addListOfBytes(options.test_filters);
                 hash.add(options.skip_linker_dependencies);
                 //hash.add(options.emit_h != .no);
@@ -3371,7 +3372,7 @@ fn addNonIncrementalStuffToCacheManifest(comp: *Compilation, man: *Cache.Manifes
     man.hash.add(comp.config.use_lld);
     man.hash.add(comp.config.use_new_linker);
     man.hash.add(comp.config.is_test);
-    man.hash.add(comp.config.test_evented_io);
+    man.hash.add(comp.config.test_io_mode);
     man.hash.add(comp.config.import_memory);
     man.hash.add(comp.config.export_memory);
     man.hash.add(comp.config.shared_memory);
@@ -4836,7 +4837,7 @@ fn workerDocsWasmFallible(comp: *Compilation, prog_node: std.Progress.Node) SubU
         .output_mode = output_mode,
         .resolved_target = resolved_target,
         .is_test = false,
-        .test_evented_io = false,
+        .test_io_mode = .threaded,
         .have_zcu = true,
         .emit_bin = true,
         .root_optimize_mode = optimize_mode,
@@ -7383,7 +7384,7 @@ fn buildOutputFromZig(
         .link_mode = link_mode,
         .resolved_target = comp.root_mod.resolved_target,
         .is_test = false,
-        .test_evented_io = false,
+        .test_io_mode = .threaded,
         .have_zcu = true,
         .emit_bin = true,
         .root_optimize_mode = optimize_mode,
@@ -7523,7 +7524,7 @@ pub fn build_crt_file(
         .output_mode = output_mode,
         .resolved_target = comp.root_mod.resolved_target,
         .is_test = false,
-        .test_evented_io = false,
+        .test_io_mode = .threaded,
         .have_zcu = false,
         .emit_bin = true,
         .root_optimize_mode = comp.compilerRtOptMode(),

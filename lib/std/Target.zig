@@ -930,9 +930,13 @@ pub const Abi = enum {
             },
             .windows => .gnu,
             .uefi => .msvc,
+            .gba => .eabi,
             .@"3ds" => .eabihf,
             .wiiu => .eabihf,
-            .gba => .eabi,
+            .@"switch" => switch (arch) {
+                .arm => .eabihf,
+                else => .none,
+            },
             .psx => .eabi,
             .ps3 => .ilp32,
             .psp => .eabihf,
@@ -953,7 +957,6 @@ pub const Abi = enum {
             .tvos,
             .visionos,
             .watchos,
-            .@"switch",
             .ps4,
             .ps5,
             .amdhsa,
@@ -2104,6 +2107,7 @@ pub const Cpu = struct {
                     .@"3ds" => &arm.cpu.mpcore,
                     .vita => &arm.cpu.kermit,
                     .gba => &arm.cpu.arm7tdmi,
+                    .@"switch" => &arm.cpu.cortex_a57,
                     else => &arm.cpu.baseline,
                 },
                 .thumb => switch (os.tag) {
@@ -3484,8 +3488,12 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) ?u16 {
             .char => 8,
             .short, .ushort => 16,
             .int, .uint, .float => 32,
-            .long, .ulong, .longlong, .ulonglong, .double => 64,
-            .longdouble => 128,
+            .long, .ulong => target.ptrBitWidth(),
+            .longlong, .ulonglong, .double => 64,
+            .longdouble => switch (target.cpu.arch) {
+                .aarch64 => 128,
+                else => 64,
+            },
         },
 
         .psx, .ps3, .psp, .vita => switch (c_type) {

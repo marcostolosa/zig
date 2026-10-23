@@ -65,6 +65,7 @@
     .{ .cpu = .{ .arm = .{} }, .os = .{ .openbsd = .{} }, .abi = .{ .eabi = .{} }, .cache_mode = .whole, .backend = .llvm, .linker = .lld, .pic = .pic },
     .{ .cpu = .{ .arm = .{} }, .os = .{ .rtems = .{} }, .abi = .{ .eabi = .{} }, .cache_mode = .whole, .backend = .llvm, .linker = .lld, .pic = .pic },
     .{ .cpu = .{ .arm = .{} }, .os = .{ .rtems = .{} }, .abi = .{ .eabihf = .{} }, .cache_mode = .whole, .backend = .llvm, .linker = .lld, .pic = .pic },
+    .{ .cpu = .{ .arm = .{} }, .os = .{ .@"switch" = .{} }, .abi = .{ .eabihf = .{} }, .cache_mode = .whole, .backend = .llvm, .linker = .lld, .pic = .pic },
     .{ .cpu = .{ .arm = .{} }, .os = .{ .uefi = .{} }, .abi = .{ .eabi = .{} }, .cache_mode = .whole, .backend = .llvm, .linker = .lld, .pic = .pic },
     .{ .cpu = .{ .arm = .{} }, .os = .{ .uefi = .{} }, .abi = .{ .eabihf = .{} }, .cache_mode = .whole, .backend = .llvm, .linker = .lld, .pic = .pic },
     .{ .cpu = .{ .arm = .{} }, .os = .{ .vita = .{} }, .abi = .{ .eabihf = .{} }, .cache_mode = .whole, .backend = .llvm, .linker = .lld, .pic = .pic },

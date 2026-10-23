@@ -712,6 +712,10 @@ const targets = [_]ArchTarget{
                 .flatten = true,
             },
             .{
+                .llvm_name = "cortex-a510",
+                .flatten = true,
+            },
+            .{
                 .llvm_name = "cortex-a710",
                 .flatten = true,
             },
@@ -744,6 +748,14 @@ const targets = [_]ArchTarget{
                 .flatten = true,
             },
             .{
+                .llvm_name = "m55",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "m85",
+                .flatten = true,
+            },
+            .{
                 .llvm_name = "neoverse-v1",
                 .flatten = true,
             },
@@ -770,6 +782,79 @@ const targets = [_]ArchTarget{
             .{
                 .llvm_name = "swift",
                 .flatten = true,
+            },
+
+            .{
+                .llvm_name = "32bit",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "aapcs-frame-chain",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "big-endian-instructions",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "disable-postra-scheduler",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "execute-only",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "harden-sls-blr",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "harden-sls-nocomdat",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "harden-sls-retbr",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "long-calls",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "no-bti-at-return-twice",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "no-movt",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "no-neg-immediates",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "read-tp-tpidrprw",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "read-tp-tpidruro",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "read-tp-tpidrurw",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r9",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "use-mipipeliner",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "use-misched",
+                .omit = true,
             },
 
             .{

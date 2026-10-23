@@ -6788,6 +6788,18 @@ pub fn addCCArgs(
                     }
                 }
             }
+
+            if (target.cpu.arch.isXtensa()) {
+                // LLVM does not currently support specifying windowed vs call0 ABI any other way than
+                // disabling all windowed instructions altogether. That's kind of silly because a
+                // windowed core can do call0 just fine.
+                if (target.abi == .call0) for (xclang_flags) |xclang| try argv.appendSlice(&.{
+                    xclang,
+                    "-target-feature",
+                    xclang,
+                    "-windowed",
+                });
+            }
         },
         else => {},
     }

@@ -1315,6 +1315,12 @@ const targets = [_]ArchTarget{
             .name = "AVR",
             .td_name = "AVR",
         },
+        .feature_overrides = &.{
+            .{
+                .llvm_name = "special",
+                .omit = true,
+            },
+        },
     },
     .{
         .zig_name = "bpf",

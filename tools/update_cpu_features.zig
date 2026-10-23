@@ -2427,72 +2427,203 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
 
+            // LLVM's names for s390x features are horribly long.
+            .{
+                .llvm_name = "bear-enhancement",
+                .zig_name = "beareh",
+            },
+            .{
+                .llvm_name = "concurrent-functions",
+                .zig_name = "ccf",
+            },
+            .{
+                .llvm_name = "deflate-conversion",
+                .zig_name = "deflate",
+            },
+            .{
+                .llvm_name = "dfp-packed-conversion",
+                .zig_name = "dfppc",
+            },
+            .{
+                .llvm_name = "dfp-zoned-conversion",
+                .zig_name = "dfpzc",
+            },
+            .{
+                .llvm_name = "distinct-ops",
+                .zig_name = "distops",
+            },
+            .{
+                .llvm_name = "enhanced-dat-2",
+                .zig_name = "edat2",
+            },
+            .{
+                .llvm_name = "enhanced-sort",
+                .zig_name = "esort",
+            },
+            .{
+                .llvm_name = "execution-hint",
+                .zig_name = "exhint",
+            },
+            .{
+                .llvm_name = "fast-serialization",
+                .zig_name = "fbcrs",
+            },
+            .{
+                .llvm_name = "fp-extension",
+                .zig_name = "fpe",
+            },
+            .{
+                .llvm_name = "guarded-storage",
+                .zig_name = "gs",
+            },
+            .{
+                .llvm_name = "high-word",
+                .zig_name = "hiword",
+            },
+            .{
+                .llvm_name = "insert-reference-bits-multiple",
+                .zig_name = "irbm",
+            },
+            .{
+                .llvm_name = "interlocked-access1",
+                .zig_name = "iacc",
+            },
+            .{
+                .llvm_name = "load-and-trap",
+                .zig_name = "lat",
+            },
+            .{
+                .llvm_name = "load-and-zero-rightmost-byte",
+                .zig_name = "lzr",
+            },
+            .{
+                .llvm_name = "load-store-on-cond",
+                .zig_name = "loc",
+            },
+            .{
+                .llvm_name = "load-store-on-cond-2",
+                .zig_name = "loc2",
+            },
+            .{
+                .llvm_name = "message-security-assist-extension3",
+                .zig_name = "msa3",
+            },
+            .{
+                .llvm_name = "message-security-assist-extension4",
+                .zig_name = "msa4",
+            },
+            .{
+                .llvm_name = "message-security-assist-extension5",
+                .zig_name = "msa5",
+            },
             .{
                 .llvm_name = "message-security-assist-extension7",
-                .extra_deps = &.{"message_security_assist_extension5"},
+                .zig_name = "msa7",
+                .extra_deps = &.{"msa5"},
             },
             .{
                 .llvm_name = "message-security-assist-extension8",
-                .extra_deps = &.{"message_security_assist_extension3"},
+                .zig_name = "msa8",
+                .extra_deps = &.{"msa3"},
             },
             .{
                 .llvm_name = "message-security-assist-extension9",
-                .extra_deps = &.{
-                    "message_security_assist_extension3",
-                    "message_security_assist_extension4",
-                },
+                .zig_name = "msa9",
+                .extra_deps = &.{ "msa3", "msa4" },
+            },
+            .{
+                .llvm_name = "message-security-assist-extension12",
+                .zig_name = "msa12",
+            },
+            .{
+                .llvm_name = "miscellaneous-extensions",
+                .zig_name = "minste",
+            },
+            .{
+                .llvm_name = "miscellaneous-extensions-2",
+                .zig_name = "minste2",
             },
             .{
                 .llvm_name = "miscellaneous-extensions-3",
-                .extra_deps = &.{
-                    "distinct_ops",
-                    "fast_serialization",
-                    "high_word",
-                    "interlocked_access1",
-                    "load_store_on_cond",
-                    "population_count",
-                },
+                .zig_name = "minste3",
+                .extra_deps = &.{ "distops", "fbcrs", "hiword", "iacc", "loc", "popcnt" },
+            },
+            .{
+                .llvm_name = "miscellaneous-extensions-4",
+                .zig_name = "minste4",
             },
             .{
                 .llvm_name = "nnp-assist",
-                .extra_deps = &.{"vector"},
+                .zig_name = "nnpa",
+                .extra_deps = &.{"vx"},
+            },
+            .{
+                .llvm_name = "population-count",
+                .zig_name = "popcnt",
+            },
+            .{
+                .llvm_name = "processor-activity-instrumentation",
+                .zig_name = "pai",
+            },
+            .{
+                .llvm_name = "processor-assist",
+                .zig_name = "ppa",
+            },
+            .{
+                .llvm_name = "reset-dat-protection",
+                .zig_name = "rdp",
+            },
+            .{
+                .llvm_name = "reset-reference-bits-multiple",
+                .zig_name = "rrbm",
+            },
+            .{
+                .llvm_name = "test-pending-external-interruption",
+                .zig_name = "tpei",
             },
             .{
                 .llvm_name = "transactional-execution",
-                .extra_deps = &.{
-                    "execution_hint",
-                    "load_and_trap",
-                    "miscellaneous_extensions",
-                    "processor_assist",
-                },
+                .zig_name = "te",
+                .extra_deps = &.{ "exhint", "lat", "minste", "ppa" },
+            },
+            .{
+                .llvm_name = "vector",
+                .zig_name = "vx",
             },
             .{
                 .llvm_name = "vector-enhancements-1",
-                .extra_deps = &.{"vector"},
+                .zig_name = "vxeh",
+                .extra_deps = &.{"vx"},
             },
             .{
                 .llvm_name = "vector-enhancements-2",
-                .extra_deps = &.{"vector_enhancements_1"},
+                .zig_name = "vxeh2",
+                .extra_deps = &.{"vxeh"},
             },
             .{
                 .llvm_name = "vector-enhancements-3",
-                .extra_deps = &.{"vector_enhancements_2"},
+                .zig_name = "vxeh3",
+                .extra_deps = &.{"vxeh2"},
             },
             .{
                 .llvm_name = "vector-packed-decimal",
-                .extra_deps = &.{"vector"},
+                .zig_name = "vxpd",
+                .extra_deps = &.{"vx"},
             },
             .{
                 .llvm_name = "vector-packed-decimal-enhancement",
-                .extra_deps = &.{"vector_packed_decimal"},
+                .zig_name = "vxpdeh",
+                .extra_deps = &.{"vxpd"},
             },
             .{
                 .llvm_name = "vector-packed-decimal-enhancement-2",
-                .extra_deps = &.{"vector_packed_decimal_enhancement"},
+                .zig_name = "vxpdeh2",
+                .extra_deps = &.{"vxpdeh"},
             },
             .{
                 .llvm_name = "vector-packed-decimal-enhancement-3",
-                .extra_deps = &.{"vector_packed_decimal_enhancement_2"},
+                .zig_name = "vxpdeh3",
+                .extra_deps = &.{"vxpdeh2"},
             },
         },
     },

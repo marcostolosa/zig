@@ -1228,10 +1228,10 @@ fn generateSystemDefines(comp: *Compilation, w: *Io.Writer) !void {
             try define(w, "__s390x__");
             try define(w, "__zarch__");
 
-            if (target.cpu.has(.s390x, .transactional_execution)) {
+            if (target.cpu.has(.s390x, .te)) {
                 try define(w, "__HTM__");
             }
-            if (target.cpu.has(.s390x, .vector)) {
+            if (target.cpu.has(.s390x, .vx)) {
                 try define(w, "__VX__");
             }
         },

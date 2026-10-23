@@ -65,7 +65,7 @@ pub fn suggestVectorLengthForCpu(comptime T: type, comptime cpu: std.Target.Cpu)
                 break :blk 256;
             }
         } else if (cpu.arch == .s390x) {
-            if (cpu.has(.s390x, .vector)) break :blk 128;
+            if (cpu.has(.s390x, .vx)) break :blk 128;
         } else if (cpu.arch.isSPARC()) {
             if (cpu.hasAny(.sparc, &.{ .vis, .vis2, .vis3 })) break :blk 64;
         } else if (cpu.arch == .kvx) {

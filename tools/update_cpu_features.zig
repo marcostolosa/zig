@@ -2139,7 +2139,24 @@ const targets = [_]ArchTarget{
         },
         .feature_overrides = &.{
             .{
+                .llvm_name = "e500",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "ppc4xx",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "ppc6xx",
+                .flatten = true,
+            },
+
+            .{
                 .llvm_name = "64bit",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "64bitregs",
                 .omit = true,
             },
             .{
@@ -2159,13 +2176,78 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
             .{
+                .llvm_name = "crbits",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "hard-float",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "invariant-function-descriptors",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "longcall",
+                .omit = true,
+            },
+            .{
                 .llvm_name = "modern-aix-as",
                 .omit = true,
+            },
+            .{
+                .llvm_name = "ppc-postra-sched",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "ppc-prera-sched",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "privileged",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "rop-protect",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "secure-plt",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "use-ptrgl-helper",
+                .omit = true,
+            },
+
+            // Future ISA extensions; omit until they are stabilized.
+            .{
+                .llvm_name = "future-vector",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "isa-future-instructions",
+                .omit = true,
+            },
+
+            .{
+                .llvm_name = "fast-MFLR",
+                .zig_name = "fast_mflr",
             },
         },
         .model_overrides = &.{
             .{
-                .llvm_name = "ppc32",
+                .llvm_name = "generic",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "ppc",
+                .omit = true,
+            },
+
+            // Future ISA extensions; omit until they are stabilized.
+            .{
+                .llvm_name = "future",
                 .omit = true,
             },
         },

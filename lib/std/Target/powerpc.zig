@@ -6,19 +6,16 @@ const CpuModel = std.Target.Cpu.Model;
 
 pub const Feature = enum {
     @"64bit_support",
-    @"64bitregs",
     allow_unaligned_fp_access,
     altivec,
     booke,
     bpermd,
     cmpb,
-    crbits,
     crypto,
     direct_move,
-    e500,
     efpu2,
     extdiv,
-    fast_MFLR,
+    fast_mflr,
     fcpsgn,
     float128,
     fpcvt,
@@ -42,12 +39,8 @@ pub const Feature = enum {
     fuse_wideimm,
     fuse_zeromove,
     fusion,
-    future_vector,
-    hard_float,
     htm,
     icbt,
-    invariant_function_descriptors,
-    isa_future_instructions,
     isa_v206_instructions,
     isa_v207_instructions,
     isa_v30_instructions,
@@ -55,7 +48,6 @@ pub const Feature = enum {
     isel,
     ldbrx,
     lfiwax,
-    longcall,
     mfocrf,
     mma,
     msync,
@@ -68,22 +60,14 @@ pub const Feature = enum {
     power8_vector,
     power9_altivec,
     power9_vector,
-    ppc4xx,
-    ppc6xx,
-    ppc_postra_sched,
-    ppc_prera_sched,
     predictable_select_expensive,
     prefix_instrs,
-    privileged,
     quadword_atomics,
     recipprec,
-    rop_protect,
-    secure_plt,
     slow_popcntd,
     spe,
     stfiwx,
     two_const_nr,
-    use_ptrgl_helper,
     vectors_use_two_units,
     vsx,
 };
@@ -100,11 +84,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.@"64bit_support")] = .{
         .llvm_name = "64bit-support",
         .description = "Supports 64-bit instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.@"64bitregs")] = .{
-        .llvm_name = "64bitregs",
-        .description = "Enable 64-bit registers usage for ppc32 [beta]",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.allow_unaligned_fp_access)] = .{
@@ -136,11 +115,6 @@ pub const all_features = blk: {
         .description = "Enable the cmpb instruction",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.crbits)] = .{
-        .llvm_name = "crbits",
-        .description = "Use condition-register bits individually",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.crypto)] = .{
         .llvm_name = "crypto",
         .description = "Enable POWER8 Crypto instructions",
@@ -155,11 +129,6 @@ pub const all_features = blk: {
             .vsx,
         }),
     };
-    result[@backingInt(Feature.e500)] = .{
-        .llvm_name = "e500",
-        .description = "Enable E500/E500mc instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.efpu2)] = .{
         .llvm_name = "efpu2",
         .description = "Enable Embedded Floating-Point APU 2 instructions",
@@ -172,7 +141,7 @@ pub const all_features = blk: {
         .description = "Enable extended divide instructions",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.fast_MFLR)] = .{
+    result[@backingInt(Feature.fast_mflr)] = .{
         .llvm_name = "fast-MFLR",
         .description = "MFLR is a fast instruction",
         .dependencies = featureSet(&[_]Feature{}),
@@ -208,9 +177,7 @@ pub const all_features = blk: {
     result[@backingInt(Feature.fpu)] = .{
         .llvm_name = "fpu",
         .description = "Enable classic FPU instructions",
-        .dependencies = featureSet(&[_]Feature{
-            .hard_float,
-        }),
+        .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.fre)] = .{
         .llvm_name = "fre",
@@ -336,19 +303,6 @@ pub const all_features = blk: {
         .description = "Target supports instruction fusion",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.future_vector)] = .{
-        .llvm_name = "future-vector",
-        .description = "Enable Future vector instructions",
-        .dependencies = featureSet(&[_]Feature{
-            .isa_future_instructions,
-            .power10_vector,
-        }),
-    };
-    result[@backingInt(Feature.hard_float)] = .{
-        .llvm_name = "hard-float",
-        .description = "Enable floating-point instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.htm)] = .{
         .llvm_name = "htm",
         .description = "Enable Hardware Transactional Memory instructions",
@@ -358,18 +312,6 @@ pub const all_features = blk: {
         .llvm_name = "icbt",
         .description = "Enable icbt instruction",
         .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.invariant_function_descriptors)] = .{
-        .llvm_name = "invariant-function-descriptors",
-        .description = "Assume function descriptors are invariant",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.isa_future_instructions)] = .{
-        .llvm_name = "isa-future-instructions",
-        .description = "Enable instructions for Future ISA.",
-        .dependencies = featureSet(&[_]Feature{
-            .isa_v31_instructions,
-        }),
     };
     result[@backingInt(Feature.isa_v206_instructions)] = .{
         .llvm_name = "isa-v206-instructions",
@@ -411,11 +353,6 @@ pub const all_features = blk: {
         .dependencies = featureSet(&[_]Feature{
             .fpu,
         }),
-    };
-    result[@backingInt(Feature.longcall)] = .{
-        .llvm_name = "longcall",
-        .description = "Always use indirect calls",
-        .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.mfocrf)] = .{
         .llvm_name = "mfocrf",
@@ -502,26 +439,6 @@ pub const all_features = blk: {
             .power9_altivec,
         }),
     };
-    result[@backingInt(Feature.ppc4xx)] = .{
-        .llvm_name = "ppc4xx",
-        .description = "Enable PPC 4xx instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.ppc6xx)] = .{
-        .llvm_name = "ppc6xx",
-        .description = "Enable PPC 6xx instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.ppc_postra_sched)] = .{
-        .llvm_name = "ppc-postra-sched",
-        .description = "Use PowerPC post-RA scheduling strategy",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.ppc_prera_sched)] = .{
-        .llvm_name = "ppc-prera-sched",
-        .description = "Use PowerPC pre-RA scheduling strategy",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.predictable_select_expensive)] = .{
         .llvm_name = "predictable-select-expensive",
         .description = "Prefer likely predicted branches over selects",
@@ -534,11 +451,6 @@ pub const all_features = blk: {
             .isa_v31_instructions,
         }),
     };
-    result[@backingInt(Feature.privileged)] = .{
-        .llvm_name = "privileged",
-        .description = "Add privileged instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.quadword_atomics)] = .{
         .llvm_name = "quadword-atomics",
         .description = "Enable lqarx and stqcx.",
@@ -549,16 +461,6 @@ pub const all_features = blk: {
         .description = "Assume higher precision reciprocal estimates",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.rop_protect)] = .{
-        .llvm_name = "rop-protect",
-        .description = "Add ROP protect",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.secure_plt)] = .{
-        .llvm_name = "secure-plt",
-        .description = "Enable secure plt mode",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.slow_popcntd)] = .{
         .llvm_name = "slow-popcntd",
         .description = "Has slow popcnt[dw] instructions",
@@ -567,9 +469,7 @@ pub const all_features = blk: {
     result[@backingInt(Feature.spe)] = .{
         .llvm_name = "spe",
         .description = "Enable SPE instructions",
-        .dependencies = featureSet(&[_]Feature{
-            .hard_float,
-        }),
+        .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.stfiwx)] = .{
         .llvm_name = "stfiwx",
@@ -581,11 +481,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.two_const_nr)] = .{
         .llvm_name = "two-const-nr",
         .description = "Requires two constant Newton-Raphson computation",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.use_ptrgl_helper)] = .{
-        .llvm_name = "use-ptrgl-helper",
-        .description = "Use ._ptrgl for indirect calls",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.vectors_use_two_units)] = .{
@@ -815,53 +710,6 @@ pub const cpu = struct {
             .stfiwx,
         }),
     };
-    pub const future: CpuModel = .{
-        .name = "future",
-        .llvm_name = "future",
-        .features = featureSet(&[_]Feature{
-            .@"64bit_support",
-            .allow_unaligned_fp_access,
-            .bpermd,
-            .cmpb,
-            .crbits,
-            .crypto,
-            .direct_move,
-            .extdiv,
-            .fast_MFLR,
-            .fcpsgn,
-            .fpcvt,
-            .fprnd,
-            .fre,
-            .fres,
-            .frsqrte,
-            .frsqrtes,
-            .fsqrt,
-            .fuse_add_logical,
-            .fuse_arith_add,
-            .fuse_logical,
-            .fuse_logical_add,
-            .fuse_sha3,
-            .fuse_store,
-            .future_vector,
-            .icbt,
-            .isa_v206_instructions,
-            .isel,
-            .ldbrx,
-            .lfiwax,
-            .mfocrf,
-            .mma,
-            .partword_atomics,
-            .pcrelative_memops,
-            .popcntd,
-            .ppc_postra_sched,
-            .ppc_prera_sched,
-            .predictable_select_expensive,
-            .quadword_atomics,
-            .recipprec,
-            .stfiwx,
-            .two_const_nr,
-        }),
-    };
     pub const g3: CpuModel = .{
         .name = "g3",
         .llvm_name = "g3",
@@ -901,19 +749,10 @@ pub const cpu = struct {
             .stfiwx,
         }),
     };
-    pub const generic: CpuModel = .{
-        .name = "generic",
-        .llvm_name = "generic",
-        .features = featureSet(&[_]Feature{
-            .hard_float,
-        }),
-    };
-    pub const ppc: CpuModel = .{
-        .name = "ppc",
-        .llvm_name = "ppc",
-        .features = featureSet(&[_]Feature{
-            .hard_float,
-        }),
+    pub const ppc32: CpuModel = .{
+        .name = "ppc32",
+        .llvm_name = "ppc32",
+        .features = featureSet(&[_]Feature{}),
     };
     pub const ppc64: CpuModel = .{
         .name = "ppc64",
@@ -936,7 +775,6 @@ pub const cpu = struct {
             .allow_unaligned_fp_access,
             .bpermd,
             .cmpb,
-            .crbits,
             .crypto,
             .direct_move,
             .extdiv,
@@ -976,11 +814,10 @@ pub const cpu = struct {
             .allow_unaligned_fp_access,
             .bpermd,
             .cmpb,
-            .crbits,
             .crypto,
             .direct_move,
             .extdiv,
-            .fast_MFLR,
+            .fast_mflr,
             .fcpsgn,
             .fpcvt,
             .fprnd,
@@ -1006,8 +843,6 @@ pub const cpu = struct {
             .pcrelative_memops,
             .popcntd,
             .power10_vector,
-            .ppc_postra_sched,
-            .ppc_prera_sched,
             .predictable_select_expensive,
             .quadword_atomics,
             .recipprec,
@@ -1023,11 +858,10 @@ pub const cpu = struct {
             .allow_unaligned_fp_access,
             .bpermd,
             .cmpb,
-            .crbits,
             .crypto,
             .direct_move,
             .extdiv,
-            .fast_MFLR,
+            .fast_mflr,
             .fcpsgn,
             .fpcvt,
             .fprnd,
@@ -1053,8 +887,6 @@ pub const cpu = struct {
             .pcrelative_memops,
             .popcntd,
             .power10_vector,
-            .ppc_postra_sched,
-            .ppc_prera_sched,
             .predictable_select_expensive,
             .quadword_atomics,
             .recipprec,
@@ -1195,7 +1027,6 @@ pub const cpu = struct {
             .allow_unaligned_fp_access,
             .bpermd,
             .cmpb,
-            .crbits,
             .crypto,
             .direct_move,
             .extdiv,
@@ -1235,7 +1066,6 @@ pub const cpu = struct {
             .allow_unaligned_fp_access,
             .bpermd,
             .cmpb,
-            .crbits,
             .crypto,
             .direct_move,
             .extdiv,
@@ -1257,8 +1087,6 @@ pub const cpu = struct {
             .partword_atomics,
             .popcntd,
             .power9_vector,
-            .ppc_postra_sched,
-            .ppc_prera_sched,
             .predictable_select_expensive,
             .quadword_atomics,
             .recipprec,

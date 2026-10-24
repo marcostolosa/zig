@@ -331,13 +331,6 @@ pub const cpu = struct {
             .vfpu,
         }),
     };
-    pub const generic: CpuModel = .{
-        .name = "generic",
-        .llvm_name = "generic",
-        .features = featureSet(&[_]Feature{
-            .mips32,
-        }),
-    };
     pub const @"i6400": CpuModel = .{
         .name = "i6400",
         .llvm_name = "i6400",

@@ -179433,31 +179433,14 @@ fn airCmpxchg(self: *CodeGen, inst: Air.Inst.Index) !void {
     defer for (regs_lock) |lock| self.register_manager.unlockReg(lock);
 
     const exp_mcv = try self.resolveInst(extra.expected_value);
-    if (val_abi_size > 8) {
-        const exp_addr_mcv: MCValue = switch (exp_mcv) {
-            .memory, .indirect, .load_frame => exp_mcv.address(),
-            else => .{ .register = try self.copyToTmpRegister(.usize, exp_mcv.address()) },
-        };
-        const exp_addr_lock =
-            if (exp_addr_mcv.getReg()) |reg| self.register_manager.lockReg(reg) else null;
-        defer if (exp_addr_lock) |lock| self.register_manager.unlockReg(lock);
-
-        try self.genSetReg(.rax, .usize, exp_addr_mcv.deref(), .{});
-        try self.genSetReg(.rdx, .usize, exp_addr_mcv.offset(8).deref(), .{});
-    } else try self.genSetReg(.rax, val_ty, exp_mcv, .{});
+    if (val_abi_size > 8)
+        try self.genCopy(.u128, .{ .register_pair = .{ .rax, .rdx } }, exp_mcv, .{})
+    else
+        try self.genSetReg(.rax, val_ty, exp_mcv, .{});
 
     const new_mcv = try self.resolveInst(extra.new_value);
-    const new_reg = if (val_abi_size > 8) new: {
-        const new_addr_mcv: MCValue = switch (new_mcv) {
-            .memory, .indirect, .load_frame => new_mcv.address(),
-            else => .{ .register = try self.copyToTmpRegister(.usize, new_mcv.address()) },
-        };
-        const new_addr_lock =
-            if (new_addr_mcv.getReg()) |reg| self.register_manager.lockReg(reg) else null;
-        defer if (new_addr_lock) |lock| self.register_manager.unlockReg(lock);
-
-        try self.genSetReg(.rbx, .usize, new_addr_mcv.deref(), .{});
-        try self.genSetReg(.rcx, .usize, new_addr_mcv.offset(8).deref(), .{});
+    const new_reg: ?Register = if (val_abi_size > 8) new: {
+        try self.genCopy(.u128, .{ .register_pair = .{ .rbx, .rcx } }, new_mcv, .{});
         break :new null;
     } else try self.copyToTmpRegister(val_ty, new_mcv);
     const new_lock = if (new_reg) |reg| self.register_manager.lockRegAssumeUnused(reg) else null;

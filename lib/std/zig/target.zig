@@ -520,12 +520,12 @@ pub fn intAlignment(target: *const std.Target, bits: u16) u16 {
 }
 
 pub fn compilerRtFloatAbi(target: *const std.Target, bits: u16) std.Target.Abi.Float {
-    if (target.cpu.has(.x86, .soft_float)) return .soft;
+    if (target.cpu.arch.isX86() and target.abi.float() == .soft) return .soft;
     // Marks targets where clang does not even provide a usable C type.
     const no_c_type_available = .soft;
     switch (bits) {
         else => unreachable,
-        16 => if (target.cpu.arch.isMIPS() or target.cpu.arch.isPowerPC()) return no_c_type_available,
+        16 => if (target.cpu.arch.isMips() or target.cpu.arch.isPowerpc()) return no_c_type_available,
         32, 64 => {},
         80 => if (target.cTypeBitSize(.longdouble) != 80) return no_c_type_available,
         128 => {

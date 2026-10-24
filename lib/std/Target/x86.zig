@@ -208,7 +208,6 @@ pub const Feature = enum {
     sm4,
     smap,
     smep,
-    soft_float,
     sse,
     sse2,
     sse3,
@@ -1376,11 +1375,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.smep)] = .{
         .llvm_name = null,
         .description = "Enable Supervisor Mode Execution Prevention",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.soft_float)] = .{
-        .llvm_name = "soft-float",
-        .description = "Use software floating point features",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.sse)] = .{
@@ -3884,7 +3878,6 @@ pub const cpu = struct {
         .features = featureSet(&[_]Feature{
             .cx8,
             .slow_unaligned_mem_16,
-            .soft_float,
             .vzeroupper,
         }),
     };

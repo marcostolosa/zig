@@ -6682,6 +6682,12 @@ pub fn addCCArgs(
         });
     }
 
+    if (target.cpu.arch.isX86() and target.abi.float() == .soft) {
+        // This is necessary to get the effects of the `soft-float` backend
+        // subtarget feature in the frontend as well.
+        try argv.append("-mgeneral-regs-only");
+    }
+
     if (mod.patchable_function_entry > 0) {
         const pf = mod.patchable_function_entry;
         try argv.append(try std.fmt.allocPrint(arena, "-fpatchable-function-entry={}", .{pf}));
@@ -6691,8 +6697,13 @@ pub fn addCCArgs(
 
     // Non-preprocessed assembly files don't support these flags.
     if (ext != .assembly) {
-        if (target_util.clangSupportsNoImplicitFloatArg(target) and target.abi.float() == .soft) {
-            try argv.append("-mno-implicit-float");
+        if (target.abi.float() == .soft) {
+            if (target_util.clangSupportsNoImplicitFloatArg(target)) {
+                try argv.append("-mno-implicit-float");
+            }
+
+            // Ensure that Clang emits the `use-soft-float` function attribute.
+            try argv.appendSlice(&.{ "-Xclang", "-msoft-float" });
         }
 
         if (target_util.hasRedZone(target)) {

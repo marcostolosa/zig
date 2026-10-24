@@ -3625,6 +3625,10 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
             .{
+                .llvm_name = "soft-float",
+                .omit = true,
+            },
+            .{
                 .llvm_name = "x32",
                 .omit = true,
             },
@@ -3665,6 +3669,7 @@ const targets = [_]ArchTarget{
                 .desc = "Prefetch with Intent to Write and T1 Hint",
                 .deps = &.{},
             },
+
             // Custom Zig features
             .{
                 .zig_name = "bsf_bsr_0_clobbers_result",
@@ -3810,10 +3815,6 @@ const targets = [_]ArchTarget{
                     "avx512pf",
                     "prefetchwt1",
                 },
-            },
-            .{
-                .llvm_name = "lakemont",
-                .extra_deps = &.{"soft_float"},
             },
             .{
                 .llvm_name = "meteorlake",

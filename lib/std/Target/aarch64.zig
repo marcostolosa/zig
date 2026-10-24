@@ -3804,7 +3804,6 @@ pub const cpu = struct {
             .aggressive_fma,
             .arith_bcc_fusion,
             .balance_fp_ops,
-            .no_unaligned_access,
             .perfmon,
             .predictable_select_expensive,
             .sha2,

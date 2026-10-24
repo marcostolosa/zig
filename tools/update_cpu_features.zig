@@ -708,6 +708,7 @@ const targets = [_]ArchTarget{
             .{
                 .llvm_name = "thunderx3t110",
                 .flatten = true,
+                .omit_deps = &.{"no_unaligned_access"},
             },
             .{
                 .llvm_name = "thunderxt81",

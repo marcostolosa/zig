@@ -4987,8 +4987,6 @@ fn create(
         .openbsd => .OPENBSD,
         .cuda => .CUDA,
         .amdhsa => .AMDGPU_HSA,
-        .amdpal => .AMDGPU_PAL,
-        .mesa3d => .AMDGPU_MESA3D,
     };
     const @"type": EhdrType = switch (comp.config.output_mode) {
         .Exe => if (comp.config.pie or target.os.tag == .haiku) .DYN else .EXEC,

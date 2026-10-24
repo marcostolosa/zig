@@ -38,8 +38,6 @@
     .{ .cpu = .{ .aarch64_be = .{} }, .os = .{ .netbsd = .{} }, .abi = .{ .none = .{} }, .cache_mode = .whole, .backend = .llvm, .linker = .lld, .pic = .pic },
 
     .{ .cpu = .{ .amdgcn = .{} }, .os = .{ .amdhsa = .{} }, .abi = .{ .none = .{} }, .cache_mode = .whole, .backend = .llvm, .linker = .lld, .pic = .pic },
-    .{ .cpu = .{ .amdgcn = .{} }, .os = .{ .amdpal = .{} }, .abi = .{ .none = .{} }, .cache_mode = .whole, .backend = .llvm, .linker = .lld, .pic = .pic },
-    .{ .cpu = .{ .amdgcn = .{} }, .os = .{ .mesa3d = .{} }, .abi = .{ .none = .{} }, .cache_mode = .whole, .backend = .llvm, .linker = .lld, .pic = .pic },
 
     .{ .cpu = .{ .arc = .{} }, .os = .{ .freestanding = .{} }, .abi = .{ .none = .{} }, .cache_mode = .whole, .backend = .llvm, .linker = .lld, .pic = .pic },
     .{ .cpu = .{ .arc = .{} }, .os = .{ .linux = .{} }, .abi = .{ .gnu = .{} }, .cache_mode = .whole, .backend = .llvm, .linker = .lld, .pic = .pic },

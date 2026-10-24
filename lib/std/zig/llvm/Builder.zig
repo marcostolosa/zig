@@ -253,13 +253,10 @@ pub fn tripleForTarget(allocator: Allocator, target: *const std.Target) ![]const
         .ps5,
         => "scei",
         .amdhsa,
-        .amdpal,
         => "amd",
         .cuda,
         .nvcl,
         => "nvidia",
-        .mesa3d,
-        => "mesa",
         else => "unknown",
     });
     try llvm_triple.append(allocator, '-');
@@ -281,8 +278,6 @@ pub fn tripleForTarget(allocator: Allocator, target: *const std.Target) ![]const
         .ps3 => "lv2",
         .ps4 => "ps4",
         .ps5 => "ps5",
-        .mesa3d => "mesa3d",
-        .amdpal => "amdpal",
         .hurd => "hurd",
         .wasi => "wasi",
         .emscripten => "emscripten",

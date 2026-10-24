@@ -1292,7 +1292,6 @@ pub fn toLLVMTriple(target: *const Target, buf: []u8) []const u8 {
 
     const llvm_os = switch (target.os.tag) {
         .amdhsa => "amdhsa",
-        .amdpal => "amdpal",
         .cuda => "cuda",
         .dragonfly => "dragonfly",
         .driverkit => "driverkit",
@@ -1307,7 +1306,6 @@ pub fn toLLVMTriple(target: *const Target, buf: []u8) []const u8 {
         .linux => "linux",
         .macos => "macosx",
         .managarm => "managarm",
-        .mesa3d => "mesa3d",
         .netbsd => "netbsd",
         .nvcl => "nvcl",
         .openbsd => "openbsd",
@@ -1410,8 +1408,6 @@ pub fn isPIEDefault(target: *const Target) DefaultPIStatus {
 
         .cuda,
         .amdhsa,
-        .amdpal,
-        .mesa3d,
 
         .ps4,
         .ps5,
@@ -1484,8 +1480,6 @@ pub fn isPICdefault(target: *const Target) DefaultPIStatus {
         .driverkit,
 
         .amdhsa,
-        .amdpal,
-        .mesa3d,
 
         .ps4,
         .ps5,
@@ -1551,7 +1545,7 @@ pub fn isPICdefault(target: *const Target) DefaultPIStatus {
 
 pub fn isPICDefaultForced(target: *const Target) DefaultPIStatus {
     return switch (target.os.tag) {
-        .amdhsa, .amdpal, .mesa3d => .yes,
+        .amdhsa => .yes,
 
         .haiku,
         .dragonfly,

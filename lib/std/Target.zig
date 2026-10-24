@@ -62,9 +62,7 @@ pub const Os = struct {
         wasi,
 
         amdhsa,
-        amdpal,
         cuda,
-        mesa3d,
         nvcl,
         opencl,
         opengl,
@@ -171,8 +169,6 @@ pub const Os = struct {
 
                 .emscripten,
 
-                .mesa3d,
-
                 .ashetos,
                 => .none,
 
@@ -205,7 +201,6 @@ pub const Os = struct {
                 .wasi,
 
                 .amdhsa,
-                .amdpal,
                 .cuda,
                 .nvcl,
                 .opencl,
@@ -409,8 +404,6 @@ pub const Os = struct {
                 .gba,
 
                 .emscripten,
-
-                .mesa3d,
 
                 .ashetos,
                 => .{ .none = {} },
@@ -666,12 +659,6 @@ pub const Os = struct {
                     .semver = .{
                         .min = .{ .major = 6, .minor = 1, .patch = 0 },
                         .max = .{ .major = 7, .minor = 2, .patch = 3 },
-                    },
-                },
-                .amdpal => .{
-                    .semver = .{
-                        .min = .{ .major = 1, .minor = 1, .patch = 0 },
-                        .max = .{ .major = 3, .minor = 5, .patch = 0 },
                     },
                 },
                 .cuda => .{
@@ -960,9 +947,7 @@ pub const Abi = enum {
             .ps4,
             .ps5,
             .amdhsa,
-            .amdpal,
             .cuda,
-            .mesa3d,
             .nvcl,
             .opencl,
             .opengl,
@@ -2341,8 +2326,6 @@ pub fn requiresLibC(target: *const Target) bool {
         .gba,
         .psp,
         .vita,
-        .mesa3d,
-        .amdpal,
         .hurd,
         .wasi,
         .uefi,
@@ -2518,9 +2501,7 @@ pub const DynamicLinker = struct {
             .wasi,
 
             .amdhsa,
-            .amdpal,
             .cuda,
-            .mesa3d,
             .nvcl,
             .opencl,
             .opengl,
@@ -2965,9 +2946,7 @@ pub const DynamicLinker = struct {
             .wasi,
 
             .amdhsa,
-            .amdpal,
             .cuda,
-            .mesa3d,
             .nvcl,
             .opencl,
             .opengl,
@@ -3470,7 +3449,7 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) ?u16 {
             },
         },
 
-        .cuda, .amdhsa, .amdpal, .mesa3d, .nvcl, .opencl, .vulkan => switch (c_type) {
+        .cuda, .amdhsa, .nvcl, .opencl, .vulkan => switch (c_type) {
             .char => 8,
             .short, .ushort => 16,
             .int, .uint, .float => 32,

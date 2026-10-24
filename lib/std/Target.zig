@@ -2154,6 +2154,17 @@ pub const Cpu = struct {
                     else => &sparc.cpu.v8,
                 },
                 .sparc64 => &sparc.cpu.ultrasparc,
+                .spirv32 => switch (os.tag) {
+                    .opencl => &spirv.cpu.opencl_v2_1,
+                    .opengl => &spirv.cpu.opengl_v4_6,
+                    .vulkan => &spirv.cpu.vulkan_v1_0,
+                    else => generic(arch),
+                },
+                .spirv64 => switch (os.tag) {
+                    .opencl => &spirv.cpu.opencl_v2_1,
+                    .vulkan => &spirv.cpu.vulkan_v1_0,
+                    else => generic(arch),
+                },
                 .x86 => &x86.cpu.pentium4,
                 .x86_64 => switch (os.tag) {
                     .driverkit, .maccatalyst => &x86.cpu.nehalem,

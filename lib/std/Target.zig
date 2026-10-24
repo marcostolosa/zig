@@ -671,13 +671,13 @@ pub const Os = struct {
                 .opencl,
                 => .{
                     .semver = .{
-                        .min = .{ .major = 2, .minor = 2, .patch = 0 },
-                        .max = .{ .major = 3, .minor = 0, .patch = 19 },
+                        .min = .{ .major = 2, .minor = 1, .patch = 0 },
+                        .max = .{ .major = 3, .minor = 1, .patch = 19 },
                     },
                 },
                 .opengl => .{
                     .semver = .{
-                        .min = .{ .major = 4, .minor = 5, .patch = 0 },
+                        .min = .{ .major = 4, .minor = 6, .patch = 0 },
                         .max = .{ .major = 4, .minor = 6, .patch = 0 },
                     },
                 },
@@ -689,8 +689,8 @@ pub const Os = struct {
                 },
                 .vulkan => .{
                     .semver = .{
-                        .min = .{ .major = 1, .minor = 2, .patch = 0 },
-                        .max = .{ .major = 1, .minor = 4, .patch = 352 },
+                        .min = .{ .major = 1, .minor = 0, .patch = 0 },
+                        .max = .{ .major = 1, .minor = 4, .patch = 366 },
                     },
                 },
             };

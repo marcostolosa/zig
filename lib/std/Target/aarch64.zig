@@ -5,7 +5,6 @@ const CpuFeature = std.Target.Cpu.Feature;
 const CpuModel = std.Target.Cpu.Model;
 
 pub const Feature = enum {
-    a320,
     addr_lsl_slow_14,
     aes,
     aggressive_fma,
@@ -88,7 +87,6 @@ pub const Feature = enum {
     fpac,
     fprcvt,
     fptoint,
-    fujitsu_monaka,
     fullfp16,
     fuse_address,
     fuse_addsub_2reg_const1,
@@ -139,7 +137,6 @@ pub const Feature = enum {
     no_zcz_fpr64,
     nv,
     occmo,
-    olympus,
     outline_atomics,
     pan,
     pan_rwv,
@@ -299,18 +296,6 @@ pub const all_features = blk: {
     const len = @typeInfo(Feature).@"enum".field_names.len;
     std.debug.assert(len <= CpuFeature.Set.needed_bit_count);
     var result: [len]CpuFeature = undefined;
-    result[@backingInt(Feature.a320)] = .{
-        .llvm_name = "a320",
-        .description = "Cortex-A320 ARM processors",
-        .dependencies = featureSet(&[_]Feature{
-            .aggressive_interleaving,
-            .fuse_adrp_add,
-            .fuse_aes,
-            .use_fixed_over_scalable_if_equal_cost,
-            .use_postra_scheduler,
-            .use_wzr_to_vec_move,
-        }),
-    };
     result[@backingInt(Feature.addr_lsl_slow_14)] = .{
         .llvm_name = "addr-lsl-slow-14",
         .description = "Address operands with shift amount of 1 or 4 are slow",
@@ -776,16 +761,6 @@ pub const all_features = blk: {
             .fp_armv8,
         }),
     };
-    result[@backingInt(Feature.fujitsu_monaka)] = .{
-        .llvm_name = "fujitsu-monaka",
-        .description = "Fujitsu FUJITSU-MONAKA processors",
-        .dependencies = featureSet(&[_]Feature{
-            .arith_bcc_fusion,
-            .enable_select_opt,
-            .predictable_select_expensive,
-            .use_postra_scheduler,
-        }),
-    };
     result[@backingInt(Feature.fullfp16)] = .{
         .llvm_name = "fullfp16",
         .description = "Enable half-precision floating-point data processing",
@@ -1060,21 +1035,6 @@ pub const all_features = blk: {
         .llvm_name = "occmo",
         .description = "Enable Armv9.6-A Outer cacheable cache maintenance operations",
         .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.olympus)] = .{
-        .llvm_name = "olympus",
-        .description = "NVIDIA Olympus processors",
-        .dependencies = featureSet(&[_]Feature{
-            .alu_lsl_fast,
-            .cmp_bcc_fusion,
-            .enable_select_opt,
-            .fuse_adrp_add,
-            .fuse_aes,
-            .max_interleave_factor_4,
-            .predictable_select_expensive,
-            .use_fixed_over_scalable_if_equal_cost,
-            .use_postra_scheduler,
-        }),
     };
     result[@backingInt(Feature.outline_atomics)] = .{
         .llvm_name = "outline-atomics",
@@ -3128,12 +3088,17 @@ pub const cpu = struct {
         .name = "cortex_a320",
         .llvm_name = "cortex-a320",
         .features = featureSet(&[_]Feature{
-            .a320,
+            .aggressive_interleaving,
             .ete,
             .fp16fml,
+            .fuse_adrp_add,
+            .fuse_aes,
             .mte,
             .perfmon,
             .sve_bitperm,
+            .use_fixed_over_scalable_if_equal_cost,
+            .use_postra_scheduler,
+            .use_wzr_to_vec_move,
             .v9_2a,
         }),
     };
@@ -3959,7 +3924,9 @@ pub const cpu = struct {
         .name = "fujitsu_monaka",
         .llvm_name = "fujitsu-monaka",
         .features = featureSet(&[_]Feature{
+            .arith_bcc_fusion,
             .clrbhb,
+            .enable_select_opt,
             .ete,
             .faminmax,
             .fp16fml,
@@ -3967,16 +3934,17 @@ pub const cpu = struct {
             .fp8dot4,
             .fp8fma,
             .fpac,
-            .fujitsu_monaka,
             .ls64,
             .lut,
             .perfmon,
+            .predictable_select_expensive,
             .rand,
             .specres2,
             .sve_aes,
             .sve_bitperm,
             .sve_sha3,
             .sve_sm4,
+            .use_postra_scheduler,
             .v9_3a,
         }),
     };
@@ -4335,8 +4303,11 @@ pub const cpu = struct {
         .name = "olympus",
         .llvm_name = "olympus",
         .features = featureSet(&[_]Feature{
+            .alu_lsl_fast,
             .brbe,
             .chk,
+            .cmp_bcc_fusion,
+            .enable_select_opt,
             .ete,
             .faminmax,
             .fp16fml,
@@ -4344,17 +4315,22 @@ pub const cpu = struct {
             .fp8dot4,
             .fp8fma,
             .fpac,
+            .fuse_adrp_add,
+            .fuse_aes,
             .ls64,
             .lut,
+            .max_interleave_factor_4,
             .mte,
-            .olympus,
             .perfmon,
+            .predictable_select_expensive,
             .rand,
             .spe,
             .sve_aes,
             .sve_bitperm,
             .sve_sha3,
             .sve_sm4,
+            .use_fixed_over_scalable_if_equal_cost,
+            .use_postra_scheduler,
             .v9_2a,
         }),
     };
@@ -4383,8 +4359,11 @@ pub const cpu = struct {
         .name = "rigel",
         .llvm_name = "rigel",
         .features = featureSet(&[_]Feature{
+            .alu_lsl_fast,
             .brbe,
             .chk,
+            .cmp_bcc_fusion,
+            .enable_select_opt,
             .ete,
             .faminmax,
             .fp16fml,
@@ -4392,17 +4371,22 @@ pub const cpu = struct {
             .fp8dot4,
             .fp8fma,
             .fpac,
+            .fuse_adrp_add,
+            .fuse_aes,
             .ls64,
             .lut,
+            .max_interleave_factor_4,
             .mte,
-            .olympus,
             .perfmon,
+            .predictable_select_expensive,
             .rand,
             .spe,
             .sve_aes,
             .sve_bitperm,
             .sve_sha3,
             .sve_sm4,
+            .use_fixed_over_scalable_if_equal_cost,
+            .use_postra_scheduler,
             .v9_2a,
         }),
     };

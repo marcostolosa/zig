@@ -137,17 +137,13 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
             .{
-                .llvm_name = "CONTEXTIDREL2",
-                .zig_name = "contextidr_el2",
-                .desc = "Enable RW operand Context ID Register (EL2)",
+                .llvm_name = "mca-streaming-sched",
+                .omit = true,
             },
+
             .{
                 .llvm_name = "hip12",
                 .flatten = true,
-            },
-            .{
-                .llvm_name = "mca-streaming-sched",
-                .omit = true,
             },
             .{
                 .llvm_name = "neoversee1",
@@ -195,6 +191,10 @@ const targets = [_]ArchTarget{
             },
             .{
                 .llvm_name = "exynosm4",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "a320",
                 .flatten = true,
             },
             .{
@@ -398,7 +398,15 @@ const targets = [_]ArchTarget{
                 .flatten = true,
             },
             .{
+                .llvm_name = "fujitsu-monaka",
+                .flatten = true,
+            },
+            .{
                 .llvm_name = "kryo",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "olympus",
                 .flatten = true,
             },
             .{
@@ -442,6 +450,11 @@ const targets = [_]ArchTarget{
                 .flatten = true,
             },
 
+            .{
+                .llvm_name = "CONTEXTIDREL2",
+                .zig_name = "contextidr_el2",
+                .desc = "Enable RW operand Context ID Register (EL2)",
+            },
             .{
                 .llvm_name = "strict-align",
                 .zig_name = "no_unaligned_access",

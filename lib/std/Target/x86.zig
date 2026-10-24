@@ -2833,21 +2833,6 @@ pub const cpu = struct {
             .xsaves,
         }),
     };
-    pub const generic: CpuModel = .{
-        .name = "generic",
-        .llvm_name = "generic",
-        .features = featureSet(&[_]Feature{
-            .@"64bit",
-            .cx8,
-            .fast_15bytenop,
-            .fast_scalar_fsqrt,
-            .idivq_to_divl,
-            .macrofusion,
-            .slow_3ops_lea,
-            .vzeroupper,
-            .x87,
-        }),
-    };
     pub const geode: CpuModel = .{
         .name = "geode",
         .llvm_name = "geode",

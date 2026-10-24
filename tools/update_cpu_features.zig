@@ -4132,6 +4132,136 @@ const targets = [_]ArchTarget{
         },
         .model_overrides = &.{
             .{
+                .llvm_name = "generic",
+                .omit = true,
+            },
+            // LLVM defines a bunch of dumb aliases with foreach loops in X86.td.
+            .{
+                .llvm_name = "pentium_mmx",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "pentium_pro",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "pentium_ii",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "pentium_3m",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "pentium_iii",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "pentium_iii_no_xmm_regs",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "pentium_m",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "pentium4m",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "pentium_4",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "pentium_4_sse3",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "core_2_duo_ssse3",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "core_2_duo_sse4_1",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "atom_sse4_2",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "goldmont-plus",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "core_i7_sse4_2",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "core_aes_pclmulqdq",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "corei7-avx",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "core_2nd_gen_avx",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "core-avx-i",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "core_3rd_gen_avx",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "core-avx2",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "core_4th_gen_avx",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "core_4th_gen_avx_tsx",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "core_5th_gen_avx",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "core_5th_gen_avx_tsx",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "mic_avx512",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "skylake-avx512",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "icelake-client",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "icelake-server",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "graniterapids_d",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "arrowlake_s",
+                .omit = true,
+            },
+
+            .{
                 .llvm_name = "amdfam10",
                 .extra_deps = &.{"3dnowa"},
             },
@@ -4338,132 +4468,6 @@ const targets = [_]ArchTarget{
             .{
                 .llvm_name = "znver5",
                 .extra_deps = &.{ "smap", "smep" },
-            },
-
-            // LLVM defines a bunch of dumb aliases with foreach loops in X86.td.
-            .{
-                .llvm_name = "pentium_mmx",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "pentium_pro",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "pentium_ii",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "pentium_3m",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "pentium_iii",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "pentium_iii_no_xmm_regs",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "pentium_m",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "pentium4m",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "pentium_4",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "pentium_4_sse3",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "core_2_duo_ssse3",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "core_2_duo_sse4_1",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "atom_sse4_2",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "goldmont-plus",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "core_i7_sse4_2",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "core_aes_pclmulqdq",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "corei7-avx",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "core_2nd_gen_avx",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "core-avx-i",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "core_3rd_gen_avx",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "core-avx2",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "core_4th_gen_avx",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "core_4th_gen_avx_tsx",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "core_5th_gen_avx",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "core_5th_gen_avx_tsx",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "mic_avx512",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "skylake-avx512",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "icelake-client",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "icelake-server",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "graniterapids_d",
-                .omit = true,
-            },
-            .{
-                .llvm_name = "arrowlake_s",
-                .omit = true,
             },
         },
         .extra_models = &.{

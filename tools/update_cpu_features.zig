@@ -758,8 +758,108 @@ const targets = [_]ArchTarget{
                 .llvm_name = "apple-latest",
                 .omit = true,
             },
+            .{
+                .llvm_name = "generic",
+                .omit = true,
+            },
         },
         .extra_models = &.{
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv8a",
+                .features = &.{"v8a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv8r",
+                .features = &.{"v8r"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv8_1a",
+                .features = &.{"v8_1a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv8_2a",
+                .features = &.{"v8_2a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv8_3a",
+                .features = &.{"v8_3a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv8_4a",
+                .features = &.{"v8_4a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv8_5a",
+                .features = &.{"v8_5a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv8_6a",
+                .features = &.{"v8_6a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv8_7a",
+                .features = &.{"v8_7a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv8_8a",
+                .features = &.{"v8_8a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv8_9a",
+                .features = &.{"v8_9a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv9a",
+                .features = &.{"v9a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv9_1a",
+                .features = &.{"v9_1a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv9_2a",
+                .features = &.{"v9_2a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv9_3a",
+                .features = &.{"v9_3a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv9_4a",
+                .features = &.{"v9_4a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv9_5a",
+                .features = &.{"v9_5a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv9_6a",
+                .features = &.{"v9_6a"},
+            },
+            .{
+                .llvm_name = "generic",
+                .zig_name = "armv9_7a",
+                .features = &.{"v9_7a"},
+            },
+
             .{
                 .llvm_name = null,
                 .zig_name = "exynos_m1",

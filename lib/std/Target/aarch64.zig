@@ -2464,6 +2464,139 @@ pub const cpu = struct {
             .v9_2a,
         }),
     };
+    pub const armv8_1a: CpuModel = .{
+        .name = "armv8_1a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v8_1a,
+        }),
+    };
+    pub const armv8_2a: CpuModel = .{
+        .name = "armv8_2a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v8_2a,
+        }),
+    };
+    pub const armv8_3a: CpuModel = .{
+        .name = "armv8_3a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v8_3a,
+        }),
+    };
+    pub const armv8_4a: CpuModel = .{
+        .name = "armv8_4a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v8_4a,
+        }),
+    };
+    pub const armv8_5a: CpuModel = .{
+        .name = "armv8_5a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v8_5a,
+        }),
+    };
+    pub const armv8_6a: CpuModel = .{
+        .name = "armv8_6a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v8_6a,
+        }),
+    };
+    pub const armv8_7a: CpuModel = .{
+        .name = "armv8_7a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v8_7a,
+        }),
+    };
+    pub const armv8_8a: CpuModel = .{
+        .name = "armv8_8a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v8_8a,
+        }),
+    };
+    pub const armv8_9a: CpuModel = .{
+        .name = "armv8_9a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v8_9a,
+        }),
+    };
+    pub const armv8a: CpuModel = .{
+        .name = "armv8a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v8a,
+        }),
+    };
+    pub const armv8r: CpuModel = .{
+        .name = "armv8r",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v8r,
+        }),
+    };
+    pub const armv9_1a: CpuModel = .{
+        .name = "armv9_1a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v9_1a,
+        }),
+    };
+    pub const armv9_2a: CpuModel = .{
+        .name = "armv9_2a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v9_2a,
+        }),
+    };
+    pub const armv9_3a: CpuModel = .{
+        .name = "armv9_3a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v9_3a,
+        }),
+    };
+    pub const armv9_4a: CpuModel = .{
+        .name = "armv9_4a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v9_4a,
+        }),
+    };
+    pub const armv9_5a: CpuModel = .{
+        .name = "armv9_5a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v9_5a,
+        }),
+    };
+    pub const armv9_6a: CpuModel = .{
+        .name = "armv9_6a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v9_6a,
+        }),
+    };
+    pub const armv9_7a: CpuModel = .{
+        .name = "armv9_7a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v9_7a,
+        }),
+    };
+    pub const armv9a: CpuModel = .{
+        .name = "armv9a",
+        .llvm_name = "generic",
+        .features = featureSet(&[_]Feature{
+            .v9a,
+        }),
+    };
     pub const c1_nano: CpuModel = .{
         .name = "c1_nano",
         .llvm_name = "c1-nano",
@@ -3391,16 +3524,6 @@ pub const cpu = struct {
             .sve_sha3,
             .sve_sm4,
             .v9_2a,
-        }),
-    };
-    pub const generic: CpuModel = .{
-        .name = "generic",
-        .llvm_name = "generic",
-        .features = featureSet(&[_]Feature{
-            .ete,
-            .fuse_adrp_add,
-            .fuse_aes,
-            .neon,
         }),
     };
     pub const grace: CpuModel = .{

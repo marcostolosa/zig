@@ -2045,6 +2045,7 @@ pub const Cpu = struct {
         /// Clang compatibility is important, consider using `baseline` instead.
         pub fn generic(arch: Arch) *const Model {
             return switch (arch) {
+                .aarch64, .aarch64_be => &aarch64.cpu.armv8a,
                 .alpha => &alpha.cpu.ev4,
                 .amdgcn => &amdgcn.cpu.gfx600,
                 .avr => &avr.cpu.avr1,

@@ -2573,7 +2573,7 @@ pub const cpu = struct {
     };
     pub const generic: CpuModel = .{
         .name = "generic",
-        .llvm_name = "generic",
+        .llvm_name = null,
         .features = featureSet(&[_]Feature{
             .e2,
         }),

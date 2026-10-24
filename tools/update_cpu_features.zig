@@ -2140,8 +2140,14 @@ const targets = [_]ArchTarget{
         .model_overrides = &.{
             .{
                 .llvm_name = "generic",
-                .extra_deps = &.{"e2"},
-                .omit_deps = &.{"btst16"},
+                .omit = true,
+            },
+        },
+        .extra_models = &.{
+            .{
+                .llvm_name = null,
+                .zig_name = "generic",
+                .features = &.{"e2"},
             },
         },
     },

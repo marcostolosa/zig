@@ -538,6 +538,8 @@ pub fn clangSupportsTargetCpuArg(target: *const std.Target) bool {
     return switch (target.cpu.arch) {
         .arc,
         .msp430,
+        .spirv32,
+        .spirv64,
         .ve,
         .xcore,
         .xtensa,

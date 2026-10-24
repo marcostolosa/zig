@@ -2709,8 +2709,72 @@ const targets = [_]ArchTarget{
         },
         .feature_overrides = &.{
             .{
+                .llvm_name = "i6400",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "i6500",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "p5600",
+                .flatten = true,
+            },
+
+            .{
+                .llvm_name = "gp64",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "long-calls",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "micromips",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "mips16",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "noabicalls",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "ptr64",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "sym32",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "use-compact-branches",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "use-indirect-jump-hazard",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "use-tcc-in-div",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "xgot",
+                .omit = true,
+            },
+
+            .{
                 .llvm_name = "strict-align",
                 .zig_name = "no_unaligned_access",
+            },
+        },
+        .model_overrides = &.{
+            .{
+                .llvm_name = "mips5",
+                .omit = true,
             },
         },
         .extra_models = &.{

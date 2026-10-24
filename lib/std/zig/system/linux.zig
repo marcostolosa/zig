@@ -319,7 +319,6 @@ const mips = struct {
                 .{ "mips32r5", &Target.mips.cpu.mips32r5 },
                 .{ "mips32r2", &Target.mips.cpu.mips32r2 },
                 .{ "mips32r1", &Target.mips.cpu.mips32 },
-                .{ "mips5", &Target.mips.cpu.mips5 },
                 .{ "mips4", &Target.mips.cpu.mips4 },
                 .{ "mips3", &Target.mips.cpu.mips3 },
                 .{ "mips2", &Target.mips.cpu.mips2 },

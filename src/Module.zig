@@ -184,9 +184,8 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
                 return error.PieRequiresPic;
             break :b true;
         }
-        if (options.global.output_mode == .Lib and
-            options.global.link_mode == .dynamic and
-            target_util.requiresPicForDynamicLink(target))
+        if (options.global.link_mode == .dynamic and
+            target_util.requiresPicForDynamicLink(target, options.global.output_mode))
         {
             if (options.inherited.pic == false)
                 return error.DynamicLinkingRequiresPic;
@@ -393,6 +392,11 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
 
         if (target.cpu.arch == .hexagon) {
             try buf.appendSlice("-small-data,"); // Unsupported by LLD.
+        }
+
+        if (target.cpu.arch.isMips()) {
+            try buf.append(if (pic) '-' else '+');
+            try buf.appendSlice("noabicalls,");
         }
 
         if (target.cpu.arch == .s390x) {

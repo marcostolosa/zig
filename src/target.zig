@@ -76,12 +76,16 @@ pub fn requiresPic(target: *const std.Target) bool {
     return (target.os.tag == .windows or target.os.tag == .uefi) and (target.cpu.arch == .aarch64 or target.cpu.arch == .x86_64);
 }
 
-pub fn requiresPicForDynamicLink(target: *const std.Target) bool {
+pub fn requiresPicForDynamicLink(target: *const std.Target, output_mode: std.lang.OutputMode) bool {
     assert(canDynamicLink(target));
 
-    return switch (target.os.tag) {
-        .windows => target.cpu.arch == .aarch64 or target.cpu.arch == .x86_64,
-        else => !target.cpu.arch.isWasm(),
+    return switch (output_mode) {
+        .Lib => switch (target.os.tag) {
+            .windows => target.cpu.arch == .aarch64 or target.cpu.arch == .x86_64,
+            else => !target.cpu.arch.isWasm(),
+        },
+        .Exe => target.cpu.arch.isMips(),
+        .Obj => false,
     };
 }
 

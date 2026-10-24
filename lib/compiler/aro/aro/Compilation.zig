@@ -796,18 +796,6 @@ fn generateSystemDefines(comp: *Compilation, w: *Io.Writer) !void {
                 try w.print("#define _MIPS_ARCH_{s} 1\n", .{upper});
             }
 
-            if (!target.cpu.has(.mips, .noabicalls)) {
-                try define(w, "__mips_abicalls");
-                if (target.os.tag.isBSD()) {
-                    try define(w, "__ABICALLS__");
-                }
-            }
-
-            if (target.cpu.has(.mips, .soft_float)) {
-                try define(w, "__mips_soft_float");
-            } else {
-                try define(w, "__mips_hard_float");
-            }
             if (target.cpu.has(.mips, .single_float)) {
                 try define(w, "__mips_single_float");
             }
@@ -821,12 +809,9 @@ fn generateSystemDefines(comp: *Compilation, w: *Io.Writer) !void {
                 const fpset: u8 = if (target.defaultMipsFpMode() == .fp64 or
                     target.cpu.has(.mips, .single_float)) 32 else 16;
                 try w.print("#define _MIPS_FPSET {d}\n", .{fpset});
-                const spfpset: u8 = if (target.cpu.has(.mips, .nooddspreg) or
-                    target.defaultMipsFpMode() == .fpxx) 16 else 32;
+                const spfpset: u8 = if (target.defaultMipsFpMode() == .fpxx) 16 else 32;
                 try w.print("#define _MIPS_SPFPSET {d}\n", .{spfpset});
             }
-            if (target.cpu.has(.mips, .mips16)) try define(w, "__mips16");
-            if (target.cpu.has(.mips, .micromips)) try define(w, "__mips_micromips");
             if (target.cpu.has(.mips, .nan2008)) try define(w, "__mips_nan2008");
             if (target.cpu.has(.mips, .abs2008)) try define(w, "__mips_abs2008");
             if (target.cpu.has(.mips, .dspr3)) {

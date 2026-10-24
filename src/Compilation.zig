@@ -6693,6 +6693,10 @@ pub fn addCCArgs(
         try argv.append(try std.fmt.allocPrint(arena, "-fpatchable-function-entry={}", .{pf}));
     }
 
+    if (target.cpu.arch.isMips()) {
+        try argv.append(if (mod.pic) "-mabicalls" else "-mno-abicalls");
+    }
+
     try comp.addCommonCCArgs(arena, argv, ext, out_dep_path, mod, comp.config.c_frontend);
 
     // Non-preprocessed assembly files don't support these flags.
@@ -6704,6 +6708,10 @@ pub fn addCCArgs(
 
             // Ensure that Clang emits the `use-soft-float` function attribute.
             try argv.appendSlice(&.{ "-Xclang", "-msoft-float" });
+        }
+
+        if (target.cpu.arch.isMips() and !mod.pic) {
+            try argv.append("-mno-gpopt");
         }
 
         if (target_util.hasRedZone(target)) {

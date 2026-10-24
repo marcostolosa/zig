@@ -2037,6 +2037,13 @@ const targets = [_]ArchTarget{
                 .flatten = true,
             },
         },
+        .model_overrides = &.{
+            .{
+                .llvm_name = "generic",
+                .extra_deps = &.{"e2"},
+                .omit_deps = &.{"btst16"},
+            },
+        },
     },
     .{
         .zig_name = "hexagon",

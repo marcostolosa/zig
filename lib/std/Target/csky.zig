@@ -2575,7 +2575,7 @@ pub const cpu = struct {
         .name = "generic",
         .llvm_name = "generic",
         .features = featureSet(&[_]Feature{
-            .btst16,
+            .e2,
         }),
     };
     pub const @"i805": CpuModel = .{

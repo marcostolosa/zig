@@ -3540,6 +3540,12 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
         },
+        .model_overrides = &.{
+            .{
+                .llvm_name = "generic",
+                .omit = true,
+            },
+        },
     },
     .{
         .zig_name = "s390x",

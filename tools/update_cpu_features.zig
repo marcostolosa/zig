@@ -3625,7 +3625,151 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
             .{
+                .llvm_name = "harden-sls-ijmp",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "harden-sls-ret",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "inline-asm-use-gpr32",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "lvi-cfi",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "lvi-load-hardening",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-edi",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r8",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r9",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r10",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r11",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r12",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r13",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r14",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r15",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r16",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r17",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r18",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r19",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r20",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r21",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r22",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r23",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r24",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r25",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r26",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r27",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r28",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r29",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r30",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "reserve-r31",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "retpoline",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "retpoline-external-thunk",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "retpoline-indirect-branches",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "retpoline-indirect-calls",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "seses",
+                .omit = true,
+            },
+            .{
                 .llvm_name = "soft-float",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "tagged-globals",
                 .omit = true,
             },
             .{

@@ -102,19 +102,14 @@ pub const Feature = enum {
     fsrm,
     fxsr,
     gfni,
-    harden_sls_ijmp,
-    harden_sls_ret,
     hreset,
     idivl_to_divb,
     idivq_to_divl,
-    inline_asm_use_gpr32,
     invpcid,
     jmpabs,
     kl,
     lea_sp,
     lea_uses_ag,
-    lvi_cfi,
-    lvi_load_hardening,
     lwp,
     lzcnt,
     macrofusion,
@@ -155,40 +150,10 @@ pub const Feature = enum {
     rdpru,
     rdrnd,
     rdseed,
-    reserve_edi,
-    reserve_r10,
-    reserve_r11,
-    reserve_r12,
-    reserve_r13,
-    reserve_r14,
-    reserve_r15,
-    reserve_r16,
-    reserve_r17,
-    reserve_r18,
-    reserve_r19,
-    reserve_r20,
-    reserve_r21,
-    reserve_r22,
-    reserve_r23,
-    reserve_r24,
-    reserve_r25,
-    reserve_r26,
-    reserve_r27,
-    reserve_r28,
-    reserve_r29,
-    reserve_r30,
-    reserve_r31,
-    reserve_r8,
-    reserve_r9,
-    retpoline,
-    retpoline_external_thunk,
-    retpoline_indirect_branches,
-    retpoline_indirect_calls,
     rtm,
     sahf,
     sbb_dep_breaking,
     serialize,
-    seses,
     sgx,
     sha,
     sha512,
@@ -215,7 +180,6 @@ pub const Feature = enum {
     sse4_2,
     sse4a,
     ssse3,
-    tagged_globals,
     tbm,
     tsxldtrk,
     tuning_fast_imm_vector_shift,
@@ -828,16 +792,6 @@ pub const all_features = blk: {
             .sse2,
         }),
     };
-    result[@backingInt(Feature.harden_sls_ijmp)] = .{
-        .llvm_name = "harden-sls-ijmp",
-        .description = "Harden against straight line speculation across indirect JMP instructions.",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.harden_sls_ret)] = .{
-        .llvm_name = "harden-sls-ret",
-        .description = "Harden against straight line speculation across RET instructions.",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.hreset)] = .{
         .llvm_name = "hreset",
         .description = "Has hreset instruction",
@@ -851,11 +805,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.idivq_to_divl)] = .{
         .llvm_name = "idivq-to-divl",
         .description = "Use 32-bit divide for positive values less than 2^32",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.inline_asm_use_gpr32)] = .{
-        .llvm_name = "inline-asm-use-gpr32",
-        .description = "Enable use of GPR32 in inline assembly for APX",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.invpcid)] = .{
@@ -883,16 +832,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.lea_uses_ag)] = .{
         .llvm_name = "lea-uses-ag",
         .description = "LEA instruction needs inputs at AG stage",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.lvi_cfi)] = .{
-        .llvm_name = "lvi-cfi",
-        .description = "Prevent indirect calls/branches from using a memory operand, and precede all indirect calls/branches from a register with an LFENCE instruction to serialize control flow. Also decompose RET instructions into a POP+LFENCE+JMP sequence.",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.lvi_load_hardening)] = .{
-        .llvm_name = "lvi-load-hardening",
-        .description = "Insert LFENCE instructions to prevent data speculatively injected into loads from being used maliciously.",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.lwp)] = .{
@@ -1097,156 +1036,6 @@ pub const all_features = blk: {
         .description = "Support RDSEED instruction",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.reserve_edi)] = .{
-        .llvm_name = "reserve-edi",
-        .description = "Reserve EDI, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r10)] = .{
-        .llvm_name = "reserve-r10",
-        .description = "Reserve R10, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r11)] = .{
-        .llvm_name = "reserve-r11",
-        .description = "Reserve R11, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r12)] = .{
-        .llvm_name = "reserve-r12",
-        .description = "Reserve R12, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r13)] = .{
-        .llvm_name = "reserve-r13",
-        .description = "Reserve R13, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r14)] = .{
-        .llvm_name = "reserve-r14",
-        .description = "Reserve R14, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r15)] = .{
-        .llvm_name = "reserve-r15",
-        .description = "Reserve R15, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r16)] = .{
-        .llvm_name = "reserve-r16",
-        .description = "Reserve R16, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r17)] = .{
-        .llvm_name = "reserve-r17",
-        .description = "Reserve R17, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r18)] = .{
-        .llvm_name = "reserve-r18",
-        .description = "Reserve R18, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r19)] = .{
-        .llvm_name = "reserve-r19",
-        .description = "Reserve R19, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r20)] = .{
-        .llvm_name = "reserve-r20",
-        .description = "Reserve R20, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r21)] = .{
-        .llvm_name = "reserve-r21",
-        .description = "Reserve R21, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r22)] = .{
-        .llvm_name = "reserve-r22",
-        .description = "Reserve R22, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r23)] = .{
-        .llvm_name = "reserve-r23",
-        .description = "Reserve R23, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r24)] = .{
-        .llvm_name = "reserve-r24",
-        .description = "Reserve R24, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r25)] = .{
-        .llvm_name = "reserve-r25",
-        .description = "Reserve R25, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r26)] = .{
-        .llvm_name = "reserve-r26",
-        .description = "Reserve R26, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r27)] = .{
-        .llvm_name = "reserve-r27",
-        .description = "Reserve R27, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r28)] = .{
-        .llvm_name = "reserve-r28",
-        .description = "Reserve R28, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r29)] = .{
-        .llvm_name = "reserve-r29",
-        .description = "Reserve R29, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r30)] = .{
-        .llvm_name = "reserve-r30",
-        .description = "Reserve R30, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r31)] = .{
-        .llvm_name = "reserve-r31",
-        .description = "Reserve R31, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r8)] = .{
-        .llvm_name = "reserve-r8",
-        .description = "Reserve R8, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_r9)] = .{
-        .llvm_name = "reserve-r9",
-        .description = "Reserve R9, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.retpoline)] = .{
-        .llvm_name = "retpoline",
-        .description = "Remove speculation of indirect branches from the generated code, either by avoiding them entirely or lowering them with a speculation blocking construct",
-        .dependencies = featureSet(&[_]Feature{
-            .retpoline_indirect_branches,
-            .retpoline_indirect_calls,
-        }),
-    };
-    result[@backingInt(Feature.retpoline_external_thunk)] = .{
-        .llvm_name = "retpoline-external-thunk",
-        .description = "When lowering an indirect call or branch using a `retpoline`, rely on the specified user provided thunk rather than emitting one ourselves. Only has effect when combined with some other retpoline feature",
-        .dependencies = featureSet(&[_]Feature{
-            .retpoline_indirect_calls,
-        }),
-    };
-    result[@backingInt(Feature.retpoline_indirect_branches)] = .{
-        .llvm_name = "retpoline-indirect-branches",
-        .description = "Remove speculation of indirect branches from the generated code",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.retpoline_indirect_calls)] = .{
-        .llvm_name = "retpoline-indirect-calls",
-        .description = "Remove speculation of indirect calls from the generated code",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.rtm)] = .{
         .llvm_name = "rtm",
         .description = "Support RTM instructions",
@@ -1266,13 +1055,6 @@ pub const all_features = blk: {
         .llvm_name = "serialize",
         .description = "Has serialize instruction",
         .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.seses)] = .{
-        .llvm_name = "seses",
-        .description = "Prevent speculative execution side channel timing attacks by inserting a speculation barrier before memory reads, memory writes, and conditional branches. Implies LVI Control Flow integrity.",
-        .dependencies = featureSet(&[_]Feature{
-            .lvi_cfi,
-        }),
     };
     result[@backingInt(Feature.sgx)] = .{
         .llvm_name = "sgx",
@@ -1424,11 +1206,6 @@ pub const all_features = blk: {
         .dependencies = featureSet(&[_]Feature{
             .sse3,
         }),
-    };
-    result[@backingInt(Feature.tagged_globals)] = .{
-        .llvm_name = "tagged-globals",
-        .description = "Use an instruction sequence for taking the address of a global that allows a memory tag in the upper address bits.",
-        .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.tbm)] = .{
         .llvm_name = "tbm",

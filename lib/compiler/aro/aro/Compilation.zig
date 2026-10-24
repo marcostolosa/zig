@@ -729,10 +729,6 @@ fn generateSystemDefines(comp: *Compilation, w: *Io.Writer) !void {
                 try define(w, "__APX_F__");
             }
 
-            if (target.cpu.hasAll(.x86, &.{ .egpr, .inline_asm_use_gpr32 })) {
-                try define(w, "__APX_INLINE_ASM_USE_GPR32__");
-            }
-
             if (target.cpu.has(.x86, .cx8)) {
                 try define(w, "__GCC_HAVE_SYNC_COMPARE_AND_SWAP_8");
             }

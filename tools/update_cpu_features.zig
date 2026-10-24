@@ -2627,6 +2627,10 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
             .{
+                .llvm_name = "generic-la32",
+                .omit = true,
+            },
+            .{
                 .llvm_name = "generic-la64",
                 .omit = true,
             },
@@ -2640,6 +2644,13 @@ const targets = [_]ArchTarget{
             },
         },
         .extra_models = &.{
+            .{
+                .llvm_name = null,
+                .zig_name = "generic_la32",
+                .features = &.{
+                    "32bit",
+                },
+            },
             .{
                 .llvm_name = null,
                 .zig_name = "generic_la64",

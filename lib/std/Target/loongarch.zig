@@ -131,7 +131,7 @@ pub const all_features = blk: {
 pub const cpu = struct {
     pub const generic_la32: CpuModel = .{
         .name = "generic_la32",
-        .llvm_name = "generic-la32",
+        .llvm_name = null,
         .features = featureSet(&[_]Feature{
             .@"32bit",
         }),

@@ -120,7 +120,6 @@ pub const Feature = enum {
     slow_vgetlni32,
     slowfpvfmx,
     slowfpvmlx,
-    soft_float,
     splat_vfp_neon,
     thumb2,
     trustzone,
@@ -907,11 +906,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.slowfpvmlx)] = .{
         .llvm_name = "slowfpvmlx",
         .description = "Disable VFP / NEON MAC instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.soft_float)] = .{
-        .llvm_name = "soft-float",
-        .description = "Use software floating point features.",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.splat_vfp_neon)] = .{

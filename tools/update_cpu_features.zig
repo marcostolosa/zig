@@ -1333,6 +1333,10 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
             .{
+                .llvm_name = "soft-float",
+                .omit = true,
+            },
+            .{
                 .llvm_name = "thumb-mode",
                 .omit = true,
             },

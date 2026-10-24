@@ -35,8 +35,6 @@ pub const Feature = enum {
     fpuv3_hf,
     fpuv3_hi,
     fpuv3_sf,
-    hard_float,
-    hard_float_abi,
     high_registers,
     hwdiv,
     istack,
@@ -224,16 +222,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.fpuv3_sf)] = .{
         .llvm_name = "fpuv3_sf",
         .description = "Enable FPUv3 single float instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.hard_float)] = .{
-        .llvm_name = "hard-float",
-        .description = "Use hard floating point features",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.hard_float_abi)] = .{
-        .llvm_name = "hard-float-abi",
-        .description = "Use hard floating point ABI to pass args",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.high_registers)] = .{

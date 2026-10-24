@@ -518,11 +518,6 @@ pub const cpu = struct {
             .rrbm,
         }),
     };
-    pub const generic: CpuModel = .{
-        .name = "generic",
-        .llvm_name = "generic",
-        .features = featureSet(&[_]Feature{}),
-    };
     pub const z10: CpuModel = .{
         .name = "z10",
         .llvm_name = "z10",

@@ -3772,6 +3772,12 @@ const targets = [_]ArchTarget{
                 .extra_deps = &.{"vxpdeh2"},
             },
         },
+        .model_overrides = &.{
+            .{
+                .llvm_name = "generic",
+                .omit = true,
+            },
+        },
     },
     .{
         .zig_name = "ve",

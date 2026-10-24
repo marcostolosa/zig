@@ -3246,6 +3246,46 @@ const targets = [_]ArchTarget{
         .branch_quota = 2000,
         .feature_overrides = &.{
             .{
+                .llvm_name = "rva20s64",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "rva20u64",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "rva22s64",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "rva22u64",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "rva23s64",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "rva23u64",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "rvb23s64",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "rvb23u64",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "rvi20u32",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "rvi20u64",
+                .flatten = true,
+            },
+            .{
                 .llvm_name = "andes45",
                 .flatten = true,
             },
@@ -3703,6 +3743,57 @@ const targets = [_]ArchTarget{
                 .llvm_name = null,
                 .zig_name = "rv64imc",
                 .features = &.{ "64bit", "c", "i", "m" },
+            },
+
+            .{
+                .llvm_name = null,
+                .zig_name = "rva20s64",
+                .features = &.{"rva20s64"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rva20u64",
+                .features = &.{"rva20u64"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rva22s64",
+                .features = &.{"rva22s64"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rva22u64",
+                .features = &.{"rva22u64"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rva23s64",
+                .features = &.{"rva23s64"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rva23u64",
+                .features = &.{"rva23u64"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rvb23s64",
+                .features = &.{"rvb23s64"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rvb23u64",
+                .features = &.{"rvb23u64"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rvi20u32",
+                .features = &.{"rvi20u32"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rvi20u64",
+                .features = &.{"rvi20u64"},
             },
         },
     },

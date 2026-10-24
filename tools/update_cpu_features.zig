@@ -1089,6 +1089,16 @@ const targets = [_]ArchTarget{
                 .extra_deps = &.{"gfx12"},
             },
         },
+        .model_overrides = &.{
+            .{
+                .llvm_name = "generic",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "generic-hsa",
+                .omit = true,
+            },
+        },
     },
     .{
         .zig_name = "arc",

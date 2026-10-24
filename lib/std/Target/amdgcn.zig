@@ -1824,18 +1824,6 @@ pub const cpu = struct {
             .wavefrontsize64,
         }),
     };
-    pub const generic: CpuModel = .{
-        .name = "generic",
-        .llvm_name = "generic",
-        .features = featureSet(&[_]Feature{}),
-    };
-    pub const generic_hsa: CpuModel = .{
-        .name = "generic_hsa",
-        .llvm_name = "generic-hsa",
-        .features = featureSet(&[_]Feature{
-            .flat_address_space,
-        }),
-    };
     pub const gfx1010: CpuModel = .{
         .name = "gfx1010",
         .llvm_name = "gfx1010",

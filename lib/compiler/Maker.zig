@@ -2044,7 +2044,7 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
 
     const path_or_url = opt_path_or_url orelse fatal("missing url or path parameter", .{});
 
-    var http_client: std.http.Client = .{ .allocator = gpa, .io = io };
+    var http_client: std.http.Client = .{ .allocator = gpa, .io = io, .read_buffer_size = 16384 };
     defer http_client.deinit();
 
     try http_client.initDefaultProxies(arena, environ_map);

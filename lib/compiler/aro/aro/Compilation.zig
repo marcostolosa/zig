@@ -1136,9 +1136,6 @@ fn generateSystemDefines(comp: *Compilation, w: *Io.Writer) !void {
                 try define(w, "__ARM_FEATURE_SME");
                 try define(w, "__ARM_FEATURE_LOCALLY_STREAMING");
             }
-            if (target.cpu.has(.aarch64, .fmv)) {
-                try define(w, "__HAVE_FUNCTION_MULTI_VERSIONING");
-            }
             if (target.cpu.has(.aarch64, .sha3)) {
                 try define(w, "__ARM_FEATURE_SHA3");
                 try define(w, "__ARM_FEATURE_SHA512");

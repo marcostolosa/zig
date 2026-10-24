@@ -891,6 +891,46 @@ const targets = [_]ArchTarget{
         },
         .branch_quota = 2000,
         .feature_overrides = &.{
+            // The `zig_name`s on these are placeholders to avoid collision with
+            // the real features defined further below.
+            .{
+                .llvm_name = "gfx9",
+                .zig_name = "__gfx9",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "gfx10",
+                .zig_name = "__gfx10",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "gfx11",
+                .zig_name = "__gfx11",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "gfx12",
+                .zig_name = "__gfx12",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "gfx13",
+                .zig_name = "__gfx13",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "sea-islands",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "southern-islands",
+                .flatten = true,
+            },
+            .{
+                .llvm_name = "volcanic-islands",
+                .flatten = true,
+            },
+
             .{
                 .llvm_name = "assembler-permissive-wavesize",
                 .omit = true,
@@ -982,6 +1022,71 @@ const targets = [_]ArchTarget{
             .{
                 .llvm_name = "xnack",
                 .flatten = true,
+            },
+
+            .{
+                .llvm_name = "ci-insts",
+                .zig_name = "gfx7",
+            },
+            .{
+                .llvm_name = "gfx8-insts",
+                .zig_name = "gfx8",
+                .extra_deps = &.{"gfx7"},
+            },
+            .{
+                .llvm_name = "gfx9-insts",
+                .zig_name = "gfx9",
+                .extra_deps = &.{"gfx8"},
+            },
+            .{
+                .llvm_name = "gfx90a-insts",
+                .zig_name = "gfx9_0a",
+                .extra_deps = &.{"gfx9"},
+            },
+            .{
+                .llvm_name = "gfx940-insts",
+                .zig_name = "gfx9_4",
+                .extra_deps = &.{"gfx9_0a"},
+            },
+            .{
+                .llvm_name = "gfx950-insts",
+                .zig_name = "gfx9_5",
+                .extra_deps = &.{"gfx9_4"},
+            },
+            .{
+                .llvm_name = "gfx10-insts",
+                .zig_name = "gfx10",
+                .extra_deps = &.{"gfx9"},
+            },
+            .{
+                .llvm_name = "gfx10-3-insts",
+                .zig_name = "gfx10_3",
+                .extra_deps = &.{"gfx10"},
+            },
+            .{
+                .llvm_name = "gfx11-insts",
+                .zig_name = "gfx11",
+                .extra_deps = &.{"gfx10_3"},
+            },
+            .{
+                .llvm_name = "gfx11-7-insts",
+                .zig_name = "gfx11_7",
+                .extra_deps = &.{"gfx11"},
+            },
+            .{
+                .llvm_name = "gfx12-insts",
+                .zig_name = "gfx12",
+                .extra_deps = &.{"gfx11"},
+            },
+            .{
+                .llvm_name = "gfx1250-insts",
+                .zig_name = "gfx12_5",
+                .extra_deps = &.{"gfx12"},
+            },
+            .{
+                .llvm_name = "gfx13-insts",
+                .zig_name = "gfx13",
+                .extra_deps = &.{"gfx12"},
             },
         },
     },

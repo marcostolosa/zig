@@ -25,7 +25,6 @@ pub const Feature = enum {
     osa2011,
     popc,
     slow_rdpc,
-    soft_float,
     soft_mul_div,
     ua2005,
     ua2007,
@@ -151,11 +150,6 @@ pub const all_features = blk: {
         .dependencies = featureSet(&[_]Feature{
             .v9,
         }),
-    };
-    result[@backingInt(Feature.soft_float)] = .{
-        .llvm_name = "soft-float",
-        .description = "Use software emulation for floating point",
-        .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.soft_mul_div)] = .{
         .llvm_name = "soft-mul-div",

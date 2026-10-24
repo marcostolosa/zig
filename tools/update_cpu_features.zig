@@ -3446,6 +3446,10 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
             .{
+                .llvm_name = "soft-float",
+                .omit = true,
+            },
+            .{
                 .llvm_name = "v8plus",
                 .omit = true,
             },

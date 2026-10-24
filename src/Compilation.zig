@@ -6673,13 +6673,24 @@ pub fn addCCArgs(
 
     // We might want to support -mfloat-abi=softfp for Arm and CSKY here in the future.
     if (target_util.clangSupportsFloatAbiArg(target)) {
-        const fabi = @tagName(target.abi.float());
+        const fabi = target.abi.float();
 
         try argv.append(switch (target.cpu.arch) {
             // For whatever reason, Clang doesn't support `-mfloat-abi` for s390x.
-            .s390x => try std.fmt.allocPrint(arena, "-m{s}-float", .{fabi}),
-            else => try std.fmt.allocPrint(arena, "-mfloat-abi={s}", .{fabi}),
+            .s390x => try std.fmt.allocPrint(arena, "-m{s}-float", .{@tagName(fabi)}),
+            else => try std.fmt.allocPrint(arena, "-mfloat-abi={s}", .{@tagName(fabi)}),
         });
+
+        if (target.cpu.arch.isMips() and fabi == .hard) {
+            try argv.appendSlice(if (target.cpu.has(.mips, .single_float))
+                &.{ "-msingle-float", "-mno-odd-spreg" }
+            else if (target.cpu.arch.isMips64() or target.cpu.hasAny(.mips, &.{ .mips32r6, .msa }))
+                &.{ "-mfp64", "-modd-spreg" }
+            else if (target.cpu.has(.mips, .mips2))
+                &.{ "-mfpxx", "-mno-odd-spreg" }
+            else
+                &.{ "-mfp32", "-mno-odd-spreg" });
+        }
     }
 
     if (target.cpu.arch.isX86() and target.abi.float() == .soft) {

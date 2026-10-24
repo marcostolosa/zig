@@ -14,8 +14,6 @@ pub const Feature = enum {
     dspr3,
     eva,
     fix_r5900,
-    fp64,
-    fpxx,
     ginv,
     mips1,
     mips2,
@@ -43,10 +41,8 @@ pub const Feature = enum {
     nan2008,
     no_unaligned_access,
     nomadd4,
-    nooddspreg,
     r5900,
     single_float,
-    soft_float,
     vfpu,
     virt,
 };
@@ -113,16 +109,6 @@ pub const all_features = blk: {
         .description = "Enable R5900 short loop erratum fix",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.fp64)] = .{
-        .llvm_name = "fp64",
-        .description = "Support 64-bit FP registers",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.fpxx)] = .{
-        .llvm_name = "fpxx",
-        .description = "Support for FPXX",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.ginv)] = .{
         .llvm_name = "ginv",
         .description = "Mips Global Invalidate ASE",
@@ -144,7 +130,6 @@ pub const all_features = blk: {
         .llvm_name = "mips3",
         .description = "MIPS III ISA Support",
         .dependencies = featureSet(&[_]Feature{
-            .fp64,
             .mips2,
             .mips3_32,
             .mips3_32r2,
@@ -188,7 +173,6 @@ pub const all_features = blk: {
         .description = "Mips32r6 ISA Support [experimental]",
         .dependencies = featureSet(&[_]Feature{
             .abs2008,
-            .fp64,
             .mips32r5,
             .nan2008,
         }),
@@ -305,11 +289,6 @@ pub const all_features = blk: {
         .description = "Disable 4-operand madd.fmt and related instructions",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.nooddspreg)] = .{
-        .llvm_name = "nooddspreg",
-        .description = "Disable odd numbered single-precision registers",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.r5900)] = .{
         .llvm_name = "r5900",
         .description = "R5900 (PS2 Emotion Engine) Support",
@@ -322,11 +301,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.single_float)] = .{
         .llvm_name = "single-float",
         .description = "Only supports single precision float",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.soft_float)] = .{
-        .llvm_name = "soft-float",
-        .description = "Does not support floating point instructions",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.vfpu)] = .{

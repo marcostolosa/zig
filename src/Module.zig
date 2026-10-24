@@ -397,6 +397,14 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         if (target.cpu.arch.isMips()) {
             try buf.append(if (pic) '-' else '+');
             try buf.appendSlice("noabicalls,");
+            try buf.appendSlice(if (target.cpu.has(.mips, .single_float))
+                "-fpxx,+nooddspreg,"
+            else if (target.cpu.arch.isMips64() or target.cpu.hasAny(.mips, &.{ .mips32r6, .msa }))
+                "-fpxx,-nooddspreg,+fp64,"
+            else if (target.cpu.has(.mips, .mips2))
+                "+fpxx,+nooddspreg,"
+            else
+                "-fpxx,+nooddspreg,");
         }
 
         if (target.cpu.arch == .s390x) {

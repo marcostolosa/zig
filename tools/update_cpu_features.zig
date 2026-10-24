@@ -2722,6 +2722,14 @@ const targets = [_]ArchTarget{
             },
 
             .{
+                .llvm_name = "fp64",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "fpxx",
+                .omit = true,
+            },
+            .{
                 .llvm_name = "gp64",
                 .omit = true,
             },
@@ -2742,7 +2750,15 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
             .{
+                .llvm_name = "nooddspreg",
+                .omit = true,
+            },
+            .{
                 .llvm_name = "ptr64",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "soft-float",
                 .omit = true,
             },
             .{

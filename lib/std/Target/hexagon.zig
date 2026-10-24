@@ -306,15 +306,6 @@ pub const all_features = blk: {
 };
 
 pub const cpu = struct {
-    pub const generic: CpuModel = .{
-        .name = "generic",
-        .llvm_name = "generic",
-        .features = featureSet(&[_]Feature{
-            .cabac,
-            .prev65,
-            .v60,
-        }),
-    };
     pub const hexagonv5: CpuModel = .{
         .name = "hexagonv5",
         .llvm_name = "hexagonv5",

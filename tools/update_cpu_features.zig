@@ -2283,6 +2283,12 @@ const targets = [_]ArchTarget{
                 .extra_deps = &.{"v79"},
             },
         },
+        .model_overrides = &.{
+            .{
+                .llvm_name = "generic",
+                .omit = true,
+            },
+        },
     },
     .{
         .zig_name = "hppa",

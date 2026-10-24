@@ -308,6 +308,7 @@ pub const MCValue = union(enum) {
         return switch (mcv) {
             .memory,
             .indirect,
+            .indirect_load_frame,
             .load_frame,
             .load_nav,
             .load_uav,

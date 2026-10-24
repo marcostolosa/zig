@@ -55,7 +55,7 @@ pub const ParseOptions = struct {
     /// may lose precision when being parsed into `std.json.Value.float`.
     parse_numbers: bool = true,
 
-    /// Enable diagnostics with `var diagnostics: json.Diagnostics = undefined;`,
+    /// Enable diagnostics with `var diagnostics: json.Diagnostics = .{};`,
     /// and set this option to `&diagnostics`.
     diagnostics: ?*Diagnostics = null,
 };
@@ -810,7 +810,7 @@ pub fn innerParseFromValue(
                 }
 
                 if (source.array.items.len != structInfo.field_names.len) {
-                    if (options.diagnostics) |diag| diag.setMessage("tuple length doesn't match expected length");
+                    if (options.diagnostics) |diag| diag.setMessageFmt("tuple length doesn't match expected length. expected: {} found: {}", .{ structInfo.field_names.len, source.array.items.len });
                     return error.UnexpectedToken;
                 }
 
@@ -871,11 +871,11 @@ pub fn innerParseFromValue(
                     return innerParseArrayFromArrayValue(T, arrayInfo.child, arrayInfo.len, allocator, array, options);
                 },
                 .string => |s| {
-                    if (arrayInfo.child != u8) return typeError(options.diagnostics, source, "string");
+                    if (arrayInfo.child != u8) return typeError(options.diagnostics, source, "array");
                     // Fixed-length string.
 
                     if (s.len != arrayInfo.len) {
-                        if (options.diagnostics) |diag| diag.setMessageFmt("Length Mismatch for string. String: {d}. Array: {d}", .{ s.len, arrayInfo.len });
+                        if (options.diagnostics) |diag| diag.setMessageFmt("Length mismatch for fixed-length string. Found: {}. Expected: {}", .{ s.len, arrayInfo.len });
                         return error.LengthMismatch;
                     }
 
@@ -883,7 +883,7 @@ pub fn innerParseFromValue(
                     @memcpy(r[0..], s);
                     return r;
                 },
-                else => |t| return typeError(options.diagnostics, t, "array"),
+                else => |t| return typeError(options.diagnostics, t, if (arrayInfo.child == u8) "array or fixed-length string" else "array"),
             }
         },
 
@@ -918,7 +918,7 @@ pub fn innerParseFromValue(
                             return r;
                         },
                         .string => |s| {
-                            if (ptrInfo.child != u8) return typeError(options.diagnostics, source, "string");
+                            if (ptrInfo.child != u8) return typeError(options.diagnostics, source, "array");
                             // Dynamic length string.
 
                             const r = if (ptrInfo.sentinel()) |sentinel|
@@ -948,7 +948,7 @@ fn innerParseArrayFromArrayValue(
     options: ParseOptions,
 ) !T {
     if (array.items.len != len) {
-        if (options.diagnostics) |diag| diag.setMessage(std.fmt.comptimePrint("array len mismatch. expected: {}", .{len}));
+        if (options.diagnostics) |diag| diag.setMessageFmt("array length mismatch. expected: {}, found: {}", .{ len, array.items.len });
         return error.LengthMismatch;
     }
 

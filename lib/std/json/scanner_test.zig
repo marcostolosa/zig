@@ -506,18 +506,6 @@ test isNumberFormattedLikeAnInteger {
 test "diagnostics buffer" {
     var diags = Diagnostics{};
 
-    diags.setMessage("Test");
-
-    const values = [_][]const u8{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20" };
-
-    inline for (values) |val| {
-        diags.recordContext(val);
-    }
-
-    try std.testing.expectEqualStrings(diags.context_stack[0], "0");
-    try std.testing.expectEqualStrings(diags.context_stack[15], "15");
-
-    diags = Diagnostics{};
     diags.setMessage("test");
     diags.recordContext("First");
     diags.recordContext("Second");

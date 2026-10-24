@@ -390,18 +390,7 @@ test "diagnostics - parseFromTokenSource" {
     var buf: [4096]u8 = undefined;
     var writer: std.Io.Writer = .fixed(&buf);
 
-    var out_buffer: [1000]u8 = undefined;
-    var fixed_writer: Writer = .fixed(&out_buffer);
-    var jw: json.Stringify = .{ .writer = &fixed_writer, .options = .{} };
-
-    try jw.beginObject();
-
-    try jw.objectField("testNum");
-    try jw.write(false);
-
-    try jw.endObject();
-
-    var fbs: std.Io.Reader = .fixed(fixed_writer.buffered());
+    var fbs: std.Io.Reader = .fixed("{\"testNum\":false}");
     var json_reader: Scanner.Reader = .init(testing.allocator, &fbs);
     defer json_reader.deinit();
 

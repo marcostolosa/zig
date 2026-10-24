@@ -710,6 +710,12 @@ pub fn isDynamicAMDGCNFeature(target: *const std.Target, feature: std.Target.Cpu
 
 pub fn llvmMachineAbi(target: *const std.Target) ?[:0]const u8 {
     return switch (target.cpu.arch) {
+        .aarch64, .aarch64_be => if (target.abi.float() == .soft)
+            "aapcs-soft"
+        else if (target.os.tag.isDarwin())
+            "darwinpcs"
+        else
+            "aapcs",
         .arm, .armeb, .thumb, .thumbeb => "aapcs",
         .loongarch64 => switch (target.abi) {
             .gnusf, .muslsf => "lp64s",

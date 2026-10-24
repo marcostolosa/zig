@@ -2482,30 +2482,6 @@ pub const cpu = struct {
             .zifencei,
         }),
     };
-    pub const baseline_rv32: CpuModel = .{
-        .name = "baseline_rv32",
-        .llvm_name = null,
-        .features = featureSet(&[_]Feature{
-            .@"32bit",
-            .a,
-            .c,
-            .d,
-            .i,
-            .m,
-        }),
-    };
-    pub const baseline_rv64: CpuModel = .{
-        .name = "baseline_rv64",
-        .llvm_name = null,
-        .features = featureSet(&[_]Feature{
-            .@"64bit",
-            .a,
-            .c,
-            .d,
-            .i,
-            .m,
-        }),
-    };
     pub const et_soc1: CpuModel = .{
         .name = "et_soc1",
         .llvm_name = "et-soc1",
@@ -2514,24 +2490,6 @@ pub const cpu = struct {
             .c,
             .m,
             .xaifet,
-        }),
-    };
-    pub const generic_rv32: CpuModel = .{
-        .name = "generic_rv32",
-        .llvm_name = "generic-rv32",
-        .features = featureSet(&[_]Feature{
-            .@"32bit",
-            .i,
-            .optimized_nf2_segment_load_store,
-        }),
-    };
-    pub const generic_rv64: CpuModel = .{
-        .name = "generic_rv64",
-        .llvm_name = "generic-rv64",
-        .features = featureSet(&[_]Feature{
-            .@"64bit",
-            .i,
-            .optimized_nf2_segment_load_store,
         }),
     };
     pub const mips_p8700: CpuModel = .{
@@ -2595,6 +2553,205 @@ pub const cpu = struct {
             .zcmp,
             .zicsr,
             .zifencei,
+        }),
+    };
+    pub const rv32e: CpuModel = .{
+        .name = "rv32e",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"32bit",
+            .e,
+        }),
+    };
+    pub const rv32ec: CpuModel = .{
+        .name = "rv32ec",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"32bit",
+            .c,
+            .e,
+        }),
+    };
+    pub const rv32emc: CpuModel = .{
+        .name = "rv32emc",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"32bit",
+            .c,
+            .e,
+            .m,
+        }),
+    };
+    pub const rv32gc: CpuModel = .{
+        .name = "rv32gc",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"32bit",
+            .a,
+            .c,
+            .i,
+            .m,
+            .zcd,
+            .zcf,
+            .zifencei,
+        }),
+    };
+    pub const rv32i: CpuModel = .{
+        .name = "rv32i",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"32bit",
+            .i,
+        }),
+    };
+    pub const rv32im: CpuModel = .{
+        .name = "rv32im",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"32bit",
+            .i,
+            .m,
+        }),
+    };
+    pub const rv32ima: CpuModel = .{
+        .name = "rv32ima",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"32bit",
+            .a,
+            .i,
+            .m,
+        }),
+    };
+    pub const rv32imac: CpuModel = .{
+        .name = "rv32imac",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"32bit",
+            .a,
+            .c,
+            .i,
+            .m,
+        }),
+    };
+    pub const rv32imafc: CpuModel = .{
+        .name = "rv32imafc",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"32bit",
+            .a,
+            .c,
+            .i,
+            .m,
+            .zcf,
+        }),
+    };
+    pub const rv32imafdc: CpuModel = .{
+        .name = "rv32imafdc",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"32bit",
+            .a,
+            .c,
+            .i,
+            .m,
+            .zcd,
+            .zcf,
+        }),
+    };
+    pub const rv32imc: CpuModel = .{
+        .name = "rv32imc",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"32bit",
+            .c,
+            .i,
+            .m,
+        }),
+    };
+    pub const rv64gc: CpuModel = .{
+        .name = "rv64gc",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"64bit",
+            .a,
+            .c,
+            .i,
+            .m,
+            .zcd,
+            .zifencei,
+        }),
+    };
+    pub const rv64i: CpuModel = .{
+        .name = "rv64i",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"64bit",
+            .i,
+        }),
+    };
+    pub const rv64im: CpuModel = .{
+        .name = "rv64im",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"64bit",
+            .i,
+            .m,
+        }),
+    };
+    pub const rv64ima: CpuModel = .{
+        .name = "rv64ima",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"64bit",
+            .a,
+            .i,
+            .m,
+        }),
+    };
+    pub const rv64imac: CpuModel = .{
+        .name = "rv64imac",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"64bit",
+            .a,
+            .c,
+            .i,
+            .m,
+        }),
+    };
+    pub const rv64imafc: CpuModel = .{
+        .name = "rv64imafc",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"64bit",
+            .a,
+            .c,
+            .f,
+            .i,
+            .m,
+        }),
+    };
+    pub const rv64imafdc: CpuModel = .{
+        .name = "rv64imafdc",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"64bit",
+            .a,
+            .c,
+            .i,
+            .m,
+            .zcd,
+        }),
+    };
+    pub const rv64imc: CpuModel = .{
+        .name = "rv64imc",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .@"64bit",
+            .c,
+            .i,
+            .m,
         }),
     };
     pub const sifive_7_series: CpuModel = .{

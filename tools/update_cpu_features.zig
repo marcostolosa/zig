@@ -3599,17 +3599,110 @@ const targets = [_]ArchTarget{
                 .llvm_name = "generic-ooo",
                 .omit = true,
             },
+            .{
+                .llvm_name = "generic-rv32",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "generic-rv64",
+                .omit = true,
+            },
         },
         .extra_models = &.{
             .{
                 .llvm_name = null,
-                .zig_name = "baseline_rv32",
-                .features = &.{ "32bit", "a", "c", "d", "f", "i", "m" },
+                .zig_name = "rv32e",
+                .features = &.{ "32bit", "e" },
             },
             .{
                 .llvm_name = null,
-                .zig_name = "baseline_rv64",
-                .features = &.{ "64bit", "a", "c", "d", "f", "i", "m" },
+                .zig_name = "rv32ec",
+                .features = &.{ "32bit", "c", "e" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv32emc",
+                .features = &.{ "32bit", "c", "e", "m" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv32gc",
+                .features = &.{ "32bit", "a", "c", "d", "i", "m", "zcd", "zcf", "zicsr", "zifencei" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv32i",
+                .features = &.{ "32bit", "i" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv32im",
+                .features = &.{ "32bit", "i", "m" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv32ima",
+                .features = &.{ "32bit", "a", "i", "m" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv32imac",
+                .features = &.{ "32bit", "a", "c", "i", "m" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv32imafc",
+                .features = &.{ "32bit", "a", "c", "f", "i", "m", "zcf" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv32imafdc",
+                .features = &.{ "32bit", "a", "c", "d", "i", "m", "zcd", "zcf" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv32imc",
+                .features = &.{ "32bit", "c", "i", "m" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv64gc",
+                .features = &.{ "64bit", "a", "c", "d", "i", "m", "zcd", "zicsr", "zifencei" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv64i",
+                .features = &.{ "64bit", "i" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv64im",
+                .features = &.{ "64bit", "i", "m" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv64ima",
+                .features = &.{ "64bit", "a", "i", "m" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv64imac",
+                .features = &.{ "64bit", "a", "c", "i", "m" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv64imafc",
+                .features = &.{ "64bit", "a", "c", "f", "i", "m" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv64imafdc",
+                .features = &.{ "64bit", "a", "c", "d", "i", "m", "zcd" },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "rv64imc",
+                .features = &.{ "64bit", "c", "i", "m" },
             },
         },
     },

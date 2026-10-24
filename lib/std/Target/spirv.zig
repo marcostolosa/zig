@@ -1829,16 +1829,95 @@ pub const all_features = blk: {
 };
 
 pub const cpu = struct {
-    pub const generic: CpuModel = .{
-        .name = "generic",
-        .llvm_name = "generic",
-        .features = featureSet(&[_]Feature{}),
+    pub const opencl_v2_1: CpuModel = .{
+        .name = "opencl_v2_1",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .v1_0,
+        }),
     };
-    pub const opencl_v2: CpuModel = .{
-        .name = "opencl_v2",
+    pub const opencl_v2_2: CpuModel = .{
+        .name = "opencl_v2_2",
         .llvm_name = null,
         .features = featureSet(&[_]Feature{
             .v1_2,
+        }),
+    };
+    pub const opencl_v3_1: CpuModel = .{
+        .name = "opencl_v3_1",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .v1_4,
+        }),
+    };
+    pub const opengl_v4_6: CpuModel = .{
+        .name = "opengl_v4_6",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .v1_4,
+        }),
+    };
+    pub const v1_0: CpuModel = .{
+        .name = "v1_0",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .v1_0,
+        }),
+    };
+    pub const v1_1: CpuModel = .{
+        .name = "v1_1",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .v1_1,
+        }),
+    };
+    pub const v1_2: CpuModel = .{
+        .name = "v1_2",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .v1_2,
+        }),
+    };
+    pub const v1_3: CpuModel = .{
+        .name = "v1_3",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .v1_3,
+        }),
+    };
+    pub const v1_4: CpuModel = .{
+        .name = "v1_4",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .v1_4,
+        }),
+    };
+    pub const v1_5: CpuModel = .{
+        .name = "v1_5",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .v1_5,
+        }),
+    };
+    pub const v1_6: CpuModel = .{
+        .name = "v1_6",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .v1_6,
+        }),
+    };
+    pub const vulkan_v1_0: CpuModel = .{
+        .name = "vulkan_v1_0",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .v1_0,
+        }),
+    };
+    pub const vulkan_v1_1: CpuModel = .{
+        .name = "vulkan_v1_1",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .v1_3,
         }),
     };
     pub const vulkan_v1_2: CpuModel = .{
@@ -1846,6 +1925,20 @@ pub const cpu = struct {
         .llvm_name = null,
         .features = featureSet(&[_]Feature{
             .v1_5,
+        }),
+    };
+    pub const vulkan_v1_3: CpuModel = .{
+        .name = "vulkan_v1_3",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .v1_6,
+        }),
+    };
+    pub const vulkan_v1_4: CpuModel = .{
+        .name = "vulkan_v1_4",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .v1_6,
         }),
     };
 };

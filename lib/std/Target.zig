@@ -2070,6 +2070,7 @@ pub const Cpu = struct {
                 .s390x => &s390x.cpu.arch8,
                 .sparc => &sparc.cpu.v7,
                 .sparc64 => &sparc.cpu.v9, // SPARC can only be 64-bit from v9 and up.
+                .spirv32, .spirv64 => &spirv.cpu.v1_0,
                 .ve => &ve.cpu.ve10,
                 .wasm32, .wasm64 => &wasm.cpu.mvp,
                 .x86_16 => &x86.cpu.i86,

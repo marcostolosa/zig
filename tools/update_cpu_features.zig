@@ -3142,7 +3142,78 @@ const targets = [_]ArchTarget{
         },
         .branch_quota = 2000,
         .extra_features = spirv_extra_features,
+        .model_overrides = &.{
+            .{
+                .llvm_name = "generic",
+                .omit = true,
+            },
+        },
         .extra_models = &.{
+            .{
+                .llvm_name = null,
+                .zig_name = "v1_0",
+                .features = &.{"v1_0"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "v1_1",
+                .features = &.{"v1_1"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "v1_2",
+                .features = &.{"v1_2"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "v1_3",
+                .features = &.{"v1_3"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "v1_4",
+                .features = &.{"v1_4"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "v1_5",
+                .features = &.{"v1_5"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "v1_6",
+                .features = &.{"v1_6"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "opencl_v2_1",
+                .features = &.{"v1_0"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "opencl_v2_2",
+                .features = &.{"v1_2"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "opencl_v3_1",
+                .features = &.{"v1_4"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "opengl_v4_6",
+                .features = &.{"v1_4"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "vulkan_v1_0",
+                .features = &.{"v1_0"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "vulkan_v1_1",
+                .features = &.{"v1_3"},
+            },
             .{
                 .llvm_name = null,
                 .zig_name = "vulkan_v1_2",
@@ -3150,8 +3221,13 @@ const targets = [_]ArchTarget{
             },
             .{
                 .llvm_name = null,
-                .zig_name = "opencl_v2",
-                .features = &.{"v1_2"},
+                .zig_name = "vulkan_v1_3",
+                .features = &.{"v1_6"},
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "vulkan_v1_4",
+                .features = &.{"v1_6"},
             },
         },
     },

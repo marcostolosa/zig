@@ -2468,6 +2468,12 @@ const targets = [_]ArchTarget{
             .name = "Lanai",
             .td_name = "Lanai",
         },
+        .model_overrides = &.{
+            .{
+                .llvm_name = "generic",
+                .omit = true,
+            },
+        },
     },
     .{
         .zig_name = "loongarch",

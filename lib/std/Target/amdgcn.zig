@@ -23,7 +23,6 @@ pub const Feature = enum {
     architected_flat_scratch,
     architected_sgprs,
     ashr_pk_insts,
-    assembler_permissive_wavesize,
     asynccnt,
     atomic_buffer_global_pk_add_f16_insts,
     atomic_buffer_global_pk_add_f16_no_rtn_insts,
@@ -45,12 +44,10 @@ pub const Feature = enum {
     bf16_trans_insts,
     bf8_cvt_scale_insts,
     bitop3_insts,
-    block_vgpr_csr,
     bvh_dual_bvh_8_insts,
     ci_insts,
     clusters,
     cube_insts,
-    cumode,
     cvt_fp8_vop1_bug,
     cvt_norm_insts,
     cvt_pk_f16_f32_inst,
@@ -79,7 +76,6 @@ pub const Feature = enum {
     dpp_row_bcast,
     dpp_src1_sgpr,
     dpp_wavefront_shifts,
-    ds128,
     ds_src2_insts,
     dx10_clamp_and_ieee_mode,
     emulated_system_scope_atomics,
@@ -91,20 +87,17 @@ pub const Feature = enum {
     flat_address_space,
     flat_atomic_fadd_f32_inst,
     flat_buffer_global_fadd_f64_inst,
-    flat_for_global,
     flat_global_insts,
     flat_gvs_mode,
     flat_inst_offsets,
     flat_offset_bits_12,
     flat_offset_bits_24,
-    flat_scratch,
     flat_scratch_insts,
     flat_segment_offset_bug,
     flat_signed_offset,
     fma_mix_bf16_insts,
     fma_mix_insts,
     fmacf64_inst,
-    fmaf,
     formatted_mubuf_insts,
     fp4_cvt_scale_insts,
     fp64,
@@ -159,7 +152,6 @@ pub const Feature = enum {
     ldsbankcount16,
     ldsbankcount32,
     lerp_inst,
-    load_store_opt,
     lshl_add_u64_inst,
     mad_intra_fwd_bug,
     mad_mac_f32_insts,
@@ -169,9 +161,6 @@ pub const Feature = enum {
     mai_insts,
     max_hard_clause_length_32,
     max_hard_clause_length_63,
-    max_private_element_size_16,
-    max_private_element_size_4,
-    max_private_element_size_8,
     mcast_load_insts,
     memory_atomic_fadd_f32_denormal_support,
     mfma_inline_literal_bug,
@@ -207,14 +196,11 @@ pub const Feature = enum {
     pk_add_min_max_insts,
     pk_fmac_f16_inst,
     point_sample_accel,
-    precise_memory,
     priv_enabled_trap2_nop_bug,
     prng_inst,
-    prt_strict_null,
     pseudo_scalar_trans,
     qsad_insts,
     r128_a16,
-    real_true16,
     required_export_priority,
     requires_cov6,
     requires_initial_unclause_vmem,
@@ -245,11 +231,9 @@ pub const Feature = enum {
     sgpr_init_bug,
     shader_cycles_hi_lo_registers,
     shader_cycles_register,
-    si_scheduler,
     smem_prefetch_insts,
     smem_to_vector_write_hazard,
     southern_islands,
-    sramecc,
     sramecc_support,
     swmmac_gfx1200_insts,
     swmmac_gfx1250_insts,
@@ -258,16 +242,12 @@ pub const Feature = enum {
     tgsplit_support,
     trans_coexecution_hazard,
     transpose_load_f4f6_insts,
-    trap_handler,
     trig_reduced_range,
     true16,
-    unaligned_access_mode,
     unaligned_buffer_access,
     unaligned_ds_access,
     unaligned_scratch_access,
     unpacked_d16_vmem,
-    unsafe_ds_offset_folding,
-    use_add_pc64_inst,
     user_sgpr_init16_bug,
     v_mov_b64_inst,
     v_mul_u64_inst,
@@ -295,7 +275,6 @@ pub const Feature = enum {
     wmma_256b_insts,
     wmma_coexecution_hazards,
     xf32_insts,
-    xnack,
     xnack_on_off_modes,
     xnack_support,
 };
@@ -398,11 +377,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.ashr_pk_insts)] = .{
         .llvm_name = "ashr-pk-insts",
         .description = "Has Arithmetic Shift Pack instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.assembler_permissive_wavesize)] = .{
-        .llvm_name = "assembler-permissive-wavesize",
-        .description = "Allow parsing wave32 and wave64 variants of instructions",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.asynccnt)] = .{
@@ -524,11 +498,6 @@ pub const all_features = blk: {
         .description = "Has v_bitop3_b32/v_bitop3_b16 instructions",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.block_vgpr_csr)] = .{
-        .llvm_name = "block-vgpr-csr",
-        .description = "Use block load/store for VGPR callee saved registers",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.bvh_dual_bvh_8_insts)] = .{
         .llvm_name = "bvh-dual-bvh-8-insts",
         .description = "Has image_bvh_dual_intersect_ray and image_bvh8_intersect_ray instructions",
@@ -547,11 +516,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.cube_insts)] = .{
         .llvm_name = "cube-insts",
         .description = "Has v_cube* instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.cumode)] = .{
-        .llvm_name = "cumode",
-        .description = "Enable CU wavefront execution mode",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.cvt_fp8_vop1_bug)] = .{
@@ -696,11 +660,6 @@ pub const all_features = blk: {
         .description = "Support DPP wave_shl/wave_rol/wave_shr/wave_ror",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.ds128)] = .{
-        .llvm_name = "enable-ds128",
-        .description = "Use ds_{read|write}_b128",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.ds_src2_insts)] = .{
         .llvm_name = "ds-src2-insts",
         .description = "Has ds_*_src2 instructions",
@@ -758,11 +717,6 @@ pub const all_features = blk: {
         .description = "Has flat, buffer, and global instructions for f64 atomic fadd",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.flat_for_global)] = .{
-        .llvm_name = "flat-for-global",
-        .description = "Force to generate flat instruction for global",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.flat_global_insts)] = .{
         .llvm_name = "flat-global-insts",
         .description = "Have global_* flat memory instructions",
@@ -790,11 +744,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.flat_offset_bits_24)] = .{
         .llvm_name = "flat-offset-bits-24",
         .description = "Number of bits for flat offset encoding",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.flat_scratch)] = .{
-        .llvm_name = "enable-flat-scratch",
-        .description = "Use scratch_* flat memory instructions to access scratch",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.flat_scratch_insts)] = .{
@@ -827,11 +776,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.fmacf64_inst)] = .{
         .llvm_name = "fmacf64-inst",
         .description = "Has v_fmac_f64 instruction",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.fmaf)] = .{
-        .llvm_name = "fmaf",
-        .description = "Enable single precision FMA (not as fast as mul+add, but fused)",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.formatted_mubuf_insts)] = .{
@@ -1414,11 +1358,6 @@ pub const all_features = blk: {
         .description = "Has v_lerp_u8 instruction",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.load_store_opt)] = .{
-        .llvm_name = "load-store-opt",
-        .description = "Enable SI load/store optimizer pass",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.lshl_add_u64_inst)] = .{
         .llvm_name = "lshl-add-u64-inst",
         .description = "Has v_lshl_add_u64 instruction",
@@ -1462,21 +1401,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.max_hard_clause_length_63)] = .{
         .llvm_name = "max-hard-clause-length-63",
         .description = "Maximum number of instructions in an explicit S_CLAUSE is 63",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.max_private_element_size_16)] = .{
-        .llvm_name = "max-private-element-size-16",
-        .description = "Maximum private access size may be 16",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.max_private_element_size_4)] = .{
-        .llvm_name = "max-private-element-size-4",
-        .description = "Maximum private access size may be 4",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.max_private_element_size_8)] = .{
-        .llvm_name = "max-private-element-size-8",
-        .description = "Maximum private access size may be 8",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.mcast_load_insts)] = .{
@@ -1654,11 +1578,6 @@ pub const all_features = blk: {
         .description = "Has point sample acceleration feature",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.precise_memory)] = .{
-        .llvm_name = "precise-memory",
-        .description = "Enable precise memory mode",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.priv_enabled_trap2_nop_bug)] = .{
         .llvm_name = "priv-enabled-trap2-nop-bug",
         .description = "Hardware that runs with PRIV=1 interpreting 's_trap 2' as a nop bug",
@@ -1667,11 +1586,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.prng_inst)] = .{
         .llvm_name = "prng-inst",
         .description = "Has v_prng_b32 instruction",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.prt_strict_null)] = .{
-        .llvm_name = "enable-prt-strict-null",
-        .description = "Enable zeroing of result registers for sparse texture fetches",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.pseudo_scalar_trans)] = .{
@@ -1687,11 +1601,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.r128_a16)] = .{
         .llvm_name = "r128-a16",
         .description = "Support gfx9-style A16 for 16-bit coordinates/gradients/lod/clamp/mip image operands, where a16 is aliased with r128",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.real_true16)] = .{
-        .llvm_name = "real-true16",
-        .description = "Use true 16-bit registers",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.required_export_priority)] = .{
@@ -1879,11 +1788,6 @@ pub const all_features = blk: {
         .description = "Has SHADER_CYCLES hardware register",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.si_scheduler)] = .{
-        .llvm_name = "si-scheduler",
-        .description = "Enable SI Machine Scheduler",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.smem_prefetch_insts)] = .{
         .llvm_name = "smem-prefetch-insts",
         .description = "Has s_prefetch_inst, s_prefetch_inst_pc_rel, s_prefetch_data and s_prefetch_data_pc_rel instructions",
@@ -1928,11 +1832,6 @@ pub const all_features = blk: {
             .wavefrontsize64,
         }),
     };
-    result[@backingInt(Feature.sramecc)] = .{
-        .llvm_name = "sramecc",
-        .description = "Enable SRAMECC",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.sramecc_support)] = .{
         .llvm_name = "sramecc-support",
         .description = "Hardware supports SRAMECC",
@@ -1973,11 +1872,6 @@ pub const all_features = blk: {
         .description = "Has ds_load_tr4/tr6 and global_load_tr4/tr6 instructions",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.trap_handler)] = .{
-        .llvm_name = "trap-handler",
-        .description = "Trap handler support",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.trig_reduced_range)] = .{
         .llvm_name = "trig-reduced-range",
         .description = "Requires use of fract on arguments to trig instructions",
@@ -1986,11 +1880,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.true16)] = .{
         .llvm_name = "true16",
         .description = "True 16-bit operand instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.unaligned_access_mode)] = .{
-        .llvm_name = "unaligned-access-mode",
-        .description = "Enable unaligned global, local and region loads and stores if the hardware supports it",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.unaligned_buffer_access)] = .{
@@ -2011,16 +1900,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.unpacked_d16_vmem)] = .{
         .llvm_name = "unpacked-d16-vmem",
         .description = "Has unpacked d16 vmem instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.unsafe_ds_offset_folding)] = .{
-        .llvm_name = "unsafe-ds-offset-folding",
-        .description = "Force using DS instruction immediate offsets on SI",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.use_add_pc64_inst)] = .{
-        .llvm_name = "use-add-pc64-inst",
-        .description = "Use s_add_pc_i64 instruction.",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.user_sgpr_init16_bug)] = .{
@@ -2204,13 +2083,6 @@ pub const all_features = blk: {
         .llvm_name = "xf32-insts",
         .description = "Has instructions that support xf32 format, such as v_mfma_f32_16x16x8_xf32 and v_mfma_f32_32x32x4_xf32",
         .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.xnack)] = .{
-        .llvm_name = "xnack",
-        .description = "Enable XNACK support",
-        .dependencies = featureSet(&[_]Feature{
-            .xnack_support,
-        }),
     };
     result[@backingInt(Feature.xnack_on_off_modes)] = .{
         .llvm_name = "xnack-on-off-modes",
@@ -2636,7 +2508,6 @@ pub const cpu = struct {
             .packed_tid,
             .partial_nsa_encoding,
             .priv_enabled_trap2_nop_bug,
-            .real_true16,
             .shader_cycles_register,
             .user_sgpr_init16_bug,
             .valu_trans_use_hazard,
@@ -2673,7 +2544,6 @@ pub const cpu = struct {
             .packed_tid,
             .partial_nsa_encoding,
             .priv_enabled_trap2_nop_bug,
-            .real_true16,
             .shader_cycles_register,
             .valu_trans_use_hazard,
             .vcmpx_permlane_hazard,
@@ -2708,7 +2578,6 @@ pub const cpu = struct {
             .packed_tid,
             .partial_nsa_encoding,
             .priv_enabled_trap2_nop_bug,
-            .real_true16,
             .shader_cycles_register,
             .user_sgpr_init16_bug,
             .valu_trans_use_hazard,
@@ -2744,7 +2613,6 @@ pub const cpu = struct {
             .packed_tid,
             .partial_nsa_encoding,
             .priv_enabled_trap2_nop_bug,
-            .real_true16,
             .shader_cycles_register,
             .valu_trans_use_hazard,
             .vcmpx_permlane_hazard,
@@ -2778,7 +2646,6 @@ pub const cpu = struct {
             .packed_tid,
             .partial_nsa_encoding,
             .point_sample_accel,
-            .real_true16,
             .required_export_priority,
             .salu_float,
             .shader_cycles_register,
@@ -2814,7 +2681,6 @@ pub const cpu = struct {
             .packed_tid,
             .partial_nsa_encoding,
             .point_sample_accel,
-            .real_true16,
             .required_export_priority,
             .salu_float,
             .shader_cycles_register,
@@ -2849,7 +2715,6 @@ pub const cpu = struct {
             .packed_tid,
             .partial_nsa_encoding,
             .point_sample_accel,
-            .real_true16,
             .required_export_priority,
             .salu_float,
             .shader_cycles_register,
@@ -2883,7 +2748,6 @@ pub const cpu = struct {
             .nsa_encoding,
             .packed_tid,
             .partial_nsa_encoding,
-            .real_true16,
             .required_export_priority,
             .salu_float,
             .shader_cycles_register,
@@ -2917,7 +2781,6 @@ pub const cpu = struct {
             .nsa_encoding,
             .packed_tid,
             .partial_nsa_encoding,
-            .real_true16,
             .required_export_priority,
             .salu_float,
             .shader_cycles_register,
@@ -2956,7 +2819,6 @@ pub const cpu = struct {
             .nsa_encoding,
             .packed_tid,
             .partial_nsa_encoding,
-            .real_true16,
             .salu_float,
             .shader_cycles_register,
             .swmmac_gfx1200_insts,
@@ -2995,7 +2857,6 @@ pub const cpu = struct {
             .nsa_encoding,
             .packed_tid,
             .partial_nsa_encoding,
-            .real_true16,
             .salu_float,
             .shader_cycles_register,
             .swmmac_gfx1200_insts,
@@ -3034,7 +2895,6 @@ pub const cpu = struct {
             .nsa_encoding,
             .packed_tid,
             .partial_nsa_encoding,
-            .real_true16,
             .salu_float,
             .shader_cycles_register,
             .swmmac_gfx1200_insts,
@@ -3073,7 +2933,6 @@ pub const cpu = struct {
             .nsa_encoding,
             .packed_tid,
             .partial_nsa_encoding,
-            .real_true16,
             .requires_cov6,
             .salu_float,
             .shader_cycles_register,
@@ -3110,7 +2969,6 @@ pub const cpu = struct {
             .packed_tid,
             .partial_nsa_encoding,
             .priv_enabled_trap2_nop_bug,
-            .real_true16,
             .required_export_priority,
             .requires_cov6,
             .shader_cycles_register,
@@ -3169,7 +3027,6 @@ pub const cpu = struct {
             .partial_nsa_encoding,
             .pseudo_scalar_trans,
             .qsad_insts,
-            .real_true16,
             .restricted_soffset,
             .sad_insts,
             .salu_float,
@@ -3231,7 +3088,6 @@ pub const cpu = struct {
             .partial_nsa_encoding,
             .pseudo_scalar_trans,
             .qsad_insts,
-            .real_true16,
             .restricted_soffset,
             .sad_insts,
             .salu_float,
@@ -3274,7 +3130,6 @@ pub const cpu = struct {
             .bitop3_insts,
             .clusters,
             .cube_insts,
-            .cumode,
             .cvt_norm_insts,
             .cvt_pk_f16_f32_inst,
             .cvt_pknorm_vop2_insts,
@@ -3319,7 +3174,6 @@ pub const cpu = struct {
             .prng_inst,
             .pseudo_scalar_trans,
             .qsad_insts,
-            .real_true16,
             .requires_initial_unclause_vmem,
             .restricted_soffset,
             .s_wakeup_barrier_inst,
@@ -3346,7 +3200,7 @@ pub const cpu = struct {
             .wait_xcnt,
             .wavefrontsize32,
             .wmma_coexecution_hazards,
-            .xnack,
+            .xnack_support,
         }),
     };
     pub const gfx1251: CpuModel = .{
@@ -3379,7 +3233,6 @@ pub const cpu = struct {
             .bitop3_insts,
             .clusters,
             .cube_insts,
-            .cumode,
             .cvt_norm_insts,
             .cvt_pk_f16_f32_inst,
             .cvt_pknorm_vop2_insts,
@@ -3430,7 +3283,6 @@ pub const cpu = struct {
             .prng_inst,
             .pseudo_scalar_trans,
             .qsad_insts,
-            .real_true16,
             .requires_initial_unclause_vmem,
             .restricted_soffset,
             .s_wakeup_barrier_inst,
@@ -3447,7 +3299,6 @@ pub const cpu = struct {
             .tensor_cvt_lut_insts,
             .trans_coexecution_hazard,
             .transpose_load_f4f6_insts,
-            .use_add_pc64_inst,
             .v_mov_b64_inst,
             .v_mul_u64_inst,
             .vcmpx_permlane_hazard,
@@ -3457,7 +3308,7 @@ pub const cpu = struct {
             .wait_xcnt,
             .wavefrontsize32,
             .wmma_coexecution_hazards,
-            .xnack,
+            .xnack_support,
         }),
     };
     pub const gfx12_5_generic: CpuModel = .{
@@ -3489,7 +3340,6 @@ pub const cpu = struct {
             .bf16_trans_insts,
             .bitop3_insts,
             .clusters,
-            .cumode,
             .cvt_pk_f16_f32_inst,
             .d16_write_vgpr32,
             .dl_insts,
@@ -3527,7 +3377,6 @@ pub const cpu = struct {
             .pk_add_min_max_insts,
             .prng_inst,
             .pseudo_scalar_trans,
-            .real_true16,
             .requires_cov6,
             .requires_initial_unclause_vmem,
             .restricted_soffset,
@@ -3551,7 +3400,7 @@ pub const cpu = struct {
             .wait_xcnt,
             .wavefrontsize32,
             .wmma_coexecution_hazards,
-            .xnack,
+            .xnack_support,
         }),
     };
     pub const gfx12_generic: CpuModel = .{
@@ -3603,7 +3452,6 @@ pub const cpu = struct {
             .partial_nsa_encoding,
             .pseudo_scalar_trans,
             .qsad_insts,
-            .real_true16,
             .requires_cov6,
             .restricted_soffset,
             .sad_insts,

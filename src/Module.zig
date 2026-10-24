@@ -371,10 +371,6 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         var disabled_features = std.array_list.Managed(u8).init(arena);
         for (target.cpu.arch.allFeaturesList()) |feature| {
             if (feature.llvm_name) |llvm_name| {
-                // Ignore these until we figure out how to handle the concept of omitting features.
-                // See https://github.com/ziglang/zig/issues/23539
-                if (target_util.isDynamicAMDGCNFeature(target, feature)) continue;
-
                 if (target.cpu.features.isEnabled(feature.index)) {
                     try buf.ensureUnusedCapacity(2 + llvm_name.len);
                     buf.appendAssumeCapacity('+');

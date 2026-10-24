@@ -892,6 +892,18 @@ const targets = [_]ArchTarget{
         .branch_quota = 2000,
         .feature_overrides = &.{
             .{
+                .llvm_name = "assembler-permissive-wavesize",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "block-vgpr-csr",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "cumode",
+                .omit = true,
+            },
+            .{
                 .llvm_name = "DumpCode",
                 .omit = true,
             },
@@ -901,15 +913,75 @@ const targets = [_]ArchTarget{
             },
             .{
                 .llvm_name = "enable-ds128",
-                .zig_name = "ds128",
+                .omit = true,
             },
             .{
                 .llvm_name = "enable-flat-scratch",
-                .zig_name = "flat_scratch",
+                .omit = true,
             },
             .{
                 .llvm_name = "enable-prt-strict-null",
-                .zig_name = "prt_strict_null",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "flat-for-global",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "fmaf",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "load-store-opt",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "max-private-element-size-4",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "max-private-element-size-8",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "max-private-element-size-16",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "precise-memory",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "real-true16",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "si-scheduler",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "sramecc",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "trap-handler",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "unaligned-access-mode",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "unsafe-ds-offset-folding",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "use-add-pc64-inst",
+                .omit = true,
+            },
+            .{
+                .llvm_name = "xnack",
+                .flatten = true,
             },
         },
     },

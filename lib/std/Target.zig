@@ -905,6 +905,8 @@ pub const Abi = enum {
                 // Soft float tends to be more common for MIPS.
                 .mips,
                 .mipsel,
+                .sh,
+                .sheb,
                 => .eabi,
                 else => .none,
             },
@@ -912,6 +914,7 @@ pub const Abi = enum {
                 .arm,
                 => .eabi,
                 .powerpc,
+                .sh,
                 => .eabihf,
                 else => .none,
             },

@@ -105,7 +105,6 @@ pub const Feature = enum {
     opt_none_ext,
     pipe_storage,
     pipes,
-    poison_freeze_khr,
     quad_control_khr,
     ray_cull_mask_khr,
     ray_query_khr,
@@ -178,7 +177,6 @@ pub const Feature = enum {
     SPV_KHR_integer_dot_product,
     SPV_KHR_multiview,
     SPV_KHR_opacity_micromap,
-    SPV_KHR_poison_freeze,
     SPV_KHR_post_depth_coverage,
     SPV_KHR_quad_control,
     SPV_KHR_ray_cull_mask,
@@ -903,13 +901,6 @@ pub const all_features = blk: {
         .description = "Enable pipes capability",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.poison_freeze_khr)] = .{
-        .llvm_name = null,
-        .description = "Enable poison_freeze_khr capability",
-        .dependencies = featureSet(&[_]Feature{
-            .SPV_KHR_poison_freeze,
-        }),
-    };
     result[@backingInt(Feature.quad_control_khr)] = .{
         .llvm_name = null,
         .description = "Enable quad_control_khr capability",
@@ -1318,11 +1309,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.SPV_KHR_opacity_micromap)] = .{
         .llvm_name = null,
         .description = "Enable SPV_KHR_opacity_micromap extension",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.SPV_KHR_poison_freeze)] = .{
-        .llvm_name = null,
-        .description = "Enable SPV_KHR_poison_freeze extension",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.SPV_KHR_post_depth_coverage)] = .{

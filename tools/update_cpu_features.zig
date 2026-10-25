@@ -64,6 +64,7 @@ const spirv_omitted_capabilities = [_][]const u8{
     "shader", // implied by Vulkan/OpenGL targets
     "kernel", // implied by OpenCL/AMDHSA targets
     "addresses", // implied by OpenCL/AMDHSA targets
+    "matrix", // implied by shader
     "physical_storage_buffer_addresses", // implied by spirv64-vulkan
     "linkage", // automatically emitted when externs need linkage decorations
 };

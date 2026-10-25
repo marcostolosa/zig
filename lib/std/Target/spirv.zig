@@ -88,7 +88,6 @@ pub const Feature = enum {
     interpolation_function,
     literal_sampler,
     long_vector_ext,
-    matrix,
     mesh_shading_ext,
     min_lod,
     multi_view,
@@ -869,13 +868,6 @@ pub const all_features = blk: {
         .description = "Enable long_vector_ext capability",
         .dependencies = featureSet(&[_]Feature{
             .SPV_EXT_long_vector,
-            .v1_0,
-        }),
-    };
-    result[@backingInt(Feature.matrix)] = .{
-        .llvm_name = null,
-        .description = "Enable matrix capability",
-        .dependencies = featureSet(&[_]Feature{
             .v1_0,
         }),
     };

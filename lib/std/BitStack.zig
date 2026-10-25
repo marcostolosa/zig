@@ -4,31 +4,31 @@ const BitStack = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const ArrayList = std.array_list.Managed;
 
-bytes: std.array_list.Managed(u8),
+bytes: std.ArrayList(u8),
 bit_len: usize = 0,
 
-pub fn init(allocator: Allocator) @This() {
-    return .{
-        .bytes = std.array_list.Managed(u8).init(allocator),
-    };
+pub const empty: @This() = .{ .bytes = .empty };
+
+/// Deprecated, use `empty`.
+pub fn init() @This() {
+    return .empty;
 }
 
-pub fn deinit(self: *@This()) void {
-    self.bytes.deinit();
+pub fn deinit(self: *@This(), gpa: Allocator) void {
+    self.bytes.deinit(gpa);
     self.* = undefined;
 }
 
-pub fn ensureTotalCapacity(self: *@This(), bit_capacity: usize) Allocator.Error!void {
+pub fn ensureTotalCapacity(self: *@This(), gpa: Allocator, bit_capacity: usize) Allocator.Error!void {
     const byte_capacity = (bit_capacity + 7) >> 3;
-    try self.bytes.ensureTotalCapacity(byte_capacity);
+    try self.bytes.ensureTotalCapacity(gpa, byte_capacity);
 }
 
-pub fn push(self: *@This(), b: u1) Allocator.Error!void {
+pub fn push(self: *@This(), gpa: Allocator, b: u1) Allocator.Error!void {
     const byte_index = self.bit_len >> 3;
     if (self.bytes.items.len <= byte_index) {
-        try self.bytes.append(0);
+        try self.bytes.append(gpa, 0);
     }
 
     pushWithStateAssumeCapacity(self.bytes.items, &self.bit_len, b);
@@ -69,13 +69,13 @@ pub fn popWithState(buf: []const u8, bit_len: *usize) u1 {
 
 const testing = std.testing;
 test BitStack {
-    var stack = BitStack.init(testing.allocator);
-    defer stack.deinit();
+    var stack: BitStack = .empty;
+    defer stack.deinit(testing.allocator);
 
-    try stack.push(1);
-    try stack.push(0);
-    try stack.push(0);
-    try stack.push(1);
+    try stack.push(testing.allocator, 1);
+    try stack.push(testing.allocator, 0);
+    try stack.push(testing.allocator, 0);
+    try stack.push(testing.allocator, 1);
 
     try testing.expectEqual(@as(u1, 1), stack.peek());
     try testing.expectEqual(@as(u1, 1), stack.pop());

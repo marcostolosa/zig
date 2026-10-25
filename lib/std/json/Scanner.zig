@@ -52,6 +52,7 @@ const BitStack = std.BitStack;
 state: State = .value,
 string_is_object_key: bool = false,
 stack: BitStack,
+stack_allocator: Allocator,
 value_start: usize = undefined,
 utf16_code_units: [2]u16 = undefined,
 
@@ -61,9 +62,10 @@ is_end_of_input: bool = false,
 diagnostics: ?*Diagnostics = null,
 
 /// The allocator is only used to track `[]` and `{}` nesting levels.
-pub fn initStreaming(allocator: Allocator) @This() {
+pub fn initStreaming(gpa: Allocator) @This() {
     return .{
-        .stack = BitStack.init(allocator),
+        .stack = .empty,
+        .stack_allocator = gpa,
     };
 }
 /// Use this if your input is a single slice.
@@ -73,15 +75,16 @@ pub fn initStreaming(allocator: Allocator) @This() {
 /// feedInput(complete_input);
 /// endInput();
 /// ```
-pub fn initCompleteInput(allocator: Allocator, complete_input: []const u8) @This() {
+pub fn initCompleteInput(gpa: Allocator, complete_input: []const u8) @This() {
     return .{
-        .stack = BitStack.init(allocator),
+        .stack = .empty,
+        .stack_allocator = gpa,
         .input = complete_input,
         .is_end_of_input = true,
     };
 }
 pub fn deinit(self: *@This()) void {
-    self.stack.deinit();
+    self.stack.deinit(self.stack_allocator);
     self.* = undefined;
 }
 
@@ -324,13 +327,13 @@ pub fn next(self: *@This()) NextError!Token {
                 switch (try self.skipWhitespaceExpectByte()) {
                     // Object, Array
                     '{' => {
-                        try self.stack.push(OBJECT_MODE);
+                        try self.stack.push(self.stack_allocator, OBJECT_MODE);
                         self.cursor += 1;
                         self.state = .object_start;
                         return .object_begin;
                     },
                     '[' => {
-                        try self.stack.push(ARRAY_MODE);
+                        try self.stack.push(self.stack_allocator, ARRAY_MODE);
                         self.cursor += 1;
                         self.state = .array_start;
                         return .array_begin;

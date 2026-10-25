@@ -148,7 +148,6 @@ pub const Feature = enum {
     SPV_EXT_ocp_microscaling_types,
     SPV_EXT_opacity_micromap,
     SPV_EXT_optnone,
-    SPV_EXT_physical_storage_buffer,
     SPV_EXT_replicated_composites,
     SPV_EXT_shader_64bit_indexing,
     SPV_EXT_shader_atomic_float16_add,
@@ -1169,11 +1168,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.SPV_EXT_optnone)] = .{
         .llvm_name = null,
         .description = "Enable SPV_EXT_optnone extension",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.SPV_EXT_physical_storage_buffer)] = .{
-        .llvm_name = null,
-        .description = "Enable SPV_EXT_physical_storage_buffer extension",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.SPV_EXT_replicated_composites)] = .{

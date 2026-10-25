@@ -74,6 +74,7 @@ const spirv_omitted_capabilities = [_][]const u8{
 };
 const spirv_omitted_extensions = [_][]const u8{
     "SPV_KHR_physical_storage_buffer", // paired with physical_storage_buffer_addresses
+    "SPV_EXT_physical_storage_buffer",
 };
 
 const spirv_extra_features: []const Feature = blk: {

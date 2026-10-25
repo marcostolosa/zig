@@ -14059,8 +14059,8 @@ fn zirDiv(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.Ins
     {
         // If it makes a difference whether we coerce to ints or floats before doing the division, error.
         // If lhs % rhs is 0, it doesn't matter.
-        const lhs_val = maybe_lhs_val orelse unreachable;
-        const rhs_val = maybe_rhs_val orelse unreachable;
+        const lhs_val = maybe_lhs_val.?;
+        const rhs_val = maybe_rhs_val.?;
         const rem = arith.modRem(sema, block, resolved_type, lhs_val, rhs_val, lhs_src, rhs_src, .rem) catch unreachable;
         if (!rem.compareAllWithZero(.eq, zcu)) {
             return sema.fail(

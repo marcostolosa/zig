@@ -81,7 +81,7 @@ pub fn generate(
 
     const ret_layout_vi: ?Select.Value.Index = ret: {
         const ret_vi1 = try cc_it1.resolve(.fromInterned(func_type.return_type), true) orelse break :ret null;
-        const ret_vi2 = try cc_it2.resolve(.fromInterned(func_type.return_type), true) orelse unreachable;
+        const ret_vi2 = (try cc_it2.resolve(.fromInterned(func_type.return_type), true)).?;
         ret_vi2.deref(&isel);
         tracking_log.debug("{f} <- %main", .{ret_vi1});
         try isel.live_values.putNoClobber(gpa, Select.Block.main, ret_vi1);
@@ -96,8 +96,8 @@ pub fn generate(
         const param_ty = arg.ty;
         if (arg.zir_param_index >= named_params_len)
             assert(func_type.is_var_args);
-        const param_vi1 = try cc_it1.resolve(param_ty, false) orelse unreachable;
-        const param_vi2 = try cc_it2.resolve(param_ty, false) orelse unreachable;
+        const param_vi1 = (try cc_it1.resolve(param_ty, false)).?;
+        const param_vi2 = (try cc_it2.resolve(param_ty, false)).?;
         tracking_log.debug("{f} <- %{d}", .{ param_vi1, @backingInt(air_inst_index) });
         try isel.live_values.putNoClobber(gpa, air_inst_index, param_vi1);
         try arg_layouts.append(gpa, param_vi2);

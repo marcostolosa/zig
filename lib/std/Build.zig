@@ -2038,7 +2038,7 @@ pub fn dependencyStep(b: *Build, s: *Step, name: []const u8, args: anytype) ?*De
 /// * `declareDependencyStep`
 pub fn dependencyLazy(b: *Build, name: []const u8, args: anytype) error{LazyDependencyNeeded}!*Dependency {
     const pkg_hash = findPkgHashOrFatal(b, name);
-    const entry = package_map.get(pkg_hash) orelse unreachable;
+    const entry = package_map.get(pkg_hash).?;
     if (!entry.available) {
         markNeededLazyDep(b, pkg_hash);
         return error.LazyDependencyNeeded;

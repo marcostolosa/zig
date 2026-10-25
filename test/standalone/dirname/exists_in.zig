@@ -14,7 +14,7 @@ const std = @import("std");
 pub fn main(init: std.process.Init) !void {
     var args = try init.minimal.args.iterateAllocator(init.gpa);
     defer args.deinit();
-    _ = args.next() orelse unreachable; // skip binary name
+    _ = args.next().?; // skip binary name
 
     const dir_path = args.next() orelse {
         std.log.err("missing <dir> argument", .{});

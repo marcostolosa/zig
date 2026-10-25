@@ -1385,7 +1385,7 @@ const x86_64 = struct {
 
     fn relaxGotTpOff(code: []u8, t: *const std.Target) void {
         dev.checkAny(&.{ .llvm_backend, .x86_64_backend });
-        const old_inst = disassemble(code) orelse unreachable;
+        const old_inst = disassemble(code).?;
         switch (old_inst.encoding.mnemonic) {
             .mov => {
                 const inst = Instruction.new(old_inst.prefix, .mov, &.{

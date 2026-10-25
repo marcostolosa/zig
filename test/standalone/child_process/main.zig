@@ -24,9 +24,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     var it = try init.args.iterateAllocator(gpa);
     defer it.deinit();
-    _ = it.next() orelse unreachable; // skip binary name
+    _ = it.next().?; // skip binary name
     const child_path, const needs_free = child_path: {
-        const child_path = it.next() orelse unreachable;
+        const child_path = it.next().?;
         const cwd_path = it.next() orelse break :child_path .{ child_path, false };
         // If there is a third argument, it is the current CWD somewhere within the cache directory.
         // In that case, modify the child path in order to test spawning a path with a leading `..` component.

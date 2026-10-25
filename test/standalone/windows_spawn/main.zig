@@ -12,9 +12,9 @@ pub fn main(init: std.process.Init) !void {
 
     var it = try init.minimal.args.iterateAllocator(gpa);
     defer it.deinit();
-    _ = it.next() orelse unreachable; // skip binary name
-    const hello_exe_cache_path = it.next() orelse unreachable;
-    const tmp_dir_path = it.next() orelse unreachable;
+    _ = it.next().?; // skip binary name
+    const hello_exe_cache_path = it.next().?;
+    const tmp_dir_path = it.next().?;
 
     var tmp_dir = try Io.Dir.cwd().openDir(io, tmp_dir_path, .{});
     defer tmp_dir.close(io);

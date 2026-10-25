@@ -45,7 +45,7 @@ fn test_chdir_absolute(io: Io) !void {
     var old_cwd_buf: [path_max]u8 = undefined;
     const old_cwd = old_cwd_buf[0..try std.process.currentPath(io, &old_cwd_buf)];
 
-    const parent = std.fs.path.dirname(old_cwd) orelse unreachable; // old_cwd should be absolute
+    const parent = std.fs.path.dirname(old_cwd).?; // old_cwd should be absolute
 
     // Try changing to the parent via a full path
     try std.process.setCurrentPath(io, parent);

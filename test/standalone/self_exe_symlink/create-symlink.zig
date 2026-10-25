@@ -5,9 +5,9 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     var it = try init.minimal.args.iterateAllocator(gpa);
     defer it.deinit();
-    _ = it.next() orelse unreachable; // skip binary name
-    const exe_path = it.next() orelse unreachable;
-    const symlink_path = it.next() orelse unreachable;
+    _ = it.next().?; // skip binary name
+    const exe_path = it.next().?;
+    const symlink_path = it.next().?;
 
     const cwd = try std.process.currentPathAlloc(io, init.arena.allocator());
 

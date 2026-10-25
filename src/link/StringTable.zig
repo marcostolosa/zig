@@ -37,7 +37,7 @@ pub fn get(self: Self, off: u32) ?[:0]const u8 {
 }
 
 pub fn getAssumeExists(self: Self, off: u32) [:0]const u8 {
-    return self.get(off) orelse unreachable;
+    return self.get(off).?;
 }
 
 const std = @import("std");

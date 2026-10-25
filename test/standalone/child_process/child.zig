@@ -12,11 +12,11 @@ pub fn main(init: std.process.Init) !void {
 fn run(arena: std.mem.Allocator, io: Io, args: std.process.Args) !void {
     var it = try args.iterateAllocator(arena);
     defer it.deinit();
-    _ = it.next() orelse unreachable; // skip binary name
+    _ = it.next().?; // skip binary name
 
     // test cmd args
     const hello_arg = "hello arg";
-    const a1 = it.next() orelse unreachable;
+    const a1 = it.next().?;
     if (!std.mem.eql(u8, a1, hello_arg)) {
         testError(io, "first arg: '{s}'; want '{s}'", .{ a1, hello_arg });
     }

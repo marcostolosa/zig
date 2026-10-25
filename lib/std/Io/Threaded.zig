@@ -6543,7 +6543,7 @@ pub fn GetFinalPathNameByHandle(
                 };
             }
 
-            const file_path_begin_index = std.mem.findPos(u16, final_path, device_prefix.len, &[_]u16{'\\'}) orelse unreachable;
+            const file_path_begin_index = std.mem.findPos(u16, final_path, device_prefix.len, &[_]u16{'\\'}).?;
             const volume_name_u16 = final_path[0..file_path_begin_index];
             const device_name_u16 = volume_name_u16[device_prefix.len..];
             const file_name_u16 = final_path[file_path_begin_index..];

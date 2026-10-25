@@ -170,10 +170,10 @@ pub fn RegisterManager(
             return RegisterLock{ .tracked_index = tracked_index };
         }
         pub fn lockRegAssumeUnused(self: *Self, reg: Register) RegisterLock {
-            return self.lockRegIndexAssumeUnused(indexOfRegIntoTracked(reg) orelse unreachable);
+            return self.lockRegIndexAssumeUnused(indexOfRegIntoTracked(reg).?);
         }
         pub fn lockKnownRegAssumeUnused(self: *Self, comptime reg: Register) RegisterLock {
-            return self.lockRegIndexAssumeUnused(indexOfKnownRegIntoTracked(reg) orelse unreachable);
+            return self.lockRegIndexAssumeUnused(indexOfKnownRegIntoTracked(reg).?);
         }
 
         /// Like `lockReg` but locks multiple registers.

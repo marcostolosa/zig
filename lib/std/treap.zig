@@ -267,7 +267,7 @@ pub fn Treap(comptime Key: type, comptime compareFn: anytype) type {
             //      parent -> (node (target YY adjacent) XX)
             //      parent -> (target YY (node adjacent XX))
             const parent = node.parent;
-            const target = node.children[@intFromBool(!right)] orelse unreachable;
+            const target = node.children[@intFromBool(!right)].?;
             const adjacent = target.children[@intFromBool(right)];
 
             // rotate the children

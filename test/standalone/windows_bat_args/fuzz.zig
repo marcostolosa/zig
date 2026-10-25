@@ -10,7 +10,7 @@ pub fn main(init: std.process.Init) !void {
 
     var it = try init.minimal.args.iterateAllocator(gpa);
     defer it.deinit();
-    _ = it.next() orelse unreachable; // skip binary name
+    _ = it.next().?; // skip binary name
 
     const iterations: u64 = iterations: {
         const arg = it.next() orelse "0";

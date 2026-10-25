@@ -861,7 +861,7 @@ pub const Value = struct {
 
         fn reextendToPcs(vi: Value.Index, isel: *Select) !void {
             if (!vi.isSmall(isel)) return;
-            const ty = vi.typeOf(isel) orelse unreachable; // cannot reextend ill-shaped values to PCS mode
+            const ty = vi.typeOf(isel).?; // cannot reextend ill-shaped values to PCS mode
             return vi.reextendAdvanced(isel, vi.bitSize(isel), null, .pcsMode(isel, ty));
         }
 

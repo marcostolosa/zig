@@ -446,7 +446,7 @@ fn finishAirWithBranchDeaths(
     if (result == .local) aliased: {
         for (operands) |operand| {
             if (operand.toIndex() == null) continue;
-            const resolved_operand = cg.values.getPtr(operand) orelse unreachable;
+            const resolved_operand = cg.values.getPtr(operand).?;
             if (resolved_operand.* != .local or resolved_operand.local != result.local) continue;
 
             if (result.local >= cg.wasm_param_count) {
@@ -513,7 +513,7 @@ fn feed(cg: *CodeGen, bt: *Air.Liveness.BigTomb, operand: Air.Inst.Ref) void {
 
 fn processDeath(cg: *CodeGen, ref: Air.Inst.Ref) void {
     if (ref.toIndex() == null) return;
-    const value = cg.values.getPtr(ref) orelse unreachable;
+    const value = cg.values.getPtr(ref).?;
     if (value.* != .local) return;
     cg.releaseLocal(value.local);
 }

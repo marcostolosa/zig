@@ -4802,7 +4802,6 @@ pub fn initializeLLVMTarget(io: Io, arch: std.Target.Cpu.Arch) void {
         .ez80,
         .hppa,
         .hppa64,
-        .kalimba,
         .kvx,
         .m88k,
         .microblaze,

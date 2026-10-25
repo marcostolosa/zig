@@ -753,7 +753,6 @@ pub const bpf = @import("Target/bpf.zig");
 pub const csky = @import("Target/csky.zig");
 pub const hexagon = @import("Target/hexagon.zig");
 pub const hppa = @import("Target/hppa.zig");
-pub const kalimba = @import("Target/generic.zig");
 pub const kvx = @import("Target/kvx.zig");
 pub const lanai = @import("Target/lanai.zig");
 pub const loongarch = @import("Target/loongarch.zig");
@@ -1091,7 +1090,6 @@ pub fn toElfMachine(target: *const Target) std.elf.EM {
         .ez80 => .Z80,
         .hexagon => .QDSP6,
         .hppa, .hppa64 => .PARISC,
-        .kalimba => .CSR_KALIMBA,
         .kvx => .KVX,
         .lanai => .LANAI,
         .loongarch32, .loongarch64 => .LOONGARCH,
@@ -1157,7 +1155,6 @@ pub fn toCoffMachine(target: *const Target) std.coff.IMAGE.FILE.MACHINE {
         .hexagon,
         .hppa,
         .hppa64,
-        .kalimba,
         .kvx,
         .lanai,
         .m88k,
@@ -1366,7 +1363,6 @@ pub const Cpu = struct {
         hexagon,
         hppa,
         hppa64,
-        kalimba,
         kvx,
         lanai,
         loongarch32,
@@ -1426,7 +1422,6 @@ pub const Cpu = struct {
             csky,
             hexagon,
             hppa,
-            kalimba,
             kvx,
             lanai,
             loongarch,
@@ -1466,7 +1461,6 @@ pub const Cpu = struct {
                 .ez80 => .z80,
                 .hexagon => .hexagon,
                 .hppa, .hppa64 => .hppa,
-                .kalimba => .kalimba,
                 .kvx => .kvx,
                 .lanai => .lanai,
                 .loongarch32, .loongarch64 => .loongarch,
@@ -1705,7 +1699,6 @@ pub const Cpu = struct {
                 .bpfel,
                 .csky,
                 .hexagon,
-                .kalimba,
                 .kvx,
                 .loongarch32,
                 .loongarch64,
@@ -3028,7 +3021,6 @@ pub fn ptrBitWidth_arch_abi(cpu_arch: Cpu.Arch, abi: Abi) u16 {
         .csky,
         .hexagon,
         .hppa,
-        .kalimba,
         .lanai,
         .loongarch32,
         .m68k,
@@ -3568,7 +3560,6 @@ pub fn cTypeAlignment(target: *const Target, c_type: CType) ?u16 {
             .arc,
             .arceb,
             .csky,
-            .kalimba,
             .microblaze,
             .microblazeel,
             .or1k,
@@ -3649,7 +3640,6 @@ pub fn cMaxIntAlignment(target: *const Target) u16 {
         .arc,
         .arceb,
         .csky,
-        .kalimba,
         .microblaze,
         .microblazeel,
         .or1k,
@@ -3762,7 +3752,6 @@ pub fn cCallingConvention(target: *const Target) ?std.builtin.CallingConvention 
         .hexagon => .{ .hexagon_sysv = .{} },
         .hppa => .{ .hppa_elf = .{} },
         .hppa64 => .{ .hppa64_elf = .{} },
-        .kalimba => null,
         .kvx => switch (target.abi) {
             .ilp32 => .{ .kvx_ilp32 = .{} },
             else => .{ .kvx_lp64 = .{} },

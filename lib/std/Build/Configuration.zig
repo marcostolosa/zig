@@ -2389,7 +2389,6 @@ pub const TargetQuery = struct {
         hexagon,
         hppa,
         hppa64,
-        kalimba,
         kvx,
         lanai,
         loongarch32,

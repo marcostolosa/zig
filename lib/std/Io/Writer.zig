@@ -391,7 +391,17 @@ pub fn flush(w: *Writer) Error!void {
 /// Repeatedly calls `VTable.drain` until `end` is zero.
 pub fn defaultFlush(w: *Writer) Error!void {
     const drainFn = w.vtable.drain;
-    while (w.end != 0) _ = try drainFn(w, &.{""}, 1);
+    var stalled = false;
+    while (w.end != 0) {
+        const end_before = w.end;
+        _ = try drainFn(w, &.{""}, 1);
+        if (w.end == end_before) {
+            if (stalled) return error.WriteFailed;
+            stalled = true;
+        } else {
+            stalled = false;
+        }
+    }
 }
 
 /// Does nothing.
@@ -406,6 +416,25 @@ test "fixed buffer flush" {
     try writer.writeByte(10);
     try writer.flush();
     try testing.expectEqual(10, buffer[0]);
+}
+
+test "defaultFlush errors when drain makes no progress" {
+    const NoProgress = struct {
+        var calls: usize = 0;
+
+        fn drain(_: *Writer, _: []const []const u8, _: usize) Error!usize {
+            calls += 1;
+            if (calls > 2) return error.WriteFailed;
+            return 0;
+        }
+    };
+
+    var buffer: [8]u8 = undefined;
+    var w: Writer = .{ .vtable = &.{ .drain = NoProgress.drain }, .buffer = &buffer };
+    try w.writeAll("hi");
+
+    try testing.expectError(error.WriteFailed, Writer.defaultFlush(&w));
+    try testing.expectEqual(2, NoProgress.calls);
 }
 
 pub fn rebase(w: *Writer, preserve: usize, unused_capacity_len: usize) Error!void {

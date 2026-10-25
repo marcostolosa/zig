@@ -2998,14 +2998,14 @@ const targets = [_]ArchTarget{
         },
         .extra_models = &.{
             .{
-                .llvm_name = null,
+                .llvm_name = "mips1",
                 .zig_name = "r3000a",
                 .features = &.{
                     "mips1",
                 },
             },
             .{
-                .llvm_name = null,
+                .llvm_name = "mips2",
                 .zig_name = "allegrex",
                 .features = &.{
                     "mips2",

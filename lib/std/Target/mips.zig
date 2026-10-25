@@ -324,7 +324,7 @@ pub const all_features = blk: {
 pub const cpu = struct {
     pub const allegrex: CpuModel = .{
         .name = "allegrex",
-        .llvm_name = null,
+        .llvm_name = "mips2",
         .features = featureSet(&[_]Feature{
             .mips2,
             .single_float,
@@ -468,7 +468,7 @@ pub const cpu = struct {
     };
     pub const r3000a: CpuModel = .{
         .name = "r3000a",
-        .llvm_name = null,
+        .llvm_name = "mips1",
         .features = featureSet(&[_]Feature{
             .mips1,
         }),

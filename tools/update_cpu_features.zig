@@ -67,6 +67,10 @@ const spirv_omitted_capabilities = [_][]const u8{
     "matrix", // implied by shader
     "physical_storage_buffer_addresses", // implied by spirv64-vulkan
     "linkage", // automatically emitted when externs need linkage decorations
+
+    // Legacy leftovers:
+    "ray_query_provisional_khr",
+    "ray_tracing_provisional_khr",
 };
 const spirv_omitted_extensions = [_][]const u8{
     "SPV_KHR_physical_storage_buffer", // paired with physical_storage_buffer_addresses

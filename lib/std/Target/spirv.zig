@@ -101,11 +101,9 @@ pub const Feature = enum {
     ray_cull_mask_khr,
     ray_query_khr,
     ray_query_position_fetch_khr,
-    ray_query_provisional_khr,
     ray_tracing_khr,
     ray_tracing_opacity_micromap_ext,
     ray_tracing_position_fetch_khr,
-    ray_tracing_provisional_khr,
     ray_traversal_primitive_culling_khr,
     replicated_composites_ext,
     runtime_descriptor_array,
@@ -970,14 +968,6 @@ pub const all_features = blk: {
             .v1_0,
         }),
     };
-    result[@backingInt(Feature.ray_query_provisional_khr)] = .{
-        .llvm_name = null,
-        .description = "Enable ray_query_provisional_khr capability",
-        .dependencies = featureSet(&[_]Feature{
-            .SPV_KHR_ray_query,
-            .v1_0,
-        }),
-    };
     result[@backingInt(Feature.ray_tracing_khr)] = .{
         .llvm_name = null,
         .description = "Enable ray_tracing_khr capability",
@@ -999,14 +989,6 @@ pub const all_features = blk: {
         .description = "Enable ray_tracing_position_fetch_khr capability",
         .dependencies = featureSet(&[_]Feature{
             .SPV_KHR_ray_tracing_position_fetch,
-            .v1_0,
-        }),
-    };
-    result[@backingInt(Feature.ray_tracing_provisional_khr)] = .{
-        .llvm_name = null,
-        .description = "Enable ray_tracing_provisional_khr capability",
-        .dependencies = featureSet(&[_]Feature{
-            .SPV_KHR_ray_tracing,
             .v1_0,
         }),
     };

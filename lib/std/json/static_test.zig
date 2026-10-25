@@ -989,20 +989,48 @@ const diagnostics_test_multi_line_error_on_last_line =
     \\      "testSecondNum": "bad value"}
 ;
 
-const DiagnosticCase = struct {
-    T: type,
-    err: anyerror,
+const NestedDiagnostic1 = struct {
+    nestedDiag: []NestedDiagnostic2,
+};
+
+const NestedDiagnostic2 = struct {
     msgs: []const []const u8,
-    doc: []const u8,
+};
+
+const DiagnosticCase = struct {
+    nested: ?[]NestedDiagnostic1,
 };
 
 test "diagnostics" {
+    try testAllDiagnostics(
+        DiagnosticCase,
+        error.UnexpectedToken,
+        &.{
+            "input.json:1:39: UnexpectedToken",
+            "expected: array, found: number",
+            "in []const []const u8",
+            "in json.static_test.NestedDiagnostic2.msgs",
+            "in json.static_test.NestedDiagnostic2",
+            "in []json.static_test.NestedDiagnostic2",
+            "in json.static_test.NestedDiagnostic1.nestedDiag",
+            "in json.static_test.NestedDiagnostic1",
+            "in []json.static_test.NestedDiagnostic1",
+            "in ?[]json.static_test.NestedDiagnostic1",
+            "in json.static_test.DiagnosticCase.nested",
+            "in json.static_test.DiagnosticCase",
+        },
+        "{ \"nested\": [{\"nestedDiag\": [{\"msgs\": 2}]}]  }",
+    );
+
     try testAllDiagnostics(
         ScannerParseTest,
         error.UnexpectedToken,
         &.{
             "input.json:1:32: UnexpectedToken",
             "expected: string, found: number",
+            "in []const u8",
+            "in json.static_test.ScannerParseTest.testString",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": 32, \"testString\": 32 }",
     );
@@ -1013,6 +1041,9 @@ test "diagnostics" {
         &.{
             "input.json:1:51: UnexpectedToken",
             "expected: array, found: object",
+            "in []f32",
+            "in json.static_test.ScannerParseTest.testArr",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": 32, \"testString\": \"test\", \"testArr\": {} }",
     );
@@ -1024,6 +1055,9 @@ test "diagnostics" {
             "input.json:1:16: Overflow",
             "failed to parse. expected: u8 found: -2",
             "{ \"testNum\": -2, \"testString\": \"random text to test the trailing ellip...",
+            "in u8",
+            "in json.static_test.ScannerParseTest.testNum",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": -2, \"testString\": \"random text to test the trailing ellipsis\", \"testArr\": [3] }",
     );
@@ -1045,6 +1079,9 @@ test "diagnostics" {
             "input.json:4:35: InvalidCharacter",
             "\"testSecondNum\": \"bad value\",",
             "failed to parse. expected: u8 found: bad value",
+            "in u8",
+            "in json.static_test.ScannerParseTest.testSecondNum",
+            "in json.static_test.ScannerParseTest",
         },
         diagnostics_test_multi_line,
     );
@@ -1056,6 +1093,9 @@ test "diagnostics" {
             "input.json:4:35: InvalidCharacter",
             "\"testSecondNum\": \"bad value\"}",
             "failed to parse. expected: u8 found: bad value",
+            "in u8",
+            "in json.static_test.ScannerParseTest.testSecondNum",
+            "in json.static_test.ScannerParseTest",
         },
         diagnostics_test_multi_line_error_on_last_line,
     );
@@ -1066,6 +1106,7 @@ test "diagnostics" {
         &.{
             "input.json:1:18: MissingField",
             "missing field: json.static_test.ScannerParseTest.testString",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": 32 }",
     );
@@ -1076,6 +1117,9 @@ test "diagnostics" {
         &.{
             "input.json:1:16: Overflow",
             "failed to parse. expected: u8 found: -2",
+            "in u8",
+            "in json.static_test.ScannerParseTest.testNum",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": -2 }",
     );
@@ -1086,6 +1130,10 @@ test "diagnostics" {
         &.{
             "input.json:1:61: InvalidCharacter",
             "...stString\": \"test\", \"testArr\": [3, \"test\"] }",
+            "in f32",
+            "in []f32",
+            "in json.static_test.ScannerParseTest.testArr",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": 32, \"testString\": \"test\", \"testArr\": [3, \"test\"] }",
     );
@@ -1096,6 +1144,9 @@ test "diagnostics" {
         &.{
             "input.json:1:17: Overflow",
             "failed to parse. expected: u8 found: 320",
+            "in u8",
+            "in json.static_test.ScannerParseTest.testNum",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": 320 }",
     );
@@ -1106,6 +1157,7 @@ test "diagnostics" {
         &.{
             "input.json:1:25: UnknownField",
             "found unknown field. found: thisFieldDoesntExist",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"thisFieldDoesntExist\": 320 }",
     );
@@ -1116,6 +1168,8 @@ test "diagnostics" {
         &.{
             "input.json:1:27: DuplicateField",
             "duplicate field name: testNum",
+            "in json.static_test.ScannerParseTest.testNum",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": 32, \"testNum\": 32 }",
     );
@@ -1126,6 +1180,9 @@ test "diagnostics" {
         &.{
             "input.json:1:17: InvalidNumber",
             "failed to parse. expected: u8 found: 3.2",
+            "in u8",
+            "in json.static_test.ScannerParseTest.testNum",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": 3.2 }",
     );
@@ -1136,6 +1193,9 @@ test "diagnostics" {
         &.{
             "input.json:1:19: InvalidNumber",
             "failed to parse. expected: u8 found: 300.2",
+            "in u8",
+            "in json.static_test.ScannerParseTest.testNum",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": 300.2 }",
     );
@@ -1147,6 +1207,9 @@ test "diagnostics" {
         &.{
             "expected: string, found: number",
             "input.json: UnexpectedToken",
+            "in []const u8",
+            "in json.static_test.ScannerParseTest.testString",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": 32, \"testString\": 32 }",
     );
@@ -1157,6 +1220,9 @@ test "diagnostics" {
         &.{
             "expected: array, found: object",
             "input.json: UnexpectedToken",
+            "in []f32",
+            "in json.static_test.ScannerParseTest.testArr",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": 32, \"testString\": \"test\", \"testArr\": {} }",
     );
@@ -1167,6 +1233,9 @@ test "diagnostics" {
         &.{
             "input.json: InvalidCharacter",
             "failed to parse. expected: u8 found: bad value",
+            "in u8",
+            "in json.static_test.ScannerParseTest.testSecondNum",
+            "in json.static_test.ScannerParseTest",
         },
         diagnostics_test_multi_line,
     );
@@ -1175,8 +1244,9 @@ test "diagnostics" {
         ScannerParseTest,
         error.MissingField,
         &.{
-            "missing field: json.static_test.ScannerParseTest.testString",
             "input.json: MissingField",
+            "missing field: json.static_test.ScannerParseTest.testString",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": 32 }",
     );
@@ -1187,6 +1257,9 @@ test "diagnostics" {
         &.{
             "input.json: Overflow",
             "failed to parse. expected: u8 found: -2",
+            "in u8",
+            "in json.static_test.ScannerParseTest.testNum",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": -2 }",
     );
@@ -1196,6 +1269,10 @@ test "diagnostics" {
         error.InvalidCharacter,
         &.{
             "input.json: InvalidCharacter",
+            "in json.static_test.ScannerParseTest",
+            "in f32",
+            "in []f32",
+            "in json.static_test.ScannerParseTest.testArr",
             "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": 32, \"testString\": \"test\", \"testArr\": [3, \"test\"] }",
@@ -1207,6 +1284,9 @@ test "diagnostics" {
         &.{
             "input.json: Overflow",
             "failed to parse. expected: u8 found: 320",
+            "in u8",
+            "in json.static_test.ScannerParseTest.testNum",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": 320 }",
     );
@@ -1217,6 +1297,7 @@ test "diagnostics" {
         &.{
             "input.json: UnknownField",
             "found unknown field. found: thisFieldDoesntExist",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"thisFieldDoesntExist\": 320 }",
     );
@@ -1227,6 +1308,9 @@ test "diagnostics" {
         &.{
             "input.json: InvalidNumber",
             "failed to parse. expected: u8 found: 3.2",
+            "in u8",
+            "in json.static_test.ScannerParseTest.testNum",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": 3.2 }",
     );
@@ -1237,6 +1321,9 @@ test "diagnostics" {
         &.{
             "input.json: InvalidNumber",
             "failed to parse. expected: u8 found: 300.2",
+            "in u8",
+            "in json.static_test.ScannerParseTest.testNum",
+            "in json.static_test.ScannerParseTest",
         },
         "{ \"testNum\": 300.2 }",
     );
@@ -1315,10 +1402,6 @@ fn testDynamicParsedDiagnostics(comptime T: type, expectedError: anyerror, expec
             try writer.flush();
             const output = writer.buffered();
 
-            std.debug.print("================================\n", .{});
-            std.debug.print("{s}\n", .{output});
-            std.debug.print("================================\n", .{});
-
             const actual_error_union: anyerror!void = err;
             try std.testing.expectError(expectedError, actual_error_union);
             for (expectedErrorMsgs) |expectedErrorMsg| {
@@ -1337,11 +1420,18 @@ fn testEnumDiagnostics(comptime T: type, expectedError: anyerror, expectedErrorM
     if (std.json.parseFromValue(T, testing.allocator, value.value, .{ .diagnostics = &diags })) |_| {
         return error.expectedParseFailure;
     } else |err| {
+        var buf: [4096]u8 = undefined;
+        var writer: std.Io.Writer = .fixed(&buf);
+
+        diags.dump(&writer, err, "input.json") catch {};
+        try writer.flush();
+        const output = writer.buffered();
+
         const actual_error_union: anyerror!void = err;
         try std.testing.expectError(expectedError, actual_error_union);
-    }
-    for (expectedErrorMsgs) |expectedErrorMsg| {
-        try testing.expectEqualStrings(expectedErrorMsg, diags.message);
+        for (expectedErrorMsgs) |expectedErrorMsg| {
+            try std.testing.expect(std.mem.containsAtLeast(u8, output, 1, expectedErrorMsg));
+        }
     }
 }
 
@@ -1349,35 +1439,50 @@ test "union diagnostics" {
     try testEnumDiagnostics(
         DiagnosticsTestEnum,
         error.UnexpectedToken,
-        &.{"union (object with one field), found: integer"},
+        &.{
+            "union (object with one field), found: integer",
+            "in json.static_test.DiagnosticsTestEnum",
+        },
         "1",
     );
 
     try testEnumDiagnostics(
         DiagnosticsTestEnum,
         error.UnexpectedToken,
-        &.{"tagged union requires only one field"},
+        &.{
+            "tagged union requires only one field",
+            "in json.static_test.DiagnosticsTestEnum",
+        },
         "{}",
     );
 
     try testEnumDiagnostics(
         DiagnosticsTestEnum,
         error.UnknownField,
-        &.{"unrecognized tag name"},
+        &.{
+            "unrecognized tag name",
+            "in json.static_test.DiagnosticsTestEnum",
+        },
         "{\"nope\": 1}",
     );
 
     try testEnumDiagnostics(
         DiagnosticsTestEnum,
         error.UnexpectedToken,
-        &.{"void payload '{}' should have no fields"},
+        &.{
+            "void payload '{}' should have no fields",
+            "in json.static_test.DiagnosticsTestEnum",
+        },
         "{\"nothing\": {\"a\": 1}}",
     );
 
     try testEnumDiagnostics(
         DiagnosticsTestEnum,
         error.UnexpectedToken,
-        &.{"expected: void payload ('{}'), found: number"},
+        &.{
+            "expected: void payload ('{}'), found: number",
+            "in json.static_test.DiagnosticsTestEnum",
+        },
         "{\"nothing\": 1}",
     );
 }

@@ -2504,6 +2504,9 @@ fn loadObject(
     var atoms: std.ArrayList(Atom) = .empty;
     defer atoms.deinit(gpa);
 
+    var cstring_buf: Io.Writer.Allocating = .init(gpa);
+    defer cstring_buf.deinit();
+
     // This block processes symbols and atoms (populating `symbols` and `atoms` in the process).
     // After the block exits, the only work remining is relocation lowering.
     {
@@ -2715,15 +2718,43 @@ fn loadObject(
                 while (cur_atom_end <= target_atom_offset) {
                     // We need to start a new atom at `cur_atom_end`.
                     const atom_offset: u64 = cur_atom_end;
-                    const atom_size: u64 = usage: switch (section.usage) {
+                    const atom_size: u64 = switch (section.usage) {
                         // TODO: we should also deduplicate these
                         .data_const_split_4 => 4,
                         .data_const_split_8 => 8,
                         .data_const_split_16 => 16,
 
-                        // TODO: split C string sections (although `MH_SUBSECTIONS_VIA_SYMBOLS` is
-                        // usually sufficient anyway); and deduplicate those too
-                        .data_const_split_c_strings => continue :usage .data_const,
+                        // TODO: Deduplicate those too
+                        .data_const_split_c_strings => cstring: {
+                            cstring_buf.shrinkRetainingCapacity(0);
+
+                            const remaining = section.size - atom_offset;
+
+                            const len = fr.interface.streamDelimiterLimit(
+                                &cstring_buf.writer,
+                                0,
+                                .limited64(remaining),
+                            ) catch |e| switch (e) {
+                                error.WriteFailed => return error.OutOfMemory,
+                                error.ReadFailed => return error.ReadFailed,
+                                error.StreamTooLong => return diags.failParse(
+                                    path,
+                                    "unterminated C string in section '{s},{s}'",
+                                    .{
+                                        std.mem.sliceTo(&section.segname, 0),
+                                        std.mem.sliceTo(&section.sectname, 0),
+                                    },
+                                ),
+                            };
+
+                            assert(len == cstring_buf.written().len);
+
+                            // Consume NUL.
+                            fr.interface.toss(1);
+                            cstring_buf.writer.writeByte(0) catch
+                                return error.OutOfMemory;
+                            break :cstring len + 1;
+                        },
 
                         .text,
                         .data_const,
@@ -2787,7 +2818,10 @@ fn loadObject(
                     });
                     macho.nodes.appendAssumeCapacity(.{ .input_atom = iai });
 
-                    if (section.usage != .bss) {
+                    if (section.usage == .data_const_split_c_strings) {
+                        const dest = atom_node.slice(&macho.mf)[0..@intCast(atom_size)];
+                        @memcpy(dest, cstring_buf.written());
+                    } else if (section.usage != .bss) {
                         const slice = atom_node.slice(&macho.mf);
                         try fr.interface.readSliceAll(slice[0..@intCast(atom_size)]);
                     }

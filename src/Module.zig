@@ -407,6 +407,11 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
                 "-fpxx,+nooddspreg,");
         }
 
+        if (target.cpu.arch.isPowerpc32()) {
+            // https://github.com/llvm/llvm-project/issues/235393
+            try buf.appendSlice("-crbits,");
+        }
+
         if (target.cpu.arch == .s390x) {
             try buf.append(if (omit_frame_pointer) '-' else '+');
             try buf.appendSlice("backchain,");

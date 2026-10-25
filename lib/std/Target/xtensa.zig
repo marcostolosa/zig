@@ -339,8 +339,8 @@ pub const cpu = struct {
             .timers1,
         }),
     };
-    pub const generic: CpuModel = .{
-        .name = "generic",
+    pub const xtensa: CpuModel = .{
+        .name = "xtensa",
         .llvm_name = "generic",
         .features = featureSet(&[_]Feature{}),
     };

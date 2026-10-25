@@ -2079,6 +2079,7 @@ pub const Cpu = struct {
                 .x86 => &x86.cpu.i386,
                 .x86_64 => &x86.cpu.x86_64,
                 .xcore => &xcore.cpu.xs1b,
+                .xtensa, .xtensaeb => &xtensa.cpu.xtensa,
                 inline else => |a| &@field(Target, @tagName(a.family())).cpu.generic,
             };
         }

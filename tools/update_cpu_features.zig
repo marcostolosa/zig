@@ -4939,6 +4939,12 @@ const targets = [_]ArchTarget{
                 .omit = true,
             },
         },
+        .model_overrides = &.{
+            .{
+                .llvm_name = "generic",
+                .zig_name = "xtensa",
+            },
+        },
     },
 };
 

@@ -2277,7 +2277,7 @@ pub const cpu = struct {
     };
     pub const exynos_m1: CpuModel = .{
         .name = "exynos_m1",
-        .llvm_name = null,
+        .llvm_name = "generic",
         .features = featureSet(&[_]Feature{
             .crypto,
             .expand_fp_mlx,
@@ -2298,7 +2298,7 @@ pub const cpu = struct {
     };
     pub const exynos_m2: CpuModel = .{
         .name = "exynos_m2",
-        .llvm_name = null,
+        .llvm_name = "generic",
         .features = featureSet(&[_]Feature{
             .crypto,
             .expand_fp_mlx,

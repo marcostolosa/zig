@@ -861,7 +861,7 @@ const targets = [_]ArchTarget{
             },
 
             .{
-                .llvm_name = null,
+                .llvm_name = "generic",
                 .zig_name = "exynos_m1",
                 .features = &.{
                     "crc",
@@ -874,7 +874,7 @@ const targets = [_]ArchTarget{
                 },
             },
             .{
-                .llvm_name = null,
+                .llvm_name = "generic",
                 .zig_name = "exynos_m2",
                 .features = &.{
                     "crc",
@@ -887,7 +887,7 @@ const targets = [_]ArchTarget{
                 },
             },
             .{
-                .llvm_name = null,
+                .llvm_name = "generic",
                 .zig_name = "xgene1",
                 .features = &.{
                     "perfmon",
@@ -895,7 +895,7 @@ const targets = [_]ArchTarget{
                 },
             },
             .{
-                .llvm_name = null,
+                .llvm_name = "generic",
                 .zig_name = "emag",
                 .features = &.{
                     "crc",
@@ -1970,12 +1970,12 @@ const targets = [_]ArchTarget{
                 .features = &.{ "v7a", "vfp3d16" },
             },
             .{
-                .llvm_name = null,
+                .llvm_name = "generic",
                 .zig_name = "exynos_m1",
                 .features = &.{ "v8a", "exynos" },
             },
             .{
-                .llvm_name = null,
+                .llvm_name = "generic",
                 .zig_name = "exynos_m2",
                 .features = &.{ "v8a", "exynos" },
             },

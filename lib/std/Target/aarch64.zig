@@ -3361,7 +3361,7 @@ pub const cpu = struct {
     };
     pub const emag: CpuModel = .{
         .name = "emag",
-        .llvm_name = null,
+        .llvm_name = "generic",
         .features = featureSet(&[_]Feature{
             .crc,
             .crypto,
@@ -3371,7 +3371,7 @@ pub const cpu = struct {
     };
     pub const exynos_m1: CpuModel = .{
         .name = "exynos_m1",
-        .llvm_name = null,
+        .llvm_name = "generic",
         .features = featureSet(&[_]Feature{
             .crc,
             .crypto,
@@ -3384,7 +3384,7 @@ pub const cpu = struct {
     };
     pub const exynos_m2: CpuModel = .{
         .name = "exynos_m2",
-        .llvm_name = null,
+        .llvm_name = "generic",
         .features = featureSet(&[_]Feature{
             .crc,
             .crypto,
@@ -3987,7 +3987,7 @@ pub const cpu = struct {
     };
     pub const xgene1: CpuModel = .{
         .name = "xgene1",
-        .llvm_name = null,
+        .llvm_name = "generic",
         .features = featureSet(&[_]Feature{
             .perfmon,
             .v8a,

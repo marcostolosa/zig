@@ -3059,6 +3059,10 @@ const targets = [_]ArchTarget{
             },
 
             .{
+                .llvm_name = "64bit-support",
+                .zig_name = "64bit",
+            },
+            .{
                 .llvm_name = "fast-MFLR",
                 .zig_name = "fast_mflr",
             },
@@ -3088,7 +3092,7 @@ const targets = [_]ArchTarget{
                 .llvm_name = null,
                 .zig_name = "cell",
                 .features = &.{
-                    "64bit_support",
+                    "64bit",
                     "altivec",
                     "fres",
                     "frsqrte",
@@ -3101,7 +3105,7 @@ const targets = [_]ArchTarget{
                 .llvm_name = null,
                 .zig_name = "e6500",
                 .features = &.{
-                    "64bit_support",
+                    "64bit",
                     "altivec",
                     "booke",
                     "bpermd",

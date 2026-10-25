@@ -803,6 +803,11 @@ fn initInner(macho: *MachO) !void {
 
     macho.node.macho = .root;
     try macho.nodes.append(gpa, .macho);
+    try macho.node.macho.realign(
+        gpa,
+        &macho.mf,
+        macho.mf.flags.block_size.max(macho.targetPageAlign()),
+    );
 
     const arch: enum { aarch64, x86_64 } = switch (comp.getTarget().cpu.arch) {
         .aarch64 => .aarch64,

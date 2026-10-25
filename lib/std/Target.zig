@@ -2048,6 +2048,7 @@ pub const Cpu = struct {
                 .aarch64, .aarch64_be => &aarch64.cpu.armv8a,
                 .alpha => &alpha.cpu.ev4,
                 .amdgcn => &amdgcn.cpu.gfx600,
+                .arc, .arceb => &arc.cpu.arcv2,
                 .avr => &avr.cpu.avr1,
                 .bpfel, .bpfeb => &bpf.cpu.v1,
                 .csky => &csky.cpu.e2,

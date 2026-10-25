@@ -1206,6 +1206,12 @@ const targets = [_]ArchTarget{
             .name = "ARC",
             .td_name = "ARC",
         },
+        .model_overrides = &.{
+            .{
+                .llvm_name = "generic",
+                .zig_name = "arcv2",
+            },
+        },
     },
     .{
         .zig_name = "arm",

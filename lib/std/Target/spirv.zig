@@ -19,11 +19,16 @@ pub const Feature = enum {
     b_float16dot_product_khr,
     b_float16type_khr,
     bit_instructions,
+    bitcast_extract_ext,
     clip_distance,
     compute_derivative_group_linear_khr,
     compute_derivative_group_quads_khr,
     constant_data_khr,
+    cooperative_matrix_conversions_ext,
+    cooperative_matrix_get_coordinate_ext,
     cooperative_matrix_khr,
+    cooperative_matrix_per_element_operations_ext,
+    cooperative_matrix_reductions_ext,
     cull_distance,
     demote_to_helper_invocation,
     denorm_flush_to_zero,
@@ -40,9 +45,12 @@ pub const Feature = enum {
     expect_assume_khr,
     float16,
     float16buffer,
+    float4ext,
     float64,
+    float6ext,
     float8cooperative_matrix_ext,
     float8ext,
+    float8unsigned_e8m0ext,
     float_controls2,
     fmakhr,
     fragment_barycentric_khr,
@@ -92,6 +100,7 @@ pub const Feature = enum {
     min_lod,
     multi_view,
     multi_viewport,
+    mx_int8ext,
     named_barrier,
     opt_none_ext,
     pipe_storage,
@@ -102,7 +111,8 @@ pub const Feature = enum {
     ray_query_khr,
     ray_query_position_fetch_khr,
     ray_tracing_khr,
-    ray_tracing_opacity_micromap_ext,
+    ray_tracing_opacity_micromap_execution_mode_khr,
+    ray_tracing_opacity_micromap_khr,
     ray_tracing_position_fetch_khr,
     ray_traversal_primitive_culling_khr,
     replicated_composites_ext,
@@ -123,7 +133,9 @@ pub const Feature = enum {
     shader_viewport_index_layer_ext,
     signed_zero_inf_nan_preserve,
     sparse_residency,
+    split_barrier_ext,
     SPV_EXT_arithmetic_fence,
+    SPV_EXT_cooperative_matrix_maintenance1,
     SPV_EXT_demote_to_helper_invocation,
     SPV_EXT_descriptor_heap,
     SPV_EXT_descriptor_indexing,
@@ -133,6 +145,7 @@ pub const Feature = enum {
     SPV_EXT_fragment_shader_interlock,
     SPV_EXT_long_vector,
     SPV_EXT_mesh_shader,
+    SPV_EXT_ocp_microscaling_types,
     SPV_EXT_opacity_micromap,
     SPV_EXT_optnone,
     SPV_EXT_physical_storage_buffer,
@@ -147,6 +160,7 @@ pub const Feature = enum {
     SPV_EXT_shader_subgroup_partitioned,
     SPV_EXT_shader_tile_image,
     SPV_EXT_shader_viewport_index_layer,
+    SPV_EXT_split_barrier,
     SPV_KHR_16bit_storage,
     SPV_KHR_8bit_storage,
     SPV_KHR_abort,
@@ -164,6 +178,7 @@ pub const Feature = enum {
     SPV_KHR_fragment_shading_rate,
     SPV_KHR_integer_dot_product,
     SPV_KHR_multiview,
+    SPV_KHR_opacity_micromap,
     SPV_KHR_poison_freeze,
     SPV_KHR_post_depth_coverage,
     SPV_KHR_quad_control,
@@ -353,6 +368,14 @@ pub const all_features = blk: {
             .v1_0,
         }),
     };
+    result[@backingInt(Feature.bitcast_extract_ext)] = .{
+        .llvm_name = null,
+        .description = "Enable bitcast_extract_ext capability",
+        .dependencies = featureSet(&[_]Feature{
+            .SPV_EXT_ocp_microscaling_types,
+            .v1_0,
+        }),
+    };
     result[@backingInt(Feature.clip_distance)] = .{
         .llvm_name = null,
         .description = "Enable clip_distance capability",
@@ -384,11 +407,43 @@ pub const all_features = blk: {
             .v1_0,
         }),
     };
+    result[@backingInt(Feature.cooperative_matrix_conversions_ext)] = .{
+        .llvm_name = null,
+        .description = "Enable cooperative_matrix_conversions_ext capability",
+        .dependencies = featureSet(&[_]Feature{
+            .SPV_EXT_cooperative_matrix_maintenance1,
+            .v1_0,
+        }),
+    };
+    result[@backingInt(Feature.cooperative_matrix_get_coordinate_ext)] = .{
+        .llvm_name = null,
+        .description = "Enable cooperative_matrix_get_coordinate_ext capability",
+        .dependencies = featureSet(&[_]Feature{
+            .SPV_EXT_cooperative_matrix_maintenance1,
+            .v1_0,
+        }),
+    };
     result[@backingInt(Feature.cooperative_matrix_khr)] = .{
         .llvm_name = null,
         .description = "Enable cooperative_matrix_khr capability",
         .dependencies = featureSet(&[_]Feature{
             .SPV_KHR_cooperative_matrix,
+            .v1_0,
+        }),
+    };
+    result[@backingInt(Feature.cooperative_matrix_per_element_operations_ext)] = .{
+        .llvm_name = null,
+        .description = "Enable cooperative_matrix_per_element_operations_ext capability",
+        .dependencies = featureSet(&[_]Feature{
+            .SPV_EXT_cooperative_matrix_maintenance1,
+            .v1_0,
+        }),
+    };
+    result[@backingInt(Feature.cooperative_matrix_reductions_ext)] = .{
+        .llvm_name = null,
+        .description = "Enable cooperative_matrix_reductions_ext capability",
+        .dependencies = featureSet(&[_]Feature{
+            .SPV_EXT_cooperative_matrix_maintenance1,
             .v1_0,
         }),
     };
@@ -515,10 +570,26 @@ pub const all_features = blk: {
             .v1_0,
         }),
     };
+    result[@backingInt(Feature.float4ext)] = .{
+        .llvm_name = null,
+        .description = "Enable float4ext capability",
+        .dependencies = featureSet(&[_]Feature{
+            .SPV_EXT_ocp_microscaling_types,
+            .v1_0,
+        }),
+    };
     result[@backingInt(Feature.float64)] = .{
         .llvm_name = null,
         .description = "Enable float64 capability",
         .dependencies = featureSet(&[_]Feature{
+            .v1_0,
+        }),
+    };
+    result[@backingInt(Feature.float6ext)] = .{
+        .llvm_name = null,
+        .description = "Enable float6ext capability",
+        .dependencies = featureSet(&[_]Feature{
+            .SPV_EXT_ocp_microscaling_types,
             .v1_0,
         }),
     };
@@ -535,6 +606,14 @@ pub const all_features = blk: {
         .description = "Enable float8ext capability",
         .dependencies = featureSet(&[_]Feature{
             .SPV_EXT_float8,
+            .v1_0,
+        }),
+    };
+    result[@backingInt(Feature.float8unsigned_e8m0ext)] = .{
+        .llvm_name = null,
+        .description = "Enable float8unsigned_e8m0ext capability",
+        .dependencies = featureSet(&[_]Feature{
+            .SPV_EXT_ocp_microscaling_types,
             .v1_0,
         }),
     };
@@ -899,6 +978,14 @@ pub const all_features = blk: {
             .v1_0,
         }),
     };
+    result[@backingInt(Feature.mx_int8ext)] = .{
+        .llvm_name = null,
+        .description = "Enable mx_int8ext capability",
+        .dependencies = featureSet(&[_]Feature{
+            .SPV_EXT_ocp_microscaling_types,
+            .v1_0,
+        }),
+    };
     result[@backingInt(Feature.named_barrier)] = .{
         .llvm_name = null,
         .description = "Enable named_barrier capability",
@@ -976,11 +1063,20 @@ pub const all_features = blk: {
             .v1_0,
         }),
     };
-    result[@backingInt(Feature.ray_tracing_opacity_micromap_ext)] = .{
+    result[@backingInt(Feature.ray_tracing_opacity_micromap_execution_mode_khr)] = .{
         .llvm_name = null,
-        .description = "Enable ray_tracing_opacity_micromap_ext capability",
+        .description = "Enable ray_tracing_opacity_micromap_execution_mode_khr capability",
+        .dependencies = featureSet(&[_]Feature{
+            .SPV_KHR_opacity_micromap,
+            .v1_0,
+        }),
+    };
+    result[@backingInt(Feature.ray_tracing_opacity_micromap_khr)] = .{
+        .llvm_name = null,
+        .description = "Enable ray_tracing_opacity_micromap_khr capability",
         .dependencies = featureSet(&[_]Feature{
             .SPV_EXT_opacity_micromap,
+            .SPV_KHR_opacity_micromap,
             .v1_0,
         }),
     };
@@ -1137,9 +1233,22 @@ pub const all_features = blk: {
             .v1_0,
         }),
     };
+    result[@backingInt(Feature.split_barrier_ext)] = .{
+        .llvm_name = null,
+        .description = "Enable split_barrier_ext capability",
+        .dependencies = featureSet(&[_]Feature{
+            .SPV_EXT_split_barrier,
+            .v1_0,
+        }),
+    };
     result[@backingInt(Feature.SPV_EXT_arithmetic_fence)] = .{
         .llvm_name = null,
         .description = "Enable SPV_EXT_arithmetic_fence extension",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
+    result[@backingInt(Feature.SPV_EXT_cooperative_matrix_maintenance1)] = .{
+        .llvm_name = null,
+        .description = "Enable SPV_EXT_cooperative_matrix_maintenance1 extension",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.SPV_EXT_demote_to_helper_invocation)] = .{
@@ -1185,6 +1294,11 @@ pub const all_features = blk: {
     result[@backingInt(Feature.SPV_EXT_mesh_shader)] = .{
         .llvm_name = null,
         .description = "Enable SPV_EXT_mesh_shader extension",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
+    result[@backingInt(Feature.SPV_EXT_ocp_microscaling_types)] = .{
+        .llvm_name = null,
+        .description = "Enable SPV_EXT_ocp_microscaling_types extension",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.SPV_EXT_opacity_micromap)] = .{
@@ -1255,6 +1369,11 @@ pub const all_features = blk: {
     result[@backingInt(Feature.SPV_EXT_shader_viewport_index_layer)] = .{
         .llvm_name = null,
         .description = "Enable SPV_EXT_shader_viewport_index_layer extension",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
+    result[@backingInt(Feature.SPV_EXT_split_barrier)] = .{
+        .llvm_name = null,
+        .description = "Enable SPV_EXT_split_barrier extension",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.SPV_KHR_16bit_storage)] = .{
@@ -1340,6 +1459,11 @@ pub const all_features = blk: {
     result[@backingInt(Feature.SPV_KHR_multiview)] = .{
         .llvm_name = null,
         .description = "Enable SPV_KHR_multiview extension",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
+    result[@backingInt(Feature.SPV_KHR_opacity_micromap)] = .{
+        .llvm_name = null,
+        .description = "Enable SPV_KHR_opacity_micromap extension",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.SPV_KHR_poison_freeze)] = .{

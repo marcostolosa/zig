@@ -1487,7 +1487,7 @@ test "union diagnostics" {
     );
 }
 
-test "test innerParseArrayFromArrayValue Length Error" {
+test "innerParseArrayFromArrayValue Length Error" {
     var diags = std.json.Diagnostics{};
     const value = try std.json.parseFromSlice(std.json.Value, testing.allocator, "[1,2,3]", .{});
     defer value.deinit();
@@ -1500,4 +1500,55 @@ test "test innerParseArrayFromArrayValue Length Error" {
         const actual_error_union: anyerror!void = err;
         try std.testing.expectError(error.LengthMismatch, actual_error_union);
     }
+}
+
+fn testTinyChunkedDiagnostics(comptime T: type, expectedError: anyerror, expectedErrorMsgs: []const []const u8, doc: []const u8) !void {
+    var tiny_buffer: [1]u8 = undefined;
+    var one_byte_stream: testing.Reader = .init(&tiny_buffer, &.{
+        .{ .buffer = doc },
+    });
+    one_byte_stream.artificial_limit = .limited(1);
+
+    var diags = std.json.Diagnostics{};
+
+    var json_reader: Scanner.Reader = .init(std.testing.allocator, &one_byte_stream.interface);
+    defer json_reader.deinit();
+
+    if (parseFromTokenSource(T, testing.allocator, &json_reader, .{ .diagnostics = &diags })) |parsed| {
+        defer parsed.deinit();
+        return error.expectedParseFailure;
+    } else |err| {
+        var buf: [4096]u8 = undefined;
+        var writer: std.Io.Writer = .fixed(&buf);
+
+        diags.dump(&writer, err, "input.json") catch {};
+        try writer.flush();
+        const output = writer.buffered();
+
+        const actual_error_union: anyerror!void = err;
+        try std.testing.expectError(expectedError, actual_error_union);
+        for (expectedErrorMsgs) |expectedErrorMsg| {
+            try std.testing.expect(std.mem.containsAtLeast(u8, output, 1, expectedErrorMsg));
+        }
+    }
+}
+
+test "tiny chunks diagnostics" {
+    // This is not what we would want to see from buffered chunks
+    // however the diagnostics about value and location are still valuable for
+    // troubleshooting and an improvement over the status quo.
+    try testTinyChunkedDiagnostics(
+        ScannerParseTest,
+        error.InvalidCharacter,
+        &.{
+            "input.json:4:35: InvalidCharacter",
+            "\"...",
+            " ^",
+            "failed to parse. expected: u8 found: bad value",
+            "in u8",
+            "in json.static_test.ScannerParseTest.testSecondNum",
+            "in json.static_test.ScannerParseTest",
+        },
+        diagnostics_test_multi_line,
+    );
 }

@@ -2000,6 +2000,7 @@ pub fn deinit(macho: *MachO) void {
     macho.got.deinit(gpa);
     macho.stubs.deinit(gpa);
     macho.sections_changed_index.deinit(gpa);
+    macho.lc.offsets.deinit(gpa);
     macho.* = undefined;
 }
 

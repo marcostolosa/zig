@@ -2146,7 +2146,7 @@ const targets = [_]ArchTarget{
         .extra_models = &.{
             .{
                 .llvm_name = null,
-                .zig_name = "generic",
+                .zig_name = "e2",
                 .features = &.{"e2"},
             },
         },

@@ -2428,6 +2428,13 @@ pub const cpu = struct {
             .vdspv2,
         }),
     };
+    pub const e2: CpuModel = .{
+        .name = "e2",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .e2,
+        }),
+    };
     pub const e801: CpuModel = .{
         .name = "e801",
         .llvm_name = "e801",
@@ -2569,13 +2576,6 @@ pub const cpu = struct {
             .hwdiv,
             .mp,
             .trust,
-        }),
-    };
-    pub const generic: CpuModel = .{
-        .name = "generic",
-        .llvm_name = null,
-        .features = featureSet(&[_]Feature{
-            .e2,
         }),
     };
     pub const @"i805": CpuModel = .{

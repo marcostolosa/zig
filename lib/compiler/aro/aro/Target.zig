@@ -116,7 +116,6 @@ pub const SubArch = enum {
         } else if (arch.isSpirv()) {
             const spirv = std.Target.spirv.Feature;
             return @backingInt(switch (sub) {
-                .spirv_v10 => spirv.v1_0,
                 .spirv_v11 => spirv.v1_1,
                 .spirv_v12 => spirv.v1_2,
                 .spirv_v13 => spirv.v1_3,

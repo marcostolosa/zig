@@ -311,7 +311,6 @@ fn renderExtension(
 ) !void {
     try writer.writeAll(
         \\pub const Extension = enum {
-        \\v1_0,
         \\v1_1,
         \\v1_2,
         \\v1_3,
@@ -815,10 +814,16 @@ fn renderValueEnum(
             const enumerant = enumerants[i];
             const enum_version = enumerant.version.?;
             const minor = if (enum_version[0] == 'N') '0' else enum_version[2];
-            try writer.print("\n.{f} => &.{{.v1_{c}", .{ formatId(enumerant.enumerant), minor });
+            try writer.print("\n.{f} => &.{{", .{formatId(enumerant.enumerant)});
+            var comma = if (minor != '0') b: {
+                try writer.print(".v1_{c}", .{minor});
+                break :b true;
+            } else false;
             for (enumerant.extensions) |extension| {
                 if (!isAllowedExtension(extension)) continue;
-                try writer.print(", .{s}", .{extension});
+                if (comma) try writer.writeAll(", ");
+                try writer.print(".{s}", .{extension});
+                comma = true;
             }
             try writer.writeAll("},");
         }

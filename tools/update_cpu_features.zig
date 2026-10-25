@@ -118,8 +118,6 @@ const spirv_extra_features: []const Feature = blk: {
                 &.{"v1_2"}
             else if (std.mem.eql(u8, name, "v1_2"))
                 &.{"v1_1"}
-            else if (std.mem.eql(u8, name, "v1_1"))
-                &.{"v1_0"}
             else
                 &.{},
         }};
@@ -3682,7 +3680,7 @@ const targets = [_]ArchTarget{
             .{
                 .llvm_name = null,
                 .zig_name = "v1_0",
-                .features = &.{"v1_0"},
+                .features = &.{},
             },
             .{
                 .llvm_name = null,
@@ -3717,7 +3715,7 @@ const targets = [_]ArchTarget{
             .{
                 .llvm_name = null,
                 .zig_name = "opencl_v2_1",
-                .features = &.{"v1_0"},
+                .features = &.{},
             },
             .{
                 .llvm_name = null,
@@ -3737,7 +3735,7 @@ const targets = [_]ArchTarget{
             .{
                 .llvm_name = null,
                 .zig_name = "vulkan_v1_0",
-                .features = &.{"v1_0"},
+                .features = &.{},
             },
             .{
                 .llvm_name = null,

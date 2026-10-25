@@ -694,7 +694,7 @@ pub const cpu = struct {
     };
     pub const e6500: CpuModel = .{
         .name = "e6500",
-        .llvm_name = null,
+        .llvm_name = "e5500",
         .features = featureSet(&[_]Feature{
             .@"64bit",
             .altivec,

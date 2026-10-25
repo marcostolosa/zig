@@ -3165,7 +3165,7 @@ const targets = [_]ArchTarget{
                 },
             },
             .{
-                .llvm_name = null,
+                .llvm_name = "e5500",
                 .zig_name = "e6500",
                 .features = &.{
                     "64bit",

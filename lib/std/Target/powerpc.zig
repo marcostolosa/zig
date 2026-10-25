@@ -652,7 +652,7 @@ pub const cpu = struct {
     };
     pub const cell: CpuModel = .{
         .name = "cell",
-        .llvm_name = null,
+        .llvm_name = "970",
         .features = featureSet(&[_]Feature{
             .@"64bit",
             .altivec,

@@ -3152,7 +3152,7 @@ const targets = [_]ArchTarget{
         },
         .extra_models = &.{
             .{
-                .llvm_name = null,
+                .llvm_name = "970",
                 .zig_name = "cell",
                 .features = &.{
                     "64bit",

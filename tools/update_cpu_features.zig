@@ -2825,6 +2825,63 @@ const targets = [_]ArchTarget{
         },
     },
     .{
+        .zig_name = "m88k",
+        .llvm = null,
+        .extra_features = &.{
+            .{
+                .zig_name = "isa_88110",
+                .desc = "Enable MC88110 additions to the base instruction set",
+                .deps = &.{},
+            },
+            .{
+                .zig_name = "sfu1",
+                .desc = "Enable floating-point unit",
+                .deps = &.{},
+            },
+            .{
+                .zig_name = "sfu2",
+                .desc = "Enable graphics unit",
+                .deps = &.{},
+            },
+            .{
+                .zig_name = "xmem_imm",
+                .desc = "Enable xmem with 16-bit immediate offset",
+                .deps = &.{},
+            },
+            .{
+                .zig_name = "xrf",
+                .desc = "Enable extended register file",
+                .deps = &.{"sfu1"},
+            },
+        },
+        .extra_models = &.{
+            .{
+                .llvm_name = null,
+                .zig_name = "m88000",
+                .features = &.{
+                    "sfu1",
+                },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "m88100",
+                .features = &.{
+                    "sfu1",
+                    "xmem_imm",
+                },
+            },
+            .{
+                .llvm_name = null,
+                .zig_name = "m88110",
+                .features = &.{
+                    "sfu1",
+                    "sfu2",
+                    "xrf",
+                },
+            },
+        },
+    },
+    .{
         .zig_name = "msp430",
         .llvm = .{
             .name = "MSP430",

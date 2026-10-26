@@ -1721,3 +1721,24 @@ test "switch on expression" {
     }
     try expect(c == 0);
 }
+
+test "switch results across inferred anytype" {
+    const x: u32 = 1;
+    var y: u32 = x;
+    _ = &y;
+
+    const a = switch (x) {
+        1 => 1,
+        else => 3,
+    };
+
+    const b = anytypeInner(.{switch (y) {
+        1 => "1",
+        else => "3",
+    }});
+
+    try expect(b[0] - '0' == a);
+}
+fn anytypeInner(thing: anytype) []const u8 {
+    return thing[0];
+}

@@ -539,11 +539,9 @@ const Module = struct {
         }
 
         var opt_pdb: ?Pdb = pdb: {
-            const path = (coff_obj.getPdbPath() catch {
-                return error.InvalidDebugInfo;
-            }) orelse {
-                break :pdb null;
-            };
+            const pdb_info = (coff_obj.getPdbInfo() catch
+                return error.InvalidDebugInfo) orelse break :pdb null;
+            const path = pdb_info.path;
             const pdb_file_open_result = if (fs.path.isAbsolute(path)) res: {
                 break :res Io.Dir.cwd().openFile(io, path, .{});
             } else res: {
@@ -605,7 +603,7 @@ const Module = struct {
                 => |e| return e,
             };
 
-            if (!std.mem.eql(u8, &coff_obj.guid, &pdb.guid) or coff_obj.age != pdb.age)
+            if (!std.mem.eql(u8, &pdb_info.guid, &pdb.guid) or pdb_info.age != pdb.age)
                 return error.InvalidDebugInfo;
 
             break :pdb pdb;
@@ -615,9 +613,10 @@ const Module = struct {
             pdb.deinit();
         };
 
-        const coff_section_headers: []coff.SectionHeader = if (opt_pdb != null) csh: {
-            break :csh try coff_obj.getSectionHeadersAlloc(arena);
-        } else &.{};
+        const coff_section_headers: []coff.SectionHeader = if (opt_pdb != null)
+            try coff_obj.getSectionHeadersAlloc(arena)
+        else
+            &.{};
 
         return .{
             .arena = arena_instance.state,

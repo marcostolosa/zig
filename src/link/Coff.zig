@@ -92,8 +92,6 @@ pub const default_size_of_stack_commit: u32 = 0x1000;
 pub const default_size_of_heap_reserve: u32 = 0x100000;
 pub const default_size_of_heap_commit: u32 = 0x1000;
 
-pub const imp_prefix = "__imp_";
-
 const header_name_max_len = @typeInfo(@FieldType(std.coff.SectionHeader, "name")).array.len;
 
 const Error = link.Error || error{MappedFileIo};
@@ -530,7 +528,7 @@ pub const Member = struct {
             );
 
             if (!gop.found_existing) {
-                errdefer _ = coff.export_table.entries.pop();
+                errdefer _ = coff.long_names_table.entries.pop();
 
                 _, const old_size = Node.known.longnames_member.location(&coff.mf).resolve(&coff.mf);
                 const new_size = Alignment.@"4".forward(old_size + name.len + 1);
@@ -580,17 +578,6 @@ pub const Member = struct {
     }
 
     pub fn storeHeaderDecimalStr(field_ptr: anytype, value: u64) void {
-        const array_info = @typeInfo(@typeInfo(@TypeOf(field_ptr)).pointer.child).array;
-        assert(array_info.child == u8);
-        assert(value < comptime try std.math.powi(u64, 10, array_info.len));
-        _ = std.fmt.printInt(field_ptr, value, 10, .lower, .{
-            .width = array_info.len,
-            .alignment = .left,
-            .fill = ' ',
-        });
-    }
-
-    pub fn loadHeaderDecimalStr(field_ptr: anytype, value: u64) void {
         const array_info = @typeInfo(@typeInfo(@TypeOf(field_ptr)).pointer.child).array;
         assert(array_info.child == u8);
         assert(value < comptime try std.math.powi(u64, 10, array_info.len));
@@ -1417,40 +1404,10 @@ pub const Reloc = extern struct {
                         @intCast(target_rva),
                         target_endian,
                     ),
-                    .REL32 => std.mem.writeInt(
+                    .REL32, .REL32_1, .REL32_2, .REL32_3, .REL32_4, .REL32_5 => |kind| std.mem.writeInt(
                         i32,
                         loc_slice[0..4],
-                        @intCast(@as(i64, @bitCast(target_rva -% (loc_sym.rva + reloc.offset + 4)))),
-                        target_endian,
-                    ),
-                    .REL32_1 => std.mem.writeInt(
-                        i32,
-                        loc_slice[0..4],
-                        @intCast(@as(i64, @bitCast(target_rva -% (loc_sym.rva + reloc.offset + 5)))),
-                        target_endian,
-                    ),
-                    .REL32_2 => std.mem.writeInt(
-                        i32,
-                        loc_slice[0..4],
-                        @intCast(@as(i64, @bitCast(target_rva -% (loc_sym.rva + reloc.offset + 6)))),
-                        target_endian,
-                    ),
-                    .REL32_3 => std.mem.writeInt(
-                        i32,
-                        loc_slice[0..4],
-                        @intCast(@as(i64, @bitCast(target_rva -% (loc_sym.rva + reloc.offset + 7)))),
-                        target_endian,
-                    ),
-                    .REL32_4 => std.mem.writeInt(
-                        i32,
-                        loc_slice[0..4],
-                        @intCast(@as(i64, @bitCast(target_rva -% (loc_sym.rva + reloc.offset + 8)))),
-                        target_endian,
-                    ),
-                    .REL32_5 => std.mem.writeInt(
-                        i32,
-                        loc_slice[0..4],
-                        @intCast(@as(i64, @bitCast(target_rva -% (loc_sym.rva + reloc.offset + 9)))),
+                        @intCast(@as(i64, @bitCast(target_rva -% (loc_sym.rva + reloc.offset + @backingInt(kind))))),
                         target_endian,
                     ),
                     .SECREL => std.mem.writeInt(
@@ -1578,6 +1535,10 @@ fn create(
     if (target.cpu.arch.endian() != comptime targetEndian(undefined))
         return error.UnsupportedCOFFArchitecture;
     const machine = target.toCoffMachine();
+    switch (machine) {
+        .AMD64, .I386 => {},
+        else => return error.UnsupportedCOFFArchitecture,
+    }
     const timestamp: u32 = 0;
     const major_subsystem_version = options.major_subsystem_version orelse 6;
     const minor_subsystem_version = options.minor_subsystem_version orelse 0;
@@ -3491,7 +3452,7 @@ const ObjectSectionAttributes = bitpack struct {
             .MEM_NOT_CACHED = attr.nocache,
             .MEM_DISCARDABLE = attr.discard,
             .LNK_REMOVE = attr.remove,
-            .CNT_INITIALIZED_DATA = attr.uninitialized,
+            .CNT_INITIALIZED_DATA = attr.initialized,
             .CNT_UNINITIALIZED_DATA = attr.uninitialized,
         };
     }
@@ -3924,27 +3885,19 @@ fn memberNameStringEscape(memberName: ?[]const u8, w: *std.Io.Writer) std.Io.Wri
     try w.print("({f})", .{std.zig.fmtString(memberName orelse return)});
 }
 
-fn inputSectionHeaderNameSlice(
-    coff: *Coff,
-    header: *const std.coff.SectionHeader,
-    string_table: []const u8,
-    path: std.Build.Cache.Path,
-    section_i: usize,
-) ![]const u8 {
-    const diags = &coff.base.comp.link_diags;
-    return if (header.name[0] == '/') name: {
-        const offset_str = std.mem.sliceTo(header.name[1..], 0);
-        const name_offset = std.fmt.parseUnsigned(u24, offset_str, 10) catch
-            return diags.failParse(path, "ill-formed section name in section {d}: '{s}'", .{
-                section_i,
-                header.name[0 .. offset_str.len + 1],
-            });
-
-        if (name_offset > string_table.len)
-            return diags.failParse(path, "out-of-bounds section name offset in section {d}: {d}", .{ section_i, name_offset });
-
-        break :name std.mem.sliceTo(string_table[name_offset..], 0);
-    } else std.mem.sliceTo(&header.name, 0);
+/// Checks that line numbers, relocations and raw data of a section lie within the file
+fn checkSectionBounds(
+    header: std.coff.SectionHeader,
+    file_size: u64,
+) error{ BadLineNumbers, BadRelocations, BadRawData }!void {
+    const ln_end = @as(u64, header.pointer_to_linenumbers) +
+        @as(u64, header.number_of_linenumbers) * std.coff.LineNumber.sizeOf();
+    if (ln_end > file_size) return error.BadLineNumbers;
+    const rel_end = @as(u64, header.pointer_to_relocations) +
+        @as(u64, header.number_of_relocations) * std.coff.Relocation.sizeOf();
+    if (rel_end > file_size) return error.BadRelocations;
+    const raw_end = @as(u64, header.pointer_to_raw_data) + header.size_of_raw_data;
+    if (raw_end > file_size) return error.BadRawData;
 }
 
 fn loadObject(
@@ -3992,9 +3945,9 @@ fn loadObject(
     if (header.size_of_optional_header != 0)
         return diags.failParse(path, "unexpected optional header", .{});
 
-    const symbol_table_len = header.number_of_symbols * std.coff.Symbol.sizeOf();
-    const symbol_table_end = header.pointer_to_symbol_table + symbol_table_len;
     // String table length (which includes the length field) immediately trails the symbol table
+    const symbol_table_end = @as(u64, header.pointer_to_symbol_table) +
+        @as(u64, header.number_of_symbols) * std.coff.Symbol.sizeOf();
     if (symbol_table_end + @sizeOf(u32) > fl.size)
         return diags.failParse(path, "bad symbol table location", .{});
 
@@ -4021,11 +3974,11 @@ fn loadObject(
     };
     defer gpa.free(string_table);
 
+    const num_sections: usize = header.number_of_sections;
+    const num_symbols: usize = header.number_of_symbols;
     try coff.ensureManyUnusedStringCapacity(
-        header.number_of_sections + header.number_of_symbols,
-        header.number_of_sections * 9 +
-            header.number_of_symbols * 9 +
-            string_table_len - @sizeOf(u32),
+        @intCast(num_sections + num_symbols),
+        @intCast(num_sections * 9 + num_symbols * 9 + string_table_len - @sizeOf(u32)),
     );
 
     const PendingSymbolIndex = enum(u32) {
@@ -4084,44 +4037,15 @@ fn loadObject(
                 .comdat_result = .pending,
             };
 
-            const section_name_slice = if (section.header.name[0] == '/') name: {
-                const offset_str = std.mem.sliceTo(section.header.name[1..], 0);
-                const name_offset = std.fmt.parseUnsigned(u24, offset_str, 10) catch
-                    return diags.failParse(path, "ill-formed section name offset in section {d}: '{s}'", .{
-                        section_i,
-                        section.header.name[0 .. offset_str.len + 1],
-                    });
-
-                if (name_offset > string_table.len)
-                    return diags.failParse(
-                        path,
-                        "out-of-bounds section name offset in section {d}: {d}",
-                        .{ section_i, name_offset },
-                    );
-
-                break :name std.mem.sliceTo(string_table[name_offset..], 0);
-            } else std.mem.sliceTo(&section.header.name, 0);
+            const section_name_slice = section.header.resolveName(.{ .buffer = string_table }) catch |err|
+                return diags.failParse(path, "bad name in section {d}: {t}", .{ section_i, err });
             section.name = coff.getOrPutStringAssumeCapacity(section_name_slice);
 
-            if (section.header.pointer_to_linenumbers +
-                @as(u32, section.header.number_of_linenumbers) * std.coff.LineNumber.sizeOf() > fl.size)
-                return diags.failParse(path, "bad line numbers location in section {d} `{s}`", .{
-                    section_i,
-                    section_name_slice,
-                });
-
-            if (section.header.pointer_to_relocations +
-                @as(u32, section.header.number_of_relocations) * std.coff.Relocation.sizeOf() > fl.size)
-                return diags.failParse(path, "bad relocations location in section {d} `{s}`", .{
-                    section_i,
-                    section_name_slice,
-                });
-
-            if (section.header.pointer_to_raw_data + section.header.size_of_raw_data > fl.size)
-                return diags.failParse(path, "bad raw data location in section {d} `{s}`", .{
-                    section_i,
-                    section_name_slice,
-                });
+            checkSectionBounds(section.header, fl.size) catch |err| return diags.failParse(
+                path,
+                "{t} in section {d} `{s}`",
+                .{ err, section_i, section_name_slice },
+            );
         }
 
         break :sections sections;
@@ -4204,17 +4128,16 @@ fn loadObject(
             std.mem.byteSwap(std.coff.Symbol, &symbol);
 
         const aux_symbols = if (symbol.number_of_aux_symbols > 0)
-            try r.take(symbol_size * symbol.number_of_aux_symbols)
+            try r.take(@as(usize, symbol.number_of_aux_symbols) * symbol_size)
         else
             &.{};
         defer symbol_i += symbol.number_of_aux_symbols + 1;
 
-        const name = std.mem.sliceTo(if (std.mem.eql(u8, symbol.name[0..4], "\x00\x00\x00\x00")) name: {
-            const index = std.mem.readInt(u32, symbol.name[4..], target_endian);
-            if (index >= string_table.len)
-                return diags.failParse(path, "bad string offset for symbol 0x{x}", .{symbol_i});
-            break :name string_table[index..];
-        } else &symbol.name, 0);
+        const name = if (symbol.getNameOffset()) |offset|
+            (std.coff.Strtab{ .buffer = string_table }).getChecked(offset) catch
+                return diags.failParse(path, "bad string offset for symbol 0x{x}", .{symbol_i})
+        else
+            symbol.getName().?;
 
         if (is_archive) {
             if (switch (symbol.storage_class) {
@@ -4228,7 +4151,7 @@ fn loadObject(
 
         switch (symbol.section_number) {
             .UNDEFINED, .DEBUG, .ABSOLUTE => {},
-            else => |sn| if (@backingInt(sn) > sections.len)
+            else => |sn| if (@backingInt(sn) < 0 or @backingInt(sn) > sections.len)
                 return diags.failParse(path, "out-of-bounds section number {d} in symbol 0x{x}", .{ sn, symbol_i }),
         }
 
@@ -4292,7 +4215,14 @@ fn loadObject(
 
                                 section.comdat_association = @fromBackingInt(@intCast(section_def.number));
                             }
-
+                            switch (section_def.selection) {
+                                .NONE, .NODUPLICATES, .ANY, .SAME_SIZE, .EXACT_MATCH, .ASSOCIATIVE, .LARGEST => {},
+                                _ => return diags.failParse(
+                                    path,
+                                    "section aux symbol 0x{x} for '{s}' has unknown COMDAT selection {d}",
+                                    .{ symbol_i + 1, name, @backingInt(section_def.selection) },
+                                ),
+                            }
                             section.comdat = section_def.selection;
                             section.comdat_crc = section_def.checksum;
                         }
@@ -4364,10 +4294,12 @@ fn loadObject(
                         .{ name, symbol_i },
                     );
 
-                var file: std.coff.FileDefinition = undefined;
-                @memcpy(std.mem.asBytes(&file)[0..symbol_size], aux_symbols[0..symbol_size]);
+                if (symbol.number_of_aux_symbols == 0)
+                    return diags.failParse(path, "file symbol 0x{x} has no auxiliary records", .{symbol_i});
 
-                input.source_name = (try coff.getOrPutString(file.getFileName())).toOptional();
+                // The name spans all aux records and is NUL padded
+                const file_name = std.mem.sliceTo(aux_symbols, 0);
+                input.source_name = (try coff.getOrPutString(file_name)).toOptional();
                 break :pending_symbols &.{};
             },
             else => |storage_class| return diags.failParse(
@@ -4414,22 +4346,23 @@ fn loadObject(
         if (section.header.flags.LNK_INFO) {
             if (std.mem.eql(u8, &section.header.name, ".drectve")) {
                 try fr.seekTo(fl.offset + section.header.pointer_to_raw_data);
-                // TODO: Don't really want an additional buffer here, but want to limit to size_of_raw_data
-                var buf: [128]u8 = undefined;
-                var section_r = r.limited(.limited(section.header.size_of_raw_data), &buf);
-                while (section_r.interface.takeDelimiter(' ') catch |err| switch (err) {
-                    error.StreamTooLong => return diags.failParse(path, "unexpectedly long .drectve argument", .{}),
-                    else => |e| return e,
-                }) |arg| {
+                const drectve = try r.readAllocAll(gpa, section.header.size_of_raw_data);
+                defer gpa.free(drectve);
+                var args = std.mem.splitScalar(u8, drectve, ' ');
+                while (args.next()) |arg| {
                     // Microsoft tools emit 3 space characters into this section even with /Zl
                     if (arg.len == 0) continue;
 
-                    if (std.ascii.startsWithIgnoreCase(arg, "-exclude-symbols:")) {
+                    if (arg[0] != '/' and arg[0] != '-')
+                        return diags.failParse(path, "malformed .drectve argument: '{s}'", .{arg});
+                    const opt = arg[1..];
+
+                    if (std.ascii.startsWithIgnoreCase(opt, "exclude-symbols:")) {
                         // TODO: When implementing mingw auto-exports (if at all?), track this to not export this symbol
-                    } else if (std.ascii.startsWithIgnoreCase(arg, "/include:")) {
-                        _ = try coff.globalSymbol(.{ .name = arg["/include:".len..] });
-                    } else if (std.ascii.startsWithIgnoreCase(arg, "/alternatename:")) {
-                        var split = std.mem.splitScalar(u8, arg["/alternatename:".len..], '=');
+                    } else if (std.ascii.startsWithIgnoreCase(opt, "include:")) {
+                        _ = try coff.globalSymbol(.{ .name = opt["include:".len..] });
+                    } else if (std.ascii.startsWithIgnoreCase(opt, "alternatename:")) {
+                        var split = std.mem.splitScalar(u8, opt["alternatename:".len..], '=');
                         const orig = split.first();
                         const alt = split.next() orelse
                             return diags.failParse(path, "malformed .drectve argument: '{s}'", .{arg});
@@ -4447,10 +4380,10 @@ fn loadObject(
                                 "conflicting /alternatename .drectve arguments: first seen as {s}={s}, now seen as {s}={s}",
                                 .{ orig, gop.value_ptr.toSlice(coff), orig, alt },
                             );
-                    } else if (std.ascii.startsWithIgnoreCase(arg, "/guardsym:")) {
+                    } else if (std.ascii.startsWithIgnoreCase(opt, "guardsym:")) {
                         // TODO: https://learn.microsoft.com/en-us/windows/win32/secbp/pe-metadata
-                    } else if (std.ascii.startsWithIgnoreCase(arg, "/merge:")) merge: {
-                        var split = std.mem.splitScalar(u8, arg["/merge:".len..], '=');
+                    } else if (std.ascii.startsWithIgnoreCase(opt, "merge:")) merge: {
+                        var split = std.mem.splitScalar(u8, opt["merge:".len..], '=');
                         const from = split.first();
                         const to = split.next() orelse
                             return diags.failParse(path, "malformed .drectve argument: '{s}'", .{arg});
@@ -4491,12 +4424,12 @@ fn loadObject(
                                 "conflicting /merge .drectve arguments: first seen as {s}={s}, now seen as {s}={s}",
                                 .{ from, gop.value_ptr.toSlice(coff), from, to },
                             );
-                    } else if (std.ascii.startsWithIgnoreCase(arg, "/disallowlib:")) {
-                        const lib_name = arg["/disallowlib:".len..];
+                    } else if (std.ascii.startsWithIgnoreCase(opt, "disallowlib:")) {
+                        const lib_name = opt["disallowlib:".len..];
                         // TODO: Track these and issue error in prelink if any match
                         _ = lib_name;
-                    } else if (std.ascii.startsWithIgnoreCase(arg, "/defaultlib:")) {
-                        const lib_path = arg["/defaultlib:".len..];
+                    } else if (std.ascii.startsWithIgnoreCase(opt, "defaultlib:")) {
+                        const lib_path = opt["defaultlib:".len..];
                         const trim = std.mem.trim(u8, lib_path, "\"");
                         if (lib_path.len == trim.len or lib_path.len - 2 == trim.len) {
                             if (!comp.config.link_libc or comp.libc_installation == null)
@@ -4511,6 +4444,14 @@ fn loadObject(
                             "malformed /DEFAULTLIB .drectve argument: `{s}`",
                             .{arg},
                         );
+                    } else if (std.ascii.startsWithIgnoreCase(opt, "failifmismatch:") or
+                        std.ascii.startsWithIgnoreCase(opt, "manifestdependency:") or
+                        std.ascii.startsWithIgnoreCase(opt, "disallowlib:") or
+                        std.ascii.startsWithIgnoreCase(opt, "guardsym:") or
+                        std.ascii.startsWithIgnoreCase(opt, "throwingnew") or
+                        std.ascii.startsWithIgnoreCase(opt, "editandcontinue"))
+                    {
+                        log.debug("ignoring .drectve argument: {s}", .{arg});
                     } else return diags.failParse(path, "unsupported argument in .drectve section: `{s}`", .{arg});
                 }
             }
@@ -4640,7 +4581,11 @@ fn loadObject(
                     .LARGEST => {
                         // TODO: Resize existing .ni and replace with this section's contents
                         // TODO: This will be tricky, what to do about existing InputSection?
-                        unreachable;
+                        return diags.failParse(
+                            path,
+                            "COMDAT selection LARGEST is not supported yet (symbol 0x{x})",
+                            .{index},
+                        );
                     },
                     .NONE, .ASSOCIATIVE, _ => unreachable,
                 }
@@ -4949,13 +4894,19 @@ fn loadObject(
             }
 
             assert(symbol.si != .null);
-            try coff.addReloc(
-                section.si,
-                reloc.virtual_address - section.header.virtual_address,
-                symbol.si,
-                .pending,
-                .{ .u16 = reloc.type },
-            );
+            const reloc_offset = std.math.sub(u32, reloc.virtual_address, section.header.virtual_address) catch
+                return diags.failParse(
+                    path,
+                    "relocation 0x{x} in section '{s}' has invalid offset 0x{x}",
+                    .{ reloc_i, section.name.toSlice(coff), reloc.virtual_address },
+                );
+            if (reloc_offset >= section.header.size_of_raw_data)
+                return diags.failParse(
+                    path,
+                    "relocation 0x{x} in section '{s}' is outside of the section: 0x{x}",
+                    .{ reloc_i, section.name.toSlice(coff), reloc_offset },
+                );
+            try coff.addReloc(section.si, reloc_offset, symbol.si, .pending, .{ .u16 = reloc.type });
         }
     }
 
@@ -5084,11 +5035,196 @@ fn parseArchiveMemberHeaderInner(
     if (!std.mem.eql(u8, &header.end_of_header, std.coff.archive_end_of_header))
         return error.BadEndOfHeader;
 
-    return .{
-        .name = name,
-        .size = size,
-    };
+    return .{ .name = name, .size = size };
 }
+
+const Archive = struct {
+    pub const MemberContent = enum { object, import, anon_object };
+
+    pub const MemberInfo = struct {
+        kind: MemberContent,
+        machine: std.coff.IMAGE.FILE.MACHINE,
+    };
+
+    pub fn classifyMember(prefix: *const [6]u8) MemberInfo {
+        const machine: std.coff.IMAGE.FILE.MACHINE = @fromBackingInt(std.mem.readInt(u16, prefix[0..2], .little));
+        const sig2 = std.mem.readInt(u16, prefix[2..4], .little);
+        const version = std.mem.readInt(u16, prefix[4..6], .little);
+        if (machine == .UNKNOWN and sig2 == 0xffff)
+            return .{ .kind = if (version == 0) .import else .anon_object, .machine = machine };
+        return .{ .kind = .object, .machine = machine };
+    }
+
+    pub const SecondLinkerMember = struct {
+        member_offsets: []u32,
+        symbol_member_indices: []u16,
+        string_table: []u8,
+
+        pub const ReadError = error{
+            InvalidMemberCount,
+            InvalidSymbolCount,
+            InvalidMemberIndex,
+            InvalidMemberOffset,
+            UnterminatedString,
+            SymbolCountMismatch,
+        } || std.mem.Allocator.Error || Io.Reader.Error;
+
+        pub const Entry = struct {
+            name: []const u8,
+            member_index: u16,
+            member_offset: u32,
+        };
+
+        pub const Iterator = struct {
+            indices: []const u16,
+            offsets: []const u32,
+            strings: []const u8,
+            i: usize = 0,
+            pos: usize = 0,
+
+            pub fn next(it: *Iterator) ?Entry {
+                if (it.i >= it.indices.len) return null;
+                const end = std.mem.findScalarPos(u8, it.strings, it.pos, 0).?; // Validated by read()
+                const idx = it.indices[it.i];
+                const entry: Entry = .{
+                    .name = it.strings[it.pos..end],
+                    .member_index = idx,
+                    .member_offset = it.offsets[idx],
+                };
+                it.i += 1;
+                it.pos = end + 1;
+                return entry;
+            }
+        };
+
+        pub fn symbols(self: SecondLinkerMember) Iterator {
+            return .{
+                .indices = self.symbol_member_indices,
+                .offsets = self.member_offsets,
+                .strings = self.string_table,
+            };
+        }
+
+        pub fn deinit(self: SecondLinkerMember, gpa: std.mem.Allocator) void {
+            gpa.free(self.member_offsets);
+            gpa.free(self.symbol_member_indices);
+            gpa.free(self.string_table);
+        }
+
+        pub fn read(gpa: std.mem.Allocator, r: *Io.Reader, size: u64, archive_size: u64) ReadError!SecondLinkerMember {
+            if (size < 2 * @sizeOf(u32)) return error.InvalidMemberCount;
+
+            const num_members = try r.takeInt(u32, .little);
+            // The offsets table and the symbol count that follows it must fit
+            const symbols_start: u64 = 2 * @sizeOf(u32) + @as(u64, num_members) * @sizeOf(u32);
+            if (symbols_start > size) return error.InvalidMemberCount;
+
+            const offsets = try gpa.alloc(u32, num_members);
+            errdefer gpa.free(offsets);
+            for (offsets) |*offset| offset.* = try r.takeInt(u32, .little);
+
+            const num_symbols = try r.takeInt(u32, .little);
+            const strings_start = symbols_start + @as(u64, num_symbols) * @sizeOf(u16);
+            if (strings_start > size) return error.InvalidSymbolCount;
+
+            const indices = try gpa.alloc(u16, num_symbols);
+            errdefer gpa.free(indices);
+            for (indices) |*index| {
+                const number = try r.takeInt(u16, .little);
+                if (number == 0 or number > num_members) return error.InvalidMemberIndex;
+                const offset = offsets[number - 1];
+                if (offset < std.coff.archive_signature.len or @as(u64, offset) + @sizeOf(std.coff.ArchiveMemberHeader) > archive_size)
+                    return error.InvalidMemberOffset;
+                index.* = number - 1;
+            }
+
+            const strings_len = std.math.cast(usize, size - strings_start) orelse return error.InvalidSymbolCount;
+            const strings = try r.readAllocAll(gpa, strings_len);
+            errdefer gpa.free(strings);
+
+            var start: usize = 0;
+            for (0..num_symbols) |_| {
+                if (start >= strings.len) return error.SymbolCountMismatch;
+                const end = std.mem.findScalarPos(u8, strings, start, 0) orelse return error.UnterminatedString;
+                start = end + 1;
+            }
+
+            return .{ .member_offsets = offsets, .symbol_member_indices = indices, .string_table = strings };
+        }
+    };
+
+    pub const Index = struct {
+        second: SecondLinkerMember,
+        longnames: ?[]u8,
+
+        pub fn deinit(self: Index, gpa: std.mem.Allocator) void {
+            self.second.deinit(gpa);
+            if (self.longnames) |l| gpa.free(l);
+        }
+    };
+
+    pub const IndexError = error{
+        BadSignature,
+        MissingFirstLinkerMember,
+        MissingSecondLinkerMember,
+        MemberOutOfBounds,
+        BadName,
+        NoLongNames,
+        BadSize,
+        BadEndOfHeader,
+    } || SecondLinkerMember.ReadError;
+
+    pub fn readIndex(gpa: std.mem.Allocator, r: *Io.Reader, archive_size: u64) IndexError!Index {
+        const signature = try r.takeArray(std.coff.archive_signature.len);
+        if (!std.mem.eql(u8, signature, std.coff.archive_signature)) return error.BadSignature;
+        var pos: u64 = std.coff.archive_signature.len;
+        var header: std.coff.ArchiveMemberHeader = undefined;
+
+        if (pos >= archive_size) return error.MissingFirstLinkerMember;
+        var member = try takeMember(r, &pos, archive_size, &header);
+        if (!std.mem.eql(u8, member.name, "/")) return error.MissingFirstLinkerMember;
+        try r.discardAll(std.math.cast(usize, member.size) orelse return error.MemberOutOfBounds);
+        pos += member.size;
+
+        if (pos >= archive_size) return error.MissingSecondLinkerMember;
+        member = try takeMember(r, &pos, archive_size, &header);
+        if (!std.mem.eql(u8, member.name, "/")) return error.MissingSecondLinkerMember;
+        const second = try SecondLinkerMember.read(gpa, r, member.size, archive_size);
+        errdefer second.deinit(gpa);
+        pos += member.size;
+
+        var longnames: ?[]u8 = null;
+        if (pos < archive_size) {
+            const pad: usize = @intCast(pos & 1);
+            const peeked = try r.peek(pad + @sizeOf(std.coff.ArchiveMemberHeader));
+            const next_header: *const std.coff.ArchiveMemberHeader = @ptrCast(peeked[pad..][0..@sizeOf(std.coff.ArchiveMemberHeader)]);
+            if (std.mem.eql(u8, (try parseArchiveMemberHeaderInner(next_header, null)).name, "//")) {
+                member = try takeMember(r, &pos, archive_size, &header);
+                const len = std.math.cast(usize, member.size) orelse return error.MemberOutOfBounds;
+                longnames = try r.readAllocAll(gpa, len);
+            }
+        }
+
+        return .{ .second = second, .longnames = longnames };
+    }
+
+    fn takeMember(
+        r: *Io.Reader,
+        pos: *u64,
+        archive_size: u64,
+        header: *std.coff.ArchiveMemberHeader,
+    ) IndexError!ArchiveMemberHeader {
+        if (pos.* & 1 != 0) {
+            try r.discardAll(1);
+            pos.* += 1;
+        }
+        header.* = try r.takeStruct(std.coff.ArchiveMemberHeader, .little);
+        pos.* += @sizeOf(std.coff.ArchiveMemberHeader);
+        const parsed = try parseArchiveMemberHeaderInner(header, null);
+        if (pos.* + parsed.size > archive_size) return error.MemberOutOfBounds;
+        return parsed;
+    }
+};
 
 fn loadArchive(coff: *Coff, path: std.Build.Cache.Path, fr: *Io.File.Reader) LoadInputError!void {
     const comp = coff.base.comp;
@@ -5099,21 +5235,19 @@ fn loadArchive(coff: *Coff, path: std.Build.Cache.Path, fr: *Io.File.Reader) Loa
 
     log.debug("loadArchive({f})", .{path.fmtEscapeString()});
 
-    const signature = try r.take(std.coff.archive_signature.len);
-    if (!std.mem.eql(u8, signature, std.coff.archive_signature))
-        return diags.failParse(path, "bad signature", .{});
+    const size = try fr.getSize();
+    var index = Archive.readIndex(gpa, r, size) catch |err| switch (err) {
+        error.OutOfMemory, error.ReadFailed, error.EndOfStream => |e| return e,
+        else => |e| return diags.failParse(path, "malformed archive: {t}", .{e}),
+    };
+    defer index.deinit(gpa);
+    const opt_longnames: ?[]const u8 = index.longnames;
 
-    var opt_expected_kind: ?std.coff.ArchiveMemberHeader.Kind = .first_linker;
-    var opt_longnames: ?[]const u8 = null;
-    defer if (opt_longnames) |l| gpa.free(l);
-
-    var members: std.ArrayList(struct {
-        offset: u32,
-        iami: ?InputArchive.Member.Index,
-    }) = .empty;
+    var members: std.ArrayList(struct { offset: u32, iami: ?InputArchive.Member.Index }) = .empty;
     defer members.deinit(gpa);
-    var symbol_member_indices: std.ArrayList(u32) = .empty;
-    defer symbol_member_indices.deinit(gpa);
+    try members.ensureTotalCapacity(gpa, index.second.member_offsets.len);
+    for (index.second.member_offsets) |offset|
+        members.addOneAssumeCapacity().* = .{ .offset = offset, .iami = null };
 
     const iai: InputArchive.Index = @fromBackingInt(@intCast(coff.input_archives.items.len));
     (try coff.input_archives.addOne(gpa)).* = .{
@@ -5148,139 +5282,41 @@ fn loadArchive(coff: *Coff, path: std.Build.Cache.Path, fr: *Io.File.Reader) Loa
         _ = coff.input_archives.pop();
     }
 
-    var pos = fr.logicalPos();
-    const size = try fr.getSize();
-    while (pos < size) : (pos = fr.logicalPos()) {
-        if ((pos & 1) != 0) try r.discardAll(1);
-        const header = try r.takeStruct(std.coff.ArchiveMemberHeader, target_endian);
-        const res = try parseArchiveMemberHeader(diags, path, &header, opt_longnames);
+    const num_members = index.second.member_offsets.len;
+    const num_symbols = index.second.symbol_member_indices.len;
+    try coff.ensureManyUnusedStringCapacity(@intCast(num_symbols), @intCast(index.second.string_table.len));
+    try coff.input_archive_members.ensureUnusedCapacity(gpa, num_members);
+    try coff.input_archive_symbols.ensureUnusedCapacity(gpa, num_symbols);
+    try coff.input_archive_symbol_indices.ensureUnusedCapacity(gpa, num_symbols);
 
-        const member_end = fr.logicalPos() + res.size;
-        if (member_end > size)
-            return diags.failParse(path, "out-of-bounds length 0x{x} in member '{s}'", .{ res.size, res.name });
+    var symbols = index.second.symbols();
+    while (symbols.next()) |sym| {
+        const string = coff.getOrPutStringAssumeCapacity(sym.name);
+        const iamsi: InputArchive.Member.Symbol.Index = @fromBackingInt(@intCast(coff.input_archive_symbols.items.len));
+        const symbol_gop = coff.input_archive_symbol_indices.getOrPutAssumeCapacity(string);
+        if (!symbol_gop.found_existing) {
+            symbol_gop.value_ptr.* = .{ .first = iamsi, .last = iamsi };
+        } else {
+            coff.input_archive_symbols.items[@backingInt(symbol_gop.value_ptr.last)].next = iamsi;
+            symbol_gop.value_ptr.last = iamsi;
+        }
 
-        log.debug("loadArchiveMember({s})", .{res.name});
-
-        if (opt_expected_kind) |expected_kind| switch (expected_kind) {
-            .first_linker => {
-                if (!std.mem.eql(u8, res.name, "/"))
-                    return diags.failParse(path, "expected first linker member, found '{s}'", .{res.name});
-
-                try fr.seekTo(fr.logicalPos() + res.size);
-                opt_expected_kind = .second_linker;
-                continue;
-            },
-            .second_linker => {
-                if (!std.mem.eql(u8, res.name, "/"))
-                    return diags.failParse(path, "expected second linker member, found '{s}'", .{res.name});
-
-                const num_members = try r.takeInt(u32, target_endian);
-                pos = fr.logicalPos();
-                if (pos + num_members * @sizeOf(u32) > member_end)
-                    return diags.failParse(path, "invalid member count 0x{x} in second linker member", .{num_members});
-
-                try members.ensureTotalCapacity(gpa, num_members);
-                for (0..num_members) |_|
-                    members.addOneAssumeCapacity().* = .{
-                        .offset = try r.takeInt(u32, target_endian),
-                        .iami = null,
-                    };
-
-                const num_symbols = try r.takeInt(u32, target_endian);
-                pos = fr.logicalPos();
-                if (pos + num_symbols * @sizeOf(u16) > member_end)
-                    return diags.failParse(path, "invalid symbol count 0x{x} in second linker member", .{num_symbols});
-
-                try symbol_member_indices.ensureTotalCapacity(gpa, num_symbols);
-                for (0..num_symbols) |_|
-                    symbol_member_indices.addOneAssumeCapacity().* = (try r.takeInt(u16, target_endian)) - 1;
-
-                pos = fr.logicalPos();
-                try coff.ensureManyUnusedStringCapacity(num_symbols, @intCast(member_end - pos));
-                try coff.input_archive_members.ensureUnusedCapacity(gpa, num_members);
-                try coff.input_archive_symbols.ensureUnusedCapacity(gpa, num_symbols);
-                try coff.input_archive_symbol_indices.ensureUnusedCapacity(gpa, num_symbols);
-
-                var symbol_i: u32 = 0;
-                while (pos < member_end and symbol_i < num_symbols) : ({
-                    pos = fr.logicalPos();
-                    symbol_i += 1;
-                }) {
-                    const name = if (r.takeDelimiter(0) catch |err| switch (err) {
-                        error.StreamTooLong => null,
-                        else => |e| return e,
-                    }) |n| n else return diags.failParse(path, "unterminated string found in second linker member", .{});
-
-                    const string = coff.getOrPutStringAssumeCapacity(name);
-                    const iamsi: InputArchive.Member.Symbol.Index = @fromBackingInt(@intCast(coff.input_archive_symbols.items.len));
-                    const symbol_gop = coff.input_archive_symbol_indices.getOrPutAssumeCapacity(string);
-                    if (!symbol_gop.found_existing) {
-                        symbol_gop.value_ptr.* = .{
-                            .first = iamsi,
-                            .last = iamsi,
-                        };
-                    } else {
-                        coff.input_archive_symbols.items[@backingInt(symbol_gop.value_ptr.last)].next = iamsi;
-                        symbol_gop.value_ptr.last = iamsi;
-                    }
-
-                    const iami = members.items[symbol_member_indices.items[symbol_i]].iami orelse iami: {
-                        const iami: InputArchive.Member.Index = @fromBackingInt(@intCast(coff.input_archive_members.items.len));
-                        const member_offset = members.items[symbol_member_indices.items[symbol_i]].offset;
-                        coff.input_archive_members.addOneAssumeCapacity().* = .{
-                            .iai = iai,
-                            .name = undefined,
-                            .content = .{
-                                .object = .{
-                                    .offset = member_offset,
-                                    .size = undefined,
-                                },
-                            },
-                            .flags = .{
-                                .is_loaded = false,
-                            },
-                        };
-
-                        members.items[symbol_member_indices.items[symbol_i]].iami = iami;
-                        break :iami iami;
-                    };
-
-                    log.debug("loadArchiveMemberSymbol({s}) = ({d}, {d}, {d})", .{ name, iai, iami, iamsi });
-
-                    coff.input_archive_symbols.addOneAssumeCapacity().* = .{
-                        .iami = iami,
-                        .next = iamsi,
-                    };
-                }
-
-                if (symbol_i != num_symbols)
-                    return diags.failParse(
-                        path,
-                        " expected {d} entries in second linker member string table, but found {d}",
-                        .{ num_symbols, symbol_i },
-                    );
-
-                try fr.seekTo(member_end);
-                opt_expected_kind = .longnames;
-                continue;
-            },
-            .longnames => {
-                // This member is optional
-                if (std.mem.eql(u8, res.name, "//"))
-                    opt_longnames = try r.readAllocAll(gpa, @intCast(res.size));
-
-                opt_expected_kind = null;
-                break;
-            },
-            else => unreachable,
+        const iami = members.items[sym.member_index].iami orelse iami: {
+            const iami: InputArchive.Member.Index = @fromBackingInt(@intCast(coff.input_archive_members.items.len));
+            coff.input_archive_members.addOneAssumeCapacity().* = .{
+                .iai = iai,
+                .name = undefined,
+                .content = .{ .object = .{ .offset = sym.member_offset, .size = undefined } },
+                .flags = .{ .is_loaded = false },
+            };
+            members.items[sym.member_index].iami = iami;
+            break :iami iami;
         };
-    }
 
-    if (opt_expected_kind) |expected_kind| switch (expected_kind) {
-        .first_linker => return diags.failParse(path, "missing first linker member", .{}),
-        .second_linker => return diags.failParse(path, "missing second linker member", .{}),
-        else => {},
-    };
+        log.debug("loadArchiveMemberSymbol({s}) = ({d}, {d}, {d})", .{ sym.name, iai, iami, iamsi });
+
+        coff.input_archive_symbols.addOneAssumeCapacity().* = .{ .iami = iami, .next = iamsi };
+    }
 
     // Validate / read names and sizes of all the referenced members, enumerate imports
     for (coff.input_archive_members.items[first_iami..]) |*member| {
@@ -5292,10 +5328,7 @@ fn loadArchive(coff: *Coff, path: std.Build.Cache.Path, fr: *Io.File.Reader) Loa
         try coff.ensureUnusedStringCapacity(res.name.len);
         member.name = coff.getOrPutStringAssumeCapacity(res.name);
 
-        const member_sig = try r.peek(4);
-        const machine: std.coff.IMAGE.FILE.MACHINE =
-            @fromBackingInt(@intCast(std.mem.readInt(u16, member_sig[0..2], target_endian)));
-        const sig = std.mem.readInt(u16, member_sig[2..4], target_endian);
+        const info = Archive.classifyMember((try r.peek(6))[0..6]);
 
         log.debug("verifyArchiveMember({s}) = 0x{x}+{x}", .{
             res.name,
@@ -5304,64 +5337,70 @@ fn loadArchive(coff: *Coff, path: std.Build.Cache.Path, fr: *Io.File.Reader) Loa
         });
 
         const expected_machine = comp.root_mod.resolved_target.result.toCoffMachine();
-        if (machine == std.coff.IMAGE.FILE.MACHINE.UNKNOWN and sig == 0xffff) {
-            const import_header = try r.takeStruct(std.coff.ImportHeader, target_endian);
-            const strings = r.take(import_header.size_of_data) catch |err| switch (err) {
-                error.EndOfStream => return diags.failParse(path, "invalid data size in import header '{s}'", .{res.name}),
-                else => |e| return e,
-            };
+        switch (info.kind) {
+            .import => {
+                const import_header = try r.takeStruct(std.coff.ImportHeader, target_endian);
+                const strings = r.take(import_header.size_of_data) catch |err| switch (err) {
+                    error.EndOfStream => return diags.failParse(path, "invalid data size in import header '{s}'", .{res.name}),
+                    else => |e| return e,
+                };
 
-            var split = std.mem.splitScalar(u8, strings, 0);
-            const symbol_name = split.next() orelse
-                return diags.failParse(path, "invalid symbol name string in import header '{s}'", .{res.name});
-            var lib_name = split.next() orelse
-                return diags.failParse(path, "invalid dll name string in import header '{s}' ('{s}')", .{ res.name, symbol_name });
+                var split = std.mem.splitScalar(u8, strings, 0);
+                const symbol_name = split.next() orelse
+                    return diags.failParse(path, "invalid symbol name string in import header '{s}'", .{res.name});
+                var lib_name = split.next() orelse
+                    return diags.failParse(path, "invalid dll name string in import header '{s}' ('{s}')", .{ res.name, symbol_name });
 
-            if (import_header.machine != expected_machine)
-                return diags.failParse(path, "machine mismatch in import header '{s}' ('{s}'): expected {t}, found {t}", .{
+                if (import_header.machine != expected_machine)
+                    return diags.failParse(path, "machine mismatch in import header '{s}' ('{s}'): expected {t}, found {t}", .{
+                        res.name,
+                        symbol_name,
+                        expected_machine,
+                        import_header.machine,
+                    });
+
+                const ext = ".dll";
+                if (!std.ascii.endsWithIgnoreCase(lib_name, ext))
+                    return diags.failParse(
+                        path,
+                        "unexpected extension for import '{s} ('{s}'): '{s}'",
+                        .{ res.name, symbol_name, lib_name },
+                    );
+
+                lib_name = lib_name[0 .. lib_name.len - ext.len];
+                log.debug("verifyArchiveImportHeader({s}, {s}, {s}) = {t} ({t})", .{
                     res.name,
                     symbol_name,
-                    expected_machine,
-                    machine,
+                    lib_name,
+                    import_header.types.type,
+                    import_header.types.name_type,
                 });
 
-            const ext = ".dll";
-            if (!std.ascii.endsWithIgnoreCase(lib_name, ext))
-                return diags.failParse(
-                    path,
-                    "unexpected extension for import '{s} ('{s}'): '{s}'",
-                    .{ res.name, symbol_name, lib_name },
-                );
-
-            lib_name = lib_name[0 .. lib_name.len - ext.len];
-            log.debug("verifyArchiveImportHeader({s}, {s}, {s}) = {t} ({t})", .{
-                res.name,
-                symbol_name,
-                lib_name,
-                import_header.types.type,
-                import_header.types.name_type,
-            });
-
-            try coff.ensureManyUnusedStringCapacity(2, strings.len - ext.len);
-            member.content = .{
-                .import = .{
-                    .symbol_name = coff.getOrPutStringAssumeCapacity(symbol_name),
-                    .lib_name = coff.getOrPutStringAssumeCapacity(lib_name),
-                    .import_ordinal_hint = import_header.hint,
-                    .type = import_header.types.type,
-                    .name_type = import_header.types.name_type,
-                },
-            };
-        } else {
-            member.content.object.size = res.size;
-            // Microsoft's CRT contains members that set .UNKNOWN but do have undef symbols
-            if (machine != expected_machine and machine != .UNKNOWN) {
-                return diags.failParse(path, "machine mismatch in member header '{s}': expected {t}, found {t}", .{
-                    res.name,
-                    expected_machine,
-                    machine,
-                });
-            }
+                try coff.ensureManyUnusedStringCapacity(2, strings.len - ext.len);
+                member.content = .{
+                    .import = .{
+                        .symbol_name = coff.getOrPutStringAssumeCapacity(symbol_name),
+                        .lib_name = coff.getOrPutStringAssumeCapacity(lib_name),
+                        .import_ordinal_hint = import_header.hint,
+                        .type = import_header.types.type,
+                        .name_type = import_header.types.name_type,
+                    },
+                };
+            },
+            .anon_object => return diags.failParse(
+                path,
+                "anonymous (bigobj) object member '{s}' is not supported",
+                .{res.name},
+            ),
+            .object => {
+                member.content.object.size = res.size;
+                // Microsoft's CRT contains members that set .UNKNOWN but do have undef symbols
+                if (info.machine != expected_machine and info.machine != .UNKNOWN) {
+                    return diags.failParse(path, "machine mismatch in member header '{s}': expected {t}, found {t}", .{
+                        res.name, expected_machine, info.machine,
+                    });
+                }
+            },
         }
     }
 }
@@ -5375,8 +5414,8 @@ fn loadRes(coff: *Coff, path: std.Build.Cache.Path, fr: *Io.File.Reader) LoadInp
     log.debug("loadRes({f})", .{path.fmtEscapeString()});
 
     _ = gpa;
-    _ = diags;
     _ = r;
+    return diags.failParse(path, "linking Win32 resource files is not supported yet", .{});
 }
 
 fn loadDll(coff: *Coff, path: std.Build.Cache.Path, fr: *Io.File.Reader) LoadInputError!void {
@@ -5388,8 +5427,8 @@ fn loadDll(coff: *Coff, path: std.Build.Cache.Path, fr: *Io.File.Reader) LoadInp
     log.debug("loadDll({f})", .{path.fmtEscapeString()});
 
     _ = gpa;
-    _ = diags;
     _ = r;
+    return diags.failParse(path, "linking against DLLs directly is not supported yet", .{});
 }
 
 pub fn prelink(coff: *Coff, prog_node: std.Progress.Node) link.Error!void {
@@ -6343,7 +6382,7 @@ fn flushGlobal(coff: *Coff, gmi: Node.GlobalMapIndex) !bool {
         const sym = si.get(coff);
         const imp_match, const name_len = blk: {
             const name_slice = name.toSlice(coff);
-            break :blk .{ std.mem.startsWith(u8, name_slice, imp_prefix), name_slice.len };
+            break :blk .{ std.mem.startsWith(u8, name_slice, std.coff.import_symbol_prefix), name_slice.len };
         };
 
         // Globals may have the __imp_ prefix already if they are undef externals from another input.
@@ -6351,8 +6390,8 @@ fn flushGlobal(coff: *Coff, gmi: Node.GlobalMapIndex) !bool {
         const search_name, const is_imp = if (imp_match or sym.flags.dll_storage_class != .dllimport)
             .{ name, imp_match }
         else name: {
-            try coff.ensureUnusedStringCapacity(imp_prefix.len + name_len);
-            const imp_name = try gpa.print(imp_prefix ++ "{s}", .{name.toSlice(coff)});
+            try coff.ensureUnusedStringCapacity(std.coff.import_symbol_prefix.len + name_len);
+            const imp_name = try gpa.print(std.coff.import_symbol_prefix ++ "{s}", .{name.toSlice(coff)});
             defer gpa.free(imp_name);
             break :name .{ coff.getOrPutStringAssumeCapacity(imp_name), true };
         };
@@ -6420,7 +6459,7 @@ fn flushGlobal(coff: *Coff, gmi: Node.GlobalMapIndex) !bool {
                                     const len_delta = name_slice.len -% symbol_name.len;
                                     if (!end_match or
                                         (!imp_match and len_delta != 0) or
-                                        (imp_match and len_delta != imp_prefix.len))
+                                        (imp_match and len_delta != std.coff.import_symbol_prefix.len))
                                         return comp.link_diags.fail(
                                             "global '{s}' has mismatched symbol name in import header: '{s}'",
                                             .{

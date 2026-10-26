@@ -1,10 +1,12 @@
 const std = @import("std.zig");
+const Io = std.Io;
 const assert = std.debug.assert;
 const mem = std.mem;
 
 pub const archive_signature = "!<arch>\n";
 pub const archive_end_of_header = "`\n";
 
+pub const dos_signature = "MZ";
 pub const pe_signature = "PE\x00\x00";
 pub const pe_pointer_offset = 0x3C;
 
@@ -138,6 +140,9 @@ pub const DllFlags = bitpack struct(u16) {
     /// Terminal Server aware.
     TERMINAL_SERVER_AWARE: bool = false,
 };
+
+/// Prefix of the symbol that holds the address of an imported symbol
+pub const import_symbol_prefix = "__imp_";
 
 pub const Subsystem = enum(u16) {
     /// An unknown subsystem
@@ -363,11 +368,15 @@ pub const DebugType = enum(u32) {
     OMAP_FROM_SRC = 8,
     BORLAND = 9,
     RESERVED10 = 10,
+    CLSID = 11,
     VC_FEATURE = 12,
     POGO = 13,
     ILTCG = 14,
     MPX = 15,
     REPRO = 16,
+    EMBEDDED_PORTABLE_PDB = 17,
+    SPGO = 18,
+    PDBCHECKSUM = 19,
     EX_DLLCHARACTERISTICS = 20,
 
     _,
@@ -383,9 +392,9 @@ pub fn TlsDirectoryEntry(comptime magic: std.coff.OptionalHeader.Magic) type {
             callbacks_va: u32,
             size_of_zero_fill: u32,
             characteristics: bitpack struct(u32) {
-                _reserved_0: u19,
+                _reserved_0: u20,
                 alignment: SectionHeader.Flags.Align,
-                _reserved_1: u9,
+                _reserved_1: u8,
             },
         },
         .@"PE32+" => extern struct {
@@ -395,9 +404,9 @@ pub fn TlsDirectoryEntry(comptime magic: std.coff.OptionalHeader.Magic) type {
             callbacks_va: u64,
             size_of_zero_fill: u32,
             characteristics: bitpack struct(u32) {
-                _reserved_0: u19,
+                _reserved_0: u20,
                 alignment: SectionHeader.Flags.Align,
-                _reserved_1: u9,
+                _reserved_1: u8,
             },
         },
     };
@@ -518,15 +527,42 @@ pub const SectionHeader = extern struct {
 
     pub fn getName(self: *align(1) const SectionHeader) ?[]const u8 {
         if (self.name[0] == '/') return null;
-        const len = std.mem.findScalar(u8, &self.name, @as(u8, 0)) orelse self.name.len;
+        const len = mem.findScalar(u8, &self.name, @as(u8, 0)) orelse self.name.len;
         return self.name[0..len];
     }
 
-    pub fn getNameOffset(self: SectionHeader) ?u32 {
+    pub fn getNameOffset(self: SectionHeader) SectionNameError!?u32 {
         if (self.name[0] != '/') return null;
-        const len = std.mem.findScalar(u8, &self.name, @as(u8, 0)) orelse self.name.len;
-        const offset = std.fmt.parseInt(u32, self.name[1..len], 10) catch unreachable;
-        return offset;
+
+        // "//" + 6 base64 digits: used when the offset doesn't fit into 7 decimal digits
+        if (self.name[1] == '/') {
+            var v: u64 = 0;
+            for (self.name[2..8]) |c| {
+                const d: u8 = switch (c) {
+                    'A'...'Z' => c - 'A',
+                    'a'...'z' => c - 'a' + 26,
+                    '0'...'9' => c - '0' + 52,
+                    '+' => 62,
+                    '/' => 63,
+                    else => return error.InvalidSectionName,
+                };
+                v = v * 64 + d;
+            }
+            return std.math.cast(u32, v) orelse error.InvalidSectionName;
+        }
+
+        const len = mem.findScalar(u8, &self.name, @as(u8, 0)) orelse self.name.len;
+        return std.fmt.parseInt(u32, self.name[1..len], 10) catch error.InvalidSectionName;
+    }
+
+    pub fn resolveName(
+        self: *align(1) const SectionHeader,
+        strtab: ?Strtab,
+    ) (StrtabError || SectionNameError)![]const u8 {
+        if (self.getName()) |name| return name;
+        const st = strtab orelse return error.MissingStringTable;
+        const off = (try self.getNameOffset()).?;
+        return st.getChecked(off);
     }
 
     /// Applicable only to section headers in COFF objects.
@@ -659,11 +695,12 @@ pub const SectionHeader = extern struct {
             }
 
             pub fn fromByteUnits(n: u16) Align {
-                std.debug.assert(std.math.isPowerOfTwo(n));
+                assert(std.math.isPowerOfTwo(n));
+                assert(n <= 8192);
                 return @fromBackingInt(@intCast(@ctz(n) + 1));
             }
 
-            pub fn alignment(a: Align) ?std.mem.Alignment {
+            pub fn alignment(a: Align) ?mem.Alignment {
                 return .fromByteUnitsOptional(a.toByteUnits() orelse null);
             }
         };
@@ -683,14 +720,14 @@ pub const Symbol = extern struct {
     }
 
     pub fn getName(self: *const Symbol) ?[]const u8 {
-        if (std.mem.eql(u8, self.name[0..4], "\x00\x00\x00\x00")) return null;
-        const len = std.mem.findScalar(u8, &self.name, @as(u8, 0)) orelse self.name.len;
+        if (mem.eql(u8, self.name[0..4], "\x00\x00\x00\x00")) return null;
+        const len = mem.findScalar(u8, &self.name, @as(u8, 0)) orelse self.name.len;
         return self.name[0..len];
     }
 
     pub fn getNameOffset(self: Symbol) ?u32 {
-        if (!std.mem.eql(u8, self.name[0..4], "\x00\x00\x00\x00")) return null;
-        const offset = std.mem.readInt(u32, self.name[4..8], .little);
+        if (!mem.eql(u8, self.name[0..4], "\x00\x00\x00\x00")) return null;
+        const offset = mem.readInt(u32, self.name[4..8], .little);
         return offset;
     }
 };
@@ -711,11 +748,12 @@ pub const SectionNumber = enum(i16) {
 };
 
 pub const SymType = bitpack struct(u16) {
-    complex_type: ComplexType,
     base_type: BaseType,
+    complex_type: ComplexType,
+    _reserved: u8 = 0,
 };
 
-pub const BaseType = enum(u8) {
+pub const BaseType = enum(u4) {
     /// No type information or unknown base type. Microsoft tools use this setting
     NULL = 0,
 
@@ -763,22 +801,20 @@ pub const BaseType = enum(u8) {
 
     /// An unsigned 4-byte integer
     DWORD = 15,
-
-    _,
 };
 
-pub const ComplexType = enum(u8) {
+pub const ComplexType = enum(u4) {
     /// No derived type; the symbol is a simple scalar variable.
     NULL = 0,
 
     /// The symbol is a pointer to base type.
-    POINTER = 16,
+    POINTER = 1,
 
     /// The symbol is a function that returns a base type.
-    FUNCTION = 32,
+    FUNCTION = 2,
 
     /// The symbol is an array of base type.
-    ARRAY = 48,
+    ARRAY = 3,
 
     _,
 };
@@ -925,7 +961,7 @@ pub const FileDefinition = extern struct {
     file_name: [18]u8,
 
     pub fn getFileName(self: *const FileDefinition) []const u8 {
-        const len = std.mem.findScalar(u8, &self.file_name, @as(u8, 0)) orelse self.file_name.len;
+        const len = mem.findScalar(u8, &self.file_name, @as(u8, 0)) orelse self.file_name.len;
         return self.file_name[0..len];
     }
 };
@@ -1005,13 +1041,37 @@ pub const DebugInfoDefinition = extern struct {
     unused_3: [2]u8,
 };
 
-pub const Error = error{
-    InvalidPEMagic,
-    InvalidPEHeader,
-    InvalidMachine,
+pub const InitError = error{
+    EndOfStream,
     MissingPEHeader,
-    MissingCoffSection,
+    InvalidPEHeader,
+    InvalidPEMagic,
+};
+
+pub const SymtabError = error{InvalidSymtab};
+
+pub const StrtabError = error{InvalidStrtabSize};
+pub const StrtabOffsetError = error{InvalidStrtabOffset};
+
+pub const SectionNameError = error{
+    InvalidSectionName,
+    InvalidStrtabOffset,
     MissingStringTable,
+};
+
+pub const PdbError = error{
+    InvalidDebugDirectory,
+    InvalidCodeView,
+} || Io.Reader.Error;
+
+/// Everything the parsing functions of this file can return, except allocation failures
+pub const Error = InitError || SymtabError || StrtabError || StrtabOffsetError || SectionNameError || PdbError;
+
+pub const PdbInfo = struct {
+    guid: [16]u8,
+    age: u32,
+    /// Slice into Coff.data
+    path: []const u8,
 };
 
 // Official documentation of the format: https://docs.microsoft.com/en-us/windows/win32/debug/pe-format
@@ -1026,50 +1086,89 @@ pub const Coff = struct {
     age: u32 = undefined,
 
     // The lifetime of `data` must be longer than the lifetime of the returned Coff
-    pub fn init(data: []const u8, is_loaded: bool) error{ EndOfStream, MissingPEHeader }!Coff {
+    pub fn init(data: []const u8, is_loaded: bool) InitError!Coff {
+        if (!mem.startsWith(u8, data, dos_signature)) return initObject(data);
+
         if (data.len < pe_pointer_offset + 4) return error.EndOfStream;
-        const header_offset = mem.readInt(u32, data[pe_pointer_offset..][0..4], .little);
-        if (data.len < header_offset + 4) return error.EndOfStream;
-        const is_image = mem.eql(u8, data[header_offset..][0..4], pe_signature);
+        const header_offset: usize = mem.readInt(u32, data[pe_pointer_offset..][0..4], .little);
+        const sig_end = std.math.add(usize, header_offset, 4) catch return error.EndOfStream;
+        if (data.len < sig_end) return error.EndOfStream;
+        if (!mem.eql(u8, data[header_offset..][0..4], pe_signature)) return error.MissingPEHeader;
 
         const coff: Coff = .{
             .data = data,
-            .is_image = is_image,
+            .is_image = true,
             .is_loaded = is_loaded,
-            .coff_header_offset = o: {
-                if (is_image) break :o header_offset + 4;
-                break :o header_offset;
-            },
+            .coff_header_offset = header_offset + 4,
         };
 
-        // Do some basic validation upfront
-        if (is_image) {
-            const coff_header = coff.getHeader();
-            if (coff_header.size_of_optional_header == 0) return error.MissingPEHeader;
-        }
+        // COFF header
+        const hdr_end = std.math.add(usize, coff.coff_header_offset, @sizeOf(Header)) catch
+            return error.EndOfStream;
+        if (data.len < hdr_end) return error.EndOfStream;
+        const coff_header = coff.getHeader();
+        const opt_size: usize = coff_header.size_of_optional_header;
 
-        // JK: we used to check for architecture here and throw an error if not x86 or derivative.
-        // However I am willing to take a leap of faith and let aarch64 have a shot also.
+        // Optional header + data directories
+        if (opt_size == 0) return error.MissingPEHeader;
+        if (opt_size < @sizeOf(OptionalHeader)) return error.InvalidPEHeader;
+        if (data.len - hdr_end < @sizeOf(OptionalHeader)) return error.EndOfStream;
+
+        const fixed_size: usize = switch (coff.getOptionalHeader().magic) {
+            .PE32 => @sizeOf(OptionalHeader.PE32),
+            .@"PE32+" => @sizeOf(OptionalHeader.@"PE32+"),
+            _ => return error.InvalidPEMagic,
+        };
+        if (data.len - hdr_end < fixed_size) return error.EndOfStream;
+        const dirs_size = std.math.mul(usize, coff.getNumberOfDataDirectories(), @sizeOf(ImageDataDirectory)) catch
+            return error.InvalidPEHeader;
+        const dirs_end = std.math.add(usize, hdr_end + fixed_size, dirs_size) catch
+            return error.InvalidPEHeader;
+        if (dirs_end > hdr_end + opt_size) return error.InvalidPEHeader;
+        if (data.len < dirs_end) return error.EndOfStream;
+
+        // Section table
+        const sect_size = @as(usize, coff_header.number_of_sections) * @sizeOf(SectionHeader);
+        const sect_end = std.math.add(usize, hdr_end, opt_size + sect_size) catch return error.EndOfStream;
+        if (data.len < sect_end) return error.EndOfStream;
 
         return coff;
     }
 
-    pub fn getPdbPath(self: *Coff) !?[]const u8 {
+    /// Parses a plain COFF object file (no DOS header, no PE signature)
+    pub fn initObject(data: []const u8) InitError!Coff {
+        const coff: Coff = .{
+            .data = data,
+            .is_loaded = false,
+            .is_image = false,
+            .coff_header_offset = 0,
+        };
+        if (data.len < @sizeOf(Header)) return error.EndOfStream;
+        const header = coff.getHeader();
+        const sections_end = @sizeOf(Header) +
+            @as(usize, header.size_of_optional_header) +
+            @as(usize, header.number_of_sections) * @sizeOf(SectionHeader);
+        if (data.len < sections_end) return error.EndOfStream;
+        return coff;
+    }
+
+    pub fn getPdbInfo(self: *const Coff) PdbError!?PdbInfo {
         assert(self.is_image);
 
         const data_dirs = self.getDataDirectories();
         if (@backingInt(IMAGE.DIRECTORY_ENTRY.DEBUG) >= data_dirs.len) return null;
 
         const debug_dir = data_dirs[@backingInt(IMAGE.DIRECTORY_ENTRY.DEBUG)];
-        var reader: std.Io.Reader = .fixed(self.data);
+        if (debug_dir.virtual_address == 0 or debug_dir.size == 0) return null;
+        var reader: Io.Reader = .fixed(self.data);
 
         if (self.is_loaded) {
             reader.seek = debug_dir.virtual_address;
         } else {
-            // Find what section the debug_dir is in, in order to convert the RVA to a file offset
             for (self.getSectionHeaders()) |*sect| {
-                if (debug_dir.virtual_address >= sect.virtual_address and debug_dir.virtual_address < sect.virtual_address + sect.virtual_size) {
-                    reader.seek = sect.pointer_to_raw_data + (debug_dir.virtual_address - sect.virtual_address);
+                const rel = std.math.sub(u32, debug_dir.virtual_address, sect.virtual_address) catch continue;
+                if (rel < sect.virtual_size) {
+                    reader.seek = @as(usize, sect.pointer_to_raw_data) + rel;
                     break;
                 }
             } else return error.InvalidDebugDirectory;
@@ -1080,25 +1179,26 @@ pub const Coff = struct {
         const debug_dir_entry_count = debug_dir.size / @sizeOf(DebugDirectoryEntry);
         var i: u32 = 0;
         while (i < debug_dir_entry_count) : (i += 1) {
-            const debug_dir_entry = try reader.takeStruct(DebugDirectoryEntry, .little);
-            if (debug_dir_entry.type == .CODEVIEW) {
-                const dir_offset = if (self.is_loaded) debug_dir_entry.address_of_raw_data else debug_dir_entry.pointer_to_raw_data;
-                reader.seek = dir_offset;
+            const entry = try reader.takeStruct(DebugDirectoryEntry, .little);
+            if (entry.type == .CODEVIEW) {
+                reader.seek = if (self.is_loaded) entry.address_of_raw_data else entry.pointer_to_raw_data;
                 break;
             }
         } else return null;
 
         const code_view_signature = try reader.takeArray(4);
         // 'RSDS' indicates PDB70 format, used by lld.
-        if (!mem.eql(u8, code_view_signature, "RSDS"))
-            return error.InvalidPEMagic;
-        try reader.readSliceAll(self.guid[0..]);
-        self.age = try reader.takeInt(u32, .little);
+        if (!mem.eql(u8, code_view_signature, "RSDS")) return error.InvalidCodeView;
+
+        var info: PdbInfo = undefined;
+        try reader.readSliceAll(&info.guid);
+        info.age = try reader.takeInt(u32, .little);
 
         // Finally read the null-terminated string.
         const start = reader.seek;
-        const len = std.mem.findScalar(u8, self.data[start..], 0) orelse return null;
-        return self.data[start .. start + len];
+        const len = mem.findScalar(u8, self.data[start..], 0) orelse return null;
+        info.path = self.data[start .. start + len];
+        return info;
     }
 
     pub fn getHeader(self: Coff) Header {
@@ -1124,50 +1224,57 @@ pub const Coff = struct {
     }
 
     pub fn getImageBase(self: Coff) u64 {
-        const hdr = self.getOptionalHeader();
-        return switch (@backingInt(hdr.magic)) {
-            IMAGE_NT_OPTIONAL_HDR32_MAGIC => self.getOptionalHeader32().image_base,
-            IMAGE_NT_OPTIONAL_HDR64_MAGIC => self.getOptionalHeader64().image_base,
-            else => unreachable, // We assume we have validated the header already
+        return switch (self.getOptionalHeader().magic) {
+            .PE32 => self.getOptionalHeader32().image_base,
+            .@"PE32+" => self.getOptionalHeader64().image_base,
+            _ => unreachable, // We assume we have validated the header already
         };
     }
 
     pub fn getNumberOfDataDirectories(self: Coff) u32 {
-        const hdr = self.getOptionalHeader();
-        return switch (@backingInt(hdr.magic)) {
-            IMAGE_NT_OPTIONAL_HDR32_MAGIC => self.getOptionalHeader32().number_of_rva_and_sizes,
-            IMAGE_NT_OPTIONAL_HDR64_MAGIC => self.getOptionalHeader64().number_of_rva_and_sizes,
-            else => unreachable, // We assume we have validated the header already
+        return switch (self.getOptionalHeader().magic) {
+            .PE32 => self.getOptionalHeader32().number_of_rva_and_sizes,
+            .@"PE32+" => self.getOptionalHeader64().number_of_rva_and_sizes,
+            _ => unreachable, // We assume we have validated the header already
         };
     }
 
     pub fn getDataDirectories(self: *const Coff) []align(1) const ImageDataDirectory {
-        const hdr = self.getOptionalHeader();
-        const size: usize = switch (@backingInt(hdr.magic)) {
-            IMAGE_NT_OPTIONAL_HDR32_MAGIC => @sizeOf(OptionalHeader.PE32),
-            IMAGE_NT_OPTIONAL_HDR64_MAGIC => @sizeOf(OptionalHeader.@"PE32+"),
-            else => unreachable, // We assume we have validated the header already
+        const size: usize = switch (self.getOptionalHeader().magic) {
+            .PE32 => @sizeOf(OptionalHeader.PE32),
+            .@"PE32+" => @sizeOf(OptionalHeader.@"PE32+"),
+            _ => unreachable, // We assume we have validated the header already
         };
+        const n: usize = self.getNumberOfDataDirectories();
         const offset = self.coff_header_offset + @sizeOf(Header) + size;
-        return @as([*]align(1) const ImageDataDirectory, @ptrCast(self.data[offset..]))[0..self.getNumberOfDataDirectories()];
+        const bytes = self.data[offset..][0 .. n * @sizeOf(ImageDataDirectory)];
+        return @as([*]align(1) const ImageDataDirectory, @ptrCast(bytes.ptr))[0..n];
     }
 
-    pub fn getSymtab(self: *const Coff) ?Symtab {
+    pub fn getSymtab(self: *const Coff) SymtabError!?Symtab {
         const coff_header = self.getHeader();
         if (coff_header.pointer_to_symbol_table == 0) return null;
 
-        const offset = coff_header.pointer_to_symbol_table;
-        const size = coff_header.number_of_symbols * Symbol.sizeOf();
-        return .{ .buffer = self.data[offset..][0..size] };
+        const offset: usize = coff_header.pointer_to_symbol_table;
+        const size = std.math.mul(usize, coff_header.number_of_symbols, Symbol.sizeOf()) catch
+            return error.InvalidSymtab;
+        const end = std.math.add(usize, offset, size) catch return error.InvalidSymtab;
+        if (end > self.data.len) return error.InvalidSymtab;
+        return .{ .buffer = self.data[offset..end] };
     }
 
-    pub fn getStrtab(self: *const Coff) error{InvalidStrtabSize}!?Strtab {
+    pub fn getStrtab(self: *const Coff) StrtabError!?Strtab {
         const coff_header = self.getHeader();
         if (coff_header.pointer_to_symbol_table == 0) return null;
 
-        const offset = coff_header.pointer_to_symbol_table + Symbol.sizeOf() * coff_header.number_of_symbols;
+        const symtab_size = std.math.mul(usize, coff_header.number_of_symbols, Symbol.sizeOf()) catch
+            return error.InvalidStrtabSize;
+        const offset = std.math.add(usize, coff_header.pointer_to_symbol_table, symtab_size) catch
+            return error.InvalidStrtabSize;
+        if (offset > self.data.len or self.data.len - offset < @sizeOf(u32)) return error.InvalidStrtabSize;
+
         const size = mem.readInt(u32, self.data[offset..][0..4], .little);
-        if ((offset + size) > self.data.len) return error.InvalidStrtabSize;
+        if (size > self.data.len - offset) return error.InvalidStrtabSize;
 
         return Strtab{ .buffer = self.data[offset..][0..size] };
     }
@@ -1179,11 +1286,13 @@ pub const Coff = struct {
 
     pub fn getSectionHeaders(self: *const Coff) []align(1) const SectionHeader {
         const coff_header = self.getHeader();
+        const n: usize = coff_header.number_of_sections;
         const offset = self.coff_header_offset + @sizeOf(Header) + coff_header.size_of_optional_header;
-        return @as([*]align(1) const SectionHeader, @ptrCast(self.data.ptr + offset))[0..coff_header.number_of_sections];
+        const bytes = self.data[offset..][0 .. n * @sizeOf(SectionHeader)];
+        return @as([*]align(1) const SectionHeader, @ptrCast(bytes.ptr))[0..n];
     }
 
-    pub fn getSectionHeadersAlloc(self: *const Coff, allocator: mem.Allocator) ![]SectionHeader {
+    pub fn getSectionHeadersAlloc(self: *const Coff, allocator: mem.Allocator) mem.Allocator.Error![]SectionHeader {
         const section_headers = self.getSectionHeaders();
         const out_buff = try allocator.alloc(SectionHeader, section_headers.len);
         for (out_buff, 0..) |*section_header, i| {
@@ -1193,20 +1302,15 @@ pub const Coff = struct {
         return out_buff;
     }
 
-    pub fn getSectionName(self: *const Coff, sect_hdr: *align(1) const SectionHeader) error{InvalidStrtabSize}![]const u8 {
-        const name = sect_hdr.getName() orelse blk: {
-            const strtab = (try self.getStrtab()).?;
-            const name_offset = sect_hdr.getNameOffset().?;
-            break :blk strtab.get(name_offset);
-        };
-        return name;
+    pub fn getSectionName(self: *const Coff, sect_hdr: *align(1) const SectionHeader) (StrtabError || SectionNameError)![]const u8 {
+        if (sect_hdr.getName()) |name| return name;
+        return sect_hdr.resolveName(try self.getStrtab());
     }
 
-    pub fn getSectionByName(self: *const Coff, comptime name: []const u8) ?*align(1) const SectionHeader {
+    pub fn getSectionByName(self: *const Coff, name: []const u8) ?*align(1) const SectionHeader {
         for (self.getSectionHeaders()) |*sect| {
-            const section_name = self.getSectionName(sect) catch |e| switch (e) {
-                error.InvalidStrtabSize => continue, //ignore invalid(?) strtab entries - see also GitHub issue #15238
-            };
+            // Ignore sections with unreadable names (see also https://github.com/ziglang/zig/issues/15238)
+            const section_name = self.getSectionName(sect) catch continue;
             if (mem.eql(u8, section_name, name)) {
                 return sect;
             }
@@ -1215,11 +1319,18 @@ pub const Coff = struct {
     }
 
     pub fn getSectionData(self: *const Coff, sec: *align(1) const SectionHeader) []const u8 {
-        const offset = if (self.is_loaded) sec.virtual_address else sec.pointer_to_raw_data;
-        return self.data[offset..][0..sec.virtual_size];
+        // Loaded image: sections are mapped at their RVA, virtual_size is authoritative
+        if (self.is_loaded) return self.data[sec.virtual_address..][0..sec.virtual_size];
+        // Object file: virtual_size is always 0, only size_of_raw_data is meaningful.
+        // Image on disk: raw data may be shorter than virtual_size.
+        const size = if (self.is_image and sec.virtual_size != 0)
+            @min(sec.virtual_size, sec.size_of_raw_data)
+        else
+            sec.size_of_raw_data;
+        return self.data[sec.pointer_to_raw_data..][0..size];
     }
 
-    pub fn getSectionDataAlloc(self: *const Coff, sec: *align(1) const SectionHeader, allocator: mem.Allocator) ![]u8 {
+    pub fn getSectionDataAlloc(self: *const Coff, sec: *align(1) const SectionHeader, allocator: mem.Allocator) mem.Allocator.Error![]u8 {
         const section_data = self.getSectionData(sec);
         return allocator.dupe(u8, section_data);
     }
@@ -1252,6 +1363,7 @@ pub const Symtab = struct {
 
     /// Lives as long as Symtab instance.
     pub fn at(self: Symtab, index: usize, tag: Tag) Record {
+        assert(index < self.len());
         const offset = index * Symbol.sizeOf();
         const raw = self.buffer[offset..][0..Symbol.sizeOf()];
         return switch (tag) {
@@ -1268,9 +1380,9 @@ pub const Symtab = struct {
         return .{
             .name = raw[0..8].*,
             .value = mem.readInt(u32, raw[8..12], .little),
-            .section_number = @as(SectionNumber, @fromBackingInt(@intCast(mem.readInt(u16, raw[12..14], .little)))),
-            .type = @as(SymType, @bitCast(mem.readInt(u16, raw[14..16], .little))),
-            .storage_class = @as(StorageClass, @fromBackingInt(@intCast(raw[16]))),
+            .section_number = @fromBackingInt(mem.readInt(i16, raw[12..14], .little)),
+            .type = @bitCast(mem.readInt(u16, raw[14..16], .little)),
+            .storage_class = @fromBackingInt(raw[16]),
             .number_of_aux_symbols = raw[17],
         };
     }
@@ -1298,7 +1410,7 @@ pub const Symtab = struct {
     fn asWeakExtDef(raw: []const u8) WeakExternalDefinition {
         return .{
             .tag_index = mem.readInt(u32, raw[0..4], .little),
-            .flag = @as(WeakExternalFlag, @fromBackingInt(@intCast(mem.readInt(u32, raw[4..8], .little)))),
+            .flag = @fromBackingInt(mem.readInt(u32, raw[4..8], .little)),
             .unused = raw[8..18].*,
         };
     }
@@ -1316,7 +1428,7 @@ pub const Symtab = struct {
             .number_of_linenumbers = mem.readInt(u16, raw[6..8], .little),
             .checksum = mem.readInt(u32, raw[8..12], .little),
             .number = mem.readInt(u16, raw[12..14], .little),
-            .selection = @as(ComdatSelection, @fromBackingInt(@intCast(raw[14]))),
+            .selection = @fromBackingInt(raw[14]),
             .unused = raw[15..18].*,
         };
     }
@@ -1338,18 +1450,28 @@ pub const Symtab = struct {
 
     pub fn slice(self: Symtab, start: usize, end: ?usize) Slice {
         const offset = start * Symbol.sizeOf();
-        const llen = if (end) |e| e * Symbol.sizeOf() else self.buffer.len;
-        const num = @divExact(llen - offset, Symbol.sizeOf());
-        return Slice{ .buffer = self.buffer[offset..][0..llen], .num = num };
+        const end_offset = if (end) |e| e * Symbol.sizeOf() else self.buffer.len;
+        assert(offset <= end_offset and end_offset <= self.buffer.len);
+        const num = @divExact(end_offset - offset, Symbol.sizeOf());
+        return Slice{ .buffer = self.buffer[offset..end_offset], .num = num };
     }
 };
 
 pub const Strtab = struct {
     buffer: []const u8,
 
+    /// For trusted input only
     pub fn get(self: Strtab, off: u32) []const u8 {
         assert(off < self.buffer.len);
         return mem.sliceTo(@as([*:0]const u8, @ptrCast(self.buffer.ptr + off)), 0);
+    }
+
+    /// Safe for untrusted input
+    pub fn getChecked(self: Strtab, off: u32) StrtabOffsetError![]const u8 {
+        if (off < @sizeOf(u32) or off >= self.buffer.len) return error.InvalidStrtabOffset;
+        const tail = self.buffer[off..];
+        const end = mem.findScalar(u8, tail, 0) orelse return error.InvalidStrtabOffset;
+        return tail[0..end];
     }
 };
 
@@ -2029,8 +2151,8 @@ pub const ArchiveMemberHeader = extern struct {
     pub fn parseName(
         self: *const ArchiveMemberHeader,
         opt_longnames: ?[]const u8,
-    ) ![]const u8 {
-        const trim = std.mem.trimEnd(u8, &self.name, &.{' '});
+    ) error{ BadName, NoLongNames }![]const u8 {
+        const trim = mem.trimEnd(u8, &self.name, &.{' '});
 
         if (trim.len == 0) return error.BadName;
         return if (trim[0] == '/') name: {
@@ -2043,7 +2165,7 @@ pub const ArchiveMemberHeader = extern struct {
 
             if (opt_longnames) |longnames| {
                 if (offset >= longnames.len) return error.BadName;
-                break :name std.mem.sliceTo(longnames[@intCast(offset)..], 0);
+                break :name mem.sliceTo(longnames[@intCast(offset)..], 0);
             } else return error.NoLongNames;
         } else if (trim[trim.len - 1] == '/')
             trim[0 .. trim.len - 1]
@@ -2051,35 +2173,35 @@ pub const ArchiveMemberHeader = extern struct {
             return error.BadName;
     }
 
-    fn parseField(field: []const u8, T: type, base: u8) !T {
-        if (std.mem.allEqual(u8, field, ' ')) return 0;
+    fn parseField(field: []const u8, T: type, base: u8) std.fmt.ParseIntError!T {
+        if (mem.allEqual(u8, field, ' ')) return 0;
         if (field[0] == '-')
             return @bitCast(try std.fmt.parseInt(
                 @Int(.signed, @typeInfo(T).int.bits),
-                std.mem.trimEnd(u8, field, &.{' '}),
+                mem.trimEnd(u8, field, &.{' '}),
                 base,
             ));
 
-        return std.fmt.parseUnsigned(T, std.mem.trimEnd(u8, field, &.{' '}), base);
+        return std.fmt.parseUnsigned(T, mem.trimEnd(u8, field, &.{' '}), base);
     }
 
-    pub fn parseDate(self: *const ArchiveMemberHeader) !u40 {
+    pub fn parseDate(self: *const ArchiveMemberHeader) std.fmt.ParseIntError!u40 {
         return parseField(&self.date, u40, 10);
     }
 
-    pub fn parseUserId(self: *const ArchiveMemberHeader) !u20 {
+    pub fn parseUserId(self: *const ArchiveMemberHeader) std.fmt.ParseIntError!u20 {
         return parseField(&self.user_id, u20, 10);
     }
 
-    pub fn parseGroupId(self: *const ArchiveMemberHeader) !u20 {
+    pub fn parseGroupId(self: *const ArchiveMemberHeader) std.fmt.ParseIntError!u20 {
         return parseField(&self.group_id, u20, 10);
     }
 
-    pub fn parseFileMode(self: *const ArchiveMemberHeader) !u20 {
-        return parseField(&self.group_id, u20, 8);
+    pub fn parseFileMode(self: *const ArchiveMemberHeader) std.fmt.ParseIntError!u20 {
+        return parseField(&self.file_mode, u20, 8);
     }
 
-    pub fn parseSize(self: *const ArchiveMemberHeader) !u34 {
+    pub fn parseSize(self: *const ArchiveMemberHeader) std.fmt.ParseIntError!u34 {
         return parseField(&self.size, u34, 10);
     }
 

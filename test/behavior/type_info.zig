@@ -9,7 +9,7 @@ const assert = std.debug.assert;
 const expect = std.testing.expect;
 const expectEqualStrings = std.testing.expectEqualStrings;
 
-test "type info: integer, floating point type info" {
+test "@typeInfo of integers and floating points" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     try testIntFloat();
@@ -27,7 +27,7 @@ fn testIntFloat() !void {
     try expect(f64_info.float.bits == 64);
 }
 
-test "type info: optional type info" {
+test "@typeInfo of optionals" {
     try testOptional();
     try comptime testOptional();
 }
@@ -38,7 +38,7 @@ fn testOptional() !void {
     try expect(null_info.optional.child == void);
 }
 
-test "type info: C pointer type info" {
+test "@typeInfo of C pointers" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     try testCPtr();
@@ -55,7 +55,7 @@ fn testCPtr() !void {
     try expect(ptr_info.pointer.child == i8);
 }
 
-test "type info: value is correctly copied" {
+test "@typeInfo value is correctly copied" {
     comptime {
         var ptrInfo = @typeInfo([]u32);
         ptrInfo.pointer.size = .one;
@@ -63,7 +63,7 @@ test "type info: value is correctly copied" {
     }
 }
 
-test "type info: tag type, void info" {
+test "@typeInfo of tag types and void infos" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     try testBasic();
@@ -77,7 +77,7 @@ fn testBasic() !void {
     try expect(void_info.void == {});
 }
 
-test "type info: pointer type info" {
+test "@typeInfo of pointers" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     try testPointer();
@@ -95,7 +95,7 @@ fn testPointer() !void {
     try expect(u32_ptr_info.pointer.sentinel() == null);
 }
 
-test "type info: unknown length pointer type info" {
+test "@typeInfo of unknown length pointer" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     try testUnknownLenPtr();
@@ -113,7 +113,7 @@ fn testUnknownLenPtr() !void {
     try expect(u32_ptr_info.pointer.sentinel() == null);
 }
 
-test "type info: null terminated pointer type info" {
+test "@typeInfo of null terminated pointers" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     try testNullTerminatedPtr();
@@ -131,7 +131,7 @@ fn testNullTerminatedPtr() !void {
     try expect(@typeInfo([:0]u8).pointer.sentinel() != null);
 }
 
-test "type info: slice type info" {
+test "@typeInfo of slices" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     try testSlice();
@@ -148,7 +148,7 @@ fn testSlice() !void {
     try expect(u32_slice_info.pointer.child == u32);
 }
 
-test "type info: array type info" {
+test "@typeInfo of arrays" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     try testArray();
@@ -173,7 +173,7 @@ fn testArray() !void {
     }
 }
 
-test "type info: error set, error union info, anyerror" {
+test "@typeInfo of error sets, error union infos and anyerrors" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
@@ -204,7 +204,7 @@ fn testErrorSet() !void {
     try expect(global_info.error_set.error_names == null);
 }
 
-test "type info: error set single value" {
+test "@typeInfo of single value error sets" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
@@ -217,7 +217,7 @@ test "type info: error set single value" {
     try expect(mem.eql(u8, error_set_info.error_set.error_names.?[0], "One"));
 }
 
-test "type info: error set merged" {
+test "@typeInfo of merged error sets" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
@@ -232,7 +232,7 @@ test "type info: error set merged" {
     try expect(mem.eql(u8, error_set_info.error_set.error_names.?[2], "Three"));
 }
 
-test "type info: enum info" {
+test "@typeInfo of enum infos" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
@@ -259,7 +259,7 @@ fn testEnum() !void {
     try expect(os_info.@"enum".decl_names.len == 0);
 }
 
-test "type info: union info" {
+test "@typeInfo of union infos" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     try testUnion();
@@ -303,7 +303,7 @@ fn testUnion() !void {
     try expect(extern_union_info.@"union".field_types[0] == *anyopaque);
 }
 
-test "type info: struct info" {
+test "@typeInfo of struct infos" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
@@ -327,7 +327,7 @@ const TestStruct = struct {
     fieldB: *const [6:0]u8 = "foobar",
 };
 
-test "type info: packed struct info" {
+test "@typeInfo of packed struct infos" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     try testPackedStruct();
@@ -365,7 +365,7 @@ const TestPackedStruct = packed struct {
     const Self = @This();
 };
 
-test "type info: opaque info" {
+test "@typeInfo of opaque infos" {
     try testOpaque();
     try comptime testOpaque();
 }
@@ -380,7 +380,7 @@ fn testOpaque() !void {
     try expect(foo_info.@"opaque".decl_names.len == 2);
 }
 
-test "type info: function type info" {
+test "@typeInfo of functions" {
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
@@ -448,7 +448,7 @@ fn testFunction() !void {
 extern fn typeInfoFoo(a: usize, b: bool, ...) callconv(.c) usize;
 extern fn typeInfoFooAligned(a: usize, b: bool, ...) align(4) callconv(.c) usize;
 
-test "type info: generic function types" {
+test "@typeInfo of generic function types" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const G1 = @typeInfo(@TypeOf(generic1));
@@ -488,7 +488,7 @@ fn generic2(comptime T: type, param: T, param2: u8) void {
 fn generic3(param: anytype) @TypeOf(param) {}
 fn generic4(comptime param: anytype) @TypeOf(param) {}
 
-test "typeInfo with comptime parameter in struct fn def" {
+test "@typeInfo of comptime parameter in struct fn def" {
     const S = struct {
         pub fn func(comptime x: f32) void {
             _ = x;
@@ -498,7 +498,7 @@ test "typeInfo with comptime parameter in struct fn def" {
     _ = &info;
 }
 
-test "type info: vectors" {
+test "@typeInfo of vectors" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     try testVector();
@@ -512,7 +512,7 @@ fn testVector() !void {
     try expect(vec_info.vector.child == i32);
 }
 
-test "type info: anyframe and anyframe->T" {
+test "@typeInfo of anyframes and anyframes->T" {
     if (true) {
         // https://github.com/ziglang/zig/issues/6025
         return error.SkipZigTest;
@@ -536,7 +536,7 @@ fn testAnyFrame() !void {
     }
 }
 
-test "type info: pass to function" {
+test "@typeInfo pass to function" {
     _ = passTypeInfo(@typeInfo(void));
     _ = comptime passTypeInfo(@typeInfo(void));
 }
@@ -546,7 +546,7 @@ fn passTypeInfo(comptime info: Type) type {
     return void;
 }
 
-test "type info: TypeId -> Type impl cast" {
+test "@typeInfo TypeId -> Type impl cast" {
     _ = passTypeInfo(TypeId.void);
     _ = comptime passTypeInfo(TypeId.void);
 }
@@ -603,7 +603,7 @@ test "Struct.is_tuple for anon struct literal" {
     try expect(std.mem.eql(u8, info.@"struct".field_names[0], "a"));
 }
 
-test "StructField.is_comptime" {
+test "StructField.@\"comptime\"" {
     const info = @typeInfo(struct { x: u8 = 3, comptime y: u32 = 5 }).@"struct";
     try expect(!info.field_attrs[0].@"comptime");
     try expect(info.field_attrs[1].@"comptime");
@@ -616,7 +616,7 @@ test "value from struct @typeInfo default_value_ptr can be loaded at comptime" {
     }
 }
 
-test "type info of tuple of string literal default value" {
+test "@typeInfo of tuple of string literal default value" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     const struct_info = @typeInfo(@TypeOf(.{"hi"})).@"struct";
     const struct_field_attrs = struct_info.field_attrs[0];
@@ -634,7 +634,7 @@ test "@typeInfo function with generic return type and inferred error set" {
     comptime assert(ret_ty == null);
 }
 
-test "type info: spirv info" {
+test "@typeInfo of spirv types" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (!builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 

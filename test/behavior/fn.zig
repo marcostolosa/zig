@@ -795,7 +795,7 @@ test "return undefined pointer from function, directly and by expired local" {
     _ = bad_ptr_2; // dereferencing this would be illegal behavior
 }
 
-test "a function that works at comptime but not runtime" {
+test "function that works at comptime but not runtime" {
     const a = comptime testComptimeOnlyFn(1, 1);
     try expect(a[0] == 1);
     try expect(a[1] == 2);
@@ -806,3 +806,11 @@ fn testComptimeOnlyFn(x: u32, y: u32) [2]u8 {
     const ya: [y]u8 = .{2};
     return xa ++ ya;
 }
+
+test "comptime array of optional elements in struct function parameter" {
+    var b: u32 = 0;
+    discard(0, .{ .a = [1]?u32{42}, .b = b });
+    _ = &b;
+}
+const Obj = struct { a: [1]?u32, b: u32 };
+fn discard(comptime _: u32, _: Obj) void {}

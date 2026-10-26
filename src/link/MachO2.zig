@@ -53,6 +53,15 @@ dirty_fixup_chain_pages: std.array_hash_map.Auto(struct { seg: Segment, page: u1
 
 input_atoms: std.ArrayList(InputAtom),
 
+/// Interned atom literals for deduplication.
+literals_4: std.array_hash_map.Auto(u32, InputAtom.Index),
+literals_8: std.array_hash_map.Auto(u64, InputAtom.Index),
+literals_16: std.array_hash_map.Auto(u128, InputAtom.Index),
+literals_strings: std.StringArrayHashMapUnmanaged(InputAtom.Index),
+
+/// Arena for various use cases (only strings for now).
+arena: std.heap.ArenaAllocator,
+
 /// Accessed with `String.Adapter` using `[]const u8` keys.
 strtab: std.array_hash_map.Custom(String, void, void, true),
 
@@ -798,7 +807,12 @@ fn create(
         .dirty_fixup_chain_pages = .empty,
 
         .input_atoms = .empty,
+        .literals_4 = .empty,
+        .literals_8 = .empty,
+        .literals_16 = .empty,
+        .literals_strings = .empty,
 
+        .arena = .init(comp.gpa),
         .strtab = .empty,
         .symtab = .empty,
         .global_symbols = .empty,
@@ -2027,6 +2041,11 @@ pub fn deinit(macho: *MachO) void {
     macho.sections_by_name.deinit(gpa);
     macho.dirty_fixup_chain_pages.deinit(gpa);
     macho.input_atoms.deinit(gpa);
+    macho.literals_4.deinit(gpa);
+    macho.literals_8.deinit(gpa);
+    macho.literals_16.deinit(gpa);
+    macho.literals_strings.deinit(gpa);
+    macho.arena.deinit();
     macho.strtab.deinit(gpa);
     macho.symtab.deinit(gpa);
     macho.global_symbols.deinit(gpa);
@@ -2745,16 +2764,50 @@ fn loadObject(
                 };
                 assert(target_atom_offset < section.size);
 
+                const LiteralEntry = struct {
+                    found_existing: bool,
+                    value_ptr: *InputAtom.Index,
+                };
+
                 while (cur_atom_end <= target_atom_offset) {
                     // We need to start a new atom at `cur_atom_end`.
+                    var literal_bytes: [16]u8 = undefined;
                     const atom_offset: u64 = cur_atom_end;
-                    const atom_size: u64 = switch (section.usage) {
-                        // TODO: we should also deduplicate these
-                        .data_const_split_4 => 4,
-                        .data_const_split_8 => 8,
-                        .data_const_split_16 => 16,
+                    const atom_size: u64, const entry: ?LiteralEntry = switch (section.usage) {
+                        .data_const_split_4 => literal: {
+                            const bytes = literal_bytes[0..4];
+                            try fr.interface.readSliceAll(bytes);
 
-                        // TODO: Deduplicate those too
+                            const key = std.mem.readInt(u32, bytes, .little);
+                            const gop = try macho.literals_4.getOrPut(gpa, key);
+                            break :literal .{
+                                4,
+                                .{ .found_existing = gop.found_existing, .value_ptr = gop.value_ptr },
+                            };
+                        },
+                        .data_const_split_8 => literal: {
+                            const bytes = literal_bytes[0..8];
+                            try fr.interface.readSliceAll(bytes);
+
+                            const key = std.mem.readInt(u64, bytes, .little);
+                            const gop = try macho.literals_8.getOrPut(gpa, key);
+                            break :literal .{
+                                8,
+                                .{ .found_existing = gop.found_existing, .value_ptr = gop.value_ptr },
+                            };
+                        },
+                        .data_const_split_16 => literal: {
+                            const bytes = literal_bytes[0..16];
+                            try fr.interface.readSliceAll(bytes);
+
+                            const key = std.mem.readInt(u128, bytes, .little);
+                            const gop = try macho.literals_16.getOrPut(gpa, key);
+                            break :literal .{
+                                16,
+                                .{ .found_existing = gop.found_existing, .value_ptr = gop.value_ptr },
+                            };
+                        },
+
                         .data_const_split_c_strings => cstring: {
                             cstring_buf.shrinkRetainingCapacity(0);
 
@@ -2783,7 +2836,20 @@ fn loadObject(
                             fr.interface.toss(1);
                             cstring_buf.writer.writeByte(0) catch
                                 return error.OutOfMemory;
-                            break :cstring len + 1;
+
+                            const gop = try macho.literals_strings.getOrPut(gpa, cstring_buf.written());
+
+                            if (!gop.found_existing) {
+                                // Not found, ensure its key stays alive.
+                                gop.key_ptr.* = try macho.arena.allocator().dupe(
+                                    u8,
+                                    cstring_buf.written(),
+                                );
+                            }
+                            break :cstring .{
+                                len + 1,
+                                .{ .found_existing = gop.found_existing, .value_ptr = gop.value_ptr },
+                            };
                         },
 
                         .text,
@@ -2791,12 +2857,12 @@ fn loadObject(
                         .data_const_fixups,
                         .data_mut,
                         .bss,
-                        => atom_size: {
+                        => atom: {
                             if (header.flags & std.macho.MH_SUBSECTIONS_VIA_SYMBOLS == 0) {
                                 // We aren't splitting the section into multiple atoms, so this must
                                 // mean that we haven't created *any* atom for this section yet.
                                 assert(atom_offset == 0);
-                                break :atom_size section.size;
+                                break :atom .{ section.size, null };
                             }
 
                             // Find the next symbol which splits this section. Usually this is just
@@ -2823,7 +2889,7 @@ fn loadObject(
                                 break :new_atom_end section.size;
                             };
 
-                            break :atom_size new_atom_end - atom_offset;
+                            break :atom .{ new_atom_end - atom_offset, null };
                         },
                     };
                     assert(atom_size > 0);
@@ -2831,30 +2897,59 @@ fn loadObject(
 
                     const atom_align = section.@"align".offset(atom_offset);
 
-                    try macho.nodes.ensureUnusedCapacity(gpa, 1);
-                    try macho.input_atoms.ensureUnusedCapacity(gpa, 1);
-                    const atom_node = try parent_section.node(macho).addFloatingChild(gpa, &macho.mf, .{
-                        .size = atom_align.forward(atom_size),
-                        .alignment = atom_align,
-                        .moved = true, // `flushMoved` will set up vaddrs and apply relocs
-                    });
-                    const iai: InputAtom.Index = @fromBackingInt(@intCast(macho.input_atoms.items.len));
-                    macho.input_atoms.appendAssumeCapacity(.{
-                        .node = atom_node,
-                        .first_symbol = .none,
-                        .first_reloc = @fromBackingInt(0), // populated for real later
-                        .vaddr = 0,
-                        .any_fixups = false,
-                    });
-                    macho.nodes.appendAssumeCapacity(.{ .input_atom = iai });
+                    const iai: InputAtom.Index = atom: {
+                        if (entry) |e| {
+                            if (e.found_existing) {
+                                const index = e.value_ptr.*;
+                                const node = index.node(macho);
 
-                    if (section.usage == .data_const_split_c_strings) {
-                        const dest = atom_node.slice(&macho.mf)[0..@intCast(atom_size)];
-                        @memcpy(dest, cstring_buf.written());
-                    } else if (section.usage != .bss) {
-                        const slice = atom_node.slice(&macho.mf);
-                        try fr.interface.readSliceAll(slice[0..@intCast(atom_size)]);
-                    }
+                                // The literal was already interned, satisfy its alignment
+                                // requirements if needed.
+                                try node.realign(
+                                    gpa,
+                                    &macho.mf,
+                                    node.alignment(&macho.mf).max(atom_align),
+                                );
+                                break :atom index;
+                            }
+                        }
+
+                        try macho.nodes.ensureUnusedCapacity(gpa, 1);
+                        try macho.input_atoms.ensureUnusedCapacity(gpa, 1);
+
+                        const atom_node = try parent_section.node(macho).addFloatingChild(gpa, &macho.mf, .{
+                            .size = atom_align.forward(atom_size),
+                            .alignment = atom_align,
+                            .moved = true, // `flushMoved` will set up vaddrs and apply relocs
+                        });
+
+                        macho.input_atoms.appendAssumeCapacity(.{
+                            .node = atom_node,
+                            .first_symbol = .none,
+                            .first_reloc = @fromBackingInt(0), // populated for real later
+                            .vaddr = 0,
+                            .any_fixups = false,
+                        });
+
+                        const new_index: InputAtom.Index = @fromBackingInt(@intCast(macho.input_atoms.items.len - 1));
+
+                        if (section.usage != .bss) {
+                            const dest = atom_node.slice(&macho.mf)[0..@intCast(atom_size)];
+
+                            if (section.usage == .data_const_split_c_strings) {
+                                @memcpy(dest, cstring_buf.written());
+                            } else if (entry != null) {
+                                @memcpy(dest, literal_bytes[0..@intCast(atom_size)]);
+                            } else {
+                                try fr.interface.readSliceAll(dest);
+                            }
+                        }
+
+                        macho.nodes.appendAssumeCapacity(.{ .input_atom = new_index });
+
+                        if (entry) |e| e.value_ptr.* = new_index;
+                        break :atom new_index;
+                    };
 
                     try atoms.append(gpa, .{
                         .offset_in_section = atom_offset,

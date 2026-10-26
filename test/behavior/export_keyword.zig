@@ -56,3 +56,15 @@ test "export function alias" {
     };
     try expect(Import.foo_exported() == 123);
 }
+
+test "export extern struct containing optional pointer" {
+    _ = struct {
+        export const extern_struct_optional_ptr = blk: {
+            var ret: extern struct {
+                field: ?*u8 = null,
+            } = undefined;
+            @as(*usize, @ptrCast(&ret)).* = 0;
+            break :blk ret;
+        };
+    };
+}

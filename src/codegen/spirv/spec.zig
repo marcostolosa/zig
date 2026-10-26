@@ -86,7 +86,6 @@ pub const Enumerant = struct {
 };
 
 pub const zig_generator_id: u16 = 41;
-pub const version: Version = .{ .major = 1, .minor = 6, .patch = 7 };
 pub const magic_number: Word = 0x07230203;
 
 pub const Class = enum {

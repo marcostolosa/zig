@@ -268,13 +268,10 @@ fn render(
     );
 
     try writer.print(
-        \\pub const version: Version = .{{ .major = {}, .minor = {}, .patch = {} }};
         \\pub const magic_number: Word = {s};
         \\
         \\
-    ,
-        .{ registry.major_version, registry.minor_version, registry.revision, registry.magic_number },
-    );
+    , .{registry.magic_number});
 
     var all_operand_kinds: OperandKindMap = .empty;
     for (registry.operand_kinds) |kind| {

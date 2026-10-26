@@ -104,3 +104,25 @@ test "or with noreturn operand" {
     };
     _ = S.foo(2, 2);
 }
+
+test "comptime evaluated else unreachable" {
+    _ = struct {
+        export fn whileLoopBug() void {
+            var x: bool = false;
+            _ = &x;
+            _ = while (x) : ({}) {
+                if (x) continue;
+                break @as(usize, 0);
+            } else unreachable;
+        }
+
+        export fn forLoopBug() void {
+            var x: bool = false;
+            _ = &x;
+            _ = for (&[1]u8{0}) |_| {
+                if (!x) continue;
+                break @as(usize, 0);
+            } else unreachable;
+        }
+    };
+}

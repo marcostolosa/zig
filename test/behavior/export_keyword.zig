@@ -68,3 +68,10 @@ test "export extern struct containing optional pointer" {
         };
     };
 }
+
+test "export u8 from array of error unions" {
+    _ = struct {
+        const aminoacids: [1]error{I}!u8 = @splat(error.I);
+        export const val_from_error_unions: u8 = aminoacids[0] catch 1;
+    };
+}

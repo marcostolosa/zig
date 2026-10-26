@@ -69,7 +69,7 @@ relocs: std.ArrayList(Reloc),
 overflowed_reloc_count: u32,
 misaligned_reloc_count: u32,
 
-imports: std.array_hash_map.Auto(Symbol.Index, void),
+imports: std.array_hash_map.Auto(Import, Import.Index.Optional),
 fixup_chain_symbol_names_len: u32,
 got: std.array_hash_map.Auto(Symbol.Index, void),
 stubs: std.array_hash_map.Auto(Symbol.Index, void),
@@ -281,9 +281,34 @@ const InputAtom = struct {
     };
 };
 
+const Import = struct {
+    symbol: Symbol.Index,
+    addend: u64,
+
+    const Index = enum(u32) {
+        _,
+
+        const Optional = enum(u32) {
+            none = std.math.maxInt(u32),
+            _,
+
+            fn unwrap(o: Optional) ?Index {
+                return switch (o) {
+                    .none => null,
+                    _ => @fromBackingInt(@backingInt(o)),
+                };
+            }
+            fn wrap(i: Index) Optional {
+                return @bitCast(i);
+            }
+        };
+    };
+};
+
 const Symbol = struct {
     node: MappedFile.Node.Index.Optional,
     first_target_reloc: Reloc.Index.Optional,
+    first_import: Import.Index.Optional = .none,
     prev_in_node: Symbol.Index.Optional,
     next_in_node: Symbol.Index.Optional,
 
@@ -1496,8 +1521,11 @@ fn setGlobalSymbolValue(macho: *MachO, symbol: Symbol.Index, opts: struct {
         }
     }
 
-    // If `symbol` has an `imports` entry, it should not exist.
-    if (macho.imports.getIndex(symbol)) |import_index| {
+    // If `symbol` has `imports` entries, they should not exist.
+    var it = symbol.ptr(macho).first_import;
+    while (it.unwrap()) |import| {
+        const import_index = @backingInt(import);
+
         // TODO: delete the import. For now we just mark it as weak so that dyld doesn't complain.
         const imports: []std.macho.dyld_chained_import_addend64 = @ptrCast(@alignCast(
             macho.node.fixup_chains_imports.slice(&macho.mf)[0 .. macho.imports.count() * @sizeOf(std.macho.dyld_chained_import_addend64)],
@@ -1507,6 +1535,8 @@ fn setGlobalSymbolValue(macho: *MachO, symbol: Symbol.Index, opts: struct {
             .name_offset = macho.targetLoad(&imports[import_index].bits).name_offset,
             .weak_import = true,
         });
+
+        it = macho.imports.values()[import_index];
     }
 }
 fn globalByName(macho: *MachO, name: []const u8) Symbol.Index.Optional {
@@ -3192,10 +3222,29 @@ fn loadObject(
             };
             const target_is_undef = macho.targetLoad(&target_symbol.nlist(macho).n_type).bits.type == .undf;
             if (target_is_undef) {
-                const imports_gop = try macho.imports.getOrPut(gpa, target_symbol);
+                const import_addend: u64 =
+                    if (target == .symbol and internal_type == .abs64 and final_addend > std.math.maxInt(u8))
+                        final_addend & ~@as(u64, 0xff)
+                    else
+                        0;
+                const imports_gop = try macho.imports.getOrPut(gpa, .{
+                    .symbol = target_symbol,
+                    .addend = import_addend,
+                });
                 if (!imports_gop.found_existing) {
                     assert(imports_gop.index == macho.imports.count() - 1);
-                    try macho.appendImportEntry(macho.imports.count() - 1, target_symbol);
+                    const index: Import.Index =
+                        @fromBackingInt(@intCast(imports_gop.index));
+
+                    try macho.appendImportEntry(
+                        imports_gop.index,
+                        target_symbol,
+                        import_addend,
+                    );
+
+                    imports_gop.value_ptr.* =
+                        target_symbol.ptr(macho).first_import;
+                    target_symbol.ptr(macho).first_import = .wrap(index);
                 }
             }
             if (target == .got or (target_is_undef and target == .branch)) {
@@ -3819,7 +3868,7 @@ fn appendGotEntry(macho: *MachO, old_len: u64, target_symbol: Symbol.Index) Erro
     indirect_syms[@intCast(old_len)] = target_symbol;
 }
 
-fn appendImportEntry(macho: *MachO, old_len: u64, symbol_index: Symbol.Index) Error!void {
+fn appendImportEntry(macho: *MachO, old_len: u64, symbol_index: Symbol.Index, addend: u64) Error!void {
     const gpa = macho.base.comp.gpa;
 
     const new_size = @sizeOf(std.macho.dyld_chained_import_addend64) * (old_len + 1);
@@ -3852,7 +3901,7 @@ fn appendImportEntry(macho: *MachO, old_len: u64, symbol_index: Symbol.Index) Er
             .weak_import = false,
             .name_offset = symbol_name_off,
         },
-        .addend = 0,
+        .addend = addend,
     };
     if (macho.targetEndian() != std.lang.Endian.native) {
         std.mem.byteSwapAllFields(std.macho.dyld_chained_import_addend64, &imports[@intCast(old_len)]);
@@ -4207,7 +4256,11 @@ fn writeOneFixup(
     ));
     switch (macho.targetLoad(&target.nlist(macho).n_type).bits.type) {
         .undf => {
-            const import_index = macho.imports.getIndex(target).?;
+            const import_index = macho.imports.getIndex(.{
+                .symbol = target,
+                .addend = addend & ~@as(u64, 0xff),
+            }).?;
+
             macho.targetStore(dest_ptr, .{
                 .kind = .bind,
                 .next = if (next_vaddr.* != 0) @intCast(
@@ -4215,11 +4268,7 @@ fn writeOneFixup(
                 ) else 0,
                 .per_kind = .{ .bind = .{
                     .ordinal = @intCast(import_index),
-                    .addend = std.math.cast(u8, addend) orelse {
-                        std.debug.panic("TODO(MachO2): large fixup addend (target={q}, addend={d})", .{
-                            target.name(macho), addend,
-                        });
-                    },
+                    .addend = @truncate(addend),
                 } },
             });
             next_vaddr.* = dest_vaddr;

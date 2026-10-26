@@ -776,7 +776,7 @@ pub const wasm = @import("Target/wasm.zig");
 pub const x86 = @import("Target/x86.zig");
 pub const xcore = @import("Target/xcore.zig");
 pub const xtensa = @import("Target/xtensa.zig");
-pub const z80 = @import("Target/generic.zig");
+pub const z80 = @import("Target/z80.zig");
 
 pub const Abi = enum {
     none,
@@ -2048,6 +2048,7 @@ pub const Cpu = struct {
                 .avr => &avr.cpu.avr1,
                 .bpfel, .bpfeb => &bpf.cpu.v1,
                 .csky => &csky.cpu.e2,
+                .ez80 => &z80.cpu.ez80,
                 .hexagon => &hexagon.cpu.hexagonv60,
                 .hppa => &hppa.cpu.ts_1,
                 .hppa64 => &hppa.cpu.pa_8000,

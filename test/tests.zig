@@ -420,25 +420,27 @@ const module_test_targets = blk: {
             .link_libc = true,
         },
 
-        // Similar to Thumb, we need long calls on Hexagon due to relocation range issues.
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "hexagon-linux-none",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
+            .target = .{
+                .cpu_arch = .hexagon,
+                .os_tag = .linux,
+                .abi = .none,
+            },
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "hexagon-linux-musl",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
+            .target = .{
+                .cpu_arch = .hexagon,
+                .os_tag = .linux,
+                .abi = .musl,
+            },
             .link_libc = true,
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "hexagon-linux-musl",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
+            .target = .{
+                .cpu_arch = .hexagon,
+                .os_tag = .linux,
+                .abi = .musl,
+            },
             .linkage = .dynamic,
             .link_libc = true,
             .extra_target = true,
@@ -1074,69 +1076,66 @@ const module_test_targets = blk: {
             .link_libc = true,
         },
 
-        // Calls are normally lowered to branch instructions that only support +/- 16 MB range when
-        // targeting Thumb. This easily becomes insufficient for our test binaries, so use long
-        // calls to avoid out-of-range relocations.
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-linux-eabi",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumb,
+                .os_tag = .linux,
+                .abi = .eabi,
+            },
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-linux-eabihf",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumb,
+                .os_tag = .linux,
+                .abi = .eabihf,
+            },
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-linux-musleabi",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
+            .target = .{
+                .cpu_arch = .thumb,
+                .os_tag = .linux,
+                .abi = .musleabi,
+            },
             .link_libc = true,
-            .pic = false, // Long calls don't work with PIC.
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-linux-musleabihf",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
+            .target = .{
+                .cpu_arch = .thumb,
+                .os_tag = .linux,
+                .abi = .musleabihf,
+            },
             .link_libc = true,
-            .pic = false, // Long calls don't work with PIC.
         },
 
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumbeb-linux-eabi",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumbeb,
+                .os_tag = .linux,
+                .abi = .eabi,
+            },
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumbeb-linux-eabihf",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumbeb,
+                .os_tag = .linux,
+                .abi = .eabihf,
+            },
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumbeb-linux-musleabi",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
+            .target = .{
+                .cpu_arch = .thumbeb,
+                .os_tag = .linux,
+                .abi = .musleabi,
+            },
             .link_libc = true,
-            .pic = false, // Long calls don't work with PIC.
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumbeb-linux-musleabihf",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
+            .target = .{
+                .cpu_arch = .thumbeb,
+                .os_tag = .linux,
+                .abi = .musleabihf,
+            },
             .link_libc = true,
-            .pic = false, // Long calls don't work with PIC.
         },
 
         .{
@@ -1980,33 +1979,33 @@ const c_abi_targets = blk: {
         },
 
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-linux-musleabi",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumb,
+                .os_tag = .linux,
+                .abi = .musleabi,
+            },
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumb-linux-musleabihf",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumb,
+                .os_tag = .linux,
+                .abi = .musleabihf,
+            },
         },
 
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumbeb-linux-musleabi",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumbeb,
+                .os_tag = .linux,
+                .abi = .musleabi,
+            },
         },
         .{
-            .target = std.Target.Query.parse(.{
-                .arch_os_abi = "thumbeb-linux-musleabihf",
-                .cpu_features = "baseline+long_calls",
-            }) catch unreachable,
-            .pic = false, // Long calls don't work with PIC.
+            .target = .{
+                .cpu_arch = .thumbeb,
+                .os_tag = .linux,
+                .abi = .musleabihf,
+            },
         },
 
         .{
@@ -2484,6 +2483,51 @@ pub fn addCliTests(b: *std.Build) *Step {
         step.dependOn(&run_test.step);
     }
 
+    {
+        // Test (cross-)compiling for Linux using `-l` syntax. The build system only uses `-l` for
+        // system libraries (and therefore only for native builds), but it is possible and legal to
+        // use it when cross-compiling.
+        const tmp_path = b.tmpPath();
+
+        const build_libfoo = b.addSystemCommand(&.{
+            b.graph.zig_exe,
+            "build-lib",
+            "-target",
+            "x86_64-linux",
+            "-dynamic",
+        });
+        const libfoo = build_libfoo.addOutputFileArg2("libfoo.so", .{ .prefix = "-femit-bin=" });
+
+        build_libfoo.setCwd(tmp_path);
+        build_libfoo.setName("zig build-lib libfoo.so");
+        build_libfoo.expectStdOutEqual("");
+        build_libfoo.expectStdErrEqual("");
+
+        const build_libbar = b.addSystemCommand(&.{
+            b.graph.zig_exe,
+            "build-lib",
+            "-target",
+            "x86_64-linux",
+            "-dynamic",
+        });
+        build_libbar.addDirectoryArg2(libfoo.dirname(), .{ .prefix = "-L" });
+        build_libbar.addArg("-lfoo");
+        const libbar = build_libbar.addOutputFileArg2("libbar.so", .{ .prefix = "-femit-bin=" });
+
+        build_libbar.setCwd(tmp_path);
+        build_libbar.setName("zig build-lib libbar.so");
+        build_libbar.expectStdOutEqual("");
+        build_libbar.expectStdErrEqual("");
+
+        // We mainly just want to make sure the build commands complete successfully, but we may as
+        // well double-check that the output is a valid ELF file.
+        const check_libbar = b.addCheckFile(libbar, .{
+            .expected_matches = &.{"\x7fELF"},
+        });
+
+        step.dependOn(&check_libbar.step);
+    }
+
     return step;
 }
 
@@ -2648,8 +2692,8 @@ fn addOneModuleTest(
     if (options.build_options) |build_options| {
         these_tests.root_module.addOptions("build_options", build_options);
     }
-    if (test_target.function_sections) |fs| these_tests.link_function_sections = fs;
-    if (test_target.data_sections) |ds| these_tests.link_data_sections = ds;
+    if (test_target.function_sections) |fs| these_tests.function_sections = fs;
+    if (test_target.data_sections) |ds| these_tests.data_sections = ds;
     const single_threaded_suffix = if (test_target.single_threaded == true) "-single" else "";
     const backend_suffix = if (test_target.use_llvm == true)
         "-llvm"

@@ -8522,7 +8522,7 @@ pub fn handleExternLibName(
                 .{lib_name},
             );
         }
-        if (!block.ownerModule().pic and target_util.requiresPicForDynamicLink(target)) {
+        if (!block.ownerModule().pic and target_util.requiresPicForDynamicLink(target, comp.config.output_mode)) {
             return sema.fail(
                 block,
                 src_loc,

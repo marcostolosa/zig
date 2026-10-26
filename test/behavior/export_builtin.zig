@@ -1,8 +1,7 @@
 const builtin = @import("builtin");
-const std = @import("std");
-const expect = std.testing.expect;
+const expect = @import("std").testing.expect;
 
-test "exporting enum value" {
+test "@export enum value" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
@@ -16,7 +15,7 @@ test "exporting enum value" {
     try expect(S.e == .two);
 }
 
-test "exporting using namespace access" {
+test "@export using namespace access" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
@@ -32,7 +31,7 @@ test "exporting using namespace access" {
     _ = S.Inner.x;
 }
 
-test "exporting comptime-known value" {
+test "@export comptime-known value" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
@@ -43,4 +42,14 @@ test "exporting comptime-known value" {
         extern const exporting_comptime_known_value_foo: u32;
     };
     try expect(S.exporting_comptime_known_value_foo == 10);
+}
+
+test "@export packed struct" {
+    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+
+    const P = packed struct(u32) { x: u32 };
+    const p = P{ .x = 234 };
+    comptime {
+        @export(&p, .{ .name = "@export packed struct" });
+    }
 }

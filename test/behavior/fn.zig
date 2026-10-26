@@ -814,3 +814,13 @@ test "comptime array of optional elements in struct function parameter" {
 }
 const Obj = struct { a: [1]?u32, b: u32 };
 fn discard(comptime _: u32, _: Obj) void {}
+
+test "discard comptime value and runtime struct parameters" {
+    var n: u32 = 1;
+    _ = &n;
+    switch (n) {
+        1 => discard2(2, .{ .foo = true }),
+        else => discard2(2, .{ .foo = true }),
+    }
+}
+fn discard2(comptime _: usize, _: struct { foo: bool }) void {}

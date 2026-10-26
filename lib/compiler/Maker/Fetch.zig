@@ -78,6 +78,7 @@ omit_missing_hash_error: bool,
 allow_missing_paths_field: bool,
 /// If true and URL points to a Git repository, will use the latest commit.
 use_latest_commit: bool,
+backup_fetches: std.ArrayList(*Fetch) = .empty,
 
 // Above this are fields provided as inputs to `run`.
 // Below this are fields populated by `run`.
@@ -702,6 +703,7 @@ pub fn run(f: *Fetch) RunError!void {
 }
 
 pub fn deinit(f: *Fetch) void {
+    f.backup_fetches.deinit(f.arena.child_allocator);
     f.error_bundle.deinit();
     f.arena.deinit();
 }
@@ -950,11 +952,10 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
         const deps = manifest.dependencies.values();
         // Grab the new tasks into a temporary buffer so we can unlock that mutex
         // as fast as possible.
-        // This overallocates any fetches that get skipped by the `continue` in the
-        // loop below.
         const new_fetches = try parent_arena.alloc(Fetch, deps.len);
         const prog_names = try parent_arena.alloc([]const u8, deps.len);
         var new_fetch_index: usize = 0;
+        var num_backup_fetches: usize = 0;
 
         try f.job_queue.mutex.lock(io);
         defer f.job_queue.mutex.unlock(io);
@@ -964,7 +965,8 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
 
         // There are four cases here:
         // * Correct hash is provided by manifest.
-        //   - Hash map already has the entry, no need to add it again.
+        //   - Hash map already has the entry, no need to add it again. Add
+        //     a backup fetch instead.
         // * Incorrect hash is provided by manifest.
         //   - Hash mismatch error emitted; `queueJobsForDeps` is not called.
         // * Hash is not provided by manifest.
@@ -975,11 +977,9 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
         //
         // If we add a dep as lazy and then later try to add the same dep as eager,
         // eagerness takes precedence and the existing entry is updated and re-scheduled
-        // for fetching.
+        // for fetching. The new entry is added as a backup fetch.
 
         for (dep_names, deps) |dep_name, dep| {
-            var promoted_existing_to_eager = false;
-            const new_fetch = &new_fetches[new_fetch_index];
             const location: Location = switch (dep.location) {
                 .url => |url| .{
                     .remote = .{
@@ -987,17 +987,6 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
                         .hash = h: {
                             const h = dep.hash orelse break :h null;
                             const pkg_hash: Package.Hash = .fromSlice(h);
-                            if (h.len == 0) break :h pkg_hash;
-                            const gop = f.job_queue.table.getOrPutAssumeCapacity(pkg_hash);
-                            if (gop.found_existing) {
-                                if (!dep.lazy and gop.value_ptr.*.lazy_status != .eager) {
-                                    gop.value_ptr.*.lazy_status = .eager;
-                                    promoted_existing_to_eager = true;
-                                } else {
-                                    continue;
-                                }
-                            }
-                            gop.value_ptr.* = new_fetch;
                             break :h pkg_hash;
                         },
                     },
@@ -1006,25 +995,39 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
                     // This might produce an invalid path, which is checked for
                     // at the beginning of run().
                     const new_root = try f.package_root.resolvePosix(parent_arena, rel_path);
-                    const pkg_hash = relativePathDigest(new_root, cache_root);
-                    const gop = f.job_queue.table.getOrPutAssumeCapacity(pkg_hash);
-                    if (gop.found_existing) {
-                        if (!dep.lazy and gop.value_ptr.*.lazy_status != .eager) {
-                            gop.value_ptr.*.lazy_status = .eager;
-                            promoted_existing_to_eager = true;
-                        } else {
-                            continue;
-                        }
-                    }
-                    gop.value_ptr.* = new_fetch;
                     break :l .{ .relative_path = new_root };
                 },
             };
-            prog_names[new_fetch_index] = dep_name;
-            new_fetch_index += 1;
-            if (!promoted_existing_to_eager) {
-                f.job_queue.all_fetches.appendAssumeCapacity(new_fetch);
-            }
+            const pkg_hash = switch (location) {
+                .remote => |remote| remote.hash.?,
+                .relative_path => |path| relativePathDigest(path, cache_root),
+                .path_or_url => unreachable,
+            };
+
+            // Backup fetches get put in the back of new_fetches and don't get scheduled or put in job_queue.table.
+            // They are instead called from the existing fetch (as a backup) in case the existing fetch fails.
+            const new_fetch = blk: {
+                const gop = f.job_queue.table.getOrPutAssumeCapacity(pkg_hash);
+                if (gop.found_existing) {
+                    if (!dep.lazy and gop.value_ptr.*.lazy_status != .eager) {
+                        // The existing fetch is promoted to eager.
+                        gop.value_ptr.*.lazy_status = .eager;
+                    }
+                    const nf = &new_fetches[new_fetches.len - 1 - num_backup_fetches];
+                    prog_names[new_fetches.len - 1 - num_backup_fetches] = dep_name;
+                    num_backup_fetches += 1;
+                    try gop.value_ptr.*.backup_fetches.append(gpa, nf);
+                    break :blk nf;
+                } else {
+                    const nf = &new_fetches[new_fetch_index];
+                    gop.value_ptr.* = nf;
+                    prog_names[new_fetch_index] = dep_name;
+                    new_fetch_index += 1;
+                    f.job_queue.all_fetches.appendAssumeCapacity(nf);
+                    break :blk nf;
+                }
+            };
+
             new_fetch.* = .{
                 .arena = std.heap.ArenaAllocator.init(gpa),
                 .location = location,
@@ -1082,10 +1085,28 @@ pub fn workerRun(f: *Fetch, prog_name: []const u8) Io.Cancelable!void {
     const prog_node = f.prog_node.start(prog_name, 0);
     defer prog_node.end();
 
-    run(f) catch |err| switch (err) {
+    run(f) catch |err| sw: switch (err) {
         error.OutOfMemory => f.oom_flag = true,
         error.Canceled => |e| return e,
         error.FetchFailed => {
+            // Try backup fetches. If any of those succeed, this fetch succeeds after all.
+            for (f.backup_fetches.items) |bf| {
+                run(bf) catch |err2| switch (err2) {
+                    error.OutOfMemory => continue :sw error.OutOfMemory,
+                    error.Canceled => continue :sw error.Canceled,
+                    error.FetchFailed => {
+                        var bundle = bf.error_bundle.toOwnedBundle("") catch continue :sw error.OutOfMemory;
+                        defer bundle.deinit(bf.arena.child_allocator);
+                        f.error_bundle.addBundleAsRoots(bundle) catch continue :sw error.OutOfMemory;
+                        continue;
+                    },
+                };
+                // Backup fetch was successful, so clear the errors.
+                // TODO: log these as warnings?
+                f.error_bundle.deinit();
+                f.error_bundle = ErrorBundle.Wip.init(f.arena.child_allocator) catch continue :sw error.OutOfMemory;
+                break;
+            }
             // Nothing to do because the errors are already reported in `error_bundle`,
             // and a reference is kept to the `Fetch` task inside `all_fetches`.
         },

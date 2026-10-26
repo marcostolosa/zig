@@ -288,6 +288,15 @@ pub fn float(r: Random, comptime T: type) T {
     // Then generate an exponentially biased random value for the exponent.
     // This covers every possible value in the range.
     switch (T) {
+        f16 => {
+            // Use 10 random bits for the mantissa, and the rest for exponent.
+            // No extra random bits are necessary, as 14 is enough.
+            const rand = r.int(u24);
+            const rand_lz = @clz(rand | 0b1111111111);
+            const mantissa: u10 = @truncate(rand);
+            const exponent = @as(u16, 14 - rand_lz) << 10;
+            return @bitCast(exponent | mantissa);
+        },
         f32 => {
             // Use 23 random bits for the mantissa, and the rest for the exponent.
             // If all 41 bits are zero, generate additional random bits, until a

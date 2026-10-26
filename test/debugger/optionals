@@ -17,6 +17,7 @@ pub fn main() void {
 #}
 #update
 #check lldb {
+#...
 (lldb) breakpoint set --file optionals.zig --source-pattern-regexp 'maybe_u32 = 123;'
 Breakpoint 1: where = optionals`optionals.main + #... at optionals.zig:7:9, address = 0x#...
 (lldb) process launch

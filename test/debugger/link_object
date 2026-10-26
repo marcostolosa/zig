@@ -13,6 +13,7 @@ pub fn main() void {
 #}
 #update
 #check lldb {
+#...
 (lldb) breakpoint set --file main.zig --source-pattern-regexp 'x = fabsf\(x\);'
 Breakpoint 1: where = link_object`main.main + #... at main.zig:4:14, address = 0x#...
 (lldb) process launch

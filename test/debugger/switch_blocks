@@ -21,6 +21,7 @@ pub fn main() void {
 #}
 #update
 #check lldb {
+#...
 (lldb) breakpoint set --file switch_blocks.zig --source-pattern-regexp '_ = &x;'
 Breakpoint 1: 2 locations.
 (lldb) process launch

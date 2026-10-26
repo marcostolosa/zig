@@ -61,6 +61,7 @@ pub fn main() void {
 #}
 #update
 #check lldb {
+#...
 (lldb) breakpoint set --file pointers.zig --source-pattern-regexp '_ = access;'
 Breakpoint 1: where = pointers`pointers.testPointers + #... at pointers.zig:51:1, address = 0x#...
 (lldb) process launch

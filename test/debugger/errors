@@ -32,6 +32,7 @@ pub fn main() void {
 #}
 #update
 #check lldb {
+#...
 (lldb) breakpoint set --file errors.zig --source-pattern-regexp '_ = errors;'
 Breakpoint 1: where = errors`errors.testErrors + #... at errors.zig:16:1, address = 0x#...
 (lldb) process launch

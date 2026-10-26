@@ -15,6 +15,7 @@ pub fn main() void {
 #}
 #update
 #check lldb {
+#...
 (lldb) breakpoint set --file identifiers.zig --source-pattern-regexp '_ = @"struct";'
 Breakpoint 1: where = identifiers`identifiers.testIdentifiers + #... at identifiers.zig:5:1, address = 0x#...
 (lldb) process launch

@@ -318,6 +318,7 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable atomic_storage_ops capability",
         .dependencies = featureSet(&[_]Feature{
+            .atomic_storage,
             .SPV_KHR_shader_atomic_counter_ops,
         }),
     };
@@ -325,14 +326,15 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable b_float16cooperative_matrix_khr capability",
         .dependencies = featureSet(&[_]Feature{
-            .SPV_KHR_bfloat16,
+            .b_float16type_khr,
+            .cooperative_matrix_khr,
         }),
     };
     result[@backingInt(Feature.b_float16dot_product_khr)] = .{
         .llvm_name = null,
         .description = "Enable b_float16dot_product_khr capability",
         .dependencies = featureSet(&[_]Feature{
-            .SPV_KHR_bfloat16,
+            .b_float16type_khr,
         }),
     };
     result[@backingInt(Feature.b_float16type_khr)] = .{
@@ -456,6 +458,7 @@ pub const all_features = blk: {
         .description = "Enable descriptor_heap_ext capability",
         .dependencies = featureSet(&[_]Feature{
             .SPV_EXT_descriptor_heap,
+            .untyped_pointers_khr,
         }),
     };
     result[@backingInt(Feature.device_enqueue)] = .{
@@ -483,6 +486,7 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable dot_product_input4x8bit capability",
         .dependencies = featureSet(&[_]Feature{
+            .int8,
             .SPV_KHR_integer_dot_product,
             .v1_6,
         }),
@@ -551,7 +555,8 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable float8cooperative_matrix_ext capability",
         .dependencies = featureSet(&[_]Feature{
-            .SPV_EXT_float8,
+            .cooperative_matrix_khr,
+            .float8ext,
         }),
     };
     result[@backingInt(Feature.float8ext)] = .{
@@ -644,12 +649,16 @@ pub const all_features = blk: {
     result[@backingInt(Feature.geometry_point_size)] = .{
         .llvm_name = null,
         .description = "Enable geometry_point_size capability",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .geometry,
+        }),
     };
     result[@backingInt(Feature.geometry_streams)] = .{
         .llvm_name = null,
         .description = "Enable geometry_streams capability",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .geometry,
+        }),
     };
     result[@backingInt(Feature.group_non_uniform)] = .{
         .llvm_name = null,
@@ -662,21 +671,21 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable group_non_uniform_arithmetic capability",
         .dependencies = featureSet(&[_]Feature{
-            .v1_3,
+            .group_non_uniform,
         }),
     };
     result[@backingInt(Feature.group_non_uniform_ballot)] = .{
         .llvm_name = null,
         .description = "Enable group_non_uniform_ballot capability",
         .dependencies = featureSet(&[_]Feature{
-            .v1_3,
+            .group_non_uniform,
         }),
     };
     result[@backingInt(Feature.group_non_uniform_clustered)] = .{
         .llvm_name = null,
         .description = "Enable group_non_uniform_clustered capability",
         .dependencies = featureSet(&[_]Feature{
-            .v1_3,
+            .group_non_uniform,
         }),
     };
     result[@backingInt(Feature.group_non_uniform_partitioned_ext)] = .{
@@ -690,13 +699,14 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable group_non_uniform_quad capability",
         .dependencies = featureSet(&[_]Feature{
-            .v1_3,
+            .group_non_uniform,
         }),
     };
     result[@backingInt(Feature.group_non_uniform_rotate_khr)] = .{
         .llvm_name = null,
         .description = "Enable group_non_uniform_rotate_khr capability",
         .dependencies = featureSet(&[_]Feature{
+            .group_non_uniform,
             .SPV_KHR_subgroup_rotate,
         }),
     };
@@ -704,21 +714,21 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable group_non_uniform_shuffle capability",
         .dependencies = featureSet(&[_]Feature{
-            .v1_3,
+            .group_non_uniform,
         }),
     };
     result[@backingInt(Feature.group_non_uniform_shuffle_relative)] = .{
         .llvm_name = null,
         .description = "Enable group_non_uniform_shuffle_relative capability",
         .dependencies = featureSet(&[_]Feature{
-            .v1_3,
+            .group_non_uniform,
         }),
     };
     result[@backingInt(Feature.group_non_uniform_vote)] = .{
         .llvm_name = null,
         .description = "Enable group_non_uniform_vote capability",
         .dependencies = featureSet(&[_]Feature{
-            .v1_3,
+            .group_non_uniform,
         }),
     };
     result[@backingInt(Feature.group_uniform_arithmetic_khr)] = .{
@@ -741,12 +751,16 @@ pub const all_features = blk: {
     result[@backingInt(Feature.image_buffer)] = .{
         .llvm_name = null,
         .description = "Enable image_buffer capability",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .sampled_buffer,
+        }),
     };
     result[@backingInt(Feature.image_cube_array)] = .{
         .llvm_name = null,
         .description = "Enable image_cube_array capability",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .sampled_cube_array,
+        }),
     };
     result[@backingInt(Feature.image_gather_extended)] = .{
         .llvm_name = null,
@@ -756,7 +770,9 @@ pub const all_features = blk: {
     result[@backingInt(Feature.image_mipmap)] = .{
         .llvm_name = null,
         .description = "Enable image_mipmap capability",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .image_basic,
+        }),
     };
     result[@backingInt(Feature.image_ms_array)] = .{
         .llvm_name = null,
@@ -771,12 +787,16 @@ pub const all_features = blk: {
     result[@backingInt(Feature.image_read_write)] = .{
         .llvm_name = null,
         .description = "Enable image_read_write capability",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .image_basic,
+        }),
     };
     result[@backingInt(Feature.image_rect)] = .{
         .llvm_name = null,
         .description = "Enable image_rect capability",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .sampled_rect,
+        }),
     };
     result[@backingInt(Feature.input_attachment)] = .{
         .llvm_name = null,
@@ -787,6 +807,7 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable input_attachment_array_dynamic_indexing capability",
         .dependencies = featureSet(&[_]Feature{
+            .input_attachment,
             .SPV_EXT_descriptor_indexing,
             .v1_5,
         }),
@@ -795,8 +816,8 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable input_attachment_array_non_uniform_indexing capability",
         .dependencies = featureSet(&[_]Feature{
-            .SPV_EXT_descriptor_indexing,
-            .v1_5,
+            .input_attachment,
+            .shader_non_uniform,
         }),
     };
     result[@backingInt(Feature.int16)] = .{
@@ -812,12 +833,15 @@ pub const all_features = blk: {
     result[@backingInt(Feature.int64atomics)] = .{
         .llvm_name = null,
         .description = "Enable int64atomics capability",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .int64,
+        }),
     };
     result[@backingInt(Feature.int64image_ext)] = .{
         .llvm_name = null,
         .description = "Enable int64image_ext capability",
         .dependencies = featureSet(&[_]Feature{
+            .int64,
             .SPV_EXT_shader_image_int64,
         }),
     };
@@ -866,7 +890,9 @@ pub const all_features = blk: {
     result[@backingInt(Feature.multi_viewport)] = .{
         .llvm_name = null,
         .description = "Enable multi_viewport capability",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .geometry,
+        }),
     };
     result[@backingInt(Feature.mx_int8ext)] = .{
         .llvm_name = null,
@@ -893,6 +919,7 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable pipe_storage capability",
         .dependencies = featureSet(&[_]Feature{
+            .pipes,
             .v1_1,
         }),
     };
@@ -1012,8 +1039,7 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable sampled_image_array_non_uniform_indexing capability",
         .dependencies = featureSet(&[_]Feature{
-            .SPV_EXT_descriptor_indexing,
-            .v1_5,
+            .shader_non_uniform,
         }),
     };
     result[@backingInt(Feature.sampled_rect)] = .{
@@ -1039,6 +1065,7 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable shader_invocation_reorder_ext capability",
         .dependencies = featureSet(&[_]Feature{
+            .ray_tracing_khr,
             .SPV_EXT_shader_invocation_reorder,
         }),
     };
@@ -1068,6 +1095,7 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable shader_viewport_index_layer_ext capability",
         .dependencies = featureSet(&[_]Feature{
+            .multi_viewport,
             .SPV_EXT_shader_viewport_index_layer,
         }),
     };
@@ -1428,8 +1456,7 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable storage_buffer_array_non_uniform_indexing capability",
         .dependencies = featureSet(&[_]Feature{
-            .SPV_EXT_descriptor_indexing,
-            .v1_5,
+            .shader_non_uniform,
         }),
     };
     result[@backingInt(Feature.storage_image_array_dynamic_indexing)] = .{
@@ -1441,8 +1468,7 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable storage_image_array_non_uniform_indexing capability",
         .dependencies = featureSet(&[_]Feature{
-            .SPV_EXT_descriptor_indexing,
-            .v1_5,
+            .shader_non_uniform,
         }),
     };
     result[@backingInt(Feature.storage_image_extended_formats)] = .{
@@ -1493,6 +1519,7 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable storage_texel_buffer_array_dynamic_indexing capability",
         .dependencies = featureSet(&[_]Feature{
+            .image_buffer,
             .SPV_EXT_descriptor_indexing,
             .v1_5,
         }),
@@ -1501,8 +1528,8 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable storage_texel_buffer_array_non_uniform_indexing capability",
         .dependencies = featureSet(&[_]Feature{
-            .SPV_EXT_descriptor_indexing,
-            .v1_5,
+            .image_buffer,
+            .shader_non_uniform,
         }),
     };
     result[@backingInt(Feature.subgroup_ballot_khr)] = .{
@@ -1516,6 +1543,7 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable subgroup_dispatch capability",
         .dependencies = featureSet(&[_]Feature{
+            .device_enqueue,
             .v1_1,
         }),
     };
@@ -1534,7 +1562,9 @@ pub const all_features = blk: {
     result[@backingInt(Feature.tessellation_point_size)] = .{
         .llvm_name = null,
         .description = "Enable tessellation_point_size capability",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .tessellation,
+        }),
     };
     result[@backingInt(Feature.tile_image_color_read_access_ext)] = .{
         .llvm_name = null,
@@ -1566,16 +1596,14 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable uniform_and_storage_buffer16bit_access capability",
         .dependencies = featureSet(&[_]Feature{
-            .SPV_KHR_16bit_storage,
-            .v1_3,
+            .storage_buffer16bit_access,
         }),
     };
     result[@backingInt(Feature.uniform_and_storage_buffer8bit_access)] = .{
         .llvm_name = null,
         .description = "Enable uniform_and_storage_buffer8bit_access capability",
         .dependencies = featureSet(&[_]Feature{
-            .SPV_KHR_8bit_storage,
-            .v1_5,
+            .storage_buffer8bit_access,
         }),
     };
     result[@backingInt(Feature.uniform_buffer_array_dynamic_indexing)] = .{
@@ -1587,8 +1615,7 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable uniform_buffer_array_non_uniform_indexing capability",
         .dependencies = featureSet(&[_]Feature{
-            .SPV_EXT_descriptor_indexing,
-            .v1_5,
+            .shader_non_uniform,
         }),
     };
     result[@backingInt(Feature.uniform_decoration)] = .{
@@ -1602,6 +1629,7 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable uniform_texel_buffer_array_dynamic_indexing capability",
         .dependencies = featureSet(&[_]Feature{
+            .sampled_buffer,
             .SPV_EXT_descriptor_indexing,
             .v1_5,
         }),
@@ -1610,8 +1638,8 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable uniform_texel_buffer_array_non_uniform_indexing capability",
         .dependencies = featureSet(&[_]Feature{
-            .SPV_EXT_descriptor_indexing,
-            .v1_5,
+            .sampled_buffer,
+            .shader_non_uniform,
         }),
     };
     result[@backingInt(Feature.untyped_pointers_khr)] = .{
@@ -1665,8 +1693,7 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable variable_pointers capability",
         .dependencies = featureSet(&[_]Feature{
-            .SPV_KHR_variable_pointers,
-            .v1_3,
+            .variable_pointers_storage_buffer,
         }),
     };
     result[@backingInt(Feature.variable_pointers_storage_buffer)] = .{
@@ -1702,14 +1729,14 @@ pub const all_features = blk: {
         .llvm_name = null,
         .description = "Enable workgroup_memory_explicit_layout16bit_access_khr capability",
         .dependencies = featureSet(&[_]Feature{
-            .SPV_KHR_workgroup_memory_explicit_layout,
+            .workgroup_memory_explicit_layout_khr,
         }),
     };
     result[@backingInt(Feature.workgroup_memory_explicit_layout8bit_access_khr)] = .{
         .llvm_name = null,
         .description = "Enable workgroup_memory_explicit_layout8bit_access_khr capability",
         .dependencies = featureSet(&[_]Feature{
-            .SPV_KHR_workgroup_memory_explicit_layout,
+            .workgroup_memory_explicit_layout_khr,
         }),
     };
     result[@backingInt(Feature.workgroup_memory_explicit_layout_khr)] = .{

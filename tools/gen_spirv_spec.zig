@@ -807,7 +807,7 @@ fn renderValueEnum(
     if (std.mem.eql(u8, "Capability", enumeration.kind)) {
         try writer.writeAll(
             \\
-            \\pub fn dependencies(self: Capability) []const Extension {
+            \\pub fn dependencyExtensions(self: Capability) []const Extension {
             \\ return switch (self) {
         );
         for (enum_indices) |i| {
@@ -823,6 +823,33 @@ fn renderValueEnum(
                 if (!isAllowedExtension(extension)) continue;
                 if (comma) try writer.writeAll(", ");
                 try writer.print(".{s}", .{extension});
+                comma = true;
+            }
+            try writer.writeAll("},");
+        }
+        try writer.writeAll(
+            \\};
+            \\}
+            \\
+            \\pub fn dependencyCapabilities(self: Capability) []const Capability {
+            \\ return switch (self) {
+        );
+        var by_name: std.StringHashMapUnmanaged(u31) = .empty;
+        for (enumerants) |enumerant| {
+            const value: u31 = switch (enumerant.value) {
+                .int => |value| value,
+                .bitflag => |value| try std.fmt.parseInt(u31, value, 10),
+            };
+            try by_name.putNoClobber(arena, enumerant.enumerant, value);
+            for (enumerant.aliases) |alias| try by_name.putNoClobber(arena, alias, value);
+        }
+        for (enum_indices) |i| {
+            const enumerant = enumerants[i];
+            try writer.print("\n.{f} => &.{{", .{formatId(enumerant.enumerant)});
+            var comma = false;
+            for (enumerant.capabilities) |name| {
+                if (comma) try writer.writeAll(", ");
+                try writer.print(".{f}", .{formatId(enumerants[enum_map.get(by_name.get(name).?).?].enumerant)});
                 comma = true;
             }
             try writer.writeAll("},");

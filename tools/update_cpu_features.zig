@@ -72,29 +72,48 @@ const spirv_omitted_extensions = [_][]const u8{
     "SPV_KHR_physical_storage_buffer", // paired with physical_storage_buffer_addresses
     "SPV_EXT_physical_storage_buffer",
 };
+const spirv_no_deps_capabilities = [_][]const u8{
+    "ray_traversal_primitive_culling_khr",
+};
+
+fn spirvOmitCapability(name: []const u8) bool {
+    for (spirv_omitted_capabilities) |omitted| {
+        if (std.mem.eql(u8, omitted, name)) return true;
+    }
+    return false;
+}
 
 const spirv_extra_features: []const Feature = blk: {
     @setEvalBranchQuota(15_000);
     var features: []const Feature = &.{};
 
-    cap: for (
+    for (
         @typeInfo(spirv_spec.Capability).@"enum".field_names,
         @typeInfo(spirv_spec.Capability).@"enum".field_values,
     ) |name, value| {
-        for (spirv_omitted_capabilities) |omitted| {
-            if (std.mem.eql(u8, omitted, name)) continue :cap;
-        }
+        if (spirvOmitCapability(name)) continue;
+
         features = features ++ &[_]Feature{.{
             .zig_name = name,
             .desc = "Enable " ++ name ++ " capability",
-            .deps = &struct {
-                const extensions = spirv_spec.Capability.dependencies(@fromBackingInt(@intCast(value)));
-                const deps: [extensions.len][]const u8 = inner: {
-                    var out: [extensions.len][]const u8 = undefined;
-                    for (extensions, 0..) |ext, i| out[i] = @tagName(ext);
+            .deps = struct {
+                const cap: spirv_spec.Capability = @fromBackingInt(@intCast(value));
+                const deps: []const spirv_spec.Capability = for (spirv_no_deps_capabilities) |no_deps| {
+                    if (std.mem.eql(u8, no_deps, name)) break &.{};
+                } else cap.dependencyCapabilities();
+                const result: []const []const u8 = inner: {
+                    var out: []const []const u8 = &.{};
+                    for (cap.dependencyExtensions()) |ext| {
+                        out = out ++ &[_][]const u8{@tagName(ext)};
+                    }
+                    for (deps) |dep| {
+                        if (spirvOmitCapability(@tagName(dep))) continue;
+
+                        out = out ++ &[_][]const u8{@tagName(dep)};
+                    }
                     break :inner out;
                 };
-            }.deps,
+            }.result,
         }};
     }
 

@@ -2175,7 +2175,29 @@ fn loadInputInner(macho: *MachO, input: link.Input) Error!void {
                 },
             };
         },
-        .dso => @panic("TODO(MachO2): load dso"),
+        .dso => |dso| {
+            var buf: [4096]u8 = undefined;
+            var fr = dso.file.reader(io, &buf);
+            macho.loadDso(dso.path, &fr) catch |err| switch (err) {
+                else => |e| return e,
+                error.EndOfStream => return diags.failParse(
+                    dso.path,
+                    "unexpected eof",
+                    .{},
+                ),
+                error.AccessDenied, error.Unexpected, error.Unseekable => |e| return diags.fail(
+                    "failed to read \"{f}\": {t}",
+                    .{ dso.path.fmtEscapeString(), e },
+                ),
+                error.ReadFailed => switch (fr.err.?) {
+                    error.Canceled => |e| return e,
+                    else => |e| return diags.fail(
+                        "failed to read \"{f}\": {t}",
+                        .{ dso.path.fmtEscapeString(), e },
+                    ),
+                },
+            };
+        },
         .tbd => |tbd| {
             log.debug("load tbd {qf}", .{tbd.path.fmtEscapeString()});
 
@@ -2266,6 +2288,79 @@ fn loadArchive(macho: *MachO, path: std.Build.Cache.Path, fr: *Io.File.Reader) L
         error.EndOfStream => if (!fr.atEnd()) return error.EndOfStream,
     }
 }
+
+fn loadDso(macho: *MachO, path: std.Build.Cache.Path, fr: *Io.File.Reader) LoadParseInputError!void {
+    const comp = macho.base.comp;
+    const diags = &comp.link_diags;
+    const r = &fr.interface;
+
+    // TODO: full support for dylibs!
+    log.debug("loadDso({f})", .{path.fmtEscapeString()});
+
+    const target_endian = macho.targetEndian();
+
+    switch (try r.peekInt(u32, target_endian)) {
+        std.macho.MH_MAGIC_64 => {},
+        std.macho.MH_MAGIC => {
+            return diags.failParse(path, "incorrect pointer bit width (expected 64)", .{});
+        },
+        std.macho.MH_CIGAM_64, std.macho.MH_CIGAM => {
+            return diags.failParse(path, "incorrect endian (expected {t})", .{target_endian});
+        },
+        else => {
+            return diags.failParse(path, "invalid Mach-O dylib", .{});
+        },
+    }
+
+    const header = try r.takeStruct(std.macho.mach_header_64, target_endian);
+    assert(header.magic == std.macho.MH_MAGIC_64); // checked above
+
+    if (header.filetype != std.macho.MH_DYLIB) return diags.failParse(
+        path,
+        "not a dylib",
+        .{},
+    );
+
+    var cmd_offset: u64 = 0;
+    for (0..header.ncmds) |_| {
+        const lc = try fr.interface.peekStruct(std.macho.load_command, target_endian);
+        if (lc.cmdsize < @sizeOf(std.macho.load_command)) return diags.failParse(
+            path,
+            "load command at offset 0x{X} has invalid size",
+            .{cmd_offset + @sizeOf(std.macho.mach_header_64)},
+        );
+        if (cmd_offset + lc.cmdsize > header.sizeofcmds) return diags.failParse(
+            path,
+            "load command at offset 0x{X} exceeds 'sizeofcmds'",
+            .{cmd_offset + @sizeOf(std.macho.mach_header_64)},
+        );
+        switch (lc.cmd) {
+            .ID_DYLIB => {
+                const cmd_size = @sizeOf(std.macho.dylib_command);
+                const id = try r.peekStruct(
+                    std.macho.dylib_command,
+                    target_endian,
+                );
+
+                var output = id;
+                output.cmd = .LOAD_DYLIB;
+
+                const cmd = try macho.appendLoadCommand(std.macho.dylib_command, output);
+
+                try r.discardAll(cmd_size);
+                try r.readSliceAll(cmd.trailing);
+                cmd_offset += lc.cmdsize;
+                continue;
+            },
+
+            else => {},
+        }
+
+        try r.discardAll(lc.cmdsize);
+        cmd_offset += lc.cmdsize;
+    }
+}
+
 fn loadObject(
     macho: *MachO,
     path: std.Build.Cache.Path,

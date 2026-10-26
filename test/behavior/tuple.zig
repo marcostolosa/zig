@@ -241,6 +241,12 @@ test "tuple in tuple passed to generic function" {
     try S.foo(.{x});
 }
 
+test "runtime tuple in tuple" {
+    var n: u16 = 0;
+    _ = &n;
+    _ = &.{.{n}};
+}
+
 test "coerce tuple to tuple" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO

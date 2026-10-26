@@ -1089,7 +1089,7 @@ fn renderFieldName(writer: *std.Io.Writer, operands: []const Operand, field_inde
 }
 
 fn isAllowedCapability(name: []const u8) bool {
-    if (std.mem.indexOf(u8, name, "Provisional") != null) return false;
+    if (std.mem.find(u8, name, "Provisional") != null) return false;
     const last = name[name.len - 1];
     if (std.ascii.isLower(last) or std.ascii.isDigit(last)) return true;
     for (allowed_vendors) |vendor| {
@@ -1136,7 +1136,7 @@ fn keepEnabled(instructions: *[]Instruction, kinds: []OperandKind) void {
         for (enumerants) |enumerant| {
             if (enumerant.provisional) continue;
             const enabled = if (std.mem.eql(u8, kind.kind, "Capability"))
-                isAllowedCapability(enumerant.enumerant)
+                isEnabled(enumerant.version, &.{}, enumerant.extensions) and std.mem.find(u8, enumerant.enumerant, "Provisional") == null
             else
                 isEnabled(enumerant.version, enumerant.capabilities, enumerant.extensions);
             if (!enabled) continue;

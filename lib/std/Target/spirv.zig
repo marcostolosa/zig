@@ -76,6 +76,7 @@ pub const Feature = enum {
     group_non_uniform_vote,
     group_uniform_arithmetic_khr,
     groups,
+    image1d,
     image_basic,
     image_buffer,
     image_cube_array,
@@ -115,9 +116,12 @@ pub const Feature = enum {
     ray_tracing_position_fetch_khr,
     ray_traversal_primitive_culling_khr,
     replicated_composites_ext,
+    rounding_mode_rte,
+    rounding_mode_rtz,
     runtime_descriptor_array,
     sample_mask_post_depth_coverage,
     sample_rate_shading,
+    sampled1d,
     sampled_buffer,
     sampled_cube_array,
     sampled_image_array_dynamic_indexing,
@@ -743,6 +747,13 @@ pub const all_features = blk: {
         .description = "Enable groups capability",
         .dependencies = featureSet(&[_]Feature{}),
     };
+    result[@backingInt(Feature.image1d)] = .{
+        .llvm_name = null,
+        .description = "Enable image1d capability",
+        .dependencies = featureSet(&[_]Feature{
+            .sampled1d,
+        }),
+    };
     result[@backingInt(Feature.image_basic)] = .{
         .llvm_name = null,
         .description = "Enable image_basic capability",
@@ -1000,6 +1011,22 @@ pub const all_features = blk: {
             .SPV_EXT_replicated_composites,
         }),
     };
+    result[@backingInt(Feature.rounding_mode_rte)] = .{
+        .llvm_name = null,
+        .description = "Enable rounding_mode_rte capability",
+        .dependencies = featureSet(&[_]Feature{
+            .SPV_KHR_float_controls,
+            .v1_4,
+        }),
+    };
+    result[@backingInt(Feature.rounding_mode_rtz)] = .{
+        .llvm_name = null,
+        .description = "Enable rounding_mode_rtz capability",
+        .dependencies = featureSet(&[_]Feature{
+            .SPV_KHR_float_controls,
+            .v1_4,
+        }),
+    };
     result[@backingInt(Feature.runtime_descriptor_array)] = .{
         .llvm_name = null,
         .description = "Enable runtime_descriptor_array capability",
@@ -1018,6 +1045,11 @@ pub const all_features = blk: {
     result[@backingInt(Feature.sample_rate_shading)] = .{
         .llvm_name = null,
         .description = "Enable sample_rate_shading capability",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
+    result[@backingInt(Feature.sampled1d)] = .{
+        .llvm_name = null,
+        .description = "Enable sampled1d capability",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.sampled_buffer)] = .{

@@ -342,6 +342,32 @@ pub fn float(r: Random, comptime T: type) T {
             const exponent = (1022 - rand_lz) << 52;
             return @bitCast(exponent | mantissa);
         },
+        f128 => {
+            // Use 112 random bits for the mantissa, and the rest for the exponent.
+            // If all 16 bits are zero, generate additional random bits, until a
+            // set bit is found, or 16_382 bits have been generated.
+            const rand = r.int(u128);
+            var rand_lz: u64 = @clz(rand);
+            if (rand_lz >= 128 - 112) {
+                rand_lz = 128 - 112;
+                while (true) {
+                    // It is astronomically unlikely for this loop to execute more than once.
+                    const addl_rand_lz = @clz(r.int(u64));
+                    rand_lz += addl_rand_lz;
+                    if (addl_rand_lz != 64) {
+                        @branchHint(.likely);
+                        break;
+                    }
+                    if (rand_lz >= 16494) {
+                        rand_lz = 16494;
+                        break;
+                    }
+                }
+            }
+            const mantissa = rand & 0xffffffffffffffffffffffffffff;
+            const exponent: u128 = @as(u128, 16382 - rand_lz) << 112;
+            return @bitCast(exponent | mantissa);
+        },
         else => @compileError("unknown floating point type"),
     }
 }

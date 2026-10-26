@@ -2581,7 +2581,7 @@ fn processOneTargetInner(io: Io, job: Job) !void {
     defer progress_node.end();
 
     var features_table = std.StringHashMap(Feature).init(arena);
-    var all_features : std.ArrayList(Feature) = .empty;
+    var all_features: std.ArrayList(Feature) = .empty;
     var all_models: std.ArrayList(Model) = .empty;
 
     if (target.llvm) |llvm| {
@@ -2764,7 +2764,7 @@ fn processOneTargetInner(io: Io, job: Job) !void {
                     if (llvm_name.len == 0) continue;
 
                     var zig_name = try llvmNameToZigName(arena, llvm_name);
-                    var deps: std.ArrayList([]const u8)  = .empty;
+                    var deps: std.ArrayList([]const u8) = .empty;
                     var omit_deps: []const []const u8 = &.{};
                     var extra_deps: []const []const u8 = &.{};
                     const omitted = for (target.model_overrides) |model_override| {

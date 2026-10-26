@@ -994,7 +994,7 @@ fn termColor(allocator: Allocator, input: []const u8) ![]u8 {
     const supported_sgr_colors = [_]u8{ 31, 32, 36 };
     const supported_sgr_numbers = [_]u8{ 0, 1, 2 };
 
-    var buf : std.ArrayList(u8) = .empty;
+    var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
 
     var sgr_param_start_index: usize = undefined;

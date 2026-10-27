@@ -116,6 +116,8 @@ pub const Abbrev = struct {
 pub const CompileUnit = struct {
     offset: u64,
     size: u64,
+    /// Offset from `offset` to the first DIE
+    first_die_offset: u16,
     version: u16,
     format: Format,
     addr_size_bytes: u8,
@@ -302,8 +304,8 @@ pub const OpenError = ScanError;
 /// the `Dwarf` fields before calling. `binary_mem` is the raw bytes of the
 /// main binary file (not the secondary debug info file).
 pub fn open(d: *Dwarf, gpa: Allocator, endian: Endian) OpenError!void {
-    try d.scanAllFunctions(gpa, endian);
     try d.scanAllCompileUnits(gpa, endian);
+    try d.scanAllFunctions(gpa, endian);
 }
 
 const PcRange = struct {
@@ -371,32 +373,16 @@ pub const ScanError = error{
 
 fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
     var fr: Reader = .fixed(di.section(.debug_info).?);
-    var this_unit_offset: u64 = 0;
 
-    while (this_unit_offset < fr.buffer.len) {
-        fr.seek = @intCast(this_unit_offset);
+    for (di.compile_unit_list.items) |*compile_unit| {
+        const this_unit_offset = compile_unit.offset;
+        fr.seek = @intCast(this_unit_offset + compile_unit.first_die_offset);
 
-        const unit_header = try readUnitHeader(&fr, endian);
-        if (unit_header.unit_length == 0) return;
-        const next_offset = unit_header.header_length + unit_header.unit_length;
+        const next_offset = compile_unit.size;
+        const version = compile_unit.version;
+        const address_size = compile_unit.addr_size_bytes;
 
-        const version = try fr.takeInt(u16, endian);
-        var address_size: u8 = undefined;
-        var debug_abbrev_offset: u64 = undefined;
-        if (version == 5) {
-            const unit_type = try fr.takeByte();
-            if (unit_type != DW.UT.compile) return bad();
-            address_size = try fr.takeByte();
-            debug_abbrev_offset = try readFormatSizedInt(&fr, unit_header.format, endian);
-        } else if (version >= 2 and version < 5) {
-            debug_abbrev_offset = try readFormatSizedInt(&fr, unit_header.format, endian);
-            address_size = try fr.takeByte();
-        } else {
-            this_unit_offset += next_offset;
-            continue;
-        }
-
-        const abbrev_table = try di.getAbbrevTable(gpa, debug_abbrev_offset);
+        const abbrev_table = try di.getAbbrevTable(gpa, compile_unit.abbrev_offset);
 
         var max_attrs: usize = 0;
         var zig_padding_abbrev_code: u7 = 0;
@@ -418,23 +404,6 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
 
         const next_unit_pos = this_unit_offset + next_offset;
 
-        var compile_unit: CompileUnit = .{
-            .offset = this_unit_offset,
-            .size = next_offset,
-            .version = version,
-            .format = unit_header.format,
-            .addr_size_bytes = address_size,
-            .abbrev_offset = debug_abbrev_offset,
-            .die = undefined,
-            .pc_range = null,
-            .str_offsets_base = 0,
-            .addr_base = 0,
-            .rnglists_base = 0,
-            .loclists_base = 0,
-            .frame_base = null,
-            .src_loc_cache = null,
-        };
-
         while (true) {
             fr.seek = std.mem.findNonePos(u8, fr.buffer, fr.seek, &.{
                 zig_padding_abbrev_code, 0,
@@ -444,31 +413,20 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                 &fr,
                 attrs_bufs[0],
                 abbrev_table,
-                unit_header.format,
+                compile_unit.format,
                 endian,
                 address_size,
                 version,
             )) orelse continue;
 
             switch (die_obj.tag_id) {
-                DW.TAG.compile_unit => {
-                    compile_unit.die = die_obj;
-                    compile_unit.die.attrs = attrs_bufs[1][0..die_obj.attrs.len];
-                    @memcpy(compile_unit.die.attrs, die_obj.attrs);
-
-                    compile_unit.str_offsets_base = if (die_obj.getAttr(AT.str_offsets_base)) |fv| try fv.getUInt(usize) else 0;
-                    compile_unit.addr_base = if (die_obj.getAttr(AT.addr_base)) |fv| try fv.getUInt(usize) else 0;
-                    compile_unit.rnglists_base = if (die_obj.getAttr(AT.rnglists_base)) |fv| try fv.getUInt(usize) else 0;
-                    compile_unit.loclists_base = if (die_obj.getAttr(AT.loclists_base)) |fv| try fv.getUInt(usize) else 0;
-                    compile_unit.frame_base = die_obj.getAttr(AT.frame_base);
-                },
                 DW.TAG.subprogram, DW.TAG.inlined_subroutine, DW.TAG.subroutine, DW.TAG.entry_point => {
                     const fn_name = x: {
                         var this_die_obj = die_obj;
                         // Prevent endless loops
                         for (0..3) |_| {
                             if (this_die_obj.getAttr(AT.name)) |_| {
-                                break :x try this_die_obj.getAttrString(di, endian, AT.name, di.section(.debug_str), &compile_unit);
+                                break :x try this_die_obj.getAttrString(di, endian, AT.name, di.section(.debug_str), compile_unit);
                             } else if (this_die_obj.getAttr(AT.abstract_origin)) |_| {
                                 const after_die_offset = fr.seek;
                                 defer fr.seek = after_die_offset;
@@ -480,7 +438,7 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                                     &fr,
                                     attrs_bufs[2],
                                     abbrev_table, // wrong abbrev table for different cu
-                                    unit_header.format,
+                                    compile_unit.format,
                                     endian,
                                     address_size,
                                     version,
@@ -496,7 +454,7 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                                     &fr,
                                     attrs_bufs[2],
                                     abbrev_table, // wrong abbrev table for different cu
-                                    unit_header.format,
+                                    compile_unit.format,
                                     endian,
                                     address_size,
                                     version,
@@ -509,7 +467,7 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                         break :x null;
                     };
 
-                    var range_added = if (die_obj.getAttrAddr(di, endian, AT.low_pc, &compile_unit)) |low_pc| blk: {
+                    var range_added = if (die_obj.getAttrAddr(di, endian, AT.low_pc, compile_unit)) |low_pc| blk: {
                         if (die_obj.getAttr(AT.high_pc)) |high_pc_value| {
                             const pc_end = switch (high_pc_value.*) {
                                 .addr => |value| value,
@@ -535,7 +493,7 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                     };
 
                     if (die_obj.getAttr(AT.ranges)) |ranges_value| blk: {
-                        var iter = DebugRangeIterator.init(ranges_value, di, endian, &compile_unit) catch |err| {
+                        var iter = DebugRangeIterator.init(ranges_value, di, endian, compile_unit) catch |err| {
                             if (err != error.MissingDebugInfo) return err;
                             break :blk;
                         };
@@ -562,8 +520,6 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                 else => {},
             }
         }
-
-        this_unit_offset += next_offset;
     }
 }
 
@@ -605,6 +561,7 @@ fn scanAllCompileUnits(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!voi
         }
         try attrs_buf.resize(gpa, max_attrs);
 
+        const cu_die_pos: u64 = fr.seek;
         var compile_unit_die = (try parseDie(
             &fr,
             attrs_buf.items,
@@ -622,6 +579,7 @@ fn scanAllCompileUnits(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!voi
         var compile_unit: CompileUnit = .{
             .offset = this_unit_offset,
             .size = next_offset,
+            .first_die_offset = cast(u16, cu_die_pos - this_unit_offset) orelse return bad(),
             .version = version,
             .format = unit_header.format,
             .addr_size_bytes = address_size,

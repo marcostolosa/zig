@@ -2585,6 +2585,7 @@ pub const ModuleTestOptions = struct {
     max_rss: u64 = 0,
     no_builtin: bool = false,
     sanitize_thread: ?bool = null,
+    test_io_mode: ?std.Io.Mode = null,
     build_options: ?*Step.Options = null,
 
     pub const TestOnly = union(enum) {
@@ -2722,6 +2723,7 @@ fn addOneModuleTest(
         .use_llvm = test_target.use_llvm,
         .use_lld = test_target.use_lld,
         .zig_lib_dir = b.path("lib"),
+        .test_io_mode = options.test_io_mode,
     });
     these_tests.linkage = test_target.linkage;
     these_tests.use_new_linker = test_target.new_linker;

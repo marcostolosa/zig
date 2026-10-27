@@ -130,6 +130,7 @@ pub fn build(b: *std.Build) !void {
     const skip_linux = b.option(bool, "skip-linux", "Main test suite skips targets with linux OS") orelse false;
     const skip_llvm = b.option(bool, "skip-llvm", "Main test suite skips targets that use LLVM backend") orelse false;
     const skip_cbe = b.option(bool, "skip-cbe", "Main test suite skips targets that use C backend") orelse false;
+    const test_io_mode = b.option(Io.Mode, "test-io-mode", "Tests run in the specified I/O mode");
 
     const only_install_lib_files = b.option(bool, "lib-files-only", "Only install library files") orelse false;
 
@@ -517,6 +518,7 @@ pub fn build(b: *std.Build) !void {
         .test_filters = test_filters,
         .test_target_filters = test_target_filters,
         .test_extra_targets = test_extra_targets,
+        .test_io_mode = test_io_mode,
         .root_src = "test/behavior.zig",
         .name = "behavior",
         .desc = "Run the behavior tests",
@@ -544,6 +546,7 @@ pub fn build(b: *std.Build) !void {
         .test_filters = test_filters,
         .test_target_filters = test_target_filters,
         .test_extra_targets = test_extra_targets,
+        .test_io_mode = test_io_mode,
         .root_src = "lib/compiler_rt.zig",
         .name = "compiler-rt",
         .desc = "Run the compiler_rt tests",
@@ -572,6 +575,7 @@ pub fn build(b: *std.Build) !void {
         .test_filters = test_filters,
         .test_target_filters = test_target_filters,
         .test_extra_targets = test_extra_targets,
+        .test_io_mode = test_io_mode,
         .root_src = "lib/std/std.zig",
         .name = "std",
         .desc = "Run the standard library tests",
@@ -599,6 +603,7 @@ pub fn build(b: *std.Build) !void {
         .test_filters = test_filters,
         .test_target_filters = test_target_filters,
         .test_extra_targets = test_extra_targets,
+        .test_io_mode = test_io_mode,
         .root_src = "test/c.zig",
         .name = "libc",
         .desc = "Run the libc API tests",

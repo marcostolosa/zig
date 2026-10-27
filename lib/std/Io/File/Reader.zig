@@ -376,7 +376,7 @@ fn discard(io_reader: *Io.Reader, limit: Io.Limit) Io.Reader.Error!usize {
 pub fn atEnd(r: *Reader) bool {
     // Even if stat fails, size is set when end is encountered.
     const size = r.size orelse return false;
-    return size - logicalPos(r) == 0;
+    return logicalPos(r) >= size;
 }
 
 test "positional seekBy before start returns error.Unseekable" {
@@ -407,4 +407,21 @@ test "positional discard past EOF returns error.EndOfStream" {
     var reader = file.reader(io, &file_buf);
     try reader.seekTo(20);
     try std.testing.expectError(error.EndOfStream, reader.interface.discard(.limited(5)));
+}
+
+test "positional atEnd past EOF" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const file = try tmp.dir.createFile(io, "test", .{ .read = true });
+    defer file.close(io);
+    try file.writeStreamingAll(io, "0123456789");
+
+    var file_buf: [16]u8 = undefined;
+    var reader = file.reader(io, &file_buf);
+    var data: [16]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 10), try reader.interface.readSliceShort(&data));
+    try reader.seekTo(20);
+    try std.testing.expect(reader.atEnd());
 }

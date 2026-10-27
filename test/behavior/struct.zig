@@ -2378,3 +2378,14 @@ test "struct field referencing comptime var isn't comptime" {
     v = 1;
     comptime assert(s.v.* == 1);
 }
+
+test "reinterpret bytes into packed struct" {
+    const Header = packed struct { v: u32 };
+    const buf: []const u8 = &@as([4]u8, @bitCast(@as(u32, 1)));
+    const w = buf[0..@sizeOf(Header)];
+    const hdr: *align(1) const Header = @ptrCast(w);
+    switch (native_endian) {
+        .little => assert(hdr.v == 0x0000001),
+        .big => assert(hdr.v == 0x1000000),
+    }
+}

@@ -211,3 +211,13 @@ test "@memcpy a global array" {
     @memcpy(S.slice_u32, &[1]u32{S.array_u32[0] + 10});
     try expect(S.array_u32[0] == 50);
 }
+
+test "@memcpy reinterpreted anytype tuple bytes" {
+    tracef(.{4});
+}
+fn tracef(args: anytype) void {
+    var packed_args: [4]u8 = undefined;
+    const val: i32 = args[0];
+    const src: *const [4]u8 = @ptrCast(&val);
+    @memcpy(&packed_args, src);
+}

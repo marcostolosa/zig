@@ -41,7 +41,7 @@ next_punctuation: enum {
 } = .the_beginning,
 
 nesting_stack: switch (safety_checks) {
-    .checked_to_fixed_depth => |fixed_buffer_size| [(fixed_buffer_size + 7) >> 3]u8,
+    .checked_to_fixed_depth => |fixed_buffer_size| [BitStack.numBitsToNumBytes(fixed_buffer_size)]u8,
     .assumed_correct => void,
 } = switch (safety_checks) {
     .checked_to_fixed_depth => @splat(0),

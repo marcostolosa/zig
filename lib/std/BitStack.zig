@@ -299,7 +299,7 @@ fn bitIdxToByteIdx(bit_idx: usize) struct { usize, u3 } {
 
 /// Returns the minimum number of bytes necessary
 /// to represent a number of bits.
-fn numBitsToNumBytes(num_bits: usize) usize {
+pub fn numBitsToNumBytes(num_bits: usize) usize {
     return (num_bits + 7) >> 3;
 }
 

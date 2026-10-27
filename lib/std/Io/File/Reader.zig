@@ -310,8 +310,8 @@ fn discard(io_reader: *Io.Reader, limit: Io.Limit) Io.Reader.Error!usize {
                 return 0;
             };
             const logical_pos = logicalPos(r);
+            if (logical_pos >= size) return error.EndOfStream;
             const bytes_remaining = size - logical_pos;
-            if (bytes_remaining == 0) return error.EndOfStream;
             const delta = @min(@backingInt(limit), bytes_remaining);
             setLogicalPos(r, logical_pos + delta);
             return delta;
@@ -392,4 +392,19 @@ test "positional seekBy before start returns error.Unseekable" {
     var reader = file.reader(io, &file_buf);
     try std.testing.expectError(error.Unseekable, reader.seekBy(-1));
     try std.testing.expectEqual(@as(u64, 0), reader.logicalPos());
+}
+
+test "positional discard past EOF returns error.EndOfStream" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const file = try tmp.dir.createFile(io, "test", .{ .read = true });
+    defer file.close(io);
+    try file.writeStreamingAll(io, "0123456789");
+
+    var file_buf: [16]u8 = undefined;
+    var reader = file.reader(io, &file_buf);
+    try reader.seekTo(20);
+    try std.testing.expectError(error.EndOfStream, reader.interface.discard(.limited(5)));
 }

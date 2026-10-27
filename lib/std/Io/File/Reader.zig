@@ -135,7 +135,9 @@ pub fn seekBy(r: *Reader, offset: i64) SeekError!void {
     const io = r.io;
     switch (r.mode) {
         .positional, .positional_simple => {
-            setLogicalPos(r, @intCast(@as(i64, @intCast(logicalPos(r))) + offset));
+            const new_pos = @as(i128, @intCast(logicalPos(r))) + offset;
+            if (new_pos < 0 or new_pos > std.math.maxInt(u64)) return error.Unseekable;
+            setLogicalPos(r, @intCast(new_pos));
         },
         .streaming, .streaming_simple => {
             const seek_err = r.seek_err orelse e: {
@@ -375,4 +377,19 @@ pub fn atEnd(r: *Reader) bool {
     // Even if stat fails, size is set when end is encountered.
     const size = r.size orelse return false;
     return size - logicalPos(r) == 0;
+}
+
+test "positional seekBy before start returns error.Unseekable" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const file = try tmp.dir.createFile(io, "test", .{ .read = true });
+    defer file.close(io);
+    try file.writeStreamingAll(io, "0123456789");
+
+    var file_buf: [16]u8 = undefined;
+    var reader = file.reader(io, &file_buf);
+    try std.testing.expectError(error.Unseekable, reader.seekBy(-1));
+    try std.testing.expectEqual(@as(u64, 0), reader.logicalPos());
 }

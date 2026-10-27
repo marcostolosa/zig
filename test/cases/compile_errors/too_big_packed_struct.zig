@@ -1,11 +1,13 @@
-pub export fn entry() void {
-    const T = packed struct {
-        a: u65535,
-        b: u65535,
-    };
-    @compileLog(@sizeOf(T));
+const Foo = packed struct {
+    pad: u65535 = undefined,
+    bit: u1,
+};
+export fn bar() void {
+    const foo = Foo{ .bit = 0 };
+    const ptr: *align(@alignOf(Foo):65535:8192) const u1 = &foo.bit;
+    _ = &ptr;
 }
 
 // error
 //
-// :2:22: error: packed struct bit width '131070' exceeds maximum bit width of 65535
+// :1:20: error: packed struct bit width '65536' exceeds maximum bit width of 65535

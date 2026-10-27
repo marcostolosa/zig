@@ -7,29 +7,31 @@ const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
-bytes: std.array_list.Managed(u8),
+bytes: std.ArrayList(u8),
+allocator: Allocator,
 bit_len: usize = 0,
 
 pub fn init(allocator: Allocator) @This() {
     return .{
-        .bytes = std.array_list.Managed(u8).init(allocator),
+        .bytes = .empty,
+        .allocator = allocator,
     };
 }
 
 pub fn deinit(self: *@This()) void {
-    self.bytes.deinit();
+    self.bytes.deinit(self.allocator);
     self.* = undefined;
 }
 
 pub fn ensureTotalCapacity(self: *@This(), bit_capacity: usize) Allocator.Error!void {
     const byte_capacity = (bit_capacity + 7) >> 3;
-    try self.bytes.ensureTotalCapacity(byte_capacity);
+    try self.bytes.ensureTotalCapacity(self.allocator, byte_capacity);
 }
 
 pub fn push(self: *@This(), b: u1) Allocator.Error!void {
     const byte_index = self.bit_len >> 3;
     if (self.bytes.items.len <= byte_index) {
-        try self.bytes.append(0);
+        try self.bytes.append(self.allocator, 0);
     }
 
     pushWithStateAssumeCapacity(self.bytes.items, &self.bit_len, b);

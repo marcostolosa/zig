@@ -863,20 +863,20 @@ pub const Mutable = struct {
         var buf_index: usize = 0;
         const req_limbs = calcTwosCompLimbCount(bit_count);
 
-        const a_copy = if (rma.limbs.ptr == a.limbs.ptr) blk: {
+        const a_copy: Const = if (rma.limbs.ptr == a.limbs.ptr) blk: {
             const start = buf_index;
             const a_len = @min(req_limbs, a.limbs.len);
             @memcpy(limbs_buffer[buf_index..][0..a_len], a.limbs[0..a_len]);
             buf_index += a_len;
-            break :blk a.toMutable(limbs_buffer[start..buf_index]).toConst();
+            break :blk .{ .limbs = limbs_buffer[start..buf_index], .positive = a.positive };
         } else a;
 
-        const b_copy = if (rma.limbs.ptr == b.limbs.ptr) blk: {
+        const b_copy: Const = if (rma.limbs.ptr == b.limbs.ptr) blk: {
             const start = buf_index;
             const b_len = @min(req_limbs, b.limbs.len);
             @memcpy(limbs_buffer[buf_index..][0..b_len], b.limbs[0..b_len]);
             buf_index += b_len;
-            break :blk a.toMutable(limbs_buffer[start..buf_index]).toConst();
+            break :blk .{ .limbs = limbs_buffer[start..buf_index], .positive = b.positive };
         } else b;
 
         return rma.mulWrapNoAlias(a_copy, b_copy, signedness, bit_count, allocator);

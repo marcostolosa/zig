@@ -720,3 +720,14 @@ test "optional ptr payload alignment" {
     var x: ?u32 = 10;
     try S.doTheTest(&x);
 }
+
+test "compare optional type in an else branch" {
+    var l: u8 = 1;
+    var r: ?u8 = 2;
+    const foo: u8 = 1;
+    if (l == foo) {} else {
+        _ = r == foo;
+    }
+    _ = &l;
+    _ = &r;
+}

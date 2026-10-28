@@ -3218,6 +3218,20 @@ test "gcd one large" {
     try testing.expectEqual(1, try r.toInt(u64));
 }
 
+test "gcd with zero needs the nonzero operand capacity" {
+    var a = try big.Managed.initSet(testing.allocator, 1 << (@bitSizeOf(Limb) * (big.Managed.default_capacity + 1)));
+    defer a.deinit();
+    var zero = try big.Managed.init(testing.allocator);
+    defer zero.deinit();
+    var r = try big.Managed.init(testing.allocator);
+    defer r.deinit();
+
+    try r.gcd(&a, &zero);
+    try testing.expect(r.eql(a));
+    try r.gcd(&zero, &a);
+    try testing.expect(r.eql(a));
+}
+
 test "mutable to managed" {
     const allocator = testing.allocator;
     const limbs_buf = try allocator.alloc(Limb, 8);

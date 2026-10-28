@@ -1513,7 +1513,8 @@ pub const Mutable = struct {
     /// rma may alias x or y.
     /// x and y may alias each other.
     /// Asserts that `rma` has enough limbs to store the result. Upper bound is
-    /// `@min(x.limbs.len, y.limbs.len)`.
+    /// `@min(x.limbs.len, y.limbs.len)` when both operands are nonzero,
+    /// otherwise use the nonzero operand's length (or 1 for gcd(0, 0)).
     ///
     /// `limbs_buffer` is used for temporary storage during the operation. When this function returns,
     /// it will have the same length as it had when the function was called.
@@ -1640,7 +1641,7 @@ pub const Mutable = struct {
 
     /// rma may not alias x or y.
     /// x and y may alias each other.
-    /// Asserts that `rma` has enough limbs to store the result. Upper bound is given by `calcGcdNoAliasLimbLen`.
+    /// Asserts that `rma` has enough limbs to store the result.  See `gcd` for the upper bound.
     pub fn gcdNoAlias(rma: *Mutable, allocator: Allocator, x: Const, y: Const) !void {
         assert(rma.limbs.ptr != x.limbs.ptr); // illegal aliasing
         assert(rma.limbs.ptr != y.limbs.ptr); // illegal aliasing
@@ -3506,7 +3507,7 @@ pub const Managed = struct {
     /// rma's allocator is used for temporary storage to boost multiplication performance.
     pub fn gcd(rma: *Managed, x: *const Managed, y: *const Managed) !void {
         const aliased = limbsAliasDistinct(rma, x) or limbsAliasDistinct(rma, y);
-        const needed = @min(x.len(), y.len());
+        const needed = if (x.eqlZero()) y.len() else if (y.eqlZero()) x.len() else @min(x.len(), y.len());
         try rma.ensureAliasAwareCapacity(needed, aliased);
         var m = rma.toMutable();
         var limbs_buffer: std.ArrayList(Limb) = .empty;

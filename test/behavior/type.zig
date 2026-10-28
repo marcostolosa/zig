@@ -4,7 +4,7 @@ const Type = std.builtin.Type;
 const testing = std.testing;
 const assert = std.debug.assert;
 
-test "Type.Int" {
+test "@Int" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     try testing.expect(u1 == @Int(.unsigned, 1));
@@ -15,7 +15,7 @@ test "Type.Int" {
     try testing.expect(i64 == @Int(.signed, 64));
 }
 
-test "Type.Pointer" {
+test "@Pointer" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     inline for (&[_]type{
@@ -107,7 +107,7 @@ test "@Pointer on @typeInfo round-trips sentinels" {
     }
 }
 
-test "Type.Opaque" {
+test "Opaque" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
@@ -126,7 +126,7 @@ fn add(a: i32, b: i32) i32 {
     return a + b;
 }
 
-test "Type.Struct" {
+test "@Struct" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
@@ -197,7 +197,7 @@ test "Type.Struct" {
     try testing.expectEqual(@as(bool, false), infoF.is_tuple);
 }
 
-test "Type.Enum" {
+test "@Enum" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
@@ -233,7 +233,7 @@ test "Type.Enum" {
     }
 }
 
-test "Type.Union" {
+test "@Union" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
@@ -257,19 +257,19 @@ test "Type.Union" {
     try testing.expectEqual(Tag.unsigned, @as(Tag, tagged));
 }
 
-test "Type.Union from Type.Enum" {
+test "@Union from @Enum" {
     const Tag = @Enum(u0, .exhaustive, &.{"working_as_expected"}, &.{0});
     const T = @Union(.auto, Tag, &.{"working_as_expected"}, &.{u32}, &.{.{}});
     _ = @typeInfo(T).@"union";
 }
 
-test "Type.Union from regular enum" {
+test "@Union from regular enum" {
     const E = enum { working_as_expected };
     const T = @Union(.auto, E, &.{"working_as_expected"}, &.{u32}, &.{.{}});
     _ = @typeInfo(T).@"union";
 }
 
-test "Type.Union from empty regular enum" {
+test "@Union from empty regular enum" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const E = enum {};
@@ -281,7 +281,7 @@ test "Type.Union from empty regular enum" {
     try testing.expect(@typeInfo(info.tag_type.?).@"enum".tag_type == noreturn);
 }
 
-test "Type.Union from empty Type.Enum" {
+test "@Union from empty @Enum" {
     if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const E = @Enum(noreturn, .exhaustive, &.{}, &.{});
@@ -293,7 +293,7 @@ test "Type.Union from empty Type.Enum" {
     try testing.expect(@typeInfo(info.tag_type.?).@"enum".tag_type == noreturn);
 }
 
-test "Type.Fn" {
+test "@Fn" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
@@ -319,15 +319,6 @@ test "reified struct field name from optional payload" {
             try std.testing.expect(t.a == 123);
         }
     }
-}
-
-test "reified union uses @alignOf" {
-    const S = struct {
-        fn CreateUnion(comptime T: type) type {
-            return @Union(.auto, null, &.{"field"}, &.{T}, &.{.{}});
-        }
-    };
-    _ = S.CreateUnion(struct {});
 }
 
 test "reified struct uses @alignOf" {

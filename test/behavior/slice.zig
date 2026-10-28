@@ -1241,3 +1241,13 @@ test "iterate empty slice of uninstantiable types" {
         return error.ReachedUnreachable;
     }
 }
+
+test "runtime slice slicing in function argument" {
+    stub(makeRuntimeSliceZ()[0..]);
+}
+fn makeRuntimeSliceZ() [:0]const u8 {
+    return "asdf";
+}
+fn stub(c: [*:0]const u8) void {
+    _ = c;
+}

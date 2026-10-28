@@ -2846,6 +2846,13 @@ test "bitNotWrap more than two limbs" {
     try testing.expectEqual((try res.toInt(Signed)), ~@as(Signed, maxInt(Limb)));
 }
 
+test "bitNotWrap respects the target capacity" {
+    var storage: [big.calcTwosCompLimbCount(8)]Limb = undefined;
+    var r = Mutable.init(&storage, 0);
+    r.bitNotWrap(.{ .limbs = &.{ 2, 1 }, .positive = true }, .unsigned, 8);
+    try testing.expectEqual(@as(u8, 253), try r.toInt(u8));
+}
+
 test "bitwise and simple" {
     var a = try Managed.initSet(testing.allocator, 0xffffffff11111111);
     defer a.deinit();

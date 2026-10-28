@@ -1428,7 +1428,7 @@ pub const Mutable = struct {
     /// Assets that r has enough limbs to store the result. The upper bound Limb count is
     /// r is `calcTwosCompLimbCount(bit_count)`.
     pub fn bitNotWrap(r: *Mutable, a: Const, signedness: Signedness, bit_count: usize) void {
-        r.copy(a.negate());
+        r.truncate(a.negate(), signedness, bit_count);
         const negative_one: Const = .{ .limbs = &.{1}, .positive = false };
         _ = r.addWrap(r.toConst(), negative_one, signedness, bit_count);
     }

@@ -1386,7 +1386,7 @@ pub const Mutable = struct {
     /// r and a may alias.
     ///
     /// Asserts there is enough memory to fit the result. The upper bound Limb count is
-    /// `a.limbs.len - (shift / (@bitSizeOf(Limb)))`.
+    /// `@max(a.limbs.len -| (shift / limb_bits), 1) + @intFromBool(!a.positive)`.
     pub fn shiftRight(r: *Mutable, a: Const, shift: usize) void {
         const full_limbs_shifted_out = shift / limb_bits;
         const remaining_bits_shifted_out = shift % limb_bits;
@@ -3445,7 +3445,8 @@ pub const Managed = struct {
         }
 
         const aliased = limbsAliasDistinct(r, a);
-        const needed = a.len() - (shift / limb_bits);
+        const rounding_limb = @intFromBool(!a.isPositive() and shift != 0 and shift % limb_bits == 0);
+        const needed = a.len() - (shift / limb_bits) + rounding_limb;
         try r.ensureAliasAwareCapacity(needed, aliased);
         var m = r.toMutable();
         m.shiftRight(a.toConst(), shift);

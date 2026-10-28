@@ -2668,6 +2668,15 @@ test "shift-right negative" {
     try testing.expect(arg8.toConst().orderAgainstScalar(-2).compare(.eq));
 }
 
+test "negative right shift requires rounding carry space" {
+    var a = try Managed.initSet(testing.allocator, -((1 << (5 * @bitSizeOf(Limb))) - 1));
+    defer a.deinit();
+    var r = try Managed.init(testing.allocator);
+    defer r.deinit();
+    try r.shiftRight(&a, @bitSizeOf(Limb));
+    try testing.expectEqual(@as(i512, -(1 << (4 * @bitSizeOf(Limb)))), try r.toInt(i512));
+}
+
 test "sat shift-left simple unsigned" {
     var a = try Managed.initSet(testing.allocator, 0xffff);
     defer a.deinit();

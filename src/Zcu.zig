@@ -5127,6 +5127,10 @@ fn explainWhyFileIsInModule(
 pub fn addDependencyLoopErrors(zcu: *Zcu, eb: *std.zig.ErrorBundle.Wip) Allocator.Error!void {
     const gpa = zcu.comp.gpa;
 
+    if (zcu.dependency_loops.count() == 0) {
+        return;
+    }
+
     const all_references = try zcu.resolveReferences();
 
     var units: std.ArrayList(AnalUnit) = .empty;

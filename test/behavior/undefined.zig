@@ -99,10 +99,12 @@ test "reslice of undefined global var slice" {
     try @import("std").testing.expect(x.len == 1 and x[0] == 0);
 }
 
-test "returned undef is 0xaa bytes when runtime safety is enabled" {
+test "returned undefined is 0xAA bytes when runtime safety is enabled" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/37463
+    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/37463
 
     const Rect = struct {
         x: f32,
@@ -114,7 +116,17 @@ test "returned undef is 0xaa bytes when runtime safety is enabled" {
             @setRuntimeSafety(true);
             return undefined;
         }
+        fn getUndefOptional() ?u32 {
+            @setRuntimeSafety(true);
+            return undefined;
+        }
+        fn getUndefErrorUnion() !u32 {
+            @setRuntimeSafety(true);
+            return undefined;
+        }
     };
     try std.testing.expect(@as(u32, @bitCast(Rect.getUndefStruct().x)) == 0xAAAAAAAA);
     try std.testing.expect(Rect.getUndefInt() == 0xAAAAAAAA);
+    try std.testing.expect(Rect.getUndefOptional().? == 0xAAAAAAAA);
+    try std.testing.expect((Rect.getUndefErrorUnion() catch unreachable) == 0xAAAAAAAA);
 }

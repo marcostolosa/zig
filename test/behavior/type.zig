@@ -436,3 +436,26 @@ test "reify struct with zero fields through const arrays" {
     comptime assert(@typeInfo(S) == .@"struct");
     comptime assert(@typeInfo(S).@"struct".field_names.len == 0);
 }
+
+test "array of `@Union`s" {
+    const arr = .{ u32, u64 };
+    comptime var names: [arr.len][]const u8 = undefined;
+    comptime var types: [arr.len]type = undefined;
+    inline for (arr, 0..) |v, i| {
+        names[i] = @typeName(v);
+        types[i] = v;
+    }
+    const Union = @Union(
+        .auto,
+        null,
+        &names,
+        &types,
+        &@splat(.{}),
+    );
+    const UnionArray = struct {
+        const Element = Union;
+        elements: [arr.len]*Element,
+    };
+    var t: UnionArray = undefined;
+    _ = &t;
+}

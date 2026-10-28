@@ -170,10 +170,10 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         };
         var cflags: std.ArrayList([]const u8) = .empty;
 
-        try cflags.append(arena, "-I");
-        try cflags.append(arena, tsan_include_path);
-
-        try cflags.append(arena, "-DNDEBUG");
+        try cflags.appendSlice(arena, &.{
+            "-I",       tsan_include_path,
+            "-DNDEBUG",
+        });
 
         c_source_files.appendAssumeCapacity(.{
             .src_path = try comp.dirs.zig_lib.join(arena, &.{ "libtsan", asm_source }),
@@ -190,10 +190,8 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         var cflags: std.ArrayList([]const u8) = .empty;
 
         try cflags.appendSlice(arena, &.{
-            "-I",
-            sanitizer_common_include_path,
-            "-I",
-            tsan_include_path,
+            "-I", sanitizer_common_include_path,
+            "-I", tsan_include_path,
         });
 
         try addCcArgs(target, arena, &cflags);
@@ -216,10 +214,8 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         var cflags: std.ArrayList([]const u8) = .empty;
 
         try cflags.appendSlice(arena, &.{
-            "-I",
-            sanitizer_common_include_path,
-            "-I",
-            tsan_include_path,
+            "-I", sanitizer_common_include_path,
+            "-I", tsan_include_path,
         });
 
         try addCcArgs(target, arena, &cflags);
@@ -237,8 +233,9 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
     for (sanitizer_symbolizer_sources) |c_src| {
         var cflags: std.ArrayList([]const u8) = .empty;
 
-        try cflags.append(arena, "-I");
-        try cflags.append(arena, tsan_include_path);
+        try cflags.appendSlice(arena, &.{
+            "-I", tsan_include_path,
+        });
 
         try addCcArgs(target, arena, &cflags);
 
@@ -257,11 +254,10 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
     for (interception_sources) |c_src| {
         var cflags: std.ArrayList([]const u8) = .empty;
 
-        try cflags.append(arena, "-I");
-        try cflags.append(arena, interception_include_path);
-
-        try cflags.append(arena, "-I");
-        try cflags.append(arena, tsan_include_path);
+        try cflags.appendSlice(arena, &.{
+            "-I", interception_include_path,
+            "-I", tsan_include_path,
+        });
 
         try addCcArgs(target, arena, &cflags);
 
@@ -334,7 +330,7 @@ fn addCcArgs(
     allocator: std.mem.Allocator,
     args: *std.ArrayList([]const u8),
 ) error{OutOfMemory}!void {
-    try args.appendSlice(allocator, &[_][]const u8{
+    try args.appendSlice(allocator, &.{
         "-nostdinc++",
         "-fvisibility=hidden",
         "-fvisibility-inlines-hidden",

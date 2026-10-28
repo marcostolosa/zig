@@ -2372,3 +2372,22 @@ test "union with function body field" {
     try std.testing.expect(y.f == U.foo);
     y.f();
 }
+
+test "returning tagged union from nested switch statements" {
+    const Outer = enum { first, second };
+    const Inner = enum { alpha, beta };
+    const Action = union(enum) { go: u8, stop };
+
+    for (std.enums.values(Outer)) |outer| {
+        for (std.enums.values(Inner)) |inner| {
+            const action = switch (outer) {
+                .first => @as(Action, switch (inner) {
+                    .alpha => .{ .go = 1 },
+                    .beta => .stop,
+                }),
+                .second => .stop,
+            };
+            _ = action;
+        }
+    }
+}

@@ -4260,6 +4260,9 @@ fn llsignedor(r: []Limb, a: []const Limb, a_positive: bool, b: []const Limb, b_p
         }
 
         assert(a_borrow == 0); // a was 0.
+        while (i < a.len) : (i += 1) {
+            r[i] = a[i];
+        }
 
         return false;
     } else if (a_positive and !b_positive) {

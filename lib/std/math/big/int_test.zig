@@ -3143,6 +3143,13 @@ test "bitwise or negative-negative multi-limb" {
     try testing.expectEqual(-maxInt(Limb), try a.toInt(SignedDoubleLimb));
 }
 
+test "mixed-sign OR preserves the longer operand limbs" {
+    var storage = [_]Limb{ 0, 0 };
+    var r = big.Mutable.init(&storage, 0);
+    r.bitOr(.{ .limbs = &.{ 2, 1 }, .positive = false }, .{ .limbs = &.{1}, .positive = true });
+    try testing.expectEqual(-((1 << @bitSizeOf(Limb)) + 1), try r.toInt(i256));
+}
+
 test "var args" {
     var a = try Managed.initSet(testing.allocator, 5);
     defer a.deinit();

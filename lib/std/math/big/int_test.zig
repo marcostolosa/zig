@@ -4240,3 +4240,11 @@ test "negative-to-unsigned conversion returns the right error" {
     try testing.expectError(error.NegativeIntoUnsigned, a.toInt(u8));
 }
 
+test "formatNumber uses padding and alignment" {
+    var storage: [1]Limb = undefined;
+    const a = big.Mutable.init(&storage, 42);
+    var buffer: [32]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buffer);
+    try a.formatNumber(&writer, .{ .width = 5 });
+    try testing.expectEqualStrings("   42", writer.buffered());
+}

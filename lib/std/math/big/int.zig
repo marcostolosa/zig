@@ -2447,7 +2447,7 @@ pub const Const = struct {
     pub fn formatNumber(self: Const, w: *std.Io.Writer, number: std.fmt.Number) std.Io.Writer.Error!void {
         const available_len = 64;
         if (self.limbs.len > available_len)
-            return w.writeAll("(BigInt)");
+            return w.alignBuffer("(BigInt)", number.width orelse 8, number.alignment, number.fill);
 
         var limbs: [calcToStringLimbsBufferLen(available_len, 10)]Limb = undefined;
 
@@ -2458,7 +2458,7 @@ pub const Const = struct {
         var buf: [biggest.sizeInBaseUpperBound(2)]u8 = undefined;
         const base: u8 = number.mode.base() orelse @panic("TODO print big int in scientific form");
         const len = self.toString(&buf, base, number.case, &limbs);
-        return w.writeAll(buf[0..len]);
+        return w.alignBuffer(buf[0..len], number.width orelse len, number.alignment, number.fill);
     }
 
     /// Converts self to a string in the requested base.

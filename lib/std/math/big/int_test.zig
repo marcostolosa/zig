@@ -3882,6 +3882,14 @@ test "Managed sqrt(n) succeed with res.bitCountAbs() >= usize bits" {
     try std.testing.expectEqual(std.math.Order.eq, expected.order(res));
 }
 
+test "sqrt zero with enough scratch" {
+    var storage: [1]Limb = undefined;
+    var scratch: [big.calcSqrtLimbsBufferLen(0)]Limb = undefined;
+    var r = big.Mutable.init(&storage, 0);
+    r.sqrt(r.toConst(), &scratch);
+    try testing.expect(r.eqlZero());
+}
+
 test "(BigInt) positive" {
     var a = try Managed.initSet(testing.allocator, 2);
     defer a.deinit();

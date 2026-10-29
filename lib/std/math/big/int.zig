@@ -105,6 +105,7 @@ pub fn calcPowLimbsBufferLen(a_bit_count: usize, y: usize) usize {
 }
 
 pub fn calcSqrtLimbsBufferLen(a_bit_count: usize) usize {
+    if (a_bit_count == 0) return 0;
     const a_limb_count = (a_bit_count - 1) / limb_bits + 1;
     const shift = (a_bit_count + 1) / 2;
     const u_s_rem_limb_count = 1 + ((shift / limb_bits) + 1);
@@ -1595,6 +1596,8 @@ pub const Mutable = struct {
         a: Const,
         limbs_buffer: []Limb,
     ) void {
+        if (a.eqlZero()) return r.set(0);
+
         // Brent and Zimmermann, Modern Computer Arithmetic, Algorithm 1.13 SqrtInt
         // https://members.loria.fr/PZimmermann/mca/pub226.html
         var buf_index: usize = 0;

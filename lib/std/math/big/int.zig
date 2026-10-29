@@ -2938,7 +2938,10 @@ pub const Managed = struct {
     /// Copies the value of the integer to an existing `Managed` so that they both have the same value.
     /// Extra memory will be allocated if the receiver does not have enough capacity.
     pub fn copy(self: *Managed, other: Const) !void {
-        if (self.limbs.ptr == other.limbs.ptr) return;
+        if (self.limbs.ptr == other.limbs.ptr) {
+            self.setMetadata(other.positive, other.limbs.len);
+            return;
+        }
 
         try self.ensureCapacity(other.limbs.len);
         @memcpy(self.limbs[0..other.limbs.len], other.limbs[0..other.limbs.len]);

@@ -4226,3 +4226,10 @@ test "log10" {
     try a.setString(10, "504758845984192913149382719638135788792820830414213085834451043864912744833203879823150928260925344757009154551640690830148486352800955148298533547472300");
     try testing.expectEqual(152, a.toConst().log10Alloc(testing.allocator));
 }
+
+test "copy keeps an aliased view sign" {
+    var a = try big.Managed.initSet(testing.allocator, 3);
+    defer a.deinit();
+    try a.copy(a.toConst().negate());
+    try testing.expectEqual(-3, try a.toInt(i8));
+}

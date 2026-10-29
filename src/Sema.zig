@@ -25401,6 +25401,10 @@ fn zirBuiltinExtern(
         else => {},
     }
 
+    if (target.cpu.arch.isSpirv()) {
+        try sema.validateSpirvGlobalType(block, ty_src, elem_ty, ptr_info.flags.address_space);
+    }
+
     // TODO: error for threadlocal functions, non-const functions, etc
 
     const extern_val = try pt.getExtern(.{
@@ -25447,6 +25451,141 @@ fn zirBuiltinExtern(
         return Air.internedToRef(casted_ptr_val.toIntern());
     } else {
         return block.addTyOp(.ptr_cast, result_ptr_ty, uncasted_ptr);
+    }
+}
+
+/// Resolves the layout of every pointee reachable from a global of type ty,
+/// which the SPIRV backend needs to lower typed pointers
+fn validateSpirvGlobalType(
+    sema: *Sema,
+    block: *Block,
+    src: LazySrcLoc,
+    ty: Type,
+    as: std.lang.AddressSpace,
+) CompileError!void {
+    const zcu = sema.pt.zcu;
+    const target = zcu.getTarget();
+    assert(target.cpu.arch.isSpirv());
+
+    const is_interface = switch (target.os.tag) {
+        .vulkan, .opengl => switch (as) {
+            .uniform, .push_constant, .storage_buffer, .physical_storage_buffer => true,
+            else => false,
+        },
+        else => false,
+    };
+
+    var visited: std.AutoHashMapUnmanaged(InternPool.Index, void) = .empty;
+    defer visited.deinit(sema.gpa);
+    try sema.walkSpirvGlobalType(block, src, ty, as, is_interface, &visited);
+}
+
+/// Like validateSpirvGlobalType without the interface checks
+fn resolveSpirvPointees(
+    sema: *Sema,
+    block: *Block,
+    src: LazySrcLoc,
+    ty: Type,
+    visited: *std.AutoHashMapUnmanaged(InternPool.Index, void),
+) CompileError!void {
+    try sema.walkSpirvGlobalType(block, src, ty, .generic, false, visited);
+}
+
+fn walkSpirvGlobalType(
+    sema: *Sema,
+    block: *Block,
+    src: LazySrcLoc,
+    ty: Type,
+    as: std.lang.AddressSpace,
+    is_interface: bool,
+    visited: *std.AutoHashMapUnmanaged(InternPool.Index, void),
+) CompileError!void {
+    const zcu = sema.pt.zcu;
+    const ip = &zcu.intern_pool;
+
+    const gop = try visited.getOrPut(sema.gpa, ty.toIntern());
+    if (gop.found_existing) return;
+
+    switch (ty.zigTypeTag(zcu)) {
+        .pointer => {
+            if (is_interface and ty.ptrAddressSpace(zcu) != .physical_storage_buffer) {
+                return sema.failWithOwnedErrorMsg(block, msg: {
+                    const msg = try sema.errMsg(src, "pointer type '{f}' cannot be stored in the '{t}' address space", .{ ty.fmt(zcu), as });
+                    errdefer msg.destroy(sema.gpa);
+                    try sema.errNote(src, msg, "only pointers in the 'physical_storage_buffer' address space can be stored in memory on this target", .{});
+                    break :msg msg;
+                });
+            }
+            const child_ty = ty.childType(zcu);
+            switch (child_ty.zigTypeTag(zcu)) {
+                .@"fn", .@"opaque" => {},
+                else => {
+                    try sema.ensureLayoutResolved(child_ty, src, .ptr_access);
+                    try sema.walkSpirvGlobalType(block, src, child_ty, as, is_interface, visited);
+                },
+            }
+        },
+        .optional => {
+            const payload_ty = ty.optionalChild(zcu);
+            if (is_interface and payload_ty.hasRuntimeBits(zcu) and !ty.optionalReprIsPayload(zcu)) {
+                return sema.fail(block, src, "optional type '{f}' cannot be stored in the '{t}' address space", .{ ty.fmt(zcu), as });
+            }
+            try sema.walkSpirvGlobalType(block, src, payload_ty, as, is_interface, visited);
+        },
+        .array, .vector => try sema.walkSpirvGlobalType(block, src, ty.childType(zcu), as, is_interface, visited),
+        .spirv => if (ty.isSpirvRuntimeArray(zcu)) {
+            try sema.walkSpirvGlobalType(block, src, ty.childType(zcu), as, is_interface, visited);
+        },
+        .@"struct" => {
+            const struct_type = ip.loadStructType(ty.toIntern());
+            for (struct_type.field_types.get(ip)) |field_ty| {
+                try sema.walkSpirvGlobalType(block, src, .fromInterned(field_ty), as, is_interface, visited);
+            }
+        },
+        .@"union" => {
+            const union_obj = zcu.typeToUnion(ty).?;
+            for (union_obj.field_types.get(ip)) |field_ty| {
+                try sema.walkSpirvGlobalType(block, src, .fromInterned(field_ty), as, is_interface, visited);
+            }
+        },
+        else => {},
+    }
+}
+
+/// Resolves the pointees of a global's type
+pub fn validateSpirvNavType(
+    sema: *Sema,
+    block: *Block,
+    src: LazySrcLoc,
+    nav_ty: Type,
+    as: std.lang.AddressSpace,
+) CompileError!void {
+    const zcu = sema.pt.zcu;
+    if (!zcu.getTarget().cpu.arch.isSpirv()) return;
+    if (nav_ty.zigTypeTag(zcu) == .@"fn" or nav_ty.comptimeOnly(zcu)) return;
+    try sema.validateSpirvGlobalType(block, src, nav_ty, as);
+}
+
+/// Resolves the pointees of every type used in the function
+pub fn resolveSpirvFuncPointees(
+    sema: *Sema,
+    block: *Block,
+    src: LazySrcLoc,
+) Zcu.SemaError!void {
+    const zcu = sema.pt.zcu;
+    if (!zcu.getTarget().cpu.arch.isSpirv()) return;
+    const ip = &zcu.intern_pool;
+
+    const air: Air = .{ .instructions = sema.air_instructions.slice(), .extra = sema.air_extra };
+    var visited: std.AutoHashMapUnmanaged(InternPool.Index, void) = .empty;
+    defer visited.deinit(sema.gpa);
+    for (0..air.instructions.len) |i| {
+        const inst: Air.Inst.Index = @fromBackingInt(@intCast(i));
+        sema.resolveSpirvPointees(block, src, air.typeOfIndex(inst, ip), &visited) catch |err| switch (err) {
+            error.ComptimeReturn => unreachable,
+            error.ComptimeBreak => unreachable,
+            else => |e| return e,
+        };
     }
 }
 

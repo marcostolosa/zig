@@ -13,6 +13,12 @@ next_result_id: Word = 1,
 navs: std.array_hash_map.Auto(InternPool.Nav.Index, Id) = .empty,
 externs: std.array_hash_map.Auto(InternPool.Nav.Index, Mir.Extern) = .empty,
 entry_points: std.ArrayList(Mir.EntryPoint) = .empty,
+/// Types whose OpTypeStruct is still being built, innermost last
+types_in_progress: std.ArrayList(TypeInProgress) = .empty,
+/// Recursive types that have been fully built
+finished_types: std.AutoHashMapUnmanaged(InProgressKey, Id) = .empty,
+/// Structs that have been decorated with Block
+block_structs: std.AutoHashMapUnmanaged(Id, void) = .empty,
 struct_types: std.array_hash_map.Custom(StructType, Id, StructType.HashContext, true) = .empty,
 /// SPIR-V ids of OpVariables whose pointee is a Block struct
 block_var_ids: std.AutoHashMapUnmanaged(Id, void) = .empty,
@@ -64,6 +70,26 @@ pub const Repr = enum {
     direct,
     /// A SPIR-V value as it is stored in memory.
     indirect,
+};
+
+const InProgressKey = struct {
+    ty: InternPool.Index,
+    /// true for layoutType and false for resolveType
+    layout: bool,
+};
+
+const TypeInProgress = struct {
+    key: InProgressKey,
+    id: Id,
+    /// Pointers that were forward-declared because their pointee contains this type by value;
+    /// they are defined once this type has been built
+    deferred_ptrs: std.ArrayList(DeferredPtr) = .empty,
+
+    const DeferredPtr = struct {
+        id: Id,
+        as: std.lang.AddressSpace,
+        pointee_ty: Type,
+    };
 };
 
 const StructType = struct {
@@ -163,6 +189,8 @@ pub fn deinit(cg: *CodeGen) void {
 
     cg.module.deinit(gpa);
 
+    cg.types_in_progress.deinit(gpa);
+    cg.finished_types.deinit(gpa);
     cg.struct_types.deinit(gpa);
     cg.block_var_ids.deinit(gpa);
     cg.builtins.deinit(gpa);
@@ -581,6 +609,140 @@ pub fn arrayType(cg: *CodeGen, len_id: Id, child_ty_id: Id) !Id {
     return result_id;
 }
 
+/// Returns the id of a recursive type that is already built
+fn finishedType(cg: *CodeGen, key: InProgressKey, ty: Type) !?Id {
+    for (cg.types_in_progress.items) |in_progress| {
+        if (in_progress.key.ty == key.ty and in_progress.key.layout == key.layout) {
+            return cg.fail("cannot lower recursive type '{f}'", .{ty.fmt(cg.zcu)});
+        }
+    }
+    return cg.finished_types.get(key);
+}
+
+fn beginType(cg: *CodeGen, key: InProgressKey) !Id {
+    const id = cg.allocId();
+    try cg.types_in_progress.append(cg.gpa, .{ .key = key, .id = id });
+    return id;
+}
+
+/// Defines the pointers forward-declared while the type was being built,
+/// and records the type so they and later uses can refer to it
+fn endType(cg: *CodeGen, key: InProgressKey, id: Id) !void {
+    const done = cg.types_in_progress.pop().?;
+    assert(done.key.ty == key.ty and done.key.layout == key.layout);
+    if (done.deferred_ptrs.items.len == 0) return;
+
+    try cg.finished_types.put(cg.gpa, key, id);
+    for (done.deferred_ptrs.items) |dp| {
+        const pointee_id = try cg.pointeeType(dp.as, dp.pointee_ty, false);
+        try cg.module.emit(cg.gpa, .OpTypePointer, .{
+            .id_result = dp.id,
+            .storage_class = cg.storageClass(dp.as),
+            .type = pointee_id,
+        });
+    }
+}
+
+/// The outermost type being built that ty contains by value
+fn containedInProgress(cg: *CodeGen, ty: Type) ?*TypeInProgress {
+    for (cg.types_in_progress.items) |*in_progress| {
+        if (cg.containsByValue(ty, in_progress.key.ty)) return in_progress;
+    }
+    return null;
+}
+
+fn containsByValue(cg: *CodeGen, ty: Type, needle: InternPool.Index) bool {
+    const zcu = cg.zcu;
+    const ip = &zcu.intern_pool;
+    if (ty.toIntern() == needle) return true;
+    switch (ty.zigTypeTag(zcu)) {
+        .array, .vector => return cg.containsByValue(ty.childType(zcu), needle),
+        .optional => return cg.containsByValue(ty.optionalChild(zcu), needle),
+        .error_union => return cg.containsByValue(ty.errorUnionPayload(zcu), needle),
+        .spirv => return ty.isSpirvRuntimeArray(zcu) and cg.containsByValue(ty.childType(zcu), needle),
+        .@"struct" => {
+            const field_types = switch (ip.indexToKey(ty.toIntern())) {
+                .tuple_type => |tuple| tuple.types.get(ip),
+                .struct_type => ip.loadStructType(ty.toIntern()).field_types.get(ip),
+                else => unreachable,
+            };
+            for (field_types) |field_ty| {
+                if (cg.containsByValue(.fromInterned(field_ty), needle)) return true;
+            }
+            return false;
+        },
+        .@"union" => {
+            for (zcu.typeToUnion(ty).?.field_types.get(ip)) |field_ty| {
+                if (cg.containsByValue(.fromInterned(field_ty), needle)) return true;
+            }
+            return false;
+        },
+        else => return false,
+    }
+}
+
+/// Whether a value of type ty holds a pointer that logical addressing does not
+/// allow in a variable; Only StorageBuffer, Workgroup and PhysicalStorageBuffer
+/// pointers can be stored
+fn containsUnstorablePointer(cg: *CodeGen, ty: Type) bool {
+    const zcu = cg.zcu;
+    const ip = &zcu.intern_pool;
+    switch (ty.zigTypeTag(zcu)) {
+        .pointer => return switch (cg.storageClass(ty.ptrAddressSpace(zcu))) {
+            .storage_buffer, .workgroup, .physical_storage_buffer => false,
+            else => true,
+        },
+        .array, .vector => return cg.containsUnstorablePointer(ty.childType(zcu)),
+        .optional => return cg.containsUnstorablePointer(ty.optionalChild(zcu)),
+        .error_union => return cg.containsUnstorablePointer(ty.errorUnionPayload(zcu)),
+        .@"struct" => {
+            const field_types = switch (ip.indexToKey(ty.toIntern())) {
+                .tuple_type => |tuple| tuple.types.get(ip),
+                .struct_type => ip.loadStructType(ty.toIntern()).field_types.get(ip),
+                else => unreachable,
+            };
+            for (field_types) |field_ty| {
+                if (cg.containsUnstorablePointer(.fromInterned(field_ty))) return true;
+            }
+            return false;
+        },
+        .@"union" => {
+            for (zcu.typeToUnion(ty).?.field_types.get(ip)) |field_ty| {
+                if (cg.containsUnstorablePointer(.fromInterned(field_ty))) return true;
+            }
+            return false;
+        },
+        else => return false,
+    }
+}
+
+/// SPIRV only allows forward-declaring pointers to structs
+fn lowersToStruct(cg: *CodeGen, ty: Type) bool {
+    const zcu = cg.zcu;
+    const ip = &zcu.intern_pool;
+    return switch (ty.zigTypeTag(zcu)) {
+        .@"struct" => switch (ip.indexToKey(ty.toIntern())) {
+            .tuple_type => true,
+            .struct_type => ip.loadStructType(ty.toIntern()).layout != .@"packed",
+            else => unreachable,
+        },
+        .@"union" => switch (zcu.typeToUnion(ty).?.layout) {
+            .@"packed" => false,
+            .auto => !ty.unionHasAllZeroBitFieldTypes(zcu),
+            .@"extern" => cg.unionLayout(ty).has_payload,
+        },
+        .optional => ty.optionalChild(zcu).hasRuntimeBits(zcu) and !ty.optionalReprIsPayload(zcu),
+        .error_union => cg.errorUnionLayout(ty.errorUnionPayload(zcu)).payload_has_bits,
+        else => false,
+    };
+}
+
+/// Decorates at most once; a finished type can be requested as a block root again
+fn decorateBlock(cg: *CodeGen, id: Id) !void {
+    const gop = try cg.block_structs.getOrPut(cg.gpa, id);
+    if (!gop.found_existing) try cg.decorate(id, .block);
+}
+
 pub fn ptrType(cg: *CodeGen, child_ty_id: Id, storage_class: spec.StorageClass) !Id {
     const result_id = cg.allocId();
     try cg.module.emit(cg.gpa, .OpTypePointer, .{
@@ -597,10 +759,20 @@ pub fn structType(
     maybe_names: ?[]const []const u8,
     ip_index: InternPool.Index,
 ) !Id {
+    return cg.structTypeWithId(types, maybe_names, ip_index, null);
+}
+
+pub fn structTypeWithId(
+    cg: *CodeGen,
+    types: []const Id,
+    maybe_names: ?[]const []const u8,
+    ip_index: InternPool.Index,
+    reserved_id: ?Id,
+) !Id {
     const actual_ip_index = if (cg.zcu.comp.config.root_strip) .none else ip_index;
 
     if (cg.struct_types.get(.{ .fields = types, .ip_index = actual_ip_index })) |id| return id;
-    const result_id = cg.allocId();
+    const result_id = reserved_id orelse cg.allocId();
     const types_dup = try cg.arena.dupe(Id, types);
     try cg.module.emit(cg.gpa, .OpTypeStruct, .{
         .id_result = result_id,
@@ -637,25 +809,33 @@ pub fn layoutType(cg: *CodeGen, ty: Type, is_block_root: bool) Error!Id {
     const result_id: Id = switch (ty.zigTypeTag(zcu)) {
         .@"struct" => id: {
             const struct_type = ip.loadStructType(ty.toIntern());
+            const key: InProgressKey = .{ .ty = ty.toIntern(), .layout = true };
             if (struct_type.layout == .@"packed") return cg.resolveType(ty, .indirect);
+            if (try cg.finishedType(key, ty)) |finished_id| {
+                if (is_block_root) try cg.decorateBlock(finished_id);
+                return finished_id;
+            }
 
             var member_types: std.ArrayList(Id) = .empty;
             defer member_types.deinit(gpa);
-            const id = cg.allocId();
-            if (is_block_root) try cg.decorate(id, .block);
+            const id = try cg.beginType(key);
+            var has_runtime_array = false;
             var it = struct_type.iterateRuntimeOrder(ip);
             while (it.next()) |field_index| {
                 const field_ty: Type = .fromInterned(struct_type.field_types.get(ip)[field_index]);
                 if (!field_ty.hasRuntimeBits(zcu)) continue;
+                if (field_ty.isSpirvRuntimeArray(zcu)) has_runtime_array = true;
                 try cg.decorateMember(id, @intCast(member_types.items.len), .{ .offset = .{
                     .byte_offset = @intCast(ty.structFieldOffset(field_index, zcu)),
                 } });
                 try member_types.append(gpa, try cg.layoutType(field_ty, false));
             }
+            if (is_block_root or has_runtime_array) try cg.decorateBlock(id);
             try cg.module.emit(gpa, .OpTypeStruct, .{
                 .id_result = id,
                 .id_ref = member_types.items,
             });
+            try cg.endType(key, id);
             break :id id;
         },
         .@"union" => id: {
@@ -665,8 +845,14 @@ pub fn layoutType(cg: *CodeGen, ty: Type, is_block_root: bool) Error!Id {
             const layout = cg.unionLayout(ty);
             if (!layout.has_payload) return cg.resolveType(ty, .indirect);
 
-            const id = cg.allocId();
-            if (is_block_root) try cg.decorate(id, .block);
+            const key: InProgressKey = .{ .ty = ty.toIntern(), .layout = true };
+            if (try cg.finishedType(key, ty)) |finished_id| {
+                if (is_block_root) try cg.decorateBlock(finished_id);
+                return finished_id;
+            }
+
+            const id = try cg.beginType(key);
+            if (is_block_root) try cg.decorateBlock(id);
 
             var member_types: [4]Id = undefined;
             const u8_id = try cg.resolveType(.u8, .direct);
@@ -699,6 +885,7 @@ pub fn layoutType(cg: *CodeGen, ty: Type, is_block_root: bool) Error!Id {
                 .id_result = id,
                 .id_ref = member_types[0..layout.total_fields],
             });
+            try cg.endType(key, id);
             break :id id;
         },
         .array => id: {
@@ -729,6 +916,18 @@ pub fn layoutType(cg: *CodeGen, ty: Type, is_block_root: bool) Error!Id {
             }
             break :id id;
         } else return cg.resolveType(ty, .indirect),
+        .pointer => {
+            // Sema rejects other pointers in interface blocks (validateSpirvGlobalType)
+            assert(cg.storageClass(ty.ptrAddressSpace(zcu)) == .physical_storage_buffer);
+            return cg.resolveType(ty, .indirect);
+        },
+        .optional => {
+            const payload_ty = ty.optionalChild(zcu);
+            if (!payload_ty.hasRuntimeBits(zcu)) return cg.resolveType(ty, .indirect);
+            // Sema rejects optionals that are not pointer-like in interface blocks
+            assert(ty.optionalReprIsPayload(zcu));
+            return cg.layoutType(payload_ty, false);
+        },
         else => return cg.resolveType(ty, .indirect),
     };
 
@@ -2088,9 +2287,29 @@ fn resolveType(cg: *CodeGen, ty: Type, repr: Repr) Error!Id {
                     }),
                 },
             };
-            const child_ty_id = try cg.pointeeType(ptr_info.flags.address_space, child_ty, false);
             const storage_class = cg.storageClass(ptr_info.flags.address_space);
-            const ptr_ty_id = try cg.ptrType(child_ty_id, storage_class);
+            const ptr_ty_id = if (cg.containedInProgress(child_ty)) |in_progress| id: {
+                if (!cg.lowersToStruct(child_ty)) {
+                    return cg.fail(
+                        "cannot forward-declare pointer to non-struct type '{f}' for recursive type",
+                        .{child_ty.fmt(zcu)},
+                    );
+                }
+                const fwd_id = cg.allocId();
+                try cg.module.emit(gpa, .OpTypeForwardPointer, .{
+                    .pointer_type = fwd_id,
+                    .storage_class = storage_class,
+                });
+                try in_progress.deferred_ptrs.append(cg.arena, .{
+                    .id = fwd_id,
+                    .as = ptr_info.flags.address_space,
+                    .pointee_ty = child_ty,
+                });
+                break :id fwd_id;
+            } else id: {
+                const child_ty_id = try cg.pointeeType(ptr_info.flags.address_space, child_ty, false);
+                break :id try cg.ptrType(child_ty_id, storage_class);
+            };
 
             if (ptr_info.flags.size != .slice) {
                 return ptr_ty_id;
@@ -2134,6 +2353,10 @@ fn resolveType(cg: *CodeGen, ty: Type, repr: Repr) Error!Id {
                 return try cg.resolveType(.fromInterned(struct_type.packed_backing_int_type), .direct);
             }
 
+            const key: InProgressKey = .{ .ty = ty.toIntern(), .layout = false };
+            if (try cg.finishedType(key, ty)) |finished_id| return finished_id;
+            const reserved_id = try cg.beginType(key);
+
             var member_types: std.ArrayList(Id) = .empty;
             defer member_types.deinit(gpa);
 
@@ -2150,11 +2373,13 @@ fn resolveType(cg: *CodeGen, ty: Type, repr: Repr) Error!Id {
                 try member_names.append(gpa, field_name.toSlice(ip));
             }
 
-            const result_id = try cg.structType(
+            const result_id = try cg.structTypeWithId(
                 member_types.items,
                 member_names.items,
                 ty.toIntern(),
+                reserved_id,
             );
+            try cg.endType(key, result_id);
 
             try cg.debugNameFmt(result_id, "{f}", .{ty.fmt(zcu)});
 
@@ -2193,6 +2418,10 @@ fn resolveType(cg: *CodeGen, ty: Type, repr: Repr) Error!Id {
                         return try cg.resolveType(ty.unionTagTypeRuntime(zcu).?, .indirect);
                     }
 
+                    const key: InProgressKey = .{ .ty = ty.toIntern(), .layout = false };
+                    if (try cg.finishedType(key, ty)) |finished_id| return finished_id;
+                    const reserved_id = try cg.beginType(key);
+
                     const member_types = try gpa.alloc(Id, union_obj.field_types.len + 1);
                     defer gpa.free(member_types);
                     for (member_types[0..union_obj.field_types.len], union_obj.field_types.get(ip)) |*member_ty_id, field_ty_index| {
@@ -2209,7 +2438,8 @@ fn resolveType(cg: *CodeGen, ty: Type, repr: Repr) Error!Id {
                         len += 1;
                     }
 
-                    const result_id = try cg.structType(member_types[0..len], null, .none);
+                    const result_id = try cg.structTypeWithId(member_types[0..len], null, .none, reserved_id);
+                    try cg.endType(key, result_id);
                     try cg.debugNameFmt(result_id, "{f}", .{ty.fmt(zcu)});
                     return result_id;
                 },
@@ -2219,6 +2449,11 @@ fn resolveType(cg: *CodeGen, ty: Type, repr: Repr) Error!Id {
             if (!layout.has_payload) {
                 return try cg.resolveType(.fromInterned(union_obj.enum_tag_type), .indirect);
             }
+
+            const key: InProgressKey = .{ .ty = ty.toIntern(), .layout = false };
+            if (try cg.finishedType(key, ty)) |finished_id| return finished_id;
+            const reserved_id = try cg.beginType(key);
+
             var member_types: [4]Id = undefined;
             var member_names: [4][]const u8 = undefined;
             const u8_ty_id = try cg.resolveType(.u8, .direct);
@@ -2240,11 +2475,13 @@ fn resolveType(cg: *CodeGen, ty: Type, repr: Repr) Error!Id {
                 member_types[layout.padding_index] = try cg.arrayType(len_id, u8_ty_id);
                 member_names[layout.padding_index] = "(padding)";
             }
-            const result_id = try cg.structType(
+            const result_id = try cg.structTypeWithId(
                 member_types[0..layout.total_fields],
                 member_names[0..layout.total_fields],
                 .none,
+                reserved_id,
             );
+            try cg.endType(key, result_id);
             try cg.debugNameFmt(result_id, "{f}", .{ty.fmt(zcu)});
             return result_id;
         },
@@ -4810,6 +5047,13 @@ fn airAlloc(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
             try cg.tracked_allocas.put(cg.gpa, result_id, null);
             return result_id;
         }
+    }
+
+    if (target_util.addrSpaceIsLogical(target, .local) and cg.containsUnstorablePointer(child_ty)) {
+        return cg.fail(
+            "cannot allocate a variable of type '{f}': logical addressing cannot store its pointers in a variable",
+            .{child_ty.fmt(zcu)},
+        );
     }
 
     const child_ty_id = try cg.resolveType(child_ty, .indirect);

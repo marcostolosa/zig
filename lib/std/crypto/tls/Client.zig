@@ -817,6 +817,61 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                         pending_cipher_state = .application;
                         handshake_state = .finished;
                     },
+                    .certificate_request => {
+                        if (cipher_state != .handshake) return error.TlsUnexpectedMessage;
+                        switch (tls_version) {
+                            .tls_1_3 => {
+                                var context_len: u8 = 0;
+                                var context: []const u8 = "";
+                                if (!hsd.eof()) {
+                                    try hsd.ensure(1);
+                                    context_len = hsd.decode(u8);
+                                    try hsd.ensure(context_len);
+                                    context = hsd.slice(context_len);
+                                    try hsd.ensure(2);
+                                    const extensions_size = hsd.decode(u16);
+                                    try hsd.ensure(extensions_size);
+                                    hsd.skip(extensions_size); // Ignore because we are not sending a cert, so no need to worry about extensions.
+                                }
+                                const cert_msg_prefix = .{
+                                    @backingInt(tls.ContentType.handshake), @backingInt(tls.HandshakeType.certificate),
+                                    context_len,
+                                };
+                                const empty_cert_msg = int(u24, 0) ++ // Certificate length
+                                    int(u16, 0); // Extension length
+
+                                var all_msgs_vec: [3][]const u8 = .{
+                                    &cert_msg_prefix,
+                                    // Echo the context back to the server
+                                    context,
+                                    &empty_cert_msg,
+                                };
+                                try output.writeVecAll(&all_msgs_vec);
+                                try output.flush();
+                            },
+                            .tls_1_2 => {
+                                if (!hsd.eof()) {
+                                    // Ignore the body of the `certificate_request` as we are sending an empty certificate list
+                                    try hsd.ensure(1);
+                                    const cert_types_len = hsd.decode(u8);
+                                    _ = try hsd.sub(cert_types_len);
+                                    try hsd.ensure(2);
+                                    const supported_algo_len = hsd.decode(u16);
+                                    _ = try hsd.sub(supported_algo_len);
+                                    try hsd.ensure(2);
+                                    const distinguished_name_len = hsd.decode(u16);
+                                    _ = try hsd.sub(distinguished_name_len);
+                                }
+                                const cert_msg = .{
+                                    @backingInt(tls.ContentType.handshake), @backingInt(tls.HandshakeType.certificate),
+                                } ++
+                                    int(u24, 0); // Empty certificate list
+                                try output.writeAll(&cert_msg);
+                                try output.flush();
+                            },
+                            else => return error.TlsUnexpectedMessage,
+                        }
+                    },
                     .certificate_verify => {
                         if (tls_version != .tls_1_3) return error.TlsUnexpectedMessage;
                         if (cipher_state != .handshake) return error.TlsUnexpectedMessage;

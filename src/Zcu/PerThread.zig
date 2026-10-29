@@ -1859,6 +1859,8 @@ fn analyzeNavVal(
     // this resolves the type `type` (which needs no resolution), not the struct itself.
     try sema.ensureLayoutResolved(nav_ty, block.nodeOffset(.zero), if (zir_decl.kind == .@"var") .variable else .constant);
 
+    try sema.validateSpirvNavType(&block, ty_src, nav_ty, modifiers.@"addrspace");
+
     const queue_linker_work, const is_owned_fn = switch (ip.indexToKey(nav_val.toIntern())) {
         .func => |f| .{ true, f.owner_nav == nav_id }, // note that this lets function aliases reach codegen
         .@"extern" => .{ false, nav_ty.zigTypeTag(zcu) == .@"fn" and zir_decl.linkage == .@"extern" },
@@ -3542,6 +3544,8 @@ fn analyzeFuncBodyInner(
     }
 
     try sema.flushExports();
+
+    try sema.resolveSpirvFuncPointees(&inner_block, inner_block.src(.{ .node_offset_fn_type_ret_ty = .zero }));
 
     defer {
         sema.air_instructions = .empty;

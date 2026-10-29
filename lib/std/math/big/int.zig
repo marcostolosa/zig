@@ -624,42 +624,10 @@ pub const Mutable = struct {
     /// Asserts the result fits in `r`. An upper bound on the number of limbs needed by
     /// r is `calcTwosCompLimbCount(bit_count)`.
     pub fn addWrap(r: *Mutable, a: Const, b: Const, signedness: Signedness, bit_count: usize) bool {
-        const req_limbs = calcTwosCompLimbCount(bit_count);
-
-        // Slice of the upper bits if they exist, these will be ignored and allows us to use addCarry to determine
-        // if an overflow occurred.
-        const x: Const = .{
-            .positive = a.positive,
-            .limbs = a.limbs[0..@min(req_limbs, a.limbs.len)],
-        };
-
-        const y: Const = .{
-            .positive = b.positive,
-            .limbs = b.limbs[0..@min(req_limbs, b.limbs.len)],
-        };
-
-        var carry_truncated = false;
-        if (r.addCarry(x, y)) {
-            // There are two possibilities here:
-            // - We overflowed req_limbs. In this case, the carry is ignored, as it would be removed by
-            //   truncate anyway.
-            // - a and b had less elements than req_limbs, and those were overflowed. This case needs to be handled.
-            //   Note: after this we still might need to wrap.
-            const msl = @max(a.limbs.len, b.limbs.len);
-            if (msl < req_limbs) {
-                r.len = msl + 1;
-                r.limbs[msl] = 1;
-            } else {
-                carry_truncated = true;
-            }
-        }
-
-        if (!r.toConst().fitsInTwosComp(signedness, bit_count)) {
-            r.truncate(r.toConst(), signedness, bit_count);
-            return true;
-        }
-
-        return carry_truncated;
+        const discarded = r.addMagnitudeBounded(a, b, calcTwosCompLimbCount(bit_count));
+        const overflow = discarded or !r.toConst().fitsInTwosComp(signedness, bit_count);
+        if (overflow) r.truncate(r.toConst(), signedness, bit_count);
+        return overflow;
     }
 
     /// r = a + b with 2s-complement saturating semantics.
@@ -668,38 +636,49 @@ pub const Mutable = struct {
     /// Assets the result fits in `r`. Upper bound on the number of limbs needed by
     /// r is `calcTwosCompLimbCount(bit_count)`.
     pub fn addSat(r: *Mutable, a: Const, b: Const, signedness: Signedness, bit_count: usize) void {
-        const req_limbs = calcTwosCompLimbCount(bit_count);
+        if (r.addMagnitudeBounded(a, b, calcTwosCompLimbCount(bit_count))) {
+            r.setTwosCompIntLimit(if (r.positive) .max else .min, signedness, bit_count);
+        } else {
+            r.saturate(r.toConst(), signedness, bit_count);
+        }
+    }
 
-        // Slice of the upper bits if they exist, these will be ignored and allows us to use addCarry to determine
-        // if an overflow occurred.
-        const x: Const = .{
-            .positive = a.positive,
-            .limbs = a.limbs[0..@min(req_limbs, a.limbs.len)],
-        };
-
-        const y: Const = .{
-            .positive = b.positive,
-            .limbs = b.limbs[0..@min(req_limbs, b.limbs.len)],
-        };
-
-        if (r.addCarry(x, y)) {
-            // There are two possibilities here:
-            // - We overflowed req_limbs, in which case we need to saturate.
-            // - a and b had less elements than req_limbs, and those were overflowed.
-            //   Note: In this case, might _also_ need to saturate.
-            const msl = @max(a.limbs.len, b.limbs.len);
-            if (msl < req_limbs) {
-                r.len = msl + 1;
-                r.limbs[msl] = 1;
-                // Note: Saturation may still be required if msl == req_limbs - 1
+    /// Compute a + b modulo the magnitude capacity, retaining the true result
+    /// sign and reporting whether any nonzero magnitude bits were discarded.
+    /// Inputs may alias.
+    fn addMagnitudeBounded(r: *Mutable, a: Const, b: Const, req_limbs: usize) bool {
+        const subtract = a.positive != b.positive;
+        const swap_inputs = subtract and a.orderAbs(b) == .lt;
+        const x = if (swap_inputs) b else a;
+        const y = if (swap_inputs) a else b;
+        const count = @max(x.limbs.len, y.limbs.len);
+        var carry: u1 = 0;
+        var discarded = false;
+        for (0..count) |i| {
+            const xi = if (i < x.limbs.len) x.limbs[i] else 0;
+            const yi = if (i < y.limbs.len) y.limbs[i] else 0;
+            const first = if (subtract) @subWithOverflow(xi, yi) else @addWithOverflow(xi, yi);
+            const second = if (subtract) @subWithOverflow(first[0], carry) else @addWithOverflow(first[0], carry);
+            carry = first[1] | second[1];
+            if (i < req_limbs) {
+                r.limbs[i] = second[0];
             } else {
-                // Overflowed req_limbs, definitely saturate.
-                return r.setTwosCompIntLimit(if (r.positive) .max else .min, signedness, bit_count);
+                discarded = discarded or second[0] != 0;
             }
         }
-
-        // Saturate if the result didn't fit.
-        r.saturate(r.toConst(), signedness, bit_count);
+        var length = @min(count, req_limbs);
+        if (carry != 0) {
+            assert(!subtract);
+            if (count < req_limbs) {
+                r.limbs[count] = 1;
+                length += 1;
+            } else {
+                discarded = true;
+            }
+        }
+        r.normalize(length);
+        r.positive = x.positive or (!discarded and r.eqlZero());
+        return discarded;
     }
 
     /// Base implementation for subtraction. Subtracts `@max(a.limbs.len, b.limbs.len)` elements from a and b,

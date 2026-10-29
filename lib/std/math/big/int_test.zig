@@ -1164,6 +1164,15 @@ test "addWrap returns normalized result" {
     try testing.expect(r.isPositive() and r.len() == 1 and r.limbs[0] == 0);
 }
 
+test "addWrap accounts for discarded high limbs" {
+    const a: big.Const = .{ .limbs = &.{ 0, 1 }, .positive = true };
+    const zero: big.Const = .{ .limbs = &.{0}, .positive = true };
+    var storage: [1]Limb = undefined;
+    var r = big.Mutable.init(&storage, 0);
+    try testing.expect(r.addWrap(a, zero, .unsigned, @bitSizeOf(Limb)));
+    try testing.expect(r.eqlZero());
+}
+
 test "subWrap returns normalized result" {
     var x = try Managed.initSet(testing.allocator, 0);
     defer x.deinit();
@@ -1234,6 +1243,15 @@ test "addSat single-single, signed" {
     try a.addSat(&a, &b, .signed, @bitSizeOf(i14));
 
     try testing.expectEqual(maxInt(i14), try a.toInt(i14));
+}
+
+test "addSat must not truncate before saturation" {
+    const a: big.Const = .{ .limbs = &.{ 0, 1 }, .positive = true };
+    const zero: big.Const = .{ .limbs = &.{0}, .positive = true };
+    var storage: [1]Limb = undefined;
+    var r = big.Mutable.init(&storage, 0);
+    r.addSat(a, zero, .unsigned, @bitSizeOf(Limb));
+    try testing.expectEqual(std.math.maxInt(Limb), try r.toInt(Limb));
 }
 
 test "subSat single-single, signed" {

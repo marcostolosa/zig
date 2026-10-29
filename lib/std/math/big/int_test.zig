@@ -2581,6 +2581,15 @@ test "saturate multi unsigned" {
     try testing.expectEqual(maxInt(DoubleLimb), try a.toInt(DoubleLimb));
 }
 
+test "saturation uses the source value and source sign" {
+    var storage: [1]Limb = undefined;
+    var r = big.Mutable.init(&storage, 42);
+    r.saturate(.{ .limbs = &.{7}, .positive = true }, .signed, 8);
+    try testing.expectEqual(@as(i16, 7), try r.toInt(i16));
+    r.saturate(.{ .limbs = &.{200}, .positive = false }, .signed, 8);
+    try testing.expectEqual(@as(i16, -128), try r.toInt(i16));
+}
+
 test "shift-right single" {
     var a = try Managed.initSet(testing.allocator, 0xffff0000);
     defer a.deinit();

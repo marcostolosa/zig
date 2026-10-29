@@ -2026,8 +2026,10 @@ pub const Mutable = struct {
     /// Asserts `r` has enough storage to store the result.
     /// The upper bound is `calcTwosCompLimbCount(a.len)`.
     pub fn saturate(r: *Mutable, a: Const, signedness: Signedness, bit_count: usize) void {
-        if (!a.fitsInTwosComp(signedness, bit_count)) {
-            r.setTwosCompIntLimit(if (r.positive) .max else .min, signedness, bit_count);
+        if (a.fitsInTwosComp(signedness, bit_count)) {
+            r.copy(a);
+        } else {
+            r.setTwosCompIntLimit(if (a.positive) .max else .min, signedness, bit_count);
         }
     }
 

@@ -3324,6 +3324,20 @@ test "pow" {
     }
 }
 
+test "octal and base32 digits cross limb boundaries" {
+    var storage: [big.calcLimbLen(1 << 64)]Limb = undefined;
+    const a = big.Mutable.init(&storage, 1 << 64);
+
+    inline for (.{
+        .{ 8, "2000000000000000000000" },
+        .{ 32, "g000000000000" },
+    }) |case| {
+        var buffer: [256]u8 = undefined;
+        const written = a.toConst().toString(&buffer, case[0], .lower, &.{});
+        try testing.expectEqualStrings(case[1], buffer[0..written]);
+    }
+}
+
 test "sqrt" {
     var r = try Managed.init(testing.allocator);
     defer r.deinit();

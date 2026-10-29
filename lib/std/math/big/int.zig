@@ -2502,23 +2502,20 @@ pub const Const = struct {
 
         // Power of two: can do a single pass and use masks to extract digits.
         if (math.isPowerOfTwo(base)) {
-            const base_shift = math.log2_int(Limb, base);
+            const base_shift: usize = math.log2_int(Limb, base);
 
-            outer: for (self.limbs[0..self.limbs.len]) |limb| {
-                var shift: usize = 0;
-                while (shift < limb_bits) : (shift += base_shift) {
-                    const r = @as(u8, @intCast((limb >> @as(Log2Limb, @intCast(shift))) & @as(Limb, base - 1)));
-                    const ch = std.fmt.digitToChar(r, case);
-                    string[digits_len] = ch;
-                    digits_len += 1;
-                    // If we hit the end, it must be all zeroes from here.
-                    if (digits_len == string.len) break :outer;
+            var bit_index: usize = 0;
+            const bit_count = self.bitCountAbs();
+            while (bit_index < bit_count) : (bit_index += base_shift) {
+                const limb_index = bit_index / limb_bits;
+                const shift: Log2Limb = @intCast(bit_index % limb_bits);
+                var digit = self.limbs[limb_index] >> shift;
+                if (base_shift + shift > limb_bits and limb_index + 1 < self.limbs.len) {
+                    digit |= self.limbs[limb_index + 1] << @intCast(limb_bits - shift);
                 }
-            }
 
-            // Always will have a non-zero digit somewhere.
-            while (string[digits_len - 1] == '0') {
-                digits_len -= 1;
+                string[digits_len] = std.fmt.digitToChar(@intCast(digit & (base - 1)), case);
+                digits_len += 1;
             }
         } else {
             // Non power-of-two: batch divisions per word size.

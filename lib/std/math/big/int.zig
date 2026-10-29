@@ -94,9 +94,8 @@ pub fn calcSetStringLimbsBufferLen(base: u8, string_len: usize) usize {
 
 /// Assumes `string_len` doesn't account for minus signs if the number is negative.
 pub fn calcSetStringLimbCount(base: u8, string_len: usize) usize {
-    const base_f: f32 = @floatFromInt(base);
-    const string_len_f: f32 = @floatFromInt(string_len);
-    return 1 + @as(usize, @intFromFloat(@ceil(string_len_f * std.math.log2(base_f) / limb_bits)));
+    assert(base >= 2 and base <= 36);
+    return 1 + string_len / constants.digits_per_limb[base];
 }
 
 pub fn calcPowLimbsBufferLen(a_bit_count: usize, y: usize) usize {

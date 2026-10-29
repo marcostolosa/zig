@@ -3133,6 +3133,7 @@ fn buildOutputType(
                     // clang syntax in Compilation.
                     create_module.opts.output_mode = .Obj;
                     clang_preprocessor_mode = .version;
+                    emit_bin = .no;
                     if (create_module.c_source_files.items.len == 0) {
                         try create_module.c_source_files.append(arena, .{
                             .owner = undefined,

@@ -204,6 +204,7 @@ pub fn destroy(self: Allocator, ptr: anytype) void {
     const T = info.child;
     if (@sizeOf(T) == 0) return;
     const non_const_ptr = @as([*]u8, @ptrCast(@constCast(ptr)));
+    @memset(non_const_ptr[0..@sizeOf(T)], undefined);
     self.rawFree(
         non_const_ptr[0..@sizeOf(T)],
         .fromByteUnits(info.attrs.@"align" orelse @alignOf(T)),

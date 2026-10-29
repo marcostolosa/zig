@@ -2338,11 +2338,16 @@ pub const Const = struct {
     /// Convert `self` to `Int`.
     ///
     /// Returns an error if self cannot be narrowed into the requested type without truncation.
+    /// Convert `self` to `Int`.
+    ///
+    /// Returns an error if self cannot be narrowed into the requested type without truncation.
     pub fn toInt(self: Const, comptime Int: type) ConvertError!Int {
         switch (@typeInfo(Int)) {
             .int => |info| {
                 // Make sure -0 is handled correctly.
                 if (self.eqlZero()) return 0;
+                if (info.signedness == .unsigned and !self.positive)
+                    return error.NegativeIntoUnsigned;
 
                 const Unsigned = @Int(.unsigned, info.bits);
 
@@ -2362,17 +2367,13 @@ pub const Const = struct {
                     }
                 }
 
-                if (info.signedness == .unsigned) {
-                    return if (self.positive) @intCast(r) else error.NegativeIntoUnsigned;
+                if (info.signedness == .unsigned or self.positive) {
+                    return @intCast(r); // must be positive
                 } else {
-                    if (self.positive) {
-                        return @intCast(r);
+                    if (math.cast(Int, r)) |ok| {
+                        return -ok;
                     } else {
-                        if (math.cast(Int, r)) |ok| {
-                            return -ok;
-                        } else {
-                            return minInt(Int);
-                        }
+                        return minInt(Int);
                     }
                 }
             },

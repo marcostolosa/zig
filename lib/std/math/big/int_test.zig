@@ -4233,3 +4233,10 @@ test "copy keeps an aliased view sign" {
     try a.copy(a.toConst().negate());
     try testing.expectEqual(-3, try a.toInt(i8));
 }
+
+test "negative-to-unsigned conversion returns the right error" {
+    var storage: [1]Limb = undefined;
+    const a = big.Mutable.init(&storage, -1);
+    try testing.expectError(error.NegativeIntoUnsigned, a.toInt(u8));
+}
+

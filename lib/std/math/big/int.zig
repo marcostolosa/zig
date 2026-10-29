@@ -1494,24 +1494,8 @@ pub const Mutable = struct {
     /// Asserts that `rma` has enough limbs to store the result. Upper bound is
     /// `@min(x.limbs.len, y.limbs.len)` when both operands are nonzero,
     /// otherwise use the nonzero operand's length (or 1 for gcd(0, 0)).
-    ///
-    /// `limbs_buffer` is used for temporary storage during the operation. When this function returns,
-    /// it will have the same length as it had when the function was called.
-    pub fn gcd(rma: *Mutable, allocator: Allocator, x: Const, y: Const, limbs_buffer: *std.ArrayList(Limb)) !void {
-        const prev_len = limbs_buffer.items.len;
-        defer limbs_buffer.shrinkRetainingCapacity(prev_len);
-        const x_copy = if (rma.limbs.ptr == x.limbs.ptr) blk: {
-            const start = limbs_buffer.items.len;
-            try limbs_buffer.appendSlice(allocator, x.limbs);
-            break :blk x.toMutable(limbs_buffer.items[start..]).toConst();
-        } else x;
-        const y_copy = if (rma.limbs.ptr == y.limbs.ptr) blk: {
-            const start = limbs_buffer.items.len;
-            try limbs_buffer.appendSlice(allocator, y.limbs);
-            break :blk y.toMutable(limbs_buffer.items[start..]).toConst();
-        } else y;
-
-        return gcdLehmer(rma, allocator, x_copy, y_copy);
+    pub fn gcd(rma: *Mutable, allocator: Allocator, x: Const, y: Const) !void {
+        return gcdLehmer(rma, allocator, x, y);
     }
 
     /// q = a ^ b
@@ -3504,9 +3488,7 @@ pub const Managed = struct {
         const needed = if (x.eqlZero()) y.len() else if (y.eqlZero()) x.len() else @min(x.len(), y.len());
         try rma.ensureAliasAwareCapacity(needed, aliased);
         var m = rma.toMutable();
-        var limbs_buffer: std.ArrayList(Limb) = .empty;
-        defer limbs_buffer.deinit(rma.allocator);
-        try m.gcd(rma.allocator, x.toConst(), y.toConst(), &limbs_buffer);
+        try m.gcd(rma.allocator, x.toConst(), y.toConst());
         rma.setMetadata(m.positive, m.len);
     }
 

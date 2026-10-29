@@ -2432,6 +2432,16 @@ pub const Const = struct {
             }),
             .exponent = std.math.lossyCast(Repr.Normalized.Exponent, exponent),
         };
+        if (exponent > comptime Repr.BiasedExponent.max_normal.unbias()) {
+            const to_infinity = switch (round) {
+                .nearest_even, .away => true,
+                .trunc => false,
+                .floor => !self.positive,
+                .ceil => self.positive,
+            };
+            const magnitude = if (to_infinity) std.math.inf(Float) else std.math.floatMax(Float);
+            return .{ if (self.positive) magnitude else -magnitude, .inexact };
+        }
         return .{ normalized_res.reconstruct(if (self.positive) .positive else .negative), exactness };
     }
 

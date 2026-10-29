@@ -287,15 +287,25 @@ test setFloat {
 }
 
 fn toFloat(comptime Float: type) !void {
+    @setEvalBranchQuota(10_000);
     const Result = struct { Float, big.Exactness };
     const fractional_bits = std.math.floatFractionalBits(Float);
+    const max_exponent = std.math.floatExponentMax(Float);
 
-    var int_limbs: [std.math.big.int.calcNonZeroTwosCompLimbCount(2 + fractional_bits)]Limb = undefined;
+    var int_limbs: [std.math.big.int.calcNonZeroTwosCompLimbCount(2 + max_exponent)]Limb = undefined;
     var int: Mutable = .{
         .limbs = &int_limbs,
         .len = undefined,
         .positive = undefined,
     };
+
+    int.set(-1);
+    int.shiftLeft(int.toConst(), max_exponent + 1);
+    try testing.expectEqual(Result{ -std.math.inf(Float), .inexact }, int.toFloat(Float, .nearest_even));
+    try testing.expectEqual(Result{ -std.math.inf(Float), .inexact }, int.toFloat(Float, .away));
+    try testing.expectEqual(Result{ -std.math.floatMax(Float), .inexact }, int.toFloat(Float, .trunc));
+    try testing.expectEqual(Result{ -std.math.inf(Float), .inexact }, int.toFloat(Float, .floor));
+    try testing.expectEqual(Result{ -std.math.floatMax(Float), .inexact }, int.toFloat(Float, .ceil));
 
     int.set(-(1 << (fractional_bits + 1)) - 1);
     try testing.expectEqual(
@@ -479,7 +489,16 @@ fn toFloat(comptime Float: type) !void {
         ), .inexact },
         int.toFloat(Float, .ceil),
     );
+
+    int.set(1);
+    int.shiftLeft(int.toConst(), max_exponent + 1);
+    try testing.expectEqual(Result{ std.math.inf(Float), .inexact }, int.toFloat(Float, .nearest_even));
+    try testing.expectEqual(Result{ std.math.inf(Float), .inexact }, int.toFloat(Float, .away));
+    try testing.expectEqual(Result{ std.math.floatMax(Float), .inexact }, int.toFloat(Float, .trunc));
+    try testing.expectEqual(Result{ std.math.floatMax(Float), .inexact }, int.toFloat(Float, .floor));
+    try testing.expectEqual(Result{ std.math.inf(Float), .inexact }, int.toFloat(Float, .ceil));
 }
+
 test toFloat {
     try toFloat(f16);
     try toFloat(f32);

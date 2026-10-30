@@ -75,6 +75,8 @@ comptime {
     _ = @import("c/strings.zig");
     _ = @import("c/stropts.zig");
 
+    _ = @import("c/arpa/inet.zig");
+
     _ = @import("c/sys/capability.zig");
     _ = @import("c/sys/file.zig");
     _ = @import("c/sys/mman.zig");

@@ -486,8 +486,10 @@ const Arm = struct {
         return ctx;
     }
 
+    const fp_reg = if (native_arch.isThumb()) 7 else 11;
+
     pub fn getFp(ctx: *const Arm) usize {
-        return ctx.r[11];
+        return ctx.r[fp_reg];
     }
     pub fn getPc(ctx: *const Arm) usize {
         return ctx.r[15];

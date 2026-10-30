@@ -357,7 +357,11 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
             try buf.append(if (options.global.pic) '-' else '+');
             try buf.appendSlice("noabicalls,");
             try buf.appendSlice(if (target.cpu.has(.mips, .fpu_s) and !target.cpu.has(.mips, .fpu_d))
-                "-fpxx,+nooddspreg,+single-float,"
+                // `n32` and `n64` are allowed to use odd fprs
+                (if (target.cpu.arch.isMips64())
+                    "-fpxx,-nooddspreg,+single-float,"
+                else
+                    "-fpxx,+nooddspreg,+single-float,")
             else if (target.cpu.arch.isMips64() or target.cpu.hasAny(.mips, &.{ .mips32r6, .msa }))
                 "-fpxx,-nooddspreg,+fp64,"
             else if (target.cpu.has(.mips, .mips2))

@@ -6742,7 +6742,11 @@ pub fn addCCArgs(
 
         if (target.cpu.arch.isMips() and fabi == .hard) {
             try argv.appendSlice(if (target.cpu.has(.mips, .fpu_s) and !target.cpu.has(.mips, .fpu_d))
-                &.{ "-msingle-float", "-mno-odd-spreg" }
+                // `n32` and `n64` are allowed to use odd fprs
+                (if (target.cpu.arch.isMips64())
+                    &.{ "-msingle-float", "-modd-spreg" }
+                else
+                    &.{ "-msingle-float", "-mno-odd-spreg" })
             else if (target.cpu.arch.isMips64() or target.cpu.hasAny(.mips, &.{ .mips32r6, .msa }))
                 &.{ "-mfp64", "-modd-spreg" }
             else if (target.cpu.has(.mips, .mips2))

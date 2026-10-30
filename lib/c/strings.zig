@@ -7,8 +7,8 @@ comptime {
         // bcmp is implemented in compiler_rt
         symbol(&bcopy, "bcopy");
         symbol(&bzero, "bzero");
-        symbol(&index, "index");
-        symbol(&rindex, "rindex");
+        // index is implemented in c/string.zig as strchr
+        // rindex is implemented in c/string.zig as strrchr
 
         symbol(&ffs, "ffs");
         symbol(&ffsl, "ffsl");
@@ -34,14 +34,6 @@ fn bcopy(src: *const anyopaque, dst: *anyopaque, len: usize) callconv(.c) void {
 fn bzero(s: *anyopaque, n: usize) callconv(.c) void {
     const s_cast: [*]u8 = @ptrCast(s);
     @memset(s_cast[0..n], 0);
-}
-
-fn index(str: [*:0]const c_char, value: c_int) callconv(.c) ?[*:0]c_char {
-    return @constCast(str[std.mem.findScalar(u8, std.mem.span(@as([*:0]const u8, @ptrCast(str))), @truncate(@as(c_uint, @bitCast(value)))) orelse return null ..]);
-}
-
-fn rindex(str: [*:0]const c_char, value: c_int) callconv(.c) ?[*:0]c_char {
-    return @constCast(str[std.mem.findScalarLast(u8, std.mem.span(@as([*:0]const u8, @ptrCast(str))), @truncate(@as(c_uint, @bitCast(value)))) orelse return null ..]);
 }
 
 fn firstBitSet(comptime T: type, value: T) c_int {

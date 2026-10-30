@@ -22,6 +22,8 @@ comptime {
         symbol(&strxfrm, "strxfrm");
         symbol(&strchr, "strchr");
         symbol(&strrchr, "strrchr");
+        symbol(&strchr, "index");
+        symbol(&strrchr, "rindex");
         symbol(&strcspn, "strcspn");
         symbol(&strspn, "strspn");
         symbol(&strpbrk, "strpbrk");

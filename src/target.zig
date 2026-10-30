@@ -71,6 +71,27 @@ pub fn requiresPie(target: *const std.Target, link_mode: std.lang.LinkMode) bool
     };
 }
 
+/// Computes the default image base required by the target loader or `null` for the linker default
+pub fn defaultImageBase(target: *const std.Target) ?u64 {
+    return switch (target.os.tag) {
+        .ps2 => 0x10_0000,
+        else => null,
+    };
+}
+
+/// Provides the max page size requested by the target or `null` for the linker default
+pub fn defaultMaxPageSize(target: *const std.Target) ?u64 {
+    return switch (target.os.tag) {
+        .ps2 => 128,
+        else => null,
+    };
+}
+
+/// The `PS2` kernel's `ELF` loader shifts segment addresses if the segments aren't aligned properly
+pub fn alignLoadSegmentsToMaxPageSize(target: *const std.Target) bool {
+    return target.os.tag == .ps2;
+}
+
 /// This function returns whether non-pic code is completely invalid on the given target.
 pub fn requiresPic(target: *const std.Target) bool {
     return (target.os.tag == .windows or target.os.tag == .uefi) and (target.cpu.arch == .aarch64 or target.cpu.arch == .x86_64);

@@ -890,6 +890,7 @@ pub fn exit(status: u8) noreturn {
             // If we can't exit, reboot the system instead.
             uefi.system_table.runtime_services.resetSystem(.cold, @fromBackingInt(@intCast(status)), null);
         },
+        .ps2 => std.os.ps2.exit(status),
         else => posix.system.exit(status),
     }
 }

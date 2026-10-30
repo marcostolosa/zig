@@ -1002,6 +1002,9 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
             try argv.append(gpa, "-z");
             try argv.append(gpa, try arena.print("max-page-size={d}", .{size}));
         }
+        if (target_util.alignLoadSegmentsToMaxPageSize(target)) {
+            try argv.appendSlice(gpa, &.{ "-z", "separate-loadable-segments" });
+        }
 
         if (getLDMOption(target)) |ldm| {
             try argv.appendSlice(gpa, &.{ "-m", ldm });

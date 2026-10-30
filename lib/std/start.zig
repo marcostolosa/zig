@@ -76,6 +76,11 @@ comptime {
                 if (!@hasDecl(root, start_sym_name) and @hasDecl(root, "main"))
                     @export(&wasm_freestanding_start, .{ .name = start_sym_name });
             },
+
+            .ps2 => if (!@hasDecl(root, start_sym_name)) @export(&ps2Start, .{
+                .name = start_sym_name,
+            }),
+
             .other,
             .vulkan,
             .opengl,
@@ -166,6 +171,39 @@ fn EfiMain(handle: uefi.Handle, system_table: *uefi.tables.SystemTable) callconv
                 "'uefi.Status', or 'uefi.Error!void'",
         ),
     }
+}
+
+var ps2_args: [4 + 16 * 4 + 256]u8 align(16) linksection(".data") = @splat(0xff);
+
+fn ps2Start() callconv(.naked) noreturn {
+    asm volatile (
+        \\ move $gp, $zero
+        \\ move $4, $zero
+        \\ li $5, -1
+        \\ li $6, 0x20000
+        \\ move $8, $zero
+        \\ li $3, 60
+        \\ syscall
+        \\ move $sp, $2
+        \\ j %[main]
+        :
+        : [args] "{$7}" (&ps2_args),
+          [main] "X" (&ps2Main),
+    );
+}
+
+fn ps2Main() callconv(.c) noreturn {
+    // Clear `.bss` based on `_edata` as `__bss_start` is undefined if the image has no `.bss`
+    const edata = @extern([*]u8, .{ .name = "_edata" });
+    const end = @extern([*]u8, .{ .name = "_end" });
+    @memset(edata[0 .. @intFromPtr(end) - @intFromPtr(edata)], 0);
+
+    _ = std.os.ps2.syscall2(.setup_heap, @intFromPtr(end), @bitCast(@as(isize, -1)));
+    _ = std.os.ps2.syscall1(.flush_cache, 0);
+
+    // Setup the page allocator
+    std.os.ps2.heap.init(end);
+    std.process.exit(callMain({}, std.process.Environ.Block.global));
 }
 
 fn _start() callconv(.naked) noreturn {

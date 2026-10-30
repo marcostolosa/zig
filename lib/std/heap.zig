@@ -340,7 +340,7 @@ pub const page_allocator: Allocator = if (@hasDecl(root, "os") and
     @hasDecl(root.os, "heap") and
     @hasDecl(root.os.heap, "page_allocator"))
     root.os.heap.page_allocator
-else if (builtin.target.cpu.arch.isWasm()) .{
+else if (builtin.target.os.tag == .ps2) std.os.ps2.heap.page_allocator() else if (builtin.target.cpu.arch.isWasm()) .{
     .ptr = undefined,
     .vtable = &WasmAllocator.vtable,
 } else .{
@@ -673,6 +673,11 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
         .sparc => 4 << 10,
         else => null,
     },
+    .ps2 => switch (builtin.cpu.arch) {
+        // Smallest `EE` `TLB` page according to the `EE` Core User's Manual
+        .mips64el => 4 << 10,
+        else => null,
+    },
     .ps3 => switch (builtin.cpu.arch) {
         // cell/SDK_doc/en/html/C_and_C++_standard_libraries/stdlib.html
         .powerpc64 => 1 << 20, // 1 MiB
@@ -834,6 +839,11 @@ const page_size_max_default: ?usize = switch (builtin.os.tag) {
         .mips, .mipsel, .mips64, .mips64el => 16 << 10,
         .powerpc, .powerpcle, .powerpc64, .powerpc64le => 4 << 10,
         .sparc => 4 << 10,
+        else => null,
+    },
+    .ps2 => switch (builtin.cpu.arch) {
+        // Smallest `EE` `TLB` page according to the `EE` Core User's Manual
+        .mips64el => 4 << 10,
         else => null,
     },
     .ps3 => switch (builtin.cpu.arch) {

@@ -20,6 +20,10 @@ const supports_atomic_ops = switch (arch) {
     // perform CAS operations).
     // XXX: The Linux code path is not implemented yet.
     !builtin.cpu.has(.arm, .has_v6m),
+
+    // On the `PS2` we can provide locking via interrupt masks, but on other `r5900` compatible
+    // systems this might not be the case due to a lack of usermode-enabled `DI`/`EI`.
+    .mips64, .mips64el => !cpu.has(.mips, .r5900) or builtin.target.os.tag == .ps2,
     else => true,
 };
 
@@ -31,6 +35,8 @@ const largest_atomic_size = switch (arch) {
     // available atomic operation is a test-and-set (`ldstub`), so we force
     // every atomic memory access to go through the lock.
     .sparc => if (builtin.cpu.hasAny(.sparc, &.{ .hasleoncasa, .v9 })) @sizeOf(usize) else 0,
+
+    .mips64, .mips64el => if (cpu.has(.mips, .r5900)) 0 else @sizeOf(usize),
 
     // XXX: On x86/x86_64 we could check the presence of cmpxchg8b/cmpxchg16b
     // and set this parameter accordingly.
@@ -49,6 +55,44 @@ const smallest_atomic_fetch_exch_size = switch (arch) {
 };
 
 const cache_line_size = 64;
+
+// The `r5900` has no atomics and `ps2` executables run single-threaded anyway, so the only
+// lock required is against interrupt handlers.
+const ps2_irq_lock = arch.isMips64() and cpu.has(.mips, .r5900) and builtin.target.os.tag == .ps2;
+
+// The interrupt guard open codes instructions that are not supported by `LLVM`'s `r5900` assembler
+const IrqGuard = struct {
+    const status_eie: u32 = 1 << 16;
+
+    enabled: bool,
+
+    fn status() u32 {
+        return asm volatile ("mfc0 %[s], $12"
+            : [s] "=r" (-> u32),
+        );
+    }
+
+    fn acquire() @This() {
+        if (status() & status_eie == 0) return .{ .enabled = false };
+
+        while (true) {
+            asm volatile (
+                \\.word 0x42000039 # di
+                \\.word 0x0000040f # sync.p
+                ::: .{ .memory = true });
+
+            if (status() & status_eie == 0) break;
+        }
+
+        return .{ .enabled = true };
+    }
+
+    fn release(self: @This()) void {
+        if (self.enabled) asm volatile (
+            \\.word 0x42000038 # ei
+            ::: .{ .memory = true });
+    }
+};
 
 const SpinlockTable = struct {
     // Allocate ~4096 bytes of memory for the spinlock table
@@ -96,11 +140,15 @@ const SpinlockTable = struct {
 
     list: [max_spinlocks]Spinlock = @splat(.{}),
 
+    const Lock = if (ps2_irq_lock) IrqGuard else *Spinlock;
+
     // The spinlock table behaves as a really simple hash table, mapping
     // addresses to spinlocks. The mapping is not unique but that's only a
     // performance problem as the lock will be contended by more than a pair of
     // threads.
-    fn get(self: *@This(), address: usize) *Spinlock {
+    fn get(self: *@This(), address: usize) Lock {
+        if (comptime ps2_irq_lock) return IrqGuard.acquire();
+
         var sl = &self.list[(address >> 3) % max_spinlocks];
         sl.acquire();
         return sl;

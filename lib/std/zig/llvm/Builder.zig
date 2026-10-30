@@ -294,6 +294,7 @@ pub fn tripleForTarget(allocator: Allocator, target: *const std.Target) ![]const
         .other,
         .plan9,
         .psx,
+        .ps2,
         .psp,
         .vita,
         .tios,

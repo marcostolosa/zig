@@ -2484,6 +2484,7 @@ pub const TargetQuery = struct {
         @"switch",
         gba,
         psx,
+        ps2,
         ps3,
         ps4,
         ps5,

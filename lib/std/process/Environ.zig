@@ -25,7 +25,7 @@ pub const empty: Environ = .{ .block = .empty };
 pub const Block = switch (native_os) {
     .windows => GlobalBlock,
     .emscripten => if (builtin.link_libc) PosixBlock else GlobalBlock,
-    .wasi, .freestanding, .other => GlobalBlock,
+    .wasi, .ps2, .freestanding, .other => GlobalBlock,
     else => PosixBlock,
 };
 

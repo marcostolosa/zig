@@ -52,6 +52,7 @@ pub const Os = struct {
         gba,
 
         psx,
+        ps2,
         ps3,
         ps4,
         ps5,
@@ -162,6 +163,7 @@ pub const Os = struct {
                 .serenity,
 
                 .psx,
+                .ps2,
                 .ps3,
                 .ps4,
                 .ps5,
@@ -398,6 +400,7 @@ pub const Os = struct {
                 .serenity,
 
                 .psx,
+                .ps2,
                 .ps3,
                 .ps4,
                 .ps5,
@@ -932,6 +935,7 @@ pub const Abi = enum {
                 else => .none,
             },
             .psx => .eabi,
+            .ps2 => .abin32,
             .ps3 => .ilp32,
             .psp => .eabihf,
             .vita => .eabihf,
@@ -2168,7 +2172,10 @@ pub const Cpu = struct {
                     .openbsd => &mips.cpu.octeon,
                     else => &mips.cpu.mips64r2,
                 },
-                .mips64el => &mips.cpu.mips64r2,
+                .mips64el => switch (os.tag) {
+                    .ps2 => &mips.cpu.r5900,
+                    else => &mips.cpu.mips64r2,
+                },
                 .nvptx, .nvptx64 => &nvptx.cpu.sm_52,
                 .or1k => &or1k.cpu.mor1kx,
                 .powerpc => switch (os.tag) {
@@ -2374,6 +2381,7 @@ pub fn requiresLibC(target: *const Target) bool {
         .nvcl,
         .amdhsa,
         .psx,
+        .ps2,
         .ps3,
         .ps4,
         .ps5,
@@ -2547,6 +2555,7 @@ pub const DynamicLinker = struct {
             .gba,
 
             .psx,
+            .ps2,
             .ps3,
             .psp,
             .vita,
@@ -2986,6 +2995,7 @@ pub const DynamicLinker = struct {
             .gba,
 
             .psx,
+            .ps2,
             .ps3,
             .psp,
             .vita,
@@ -3532,7 +3542,7 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) ?u16 {
             },
         },
 
-        .psx, .ps3, .psp, .vita => switch (c_type) {
+        .psx, .ps2, .ps3, .psp, .vita => switch (c_type) {
             .char => 8,
             .short, .ushort => 16,
             .int, .uint, .long, .ulong, .float => 32,

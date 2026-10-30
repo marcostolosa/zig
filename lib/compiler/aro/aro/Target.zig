@@ -1331,6 +1331,7 @@ pub fn toLLVMTriple(target: *const Target, buf: []u8) []const u8 {
         .plan9,
         .psp,
         .psx,
+        .ps2,
         .tios,
         .vita,
         => "unknown",

@@ -1137,7 +1137,7 @@ const StackIterator = union(enum) {
                 }) return .end;
 
                 it.fp = bp;
-                const ra = stripInstructionPtrAuthCode(ra_ptr.*);
+                const ra = stripInstructionPtrMarkerBits(ra_ptr.*);
                 if (ra <= 1) return .end;
                 return .{ .frame = ra };
             },
@@ -1207,7 +1207,7 @@ const StackIterator = union(enum) {
 
 /// Some platforms use pointer authentication: the upper bits of instruction pointers contain a
 /// signature. This function clears those signature bits to make the pointer directly usable.
-pub inline fn stripInstructionPtrAuthCode(ptr: usize) usize {
+pub inline fn stripInstructionPtrMarkerBits(ptr: usize) usize {
     if (native_arch.isAARCH64()) {
         // `hint 0x07` maps to `xpaclri` (or `nop` if the hardware doesn't support it)
         // The save / restore is because `xpaclri` operates on x30 (LR)

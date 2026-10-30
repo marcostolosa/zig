@@ -310,6 +310,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
         /// Application cipher is in use
         application,
     };
+    var cert_request_recieved = false;
     var pending_cipher_state: CipherState = .cleartext;
     var cipher_state = pending_cipher_state;
     const HandshakeState = enum {
@@ -819,49 +820,33 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                     },
                     .certificate_request => {
                         if (cipher_state != .handshake) return error.TlsUnexpectedMessage;
+                        if (cert_request_recieved) return error.TlsUnexpectedMessage;
                         switch (tls_version) {
                             .tls_1_3 => {
-                                var context_len: u8 = 0;
-                                var context: []const u8 = "";
-                                if (!hsd.eof()) {
-                                    try hsd.ensure(1);
-                                    context_len = hsd.decode(u8);
-                                    try hsd.ensure(context_len);
-                                    context = hsd.slice(context_len);
-                                    try hsd.ensure(2);
-                                    const extensions_size = hsd.decode(u16);
-                                    try hsd.ensure(extensions_size);
-                                    hsd.skip(extensions_size); // Ignore because we are not sending a cert, so no need to worry about extensions.
-                                }
-                                const cert_msg_prefix = .{
+                                if (handshake_state != .certificate) return error.TlsUnexpectedMessage;
+                                try hsd.ensure(1);
+                                const context_len = hsd.decode(u8);
+                                // For handshake, the context SHALL be empty per 4.3.2
+                                if (context_len != 0) return error.TlsIllegalParameter;
+
+                                try hsd.ensure(2);
+                                const extensions_size = hsd.decode(u16);
+                                try hsd.ensure(extensions_size);
+                                hsd.skip(extensions_size); // Ignore because we are not sending a cert, so no need to worry about extensions.
+                                const empty_cert_msg = .{
                                     @backingInt(tls.ContentType.handshake), @backingInt(tls.HandshakeType.certificate),
                                     context_len,
-                                };
-                                const empty_cert_msg = int(u24, 0) ++ // Certificate length
+                                } ++
+                                    int(u24, 0) ++ // Certificate length
                                     int(u16, 0); // Extension length
 
-                                var all_msgs_vec: [3][]const u8 = .{
-                                    &cert_msg_prefix,
-                                    // Echo the context back to the server
-                                    context,
-                                    &empty_cert_msg,
-                                };
-                                try output.writeVecAll(&all_msgs_vec);
+                                try output.writeAll(&empty_cert_msg);
                                 try output.flush();
                             },
                             .tls_1_2 => {
-                                if (!hsd.eof()) {
-                                    // Ignore the body of the `certificate_request` as we are sending an empty certificate list
-                                    try hsd.ensure(1);
-                                    const cert_types_len = hsd.decode(u8);
-                                    _ = try hsd.sub(cert_types_len);
-                                    try hsd.ensure(2);
-                                    const supported_algo_len = hsd.decode(u16);
-                                    _ = try hsd.sub(supported_algo_len);
-                                    try hsd.ensure(2);
-                                    const distinguished_name_len = hsd.decode(u16);
-                                    _ = try hsd.sub(distinguished_name_len);
-                                }
+                                // Must come after server key exchange, which moves to the server hello done state.
+                                // https://www.rfc-editor.org/info/rfc5246/#section-7.4.4
+                                if (handshake_state != .server_hello_done) return error.TlsUnexpectedMessage;
                                 const cert_msg = .{
                                     @backingInt(tls.ContentType.handshake), @backingInt(tls.HandshakeType.certificate),
                                 } ++
@@ -871,6 +856,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                             },
                             else => return error.TlsUnexpectedMessage,
                         }
+                        cert_request_recieved = true;
                     },
                     .certificate_verify => {
                         if (tls_version != .tls_1_3) return error.TlsUnexpectedMessage;

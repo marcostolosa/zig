@@ -4963,7 +4963,7 @@ pub fn setCpuModeSupported(zcu: *Zcu, requested_mode: InternPool.CpuMode) union(
     bad_mode: enum { thumb_has_noarm },
 } {
     const target = zcu.getTarget();
-    const backend = target_util.zigBackend(target, zcu.comp.config.use_llvm);
+    const backend = std.zig.compilerBackend(target, zcu.comp.config.use_llvm);
     if (target.cpu.arch.isThumb() and target.cpu.has(.arm, .noarm) and requested_mode.thumb == .arm) {
         return .{ .bad_mode = .thumb_has_noarm };
     }

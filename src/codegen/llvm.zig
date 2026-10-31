@@ -602,7 +602,7 @@ pub const Object = struct {
                     .@"32" => unreachable,
                     .@"16" => "+16bit-mode,-32bit-mode",
                 },
-                .mips => switch (cpu_mode.mips) {
+                .mips, .mipsel => switch (cpu_mode.mips) {
                     .mips => unreachable,
                     .mips16 => "+mips16",
                     .micromips => "+micromips",

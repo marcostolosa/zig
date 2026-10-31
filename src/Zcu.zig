@@ -4957,6 +4957,44 @@ pub fn callconvSupported(zcu: *Zcu, cc: std.lang.CallingConvention) union(enum) 
     return .ok;
 }
 
+pub fn setCpuModeSupported(zcu: *Zcu, requested_mode: InternPool.CpuMode) union(enum) {
+    ok,
+    bad_backend: std.lang.CompilerBackend, // value is current backend
+    bad_mode: enum { thumb_has_noarm },
+} {
+    const target = zcu.getTarget();
+    const backend = target_util.zigBackend(target, zcu.comp.config.use_llvm);
+    if (target.cpu.arch.isThumb() and target.cpu.has(.arm, .noarm) and requested_mode.thumb == .arm) {
+        return .{ .bad_mode = .thumb_has_noarm };
+    }
+
+    const backend_ok = ok: switch (backend) {
+        .stage1 => unreachable,
+        .other => unreachable,
+        _ => unreachable,
+
+        .stage2_llvm => {
+            dev.check(.llvm_backend);
+            break :ok switch (target.cpu.arch) {
+                .arm, .armeb, .thumb, .thumbeb, .x86, .mips, .mipsel => true,
+                .mips64, .mips64el => requested_mode.mips == .mips,
+                else => false,
+            };
+        },
+        .stage2_c => {
+            dev.check(.c_backend);
+            break :ok switch (target.cpu.arch) {
+                .arm, .armeb, .thumb, .thumbeb, .mips, .mipsel => true,
+                .mips64, .mips64el => requested_mode.mips == .mips,
+                else => false,
+            };
+        },
+        else => false,
+    };
+    if (!backend_ok) return .{ .bad_backend = backend };
+    return .ok;
+}
+
 pub const CodegenFailError = Io.Cancelable || error{
     /// Indicates the error message has been already stored at `Zcu.failed_codegen`.
     AlreadyReported,

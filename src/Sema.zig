@@ -5728,18 +5728,32 @@ fn zirSetCpuMode(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstDat
     };
 
     const target = zcu.getTarget();
-    if (target.cpu.arch == .x86 and target.ofmt == .c) {
-        return sema.fail(block, operand_src, "@setCpuMode not supported by C compiler backend for target architecture '{t}'", .{target.cpu.arch});
-    }
-
     const mode_int: u2 = @intCast(feature_val.toUnsignedInt(zcu));
     const cpu_mode: InternPool.CpuMode = switch (target.cpu.arch) {
         .arm, .armeb => .{ .arm = @fromBackingInt(mode_int) },
         .thumb, .thumbeb => .{ .thumb = @fromBackingInt(1 - mode_int) },
         .x86 => .{ .x86 = @fromBackingInt(1 - mode_int) },
-        .mips => .{ .mips = @fromBackingInt(mode_int) },
-        else => unreachable,
+        .mips, .mipsel, .mips64, .mips64el => .{ .mips = @fromBackingInt(mode_int) },
+        else => @panic("std.lang is corrupt"),
     };
+
+    switch (zcu.setCpuModeSupported(cpu_mode)) {
+        .bad_backend => |backend| return sema.fail(
+            block,
+            operand_src,
+            "operand '{f}' to @setCpuMode not supported by compiler backend '{t}' for target architecture '{t}'",
+            .{ feature_val.fmtValue(zcu), backend, target.cpu.arch },
+        ),
+        .bad_mode => |why| switch (why) {
+            .thumb_has_noarm => return sema.fail(
+                block,
+                operand_src,
+                "operand '{f}' to @setCpuMode is not supported for target architecture '{t}': 'noarm' feature is enabled",
+                .{ feature_val.fmtValue(zcu), target.cpu.arch },
+            ),
+        },
+        .ok => {},
+    }
 
     ip.funcSetCpuMode(io, func, cpu_mode);
 }

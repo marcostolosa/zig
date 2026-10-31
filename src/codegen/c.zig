@@ -1782,6 +1782,17 @@ pub const DeclGen = struct {
 
             if (kind == .definition and (func_analysis.disable_intrinsics or dg.mod.no_builtin))
                 try w.writeAll("zig_no_builtin ");
+
+            if (func_analysis.changed_cpu_mode) {
+                switch (zcu.getTarget().cpu.arch) {
+                    .arm, .armeb => try w.writeAll("zig_func_target(\"thumb\") "),
+                    .thumb, .thumbeb => try w.writeAll("zig_func_target(\"arm\") "),
+                    .x86 => {
+                        // TODO: C backend: implement @setCpuMode on x86 arch
+                    },
+                    else => unreachable,
+                }
+            }
         }
 
         // While incomplete types are usually an acceptable substitute for "void", this is not true

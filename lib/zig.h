@@ -263,6 +263,12 @@
 #define zig_no_builtin
 #endif
 
+#if zig_has_attribute(target)
+#define zig_func_target(name) __attribute__((target(name)))
+#else
+#define zig_func_target(name) zig_func_target_unavailable
+#endif
+
 #if zig_has_attribute(patchable_function_entry)
 #define zig_patchable_function_entry(count) __attribute__((patchable_function_entry(count)))
 #else

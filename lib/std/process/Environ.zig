@@ -536,7 +536,7 @@ pub fn createMap(env: Environ, allocator: Allocator) CreateMapError!Map {
         }
 
         try map.putPosixBlock(.{ .slice = environ });
-    } else try map.putPosixBlock(env.block.view());
+    } else if (Block == PosixBlock) try map.putPosixBlock(env.block.view());
     return map;
 }
 

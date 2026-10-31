@@ -292,3 +292,46 @@ pub fn exit(status: u8) noreturn {
     _ = syscall1(.exit, status);
     unreachable;
 }
+
+/// Program arguments passed by the kernel
+pub const ProgramArgs = extern struct {
+    const max_nr_args = 16;
+    const max_payload_size = 256;
+
+    /// Number of arguments in `args`
+    nr_args: c_int,
+    /// Array of `C` strings pointing into `payload`
+    args: [max_nr_args][*:0]const u8,
+    /// Payload data, holding the program arguments
+    payload: [max_payload_size]u8,
+};
+
+/// Enumerates cache operations that can be performed by the kernel through `cacheOp`
+pub const CacheOp = enum(c_int) {
+    /// Writes-back and invalidates the data cache
+    dxwbin = 0,
+    /// Invalidates the data cache
+    dxin = 1,
+    /// Invalidates the instruction and Branch Target Address Cache (`BTAC`)
+    bfh_ixin = 2,
+    /// Invalidates the data, instruction and Branch Target Address Cache (`BTAC`)
+    dxin_bfh_ixin = 3,
+};
+
+/// Performs an `EE` cache maintenance operation
+pub fn cacheOp(
+    /// Determines the cache operation performed by the kernel
+    op: CacheOp,
+) void {
+    _ = syscall1(.flush_cache, @intCast(@backingInt(op)));
+}
+
+/// Registers the executable's heap region with the `EE` kernel
+pub fn setupHeap(
+    /// Base address of the heap
+    base: *const anyopaque,
+    /// Size in bytes of the heap
+    size: ?u32,
+) void {
+    _ = syscall2(.setup_heap, @intFromPtr(base), size orelse @bitCast(@as(isize, -1)));
+}

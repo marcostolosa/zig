@@ -173,9 +173,11 @@ fn EfiMain(handle: uefi.Handle, system_table: *uefi.tables.SystemTable) callconv
     }
 }
 
-var ps2_args: [4 + 16 * 4 + 256]u8 align(16) linksection(".data") = @splat(0xff);
+// Forcibly placed in the data segment as `.bss` would be cleared afterwards in `ps2Main`
+var ps2_args: std.os.ps2.ProgramArgs align(16) linksection(".data") = undefined;
 
 fn ps2Start() callconv(.naked) noreturn {
+    // Register the executable's main thread with the `EE` kernel
     asm volatile (
         \\ move $gp, $zero
         \\ move $4, $zero
@@ -198,8 +200,9 @@ fn ps2Main() callconv(.c) noreturn {
     const end = @extern([*]u8, .{ .name = "_end" });
     @memset(edata[0 .. @intFromPtr(end) - @intFromPtr(edata)], 0);
 
-    _ = std.os.ps2.syscall2(.setup_heap, @intFromPtr(end), @bitCast(@as(isize, -1)));
-    _ = std.os.ps2.syscall1(.flush_cache, 0);
+    // Configure the heap up to the main thread's stack
+    std.os.ps2.setupHeap(end, null);
+    std.os.ps2.cacheOp(.dxwbin);
 
     // Setup the page allocator
     std.os.ps2.heap.init(end);

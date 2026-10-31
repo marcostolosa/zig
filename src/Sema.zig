@@ -5726,11 +5726,19 @@ fn zirSetCpuMode(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstDat
         .memoized_state,
         => return, // does nothing outside a function
     };
-    const int_val: u1 = @intCast(feature_val.toUnsignedInt(zcu));
+
+    const CpuMode = struct {
+        const arm: u1 = 0;
+        const thumb: u1 = 1;
+        const @"16": u1 = 0;
+        const @"32": u1 = 1;
+    };
+
+    const chosen_mode: u1 = @intCast(feature_val.toUnsignedInt(zcu));
     const changed_cpu_mode: bool = switch (zcu.getTarget().cpu.arch) {
-        .arm, .armeb => int_val != 0, // != .arm
-        .thumb, .thumbeb => int_val != 1, // != .thumb
-        .x86 => int_val != 1, // != .@"32"
+        .arm, .armeb => chosen_mode != CpuMode.arm,
+        .thumb, .thumbeb => chosen_mode != CpuMode.thumb,
+        .x86 => chosen_mode != CpuMode.@"32",
         else => unreachable,
     };
     ip.funcSetChangedCpuMode(io, func, changed_cpu_mode);

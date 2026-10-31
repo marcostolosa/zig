@@ -649,17 +649,15 @@ pub const Object = struct {
 
         if (func_analysis.changed_cpu_mode) {
             if (owner_mod.llvm_cpu_features) |s| {
+                const features = switch (owner_mod.resolved_target.result.cpu.arch) {
+                    .arm, .armeb => "+thumb-mode",
+                    .thumb, .thumbeb => "-thumb-mode",
+                    .x86 => "+16bit-mode,-32bit-mode",
+                    else => unreachable,
+                };
                 try attributes.addFnAttr(.{ .string = .{
                     .kind = try o.builder.string("target-features"),
-                    .value = try o.builder.fmt("{s},{s}", .{
-                        s,
-                        switch (owner_mod.resolved_target.result.cpu.arch) {
-                            .arm, .armeb => "+thumb-mode",
-                            .thumb, .thumbeb => "-thumb-mode",
-                            .x86 => "+16bit-mode,-32bit-mode",
-                            else => unreachable,
-                        },
-                    }),
+                    .value = try o.builder.fmt("{s},{s}", .{ s, features }),
                 } }, &o.builder);
             }
         }

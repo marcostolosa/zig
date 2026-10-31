@@ -20,7 +20,10 @@ var stdin_buffer: [4096]u8 = undefined;
 var stdout_buffer: [4096]u8 = undefined;
 var stdin_reader: Io.File.Reader = undefined;
 var stdout_writer: Io.File.Writer = undefined;
-const runner_threaded_io: Io = Io.Threaded.global_single_threaded.io();
+const runner_threaded_io: Io = if (builtin.os.tag == .ps2)
+    std.os.ps2.io.io
+else
+    Io.Threaded.global_single_threaded.io();
 
 /// Keep in sync with logic in `std.Build.addRunArtifact` which decides whether
 /// the test runner will communicate with the build runner via `std.zig.Server`.
@@ -30,7 +33,7 @@ const need_simple = switch (builtin.zig_backend) {
     .stage2_powerpc,
     .stage2_riscv64,
     => true,
-    else => false,
+    else => builtin.os.tag == .ps2,
 };
 
 pub fn main(init: std.process.Init.Minimal) void {
@@ -368,16 +371,16 @@ pub fn mainSimple() anyerror!void {
     // is the backend capable of calling `Io.File.writeAll`?
     const enable_write = switch (builtin.zig_backend) {
         .stage2_aarch64, .stage2_riscv64 => true,
-        else => false,
+        else => builtin.os.tag == .ps2,
     };
     // is the backend capable of calling `Io.Writer.print`?
     const enable_print = switch (builtin.zig_backend) {
         .stage2_aarch64, .stage2_riscv64 => true,
-        else => false,
+        else => builtin.os.tag == .ps2,
     };
 
     testing.allocator_instance = .init(std.heap.page_allocator, .{});
-    testing.io_instance = .init(testing.allocator, .{});
+    if (builtin.os.tag != .ps2) testing.io_instance = .init(testing.allocator, .{});
 
     var passed: u64 = 0;
     var skipped: u64 = 0;

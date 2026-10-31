@@ -340,7 +340,10 @@ pub const page_allocator: Allocator = if (@hasDecl(root, "os") and
     @hasDecl(root.os, "heap") and
     @hasDecl(root.os.heap, "page_allocator"))
     root.os.heap.page_allocator
-else if (builtin.target.os.tag == .ps2) std.os.ps2.heap.page_allocator() else if (builtin.target.cpu.arch.isWasm()) .{
+else if (builtin.target.os.tag == .ps2) .{
+    .ptr = undefined,
+    .vtable = &BrkAllocator.vtable,
+} else if (builtin.target.cpu.arch.isWasm()) .{
     .ptr = undefined,
     .vtable = &WasmAllocator.vtable,
 } else .{

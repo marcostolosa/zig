@@ -172,14 +172,15 @@ fn allocBigPages(n: usize) usize {
         const page_index = @wasmMemoryGrow(0, pow2_pages * pages_per_bigpage);
         if (page_index == -1) return 0;
         return @as(usize, @intCast(page_index)) * page_size;
-    } else if (builtin.os.tag == .linux) {
+    } else if (builtin.os.tag == .linux or builtin.os.tag == .ps2) {
+        const brk = if (builtin.os.tag == .ps2) std.os.ps2.brk else std.os.linux.brk;
         const prev_brk = global.prev_brk;
         const start_brk = if (prev_brk == 0)
-            std.mem.alignForward(usize, std.os.linux.brk(0), bigpage_size)
+            std.mem.alignForward(usize, brk(0), bigpage_size)
         else
             prev_brk;
         const end_brk = start_brk + pow2_pages * bigpage_size;
-        const new_prev_brk = std.os.linux.brk(end_brk);
+        const new_prev_brk = brk(end_brk);
         global.prev_brk = new_prev_brk;
         if (new_prev_brk != end_brk) return 0;
         return start_brk;

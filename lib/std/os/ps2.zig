@@ -259,19 +259,17 @@ pub const sio = struct {
     }
 };
 
-pub const heap = struct {
-    var state: std.heap.FixedBufferAllocator = .init(&.{});
+var cur_brk: usize = 0;
 
-    pub fn page_allocator() std.mem.Allocator {
-        return state.allocator();
-    }
+/// Implements a `Linux`-esque `brk`, with the caveat that it never shrinks
+pub fn brk(addr: usize) usize {
+    if (cur_brk == 0) cur_brk = @intFromPtr(@extern([*]u8, .{ .name = "_end" }));
+    if (addr != 0 and addr >= cur_brk and addr <= syscall0(.end_of_heap)) cur_brk = addr;
 
-    pub fn init(start: [*]u8) void {
-        const top = syscall0(.end_of_heap);
-        state = .init(start[0 .. top - @intFromPtr(start)]);
-    }
-};
+    return cur_brk;
+}
 
+/// Exits the currently running executable
 pub fn exit(status: u8) noreturn {
     sio.writeAll("ZIG_PS2_EXIT ");
 

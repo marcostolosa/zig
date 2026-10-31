@@ -204,8 +204,6 @@ fn ps2Main() callconv(.c) noreturn {
     std.os.ps2.setupHeap(end, null);
     std.os.ps2.cacheOp(.dxwbin);
 
-    // Setup the page allocator
-    std.os.ps2.heap.init(end);
     std.process.exit(callMain({}, std.process.Environ.Block.global));
 }
 

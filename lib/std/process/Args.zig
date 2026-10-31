@@ -14,7 +14,7 @@ vector: Vector,
 /// queried and heap-allocated at runtime.
 pub const Vector = switch (native_os) {
     .windows => []const u16, // WTF-16 encoded
-    .wasi, .ps2, .freestanding, .other => void,
+    .wasi, .freestanding, .other => void,
     else => []const [*:0]const u8,
 };
 

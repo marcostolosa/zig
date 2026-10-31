@@ -204,7 +204,8 @@ fn ps2Main() callconv(.c) noreturn {
     std.os.ps2.setupHeap(end, null);
     std.os.ps2.cacheOp(.dxwbin);
 
-    std.process.exit(callMain({}, std.process.Environ.Block.global));
+    const nr_args: usize = @intCast(std.math.clamp(ps2_args.nr_args, 0, ps2_args.args.len));
+    std.process.exit(callMain(ps2_args.args[0..nr_args], std.process.Environ.Block.global));
 }
 
 fn _start() callconv(.naked) noreturn {
@@ -830,7 +831,7 @@ const bad_main_ret = "expected return type of main to be 'void', '!void', 'noret
 
 const use_safe_allocator = !is_wasm and switch (builtin.mode) {
     .debug, .safe => true,
-    .fast, .small => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
+    .fast, .small => !builtin.link_libc and builtin.single_threaded and native_os != .ps2, // Also not ideal.
 };
 var safe_allocator: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
 
@@ -848,6 +849,8 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
         std.heap.c_allocator
     else if (is_wasm)
         std.heap.wasm_allocator
+    else if (native_os == .ps2)
+        std.heap.brk_allocator
     else if (!builtin.single_threaded)
         std.heap.smp_allocator
     else
@@ -862,11 +865,12 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
     var arena_allocator = std.heap.ArenaAllocator.init(arena_backing_allocator);
     defer arena_allocator.deinit();
 
-    var threaded: std.Io.Threaded = .init(gpa, .{
+    var threaded: if (native_os == .ps2) void else std.Io.Threaded = if (native_os == .ps2) {} else .init(gpa, .{
         .argv0 = .init(.{ .vector = args }),
         .environ = .{ .block = environ },
     });
-    defer threaded.deinit();
+    defer if (native_os != .ps2) threaded.deinit();
+    const io = if (native_os == .ps2) std.os.ps2.io.io else threaded.io();
 
     var environ_map = std.process.Environ.createMap(.{ .block = environ }, gpa) catch |err|
         std.process.fatal("failed to parse environment variables: {t}", .{err});
@@ -882,7 +886,7 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
         },
         .arena = &arena_allocator,
         .gpa = gpa,
-        .io = threaded.io(),
+        .io = io,
         .environ_map = &environ_map,
         .preopens = preopens,
     }));

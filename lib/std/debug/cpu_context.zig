@@ -482,6 +482,13 @@ const Arm = struct {
         // them to R1-R2 and STM those.  We could save a couple extra bytes/cycles by doing two
         // groups of 4xMOV+STM instead of four groups of 2xMOV+STM, but that would require
         // clobbering five registers instead of three, and that probably negates the advantage.
+        //
+        // r0 is both an input register and a clobber. musl and glibc achieve this with
+        // a "+" constraint, which isn't supported in Zig, so instead we separately list
+        // r0 as both an input and an output. Listing it as an input and a clobber would
+        // cause the C backend to emit invalid code that results in:
+        // "error: asm-specifier for input or output variable conflicts with asm clobber list"
+        var r0_out: usize = undefined;
         asm volatile (
             \\ str r0, [r0, #-4]
             \\ stm r0!, {r1-r7}
@@ -501,10 +508,7 @@ const Arm = struct {
             \\ mov r1, r14
             \\ mov r2, r15
             \\ stm r0!, {r1-r2}
-            \\ // The C backend gets upset if you try to use "+{r0}" as a constraint or add
-            \\ // R0 to the clobbers list.  So instead just restore its original value:
-            \\ subs r0, #60
-            :
+            : [r0_out] "={r0}" (r0_out),
             : [r] "{r0}" (&ctx.r[1]),
             : .{ .r1 = true, .r2 = true, .memory = true });
         return ctx;

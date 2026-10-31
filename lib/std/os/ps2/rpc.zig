@@ -12,6 +12,7 @@ const Cmd = enum(u32) {
     rpc_end = 0x8000_0008,
     rpc_bind = 0x8000_0009,
     rpc_call = 0x8000_000a,
+    rpc_rdata = 0x8000_000c,
 
     _,
 };
@@ -41,6 +42,8 @@ fn Packet(comptime Body: type) type {
 
 /// Payload bytes in `call_buf` that go ahead of the associated packet in the same chain
 const Payload = struct {
+    /// `EE` address to read from
+    src: u32,
     /// `IOP` address to write to
     dst: u32,
     /// Size of the payload data in bytes
@@ -97,16 +100,28 @@ const CallBody = extern struct {
     _pad: [2]u32 = @splat(0),
 };
 
+/// `.rpc_rdata`: The `IOP` asks for `size` bytes from the `EE`
+const RdataBody = extern struct {
+    rpc: RpcFields = .{},
+    /// `EE` source address
+    src: u32,
+    /// `IOP` destination address
+    dst: u32,
+    /// Size in bytes of the data to be transferred
+    size: u32,
+    _pad: [5]u32,
+};
+
 /// Body of the `.rpc_end` packet
 const EndBody = extern struct {
     rpc: RpcFields = .{},
     /// Request this packet completes
     request: Cmd,
     /// Server ID
-    server: u32,
-    buf: u32,
-    cbuf: u32,
-    _pad: [4]u32,
+    server: u32 = 0,
+    buf: u32 = 0,
+    cbuf: u32 = 0,
+    _pad: [4]u32 = @splat(0),
 };
 
 /// Outgoing packet to the `IOP`
@@ -116,6 +131,8 @@ const Out = enum {
     init_rpc,
     bind,
     call,
+    /// Answers an `.rpc_rdata` request with the data as the payload
+    end,
 
     fn header(comptime out: Out) Header {
         return switch (out) {
@@ -124,6 +141,7 @@ const Out = enum {
             .init_rpc => .{ .cmd = .init_cmd, .opt = 1 },
             .bind => .{ .cmd = .rpc_bind },
             .call => .{ .cmd = .rpc_call },
+            .end => .{ .cmd = .rpc_end },
         };
     }
 
@@ -133,6 +151,7 @@ const Out = enum {
             .init_rpc => extern struct {},
             .bind => BindBody,
             .call => CallBody,
+            .end => EndBody,
         };
     }
 };
@@ -142,6 +161,7 @@ const In = extern union {
     hdr: Header,
     change_saddr: Packet(BufBody),
     set_sreg: Packet(SetSregBody),
+    rdata: Packet(RdataBody),
     end: Packet(EndBody),
 };
 
@@ -288,7 +308,11 @@ fn callRaw(server: u32, buf: u32, func: u32, args_size: u32, result_size: u32) v
         .result = @intFromPtr(&call_buf),
         .result_size = result_size,
         .server = server,
-    }, .{ .dst = buf, .size = args_size });
+    }, .{
+        .src = @intFromPtr(&call_buf),
+        .dst = buf,
+        .size = args_size,
+    });
 }
 
 /// Sends a packet without an associated payload
@@ -319,7 +343,7 @@ fn submit(size: u32, payload: ?Payload) void {
         hdr.payload_dst = p.dst;
 
         list[0] = .{
-            .src = @intFromPtr(&call_buf),
+            .src = p.src,
             .dst = p.dst,
             .size = p.size,
             .attr = .{},
@@ -358,6 +382,7 @@ fn receive() In {
 
         switch (packet.hdr.cmd) {
             .change_saddr => iop_recv_buf = packet.change_saddr.body.buf,
+            .rpc_rdata => sendData(packet.rdata.body),
 
             else => return packet,
         }
@@ -370,6 +395,30 @@ fn complete(request: Cmd) EndBody {
         const packet = receive();
         if (packet.hdr.cmd == .rpc_end and packet.end.body.request == request)
             return packet.end.body;
+    }
+}
+
+/// Answers an `IOP` request for `EE` memory
+fn sendData(request: RdataBody) void {
+    // Write back any dirty lines belonging to the request so the DMA controller picks them up
+    writeBackDCache(request.src, request.size);
+    sendWith(.end, .{
+        .rpc = .{ .packet_addr = request.rpc.packet_addr, .client = request.rpc.client },
+        .request = .rpc_rdata,
+    }, .{ .src = request.src, .dst = request.dst, .size = request.size });
+}
+
+/// Writes back data cache lines associated with [`size`, `addr` + `size`)
+fn writeBackDCache(addr: u32, size: u32) void {
+    var line = addr & ~@as(u32, 63);
+    while (line < addr + size) : (line += 64) {
+        asm volatile (
+            \\ sync
+            \\ cache 0x18, 0(%[line])
+            \\ sync
+            :
+            : [line] "r" (line),
+            : .{ .memory = true });
     }
 }
 

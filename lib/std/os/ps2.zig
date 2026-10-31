@@ -1,6 +1,7 @@
 const std = @import("std");
 
 pub const io = @import("ps2/io.zig");
+pub const sif = @import("ps2/sif.zig");
 
 pub const Sys = enum(i32) {
     exit = 4,
@@ -8,6 +9,10 @@ pub const Sys = enum(i32) {
     setup_heap = 0x3d,
     end_of_heap = 0x3e,
     flush_cache = 0x64,
+    sif_set_dma = 0x77,
+    sif_set_dchain = 0x78,
+    sif_set_reg = 0x79,
+    sif_get_reg = 0x7a,
 };
 
 const SysInt = usize;

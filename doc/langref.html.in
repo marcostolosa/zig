@@ -6103,6 +6103,13 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       </p>
       {#header_close#}
 
+      {#header_open|@setCpuMode#}
+      <pre>{#syntax#}@setCpuMode(cpu_mode: CpuMode) void{#endsyntax#}</pre>
+      <p>Overrides the per-function CPU mode for the enclosing function.</p>
+      <p>This can be used to set a function's instruction set on architectures such as ARM.</p>
+      <p>{#syntax#}CpuMode{#endsyntax#} can be found with {#syntax#}@import("std").lang.CpuMode{#endsyntax#}.</p>
+      {#header_close#}
+
       {#header_close#}
 
       {#header_open|Optimization Mode#}

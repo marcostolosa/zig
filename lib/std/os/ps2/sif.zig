@@ -26,6 +26,15 @@ pub const Reg = enum(u32) {
     sys_rpc_init = 0x8000_0002,
 };
 
+/// Layout of `.ms_flag` and `.sm_flag`
+pub const Flag = packed struct(u32) {
+    _0: u16 = 0,
+    sif_init: bool = false,
+    cmd_init: bool = false,
+    boot_end: bool = false,
+    _19: u13 = 0,
+};
+
 /// Single entry in a `DMA` transfer list
 pub const DmaTransfer = extern struct {
     /// `EE` source address
@@ -72,4 +81,13 @@ pub fn getReg(reg: Reg) u32 {
 /// Updates the value of the requested `SIF` register to `val`
 pub fn setReg(reg: Reg, val: u32) void {
     _ = ps2.syscall2(.sif_set_reg, @backingInt(reg), val);
+}
+
+/// Control register of DMA channel `5` (`SIF0`)
+const sif0_chcr: *volatile u32 = @ptrFromInt(0x1000_c000);
+
+/// Determines whether `SIF0` is currently armed to receive the next packet
+pub fn receiveArmed() bool {
+    // Checks `CHCR.STR`
+    return sif0_chcr.* & 0x100 != 0;
 }

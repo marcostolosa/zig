@@ -2,6 +2,7 @@ const std = @import("std");
 
 pub const io = @import("ps2/io.zig");
 pub const sif = @import("ps2/sif.zig");
+pub const rpc = @import("ps2/rpc.zig");
 
 pub const Sys = enum(i32) {
     exit = 4,

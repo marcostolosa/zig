@@ -2091,8 +2091,10 @@ pub fn defaultUnwindTables(t: *const std.Target) std.lang.UnwindTables {
         else => {},
         // The old 32-bit x86 variant of SEH doesn't support tables.
         .x86 => if (t.os.tag == .windows) return .none,
+        .mips64el => if (t.os.tag == .ps2) return .none,
         .nvptx, .nvptx64, .spirv32, .spirv64 => return .none,
     }
+
     return .async;
 }
 

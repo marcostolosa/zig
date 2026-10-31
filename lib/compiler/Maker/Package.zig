@@ -81,10 +81,11 @@ pub const Hash = struct {
 
     pub fn toSlice(ph: *const Hash) []const u8 {
         var end: usize = ph.bytes.len;
-        while (true) {
+        while (end > 0) {
             end -= 1;
             if (ph.bytes[end] != 0) return ph.bytes[0 .. end + 1];
         }
+        return &.{};
     }
 
     pub fn eql(a: *const Hash, b: *const Hash) bool {
@@ -168,6 +169,12 @@ pub const Hash = struct {
         try std.testing.expectEqualSlices(u8, &expected_name, &project_id.padded_name);
 
         try std.testing.expectEqual(0x99490101, project_id.fingerprint_id);
+    }
+
+    test "initPath empty sub_path" {
+        const hash = initPath("", false);
+        const slice = hash.toSlice();
+        try std.testing.expectEqualSlices(u8, "", slice);
     }
 };
 

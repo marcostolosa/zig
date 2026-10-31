@@ -36,6 +36,25 @@ else if (use_libc)
 else switch (native_os) {
     .linux => linux,
     .plan9 => std.os.plan9,
+    .ps2 => struct {
+        pub const fd_t = i32;
+        pub const STDIN_FILENO = 0;
+        pub const STDOUT_FILENO = 1;
+        pub const STDERR_FILENO = 2;
+
+        pub const pid_t = void;
+        pub const pollfd = void;
+        pub const uid_t = void;
+        pub const gid_t = void;
+        pub const mode_t = u0;
+        pub const nlink_t = u0;
+        pub const blksize_t = void;
+        pub const ino_t = void;
+        pub const IFNAMESIZE = {};
+        pub const SIG = void;
+        pub const cmsghdr = void;
+        pub const cmsg_align = {};
+    },
     .psp => struct {
         pub const fd_t = i32;
         pub const pid_t = void;

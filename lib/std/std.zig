@@ -219,7 +219,12 @@ pub const Options = struct {
     /// implementation based on coroutines, one likely wants `std.debug.print`
     /// to directly write to stderr without trying to interact with the code
     /// being debugged.
-    pub const debug_io: Io = if (@hasDecl(root, "std_options_debug_io")) root.std_options_debug_io else debug_threaded_io.?.io();
+    pub const debug_io: Io = if (@hasDecl(root, "std_options_debug_io"))
+        root.std_options_debug_io
+    else if (@import("builtin").os.tag == .ps2)
+        os.ps2.io.io
+    else
+        debug_threaded_io.?.io();
 
     /// Overrides `std.Io.File.Permissions`.
     pub const FilePermissions: ?type = if (@hasDecl(root, "std_options_FilePermissions")) root.std_options_FilePermissions else null;

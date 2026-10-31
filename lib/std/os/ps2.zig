@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const io = @import("ps2/io.zig");
+
 pub const Sys = enum(i32) {
     exit = 4,
     setup_thread = 0x3c,

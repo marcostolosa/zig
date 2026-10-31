@@ -1447,6 +1447,11 @@ fn analyzeBodyInner(
                         i += 1;
                         continue;
                     },
+                    .set_cpu_mode => {
+                        try sema.zirSetCpuMode(block, extended);
+                        i += 1;
+                        continue;
+                    },
                     .restore_err_ret_index => {
                         try sema.zirRestoreErrRetIndex(block, extended);
                         i += 1;
@@ -5696,6 +5701,18 @@ fn zirDisableIntrinsics(sema: *Sema) CompileError!void {
     };
     ip.funcSetDisableIntrinsics(io, func);
     sema.allow_memoize = false;
+}
+
+fn zirSetCpuMode(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstData) CompileError!void {
+    const extra = sema.code.extraData(Zir.Inst.UnNode, extended.operand).data;
+    const uncoerced_feature = sema.resolveInst(extra.operand);
+    const operand_src = block.builtinCallArgSrc(extra.node, 0);
+
+    const feature_ty = try sema.getStdLangType(operand_src, .CpuMode);
+    const coerced_feature = try sema.coerce(block, feature_ty, uncoerced_feature, operand_src);
+    const feature_val = try sema.resolveConstDefinedValue(block, operand_src, coerced_feature, .{ .simple = .operand_setCpuMode });
+
+    log.debug("zirSetCpuMode val: {f}", .{feature_val.fmtValueSema(sema)});
 }
 
 fn zirSetFloatMode(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstData) CompileError!void {
@@ -25493,6 +25510,7 @@ fn zirStdLangValue(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstD
         .export_options     => .ExportOptions,
         .extern_options     => .ExternOptions,
         .branch_hint        => .BranchHint,
+        .cpu_mode           => .CpuMode,
         .clobbers           => .@"assembly.Clobbers",
         .pointer_size       => .@"Type.Pointer.Size",
         .pointer_attributes => .@"Type.Pointer.Attributes",
@@ -35446,6 +35464,7 @@ fn getExpectedBuiltinFnType(sema: *Sema, decl: Zcu.StdLangDecl) CompileError!Typ
         .ExportOptions,
         .ExternOptions,
         .BranchHint,
+        .CpuMode,
         .assembly,
         .@"assembly.Clobbers",
         .Type,

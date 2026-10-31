@@ -1123,6 +1123,7 @@ pub fn ensureMemoizedStateUpToDate(
             .main => .Type,
             .panic => .panic,
             .va_list => .VaList,
+            .cpu_mode => .CpuMode,
             .assembly => .assembly,
         };
         if (zcu.std_lang_decl_values.get(to_check) != .none) return;

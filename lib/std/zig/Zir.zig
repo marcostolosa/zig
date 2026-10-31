@@ -1632,6 +1632,7 @@ pub const Inst = struct {
                     .breakpoint,
                     .disable_instrumentation,
                     .disable_intrinsics,
+                    .set_cpu_mode,
                     => true,
                     else => false,
                 },
@@ -2047,6 +2048,9 @@ pub const Inst = struct {
         disable_instrumentation,
         /// Implement builtin `@disableIntrinsics`. `operand` is `src_node: i32`.
         disable_intrinsics,
+        /// Implement builtin `@setCpuMode`
+        /// `operand` is payload index to `UnNode`.
+        set_cpu_mode,
         /// Implements the `@select` builtin.
         /// `operand` is payload index to `Select`.
         select,
@@ -3639,6 +3643,7 @@ pub const Inst = struct {
         export_options,
         extern_options,
         branch_hint,
+        cpu_mode,
         clobbers,
         pointer_size,
         pointer_attributes,
@@ -4415,6 +4420,7 @@ fn findTrackableInner(
                 .breakpoint,
                 .disable_instrumentation,
                 .disable_intrinsics,
+                .set_cpu_mode,
                 .select,
                 .int_from_error,
                 .error_from_int,

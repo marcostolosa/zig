@@ -1267,6 +1267,24 @@ pub const BranchHint = enum(u3) {
     unpredictable,
 };
 
+/// This data structure is used by the Zig language code generation and
+/// therefore must be kept in sync with the compiler implementation.
+pub const CpuMode = switch (builtin.cpu.arch) {
+    .arm, .armeb, .thumb, .thumbeb => enum(u1) {
+        /// Equivalent to the `.arm` directive in assembly.
+        arm,
+        /// Equivalent to the `.thumb` directive in assembly.
+        thumb,
+    },
+    .x86 => enum(u1) {
+        /// Equivalent to the `.code16gcc` directive in assembly.
+        @"16",
+        /// Equivalent to the `.code32` directive in assembly.
+        @"32",
+    },
+    else => void,
+};
+
 /// This enum is set by the compiler and communicates which compiler
 /// implementation is used to produce machine code.
 ///

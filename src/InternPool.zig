@@ -81,6 +81,7 @@ namespace_name_deps: std.array_hash_map.Auto(NamespaceNameKey, DepEntry.Index),
 memoized_state_main_deps: DepEntry.Index.Optional,
 memoized_state_panic_deps: DepEntry.Index.Optional,
 memoized_state_va_list_deps: DepEntry.Index.Optional,
+memoized_state_cpu_mode_deps: DepEntry.Index.Optional,
 memoized_state_assembly_deps: DepEntry.Index.Optional,
 
 /// Given a `Depender`, points to an entry in `dep_entries` whose `depender`
@@ -124,6 +125,7 @@ pub const empty: InternPool = .{
     .memoized_state_main_deps = .none,
     .memoized_state_panic_deps = .none,
     .memoized_state_va_list_deps = .none,
+    .memoized_state_cpu_mode_deps = .none,
     .memoized_state_assembly_deps = .none,
     .first_dependency = .empty,
     .dep_entries = .empty,
@@ -491,6 +493,8 @@ pub const MemoizedStateStage = enum(u32) {
     panic,
     /// Specifically `std.lang.VaList`. See `Zcu.StdLangDecl.stage`.
     va_list,
+    /// Specifically `std.lang.CpuMode`. See `Zcu.StdLangDecl.stage`.
+    cpu_mode,
     /// Everything within `std.lang.assembly`. See `Zcu.StdLangDecl.stage`.
     assembly,
 };
@@ -813,6 +817,7 @@ pub fn dependencyIterator(ip: *const InternPool, dependee: Dependee) DependencyI
             .main => ip.memoized_state_main_deps.unwrap(),
             .panic => ip.memoized_state_panic_deps.unwrap(),
             .va_list => ip.memoized_state_va_list_deps.unwrap(),
+            .cpu_mode => ip.memoized_state_cpu_mode_deps.unwrap(),
             .assembly => ip.memoized_state_assembly_deps.unwrap(),
         },
     } orelse return .{
@@ -849,6 +854,7 @@ pub fn addDependency(ip: *InternPool, gpa: Allocator, depender: AnalUnit, depend
                 .main => &ip.memoized_state_main_deps,
                 .panic => &ip.memoized_state_panic_deps,
                 .va_list => &ip.memoized_state_va_list_deps,
+                .cpu_mode => &ip.memoized_state_cpu_mode_deps,
                 .assembly => &ip.memoized_state_assembly_deps,
             };
 

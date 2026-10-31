@@ -15,6 +15,7 @@ pub const Tag = enum {
     breakpoint,
     disable_instrumentation,
     disable_intrinsics,
+    set_cpu_mode,
     mul_add,
     byte_swap,
     bit_reverse,
@@ -267,6 +268,14 @@ pub const list = list: {
             .{
                 .tag = .disable_intrinsics,
                 .param_count = 0,
+                .illegal_outside_function = true,
+            },
+        },
+        .{
+            "@setCpuMode",
+            .{
+                .tag = .set_cpu_mode,
+                .param_count = 1,
                 .illegal_outside_function = true,
             },
         },

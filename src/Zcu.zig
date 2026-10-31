@@ -461,6 +461,7 @@ pub const StdLangDecl = enum {
     ExportOptions,
     ExternOptions,
     BranchHint,
+    CpuMode,
 
     Type,
     @"Type.Fn",
@@ -547,6 +548,7 @@ pub const StdLangDecl = enum {
             .ExportOptions,
             .ExternOptions,
             .BranchHint,
+            .CpuMode,
             .assembly,
             .@"assembly.Clobbers",
             => .type,
@@ -633,6 +635,7 @@ pub const StdLangDecl = enum {
     pub fn stage(decl: StdLangDecl) InternPool.MemoizedStateStage {
         return switch (decl) {
             .VaList => .va_list,
+            .CpuMode => .cpu_mode,
             .assembly, .@"assembly.Clobbers" => .assembly,
             else => {
                 if (@backingInt(decl) <= @backingInt(StdLangDecl.@"Type.Spirv.Image.Access")) {

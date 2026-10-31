@@ -893,6 +893,7 @@ fn builtinCall(astrl: *AstRlAnnotate, block: ?*Block, ri: ResultInfo, node: Ast.
         .embed_file,
         .error_name,
         .set_runtime_safety,
+        .set_cpu_mode,
         .Tuple,
         .wasm_memory_size,
         .splat,

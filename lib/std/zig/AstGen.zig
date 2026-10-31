@@ -2901,6 +2901,7 @@ fn addEnsureResult(gz: *GenZir, maybe_unused_result: Zir.Inst.Ref, statement: As
                 .breakpoint,
                 .disable_instrumentation,
                 .disable_intrinsics,
+                .set_cpu_mode,
                 .set_float_mode,
                 .branch_hint,
                 => break :b true,
@@ -9227,6 +9228,15 @@ fn builtinCall(
             _ = try gz.addExtendedPayload(.set_float_mode, Zir.Inst.UnNode{
                 .node = gz.nodeIndexToRelative(node),
                 .operand = order,
+            });
+            return rvalue(gz, ri, .void_value, node);
+        },
+        .set_cpu_mode => {
+            const cpu_mode_ty = try gz.addStdLangValue(node, .cpu_mode);
+            const cpu_mode = try comptimeExpr(gz, scope, .{ .rl = .{ .coerced_ty = cpu_mode_ty } }, params[0], .operand_setCpuMode);
+            _ = try gz.addExtendedPayload(.set_cpu_mode, Zir.Inst.UnNode{
+                .node = gz.nodeIndexToRelative(node),
+                .operand = cpu_mode,
             });
             return rvalue(gz, ri, .void_value, node);
         },

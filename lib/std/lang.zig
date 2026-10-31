@@ -1282,6 +1282,13 @@ pub const CpuMode = switch (builtin.cpu.arch) {
         /// Equivalent to the `.code32` directive in assembly.
         @"32",
     },
+    .mips => enum(u2) {
+        mips,
+        /// Equivalent to `.set mips16` directive in assembly.
+        mips16,
+        /// Equivalent to `.set micromips` directive in assembly.
+        micromips,
+    },
     else => void,
 };
 

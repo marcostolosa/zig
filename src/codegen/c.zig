@@ -1783,12 +1783,15 @@ pub const DeclGen = struct {
             if (kind == .definition and (func_analysis.disable_intrinsics or dg.mod.no_builtin))
                 try w.writeAll("zig_no_builtin ");
 
-            if (func_analysis.changed_cpu_mode) {
+            if (func_analysis.cpu_mode != InternPool.CpuMode.default) {
                 switch (zcu.getTarget().cpu.arch) {
                     .arm, .armeb => try w.writeAll("zig_func_target(\"thumb\") "),
                     .thumb, .thumbeb => try w.writeAll("zig_func_target(\"arm\") "),
-                    .x86 => {
-                        // TODO: C backend: implement @setCpuMode on x86 arch
+                    .x86 => unreachable, // handled in sema
+                    .mips => switch (func_analysis.cpu_mode.mips) {
+                        .mips => unreachable,
+                        .mips16 => try w.writeAll("zig_func_target(\"mips16\") "),
+                        .micromips => try w.writeAll("zig_func_target(\"micromips\") "),
                     },
                     else => unreachable,
                 }

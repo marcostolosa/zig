@@ -5791,9 +5791,20 @@ pub const FuncAnalysis = bitpack struct(u32) {
     inferred_error_set: bool,
     disable_instrumentation: bool,
     disable_intrinsics: bool,
-    changed_cpu_mode: bool,
+    cpu_mode: CpuMode,
 
-    _: u22 = 0,
+    _: u21 = 0,
+};
+
+/// Tag determined from target architecture.
+/// Field with value `0` in each enum is the default mode for the given architecture.
+pub const CpuMode = packed union(u2) {
+    arm: enum(u2) { arm, thumb },
+    thumb: enum(u2) { thumb, arm },
+    x86: enum(u2) { @"32", @"16" },
+    mips: enum(u2) { mips, mips16, micromips },
+
+    pub const default: CpuMode = @fromBackingInt(0);
 };
 
 pub const Bytes = struct {
@@ -9291,7 +9302,7 @@ pub fn getFuncDecl(
             .inferred_error_set = false,
             .disable_instrumentation = false,
             .disable_intrinsics = false,
-            .changed_cpu_mode = false,
+            .cpu_mode = .default,
         },
         .owner_nav = key.owner_nav,
         .ty = key.ty,
@@ -9402,7 +9413,7 @@ pub fn getFuncDeclIes(
             .inferred_error_set = true,
             .disable_instrumentation = false,
             .disable_intrinsics = false,
-            .changed_cpu_mode = false,
+            .cpu_mode = .default,
         },
         .owner_nav = key.owner_nav,
         .ty = func_ty,
@@ -9602,7 +9613,7 @@ pub fn getFuncInstance(
             .inferred_error_set = false,
             .disable_instrumentation = false,
             .disable_intrinsics = false,
-            .changed_cpu_mode = false,
+            .cpu_mode = .default,
         },
         // This is populated after we create the Nav below. It is not read
         // by equality or hashing functions.
@@ -9705,7 +9716,7 @@ fn getFuncInstanceIes(
             .inferred_error_set = true,
             .disable_instrumentation = false,
             .disable_intrinsics = false,
-            .changed_cpu_mode = false,
+            .cpu_mode = .default,
         },
         // This is populated after we create the Nav below. It is not read
         // by equality or hashing functions.
@@ -12261,7 +12272,7 @@ pub fn funcSetDisableIntrinsics(ip: *InternPool, io: Io, func: Index) void {
     @atomicStore(FuncAnalysis, analysis_ptr, analysis, .release);
 }
 
-pub fn funcSetChangedCpuMode(ip: *InternPool, io: Io, func: Index, changed_cpu_mode: bool) void {
+pub fn funcSetCpuMode(ip: *InternPool, io: Io, func: Index, cpu_mode: CpuMode) void {
     const unwrapped_func = func.unwrap(ip);
     const extra_mutex = &ip.getLocal(unwrapped_func.tid).mutate.extra.mutex;
     extra_mutex.lockUncancelable(io);
@@ -12269,7 +12280,7 @@ pub fn funcSetChangedCpuMode(ip: *InternPool, io: Io, func: Index, changed_cpu_m
 
     const analysis_ptr = ip.funcAnalysisPtr(func);
     var analysis = analysis_ptr.*;
-    analysis.changed_cpu_mode = changed_cpu_mode;
+    analysis.cpu_mode = cpu_mode;
     @atomicStore(FuncAnalysis, analysis_ptr, analysis, .release);
 }
 

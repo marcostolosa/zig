@@ -585,6 +585,32 @@ pub const Object = struct {
         var attributes: Builder.FunctionAttributes.Wip = .{};
         defer attributes.deinit(&o.builder);
 
+        const func_analysis = func.analysisUnordered(ip);
+
+        const target_feature_suffix: ?[]const u8 = if (func_analysis.cpu_mode != InternPool.CpuMode.default) b: {
+            const cpu_mode = func_analysis.cpu_mode;
+            break :b switch (owner_mod.resolved_target.result.cpu.arch) {
+                .arm, .armeb => switch (cpu_mode.arm) {
+                    .arm => unreachable,
+                    .thumb => "+thumb-mode",
+                },
+                .thumb, .thumbeb => switch (cpu_mode.thumb) {
+                    .thumb => unreachable,
+                    .arm => "-thumb-mode",
+                },
+                .x86 => switch (cpu_mode.x86) {
+                    .@"32" => unreachable,
+                    .@"16" => "+16bit-mode,-32bit-mode",
+                },
+                .mips => switch (cpu_mode.mips) {
+                    .mips => unreachable,
+                    .mips16 => "+mips16",
+                    .micromips => "+micromips",
+                },
+                else => unreachable,
+            };
+        } else null;
+
         // Function attributes that are independent of analysis results of the function body.
         try o.addCommonFnAttributes(
             &attributes,
@@ -596,6 +622,7 @@ pub const Object = struct {
             // frame pointer normally gets set up. At time of writing, this is the case for at
             // least x86 and RISC-V.
             owner_mod.omit_frame_pointer or fn_info.cc == .naked,
+            target_feature_suffix,
         );
 
         try o.addCallingConventionFnAttributes(pt, llvm_function, &attributes, if (nav.getExtern(ip)) |@"extern"| .{
@@ -603,7 +630,6 @@ pub const Object = struct {
             .lib_name = @"extern".lib_name.toSlice(ip),
         } else null, .fromIntern(fn_info, ip));
 
-        const func_analysis = func.analysisUnordered(ip);
         if (func_analysis.is_noinline) {
             try attributes.addFnAttr(.@"noinline", &o.builder);
         } else {
@@ -645,21 +671,6 @@ pub const Object = struct {
                 .kind = try o.builder.string("no-builtins"),
                 .value = .empty,
             } }, &o.builder);
-        }
-
-        if (func_analysis.changed_cpu_mode) {
-            if (owner_mod.llvm_cpu_features) |s| {
-                const features = switch (owner_mod.resolved_target.result.cpu.arch) {
-                    .arm, .armeb => "+thumb-mode",
-                    .thumb, .thumbeb => "-thumb-mode",
-                    .x86 => "+16bit-mode,-32bit-mode",
-                    else => unreachable,
-                };
-                try attributes.addFnAttr(.{ .string = .{
-                    .kind = try o.builder.string("target-features"),
-                    .value = try o.builder.fmt("{s},{s}", .{ s, features }),
-                } }, &o.builder);
-            }
         }
 
         // TODO: disable this if safety is off for the function scope
@@ -2011,6 +2022,7 @@ pub const Object = struct {
         attributes: *Builder.FunctionAttributes.Wip,
         owner_mod: *Module,
         omit_frame_pointer: bool,
+        target_feature_suffix: ?[]const u8,
     ) Allocator.Error!void {
         if (!owner_mod.red_zone) {
             try attributes.addFnAttr(.noredzone, &o.builder);
@@ -2047,7 +2059,10 @@ pub const Object = struct {
         if (owner_mod.llvm_cpu_features) |s| {
             try attributes.addFnAttr(.{ .string = .{
                 .kind = try o.builder.string("target-features"),
-                .value = try o.builder.string(s),
+                .value = if (target_feature_suffix) |suffix|
+                    try o.builder.fmt("{s},{s}", .{ s, suffix })
+                else
+                    try o.builder.string(s),
             } }, &o.builder);
         }
 
@@ -4006,7 +4021,7 @@ pub const Object = struct {
 
         var attributes: Builder.FunctionAttributes.Wip = .{};
         defer attributes.deinit(&o.builder);
-        try o.addCommonFnAttributes(&attributes, zcu.root_mod, zcu.root_mod.omit_frame_pointer);
+        try o.addCommonFnAttributes(&attributes, zcu.root_mod, zcu.root_mod.omit_frame_pointer, null);
 
         llvm_function.setLinkage(if (o.builder.strip) .private else .internal, &o.builder);
         llvm_function.setCallConv(.fastcc, &o.builder);
@@ -4100,7 +4115,7 @@ pub const Object = struct {
 
         var attributes: Builder.FunctionAttributes.Wip = .{};
         defer attributes.deinit(&o.builder);
-        try o.addCommonFnAttributes(&attributes, zcu.root_mod, zcu.root_mod.omit_frame_pointer);
+        try o.addCommonFnAttributes(&attributes, zcu.root_mod, zcu.root_mod.omit_frame_pointer, null);
 
         llvm_function.setLinkage(if (o.builder.strip) .private else .internal, &o.builder);
         llvm_function.setCallConv(.fastcc, &o.builder);

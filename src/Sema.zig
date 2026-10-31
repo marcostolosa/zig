@@ -5727,21 +5727,21 @@ fn zirSetCpuMode(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstDat
         => return, // does nothing outside a function
     };
 
-    const CpuMode = struct {
-        const arm: u1 = 0;
-        const thumb: u1 = 1;
-        const @"16": u1 = 0;
-        const @"32": u1 = 1;
-    };
+    const target = zcu.getTarget();
+    if (target.cpu.arch == .x86 and target.ofmt == .c) {
+        return sema.fail(block, operand_src, "@setCpuMode not supported by C compiler backend for target architecture '{t}'", .{target.cpu.arch});
+    }
 
-    const chosen_mode: u1 = @intCast(feature_val.toUnsignedInt(zcu));
-    const changed_cpu_mode: bool = switch (zcu.getTarget().cpu.arch) {
-        .arm, .armeb => chosen_mode != CpuMode.arm,
-        .thumb, .thumbeb => chosen_mode != CpuMode.thumb,
-        .x86 => chosen_mode != CpuMode.@"32",
+    const mode_int: u2 = @intCast(feature_val.toUnsignedInt(zcu));
+    const cpu_mode: InternPool.CpuMode = switch (target.cpu.arch) {
+        .arm, .armeb => .{ .arm = @fromBackingInt(mode_int) },
+        .thumb, .thumbeb => .{ .thumb = @fromBackingInt(1 - mode_int) },
+        .x86 => .{ .x86 = @fromBackingInt(1 - mode_int) },
+        .mips => .{ .mips = @fromBackingInt(mode_int) },
         else => unreachable,
     };
-    ip.funcSetChangedCpuMode(io, func, changed_cpu_mode);
+
+    ip.funcSetCpuMode(io, func, cpu_mode);
 }
 
 fn zirSetFloatMode(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstData) CompileError!void {

@@ -503,7 +503,7 @@ const Arm = struct {
             \\ stm r0!, {r1-r2}
             \\ // The C backend gets upset if you try to use "+{r0}" as a constraint or add
             \\ // R0 to the clobbers list.  So instead just restore its original value:
-            \\ adds r0, #-60
+            \\ subs r0, #60
             :
             : [r] "{r0}" (&ctx.r[1]),
             : .{ .r1 = true, .r2 = true, .memory = true });

@@ -761,7 +761,10 @@ fn acquireThread(s: *SafeAllocator) *Thread {
         var max = @atomicLoad(usize, &n_threads, .unordered);
         if (max == 0) {
             @branchHint(.unlikely);
-            max = @min(std.Thread.getCpuCount() catch s.threads.len, s.threads.len);
+            max = if (@import("builtin").single_threaded)
+                1
+            else
+                @min(std.Thread.getCpuCount() catch s.threads.len, s.threads.len);
             max = @cmpxchgStrong(usize, &n_threads, 0, max, .monotonic, .monotonic) orelse max;
         }
 

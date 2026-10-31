@@ -1790,8 +1790,8 @@ pub const DeclGen = struct {
                     .x86 => unreachable, // handled in sema
                     .mips, .mipsel => switch (func_analysis.cpu_mode.mips) {
                         .mips => unreachable,
-                        .mips16 => try w.writeAll("zig_func_target(\"mips16\") "),
-                        .micromips => try w.writeAll("zig_func_target(\"micromips\") "),
+                        .mips16 => try w.writeAll("zig_mips_mips16 "),
+                        .micromips => try w.writeAll("zig_mips_micromips "),
                     },
                     else => unreachable,
                 }

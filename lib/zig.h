@@ -269,6 +269,18 @@
 #define zig_func_target(name) zig_func_target_unavailable
 #endif
 
+#if zig_has_attribute(mips16)
+#define zig_mips_mips16(name) __attribute__((mips16))
+#else
+#define zig_mips_mips16(name) zig_mips_mips16_unavailable
+#endif
+
+#if zig_has_attribute(micromips)
+#define zig_mips_micromips(name) __attribute__((micromips))
+#else
+#define zig_mips_micromips(name) zig_mips_micromips_unavailable
+#endif
+
 #if zig_has_attribute(patchable_function_entry)
 #define zig_patchable_function_entry(count) __attribute__((patchable_function_entry(count)))
 #else

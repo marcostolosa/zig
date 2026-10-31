@@ -54,6 +54,10 @@ else switch (native_os) {
         pub const SIG = void;
         pub const cmsghdr = void;
         pub const cmsg_align = {};
+
+        pub const AT = struct {
+            pub const FDCWD = -100;
+        };
     },
     .psp => struct {
         pub const fd_t = i32;

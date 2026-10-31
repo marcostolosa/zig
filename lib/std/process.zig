@@ -865,6 +865,7 @@ pub fn abort() noreturn {
     }
     switch (native_os) {
         .uefi, .wasi, .emscripten, .cuda, .amdhsa, .other, .freestanding => @trap(),
+        .ps2 => std.os.ps2.exit(134),
         else => posix.system.abort(),
     }
 }

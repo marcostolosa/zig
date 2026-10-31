@@ -71,7 +71,8 @@ pub fn TargetInfo(os: std.Target.Os.Tag, arch: std.Target.Cpu.Arch) type {
     return switch (std.Target.ObjectFormat.default(os, arch)) {
         .coff => if (os == .windows) @import("debug/SelfInfo/Windows.zig") else void,
         .elf => switch (os) {
-            .ps2, .freestanding, .other => void,
+            .freestanding, .other => void,
+            .ps2 => @import("debug/SelfInfo/Ps2.zig"),
             else => @import("debug/SelfInfo/Elf.zig"),
         },
         .macho => @import("debug/SelfInfo/MachO.zig"),
@@ -526,7 +527,7 @@ pub fn defaultPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
             @trap();
         },
 
-        .ps2 => {
+        .ps2 => if (!std.options.allow_stack_tracing) {
             std.os.ps2.sio.writeAll("panic: ");
             std.os.ps2.sio.writeAll(msg);
             std.os.ps2.sio.writeByte('\n');

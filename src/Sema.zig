@@ -5712,7 +5712,28 @@ fn zirSetCpuMode(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstDat
     const coerced_feature = try sema.coerce(block, feature_ty, uncoerced_feature, operand_src);
     const feature_val = try sema.resolveConstDefinedValue(block, operand_src, coerced_feature, .{ .simple = .operand_setCpuMode });
 
-    log.debug("zirSetCpuMode val: {f}", .{feature_val.fmtValueSema(sema)});
+    const pt = sema.pt;
+    const zcu = pt.zcu;
+    const io = zcu.comp.io;
+    const ip = &zcu.intern_pool;
+    const func = switch (sema.owner.unwrap()) {
+        .func => |func| func,
+        .@"comptime",
+        .nav_val,
+        .nav_ty,
+        .type_layout,
+        .struct_defaults,
+        .memoized_state,
+        => return, // does nothing outside a function
+    };
+    const int_val: u1 = @intCast(feature_val.toUnsignedInt(zcu));
+    const changed_cpu_mode: bool = switch (zcu.getTarget().cpu.arch) {
+        .arm, .armeb => int_val != 0, // != .arm
+        .thumb, .thumbeb => int_val != 1, // != .thumb
+        .x86 => int_val != 1, // != .@"32"
+        else => unreachable,
+    };
+    ip.funcSetChangedCpuMode(io, func, changed_cpu_mode);
 }
 
 fn zirSetFloatMode(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstData) CompileError!void {

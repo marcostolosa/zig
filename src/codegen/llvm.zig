@@ -647,6 +647,23 @@ pub const Object = struct {
             } }, &o.builder);
         }
 
+        if (func_analysis.changed_cpu_mode) {
+            if (owner_mod.llvm_cpu_features) |s| {
+                try attributes.addFnAttr(.{ .string = .{
+                    .kind = try o.builder.string("target-features"),
+                    .value = try o.builder.fmt("{s},{s}", .{
+                        s,
+                        switch (owner_mod.resolved_target.result.cpu.arch) {
+                            .arm, .armeb => "+thumb-mode",
+                            .thumb, .thumbeb => "-thumb-mode",
+                            .x86 => "+16bit-mode,-32bit-mode",
+                            else => unreachable,
+                        },
+                    }),
+                } }, &o.builder);
+            }
+        }
+
         // TODO: disable this if safety is off for the function scope
         const ssp_buf_size = owner_mod.stack_protector;
         if (ssp_buf_size != 0) {

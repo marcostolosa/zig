@@ -5791,8 +5791,9 @@ pub const FuncAnalysis = bitpack struct(u32) {
     inferred_error_set: bool,
     disable_instrumentation: bool,
     disable_intrinsics: bool,
+    changed_cpu_mode: bool,
 
-    _: u23 = 0,
+    _: u22 = 0,
 };
 
 pub const Bytes = struct {
@@ -9290,6 +9291,7 @@ pub fn getFuncDecl(
             .inferred_error_set = false,
             .disable_instrumentation = false,
             .disable_intrinsics = false,
+            .changed_cpu_mode = false,
         },
         .owner_nav = key.owner_nav,
         .ty = key.ty,
@@ -9400,6 +9402,7 @@ pub fn getFuncDeclIes(
             .inferred_error_set = true,
             .disable_instrumentation = false,
             .disable_intrinsics = false,
+            .changed_cpu_mode = false,
         },
         .owner_nav = key.owner_nav,
         .ty = func_ty,
@@ -9599,6 +9602,7 @@ pub fn getFuncInstance(
             .inferred_error_set = false,
             .disable_instrumentation = false,
             .disable_intrinsics = false,
+            .changed_cpu_mode = false,
         },
         // This is populated after we create the Nav below. It is not read
         // by equality or hashing functions.
@@ -9701,6 +9705,7 @@ fn getFuncInstanceIes(
             .inferred_error_set = true,
             .disable_instrumentation = false,
             .disable_intrinsics = false,
+            .changed_cpu_mode = false,
         },
         // This is populated after we create the Nav below. It is not read
         // by equality or hashing functions.
@@ -12253,6 +12258,18 @@ pub fn funcSetDisableIntrinsics(ip: *InternPool, io: Io, func: Index) void {
     const analysis_ptr = ip.funcAnalysisPtr(func);
     var analysis = analysis_ptr.*;
     analysis.disable_intrinsics = true;
+    @atomicStore(FuncAnalysis, analysis_ptr, analysis, .release);
+}
+
+pub fn funcSetChangedCpuMode(ip: *InternPool, io: Io, func: Index, changed_cpu_mode: bool) void {
+    const unwrapped_func = func.unwrap(ip);
+    const extra_mutex = &ip.getLocal(unwrapped_func.tid).mutate.extra.mutex;
+    extra_mutex.lockUncancelable(io);
+    defer extra_mutex.unlock(io);
+
+    const analysis_ptr = ip.funcAnalysisPtr(func);
+    var analysis = analysis_ptr.*;
+    analysis.changed_cpu_mode = changed_cpu_mode;
     @atomicStore(FuncAnalysis, analysis_ptr, analysis, .release);
 }
 

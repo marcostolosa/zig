@@ -128,6 +128,8 @@ pub const ExtractOptions = struct {
     strip_components: u32 = 0,
     /// How to handle the "mode" property of files from within the tar file.
     mode_mode: ModeMode = .executable_bit_only,
+    /// Preserve the modification times of files and symlinks.
+    preserve_mtimes: bool = false,
     /// Prevents creation of empty directories.
     exclude_empty_directories: bool = false,
     /// Collects error messages during unpacking
@@ -206,7 +208,11 @@ const Header = struct {
     }
 
     pub fn mode(header: Header) !u32 {
-        return @intCast(try header.octal(100, 8));
+        return header.octal(u32, 100, 8);
+    }
+
+    pub fn mtime(header: Header) !i96 {
+        return try header.octal(i96, 136, 12) * std.time.ns_per_s;
     }
 
     pub fn size(header: Header) !u64 {
@@ -224,11 +230,11 @@ const Header = struct {
             if (raw[1] != 0 or raw[2] != 0 or raw[3] != 0) return error.TarNumericValueTooBig;
             return std.mem.readInt(u64, raw[4..12], .big);
         }
-        return try header.octal(start, len);
+        return header.octal(u64, start, len);
     }
 
     pub fn chksum(header: Header) !u64 {
-        return header.octal(148, 8);
+        return header.octal(u64, 148, 8);
     }
 
     pub fn is_ustar(header: Header) bool {
@@ -250,14 +256,14 @@ const Header = struct {
         return nullStr(header.bytes[start .. start + len]);
     }
 
-    fn octal(header: Header, start: usize, len: usize) !u64 {
+    fn octal(header: Header, comptime T: type, start: usize, len: usize) !T {
         const raw = header.bytes[start..][0..len];
         // Zero-filled octal number in ASCII. Each numeric field of width w
         // contains w minus 1 digits, and a null
         const ltrimmed = std.mem.trimStart(u8, raw, "0 ");
         const rtrimmed = std.mem.trimEnd(u8, ltrimmed, " \x00");
         if (rtrimmed.len == 0) return 0;
-        return std.fmt.parseInt(u64, rtrimmed, 8) catch return error.TarHeader;
+        return std.fmt.parseInt(T, rtrimmed, 8) catch return error.TarHeader;
     }
 
     const Chksums = struct {
@@ -346,6 +352,7 @@ pub const Iterator = struct {
         link_name: []const u8, // target name of symlink
         size: u64 = 0, // size of the file in bytes
         mode: u32 = 0,
+        mtime: i96 = 0,
         kind: FileKind = .file,
     };
 
@@ -410,6 +417,7 @@ pub const Iterator = struct {
                         else => unreachable,
                     };
                     file.mode = try header.mode();
+                    file.mtime = try header.mtime();
 
                     // set file attributes if not already set by prefix/extended headers
                     if (file.size == 0) {
@@ -624,6 +632,8 @@ pub fn extract(io: Io, dir: Io.Dir, reader: *Io.Reader, options: ExtractOptions)
                     var file_writer = fs_file.writer(io, &file_contents_buffer);
                     try it.streamRemaining(file, &file_writer.interface);
                     try file_writer.interface.flush();
+                    if (fileMtime(file.mtime, options)) |mtime|
+                        try fs_file.setTimestamps(io, .{ .modify_timestamp = mtime });
                 } else |err| {
                     const d = options.diagnostics orelse return err;
                     try d.errors.append(d.allocator, .{ .unable_to_create_file = .{
@@ -642,6 +652,8 @@ pub fn extract(io: Io, dir: Io.Dir, reader: *Io.Reader, options: ExtractOptions)
                         .link_name = try d.allocator.dupe(u8, link_name),
                     } });
                 };
+                if (fileMtime(file.mtime, options)) |mtime|
+                    try dir.setTimestamps(io, file_name, .{ .follow_symlinks = false, .modify_timestamp = mtime });
             },
         }
     }
@@ -1156,6 +1168,30 @@ test "extract strip_components" {
     try testing.expectEqualStrings("example/a/file", diagnostics.errors.items[1].components_outside_stripped_prefix.file_name);
 }
 
+test "preserve mtimes" {
+    const io = testing.io;
+    const data = @embedFile("tar/testdata/example.tar");
+    var reader: Io.Reader = .fixed(data);
+
+    var tmp = testing.tmpDir(.{ .follow_symlinks = false });
+    defer tmp.cleanup();
+    const dir = tmp.dir;
+
+    extract(io, tmp.dir, &reader, .{
+        .preserve_mtimes = true,
+    }) catch |err| {
+        // Skip on platform which don't support symlinks
+        if (err == error.UnableToCreateSymLink) return error.SkipZigTest;
+        return err;
+    };
+
+    const a_tm: Io.Timestamp = .{ .nanoseconds = 1710067303 * std.time.ns_per_s };
+    const b_tm: Io.Timestamp = .{ .nanoseconds = 1708856801 * std.time.ns_per_s };
+
+    try testing.expectEqual(a_tm, (try dir.statFile(io, "example/a/file", .{})).mtime);
+    try testing.expectEqual(b_tm, (try dir.statFile(io, "example/b/symlink", .{ .follow_symlinks = false })).mtime);
+}
+
 fn normalizePath(bytes: []u8) []u8 {
     const canonical_sep = std.fs.path.sep_posix;
     if (std.fs.path.sep == canonical_sep) return bytes;
@@ -1169,6 +1205,13 @@ fn filePermissions(mode: u32, options: ExtractOptions) Io.File.Permissions {
         .default_file
     else
         .executable_file;
+}
+
+fn fileMtime(mtime: i96, options: ExtractOptions) ?Io.File.SetTimestamp {
+    return if (options.preserve_mtimes)
+        .{ .new = .{ .nanoseconds = mtime } }
+    else
+        null;
 }
 
 test filePermissions {

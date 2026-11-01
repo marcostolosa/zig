@@ -19,6 +19,8 @@ pub const vtable: Io.VTable = blk: {
     v.unlockStderr = &unlockStderr;
     v.operate = &operate;
     v.fileWritePositional = &fileWritePositional;
+    v.fileIsTty = &fileIsTty;
+    v.fileSupportsAnsiEscapeCodes = &fileSupportsAnsiEscapeCodes;
 
     v.now = &now;
     v.clockResolution = &clockResolution;
@@ -78,6 +80,18 @@ fn fileWritePositional(
 ) Io.File.WritePositionalError!usize {
     // The `EE`'s serial `I/O` console does not support positional writes
     return error.Unseekable;
+}
+
+/// `Io.failing` sets this to `unreachable`, but `File.stdout()` exists without `open`
+fn fileIsTty(_: ?*anyopaque, file: Io.File) Io.Cancelable!bool {
+    // Only the serial `I/O` console counts as a terminal
+    return file.handle <= std.posix.STDERR_FILENO;
+}
+
+/// `Io.failing` sets this to `unreachable`, but `File.stdout()` exists without `open`
+fn fileSupportsAnsiEscapeCodes(_: ?*anyopaque, _: Io.File) Io.Cancelable!bool {
+    // The console does not support escape codes
+    return false;
 }
 
 /// Returns the current time

@@ -21,6 +21,9 @@ const vtable: Io.VTable = blk: {
     v.fileSeekTo = &fileSeekTo;
     v.fileSeekBy = &fileSeekBy;
     v.fileLength = &fileLength;
+    v.fileStat = &fileStat;
+    v.processExecutablePath = &processExecutablePath;
+    v.processCurrentPath = &processCurrentPath;
 
     break :blk v;
 };
@@ -284,6 +287,48 @@ fn fileLength(userdata: ?*anyopaque, file: Io.File) Io.File.LengthError!u64 {
     _ = self.seekFile(file.handle, pos, .set) catch return error.Unexpected;
 
     return end;
+}
+
+/// Reports `file`'s size and kind. `FILEIO` does not support a reliable `getstat` so times
+/// are zero.
+fn fileStat(userdata: ?*anyopaque, file: Io.File) Io.File.StatError!Io.File.Stat {
+    const size: u64, const kind: Io.File.Kind = if (isFileIo(file.handle))
+        .{ try fileLength(userdata, file), .file }
+    else
+        .{ 0, .character_device };
+
+    return .{
+        .inode = {},
+        .nlink = 0,
+        .size = size,
+        .permissions = .default_file,
+        .kind = kind,
+        .atime = null,
+        .mtime = .zero,
+        .ctime = .zero,
+        .block_size = 1,
+    };
+}
+
+/// Returns the device-prefixed path of the program's image (e.g. `host:foo.elf`)
+fn processExecutablePath(_: ?*anyopaque, buf: []u8) std.process.ExecutablePathError!usize {
+    const args = std.os.ps2.programArgs();
+    if (args.len == 0) return error.OperationUnsupported;
+
+    const path = std.mem.span(args[0]);
+    if (path.len > buf.len) return error.NameTooLong;
+
+    @memcpy(buf[0..path.len], path);
+    return path.len;
+}
+
+/// Returns the current program's image directory
+fn processCurrentPath(_: ?*anyopaque, buf: []u8) std.process.CurrentPathError!usize {
+    const dir = std.os.ps2.programDir();
+    if (dir.len > buf.len) return error.NameTooLong;
+
+    @memcpy(buf[0..dir.len], dir);
+    return dir.len;
 }
 
 /// Converts `path` into a path `FILEIO` understands. Device-prefixed paths (e.g. `cdrom0:\\X;1`)

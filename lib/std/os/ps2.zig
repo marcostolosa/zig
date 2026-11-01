@@ -11,6 +11,7 @@ pub const cdvd = @import("ps2/cdvd.zig");
 
 pub const Sys = enum(i32) {
     exit = 4,
+    load_exec = 6,
     setup_thread = 0x3c,
     setup_heap = 0x3d,
     end_of_heap = 0x3e,
@@ -318,6 +319,15 @@ pub fn exit(status: u8) noreturn {
     sio.writeByte('\n');
 
     _ = syscall1(.exit, status);
+    unreachable;
+}
+
+/// Replaces the running program with the `ELF` at the device-prefixed `path`. The `EE` kernel
+/// copies `path` and `args`, resets the `IOP` and starts the new program with `path` as its
+/// first argument. Missing or malformed `ELF`s don't need to be handled as the kernel will
+/// drop back to the `BIOS` menu.
+pub fn loadExec(path: [*:0]const u8, args: []const [*:0]const u8) noreturn {
+    _ = syscall3(.load_exec, @intFromPtr(path), args.len, @intFromPtr(args.ptr));
     unreachable;
 }
 

@@ -25,6 +25,7 @@ const vtable: Io.VTable = blk: {
     v.fileStat = &fileStat;
     v.processExecutablePath = &processExecutablePath;
     v.processCurrentPath = &processCurrentPath;
+    v.processReplace = &processReplace;
 
     v.now = &now;
     v.clockResolution = &clockResolution;
@@ -345,6 +346,72 @@ fn processCurrentPath(_: ?*anyopaque, buf: []u8) std.process.CurrentPathError!us
 
     @memcpy(buf[0..dir.len], dir);
     return dir.len;
+}
+
+/// Starts a new `ELF`, checking if it's valid beforehand as the `EE` kernel does not report
+/// back to the original program.
+fn processReplace(
+    userdata: ?*anyopaque,
+    opt: std.process.ReplaceOptions,
+) std.process.ReplaceError {
+    const self = fromUserdata(userdata);
+
+    const image: []const u8, const dir: Io.Dir = switch (opt.exe) {
+        .detect, .search => .{
+            if (opt.argv.len > 0) opt.argv[0] else return error.InvalidExe,
+            .cwd(),
+        },
+        .path => |dir| .{
+            if (opt.argv.len > 0) opt.argv[0] else return error.InvalidExe,
+            dir,
+        },
+        .explicit => |e| .{ e.path, e.dir },
+        .file => return error.OperationUnsupported,
+    };
+
+    if (dir.handle != std.posix.AT.FDCWD) return error.OperationUnsupported;
+    // Nothing survives across `IOP` resets and there's no environment or working directory
+    if (opt.cwd != .inherit or opt.environ_map != null or opt.inherit_dirs.len != 0 or
+        opt.inherit_files.len != 0 or opt.start_suspended) return error.OperationUnsupported;
+
+    // The kernel always passes the image path as `argv[0]` so skip it
+    const argv = if (opt.argv.len > 0) opt.argv[1..] else opt.argv;
+
+    var program_args: std.os.ps2.ProgramArgs = undefined;
+    if (argv.len > program_args.args.len - 1) return error.SystemResources;
+
+    var path_buf: [255]u8 = undefined;
+    const path = try convertPath(&path_buf, image);
+
+    // Move the arguments into place and null-terminate each
+    var fixed_buf: std.heap.FixedBufferAllocator = .init(&program_args.payload);
+    const alloc = fixed_buf.allocator();
+    const image_z = (alloc.dupeSentinel(u8, path, 0) catch return error.NameTooLong).ptr;
+    for (argv, 0..) |arg, i| {
+        program_args.args[i] = (alloc.dupeSentinel(u8, arg, 0) catch return error.SystemResources).ptr;
+    }
+
+    // Make sure we're being passed a loadable image otherwise we'll just land in the `BIOS`
+    const file = self.open(
+        .cwd(),
+        path,
+        .{ .access = .read_only },
+    ) catch |err| return switch (err) {
+        error.AccessDenied,
+        error.IsDir,
+        error.NotDir,
+        error.ProcessFdQuotaExceeded,
+        error.NameTooLong,
+        => |e| e,
+
+        else => error.FileNotFound,
+    };
+    var magic: [4]u8 = undefined;
+    const n = self.readStreaming(file.handle, &.{&magic}) catch 0;
+    fileClose(userdata, &.{file});
+    if (n != magic.len or !std.mem.eql(u8, &magic, std.elf.MAGIC)) return error.InvalidExe;
+
+    std.os.ps2.loadExec(image_z, program_args.args[0..argv.len]);
 }
 
 /// Reads from the RTC from `CDVD` for `.real`, otherwise forwards to `debug_io`

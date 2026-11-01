@@ -28,6 +28,7 @@ const log = std.log.scoped(.codegen);
 
 pub fn legalizeFeatures(target: *const std.Target) ?*const Air.Legalize.Features {
     // LLVM miscompiles reductions and bitcasts of bool vectors on Hexagon, so do them one element at a time.
+    // https://github.com/llvm/llvm-project/issues/237727
     if (target.cpu.arch == .hexagon) return comptime &.init(.{
         .expand_int_from_float_safe = true,
         .expand_int_from_float_optimized_safe = true,

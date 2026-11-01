@@ -222,7 +222,7 @@ pub const Options = struct {
     pub const debug_io: Io = if (@hasDecl(root, "std_options_debug_io"))
         root.std_options_debug_io
     else if (@import("builtin").os.tag == .ps2)
-        os.ps2.io.io
+        os.ps2.io.debug_io
     else
         debug_threaded_io.?.io();
 

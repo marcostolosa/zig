@@ -310,6 +310,15 @@ pub const ProgramArgs = extern struct {
     payload: [max_payload_size]u8,
 };
 
+// Forcibly placed in the data segment as `.bss` would be cleared afterwards by `std.start`
+pub var program_args: ProgramArgs align(16) linksection(".data") = undefined;
+
+/// Returns the program's arguments
+pub fn programArgs() []const [*:0]const u8 {
+    const n: usize = @intCast(std.math.clamp(program_args.nr_args, 0, program_args.args.len));
+    return program_args.args[0..n];
+}
+
 /// Enumerates cache operations that can be performed by the kernel through `cacheOp`
 pub const CacheOp = enum(c_int) {
     /// Writes-back and invalidates the data cache

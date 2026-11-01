@@ -173,9 +173,6 @@ fn EfiMain(handle: uefi.Handle, system_table: *uefi.tables.SystemTable) callconv
     }
 }
 
-// Forcibly placed in the data segment as `.bss` would be cleared afterwards in `ps2Main`
-var ps2_args: std.os.ps2.ProgramArgs align(16) linksection(".data") = undefined;
-
 fn ps2Start() callconv(.naked) noreturn {
     // Register the executable's main thread with the `EE` kernel
     asm volatile (
@@ -186,10 +183,12 @@ fn ps2Start() callconv(.naked) noreturn {
         \\ move $8, $zero
         \\ li $3, 60
         \\ syscall
-        \\ move $sp, $2
+        \\ .set noreorder
         \\ j %[main]
+        \\ move $sp, $2
+        \\ .set reorder
         :
-        : [args] "{$7}" (&ps2_args),
+        : [args] "{$7}" (&std.os.ps2.program_args),
           [main] "X" (&ps2Main),
     );
 }
@@ -204,8 +203,7 @@ fn ps2Main() callconv(.c) noreturn {
     std.os.ps2.setupHeap(end, null);
     std.os.ps2.cacheOp(.dxwbin);
 
-    const nr_args: usize = @intCast(std.math.clamp(ps2_args.nr_args, 0, ps2_args.args.len));
-    std.process.exit(callMain(ps2_args.args[0..nr_args], std.process.Environ.Block.global));
+    std.process.exit(callMain(std.os.ps2.programArgs(), std.process.Environ.Block.global));
 }
 
 fn _start() callconv(.naked) noreturn {

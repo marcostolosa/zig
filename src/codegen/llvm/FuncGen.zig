@@ -4746,7 +4746,7 @@ fn airBitCast(fg: *FuncGen, inst: Air.Inst.Index, safety: bool) Allocator.Error!
     // We have the following `Air.Legalize` features enabled:
     //
     // * `.scalarize_bit_cast_array`
-    // * `.scalarize_bit_cast_vector_non_elementwise` (big-endian and Hexagon)
+    // * `.scalarize_bit_cast_vector_non_elementwise` (big-endian only)
     //
     // That means that where the second one is enabled, the `bit_cast` instructions we might see are limited to:
     //

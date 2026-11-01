@@ -1,32 +1,168 @@
 const std = @import("std");
+const elf = std.elf;
+const ps2 = std.os.ps2;
 const Error = std.debug.SelfInfoError;
 
 const SelfInfo = @This();
 
+/// Holds the image's `.symtab` and `.strtab` sections, read into memory on first lookup
+symbols: Symbols = .unloaded,
+
 pub const can_unwind = true;
+
+const Symbols = union(enum) {
+    unloaded,
+    missing,
+    loaded: struct {
+        symtab: std.debug.ElfFile.SymtabSection,
+        strtab: []const u8,
+
+        search_table: ?[]usize = null,
+    },
+};
+
+const SymbolTables = struct {
+    symtab_off: u32,
+    symtab_size: u32,
+    symtab_entry_size: u32,
+
+    strtab_off: u32,
+    strtab_size: u32,
+};
+
+/// Handrolled wrapper around `file_io` as the `std.debug` `Io` instance does not support
+/// file access.
+const File = struct {
+    client: ps2.file_io.Client,
+    fd: i32,
+
+    fn init(path: []const u8) Error!@This() {
+        const client = ps2.rpc.Rpc.acquire().bind(.file_io) catch return error.MissingDebugInfo;
+        const fd = ps2.file_io.open(client, path, .{}) catch return error.MissingDebugInfo;
+        return .{ .client = client, .fd = fd };
+    }
+
+    fn deinit(self: @This()) void {
+        ps2.file_io.close(self.client, self.fd) catch {};
+    }
+
+    fn readAt(file: File, off: u32, buf: []u8) Error!void {
+        _ = ps2.file_io.lseek(
+            file.client,
+            file.fd,
+            @intCast(off),
+            .set,
+        ) catch return error.ReadFailed;
+
+        const n = ps2.file_io.read(file.client, file.fd, buf) catch return error.ReadFailed;
+        if (n != buf.len) return error.InvalidDebugInfo;
+    }
+};
+
+/// Reads the program image's `.symtab` and linked `.strtab` through `file_io`
+fn loadSymbols(gpa: std.mem.Allocator) Error!Symbols {
+    const args = ps2.programArgs();
+    if (args.len == 0) return error.MissingDebugInfo;
+
+    const file: File = try .init(std.mem.span(args[0]));
+    defer file.deinit();
+
+    const tabs = try findSymbolTables(file);
+
+    const symtab = try gpa.alloc(u8, tabs.symtab_size);
+    try file.readAt(tabs.symtab_off, symtab);
+    const strtab = try gpa.alloc(u8, tabs.strtab_size);
+    try file.readAt(tabs.strtab_off, strtab);
+
+    return .{ .loaded = .{
+        .symtab = .{ .entry_size = tabs.symtab_entry_size, .bytes = symtab },
+        .strtab = strtab,
+    } };
+}
+
+/// Looks up `.symtab` and its linked `.strtab`
+fn findSymbolTables(file: File) Error!SymbolTables {
+    var ehdr: elf.Elf32_Ehdr = undefined;
+    try file.readAt(0, std.mem.asBytes(&ehdr));
+    if (!std.mem.eql(u8, ehdr.e_ident[0..4], elf.MAGIC) or ehdr.e_shentsize != @sizeOf(elf.Elf32_Shdr))
+        return error.InvalidDebugInfo;
+
+    for (0..ehdr.e_shnum) |i| {
+        var shdr: elf.Elf32_Shdr = undefined;
+        try file.readAt(
+            ehdr.e_shoff + @as(u32, @intCast(i)) * @sizeOf(elf.Elf32_Shdr),
+            std.mem.asBytes(&shdr),
+        );
+        if (shdr.sh_type != elf.SHT_SYMTAB) continue;
+
+        var strtab: elf.Elf32_Shdr = undefined;
+        if (shdr.sh_link >= ehdr.e_shnum) return error.InvalidDebugInfo;
+
+        try file.readAt(
+            ehdr.e_shoff + shdr.sh_link * @sizeOf(elf.Elf32_Shdr),
+            std.mem.asBytes(&strtab),
+        );
+        return .{
+            .symtab_off = shdr.sh_offset,
+            .symtab_size = shdr.sh_size,
+            .symtab_entry_size = shdr.sh_entsize,
+
+            .strtab_off = strtab.sh_offset,
+            .strtab_size = strtab.sh_size,
+        };
+    }
+
+    return error.MissingDebugInfo;
+}
 
 pub const init: SelfInfo = .{};
 pub fn deinit(_: *SelfInfo, _: std.Io) void {}
 
-// Stubbed out as we don't have `DWARF` available on the target
 pub fn getSymbols(
-    _: *SelfInfo,
+    self: *SelfInfo,
     _: std.Io,
+    sym_alloc: std.mem.Allocator,
     _: std.mem.Allocator,
-    _: std.mem.Allocator,
-    _: usize,
+    addr: usize,
     _: bool,
-    _: *std.ArrayList(std.debug.Symbol),
+    symbols: *std.ArrayList(std.debug.Symbol),
 ) Error!void {
-    return error.MissingDebugInfo;
+    const gpa = std.debug.getDebugInfoAllocator();
+    if (self.symbols == .unloaded) self.symbols = loadSymbols(gpa) catch .missing;
+
+    const loaded = switch (self.symbols) {
+        .loaded => |*loaded| loaded,
+
+        else => return error.MissingDebugInfo,
+    };
+
+    const sym = std.debug.ElfFile.searchSymbolTable(
+        gpa,
+        false,
+        @import("builtin").cpu.arch.endian(),
+        loaded.symtab,
+        loaded.strtab,
+        &loaded.search_table,
+        addr,
+    ) catch |err| return switch (err) {
+        error.BadSymtab => error.InvalidDebugInfo,
+        error.OutOfMemory => error.OutOfMemory,
+    };
+    try symbols.append(sym_alloc, sym);
 }
 
+/// Returns the file name of the `ELF` the program was started from
 pub fn getModuleName(
     _: *SelfInfo,
     _: std.Io,
     _: usize,
 ) Error![]const u8 {
-    return error.MissingDebugInfo;
+    const args = ps2.programArgs();
+    if (args.len == 0) return error.MissingDebugInfo;
+
+    const path = std.mem.span(args[0]);
+    // TODO: This seems to share logic with `Io`'s `convertPath`, factor it out?
+    return path[if (std.mem.lastIndexOfAny(u8, path, ":/\\")) |i| i + 1 else 0..];
 }
 
 pub fn getModuleSlide(

@@ -342,6 +342,15 @@ pub fn programArgs() []const [*:0]const u8 {
     return program_args.args[0..n];
 }
 
+/// Computes the device and directory prefix of the program's image path (e.g. `host:` is
+/// returned for `host:foo.elf`).
+pub fn programDir() []const u8 {
+    const args = programArgs();
+    const image = if (args.len > 0) std.mem.span(args[0]) else "";
+
+    return image[0..if (std.mem.lastIndexOfAny(u8, image, ":/\\")) |i| i + 1 else 0];
+}
+
 /// Enumerates cache operations that can be performed by the kernel through `cacheOp`
 pub const CacheOp = enum(c_int) {
     /// Writes-back and invalidates the data cache

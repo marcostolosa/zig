@@ -292,10 +292,7 @@ fn fileLength(userdata: ?*anyopaque, file: Io.File) Io.File.LengthError!u64 {
 fn convertPath(buf: *[255]u8, path: []const u8) error{NameTooLong}![]const u8 {
     if (std.mem.indexOfScalar(u8, path, ':') != null) return path;
 
-    const args = std.os.ps2.programArgs();
-    const image = if (args.len > 0) std.mem.span(args[0]) else "";
-    // The program's image directory ends at its last `:`, `/` or `\\`
-    const dir = image[0..if (std.mem.lastIndexOfAny(u8, image, ":/\\")) |i| i + 1 else 0];
+    const dir = std.os.ps2.programDir();
     if (dir.len + path.len > buf.len) return error.NameTooLong;
 
     @memcpy(buf[0..dir.len], dir);

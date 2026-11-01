@@ -161,8 +161,7 @@ pub fn getModuleName(
     if (args.len == 0) return error.MissingDebugInfo;
 
     const path = std.mem.span(args[0]);
-    // TODO: This seems to share logic with `Io`'s `convertPath`, factor it out?
-    return path[if (std.mem.lastIndexOfAny(u8, path, ":/\\")) |i| i + 1 else 0..];
+    return path[ps2.programDir().len..];
 }
 
 pub fn getModuleSlide(

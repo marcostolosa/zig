@@ -1,6 +1,7 @@
 //! Implements the `SIF CMD` and `SIF RPC` protocols.
 
 const std = @import("std");
+const uncached = std.os.ps2.uncached;
 
 const sif = @import("sif.zig");
 
@@ -401,28 +402,9 @@ fn complete(request: Cmd) EndBody {
 /// Answers an `IOP` request for `EE` memory
 fn sendData(request: RdataBody) void {
     // Write back any dirty lines belonging to the request so the DMA controller picks them up
-    writeBackDCache(request.src, request.size);
+    std.os.ps2.writeBackDCache(request.src, request.size);
     sendWith(.end, .{
         .rpc = .{ .packet_addr = request.rpc.packet_addr, .client = request.rpc.client },
         .request = .rpc_rdata,
     }, .{ .src = request.src, .dst = request.dst, .size = request.size });
-}
-
-/// Writes back data cache lines associated with [`size`, `addr` + `size`)
-fn writeBackDCache(addr: u32, size: u32) void {
-    var line = addr & ~@as(u32, 63);
-    while (line < addr + size) : (line += 64) {
-        asm volatile (
-            \\ sync
-            \\ cache 0x18, 0(%[line])
-            \\ sync
-            :
-            : [line] "r" (line),
-            : .{ .memory = true });
-    }
-}
-
-/// The `EE` has a RAM mirror that bypasses its internal data cache
-fn uncached(ptr: anytype) *volatile @typeInfo(@TypeOf(ptr)).pointer.child {
-    return @ptrFromInt(@intFromPtr(ptr) | 0x2000_0000);
 }

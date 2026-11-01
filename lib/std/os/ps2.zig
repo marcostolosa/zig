@@ -3,6 +3,7 @@ const std = @import("std");
 pub const io = @import("ps2/io.zig");
 pub const sif = @import("ps2/sif.zig");
 pub const rpc = @import("ps2/rpc.zig");
+pub const file_io = @import("ps2/file_io.zig");
 
 pub const Sys = enum(i32) {
     exit = 4,
@@ -264,6 +265,25 @@ pub const sio = struct {
         for (bytes) |byte| writeByte(byte);
     }
 };
+
+/// Writes back data cache lines associated with [`addr`, `addr` + `size`)
+pub fn writeBackDCache(addr: u32, size: u32) void {
+    var line = addr & ~@as(u32, 63);
+    while (line < addr + size) : (line += 64) {
+        asm volatile (
+            \\ sync
+            \\ cache 0x18, 0(%[line])
+            \\ sync
+            :
+            : [line] "r" (line),
+            : .{ .memory = true });
+    }
+}
+
+/// The `EE` has a RAM mirror that bypasses its internal data cache
+pub fn uncached(ptr: anytype) *volatile @typeInfo(@TypeOf(ptr)).pointer.child {
+    return @ptrFromInt(@intFromPtr(ptr) | 0x2000_0000);
+}
 
 var cur_brk: usize = 0;
 

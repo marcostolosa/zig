@@ -357,7 +357,7 @@ fn buildSymbolSearchTable(gpa: Allocator, endian: Endian, comptime Sym: type, sy
             return lhs_val < rhs_val;
         }
     };
-    std.mem.sort(usize, result.items, @as(SortContext, .{
+    std.sort.heap(usize, result.items, @as(SortContext, .{
         .swap_endian = swap_endian,
         .symbols = symbols,
     }), SortContext.lessThan);

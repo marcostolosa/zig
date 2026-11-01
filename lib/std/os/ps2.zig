@@ -7,6 +7,7 @@ pub const debug_io = @import("ps2/debug_io.zig");
 pub const sif = @import("ps2/sif.zig");
 pub const rpc = @import("ps2/rpc.zig");
 pub const file_io = @import("ps2/file_io.zig");
+pub const cdvd = @import("ps2/cdvd.zig");
 
 pub const Sys = enum(i32) {
     exit = 4,

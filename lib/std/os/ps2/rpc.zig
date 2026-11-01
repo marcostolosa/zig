@@ -252,6 +252,8 @@ pub const Server = enum(u32) {
     iop_heap = 0x8000_0003,
     /// Loads and starts `IRX` modules on the `IOP` and `ELF`s on the `EE`
     load_file = 0x8000_0006,
+    /// Synchronous `CDVD` commands, which include the RTC
+    cdvd_scmd = 0x8000_0593,
 
     _,
 };
@@ -309,7 +311,7 @@ fn callRaw(server: u32, buf: u32, func: u32, args_size: u32, result_size: u32) v
         .result = @intFromPtr(&call_buf),
         .result_size = result_size,
         .server = server,
-    }, .{
+    }, if (args_size == 0) null else .{
         .src = @intFromPtr(&call_buf),
         .dst = buf,
         .size = args_size,

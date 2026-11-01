@@ -8,6 +8,7 @@ const Io = std.Io;
 
 const debug_io = std.os.ps2.debug_io;
 const file_io = std.os.ps2.file_io;
+const cdvd = std.os.ps2.cdvd;
 
 const vtable: Io.VTable = blk: {
     var v = debug_io.vtable;
@@ -25,11 +26,17 @@ const vtable: Io.VTable = blk: {
     v.processExecutablePath = &processExecutablePath;
     v.processCurrentPath = &processCurrentPath;
 
+    v.now = &now;
+    v.clockResolution = &clockResolution;
+    v.sleep = &sleep;
+
     break :blk v;
 };
 
 /// `FILEIO` RPC client bound on first file access
 client: ?file_io.Client = null,
+/// `CDVD` S-command client bound on first `now(.real)`
+cdvd_client: ?cdvd.Client = null,
 
 pub fn io(self: *SifIo) Io {
     return .{
@@ -44,6 +51,15 @@ fn fileIoClient(self: *SifIo) error{NoDevice}!file_io.Client {
 
     const client = std.os.ps2.rpc.Rpc.acquire().bind(.file_io) catch return error.NoDevice;
     self.client = client;
+    return client;
+}
+
+/// Binds to the `CDVD` S-command server on first use
+fn cdvdClient(self: *SifIo) ?cdvd.Client {
+    if (self.cdvd_client) |client| return client;
+
+    const client = std.os.ps2.rpc.Rpc.acquire().bind(.cdvd_scmd) catch return null;
+    self.cdvd_client = client;
     return client;
 }
 
@@ -329,6 +345,42 @@ fn processCurrentPath(_: ?*anyopaque, buf: []u8) std.process.CurrentPathError!us
 
     @memcpy(buf[0..dir.len], dir);
     return dir.len;
+}
+
+/// Reads from the RTC from `CDVD` for `.real`, otherwise forwards to `debug_io`
+fn now(userdata: ?*anyopaque, clk: Io.Clock) Io.Timestamp {
+    if (clk != .real) return debug_io.vtable.now(userdata, clk);
+
+    const self = fromUserdata(userdata);
+    const client = self.cdvdClient() orelse return .zero;
+    const clock = cdvd.readClock(client) catch return .zero;
+
+    return .{ .nanoseconds = @as(u64, clock.epochSeconds()) * std.time.ns_per_s };
+}
+
+fn clockResolution(userdata: ?*anyopaque, clk: Io.Clock) Io.Clock.ResolutionError!Io.Duration {
+    return if (clk == .real)
+        // The RTC counts whole seconds
+        .{ .nanoseconds = std.time.ns_per_s }
+    else
+        debug_io.vtable.clockResolution(userdata, clk);
+}
+
+/// Converts a `.real` deadline into a duration for `debug_io` to handle
+fn sleep(userdata: ?*anyopaque, timeout: Io.Timeout) Io.Cancelable!void {
+    switch (timeout) {
+        .deadline => |d| if (d.clock == .real) {
+            const left = d.raw.nanoseconds - now(userdata, .real).nanoseconds;
+            return debug_io.vtable.sleep(userdata, .{ .duration = .{
+                .raw = .{ .nanoseconds = @max(left, 0) },
+                .clock = .awake,
+            } });
+        },
+
+        else => {},
+    }
+
+    return debug_io.vtable.sleep(userdata, timeout);
 }
 
 /// Converts `path` into a path `FILEIO` understands. Device-prefixed paths (e.g. `cdrom0:\\X;1`)

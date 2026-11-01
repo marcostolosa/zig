@@ -58,7 +58,7 @@ literals_4: std.array_hash_map.Auto(u32, InputAtom.Index),
 literals_8: std.array_hash_map.Auto(u64, InputAtom.Index),
 literals_16: std.array_hash_map.Auto(u128, InputAtom.Index),
 
-/// Accessed with `InputAtom.Adapter` using `[]const u8` keys.
+/// Accessed with `InputAtom.StringAdapter` using `[]const u8` keys.
 literals_strings: std.array_hash_map.Custom(InputAtom.Index, void, void, true),
 
 /// Accessed with `String.Adapter` using `[]const u8` keys.
@@ -2937,6 +2937,7 @@ fn loadObject(
                                 0,
                                 .limited64(remaining),
                             ) catch |e| switch (e) {
+                                error.WriteFailed => return error.OutOfMemory,
                                 error.StreamTooLong => return diags.failParse(
                                     path,
                                     "unterminated C string in section '{s},{s}'",
@@ -2945,7 +2946,7 @@ fn loadObject(
                                         std.mem.sliceTo(&section.sectname, 0),
                                     },
                                 ),
-                                else => return e,
+                                else => |err| return err,
                             };
 
                             assert(len == cstring_buf.written().len);

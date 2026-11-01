@@ -132,7 +132,7 @@ pub fn tripleForTarget(allocator: Allocator, target: *const std.Target) ![]const
         .s390x => "s390x",
         .thumb => "thumb",
         .thumbeb => "thumbeb",
-        .x86 => "i386",
+        .x86, .x86c16 => "i386",
         .x86_64 => "x86_64",
         .xcore => "xcore",
         .xtensa => "xtensa",
@@ -208,9 +208,6 @@ pub fn tripleForTarget(allocator: Allocator, target: *const std.Target) ![]const
             .{ .v9_5a, "v9.5a" },
             .{ .v9_6a, "v9.6a" },
             .{ .v9_7a, "v9.7a" },
-        }),
-        .powerpc => subArchName(target, .powerpc, .{
-            .{ .spe, "spe" },
         }),
         .spirv32 => switch (target.os.tag) {
             .vulkan, .opengl => subArchName(target, .spirv, .{
@@ -361,7 +358,6 @@ pub fn tripleForTarget(allocator: Allocator, target: *const std.Target) ![]const
         .muslsf => "muslsf",
         .muslx32 => "muslx32",
         .msvc => "msvc",
-        .itanium => "itanium",
         .simulator => "simulator",
         .ohos, .ohoseabi => "ohos",
         .call0 => "unknown",
@@ -516,7 +512,7 @@ pub const DataLayout = struct {
             .sparc => "E-m:e-p:32:32-i64:64-i128:128-f128:64-n32-S64",
             .sparc64 => "E-m:e-i64:64-i128:128-n32:64-S128",
             .s390x => "E-S64-m:e-i1:8:16-i8:8:16-i64:64-f128:64-v128:64-a:8:16-n32:64",
-            .x86 => if (target.os.tag == .windows or target.os.tag == .uefi) switch (target.abi) {
+            .x86, .x86c16 => if (target.os.tag == .windows or target.os.tag == .uefi) switch (target.abi) {
                 .gnu => if (target.ofmt == .coff)
                     "e-m:x-p:32:32-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:32-n8:16:32-a:0:32-S32"
                 else
@@ -7122,14 +7118,15 @@ pub const WipFunction = struct {
 
     pub fn conv(
         self: *WipFunction,
-        signedness: Instruction.Cast.Signedness,
+        val_signedness: Instruction.Cast.Signedness,
         val: Value,
+        ty_signedness: Instruction.Cast.Signedness,
         ty: Type,
         name: []const u8,
     ) Allocator.Error!Value {
         const val_ty = val.typeOfWip(self);
         if (val_ty == ty) return val;
-        return self.cast(self.builder.convTag(signedness, val_ty, ty), val, ty, name);
+        return self.cast(self.builder.convTag(val_signedness, val_ty, ty_signedness, ty), val, ty, name);
     }
 
     pub fn cast(
@@ -12883,8 +12880,9 @@ fn noCfiConstAssumeCapacity(self: *Builder, function: Function.Index) Constant {
 
 fn convTag(
     self: *Builder,
-    signedness: Constant.Cast.Signedness,
+    val_signedness: Constant.Cast.Signedness,
     val_ty: Type,
+    ty_signedness: Constant.Cast.Signedness,
     ty: Type,
 ) Function.Instruction.Tag {
     assert(val_ty != ty);
@@ -12895,7 +12893,7 @@ fn convTag(
                 .eq => unreachable,
                 .gt => .fptrunc,
             },
-            .integer => switch (signedness) {
+            .integer => switch (ty_signedness) {
                 .unsigned => .fptoui,
                 .signed => .fptosi,
                 .unneeded => unreachable,
@@ -12903,21 +12901,24 @@ fn convTag(
             else => unreachable,
         },
         .integer => switch (ty.scalarTag(self)) {
-            .simple => switch (signedness) {
+            .simple => switch (val_signedness) {
                 .unsigned => .uitofp,
                 .signed => .sitofp,
                 .unneeded => unreachable,
             },
             .integer => switch (std.math.order(val_ty.scalarBits(self), ty.scalarBits(self))) {
-                .lt => switch (signedness) {
+                .lt => switch (val_signedness) {
                     .unsigned => .zext,
                     .signed => .sext,
                     .unneeded => unreachable,
                 },
                 .eq => unreachable,
-                .gt => switch (signedness) {
+                .gt => switch (ty_signedness) {
                     .unsigned => .@"trunc nuw",
-                    .signed => .@"trunc nsw",
+                    .signed => switch (val_signedness) {
+                        .unsigned => .@"trunc nuw nsw",
+                        .signed, .unneeded => .@"trunc nsw",
+                    },
                     .unneeded => .trunc,
                 },
             },

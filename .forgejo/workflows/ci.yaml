@@ -107,7 +107,7 @@ jobs:
           fetch-depth: 0
       - name: Build and Test
         run: sh ci/aarch64-openbsd-debug.sh
-        timeout-minutes: 300
+        timeout-minutes: 240
   aarch64-openbsd-release:
     runs-on: [self-hosted, aarch64-openbsd]
     steps:
@@ -117,7 +117,7 @@ jobs:
           fetch-depth: 0
       - name: Build and Test
         run: sh ci/aarch64-openbsd-release.sh
-        timeout-minutes: 240
+        timeout-minutes: 180
 
   loongarch64-linux-debug:
     runs-on: [self-hosted, loongarch64-linux]
@@ -180,7 +180,7 @@ jobs:
           fetch-depth: 0
       - name: Build and Test
         run: sh ci/riscv64-linux-release.sh
-        timeout-minutes: 360
+        timeout-minutes: 420
 
   s390x-linux-debug:
     runs-on: [self-hosted, s390x-linux]
@@ -233,7 +233,7 @@ jobs:
           fetch-depth: 0
       - name: Build and Test
         run: sh ci/x86_64-linux-debug.sh
-        timeout-minutes: 180
+        timeout-minutes: 240
   x86_64-linux-debug-llvm:
     runs-on: [self-hosted, x86_64-linux]
     steps:

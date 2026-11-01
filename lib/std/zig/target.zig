@@ -547,10 +547,6 @@ fn supportedCompatArch(host: *const std.Target, arch: std.Target.Cpu.Arch) bool 
     // very recent kernel and for the kernel feature to be enabled. Additionally, contemporary
     // RISC-V hardware is just too slow to justify building the 32-bit binaries.
     return switch (host.os.tag) {
-        .illumos => switch (host.cpu.arch) {
-            .x86_64 => arch == .x86,
-            else => false,
-        },
         .linux => switch (host.cpu.arch) {
             .mips64 => arch == .mips,
             .mips64el => arch == .mipsel,
@@ -597,8 +593,6 @@ pub fn isNative(query: *const std.Target.Query, target: *const std.Target, host:
     // Remove features that don't actually affect compatibility.
     const irrelevant: std.Target.Cpu.Feature.Set = switch (host.cpu.arch) {
         .x86_64 => std.Target.x86.featureSet(&.{
-            .@"16bit_mode",
-            .@"32bit_mode",
             .@"64bit",
             .false_deps_bls,
             .false_deps_compress,

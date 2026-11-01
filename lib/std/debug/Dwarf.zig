@@ -1533,7 +1533,7 @@ pub fn ipRegNum(arch: std.Target.Cpu.Arch) ?u16 {
         .s390x => 65,
         .sparc, .sparc64 => 65,
         .ve => 144,
-        .x86 => 8,
+        .x86, .x86c16 => 8,
         .x86_64 => 16,
         else => null,
     };
@@ -1544,7 +1544,8 @@ pub fn fpRegNum(arch: std.Target.Cpu.Arch) u16 {
         .aarch64, .aarch64_be => 29,
         .alpha => 15,
         .arc, .arceb => 27,
-        .arm, .armeb, .thumb, .thumbeb => 11,
+        .arm, .armeb => 11,
+        .thumb, .thumbeb => 7,
         .csky => 14,
         .hexagon => 30,
         .kvx => 14,
@@ -1559,7 +1560,7 @@ pub fn fpRegNum(arch: std.Target.Cpu.Arch) u16 {
         .s390x => 11,
         .sparc, .sparc64 => 30,
         .ve => 9,
-        .x86 => 5,
+        .x86, .x86c16 => 5,
         .x86_64 => 6,
         else => unreachable,
     };
@@ -1585,7 +1586,7 @@ pub fn spRegNum(arch: std.Target.Cpu.Arch) u16 {
         .s390x => 15,
         .sparc, .sparc64 => 14,
         .ve => 11,
-        .x86 => 4,
+        .x86, .x86c16 => 4,
         .x86_64 => 7,
         else => unreachable,
     };

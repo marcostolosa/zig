@@ -20,13 +20,8 @@ var base_allocator_instance = std.heap.FixedBufferAllocator.init("");
 pub var allocator_instance: std.heap.SafeAllocator = undefined;
 pub const allocator = if (builtin.is_test) allocator_instance.allocator() else @compileError("not testing");
 
-pub var io_instance: if (builtin.os.tag == .ps2) void else Io.Threaded = undefined;
-pub const io = if (!builtin.is_test)
-    @compileError("not testing")
-else if (builtin.os.tag == .ps2)
-    std.os.ps2.io.io
-else
-    io_instance.io();
+pub var io_instance: if (builtin.os.tag == .ps2) std.os.ps2.Io else Io.Threaded = undefined;
+pub const io = if (!builtin.is_test) @compileError("not testing") else io_instance.io();
 
 pub var environ: Environ = if (builtin.is_test) undefined else @compileError("not testing");
 

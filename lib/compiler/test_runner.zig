@@ -21,7 +21,7 @@ var stdout_buffer: [4096]u8 = undefined;
 var stdin_reader: Io.File.Reader = undefined;
 var stdout_writer: Io.File.Writer = undefined;
 const runner_threaded_io: Io = if (builtin.os.tag == .ps2)
-    std.os.ps2.io.io
+    std.os.ps2.debug_io.io
 else
     Io.Threaded.global_single_threaded.io();
 
@@ -380,7 +380,7 @@ pub fn mainSimple() anyerror!void {
     };
 
     testing.allocator_instance = .init(std.heap.page_allocator, .{});
-    if (builtin.os.tag != .ps2) testing.io_instance = .init(testing.allocator, .{});
+    testing.io_instance = if (builtin.os.tag == .ps2) .{} else .init(testing.allocator, .{});
 
     var passed: u64 = 0;
     var skipped: u64 = 0;

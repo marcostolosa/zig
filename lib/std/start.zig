@@ -868,7 +868,8 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
         .environ = .{ .block = environ },
     });
     defer if (native_os != .ps2) threaded.deinit();
-    const io = if (native_os == .ps2) std.os.ps2.io.io else threaded.io();
+    var ps2_io: if (native_os == .ps2) std.os.ps2.Io else void = if (native_os == .ps2) .{} else {};
+    const io = if (native_os == .ps2) ps2_io.io() else threaded.io();
 
     var environ_map = std.process.Environ.createMap(.{ .block = environ }, gpa) catch |err|
         std.process.fatal("failed to parse environment variables: {t}", .{err});

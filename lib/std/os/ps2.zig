@@ -1,6 +1,9 @@
+//! Provides the system interface to the `PS2` and the `EE` kernel.
+
 const std = @import("std");
 
-pub const io = @import("ps2/io.zig");
+pub const Io = @import("ps2/Io.zig");
+pub const debug_io = @import("ps2/debug_io.zig");
 pub const sif = @import("ps2/sif.zig");
 pub const rpc = @import("ps2/rpc.zig");
 pub const file_io = @import("ps2/file_io.zig");

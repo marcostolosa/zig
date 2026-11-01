@@ -12922,11 +12922,15 @@ fn zirImport(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.
     const operand = sema.code.nullTerminatedString(extra.path);
 
     const result = pt.doImport(block.getFileScope(zcu), operand) catch |err| switch (err) {
-        error.ModuleNotFound => return sema.fail(block, operand_src, "no module named '{s}' available within module '{s}'", .{
-            operand, block.getFileScope(zcu).mod.?.fully_qualified_name,
-        }),
+        error.ModuleNotFound => return sema.fail(
+            block,
+            operand_src,
+            "no module named '{s}' available within module '{s}'",
+            .{ operand, block.getFileScope(zcu).mod.?.fully_qualified_name },
+        ),
         error.IllegalZigImport => unreachable, // caught before semantic analysis
         error.OutOfMemory => |e| return e,
+        error.ImportAbsolutePath => unreachable, // caught before semantic analysis
     };
     const file_index = result.file;
     const file = zcu.fileByIndex(file_index);
@@ -12974,11 +12978,20 @@ fn zirEmbedFile(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!A
     }
 
     const ef_idx = pt.embedFile(block.getFileScope(zcu), name) catch |err| switch (err) {
-        error.ImportOutsideModulePath => {
-            return sema.fail(block, operand_src, "embed of file outside package path: '{s}'", .{name});
-        },
+        error.ImportOutsideModulePath => return sema.fail(
+            block,
+            operand_src,
+            "embed of file outside package path: '{s}'",
+            .{name},
+        ),
         error.OutOfMemory => |e| return e,
         error.Canceled => |e| return e,
+        error.ImportAbsolutePath => return sema.fail(
+            block,
+            operand_src,
+            "embed of file using absolute path: '{s}'",
+            .{name},
+        ),
     };
     try sema.declareDependency(.{ .embed_file = ef_idx });
 

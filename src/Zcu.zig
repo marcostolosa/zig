@@ -217,7 +217,7 @@ failed_imports: std.ArrayList(struct {
     file_index: File.Index,
     import_string: Zir.NullTerminatedString,
     import_token: Ast.TokenIndex,
-    kind: enum { file_outside_module_root, illegal_zig_import },
+    kind: enum { file_outside_module_root, illegal_zig_import, import_absolute_path },
 }),
 /// This tracks files which triggered errors when generating AST/ZIR/ZOIR.
 /// If not `null`, the value is a retryable error (the file status is guaranteed

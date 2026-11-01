@@ -3879,6 +3879,7 @@ pub fn getAllErrorsAlloc(comp: *Compilation) Allocator.Error!ErrorBundle {
                 .msg = switch (failed.kind) {
                     .file_outside_module_root => try bundle.addString("import of file outside module path"),
                     .illegal_zig_import => try bundle.addString("this compiler implementation does not allow importing files from this directory"),
+                    .import_absolute_path => try bundle.addString("import of file using absolute path"),
                 },
                 .src_loc = try bundle.addSourceLocation(.{
                     .src_path = try bundle.printString("{f}", .{file.path.fmt(comp)}),

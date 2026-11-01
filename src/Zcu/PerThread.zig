@@ -2466,10 +2466,12 @@ pub fn doImport(
     OutOfMemory,
     ModuleNotFound,
     IllegalZigImport,
+    ImportAbsolutePath,
 }!struct {
     file: Zcu.File.Index,
     module_root: ?*Module,
 } {
+    if (std.fs.path.isAbsolute(import_string)) return error.ImportAbsolutePath;
     const zcu = pt.zcu;
     const gpa = zcu.gpa;
     const imported_mod: ?*Module = m: {
@@ -2704,6 +2706,15 @@ fn computeAliveFiles(pt: Zcu.PerThread) Allocator.Error!bool {
                     });
                     continue;
                 },
+                error.ImportAbsolutePath => {
+                    try zcu.failed_imports.append(gpa, .{
+                        .file_index = file_idx,
+                        .import_string = item.data.name,
+                        .import_token = item.data.token,
+                        .kind = .import_absolute_path,
+                    });
+                    continue;
+                },
             };
 
             // If the import was not of a module, we propagate our own module.
@@ -2869,13 +2880,14 @@ fn updateBuiltinModule(pt: Zcu.PerThread, opts: Builtin) Allocator.Error!struct 
     };
 }
 
-pub const EmbedFileError = error{ImportOutsideModulePath} || Allocator.Error || Io.Cancelable;
+pub const EmbedFileError = error{ ImportOutsideModulePath, ImportAbsolutePath } || Allocator.Error || Io.Cancelable;
 
 pub fn embedFile(
     pt: Zcu.PerThread,
     cur_file: *Zcu.File,
     import_string: []const u8,
 ) EmbedFileError!Zcu.EmbedFile.Index {
+    if (std.fs.path.isAbsolute(import_string)) return error.ImportAbsolutePath;
     const zcu = pt.zcu;
     const gpa = zcu.gpa;
 

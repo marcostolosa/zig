@@ -62,7 +62,7 @@ func_index: InternPool.Index,
 func_is_naked: bool,
 /// Used to restore the error return trace when returning a non-error from a function.
 error_return_trace_index_on_fn_entry: Air.Inst.Ref = .none,
-comptime_err_ret_trace: *std.array_list.Managed(LazySrcLoc),
+comptime_err_ret_trace: *std.ArrayList(LazySrcLoc),
 /// When semantic analysis needs to know the return type of the function whose body
 /// is being analyzed, this `Type` should be used instead of going through `func`.
 /// This will correctly handle the case of a comptime/inline function call of a
@@ -18422,7 +18422,7 @@ fn analyzeRet(
         inlining.comptime_result = operand;
 
         if (sema.fn_ret_ty.isError(zcu) and ret_val.getErrorName(zcu) != .none) {
-            try sema.comptime_err_ret_trace.append(src);
+            try sema.comptime_err_ret_trace.append(sema.gpa, src);
         }
         return error.ComptimeReturn;
     }

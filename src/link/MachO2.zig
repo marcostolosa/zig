@@ -57,10 +57,9 @@ input_atoms: std.ArrayList(InputAtom),
 literals_4: std.array_hash_map.Auto(u32, InputAtom.Index),
 literals_8: std.array_hash_map.Auto(u64, InputAtom.Index),
 literals_16: std.array_hash_map.Auto(u128, InputAtom.Index),
-literals_strings: std.StringArrayHashMapUnmanaged(InputAtom.Index),
 
-/// Arena for various use cases (only strings for now).
-arena: std.heap.ArenaAllocator,
+/// Accessed with `InputAtom.Adapter` using `[]const u8` keys.
+literals_strings: std.array_hash_map.Custom(InputAtom.Index, void, void, true),
 
 /// Accessed with `String.Adapter` using `[]const u8` keys.
 strtab: std.array_hash_map.Custom(String, void, void, true),
@@ -78,6 +77,15 @@ relocs: std.ArrayList(Reloc),
 overflowed_reloc_count: u32,
 misaligned_reloc_count: u32,
 
+/// Map of all imports. The value here serves as an intrusive linked list `next` pointer
+/// (really, an index into the map), and allows us to find all the imports referring to a given symbol
+/// easily, by essentially going head -> values[head] -> values[values[head]] -> ... -> `.none`,
+/// where the head is stored in the symbol's `first_import` field.
+///
+/// MachO allows 8 bits addends to be stored inside the fixup itself (see `Import.Addend` below),
+/// so this is keyed only by the high 56 bits of the addend. This has the nice side effect that
+/// we only keep track of fixups that fall outside of a given range, i.e `A` and `A+0x10`
+/// both will map to the same entry, but `A+0x1000` would not.
 imports: std.array_hash_map.Auto(Import, Import.Index.Optional),
 fixup_chain_symbol_names_len: u32,
 got: std.array_hash_map.Auto(Symbol.Index, void),
@@ -288,11 +296,29 @@ const InputAtom = struct {
             return iai.ptrConst(macho).node;
         }
     };
+
+    const StringAdapter = struct {
+        macho: *const MachO,
+        pub fn hash(_: @This(), s: []const u8) u32 {
+            return std.array_hash_map.hashString(s);
+        }
+        pub fn eql(ctx: @This(), lhs: []const u8, rhs: InputAtom.Index, _: usize) bool {
+            const node = rhs.node(ctx.macho);
+            return std.mem.eql(u8, lhs, std.mem.sliceTo(node.sliceConst(&ctx.macho.mf), 0));
+        }
+    };
 };
 
 const Import = struct {
     symbol: Symbol.Index,
-    addend: u64,
+    addend_bits: u56,
+
+    const Addend = packed struct(u64) {
+        /// Stored directly in the bind fixup.
+        fixup_bits: u8,
+        /// Stored in the `Import`.
+        import_bits: u56,
+    };
 
     const Index = enum(u32) {
         _,
@@ -812,7 +838,6 @@ fn create(
         .literals_16 = .empty,
         .literals_strings = .empty,
 
-        .arena = .init(comp.gpa),
         .strtab = .empty,
         .symtab = .empty,
         .global_symbols = .empty,
@@ -2045,7 +2070,6 @@ pub fn deinit(macho: *MachO) void {
     macho.literals_8.deinit(gpa);
     macho.literals_16.deinit(gpa);
     macho.literals_strings.deinit(gpa);
-    macho.arena.deinit();
     macho.strtab.deinit(gpa);
     macho.symtab.deinit(gpa);
     macho.global_symbols.deinit(gpa);
@@ -2913,8 +2937,6 @@ fn loadObject(
                                 0,
                                 .limited64(remaining),
                             ) catch |e| switch (e) {
-                                error.WriteFailed => return error.OutOfMemory,
-                                error.ReadFailed => return error.ReadFailed,
                                 error.StreamTooLong => return diags.failParse(
                                     path,
                                     "unterminated C string in section '{s},{s}'",
@@ -2923,27 +2945,25 @@ fn loadObject(
                                         std.mem.sliceTo(&section.sectname, 0),
                                     },
                                 ),
+                                else => return e,
                             };
 
                             assert(len == cstring_buf.written().len);
 
                             // Consume NUL.
                             fr.interface.toss(1);
-                            cstring_buf.writer.writeByte(0) catch
-                                return error.OutOfMemory;
+                            cstring_buf.writer.writeByte(0) catch |err| switch (err) {
+                                error.WriteFailed => return error.OutOfMemory,
+                            };
 
-                            const gop = try macho.literals_strings.getOrPut(gpa, cstring_buf.written());
-
-                            if (!gop.found_existing) {
-                                // Not found, ensure its key stays alive.
-                                gop.key_ptr.* = try macho.arena.allocator().dupe(
-                                    u8,
-                                    cstring_buf.written(),
-                                );
-                            }
+                            try macho.literals_strings.ensureUnusedCapacity(gpa, 1);
+                            const gop = macho.literals_strings.getOrPutAssumeCapacityAdapted(
+                                std.mem.sliceTo(cstring_buf.written(), 0),
+                                InputAtom.StringAdapter{ .macho = macho },
+                            );
                             break :cstring .{
                                 len + 1,
-                                .{ .found_existing = gop.found_existing, .value_ptr = gop.value_ptr },
+                                .{ .found_existing = gop.found_existing, .value_ptr = gop.key_ptr },
                             };
                         },
 
@@ -3419,7 +3439,7 @@ fn loadObject(
                         0;
                 const imports_gop = try macho.imports.getOrPut(gpa, .{
                     .symbol = target_symbol,
-                    .addend = import_addend,
+                    .addend_bits = @intCast(import_addend),
                 });
                 if (!imports_gop.found_existing) {
                     assert(imports_gop.index == macho.imports.count() - 1);
@@ -4446,9 +4466,10 @@ fn writeOneFixup(
     ));
     switch (macho.targetLoad(&target.nlist(macho).n_type).bits.type) {
         .undf => {
+            const split_addend: Import.Addend = @fromBackingInt(addend);
             const import_index = macho.imports.getIndex(.{
                 .symbol = target,
-                .addend = addend & ~@as(u64, 0xff),
+                .addend_bits = split_addend.import_bits,
             }).?;
 
             macho.targetStore(dest_ptr, .{
@@ -4458,7 +4479,7 @@ fn writeOneFixup(
                 ) else 0,
                 .per_kind = .{ .bind = .{
                     .ordinal = @intCast(import_index),
-                    .addend = @truncate(addend),
+                    .addend = split_addend.fixup_bits,
                 } },
             });
             next_vaddr.* = dest_vaddr;

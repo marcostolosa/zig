@@ -256,50 +256,72 @@ pub fn searchSymtab(ef: *ElfFile, gpa: Allocator, vaddr: u64) error{
     const symtab = ef.symtab orelse return error.NoSymtab;
     const strtab = ef.strtab orelse return error.NoStrtab;
 
+    return switch (ef.is_64) {
+        inline else => |is_64| searchSymbolTable(
+            gpa,
+            is_64,
+            ef.endian,
+            symtab,
+            strtab,
+            &ef.symbol_search_table,
+            vaddr,
+        ),
+    };
+}
+
+pub fn searchSymbolTable(
+    gpa: Allocator,
+    comptime is_64: bool,
+    endian: Endian,
+    symtab: SymtabSection,
+    strtab: []const u8,
+    symbol_search_table: *?[]usize,
+    vaddr: u64,
+) error{ BadSymtab, OutOfMemory }!std.debug.Symbol {
     if (symtab.bytes.len % symtab.entry_size != 0) return error.BadSymtab;
 
-    const swap_endian = ef.endian != @import("builtin").cpu.arch.endian();
+    const swap_endian = endian != @import("builtin").cpu.arch.endian();
 
-    switch (ef.is_64) {
-        inline true, false => |is_64| {
-            const Sym = if (is_64) elf.Elf64_Sym else elf.Elf32_Sym;
-            if (symtab.entry_size != @sizeOf(Sym)) return error.BadSymtab;
-            const symbols: []align(1) const Sym = @ptrCast(symtab.bytes);
-            if (ef.symbol_search_table == null) {
-                ef.symbol_search_table = try buildSymbolSearchTable(gpa, ef.endian, Sym, symbols);
-            }
-            const search_table = ef.symbol_search_table.?;
-            const SearchContext = struct {
-                swap_endian: bool,
-                target: u64,
-                symbols: []align(1) const Sym,
-                fn predicate(ctx: @This(), sym_index: usize) bool {
-                    // We need to return `true` for the first N items, then `false` for the rest --
-                    // the index we'll get out is the first `false` one. So, we'll return `true` iff
-                    // the target address is after the *end* of this symbol. This synchronizes with
-                    // the logic in `buildSymbolSearchTable` which sorts by *end* address.
-                    var sym = ctx.symbols[sym_index];
-                    if (ctx.swap_endian) std.mem.byteSwapAllFields(Sym, &sym);
-                    const sym_end = sym.st_value + sym.st_size;
-                    return ctx.target >= sym_end;
-                }
-            };
-            const sym_index_index = std.sort.partitionPoint(usize, search_table, @as(SearchContext, .{
-                .swap_endian = swap_endian,
-                .target = vaddr,
-                .symbols = symbols,
-            }), SearchContext.predicate);
-            if (sym_index_index == search_table.len) return .unknown;
-            var sym = symbols[search_table[sym_index_index]];
-            if (swap_endian) std.mem.byteSwapAllFields(Sym, &sym);
-            if (vaddr < sym.st_value or vaddr >= sym.st_value + sym.st_size) return .unknown;
-            return .{
-                .name = std.mem.sliceTo(strtab[sym.st_name..], 0),
-                .compile_unit_name = null,
-                .source_location = null,
-            };
-        },
+    const Sym = if (is_64) elf.Elf64_Sym else elf.Elf32_Sym;
+    if (symtab.entry_size != @sizeOf(Sym)) return error.BadSymtab;
+
+    const symbols: []align(1) const Sym = @ptrCast(symtab.bytes);
+    if (symbol_search_table.* == null) {
+        symbol_search_table.* = try buildSymbolSearchTable(gpa, endian, Sym, symbols);
     }
+
+    const search_table = symbol_search_table.*.?;
+    const SearchContext = struct {
+        swap_endian: bool,
+        target: u64,
+        symbols: []align(1) const Sym,
+        fn predicate(ctx: @This(), sym_index: usize) bool {
+            // We need to return `true` for the first N items, then `false` for the rest --
+            // the index we'll get out is the first `false` one. So, we'll return `true` iff
+            // the target address is after the *end* of this symbol. This synchronizes with
+            // the logic in `buildSymbolSearchTable` which sorts by *end* address.
+            var sym = ctx.symbols[sym_index];
+            if (ctx.swap_endian) std.mem.byteSwapAllFields(Sym, &sym);
+            const sym_end = sym.st_value + sym.st_size;
+            return ctx.target >= sym_end;
+        }
+    };
+    const sym_index_index = std.sort.partitionPoint(usize, search_table, @as(SearchContext, .{
+        .swap_endian = swap_endian,
+        .target = vaddr,
+        .symbols = symbols,
+    }), SearchContext.predicate);
+
+    if (sym_index_index == search_table.len) return .unknown;
+    var sym = symbols[search_table[sym_index_index]];
+    if (swap_endian) std.mem.byteSwapAllFields(Sym, &sym);
+    if (vaddr < sym.st_value or vaddr >= sym.st_value + sym.st_size) return .unknown;
+
+    return .{
+        .name = std.mem.sliceTo(strtab[sym.st_name..], 0),
+        .compile_unit_name = null,
+        .source_location = null,
+    };
 }
 
 fn buildSymbolSearchTable(gpa: Allocator, endian: Endian, comptime Sym: type, symbols: []align(1) const Sym) error{

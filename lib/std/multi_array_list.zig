@@ -13,9 +13,8 @@ const testing = std.testing;
 /// This allows for memory savings if the struct or union has padding,
 /// and also improves cache usage if only some fields or just tags
 /// are needed for a computation.  The primary API for accessing fields is
-/// the `slice()` function, which computes the start pointers
-/// for the array of each field.  From the slice you can call
-/// `.items(.<field_name>)` to obtain a slice of field values.
+/// the `items` function.
+/// You can call `.items(.<field_name>)` to obtain a slice of field values.
 /// For unions you can call `.items(.tags)` or `.items(.data)`.
 pub fn MultiArrayList(comptime T: type) type {
     return struct {
@@ -74,8 +73,6 @@ pub fn MultiArrayList(comptime T: type) type {
 
         /// A MultiArrayList.Slice contains cached start pointers for each field in the list.
         /// These pointers are not normally stored to reduce the size of the list in memory.
-        /// If you are accessing multiple fields, call slice() first to compute the pointers,
-        /// and then get the field arrays from the slice.
         pub const Slice = struct {
             /// This array is indexed by the field index which can be obtained
             /// by using @intFromEnum() on the Field enum
@@ -209,43 +206,56 @@ pub fn MultiArrayList(comptime T: type) type {
         const field_names = @typeInfo(Elem).@"struct".field_names;
         const field_types = @typeInfo(Elem).@"struct".field_types;
         const field_attrs = @typeInfo(Elem).@"struct".field_attrs;
-        /// `sizes.bytes` is an array of @sizeOf each T field. Sorted by alignment, descending.
-        /// `sizes.fields` is an array mapping from `sizes.bytes` array index to field index.
-        /// `sizes.big_align` is the overall alignment of the allocation, which equals the maximum field alignment.
+
+        /// Describes the memory layout of the MultiArrayList.
+        /// `sizes.big_align`: the overall alignment of the allocation, equal to the maximum field alignment.
+        /// `sizes.bytes_per_capacity`: the unaligned sum of `T`'s field sizes.
+        /// `sizes.fields`: array of field ids.  a mapping from alignment-sorted order to declaration order.
+        /// `sizes.offsets`: array of field offsets.
+        /// `sizes.bytes`: array of @sizeOf each T field. Sorted by alignment.
+        /// Note: sizes.bytes is not used in Zig anymore, only by lldb-zig.
+        ///
+        /// When iterating over the different sub-slices of the storage,
+        /// Visit fields in the order of `size.fields` to make the memory access more predictable.
         const sizes = blk: {
             const Data = struct {
                 size: usize,
-                size_index: usize,
+                field_index: usize,
                 alignment: usize,
             };
             var data: [field_names.len]Data = undefined;
-            var big_align: usize = 1;
             for (field_types, field_attrs, 0..) |f_type, f_attrs, i| {
                 data[i] = .{
                     .size = @sizeOf(f_type),
-                    .size_index = i,
+                    .field_index = i,
                     .alignment = f_attrs.@"align" orelse @alignOf(f_type),
                 };
-                big_align = @max(big_align, data[i].alignment);
             }
             const Sort = struct {
-                fn lessThan(context: void, lhs: Data, rhs: Data) bool {
-                    _ = context;
-                    return lhs.alignment > rhs.alignment;
+                fn bigAlignmentFirst(_: void, lhs: Data, rhs: Data) bool {
+                    return (lhs.alignment > rhs.alignment) or (lhs.alignment == rhs.alignment and lhs.size > rhs.size);
                 }
             };
             @setEvalBranchQuota(3 * field_names.len * std.math.log2(field_names.len));
-            mem.sort(Data, &data, {}, Sort.lessThan);
-            var sizes_bytes: [field_names.len]usize = undefined;
+            mem.sort(Data, &data, {}, Sort.bigAlignmentFirst);
             var field_indexes: [field_names.len]usize = undefined;
+            var field_offsets: [field_names.len]usize = undefined;
+            var bytes: [field_names.len]usize = undefined;
+            var bytes_per_capacity: usize = 0;
+
             for (data, 0..) |elem, i| {
-                sizes_bytes[i] = elem.size;
-                field_indexes[i] = elem.size_index;
+                field_indexes[i] = elem.field_index;
+                field_offsets[elem.field_index] = bytes_per_capacity;
+                bytes[i] = elem.size;
+                bytes_per_capacity += elem.size;
             }
+
             break :blk .{
-                .bytes = sizes_bytes,
+                .big_align = mem.Alignment.fromByteUnits(data[0].alignment),
+                .bytes_per_capacity = bytes_per_capacity,
                 .fields = field_indexes,
-                .big_align = mem.Alignment.fromByteUnits(big_align),
+                .offsets = field_offsets,
+                .bytes = bytes,
             };
         };
 
@@ -283,8 +293,6 @@ pub fn MultiArrayList(comptime T: type) type {
         }
 
         /// Compute pointers to the start of each field of the array.
-        /// If you need to access multiple fields, calling this may
-        /// be more efficient than calling `items()` multiple times.
         /// Does not invalidate element pointers.
         /// The returned Slice inherits its locked/unlocked state from this MultiArrayList.
         pub fn slice(self: Self) Slice {
@@ -294,20 +302,26 @@ pub fn MultiArrayList(comptime T: type) type {
                 .capacity = self.capacity,
                 .pointer_stability = self.pointer_stability,
             };
-            var ptr: [*]u8 = self.bytes;
-            for (sizes.bytes, sizes.fields) |field_size, i| {
-                result.ptrs[i] = ptr;
-                ptr += field_size * self.capacity;
+            inline for (result.ptrs[0..], sizes.offsets) |*p, offset| {
+                p.* = self.bytes[offset * self.capacity ..];
             }
             return result;
         }
 
         /// Get the slice of values for a specified field.
-        /// If you need multiple fields, consider calling slice()
-        /// instead.
         /// The returned pointer may be invalidated by various operations to this MultiArrayList.
         pub fn items(self: Self, comptime field: Field) []FieldType(field) {
-            return self.slice().items(field);
+            const F = FieldType(field);
+            if (comptime @sizeOf(F) == 0) {
+                return @as([*]F, undefined)[0..self.len];
+            }
+            // @alignCast(undefined) panics, so we need to explicitly handle empty list.
+            if (self.capacity == 0) return &[_]F{};
+
+            const offset_F = sizes.offsets[@backingInt(field)];
+            const bytes_F: [*]u8 = self.bytes[offset_F * self.capacity ..];
+            const ptr_F: [*]F = @ptrCast(@alignCast(bytes_F));
+            return ptr_F[0..self.len];
         }
 
         /// Overwrite one array element with new data.
@@ -744,9 +758,7 @@ pub fn MultiArrayList(comptime T: type) type {
         }
 
         pub fn capacityInBytes(capacity: usize) usize {
-            comptime var elem_bytes: usize = 0;
-            inline for (sizes.bytes) |size| elem_bytes += size;
-            return elem_bytes * capacity;
+            return sizes.bytes_per_capacity * capacity;
         }
 
         fn allocatedBytes(self: Self) []align(sizes.big_align.toByteUnits()) u8 {
@@ -993,6 +1005,8 @@ test "ensure capacity on empty list" {
 
     var list: MultiArrayList(Foo) = .empty;
     defer list.deinit(ally);
+    try testing.expectEqualSlices(u32, &.{}, list.items(.a));
+    try testing.expectEqualSlices(u8, &.{}, list.items(.b));
 
     try list.ensureTotalCapacity(ally, 2);
     list.appendAssumeCapacity(.{ .a = 1, .b = 2 });

@@ -3994,9 +3994,11 @@ fn fileLength(userdata: ?*anyopaque, file: File) File.LengthError!u64 {
         const syscall: Syscall = try .start();
         while (true) {
             var statx = std.mem.zeroes(linux.Statx);
-            switch (linux.errno(linux.statx(file.handle, "", linux.AT.EMPTY_PATH, .{ .SIZE = true }, &statx))) {
+            switch (linux.errno(linux.statx(file.handle, "", linux.AT.EMPTY_PATH, .{ .SIZE = true, .TYPE = true }, &statx))) {
                 .SUCCESS => {
                     syscall.finish();
+                    if (!statx.mask.TYPE) return error.Unexpected;
+                    if ((statx.mode & linux.S.IFMT) != linux.S.IFREG) return error.Streaming;
                     if (!statx.mask.SIZE) return error.Unexpected;
                     return statx.size;
                 },

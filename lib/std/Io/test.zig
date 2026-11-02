@@ -107,6 +107,19 @@ test "file discard" {
     try std.testing.expectEqual(4, fr.interface.discardRemaining());
 }
 
+test "File.length on non-regular files return error.Streaming" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const io = testing.io;
+    const file = std.Io.Dir.openFileAbsolute(io, "/dev/null", .{}) catch |err| switch (err) {
+        error.FileNotFound => return error.SkipZigTest,
+        else => |e| return e,
+    };
+    defer file.close(io);
+
+    try expectError(error.Streaming, file.length(io));
+}
+
 test "File.setLength" {
     const io = testing.io;
 

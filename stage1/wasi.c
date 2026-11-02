@@ -690,6 +690,24 @@ uint32_t wasi_snapshot_preview1_fd_filestat_set_times(uint32_t fd, uint64_t atim
     return wasi_errno_success;
 }
 
+uint32_t wasi_snapshot_preview1_path_filestat_set_times(uint32_t fd, uint32_t flags, uint32_t path, uint32_t path_len, uint64_t atim, uint64_t mtim, uint32_t fst_flags) {
+    (void)fd;
+    (void)flags;
+    uint8_t *const m = *wasm_memory;
+    const char *path_ptr = (const char *)&m[path];
+    (void)path_ptr;
+    (void)path_len;
+    (void)atim;
+    (void)mtim;
+    (void)fst_flags;
+    #if LOG_TRACE
+        fprintf(stderr, "wasi_snapshot_preview1_path_filestat_set_times(%u, 0x%X, \"%.*s\", %llu, %llu, 0x%X)\n", fd, flags, (int)path_len, path_ptr, (unsigned long long)atim, (unsigned long long)mtim, fst_flags);
+    #endif
+
+    panic("unimplemented: path_filestat_set_times");
+    return wasi_errno_success;
+}
+
 uint32_t wasi_snapshot_preview1_environ_sizes_get(uint32_t environ_size, uint32_t environ_buf_size) {
     uint8_t *const m = *wasm_memory;
     uint32_t *environ_size_ptr = (uint32_t *)&m[environ_size];

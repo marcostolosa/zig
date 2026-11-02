@@ -9453,7 +9453,46 @@ fn dirSetTimestamps(
     }
 
     if (native_os == .wasi and !builtin.link_libc) {
-        @panic("TODO implement dirSetTimestamps wasi");
+        const wasi = std.os.wasi;
+        var atime: wasi.timestamp_t = 0;
+        var mtime: wasi.timestamp_t = 0;
+        var flags: wasi.fstflags_t = .{};
+
+        switch (options.access_timestamp) {
+            .unchanged => {},
+            .now => flags.ATIM_NOW = true,
+            .new => |ts| {
+                atime = timestampToPosix(ts.nanoseconds).toTimestamp();
+                flags.ATIM = true;
+            },
+        }
+
+        switch (options.modify_timestamp) {
+            .unchanged => {},
+            .now => flags.MTIM_NOW = true,
+            .new => |ts| {
+                mtime = timestampToPosix(ts.nanoseconds).toTimestamp();
+                flags.MTIM = true;
+            },
+        }
+
+        const lookup_flags: wasi.lookupflags_t = .{ .SYMLINK_FOLLOW = options.follow_symlinks };
+
+        const syscall: Syscall = try .start();
+        while (true) switch (wasi.path_filestat_set_times(dir.handle, lookup_flags, @ptrCast(sub_path), sub_path.len, atime, mtime, flags)) {
+            .SUCCESS => return syscall.finish(),
+            .INTR => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .BADF => |err| return syscall.errnoBug(err), // File descriptor use-after-free.
+            .FAULT => |err| return syscall.errnoBug(err),
+            .INVAL => |err| return syscall.errnoBug(err),
+            .ACCES => return syscall.fail(error.AccessDenied),
+            .PERM => return syscall.fail(error.PermissionDenied),
+            .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
+            else => |err| return syscall.unexpectedErrno(err),
+        };
     }
 
     var times_buffer: [2]posix.timespec = undefined;

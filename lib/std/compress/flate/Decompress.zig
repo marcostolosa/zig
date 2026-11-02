@@ -322,7 +322,7 @@ fn streamInner(d: *Decompress, w: *Writer, limit: std.Io.Limit) (Error || Reader
         },
         .block_header => {
             d.final_block = (try d.takeIntBits(u1)) != 0;
-            const block_type: BlockType = @fromBackingInt(@intCast(try d.takeIntBits(u2)));
+            const block_type: BlockType = @fromBackingInt(try d.takeIntBits(u2));
             switch (block_type) {
                 .stored => {
                     d.alignBitsForward();

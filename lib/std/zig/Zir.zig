@@ -84,13 +84,13 @@ pub fn extraData(code: Zir, comptime T: type, index: usize) ExtraData(T) {
             Ast.OptionalTokenIndex,
             Ast.Node.Index,
             Ast.Node.OptionalIndex,
-            => @fromBackingInt(@intCast(code.extra[i])),
+            => @fromBackingInt(code.extra[i]),
 
             Ast.TokenOffset,
             Ast.OptionalTokenOffset,
             Ast.Node.Offset,
             Ast.Node.OptionalOffset,
-            => @fromBackingInt(@intCast(@as(i32, @bitCast(code.extra[i])))),
+            => @fromBackingInt(@bitCast(code.extra[i])),
 
             Inst.Call.Flags,
             Inst.BuiltinCall.Flags,
@@ -2207,11 +2207,11 @@ pub const Inst = struct {
         _,
 
         pub fn toRef(i: Index) Inst.Ref {
-            return @fromBackingInt(@intCast(Ref.static_len + @backingInt(i)));
+            return @fromBackingInt(Ref.static_len + @backingInt(i));
         }
 
         pub fn toOptional(i: Index) OptionalIndex {
-            return @fromBackingInt(@intCast(@backingInt(i)));
+            return @fromBackingInt(@backingInt(i));
         }
     };
 
@@ -2223,7 +2223,7 @@ pub const Inst = struct {
         _,
 
         pub fn unwrap(oi: OptionalIndex) ?Index {
-            return if (oi == .none) null else @fromBackingInt(@intCast(@backingInt(oi)));
+            return if (oi == .none) null else @fromBackingInt(@backingInt(oi));
         }
     };
 
@@ -2371,13 +2371,13 @@ pub const Inst = struct {
 
         _,
 
-        pub const static_len = @typeInfo(@This()).@"enum".field_names.len - 1;
+        pub const static_len: u32 = @intCast(@typeInfo(@This()).@"enum".field_names.len - 1);
 
         pub fn toIndex(inst: Ref) ?Index {
             assert(inst != .none);
             const ref_int = @backingInt(inst);
             if (ref_int >= static_len) {
-                return @fromBackingInt(@intCast(ref_int - static_len));
+                return @fromBackingInt(ref_int - static_len);
             } else {
                 return null;
             }
@@ -3022,12 +3022,12 @@ pub const Inst = struct {
                     .@"comptime", .unnamed_test => return null,
                     _ => {},
                 }
-                const idx: u32 = @backingInt(name);
+                const idx = @backingInt(name);
                 if (zir.string_bytes[idx] == 0) {
                     // Named test
-                    return @fromBackingInt(@intCast(idx + 1));
+                    return @fromBackingInt(idx + 1);
                 }
-                return @fromBackingInt(@intCast(idx));
+                return @fromBackingInt(idx);
             }
         };
 
@@ -3460,8 +3460,8 @@ pub const Inst = struct {
 
             pub fn unwrap(item_info: ItemInfo) ItemInfo.Unwrapped {
                 return switch (item_info.kind) {
-                    .enum_literal => .{ .enum_literal = @fromBackingInt(@intCast(item_info.data)) },
-                    .error_value => .{ .error_value = @fromBackingInt(@intCast(item_info.data)) },
+                    .enum_literal => .{ .enum_literal = @fromBackingInt(item_info.data) },
+                    .error_value => .{ .error_value = @fromBackingInt(item_info.data) },
                     .body_len => .{ .body_len = item_info.data },
                     .under => .under,
                 };
@@ -3588,10 +3588,10 @@ pub const Inst = struct {
         pub fn unwrap(cap: Capture) Unwrapped {
             return switch (cap.tag) {
                 .nested => .{ .nested = @intCast(cap.data) },
-                .instruction => .{ .instruction = @fromBackingInt(@intCast(cap.data)) },
-                .instruction_load => .{ .instruction_load = @fromBackingInt(@intCast(cap.data)) },
-                .decl_val => .{ .decl_val = @fromBackingInt(@intCast(cap.data)) },
-                .decl_ref => .{ .decl_ref = @fromBackingInt(@intCast(cap.data)) },
+                .instruction => .{ .instruction = @fromBackingInt(cap.data) },
+                .instruction_load => .{ .instruction_load = @fromBackingInt(cap.data) },
+                .decl_val => .{ .decl_val = @fromBackingInt(cap.data) },
+                .decl_ref => .{ .decl_ref = @fromBackingInt(cap.data) },
             };
         }
     };
@@ -4736,7 +4736,7 @@ pub fn getFnInfo(zir: Zir, fn_inst: Inst.Index) FnInfo {
                     ret_ty_ref = .void_type;
                 },
                 1 => {
-                    ret_ty_ref = @fromBackingInt(@intCast(zir.extra[extra_index]));
+                    ret_ty_ref = @fromBackingInt(zir.extra[extra_index]);
                     extra_index += 1;
                 },
                 else => {
@@ -4776,7 +4776,7 @@ pub fn getFnInfo(zir: Zir, fn_inst: Inst.Index) FnInfo {
                 ret_ty_body = zir.bodySlice(extra_index, body_len);
                 extra_index += ret_ty_body.len;
             } else if (extra.data.bits.has_ret_ty_ref) {
-                ret_ty_ref = @fromBackingInt(@intCast(zir.extra[extra_index]));
+                ret_ty_ref = @fromBackingInt(zir.extra[extra_index]);
                 extra_index += 1;
             } else {
                 ret_ty_ref = .void_type;
@@ -4832,13 +4832,13 @@ pub fn getDeclaration(zir: Zir, inst: Zir.Inst.Index) Inst.Declaration.Unwrapped
     const name: NullTerminatedString = if (flags.id.hasName()) name: {
         const name = zir.extra[extra_index];
         extra_index += 1;
-        break :name @fromBackingInt(@intCast(name));
+        break :name @fromBackingInt(name);
     } else .empty;
 
     const lib_name: NullTerminatedString = if (flags.id.hasLibName()) lib_name: {
         const lib_name = zir.extra[extra_index];
         extra_index += 1;
-        break :lib_name @fromBackingInt(@intCast(lib_name));
+        break :lib_name @fromBackingInt(lib_name);
     } else .empty;
 
     const type_body_len: u32 = if (flags.id.hasTypeBody()) len: {
@@ -5001,17 +5001,17 @@ pub fn getSwitchBlock(zir: *const Zir, switch_inst: Inst.Index) UnwrappedSwitchB
         break :len multi_cases_len;
     } else 0;
     const payload_capture_placeholder: Inst.OptionalIndex = if (bits.payload_capture_inst_is_placeholder) inst: {
-        const inst: Inst.Index = @fromBackingInt(@intCast(zir.extra[extra_index]));
+        const inst: Inst.Index = @fromBackingInt(zir.extra[extra_index]);
         extra_index += 1;
         break :inst inst.toOptional();
     } else .none;
     const tag_capture_placeholder: Inst.OptionalIndex = if (bits.tag_capture_inst_is_placeholder) inst: {
-        const inst: Inst.Index = @fromBackingInt(@intCast(zir.extra[extra_index]));
+        const inst: Inst.Index = @fromBackingInt(zir.extra[extra_index]);
         extra_index += 1;
         break :inst inst.toOptional();
     } else .none;
     const catch_or_if_src_node_offset: Ast.Node.OptionalOffset = if (has_non_err) node_offset: {
-        const node_offset: Ast.Node.Offset = @fromBackingInt(@intCast(@as(i32, @bitCast(zir.extra[extra_index]))));
+        const node_offset: Ast.Node.Offset = @fromBackingInt(@bitCast(zir.extra[extra_index]));
         extra_index += 1;
         break :node_offset node_offset.toOptional();
     } else .none;

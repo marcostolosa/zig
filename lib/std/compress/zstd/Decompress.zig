@@ -902,8 +902,8 @@ pub const Frame = struct {
     };
 
     pub const Skippable = struct {
-        pub const magic_min: Magic = @fromBackingInt(@intCast(0x184D2A50));
-        pub const magic_max: Magic = @fromBackingInt(@intCast(0x184D2A5F));
+        pub const magic_min: Magic = @fromBackingInt(0x184D2A50);
+        pub const magic_max: Magic = @fromBackingInt(0x184D2A5F);
 
         pub const Header = struct {
             magic_number: u32,

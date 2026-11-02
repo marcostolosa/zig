@@ -769,7 +769,7 @@ fn builderToPackage(s: *Serialize, b: *std.Build) !Configuration.Package.Index {
 
 fn addOptionalLazyPathEnum(s: *Serialize, lp: ?std.Build.LazyPath) !Configuration.LazyPath.OptionalIndex {
     const wc = s.wc;
-    return @fromBackingInt(@intCast(switch (lp orelse return .none) {
+    return @fromBackingInt(switch (lp orelse return .none) {
         .src_path => |src_path| i: {
             const sub_path = try wc.addString(src_path.sub_path);
             break :i try wc.addExtraErased(Configuration.LazyPath.SourcePath, .{
@@ -805,7 +805,7 @@ fn addOptionalLazyPathEnum(s: *Serialize, lp: ?std.Build.LazyPath) !Configuratio
                 .sub_path = sub_path,
             });
         },
-    }));
+    });
 }
 
 fn addOptionalLazyPath(s: *Serialize, lp: ?std.Build.LazyPath) !?Configuration.LazyPath.Index {
@@ -813,7 +813,7 @@ fn addOptionalLazyPath(s: *Serialize, lp: ?std.Build.LazyPath) !?Configuration.L
 }
 
 fn addLazyPath(s: *Serialize, lp: std.Build.LazyPath) !Configuration.LazyPath.Index {
-    return @fromBackingInt(@intCast(@backingInt(try addOptionalLazyPathEnum(s, lp))));
+    return @fromBackingInt(@backingInt(try addOptionalLazyPathEnum(s, lp)));
 }
 
 fn addOptionalSemVer(s: *Serialize, sem_ver: ?std.SemanticVersion) !?Configuration.String {

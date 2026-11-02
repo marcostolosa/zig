@@ -766,7 +766,7 @@ pub const Limit = enum(usize) {
 
     /// `math.maxInt(usize)` is interpreted to mean `.unlimited`.
     pub fn limited(n: usize) Limit {
-        return @fromBackingInt(@intCast(n));
+        return @fromBackingInt(n);
     }
 
     /// Any value grater than `math.maxInt(usize)` is interpreted to mean
@@ -782,7 +782,7 @@ pub const Limit = enum(usize) {
     }
 
     pub fn min(a: Limit, b: Limit) Limit {
-        return @fromBackingInt(@intCast(@min(@backingInt(a), @backingInt(b))));
+        return @fromBackingInt(@min(@backingInt(a), @backingInt(b)));
     }
 
     pub fn max(a: Limit, b: Limit) Limit {
@@ -790,7 +790,7 @@ pub const Limit = enum(usize) {
             return .unlimited;
         }
 
-        return @fromBackingInt(@intCast(@max(@backingInt(a), @backingInt(b))));
+        return @fromBackingInt(@max(@backingInt(a), @backingInt(b)));
     }
 
     pub fn minInt(l: Limit, n: usize) usize {
@@ -840,7 +840,7 @@ pub const Limit = enum(usize) {
     pub fn subtract(l: Limit, amount: usize) ?Limit {
         if (l == .unlimited) return .unlimited;
         if (amount > @backingInt(l)) return null;
-        return @fromBackingInt(@intCast(@backingInt(l) - amount));
+        return @fromBackingInt(@backingInt(l) - amount);
     }
 };
 

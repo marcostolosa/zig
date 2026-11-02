@@ -119,7 +119,7 @@ pub const YearAndDay = struct {
             if (days_left < days_in_month)
                 break;
             days_left -= days_in_month;
-            month = @as(Month, @fromBackingInt(@intCast(@backingInt(month) + 1)));
+            month = @fromBackingInt(@backingInt(month) + 1);
         }
         return .{ .month = month, .day_index = @as(u5, @intCast(days_left)) };
     }

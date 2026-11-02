@@ -135,8 +135,7 @@ fn extraData(eb: ErrorBundle, comptime T: type, index: usize) struct { data: T, 
     inline for (field_names, field_types) |field_name, field_type| {
         @field(result, field_name) = switch (field_type) {
             u32 => eb.extra[i],
-            MessageIndex => @as(MessageIndex, @fromBackingInt(@intCast(eb.extra[i]))),
-            SourceLocationIndex => @as(SourceLocationIndex, @fromBackingInt(@intCast(eb.extra[i]))),
+            MessageIndex, SourceLocationIndex => @fromBackingInt(eb.extra[i]),
             else => @compileError("bad field type"),
         };
         i += 1;
@@ -471,15 +470,15 @@ pub const Wip = struct {
     }
 
     pub fn addErrorMessage(wip: *Wip, em: ErrorMessage) Allocator.Error!MessageIndex {
-        return @fromBackingInt(@intCast(try addExtra(wip, em)));
+        return @fromBackingInt(try addExtra(wip, em));
     }
 
     pub fn addErrorMessageAssumeCapacity(wip: *Wip, em: ErrorMessage) MessageIndex {
-        return @fromBackingInt(@intCast(addExtraAssumeCapacity(wip, em)));
+        return @fromBackingInt(addExtraAssumeCapacity(wip, em));
     }
 
     pub fn addSourceLocation(wip: *Wip, sl: SourceLocation) Allocator.Error!SourceLocationIndex {
-        return @fromBackingInt(@intCast(try addExtra(wip, sl)));
+        return @fromBackingInt(try addExtra(wip, sl));
     }
 
     pub fn addReferenceTrace(wip: *Wip, rt: ReferenceTrace) Allocator.Error!void {
@@ -628,7 +627,7 @@ pub const Wip = struct {
                     const end = token_start + @as(u32, @intCast(tree.tokenSlice(token).len));
                     break :span .{ .start = start, .end = end, .main = start };
                 } else {
-                    break :span tree.nodeToSpan(@fromBackingInt(@intCast(err.node_or_offset)));
+                    break :span tree.nodeToSpan(@fromBackingInt(err.node_or_offset));
                 }
             };
             const err_loc = std.zig.findLineColumn(source, err_span.main);
@@ -657,7 +656,7 @@ pub const Wip = struct {
                         const end = token_start + @as(u32, @intCast(tree.tokenSlice(token).len));
                         break :span .{ .start = start, .end = end, .main = start };
                     } else {
-                        break :span tree.nodeToSpan(@fromBackingInt(@intCast(note.node_or_offset)));
+                        break :span tree.nodeToSpan(@fromBackingInt(note.node_or_offset));
                     }
                 };
                 const note_loc = std.zig.findLineColumn(source, note_span.main);

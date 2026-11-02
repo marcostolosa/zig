@@ -3084,7 +3084,7 @@ fn deferStmt(
     const expr_node = tree.nodeData(node).node;
     _ = try unusedResultExpr(&defer_gen, &defer_gen.base, expr_node);
     try checkUsed(gz, scope, &defer_gen.base);
-    _ = try defer_gen.addBreak(.break_inline, @fromBackingInt(@intCast(0)), .void_value);
+    _ = try defer_gen.addBreak(.break_inline, .main_struct_inst, .void_value);
 
     const body = defer_gen.instructionsSlice();
     const body_len = gz.astgen.countBodyLenAfterFixupsExtraRefs(body, &.{});
@@ -4295,11 +4295,11 @@ fn fnDeclInner(
                 // In this case we will send a len=0 body which can be encoded more efficiently.
                 break :blk inst;
             }
-            _ = try cc_gz.addBreak(.break_inline, @fromBackingInt(@intCast(0)), inst);
+            _ = try cc_gz.addBreak(.break_inline, .main_struct_inst, inst);
             break :blk inst;
         } else if (has_inline_keyword) {
             const inst = try cc_gz.addStdLangValue(decl_node, .calling_convention_inline);
-            _ = try cc_gz.addBreak(.break_inline, @fromBackingInt(@intCast(0)), inst);
+            _ = try cc_gz.addBreak(.break_inline, .main_struct_inst, inst);
             break :blk inst;
         } else {
             break :blk .none;
@@ -4318,7 +4318,7 @@ fn fnDeclInner(
             // In this case we will send a len=0 body which can be encoded more efficiently.
             break :inst inst;
         }
-        _ = try ret_gz.addBreak(.break_inline, @fromBackingInt(@intCast(0)), inst);
+        _ = try ret_gz.addBreak(.break_inline, .main_struct_inst, inst);
         break :inst inst;
     };
     const ret_body_param_refs = try astgen.fetchRemoveRefEntries(param_insts.items);
@@ -8679,7 +8679,7 @@ fn asmExpr(
         },
         else => .{
             .tag = .asm_expr,
-            .tmpl = @fromBackingInt(@intCast(@backingInt(try comptimeExpr(gz, scope, .{ .rl = .none }, full.ast.template, .inline_assembly_code)))),
+            .tmpl = @fromBackingInt(@backingInt(try comptimeExpr(gz, scope, .{ .rl = .none }, full.ast.template, .inline_assembly_code))),
         },
     };
 
@@ -11062,11 +11062,11 @@ fn identAsString(astgen: *AstGen, ident_token: Ast.TokenIndex) !Zir.NullTerminat
     });
     if (gop.found_existing) {
         string_bytes.shrinkRetainingCapacity(str_index);
-        return @fromBackingInt(@intCast(gop.key_ptr.*));
+        return @fromBackingInt(gop.key_ptr.*);
     } else {
         gop.key_ptr.* = str_index;
         try string_bytes.append(gpa, 0);
-        return @fromBackingInt(@intCast(str_index));
+        return @fromBackingInt(str_index);
     }
 }
 
@@ -11080,7 +11080,7 @@ fn strLitAsString(astgen: *AstGen, str_lit_token: Ast.TokenIndex) !IndexSlice {
     try astgen.parseStrLit(str_lit_token, string_bytes, token_bytes, 0);
     const key: []const u8 = string_bytes.items[str_index..];
     if (std.mem.findScalar(u8, key, 0)) |_| return .{
-        .index = @fromBackingInt(@intCast(str_index)),
+        .index = @fromBackingInt(str_index),
         .len = @intCast(key.len),
     };
     const gop = try astgen.string_table.getOrPutContextAdapted(gpa, key, StringIndexAdapter{
@@ -11091,7 +11091,7 @@ fn strLitAsString(astgen: *AstGen, str_lit_token: Ast.TokenIndex) !IndexSlice {
     if (gop.found_existing) {
         string_bytes.shrinkRetainingCapacity(str_index);
         return .{
-            .index = @fromBackingInt(@intCast(gop.key_ptr.*)),
+            .index = @fromBackingInt(gop.key_ptr.*),
             .len = @intCast(key.len),
         };
     } else {
@@ -11101,7 +11101,7 @@ fn strLitAsString(astgen: *AstGen, str_lit_token: Ast.TokenIndex) !IndexSlice {
         // be null terminated for that to work.
         try string_bytes.append(gpa, 0);
         return .{
-            .index = @fromBackingInt(@intCast(str_index)),
+            .index = @fromBackingInt(str_index),
             .len = @intCast(key.len),
         };
     }
@@ -11114,7 +11114,7 @@ fn strLitNodeAsString(astgen: *AstGen, node: Ast.Node.Index) !IndexSlice {
 
     const gpa = astgen.gpa;
     const string_bytes = &astgen.string_bytes;
-    const str_index = string_bytes.items.len;
+    const str_index: u32 = @intCast(string_bytes.items.len);
 
     // First line: do not append a newline.
     var tok_i = start;
@@ -11134,8 +11134,8 @@ fn strLitNodeAsString(astgen: *AstGen, node: Ast.Node.Index) !IndexSlice {
     }
     const len = string_bytes.items.len - str_index;
     try string_bytes.append(gpa, 0);
-    return IndexSlice{
-        .index = @fromBackingInt(@intCast(str_index)),
+    return .{
+        .index = @fromBackingInt(str_index),
         .len = @intCast(len),
     };
 }

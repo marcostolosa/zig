@@ -983,31 +983,31 @@ pub const PT = enum(Word) {
     pub const NUM = @typeInfo(PT).@"enum".field_names.len;
 
     /// Start of OS-specific
-    pub const LOOS: PT = @fromBackingInt(@intCast(0x60000000));
+    pub const LOOS: PT = @fromBackingInt(0x60000000);
     /// End of OS-specific
-    pub const HIOS: PT = @fromBackingInt(@intCast(0x6fffffff));
+    pub const HIOS: PT = @fromBackingInt(0x6fffffff);
 
     /// GCC .eh_frame_hdr segment
-    pub const GNU_EH_FRAME: PT = @fromBackingInt(@intCast(0x6474e550));
+    pub const GNU_EH_FRAME: PT = @fromBackingInt(0x6474e550);
     /// Indicates stack executability
-    pub const GNU_STACK: PT = @fromBackingInt(@intCast(0x6474e551));
+    pub const GNU_STACK: PT = @fromBackingInt(0x6474e551);
     /// Read-only after relocation
-    pub const GNU_RELRO: PT = @fromBackingInt(@intCast(0x6474e552));
+    pub const GNU_RELRO: PT = @fromBackingInt(0x6474e552);
     /// Contains the `.note.gnu.property` section
-    pub const GNU_PROPERTY: PT = @fromBackingInt(@intCast(0x6474e553));
+    pub const GNU_PROPERTY: PT = @fromBackingInt(0x6474e553);
 
-    pub const LOSUNW: PT = @fromBackingInt(@intCast(0x6ffffffa));
-    pub const HISUNW: PT = @fromBackingInt(@intCast(0x6fffffff));
+    pub const LOSUNW: PT = @fromBackingInt(0x6ffffffa);
+    pub const HISUNW: PT = @fromBackingInt(0x6fffffff);
 
     /// Sun specific segment
-    pub const SUNWBSS: PT = @fromBackingInt(@intCast(0x6ffffffa));
+    pub const SUNWBSS: PT = @fromBackingInt(0x6ffffffa);
     /// Stack segment
-    pub const SUNWSTACK: PT = @fromBackingInt(@intCast(0x6ffffffb));
+    pub const SUNWSTACK: PT = @fromBackingInt(0x6ffffffb);
 
     /// Start of processor-specific
-    pub const LOPROC: PT = @fromBackingInt(@intCast(0x70000000));
+    pub const LOPROC: PT = @fromBackingInt(0x70000000);
     /// End of processor-specific
-    pub const HIPROC: PT = @fromBackingInt(@intCast(0x7fffffff));
+    pub const HIPROC: PT = @fromBackingInt(0x7fffffff);
 };
 
 pub const SHT = enum(Word) {
@@ -1053,34 +1053,34 @@ pub const SHT = enum(Word) {
     pub const NUM = @typeInfo(SHT).@"enum".field_names.len;
 
     /// Start of OS-specific
-    pub const LOOS: SHT = @fromBackingInt(@intCast(0x60000000));
+    pub const LOOS: SHT = @fromBackingInt(0x60000000);
     /// End of OS-specific
-    pub const HIOS: SHT = @fromBackingInt(@intCast(0x6fffffff));
+    pub const HIOS: SHT = @fromBackingInt(0x6fffffff);
 
     /// LLVM address-significance table
-    pub const LLVM_ADDRSIG: SHT = @fromBackingInt(@intCast(0x6fff4c03));
+    pub const LLVM_ADDRSIG: SHT = @fromBackingInt(0x6fff4c03);
 
     /// GNU hash table
-    pub const GNU_HASH: SHT = @fromBackingInt(@intCast(0x6ffffff6));
+    pub const GNU_HASH: SHT = @fromBackingInt(0x6ffffff6);
     /// GNU version definition table
-    pub const GNU_VERDEF: SHT = @fromBackingInt(@intCast(0x6ffffffd));
+    pub const GNU_VERDEF: SHT = @fromBackingInt(0x6ffffffd);
     /// GNU needed versions table
-    pub const GNU_VERNEED: SHT = @fromBackingInt(@intCast(0x6ffffffe));
+    pub const GNU_VERNEED: SHT = @fromBackingInt(0x6ffffffe);
     /// GNU symbol version table
-    pub const GNU_VERSYM: SHT = @fromBackingInt(@intCast(0x6fffffff));
+    pub const GNU_VERSYM: SHT = @fromBackingInt(0x6fffffff);
 
     /// Start of processor-specific
-    pub const LOPROC: SHT = @fromBackingInt(@intCast(0x70000000));
+    pub const LOPROC: SHT = @fromBackingInt(0x70000000);
     /// End of processor-specific
-    pub const HIPROC: SHT = @fromBackingInt(@intCast(0x7fffffff));
+    pub const HIPROC: SHT = @fromBackingInt(0x7fffffff);
 
     /// Unwind information
-    pub const X86_64_UNWIND: SHT = @fromBackingInt(@intCast(0x70000001));
+    pub const X86_64_UNWIND: SHT = @fromBackingInt(0x70000001);
 
     /// Start of application-specific
-    pub const LOUSER: SHT = @fromBackingInt(@intCast(0x80000000));
+    pub const LOUSER: SHT = @fromBackingInt(0x80000000);
     /// End of application-specific
-    pub const HIUSER: SHT = @fromBackingInt(@intCast(0xffffffff));
+    pub const HIUSER: SHT = @fromBackingInt(0xffffffff);
 };
 
 pub const STB = enum(u4) {
@@ -1096,19 +1096,19 @@ pub const STB = enum(u4) {
     pub const NUM = @typeInfo(STB).@"enum".field_names.len;
 
     /// Start of OS-specific
-    pub const LOOS: STB = @fromBackingInt(@intCast(10));
+    pub const LOOS: STB = @fromBackingInt(10);
     /// End of OS-specific
-    pub const HIOS: STB = @fromBackingInt(@intCast(12));
+    pub const HIOS: STB = @fromBackingInt(12);
 
     /// Unique symbol
-    pub const GNU_UNIQUE: STB = @fromBackingInt(@intCast(@backingInt(LOOS) + 0));
+    pub const GNU_UNIQUE: STB = @fromBackingInt(@backingInt(LOOS) + 0);
 
     /// Start of processor-specific
-    pub const LOPROC: STB = @fromBackingInt(@intCast(13));
+    pub const LOPROC: STB = @fromBackingInt(13);
     /// End of processor-specific
-    pub const HIPROC: STB = @fromBackingInt(@intCast(15));
+    pub const HIPROC: STB = @fromBackingInt(15);
 
-    pub const MIPS_SPLIT_COMMON: STB = @fromBackingInt(@intCast(@backingInt(LOPROC) + 0));
+    pub const MIPS_SPLIT_COMMON: STB = @fromBackingInt(@backingInt(LOPROC) + 0);
 };
 
 pub const STT = enum(u4) {
@@ -1132,27 +1132,27 @@ pub const STT = enum(u4) {
     pub const NUM = @typeInfo(STT).@"enum".field_names.len;
 
     /// Start of OS-specific
-    pub const LOOS: STT = @fromBackingInt(@intCast(10));
+    pub const LOOS: STT = @fromBackingInt(10);
     /// End of OS-specific
-    pub const HIOS: STT = @fromBackingInt(@intCast(12));
+    pub const HIOS: STT = @fromBackingInt(12);
 
     /// Symbol is indirect code object
-    pub const GNU_IFUNC: STT = @fromBackingInt(@intCast(@backingInt(LOOS) + 0));
+    pub const GNU_IFUNC: STT = @fromBackingInt(@backingInt(LOOS) + 0);
 
-    pub const HP_OPAQUE: STT = @fromBackingInt(@intCast(@backingInt(LOOS) + 1));
-    pub const HP_STUB: STT = @fromBackingInt(@intCast(@backingInt(LOOS) + 2));
+    pub const HP_OPAQUE: STT = @fromBackingInt(@backingInt(LOOS) + 1);
+    pub const HP_STUB: STT = @fromBackingInt(@backingInt(LOOS) + 2);
 
     /// Start of processor-specific
-    pub const LOPROC: STT = @fromBackingInt(@intCast(13));
+    pub const LOPROC: STT = @fromBackingInt(13);
     /// End of processor-specific
-    pub const HIPROC: STT = @fromBackingInt(@intCast(15));
+    pub const HIPROC: STT = @fromBackingInt(15);
 
-    pub const SPARC_REGISTER: STT = @fromBackingInt(@intCast(@backingInt(LOPROC) + 0));
+    pub const SPARC_REGISTER: STT = @fromBackingInt(@backingInt(LOPROC) + 0);
 
-    pub const PARISC_MILLICODE: STT = @fromBackingInt(@intCast(@backingInt(LOPROC) + 0));
+    pub const PARISC_MILLICODE: STT = @fromBackingInt(@backingInt(LOPROC) + 0);
 
-    pub const ARM_TFUNC: STT = @fromBackingInt(@intCast(@backingInt(LOPROC) + 0));
-    pub const ARM_16BIT: STT = @fromBackingInt(@intCast(@backingInt(HIPROC) + 2));
+    pub const ARM_TFUNC: STT = @fromBackingInt(@backingInt(LOPROC) + 0);
+    pub const ARM_16BIT: STT = @fromBackingInt(@backingInt(HIPROC) + 2);
 };
 
 pub const STV = enum(u3) {

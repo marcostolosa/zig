@@ -226,7 +226,7 @@ pub const Node = struct {
         fn unwrap(i: @This()) ?Index {
             return switch (i) {
                 .unused, .none => return null,
-                else => @fromBackingInt(@intCast(@backingInt(i))),
+                else => @fromBackingInt(@backingInt(i)),
             };
         }
     };
@@ -238,12 +238,12 @@ pub const Node = struct {
 
         pub fn unwrap(i: @This()) ?Index {
             if (i == .none) return null;
-            return @fromBackingInt(@intCast(@backingInt(i)));
+            return @fromBackingInt(@backingInt(i));
         }
 
         fn toParent(i: @This()) Parent {
             assert(@backingInt(i) != @backingInt(Parent.unused));
-            return @fromBackingInt(@intCast(@backingInt(i)));
+            return @fromBackingInt(@backingInt(i));
         }
     };
 
@@ -254,11 +254,11 @@ pub const Node = struct {
         fn toParent(i: @This()) Parent {
             assert(@backingInt(i) != @backingInt(Parent.unused));
             assert(@backingInt(i) != @backingInt(Parent.none));
-            return @fromBackingInt(@intCast(@backingInt(i)));
+            return @fromBackingInt(@backingInt(i));
         }
 
         pub fn toOptional(i: @This()) OptionalIndex {
-            return @fromBackingInt(@intCast(@backingInt(i)));
+            return @fromBackingInt(@backingInt(i));
         }
     };
 
@@ -607,7 +607,7 @@ pub fn start(io: Io, options: Options) Node {
 
     @memset(&global_progress.node_parents, .unused);
     @memset(&global_progress.ipc, .{ .locked = false, .valid = false, .generation = 0 });
-    const root_node = Node.init(@fromBackingInt(@intCast(0)), .none, options.root_name, options.estimated_total_items);
+    const root_node = Node.init(@fromBackingInt(0), .none, options.root_name, options.estimated_total_items);
     global_progress.node_end_index = 1;
 
     assert(options.draw_buffer.len >= 200);
@@ -1075,7 +1075,7 @@ fn serialize(io: Io, serialized_buffer: *Serialized.Buffer) !Serialized {
         dest_storage.completed_count = @atomicLoad(u32, &storage_ptr.completed_count, .monotonic);
 
         serialized_buffer.parents[serialized_len] = parent;
-        map_entry.* = @fromBackingInt(@intCast(serialized_len));
+        map_entry.* = @fromBackingInt(serialized_len);
         if (maybe_ipc_start == null and dest_storage.getIpcIndex() != null) maybe_ipc_start = serialized_len;
         serialized_len += 1;
     }
@@ -1189,7 +1189,7 @@ fn serialize(io: Io, serialized_buffer: *Serialized.Buffer) !Serialized {
                         @fromBackingInt(@intCast(main_index))
                     else if (@backingInt(prev_parent) >= start_index and
                         @backingInt(prev_parent) < start_index + nodes_len)
-                        @fromBackingInt(@intCast(@backingInt(prev_parent) - start_index + serialized_len))
+                        @fromBackingInt(@backingInt(prev_parent) - start_index + serialized_len)
                     else
                         .none,
                 };
@@ -1240,12 +1240,12 @@ fn serialize(io: Io, serialized_buffer: *Serialized.Buffer) !Serialized {
                         // Fix bad data so the rest of the code does not see `unused`.
                         .none, .unused => .none,
                         // Root node is being mounted here.
-                        @as(Node.Parent, @fromBackingInt(@intCast(0))) => @fromBackingInt(@intCast(main_index)),
+                        @fromBackingInt(0) => @fromBackingInt(@intCast(main_index)),
                         // Other nodes mounted at the end.
                         // Don't trust child data; if the data is outside the expected range,
                         // ignore the data. This also handles the case when data was truncated.
                         _ => if (@backingInt(prev_parent) <= nodes_len)
-                            @fromBackingInt(@intCast(@backingInt(prev_parent) - 1 + serialized_len))
+                            @fromBackingInt(@backingInt(prev_parent) - 1 + serialized_len)
                         else
                             .none,
                     };
@@ -1337,7 +1337,7 @@ fn computeRedraw(io: Io, serialized_buffer: *Serialized.Buffer) !struct { []u8, 
         .windows_api => {},
     }
 
-    const root_node_index: Node.Index = @fromBackingInt(@intCast(0));
+    const root_node_index: Node.Index = @fromBackingInt(0);
     i, const nl_n = computeNode(buf, i, 0, serialized, children, root_node_index);
 
     if (global_progress.terminal_mode == .ansi_escape_codes) {

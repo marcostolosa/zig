@@ -583,7 +583,7 @@ const Group = struct {
         var it = t.worker_threads.load(.acquire); // acquire `Thread` values
         while (it) |thread| : (it = thread.next) {
             // This non-mutating RMW exists for ordering reasons: see comment in `Group.Task.start` for reasons.
-            _ = thread.status.fetchOr(.{ .cancelation = @fromBackingInt(@intCast(0)), .awaitable = .null }, .release);
+            _ = thread.status.fetchOr(.{ .cancelation = .none, .awaitable = .null }, .release);
             if (thread.cancelAwaitable(.fromGroup(g.ptr))) any_blocked = true;
         }
         return any_blocked;
@@ -1398,7 +1398,7 @@ const Syscall = struct {
             .unblocked => {},
         }
         switch (thread.status.fetchOr(.{
-            .cancelation = @fromBackingInt(@intCast(0b011)),
+            .cancelation = .blocked,
             .awaitable = .null,
         }, .monotonic).cancelation) {
             .parked => unreachable,
@@ -1418,7 +1418,7 @@ const Syscall = struct {
     fn checkCancel(s: Syscall) Io.Cancelable!void {
         const thread = s.thread orelse return;
         switch (thread.status.fetchOr(.{
-            .cancelation = @fromBackingInt(@intCast(0b010)),
+            .cancelation = .blocked_alertable,
             .awaitable = .null,
         }, .monotonic).cancelation) {
             .none => unreachable,
@@ -1435,7 +1435,7 @@ const Syscall = struct {
     fn finish(s: Syscall) void {
         const thread = s.thread orelse return;
         switch (thread.status.fetchXor(.{
-            .cancelation = @fromBackingInt(@intCast(0b011)),
+            .cancelation = .blocked,
             .awaitable = .null,
         }, .monotonic).cancelation) {
             .none => unreachable,
@@ -1520,7 +1520,7 @@ const AlertableSyscall = struct {
             .unblocked => {},
         }
         const old_status = thread.status.fetchOr(.{
-            .cancelation = @fromBackingInt(@intCast(0b010)),
+            .cancelation = .blocked_alertable,
             .awaitable = .null,
         }, .monotonic);
         switch (old_status.cancelation) {
@@ -1543,7 +1543,7 @@ const AlertableSyscall = struct {
         comptime assert(is_windows);
         const thread = s.thread orelse return;
         const old_status = thread.status.fetchOr(.{
-            .cancelation = @fromBackingInt(@intCast(0b010)),
+            .cancelation = .blocked_alertable,
             .awaitable = .null,
         }, .monotonic);
         switch (old_status.cancelation) {
@@ -1566,7 +1566,7 @@ const AlertableSyscall = struct {
         comptime assert(is_windows);
         const thread = s.thread orelse return;
         switch (thread.status.fetchXor(.{
-            .cancelation = @fromBackingInt(@intCast(0b010)),
+            .cancelation = .blocked_alertable,
             .awaitable = .null,
         }, .monotonic).cancelation) {
             .none => unreachable,
@@ -2421,7 +2421,7 @@ fn recancel(userdata: ?*anyopaque) void {
 fn recancelInner() void {
     const thread = Thread.current.?; // called `recancel` but was not canceled
     switch (thread.status.fetchXor(.{
-        .cancelation = @fromBackingInt(@intCast(0b001)),
+        .cancelation = @fromBackingInt(0b001),
         .awaitable = .null,
     }, .monotonic).cancelation) {
         .canceled => {},
@@ -14247,7 +14247,7 @@ fn netLookupFallible(
         const syscall: Syscall = try .start();
         while (true) {
             switch (posix.system.getaddrinfo(name_c.ptr, port_c.ptr, &hints, &res)) {
-                @as(posix.system.EAI, @fromBackingInt(@intCast(0))) => {
+                @as(posix.system.EAI, @fromBackingInt(0)) => {
                     syscall.finish();
                     break;
                 },
@@ -15857,8 +15857,8 @@ fn childWaitPosix(child: *process.Child) process.Child.WaitError!process.Child.T
                 const code: linux.CLD = @fromBackingInt(@intCast(info.code));
                 return switch (code) {
                     .EXITED => .{ .exited = @truncate(status) },
-                    .KILLED, .DUMPED => .{ .signal = @fromBackingInt(@intCast(status)) },
-                    .TRAPPED, .STOPPED => .{ .stopped = @fromBackingInt(@intCast(status)) },
+                    .KILLED, .DUMPED => .{ .signal = @fromBackingInt(status) },
+                    .TRAPPED, .STOPPED => .{ .stopped = @fromBackingInt(status) },
                     _, .CONTINUED => .{ .unknown = status },
                 };
             },
@@ -18485,7 +18485,7 @@ const parking_futex = struct {
                     }
                     thread.futex_waiter = &waiter;
                     const old_status = thread.status.fetchOr(
-                        .{ .cancelation = @fromBackingInt(@intCast(0b001)), .awaitable = .null },
+                        .{ .cancelation = .parked, .awaitable = .null },
                         .release, // release `thread.futex_waiter`
                     );
                     switch (old_status.cancelation) {
@@ -18523,7 +18523,7 @@ const parking_futex = struct {
             error.Timeout => {
                 // We're not out of the woods yet: an unpark could race with the timeout.
                 const old_status = waiter.thread_status.fetchAnd(
-                    .{ .cancelation = @fromBackingInt(@intCast(0b110)), .awaitable = .all_ones },
+                    .{ .cancelation = .canceling, .awaitable = .all_ones },
                     .monotonic,
                 );
                 switch (old_status.cancelation) {
@@ -18580,7 +18580,7 @@ const parking_futex = struct {
                 it = waiter.node.next;
                 if (waiter.address != @intFromPtr(ptr)) continue;
                 const old_status = waiter.thread_status.fetchAnd(
-                    .{ .cancelation = @fromBackingInt(@intCast(0b110)), .awaitable = .all_ones },
+                    .{ .cancelation = .canceling, .awaitable = .all_ones },
                     .monotonic,
                 );
                 switch (old_status.cancelation) {
@@ -18645,7 +18645,7 @@ const parking_sleep = struct {
             thread.futex_waiter = null;
             {
                 const old_status = thread.status.fetchOr(
-                    .{ .cancelation = @fromBackingInt(@intCast(0b001)), .awaitable = .null },
+                    .{ .cancelation = .parked, .awaitable = .null },
                     .release, // release `thread.futex_waiter`
                 );
                 switch (old_status.cancelation) {
@@ -18672,7 +18672,7 @@ const parking_sleep = struct {
                 error.Timeout => {
                     // We're not out of the woods yet: an unpark could race with the timeout.
                     const old_status = thread.status.fetchAnd(
-                        .{ .cancelation = @fromBackingInt(@intCast(0b110)), .awaitable = .all_ones },
+                        .{ .cancelation = .canceling, .awaitable = .all_ones },
                         .monotonic,
                     );
                     switch (old_status.cancelation) {
@@ -18733,7 +18733,7 @@ const ParkingMutex = struct {
         /// Returns a locked state where `w` is contending the lock.
         /// If `w` is `null`, returns `.locked_once`.
         fn fromWaiter(w: ?*Waiter) State {
-            return @fromBackingInt(@intCast(@intFromPtr(w)));
+            return @fromBackingInt(@intFromPtr(w));
         }
     };
     const Waiter = struct {

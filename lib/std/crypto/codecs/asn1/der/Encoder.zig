@@ -111,7 +111,7 @@ fn mergedTag(self: *Encoder, tag_: Tag) Tag {
     var res = tag_;
     if (self.field_tag) |ft| {
         if (!ft.explicit) {
-            res.number = @fromBackingInt(@intCast(ft.number));
+            res.number = @fromBackingInt(ft.number);
             res.class = ft.class;
         }
     }

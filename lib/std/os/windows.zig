@@ -753,7 +753,7 @@ pub const FILE = struct {
             SYNCHRONOUS_NONALERT = 0b10,
             _,
 
-            pub const VALID_FLAGS: @This() = @fromBackingInt(@intCast(0b11));
+            pub const VALID_FLAGS: @This() = @fromBackingInt(0b11);
         },
         /// The file being opened must not be a directory file or this call
         /// fails. The file object being opened can represent a data file, a
@@ -1993,7 +1993,7 @@ pub const HEAP = opaque {
             CSR_PORT,
             _,
 
-            pub const MASK: CLASS = @fromBackingInt(@intCast(maxInt(@typeInfo(CLASS).@"enum".tag_type)));
+            pub const MASK: CLASS = @fromBackingInt(maxInt(@typeInfo(CLASS).@"enum".tag_type));
         };
 
         pub const CREATE = packed struct(ULONG) {
@@ -2008,7 +2008,7 @@ pub const HEAP = opaque {
             /// Callers are therefore responsible for synchronizing access to hardened heaps.
             HARDENED: bool = false,
             Reserved10: u2 = 0,
-            CLASS: CLASS = @fromBackingInt(@intCast(0)),
+            CLASS: CLASS = .PROCESS,
             /// Create heap with 16 byte alignment (obsolete)
             ALIGN_16: bool = false,
             /// Create heap call tracing enabled (obsolete)
@@ -2053,7 +2053,7 @@ pub const HEAP = opaque {
                     FLAG3: bool = false,
                 } = .{},
             } = .{},
-            CLASS: CLASS = @fromBackingInt(@intCast(0)),
+            CLASS: CLASS = .PROCESS,
             Reserved16: u2 = 0,
             TAG: u12 = 0,
             Reserved30: u2 = 0,
@@ -4139,7 +4139,7 @@ fn Bool(comptime BackingInteger: type) type {
         _,
 
         /// This is not the only truthy value, comparisons against this value are always a bug.
-        pub const TRUE: @This() = @fromBackingInt(@intCast(1));
+        pub const TRUE: @This() = @fromBackingInt(1);
 
         pub const Backing = BackingInteger;
 
@@ -4148,7 +4148,7 @@ fn Bool(comptime BackingInteger: type) type {
         }
 
         pub fn fromBool(b: bool) @This() {
-            return @fromBackingInt(@intCast(@intFromBool(b)));
+            return @fromBackingInt(@intFromBool(b));
         }
     };
 }

@@ -348,7 +348,7 @@ pub const Reader = struct {
         _,
 
         pub fn init(integer: u64) RemainingChunkLen {
-            return @fromBackingInt(@intCast(integer));
+            return @fromBackingInt(integer);
         }
 
         pub fn int(rcl: RemainingChunkLen) u64 {

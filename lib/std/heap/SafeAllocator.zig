@@ -359,7 +359,7 @@ const AllocFooter = struct {
 
         fn storedXor(m: Modify, ptr: *Modify) Modify {
             const addr_hash: u16 = @truncate(std.hash.int(@intFromPtr(ptr)));
-            return @fromBackingInt(@intCast(@backingInt(m) ^ addr_hash));
+            return @fromBackingInt(@backingInt(m) ^ addr_hash);
         }
     };
 
@@ -720,7 +720,7 @@ fn deinitLeakedBucket(s: *SafeAllocator, b: *Bucket, log: bool) usize {
 
         footer = footer.bucketPrev(b, s) orelse break;
     }
-    s.backing.rawFree(b.bytes(s), @fromBackingInt(@intCast(s.bucket_size_log2)), 0);
+    s.backing.rawFree(b.bytes(s), @fromBackingInt(s.bucket_size_log2), 0);
 
     assert(leaks == expected.n);
     return leaks;
@@ -888,7 +888,7 @@ fn formatStackTrace(trace_buf: []usize) std.debug.FormatStackTrace {
             break :trace .{
                 .return_addresses = addrs[0..@min(frames, addrs.len)],
                 .skipped = switch (frames) {
-                    else => @fromBackingInt(@intCast(frames -| addrs.len)),
+                    else => @fromBackingInt(frames -| addrs.len),
                     0, math.maxInt(usize) => .unknown,
                 },
             };
@@ -937,7 +937,7 @@ fn allocBucket(
                 @branchHint(.unlikely);
                 freeAllocEntry(t, b.entry);
                 b.check(s);
-                s.backing.rawFree(b.bytes(s), @fromBackingInt(@intCast(s.bucket_size_log2)), ra);
+                s.backing.rawFree(b.bytes(s), @fromBackingInt(s.bucket_size_log2), ra);
             }
 
             return null;
@@ -1096,7 +1096,7 @@ fn alloc(ctx: *anyopaque, len: usize, alignment: Alignment, ra: usize) ?[*]u8 {
     const entry = s.newAllocEntry(t, ra) catch return null;
     const bucket: *Bucket = @ptrCast(@alignCast(s.backing.rawAlloc(
         s.bucketSize(),
-        @fromBackingInt(@intCast(s.bucket_size_log2)),
+        @fromBackingInt(s.bucket_size_log2),
         ra,
     ) orelse {
         freeAllocEntry(t, entry);
@@ -1171,7 +1171,7 @@ fn free(ctx: *anyopaque, memory: []u8, alignment: Alignment, ra: usize) void {
         freeAllocEntry(t, b.entry);
         t.mutex.unlock();
         b.check(s);
-        s.backing.rawFree(b.bytes(s), @fromBackingInt(@intCast(s.bucket_size_log2)), ra);
+        s.backing.rawFree(b.bytes(s), @fromBackingInt(s.bucket_size_log2), ra);
     }
 }
 
@@ -1346,8 +1346,8 @@ const Smith = std.testing.Smith;
 const fuzz_probs = struct {
     const alignment: []const Smith.Weight = &.{
         .rangeAtMost(Alignment, .@"1", .@"16", 32), // ~75%
-        .rangeAtMost(Alignment, .@"16", @fromBackingInt(@intCast(@bitSizeOf(usize) - 1)), 1),
-        .value(Alignment, @fromBackingInt(@intCast(@bitSizeOf(usize) - 1)), 32), // More likely overflow cases
+        .rangeAtMost(Alignment, .@"16", @fromBackingInt(@bitSizeOf(usize) - 1), 1),
+        .value(Alignment, @fromBackingInt(@bitSizeOf(usize) - 1), 32), // More likely overflow cases
     };
 
     const eos: []const Smith.Weight = &.{

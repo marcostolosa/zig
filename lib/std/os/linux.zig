@@ -4652,10 +4652,10 @@ pub const W = struct {
         return @as(u8, @intCast((s & 0xff00) >> 8));
     }
     pub fn TERMSIG(s: u32) SIG {
-        return @fromBackingInt(@intCast(s & 0x7f));
+        return @fromBackingInt(s & 0x7f);
     }
     pub fn STOPSIG(s: u32) SIG {
-        return @fromBackingInt(@intCast(EXITSTATUS(s)));
+        return @fromBackingInt(EXITSTATUS(s));
     }
     pub fn IFEXITED(s: u32) bool {
         return (s & 0x7f) == 0;
@@ -7743,7 +7743,7 @@ pub const io_uring_cqe = extern struct {
 
     pub fn err(self: io_uring_cqe) E {
         if (self.res > -4096 and self.res < 0) {
-            return @as(E, @fromBackingInt(@intCast(-self.res)));
+            return @fromBackingInt(@intCast(-self.res));
         }
         return .SUCCESS;
     }

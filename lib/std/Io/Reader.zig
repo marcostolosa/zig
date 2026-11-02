@@ -1723,7 +1723,7 @@ test takeEnum {
     const E1 = enum(u8) { a, b, c };
     const E2 = enum(u16) { _ };
     try testing.expectEqual(E1.c, try r.takeEnum(E1, .little));
-    try testing.expectEqual(@as(E2, @fromBackingInt(@intCast(0x0001))), try r.takeEnum(E2, .big));
+    try testing.expectEqual(@as(E2, @fromBackingInt(0x0001)), try r.takeEnum(E2, .big));
 }
 
 test readSliceShort {

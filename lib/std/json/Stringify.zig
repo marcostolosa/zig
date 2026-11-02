@@ -858,7 +858,7 @@ test "stringify non-exhaustive enum" {
         _,
     };
     try testStringify("\"foo\"", E.foo, .{});
-    try testStringify("1", @as(E, @fromBackingInt(@intCast(1))), .{});
+    try testStringify("1", @as(E, @fromBackingInt(1)), .{});
 }
 
 test "stringify enum literals" {

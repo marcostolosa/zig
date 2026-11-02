@@ -664,7 +664,7 @@ pub const BlockType = enum(u8) {
     v128 = 0x7B,
 
     pub fn fromValtype(valtype: Valtype) BlockType {
-        return @fromBackingInt(@intCast(@backingInt(valtype)));
+        return @fromBackingInt(@backingInt(valtype));
     }
 };
 

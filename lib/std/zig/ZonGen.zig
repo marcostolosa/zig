@@ -590,11 +590,11 @@ fn strLitAsString(zg: *ZonGen, str_node: Ast.Node.Index) error{ OutOfMemory, Bad
     );
     if (gop.found_existing) {
         string_bytes.shrinkRetainingCapacity(str_index);
-        return .{ .nts = @fromBackingInt(@intCast(gop.key_ptr.*)) };
+        return .{ .nts = @fromBackingInt(gop.key_ptr.*) };
     }
     gop.key_ptr.* = str_index;
     try string_bytes.append(gpa, 0);
-    return .{ .nts = @fromBackingInt(@intCast(str_index)) };
+    return .{ .nts = @fromBackingInt(str_index) };
 }
 
 fn identAsString(zg: *ZonGen, ident_token: Ast.TokenIndex) !Zoir.NullTerminatedString {
@@ -610,11 +610,11 @@ fn identAsString(zg: *ZonGen, ident_token: Ast.TokenIndex) !Zoir.NullTerminatedS
     );
     if (gop.found_existing) {
         string_bytes.shrinkRetainingCapacity(str_index);
-        return @fromBackingInt(@intCast(gop.key_ptr.*));
+        return @fromBackingInt(gop.key_ptr.*);
     }
     gop.key_ptr.* = str_index;
     try string_bytes.append(gpa, 0);
-    return @fromBackingInt(@intCast(str_index));
+    return @fromBackingInt(str_index);
 }
 
 fn numberLiteral(zg: *ZonGen, num_node: Ast.Node.Index, src_node: Ast.Node.Index, dest_node: Zoir.Node.Index, sign: enum { negative, positive }) !void {
@@ -812,7 +812,7 @@ fn errNoteNode(zg: *ZonGen, node: Ast.Node.Index, comptime format: []const u8, a
     const message_idx: u32 = @intCast(zg.string_bytes.items.len);
     try zg.string_bytes.print(zg.gpa, format ++ "\x00", args);
     return .{
-        .msg = @fromBackingInt(@intCast(message_idx)),
+        .msg = @fromBackingInt(message_idx),
         .token = .none,
         .node_or_offset = @backingInt(node),
     };
@@ -822,7 +822,7 @@ fn errNoteTok(zg: *ZonGen, tok: Ast.TokenIndex, comptime format: []const u8, arg
     const message_idx: u32 = @intCast(zg.string_bytes.items.len);
     try zg.string_bytes.print(zg.gpa, format ++ "\x00", args);
     return .{
-        .msg = @fromBackingInt(@intCast(message_idx)),
+        .msg = @fromBackingInt(message_idx),
         .token = .fromToken(tok),
         .node_or_offset = 0,
     };
@@ -864,7 +864,7 @@ fn addErrorInner(
     try zg.string_bytes.print(gpa, format ++ "\x00", args);
 
     try zg.compile_errors.append(gpa, .{
-        .msg = @fromBackingInt(@intCast(message_idx)),
+        .msg = @fromBackingInt(message_idx),
         .token = token,
         .node_or_offset = node_or_offset,
         .first_note = first_note,

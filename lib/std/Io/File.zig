@@ -350,7 +350,7 @@ pub const Permissions = std.Options.FilePermissions orelse if (is_windows) enum(
 
     pub fn setReadOnly(self: @This(), read_only: bool) @This() {
         const attributes = toAttributes(self);
-        return @fromBackingInt(@intCast(if (read_only)
+        return @fromBackingInt(@bitCast(if (read_only)
             attributes | windows.FILE_ATTRIBUTE_READONLY
         else
             attributes & ~@as(windows.DWORD, windows.FILE_ATTRIBUTE_READONLY)));
@@ -379,7 +379,7 @@ pub const Permissions = std.Options.FilePermissions orelse if (is_windows) enum(
     }
 
     pub fn fromMode(mode: std.posix.mode_t) @This() {
-        return @fromBackingInt(@intCast(mode));
+        return @fromBackingInt(mode);
     }
 
     /// Returns `true` if and only if no class has write permissions.
@@ -392,7 +392,7 @@ pub const Permissions = std.Options.FilePermissions orelse if (is_windows) enum(
     pub fn setReadOnly(self: @This(), read_only: bool) @This() {
         const mode = toMode(self);
         const o222 = @as(std.posix.mode_t, 0o222);
-        return @fromBackingInt(@intCast(if (read_only) mode & ~o222 else mode | o222));
+        return @fromBackingInt(if (read_only) mode & ~o222 else mode | o222);
     }
 } else enum(u0) {
     default_file = 0,

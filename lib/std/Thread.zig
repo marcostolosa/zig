@@ -598,7 +598,7 @@ const WindowsThreadImpl = struct {
                 instance,
                 .{ .CREATE_SUSPENDED = true },
                 0,
-                @fromBackingInt(@intCast(stack_size)),
+                @fromBackingInt(stack_size),
                 .default,
                 &attr_list,
             )) {

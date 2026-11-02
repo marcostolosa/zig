@@ -765,7 +765,7 @@ fn fuzzMultiThreaded(fuzz_init: FuzzContext.Init, smith: *std.testing.Smith) any
                         .@"1",
                         .fromByteUnits(2 * std.heap.page_size_max),
                     ),
-                    @fromBackingInt(@intCast(alloc_index)),
+                    @fromBackingInt(alloc_index),
                 }) catch unreachable;
             },
             .resize => group.concurrent(io, FuzzContext.doOneResize, .{ &ctx, nextLen(smith) }) catch unreachable,

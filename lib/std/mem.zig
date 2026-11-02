@@ -58,11 +58,11 @@ pub const Alignment = enum(math.Log2Int(usize)) {
     }
 
     pub fn max(lhs: Alignment, rhs: Alignment) Alignment {
-        return @fromBackingInt(@intCast(@max(@backingInt(lhs), @backingInt(rhs))));
+        return @fromBackingInt(@max(@backingInt(lhs), @backingInt(rhs)));
     }
 
     pub fn min(lhs: Alignment, rhs: Alignment) Alignment {
-        return @fromBackingInt(@intCast(@min(@backingInt(lhs), @backingInt(rhs))));
+        return @fromBackingInt(@min(@backingInt(lhs), @backingInt(rhs)));
     }
 
     /// Return next address with this alignment.
@@ -314,7 +314,7 @@ pub fn zeroes(comptime T: type) T {
             return @as(T, 0);
         },
         .@"enum" => {
-            return @as(T, @fromBackingInt(@intCast(0)));
+            return @fromBackingInt(0);
         },
         .void => {
             return {};

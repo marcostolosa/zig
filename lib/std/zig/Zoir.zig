@@ -129,23 +129,23 @@ pub const Node = union(enum) {
                 .float_literal_small => .{ .float_literal = @as(f32, @bitCast(repr.data)) },
                 .float_literal => .{ .float_literal = @bitCast(zoir.extra[repr.data..][0..4].*) },
                 .char_literal => .{ .char_literal = @intCast(repr.data) },
-                .enum_literal => .{ .enum_literal = @fromBackingInt(@intCast(repr.data)) },
+                .enum_literal => .{ .enum_literal = @fromBackingInt(repr.data) },
                 .string_literal => .{ .string_literal = s: {
                     const start, const len = zoir.extra[repr.data..][0..2].*;
                     break :s zoir.string_bytes[start..][0..len];
                 } },
-                .string_literal_null => .{ .string_literal = NullTerminatedString.get(@fromBackingInt(@intCast(repr.data)), zoir) },
+                .string_literal_null => .{ .string_literal = NullTerminatedString.get(@fromBackingInt(repr.data), zoir) },
                 .empty_literal => .empty_literal,
                 .array_literal => .{ .array_literal = a: {
                     const elem_count, const first_elem = zoir.extra[repr.data..][0..2].*;
-                    break :a .{ .start = @fromBackingInt(@intCast(first_elem)), .len = elem_count };
+                    break :a .{ .start = @fromBackingInt(first_elem), .len = elem_count };
                 } },
                 .struct_literal => .{ .struct_literal = s: {
                     const elem_count, const first_elem = zoir.extra[repr.data..][0..2].*;
                     const field_names = zoir.extra[repr.data + 2 ..][0..elem_count];
                     break :s .{
                         .names = @ptrCast(field_names),
-                        .vals = .{ .start = @fromBackingInt(@intCast(first_elem)), .len = elem_count },
+                        .vals = .{ .start = @fromBackingInt(first_elem), .len = elem_count },
                     };
                 } },
             };
@@ -161,7 +161,7 @@ pub const Node = union(enum) {
 
             pub fn at(r: Range, i: u32) Index {
                 assert(i < r.len);
-                return @fromBackingInt(@intCast(@backingInt(r.start) + i));
+                return @fromBackingInt(@backingInt(r.start) + i);
             }
         };
     };

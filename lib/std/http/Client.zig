@@ -531,7 +531,7 @@ pub const Response = struct {
                 else => return error.HttpHeadersInvalid,
             };
             if (first_line[8] != ' ') return error.HttpHeadersInvalid;
-            const status: http.Status = @fromBackingInt(@intCast(parseInt3(first_line[9..12])));
+            const status: http.Status = @fromBackingInt(parseInt3(first_line[9..12]));
             const reason = mem.trimStart(u8, first_line[12..], " ");
 
             res.version = version;
@@ -867,14 +867,14 @@ pub const Request = struct {
 
         pub fn init(n: u16) RedirectBehavior {
             assert(n != std.math.maxInt(u16));
-            return @fromBackingInt(@intCast(n));
+            return @fromBackingInt(n);
         }
 
         pub fn subtractOne(rb: *RedirectBehavior) void {
             switch (rb.*) {
                 .not_allowed => unreachable,
                 .unhandled => unreachable,
-                _ => rb.* = @fromBackingInt(@intCast(@backingInt(rb.*) - 1)),
+                _ => rb.* = @fromBackingInt(@backingInt(rb.*) - 1),
             }
         }
 
@@ -1661,7 +1661,7 @@ pub const RequestOptions = struct {
     ///
     /// This will only follow redirects for repeatable requests (ie. with no
     /// payload or the server has acknowledged the payload).
-    redirect_behavior: Request.RedirectBehavior = @fromBackingInt(@intCast(3)),
+    redirect_behavior: Request.RedirectBehavior = @fromBackingInt(3),
 
     /// Must be an already acquired connection.
     connection: ?*Connection = null,
@@ -1821,7 +1821,7 @@ pub fn fetch(client: *Client, options: FetchOptions) FetchError!FetchResult {
         if (options.payload != null) .POST else .GET;
 
     const redirect_behavior: Request.RedirectBehavior = options.redirect_behavior orelse
-        if (options.payload == null) @fromBackingInt(@intCast(3)) else .unhandled;
+        if (options.payload == null) @fromBackingInt(3) else .unhandled;
 
     var req = try request(client, method, uri, .{
         .redirect_behavior = redirect_behavior,

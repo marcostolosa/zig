@@ -71,7 +71,7 @@ pub fn TrailerFlags(comptime Fields: type) type {
         pub fn setMany(self: Self, p: [*]align(@alignOf(Fields)) u8, fields: FieldValues) void {
             inline for (@typeInfo(Fields).@"struct".field_names, 0..) |field_name, i| {
                 if (@field(fields, field_name)) |value|
-                    self.set(p, @as(FieldEnum, @fromBackingInt(@intCast(i))), value);
+                    self.set(p, @fromBackingInt(@intCast(i)), value);
             }
         }
 

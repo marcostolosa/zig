@@ -26,7 +26,7 @@ pub const DevicePath = extern struct {
 
     /// Returns the next DevicePath node in the sequence, if any.
     pub fn next(self: *const DevicePath) ?*const DevicePath {
-        const subtype: uefi.DevicePath.End.Subtype = @fromBackingInt(@intCast(self.subtype));
+        const subtype: uefi.DevicePath.End.Subtype = @fromBackingInt(self.subtype);
         if (self.type == .end and subtype == .end_entire) return null;
         const bytes: [*]const u8 = @ptrCast(self);
         return @ptrCast(bytes + self.length);

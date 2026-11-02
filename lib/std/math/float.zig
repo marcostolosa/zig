@@ -99,7 +99,7 @@ pub fn FloatRepr(comptime Float: type) type {
             }
 
             pub fn bias(unbiased: Exponent) BiasedExponent {
-                return @fromBackingInt(@intCast(@backingInt(BiasedExponent.zero) +% @as(Int, @bitCast(unbiased))));
+                return @fromBackingInt(@backingInt(BiasedExponent.zero) +% @as(Int, @bitCast(unbiased)));
             }
         };
 

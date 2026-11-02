@@ -114,14 +114,14 @@ pub fn MultiArrayList(comptime T: type) type {
                     else => unreachable,
                 };
                 inline for (field_names, 0..) |field_name, i| {
-                    self.items(@as(Field, @fromBackingInt(@intCast(i))))[index] = @field(e, field_name);
+                    self.items(@fromBackingInt(@intCast(i)))[index] = @field(e, field_name);
                 }
             }
 
             pub fn get(self: Slice, index: usize) T {
                 var result: Elem = undefined;
                 inline for (field_names, 0..) |field_name, i| {
-                    @field(result, field_name) = self.items(@as(Field, @fromBackingInt(@intCast(i))))[index];
+                    @field(result, field_name) = self.items(@fromBackingInt(@intCast(i)))[index];
                 }
                 return switch (@typeInfo(T)) {
                     .@"struct" => result,
@@ -431,7 +431,7 @@ pub fn MultiArrayList(comptime T: type) type {
             };
             const slices = self.slice();
             inline for (field_names, 0..) |field_name, field_index| {
-                const field_slice = slices.items(@as(Field, @fromBackingInt(@intCast(field_index))));
+                const field_slice = slices.items(@fromBackingInt(@intCast(field_index)));
                 var i: usize = self.len - 1;
                 while (i > index) : (i -= 1) {
                     field_slice[i] = field_slice[i - 1];
@@ -460,7 +460,7 @@ pub fn MultiArrayList(comptime T: type) type {
             self.pointer_stability.assertUnlocked();
             const slices = self.slice();
             inline for (field_names, 0..) |_, i| {
-                const field_slice = slices.items(@as(Field, @fromBackingInt(@intCast(i))));
+                const field_slice = slices.items(@fromBackingInt(@intCast(i)));
                 field_slice[index] = field_slice[self.len - 1];
                 field_slice[self.len - 1] = undefined;
             }
@@ -474,7 +474,7 @@ pub fn MultiArrayList(comptime T: type) type {
             self.pointer_stability.assertUnlocked();
             const slices = self.slice();
             inline for (field_names, 0..) |_, field_index| {
-                const field_slice = slices.items(@as(Field, @fromBackingInt(@intCast(field_index))));
+                const field_slice = slices.items(@fromBackingInt(@intCast(field_index)));
                 var i = index;
                 while (i < self.len - 1) : (i += 1) {
                     field_slice[i] = field_slice[i + 1];
@@ -543,7 +543,7 @@ pub fn MultiArrayList(comptime T: type) type {
                 const self_slice = self.slice();
                 inline for (field_types, 0..) |field_type, i| {
                     if (@sizeOf(field_type) != 0) {
-                        const field = @as(Field, @fromBackingInt(@intCast(i)));
+                        const field: Field = @fromBackingInt(@intCast(i));
                         const dest_slice = self_slice.items(field)[new_len..];
                         // We use memset here for more efficient codegen in safety-checked,
                         // valgrind-enabled builds. Otherwise the valgrind client request
@@ -564,7 +564,7 @@ pub fn MultiArrayList(comptime T: type) type {
             const other_slice = other.slice();
             inline for (field_types, 0..) |field_type, i| {
                 if (@sizeOf(field_type) != 0) {
-                    const field = @as(Field, @fromBackingInt(@intCast(i)));
+                    const field: Field = @fromBackingInt(@intCast(i));
                     @memcpy(other_slice.items(field), self_slice.items(field));
                 }
             }
@@ -641,7 +641,7 @@ pub fn MultiArrayList(comptime T: type) type {
             const other_slice = other.slice();
             inline for (field_types, 0..) |field_type, i| {
                 if (@sizeOf(field_type) != 0) {
-                    const field = @as(Field, @fromBackingInt(@intCast(i)));
+                    const field: Field = @fromBackingInt(@intCast(i));
                     @memcpy(other_slice.items(field), self_slice.items(field));
                 }
             }
@@ -661,7 +661,7 @@ pub fn MultiArrayList(comptime T: type) type {
             const result_slice = result.slice();
             inline for (field_types, 0..) |field_type, i| {
                 if (@sizeOf(field_type) != 0) {
-                    const field = @as(Field, @fromBackingInt(@intCast(i)));
+                    const field: Field = @fromBackingInt(@intCast(i));
                     @memcpy(result_slice.items(field), self_slice.items(field));
                 }
             }

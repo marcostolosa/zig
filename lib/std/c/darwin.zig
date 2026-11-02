@@ -1136,7 +1136,7 @@ pub const mach_msg_return_t = enum(kern_return_t) {
         error_code: mach_msg_return_t,
         resource_error: ?MACH.MSG,
     } {
-        const return_code: mach_msg_return_t = @fromBackingInt(@intCast(@backingInt(ret) & ~MACH.MSG.MASK));
+        const return_code: mach_msg_return_t = @fromBackingInt(@backingInt(ret) & ~MACH.MSG.MASK);
         switch (return_code) {
             .RCV_HEADER_ERROR, .RCV_BODY_ERROR => {
                 const resource_error: MACH.MSG = @bitCast(@backingInt(ret) & MACH.MSG.MASK);

@@ -169,7 +169,7 @@ test baselineWeights {
 fn valueFromInt(T: anytype, int: Backing(T)) T {
     @disableInstrumentation();
     return switch (@typeInfo(T)) {
-        .@"enum" => @fromBackingInt(@intCast(int)),
+        .@"enum" => @fromBackingInt(int),
         else => @bitCast(int),
     };
 }
@@ -400,8 +400,8 @@ pub fn valueWithHash(s: *Smith, T: type, hash: u32) T {
                 break :v s.valueWeightedWithHash(T, baselineWeights(T), hash);
             }
             break :v std.enums.fromInt(T, s.valueWithHash(e.tag_type, hash)) orelse
-                @fromBackingInt(@intCast(e.field_values[0]));
-        } else @fromBackingInt(@intCast(s.valueWithHash(e.tag_type, hash))),
+                @fromBackingInt(e.field_values[0]);
+        } else @fromBackingInt(s.valueWithHash(e.tag_type, hash)),
         .optional => |o| if (s.valueWithHash(bool, hash))
             null
         else
@@ -718,7 +718,7 @@ test value {
         io: u128 = (1 << 80) | (1 << 23),
         fd: f64 = std.math.pi,
         ft: f80 = std.math.e,
-        eh: enum(u16) { a, _ } = @fromBackingInt(@intCast(999)),
+        eh: enum(u16) { a, _ } = @fromBackingInt(999),
         eo: enum(u128) { a, b, _ } = .b,
         aw: [3]u32 = .{ 1 << 30, 1 << 20, 1 << 10 },
         vw: @Vector(3, u32) = .{ 1 << 10, 1 << 20, 1 << 30 },

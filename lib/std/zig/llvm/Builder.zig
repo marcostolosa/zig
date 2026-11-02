@@ -1252,7 +1252,7 @@ pub const Type = enum(u32) {
             .fp128, .ppc_fp128, .i128 => 128,
             .ptr => @intCast(builder.data_layout.getPointerSpec(.default).bit_width),
             .@"ptr addrspace(4)" => @intCast(
-                builder.data_layout.getPointerSpec(@fromBackingInt(@intCast(4))).bit_width,
+                builder.data_layout.getPointerSpec(@fromBackingInt(4)).bit_width,
             ),
             _ => {
                 const item = builder.type_items.items[@backingInt(self)];

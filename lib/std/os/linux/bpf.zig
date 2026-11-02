@@ -741,11 +741,11 @@ pub const Insn = packed struct {
     }
 
     pub fn ld_map_fd1(dst: Reg, map_fd: fd_t) Insn {
-        return ld_imm_impl1(dst, @as(Reg, @fromBackingInt(@intCast(PSEUDO_MAP_FD))), @as(u64, @intCast(map_fd)));
+        return ld_imm_impl1(dst, @fromBackingInt(PSEUDO_MAP_FD), @intCast(map_fd));
     }
 
     pub fn ld_map_fd2(map_fd: fd_t) Insn {
-        return ld_imm_impl2(@as(u64, @intCast(map_fd)));
+        return ld_imm_impl2(@intCast(map_fd));
     }
 
     pub fn st(size: Size, dst: Reg, off: i16, imm: i32) Insn {

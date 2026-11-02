@@ -42,7 +42,7 @@ pub fn detectRuntimeVersion() WindowsVersion {
 
     const version: u32 = (@as(u32, os_ver) << 16) | (@as(u16, sp_ver) << 8) | sub_ver;
 
-    return @as(WindowsVersion, @fromBackingInt(@intCast(version)));
+    return @fromBackingInt(version);
 }
 
 // Technically, a registry value can be as long as 1MB. However, MS recommends storing

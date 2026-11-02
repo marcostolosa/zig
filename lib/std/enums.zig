@@ -11,7 +11,7 @@ pub fn fromInt(comptime E: type, integer: anytype) ?E {
     const enum_info = @typeInfo(E).@"enum";
     if (enum_info.mode == .nonexhaustive) {
         if (std.math.cast(enum_info.tag_type, integer)) |tag| {
-            return @fromBackingInt(@intCast(tag));
+            return @fromBackingInt(tag);
         }
         return null;
     }
@@ -44,7 +44,7 @@ pub inline fn valuesFromFields(comptime E: type, comptime field_values: []const 
         @setEvalBranchQuota(@typeInfo(E).@"enum".field_names.len + eval_branch_quota_cushion);
         var result: [field_values.len]E = undefined;
         for (&result, field_values) |*r, f_value| {
-            r.* = @fromBackingInt(@intCast(f_value));
+            r.* = @fromBackingInt(f_value);
         }
         const final = result;
         return &final;
@@ -73,7 +73,7 @@ test tagName {
     const E = enum(u8) { a, b, _ };
     try testing.expect(tagName(E, .a) != null);
     try testing.expectEqualStrings("a", tagName(E, .a).?);
-    try testing.expect(tagName(E, @as(E, @fromBackingInt(@intCast(42)))) == null);
+    try testing.expect(tagName(E, @fromBackingInt(42)) == null);
 }
 
 /// Determines the length of a direct-mapped enum array, indexed by
@@ -223,8 +223,8 @@ test fromInt {
     try testing.expect(fromInt(E1, zero).? == E1.A);
     try testing.expect(fromInt(E2, one).? == E2.B);
     try testing.expect(fromInt(E3, zero).? == E3.A);
-    try testing.expect(fromInt(E3, 127).? == @as(E3, @fromBackingInt(@intCast(127))));
-    try testing.expect(fromInt(E3, -128).? == @as(E3, @fromBackingInt(@intCast(-128))));
+    try testing.expect(fromInt(E3, 127).? == @as(E3, @fromBackingInt(127)));
+    try testing.expect(fromInt(E3, -128).? == @as(E3, @fromBackingInt(-128)));
     try testing.expectEqual(null, fromInt(E1, one));
     try testing.expectEqual(null, fromInt(E3, 128));
     try testing.expectEqual(null, fromInt(E3, -129));
@@ -689,7 +689,7 @@ pub fn BoundedEnumMultiset(comptime E: type, comptime CountSize: type) type {
             const info = @typeInfo(E).@"enum";
             inline for (info.field_names, info.field_values) |field_name, field_value| {
                 const c = @field(init_counts, field_name);
-                const key: E = @fromBackingInt(@intCast(field_value));
+                const key: E = @fromBackingInt(field_value);
                 self.counts.set(key, c);
             }
             return self;
@@ -758,7 +758,7 @@ pub fn BoundedEnumMultiset(comptime E: type, comptime CountSize: type) type {
         /// asserts operation will not overflow any key.
         pub fn addSetAssertSafe(self: *Self, other: Self) void {
             inline for (@typeInfo(E).@"enum".field_values) |field_value| {
-                const key = @as(E, @fromBackingInt(@intCast(field_value)));
+                const key: E = @fromBackingInt(field_value);
                 self.addAssertSafe(key, other.getCount(key));
             }
         }
@@ -766,7 +766,7 @@ pub fn BoundedEnumMultiset(comptime E: type, comptime CountSize: type) type {
         /// Increases the all key counts by given multiset.
         pub fn addSet(self: *Self, other: Self) error{Overflow}!void {
             inline for (@typeInfo(E).@"enum".field_values) |field_value| {
-                const key = @as(E, @fromBackingInt(@intCast(field_value)));
+                const key: E = @fromBackingInt(field_value);
                 try self.add(key, other.getCount(key));
             }
         }
@@ -776,7 +776,7 @@ pub fn BoundedEnumMultiset(comptime E: type, comptime CountSize: type) type {
         /// then that key will have a key count of zero.
         pub fn removeSet(self: *Self, other: Self) void {
             inline for (@typeInfo(E).@"enum".field_values) |field_value| {
-                const key = @as(E, @fromBackingInt(@intCast(field_value)));
+                const key: E = @fromBackingInt(field_value);
                 self.remove(key, other.getCount(key));
             }
         }
@@ -785,7 +785,7 @@ pub fn BoundedEnumMultiset(comptime E: type, comptime CountSize: type) type {
         /// given multiset.
         pub fn eql(self: Self, other: Self) bool {
             inline for (@typeInfo(E).@"enum".field_values) |field_value| {
-                const key = @as(E, @fromBackingInt(@intCast(field_value)));
+                const key: E = @fromBackingInt(field_value);
                 if (self.getCount(key) != other.getCount(key)) {
                     return false;
                 }
@@ -797,7 +797,7 @@ pub fn BoundedEnumMultiset(comptime E: type, comptime CountSize: type) type {
         /// equal to the given multiset.
         pub fn subsetOf(self: Self, other: Self) bool {
             inline for (@typeInfo(E).@"enum".field_values) |field_value| {
-                const key = @as(E, @fromBackingInt(@intCast(field_value)));
+                const key: E = @fromBackingInt(field_value);
                 if (self.getCount(key) > other.getCount(key)) {
                     return false;
                 }
@@ -809,7 +809,7 @@ pub fn BoundedEnumMultiset(comptime E: type, comptime CountSize: type) type {
         /// equal to the given multiset.
         pub fn supersetOf(self: Self, other: Self) bool {
             inline for (@typeInfo(E).@"enum".field_values) |field_value| {
-                const key = @as(E, @fromBackingInt(@intCast(field_value)));
+                const key: E = @fromBackingInt(field_value);
                 if (self.getCount(key) < other.getCount(key)) {
                     return false;
                 }
@@ -1349,7 +1349,7 @@ pub fn EnumIndexer(comptime E: type) type {
                 // gives up some safety to avoid artificially limiting
                 // the range of signed enum values to max_isize.
                 const enum_value = if (min < 0) @as(isize, @bitCast(i)) +% min else i + min;
-                return @as(E, @fromBackingInt(@intCast(@as(@typeInfo(E).@"enum".tag_type, @intCast(enum_value)))));
+                return @as(E, @fromBackingInt(@as(@typeInfo(E).@"enum".tag_type, @intCast(enum_value))));
             }
         };
     }
@@ -1396,8 +1396,8 @@ test "EnumIndexer non-exhaustive" {
         };
         const Indexer = EnumIndexer(E);
 
-        const min_tag: E = @fromBackingInt(@intCast(std.math.minInt(BackingInt)));
-        const max_tag: E = @fromBackingInt(@intCast(std.math.maxInt(BackingInt)));
+        const min_tag: E = @fromBackingInt(std.math.minInt(BackingInt));
+        const max_tag: E = @fromBackingInt(std.math.maxInt(BackingInt));
 
         const RangedType = @Int(.unsigned, @bitSizeOf(BackingInt));
         const max_index: comptime_int = std.math.maxInt(RangedType);

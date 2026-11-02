@@ -124,7 +124,7 @@ const Fiber = struct {
             const shift = 1;
 
             fn subWrap(lhs: Awaiting, rhs: Awaiting) Awaiting {
-                return @fromBackingInt(@intCast(@backingInt(lhs) -% @backingInt(rhs)));
+                return @fromBackingInt(@backingInt(lhs) -% @backingInt(rhs));
             }
 
             fn fromCancelable(cancelable: *Cancelable) Awaiting {
@@ -157,7 +157,7 @@ const Fiber = struct {
         const unblocked: CancelProtection = .{ .user = .unblocked, .acknowledged = false };
 
         fn check(cancel_protection: CancelProtection) Io.CancelProtection {
-            return @fromBackingInt(@intCast(@intFromBool(cancel_protection != unblocked)));
+            return @fromBackingInt(@intFromBool(cancel_protection != unblocked));
         }
 
         fn acknowledge(cancel_protection: *CancelProtection) void {

@@ -221,10 +221,10 @@ pub const Wip = struct {
 
         if (gop.found_existing) {
             wip.extra.items.len = revert_index;
-            return @fromBackingInt(@intCast(gop.key_ptr.index));
+            return @fromBackingInt(gop.key_ptr.index);
         }
 
-        return @fromBackingInt(@intCast(revert_index));
+        return @fromBackingInt(revert_index);
     }
 
     pub fn addStringListInterned(wip: *Wip, list: []const String) Allocator.Error!StringList {
@@ -242,10 +242,10 @@ pub const Wip = struct {
 
         if (gop.found_existing) {
             wip.extra.items.len = revert_index;
-            return @fromBackingInt(@intCast(gop.key_ptr.index));
+            return @fromBackingInt(gop.key_ptr.index);
         }
 
-        return @fromBackingInt(@intCast(revert_index));
+        return @fromBackingInt(revert_index);
     }
 
     pub fn addBytes(wip: *Wip, bytes: []const u8) Allocator.Error!Bytes {
@@ -454,7 +454,7 @@ pub const Wip = struct {
 
     pub fn addGeneratedFile(wip: *Wip) GeneratedFileIndex {
         defer wip.next_generated_file_index += 1;
-        return @fromBackingInt(@intCast(wip.next_generated_file_index));
+        return @fromBackingInt(wip.next_generated_file_index);
     }
 
     /// Returned slice expires upon next append to the configuration.
@@ -541,7 +541,7 @@ pub const Step = extern struct {
         pub fn unwrap(this: @This()) ?Index {
             return switch (this) {
                 .none => null,
-                else => @fromBackingInt(@intCast(@backingInt(this))),
+                else => @fromBackingInt(@backingInt(this)),
             };
         }
 
@@ -1567,7 +1567,7 @@ pub const LazyPath = union(@This().Tag) {
         pub fn unwrap(this: @This()) ?Index {
             return switch (this) {
                 .none => null,
-                else => @fromBackingInt(@intCast(@backingInt(this))),
+                else => @fromBackingInt(@backingInt(this)),
             };
         }
     };
@@ -1665,13 +1665,13 @@ pub const OptionalGeneratedFileIndex = enum(u32) {
     _,
 
     pub fn init(i: ?GeneratedFileIndex) OptionalGeneratedFileIndex {
-        return @fromBackingInt(@intCast(@backingInt(i orelse return .none)));
+        return @fromBackingInt(@backingInt(i orelse return .none));
     }
 
     pub fn unwrap(this: @This()) ?GeneratedFileIndex {
         return switch (this) {
             .none => null,
-            else => @fromBackingInt(@intCast(@backingInt(this))),
+            else => @fromBackingInt(@backingInt(this)),
         };
     }
 };
@@ -1703,7 +1703,7 @@ pub const Package = struct {
         _,
 
         pub fn init(i: Index) OptionalIndex {
-            const result: OptionalIndex = @fromBackingInt(@intCast(@backingInt(i)));
+            const result: OptionalIndex = @fromBackingInt(@backingInt(i));
             assert(result != .none);
             return result;
         }
@@ -1712,7 +1712,7 @@ pub const Package = struct {
             return switch (this) {
                 .none => null,
                 .root => .root,
-                _ => @fromBackingInt(@intCast(@backingInt(this))),
+                _ => @fromBackingInt(@backingInt(this)),
             };
         }
     };
@@ -1932,14 +1932,14 @@ pub const OptionalStringList = enum(u32) {
 
     pub fn init(opt_string_list: ?StringList) OptionalStringList {
         const sl = opt_string_list orelse return .none;
-        const result: OptionalStringList = @fromBackingInt(@intCast(@backingInt(sl)));
+        const result: OptionalStringList = @fromBackingInt(@backingInt(sl));
         assert(result != .none);
         return result;
     }
 
     pub fn unwrap(this: @This()) ?StringList {
         if (this == .none) return null;
-        return @fromBackingInt(@intCast(@backingInt(this)));
+        return @fromBackingInt(@backingInt(this));
     }
 
     pub fn slice(this: @This(), c: *const Configuration) ?[]const String {
@@ -1971,7 +1971,7 @@ pub const InstallDestDir = enum(u32) {
 
     pub fn initCustom(sub_path: String) InstallDestDir {
         assert(@backingInt(sub_path) < @backingInt(InstallDestDir.none));
-        return @fromBackingInt(@intCast(@backingInt(sub_path)));
+        return @fromBackingInt(@backingInt(sub_path));
     }
 
     pub const Unpacked = union(enum) {
@@ -1989,7 +1989,7 @@ pub const InstallDestDir = enum(u32) {
             .lib => .lib,
             .bin => .bin,
             .header => .header,
-            _ => .{ .sub_path = @fromBackingInt(@intCast(@backingInt(this))) },
+            _ => .{ .sub_path = @fromBackingInt(@backingInt(this)) },
         };
     }
 };
@@ -2003,14 +2003,14 @@ pub const OptionalString = enum(u32) {
     _,
 
     pub fn init(s: String) OptionalString {
-        const result: OptionalString = @fromBackingInt(@intCast(@backingInt(s)));
+        const result: OptionalString = @fromBackingInt(@backingInt(s));
         assert(result != .none);
         return result;
     }
 
     pub fn unwrap(this: @This()) ?String {
         if (this == .none) return null;
-        return @fromBackingInt(@intCast(@backingInt(this)));
+        return @fromBackingInt(@backingInt(this));
     }
 
     pub fn slice(this: @This(), c: *const Configuration) ?[:0]const u8 {
@@ -2200,7 +2200,7 @@ pub const ResolvedTarget = struct {
         _,
 
         pub fn init(i: Index) OptionalIndex {
-            const result: OptionalIndex = @fromBackingInt(@intCast(@backingInt(i)));
+            const result: OptionalIndex = @fromBackingInt(@backingInt(i));
             assert(result != .none);
             return result;
         }
@@ -2208,7 +2208,7 @@ pub const ResolvedTarget = struct {
         pub fn unwrap(this: @This()) ?Index {
             return switch (this) {
                 .none => null,
-                _ => @fromBackingInt(@intCast(@backingInt(this))),
+                _ => @fromBackingInt(@backingInt(this)),
             };
         }
 
@@ -2278,7 +2278,7 @@ pub const TargetQuery = struct {
         _,
 
         pub fn init(i: Index) OptionalIndex {
-            const result: OptionalIndex = @fromBackingInt(@intCast(@backingInt(i)));
+            const result: OptionalIndex = @fromBackingInt(@backingInt(i));
             assert(result != .none);
             return result;
         }
@@ -2286,7 +2286,7 @@ pub const TargetQuery = struct {
         pub fn unwrap(this: @This()) ?Index {
             return switch (this) {
                 .none => null,
-                _ => @fromBackingInt(@intCast(@backingInt(this))),
+                _ => @fromBackingInt(@backingInt(this)),
             };
         }
 

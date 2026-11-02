@@ -384,7 +384,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                 }
                 read_seq += 1;
                 cleartext_fragment_end -= 1;
-                const ct: tls.ContentType = @fromBackingInt(@intCast(cleartext_buf[cleartext_fragment_end]));
+                const ct: tls.ContentType = @fromBackingInt(cleartext_buf[cleartext_fragment_end]);
                 if (ct != .handshake) return error.TlsUnexpectedMessage;
                 break :content .{ tls.Decoder.fromTheirSlice(@constCast(cleartext_buf[cleartext_fragment_start..cleartext_fragment_end])), ct };
             },
@@ -490,7 +490,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                             }
                         }
 
-                        tls_version = @fromBackingInt(@intCast(supported_version orelse legacy_version));
+                        tls_version = @fromBackingInt(supported_version orelse legacy_version);
                         switch (tls_version) {
                             .tls_1_3 => if (!mem.eql(u8, legacy_session_id_echo, &legacy_session_id)) return error.TlsIllegalParameter,
                             .tls_1_2 => if (mem.eql(u8, server_hello_rand[24..31], "DOWNGRD") and
@@ -1155,7 +1155,7 @@ fn readIndirect(c: *Client) Reader.Error!usize {
         },
         error.ReadFailed => |e| return e,
     };
-    const ct: tls.ContentType = @fromBackingInt(@intCast(record_header[0]));
+    const ct: tls.ContentType = @fromBackingInt(record_header[0]);
     const legacy_version = mem.readInt(u16, record_header[1..][0..2], .big);
     _ = legacy_version;
     const record_len = mem.readInt(u16, record_header[3..][0..2], .big);
@@ -1192,7 +1192,7 @@ fn readIndirect(c: *Client) Reader.Error!usize {
                 // TODO use scalar, non-slice version
                 const msg = mem.trimEnd(u8, cleartext, "\x00");
                 if (msg.len == 0) return failRead(c, error.TlsDecodeError);
-                break :cleartext .{ msg.len - 1, @fromBackingInt(@intCast(msg[msg.len - 1])) };
+                break :cleartext .{ msg.len - 1, @fromBackingInt(msg[msg.len - 1]) };
             },
             .tls_1_2 => {
                 const pv = &p.tls_1_2;
@@ -1229,8 +1229,8 @@ fn readIndirect(c: *Client) Reader.Error!usize {
         .alert => {
             if (cleartext.len != 2) return failRead(c, error.TlsDecodeError);
             const alert: tls.Alert = .{
-                .level = @fromBackingInt(@intCast(cleartext[0])),
-                .description = @fromBackingInt(@intCast(cleartext[1])),
+                .level = @fromBackingInt(cleartext[0]),
+                .description = @fromBackingInt(cleartext[1]),
             };
             switch (alert.description) {
                 .close_notify => {
@@ -1250,7 +1250,7 @@ fn readIndirect(c: *Client) Reader.Error!usize {
         .handshake => {
             var ct_i: usize = 0;
             while (true) {
-                const handshake_type: tls.HandshakeType = @fromBackingInt(@intCast(cleartext[ct_i]));
+                const handshake_type: tls.HandshakeType = @fromBackingInt(cleartext[ct_i]);
                 ct_i += 1;
                 const handshake_len = mem.readInt(u24, cleartext[ct_i..][0..3], .big);
                 ct_i += 3;
@@ -1281,7 +1281,7 @@ fn readIndirect(c: *Client) Reader.Error!usize {
                         }
                         c.read_seq = 0;
 
-                        switch (@as(tls.KeyUpdateRequest, @fromBackingInt(@intCast(handshake[0])))) {
+                        switch (@as(tls.KeyUpdateRequest, @fromBackingInt(handshake[0]))) {
                             .update_requested => {
                                 switch (c.application_cipher) {
                                     inline else => |*p| {

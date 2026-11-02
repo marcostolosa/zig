@@ -967,7 +967,7 @@ pub const Endian = enum {
     little,
 
     pub const native = builtin.target.cpu.arch.endian();
-    pub const foreign: Endian = @fromBackingInt(@intCast(1 - @backingInt(native)));
+    pub const foreign: Endian = @fromBackingInt(1 - @backingInt(native));
 };
 
 /// This data structure is used by the Zig language code generation and

@@ -66,7 +66,7 @@ pub const MemoryType = enum(u32) {
 
     pub fn fromOem(value: Oem) MemoryType {
         const oem_start = @backingInt(MemoryType.oem_start);
-        return @fromBackingInt(@intCast(oem_start + value));
+        return @fromBackingInt(oem_start + value);
     }
 
     pub fn toOem(memtype: MemoryType) ?Oem {
@@ -79,7 +79,7 @@ pub const MemoryType = enum(u32) {
 
     pub fn fromVendor(value: Vendor) MemoryType {
         const vendor_start = @backingInt(MemoryType.vendor_start);
-        return @fromBackingInt(@intCast(vendor_start + value));
+        return @fromBackingInt(vendor_start + value);
     }
 
     pub fn toVendor(memtype: MemoryType) ?Vendor {

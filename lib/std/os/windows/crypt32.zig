@@ -73,7 +73,7 @@ pub const CERT_STORE = struct {
         _,
 
         pub fn fromString(str: LPCSTR) PROV {
-            return @fromBackingInt(@intCast(@intFromPtr(str)));
+            return @fromBackingInt(@intFromPtr(str));
         }
     };
 
@@ -159,7 +159,7 @@ pub const HCERTCHAINENGINE = enum(usize) {
     _,
 
     pub fn fromHandle(handle: HANDLE) HCERTCHAINENGINE {
-        return @fromBackingInt(@intCast(@intFromPtr(handle)));
+        return @fromBackingInt(@intFromPtr(handle));
     }
 };
 
@@ -210,7 +210,7 @@ pub const CERT_CHAIN = packed struct(DWORD) {
         _,
 
         pub fn fromString(str: LPCSTR) POLICY {
-            return @fromBackingInt(@intCast(@intFromPtr(str)));
+            return @fromBackingInt(@intFromPtr(str));
         }
 
         pub const PARA = extern struct {

@@ -9449,7 +9449,15 @@ fn dirSetTimestamps(
     _ = t;
 
     if (is_windows) {
-        @panic("TODO implement dirSetTimestamps windows");
+        const file = try dirOpenFileWindows(userdata, dir, sub_path, .{
+            .mode = .write_only,
+            .follow_symlinks = options.follow_symlinks,
+        });
+        defer windows.CloseHandle(file.handle);
+        return fileSetTimestamps(userdata, file, .{
+            .access_timestamp = options.access_timestamp,
+            .modify_timestamp = options.modify_timestamp,
+        });
     }
 
     if (native_os == .wasi and !builtin.link_libc) {

@@ -2004,7 +2004,7 @@ pub fn setFileOwner(
     return io.vtable.dirSetFileOwner(io.userdata, dir, sub_path, owner, group, options);
 }
 
-pub const SetTimestampsError = File.SetTimestampsError || PathNameError;
+pub const SetTimestampsError = File.SetTimestampsError || PathNameError || File.OpenError;
 
 pub const SetTimestampsOptions = struct {
     follow_symlinks: bool = true,

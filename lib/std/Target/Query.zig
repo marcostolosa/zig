@@ -508,8 +508,8 @@ pub fn zigTriple(query: Query, gpa: Allocator) Allocator.Error![]u8 {
 }
 
 /// Deprecated; use `printCpu` instead. Will be removed in 0.19.0.
-pub fn serializeCpu(query: Query, buffer: *std.array_list.Managed(u8)) Allocator.Error!void {
-    try buffer.print("{f}", .{std.fmt.alt(&query, .printCpu)});
+pub fn serializeCpu(query: Query, gpa: Allocator, buffer: *std.ArrayList(u8)) Allocator.Error!void {
+    try buffer.print(gpa, "{f}", .{std.fmt.alt(&query, .printCpu)});
 }
 
 /// Deprecated; use `printCpu` instead. Will be removed in 0.19.0.

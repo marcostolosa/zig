@@ -38,9 +38,6 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("rand seed: {}\n", .{seed});
     }
 
-    var cmd_line_w_buf = std.array_list.Managed(u16).init(gpa);
-    defer cmd_line_w_buf.deinit();
-
     var i: u64 = 0;
     var errors: u64 = 0;
     while (iterations == 0 or i < iterations) {
@@ -81,8 +78,8 @@ fn randomCommandLineW(allocator: Allocator, rand: std.Random) ![:0]const u16 {
     };
 
     const choices = rand.uintAtMostBiased(u16, 256);
-    var buf = try std.array_list.Managed(u16).initCapacity(allocator, choices);
-    errdefer buf.deinit();
+    var buf: std.ArrayList(u16) = try .initCapacity(allocator, choices);
+    errdefer buf.deinit(allocator);
 
     for (0..choices) |_| {
         const choice = rand.enumValue(Choice);
@@ -98,10 +95,10 @@ fn randomCommandLineW(allocator: Allocator, rand: std.Random) ![:0]const u16 {
             .printable => '!' + rand.uintAtMostBiased(u8, '~' - '!'),
             .non_ascii => rand.intRangeAtMostBiased(u16, 0x80, 0xFFFF),
         };
-        try buf.append(std.mem.nativeToLittle(u16, code_unit));
+        buf.appendAssumeCapacity(std.mem.nativeToLittle(u16, code_unit));
     }
 
-    return buf.toOwnedSliceSentinel(0);
+    return buf.toOwnedSliceSentinel(allocator, 0);
 }
 
 /// Returns the exit code of the verify process

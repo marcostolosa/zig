@@ -4748,12 +4748,12 @@ fn airBitCast(fg: *FuncGen, inst: Air.Inst.Index, safety: bool) Allocator.Error!
     // * `.scalarize_bit_cast_array`
     // * `.scalarize_bit_cast_vector_non_elementwise` (big-endian only)
     //
-    // That means that where the second one is enabled, the `bit_cast` instructions we might see are limited to:
+    // That means that on big-endian, the `bit_cast` instructions we might see are limited to the following:
     //
     // * bool/int/float <-> bool/int/float
     // * `@Vector(n, A)` <-> `@Vector(n, B)`
     //
-    // Elsewhere, the `bit_cast` instructions we might see can be any of the following:
+    // While on little-endian, the `bit_cast` instructions we might see can be any of the following:
     //
     // * bool/int/float/`@Vector(n, A)` <-> bool/int/float/`@Vector(m, B)`
 

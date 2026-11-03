@@ -20,7 +20,7 @@ pub fn ldexp(x: anytype, n: i32) @TypeOf(x) {
     const repr = @as(TBits, @bitCast(x));
     const sign_bit = repr & (1 << (exponent_bits + mantissa_bits));
 
-    if (math.isNan(x) or !math.isFinite(x))
+    if (math.isNan(x) or !math.isFinite(x) or x == 0.0)
         return x;
 
     var exponent: i32 = @as(i32, @intCast((repr << 1) >> (mantissa_bits + 1)));
@@ -92,6 +92,9 @@ test ldexp {
 
         // basic usage
         try expect(ldexp(@as(T, 1.5), 4) == 24.0);
+
+        // zero -> zero
+        try expect(ldexp(@as(T, 0.0), math.maxInt(i32)) == 0.0);
 
         // normals -> subnormals
         try expect(math.isNormal(ldexp(@as(T, 1.0), min_exponent)));

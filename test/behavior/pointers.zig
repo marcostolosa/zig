@@ -99,6 +99,52 @@ test "pointer subtraction" {
     }
 }
 
+test "comptime_int pointer subtraction" {
+    const equal = comptime blk: {
+        var values: [3]comptime_int = .{ 4, 3, 2 };
+
+        const p0: [*]comptime_int = &values;
+        const p1 = p0 + 1;
+        const p0_again = p1 - 1;
+
+        break :blk p0 == p0_again;
+    };
+
+    try expect(equal);
+}
+
+test "comptime_int pointer subtraction to nonzero index" {
+    const equal = comptime blk: {
+        var values: [4]comptime_int = .{ 4, 3, 2, 1 };
+
+        const p0: [*]comptime_int = &values;
+        const p3 = p0 + 3;
+        const p1 = p3 - 2;
+
+        break :blk p1 == p0 + 1;
+    };
+
+    try expect(equal);
+}
+
+test "pointer subtraction with nested comptime_int arrays" {
+    const equal = comptime blk: {
+        var values: [3][2]comptime_int = .{
+            .{ 1, 2 },
+            .{ 3, 4 },
+            .{ 5, 6 },
+        };
+
+        const p0: [*][2]comptime_int = &values;
+        const p2 = p0 + 2;
+        const p1 = p2 - 1;
+
+        break :blk p1 == p0 + 1;
+    };
+
+    try expect(equal);
+}
+
 test "pointer arithmetic with non-trivial RHS" {
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 

@@ -2613,6 +2613,15 @@ fn failWithInvalidPtrArithmetic(sema: *Sema, block: *Block, src: LazySrcLoc, ari
     return sema.failWithOwnedErrorMsg(block, msg);
 }
 
+fn failWithPtrUnderflow(sema: *Sema, block: *Block, src: LazySrcLoc) CompileError {
+    return sema.failWithOwnedErrorMsg(block, msg: {
+        const msg = try sema.errMsg(src, "pointer computation here causes illegal behavior", .{});
+        errdefer msg.destroy(sema.gpa);
+        try sema.errNote(src, msg, "resulting pointer exceeds bounds of containing value which may trigger overflow", .{});
+        break :msg msg;
+    });
+}
+
 /// We don't return a pointer to the new error note because the pointer
 /// becomes invalid when you add another one.
 pub fn errNote(
@@ -15322,8 +15331,11 @@ fn analyzePtrArithmetic(
 
         if (index == 0) return ptr;
         if (air_tag == .ptr_sub) {
-            const elem_size = elem_ty.abiSize(zcu);
-            return .fromValue(try sema.ptrSubtract(block, op_src, ptr_val, index * elem_size, new_ptr_ty));
+            const result = ptr_val.ptrSubtractElems(index, new_ptr_ty, pt) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.PointerUnderflow => return sema.failWithPtrUnderflow(block, op_src),
+            };
+            return .fromValue(result);
         } else {
             return .fromValue(try pt.getCoerced(try ptr_val.ptrElem(index, pt), new_ptr_ty));
         }
@@ -24228,14 +24240,7 @@ fn ptrSubtract(sema: *Sema, block: *Block, src: LazySrcLoc, ptr_val: Value, byte
         .ptr => |ptr| ptr,
         else => unreachable,
     };
-    if (ptr.byte_offset < byte_subtract) {
-        return sema.failWithOwnedErrorMsg(block, msg: {
-            const msg = try sema.errMsg(src, "pointer computation here causes illegal behavior", .{});
-            errdefer msg.destroy(sema.gpa);
-            try sema.errNote(src, msg, "resulting pointer exceeds bounds of containing value which may trigger overflow", .{});
-            break :msg msg;
-        });
-    }
+    if (ptr.byte_offset < byte_subtract) return sema.failWithPtrUnderflow(block, src);
     return Value.fromInterned(try pt.intern(.{ .ptr = .{
         .ty = new_ty.toIntern(),
         .base_addr = ptr.base_addr,

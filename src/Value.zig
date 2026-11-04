@@ -1851,6 +1851,59 @@ pub fn ptrElem(orig_parent_ptr: Value, field_idx: u64, pt: Zcu.PerThread) !Value
     } }));
 }
 
+/// Subtracts `count` elements from a many-item or C pointer.
+/// Returns a pointer with type `result_ty` to the corresponding element.
+/// Asserts that input and result element types match and their layout is resolved.
+pub fn ptrSubtractElems(ptr_val: Value, count: u64, result_ty: Type, pt: Zcu.PerThread) !Value {
+    const zcu = pt.zcu;
+    const elem_ty = result_ty.childType(zcu);
+    elem_ty.assertHasLayout(zcu);
+
+    const ptr_size = ptr_val.typeOf(zcu).ptrSize(zcu);
+    assert(ptr_size == .many or ptr_size == .c);
+    assert(ptr_val.typeOf(zcu).childType(zcu).toIntern() == elem_ty.toIntern());
+
+    if (ptr_val.isUndef(zcu)) return pt.undefValue(result_ty);
+    if (count == 0) return pt.getCoerced(ptr_val, result_ty);
+
+    const ptr = zcu.intern_pool.indexToKey(ptr_val.toIntern()).ptr;
+    if (!elem_ty.comptimeOnly(zcu)) {
+        const byte_delta = count * elem_ty.abiSize(zcu);
+        if (ptr.byte_offset < byte_delta) return error.PointerUnderflow;
+        const new_offset = ptr.byte_offset - byte_delta;
+        return .fromInterned(try pt.intern(.{ .ptr = .{
+            .ty = result_ty.toIntern(),
+            .base_addr = ptr.base_addr,
+            .byte_offset = new_offset,
+        } }));
+    }
+
+    // Comptime-only element type.
+
+    const base_elem_ty, const base_elem_count = elem_ty.arrayBase(zcu);
+    const base_elem_delta = std.math.mul(u64, base_elem_count, count) catch return error.PointerUnderflow;
+    switch (ptr.base_addr) {
+        .arr_elem => |arr_elem| {
+            const base_ptr: Value = .fromInterned(arr_elem.base);
+            if (base_ptr.typeOf(zcu).childType(zcu).toIntern() == base_elem_ty.toIntern()) {
+                if (arr_elem.index < base_elem_delta) return error.PointerUnderflow;
+                const new_index = arr_elem.index - base_elem_delta;
+                if (new_index == 0) return pt.getCoerced(base_ptr, result_ty);
+                return .fromInterned(try pt.intern(.{ .ptr = ptr: {
+                    var new = ptr;
+                    new.base_addr.arr_elem.index = new_index;
+                    new.ty = result_ty.toIntern();
+                    break :ptr new;
+                } }));
+            }
+        },
+        else => {},
+    }
+
+    // There is no compatible base from which we could move backwards.
+    return error.PointerUnderflow;
+}
+
 fn canonicalizeBasePtr(base_ptr: Value, want_size: std.lang.Type.Pointer.Size, want_child: Type, pt: Zcu.PerThread) !Value {
     const ptr_ty = base_ptr.typeOf(pt.zcu);
     const ptr_info = ptr_ty.ptrInfo(pt.zcu);

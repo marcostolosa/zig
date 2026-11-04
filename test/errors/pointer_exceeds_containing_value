@@ -10,6 +10,19 @@ export fn entry1() void {
     _ = ptr - 1;
 }
 
+comptime {
+    var values: [3]comptime_int = .{ 4, 3, 2 };
+    const p0: [*]comptime_int = &values;
+    _ = p0 - 1;
+}
+
+comptime {
+    var values: [3]comptime_int = .{ 4, 3, 2 };
+    const p0: [*]comptime_int = &values;
+    const p1 = p0 + 1;
+    _ = p1 - 2;
+}
+
 export fn entry2() void {
     const S = extern struct { x: u32, y: u32 };
     const y: u32 = 123;
@@ -21,6 +34,10 @@ export fn entry2() void {
 #check errors {
 test.zig:4:13: error: pointer computation here causes illegal behavior
 test.zig:4:13: note: resulting pointer exceeds bounds of containing value which may trigger overflow
-test.zig:10:55: error: pointer computation here causes illegal behavior
-test.zig:10:55: note: resulting pointer exceeds bounds of containing value which may trigger overflow
+test.zig:10:12: error: pointer computation here causes illegal behavior
+test.zig:10:12: note: resulting pointer exceeds bounds of containing value which may trigger overflow
+test.zig:17:12: error: pointer computation here causes illegal behavior
+test.zig:17:12: note: resulting pointer exceeds bounds of containing value which may trigger overflow
+test.zig:23:55: error: pointer computation here causes illegal behavior
+test.zig:23:55: note: resulting pointer exceeds bounds of containing value which may trigger overflow
 #}

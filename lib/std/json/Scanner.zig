@@ -91,6 +91,7 @@ pub fn deinit(self: *@This()) void {
 
 pub fn enableDiagnostics(self: *@This(), diagnostics: *Diagnostics) void {
     diagnostics.has_position = true;
+    diagnostics.cursor_pointer = &self.cursor;
     self.diagnostics = diagnostics;
 }
 
@@ -104,12 +105,14 @@ pub fn saveDiagnostics(self: *const @This()) void {
         diag.cursor_in_current_input = self.cursor;
         diag.current_input = self.input;
         diag.is_end_of_input = self.is_end_of_input;
+        diag.should_use_cursor_in_current_input = true;
     }
 }
 
 /// Call this whenever you get `error.BufferUnderrun` from `next()`.
 /// When there is no more input to provide, call `endInput()`.
 pub fn feedInput(self: *@This(), input: []const u8) void {
+    if (self.diagnostics) |diag| diag.should_use_cursor_in_current_input = false;
     assert(self.cursor == self.input.len); // Not done with the last input slice.
     if (self.diagnostics) |diag| {
         diag.total_bytes_before_current_input += self.input.len;
@@ -126,6 +129,7 @@ pub fn feedInput(self: *@This(), input: []const u8) void {
 /// or at any time afterward, such as when getting `error.BufferUnderrun` from `next()`.
 /// Don't forget to call `next*()` after `endInput()` until you get `.end_of_document`.
 pub fn endInput(self: *@This()) void {
+    if (self.diagnostics) |diag| diag.should_use_cursor_in_current_input = false;
     self.is_end_of_input = true;
 }
 
@@ -1573,6 +1577,8 @@ pub const Diagnostics = struct {
     line_number: u64 = 1,
     line_start_cursor: usize = @bitCast(@as(isize, -1)), // Start just "before" the input buffer to get a 1-based column for line 1
     total_bytes_before_current_input: u64 = 0,
+    should_use_cursor_in_current_input: bool = false,
+    cursor_pointer: *const usize = undefined,
 
     // updated by Scanner.saveDiagnostics
     cursor_in_current_input: usize = undefined,
@@ -1597,12 +1603,14 @@ pub const Diagnostics = struct {
     /// Starts at 1.
     pub fn getColumn(self: *const @This()) u64 {
         if (!self.has_position) return 0;
-        return self.cursor_in_current_input -% self.line_start_cursor;
+        const cursor = if (self.should_use_cursor_in_current_input) self.cursor_in_current_input else self.cursor_pointer.*;
+        return cursor -% self.line_start_cursor;
     }
     /// Starts at 0. Measures the byte offset since the start of the input.
     pub fn getByteOffset(self: *const @This()) u64 {
         if (!self.has_position) return 0;
-        return self.total_bytes_before_current_input + self.cursor_in_current_input;
+        const cursor = if (self.should_use_cursor_in_current_input) self.cursor_in_current_input else self.cursor_pointer.*;
+        return self.total_bytes_before_current_input + cursor;
     }
 
     /// Set the headline message of the problem

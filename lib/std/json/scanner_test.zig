@@ -555,3 +555,27 @@ test "diagnostic dump" {
     try std.testing.expect(std.mem.containsAtLeast(u8, output, 1, "test message"));
     try std.testing.expect(std.mem.containsAtLeast(u8, output, 1, "test context"));
 }
+
+test "diagnostics non error has correct line/col" {
+    const diagnostics_test_multi_line =
+        \\ {
+        \\      "first": "first field",
+        \\      "second": "second field",
+        \\      "third": "third field"
+        \\ }
+    ;
+
+    var fixed: std.Io.Reader = .fixed(diagnostics_test_multi_line);
+
+    var diagnostics = std.json.Diagnostics{};
+    var jsonReader = std.json.Reader.init(std.testing.allocator, &fixed);
+    jsonReader.enableDiagnostics(&diagnostics);
+    defer jsonReader.deinit();
+
+    _ = try jsonReader.next();
+    _ = try jsonReader.next();
+    _ = try jsonReader.next();
+
+    try std.testing.expectEqual(29, diagnostics.getColumn());
+    try std.testing.expectEqual(2, diagnostics.getLine());
+}

@@ -343,7 +343,7 @@ const Import = struct {
 const Symbol = struct {
     node: MappedFile.Node.Index.Optional,
     first_target_reloc: Reloc.Index.Optional,
-    first_import: Import.Index.Optional = .none,
+    first_import: Import.Index.Optional,
     prev_in_node: Symbol.Index.Optional,
     next_in_node: Symbol.Index.Optional,
 
@@ -1289,6 +1289,7 @@ fn addInternalSymbol(macho: *MachO, opts: struct {
         .prev_in_node = .none,
         .next_in_node = .none,
         .first_target_reloc = .none,
+        .first_import = .none,
     });
     if (sym_index.ptr(macho).node.unwrap()) |node| {
         const head_ptr = macho.nodeFirstSymbolPtr(node);
@@ -1428,6 +1429,7 @@ fn addGlobalSymbol(macho: *MachO, opts: struct {
         .prev_in_node = .none,
         .next_in_node = .none,
         .first_target_reloc = .none,
+        .first_import = .none,
     });
     symbol.nlist(macho).* = .{
         .n_strx = @backingInt(strx),
@@ -2360,19 +2362,26 @@ fn loadDso(macho: *MachO, path: std.Build.Cache.Path, fr: *Io.File.Reader) LoadP
         );
         switch (lc.cmd) {
             .ID_DYLIB => {
-                const cmd_size = @sizeOf(std.macho.dylib_command);
-                const id = try r.peekStruct(
-                    std.macho.dylib_command,
-                    target_endian,
-                );
+                if (lc.cmdsize < @sizeOf(std.macho.dylib_command)) {
+                    return diags.failParse(path, "bad cmdsize in 'LC_ID_DYLIB' load command", .{});
+                }
+                const dylib_id_lc = try r.takeStruct(std.macho.dylib_command, target_endian);
+                const dylib_name_len = dylib_id_lc.cmdsize - @sizeOf(std.macho.dylib_command);
 
-                var output = id;
-                output.cmd = .LOAD_DYLIB;
+                const cmd = try macho.appendLoadCommand(std.macho.dylib_command, .{
+                    .cmd = .LOAD_DYLIB,
+                    .cmdsize = std.mem.alignForward(
+                        u32,
+                        @sizeOf(std.macho.dylib_command) + dylib_name_len,
+                        8,
+                    ),
+                    .dylib = dylib_id_lc.dylib,
+                });
 
-                const cmd = try macho.appendLoadCommand(std.macho.dylib_command, output);
+                // Copy the name from the input. After this we have consumed the full `lc.cmdsize`
+                try r.readSliceAll(cmd.trailing[0..dylib_name_len]);
+                @memset(cmd.trailing[dylib_name_len..], 0);
 
-                try r.discardAll(cmd_size);
-                try r.readSliceAll(cmd.trailing);
                 cmd_offset += lc.cmdsize;
                 continue;
             },
@@ -2890,14 +2899,10 @@ fn loadObject(
 
                 while (cur_atom_end <= target_atom_offset) {
                     // We need to start a new atom at `cur_atom_end`.
-                    var literal_bytes: [16]u8 = undefined;
                     const atom_offset: u64 = cur_atom_end;
                     const atom_size: u64, const entry: ?LiteralEntry = switch (section.usage) {
                         .data_const_split_4 => literal: {
-                            const bytes = literal_bytes[0..4];
-                            try fr.interface.readSliceAll(bytes);
-
-                            const key = std.mem.readInt(u32, bytes, .little);
+                            const key = try fr.interface.peekInt(u32, macho.targetEndian());
                             const gop = try macho.literals_4.getOrPut(gpa, key);
                             break :literal .{
                                 4,
@@ -2905,10 +2910,7 @@ fn loadObject(
                             };
                         },
                         .data_const_split_8 => literal: {
-                            const bytes = literal_bytes[0..8];
-                            try fr.interface.readSliceAll(bytes);
-
-                            const key = std.mem.readInt(u64, bytes, .little);
+                            const key = try fr.interface.peekInt(u64, macho.targetEndian());
                             const gop = try macho.literals_8.getOrPut(gpa, key);
                             break :literal .{
                                 8,
@@ -2916,10 +2918,7 @@ fn loadObject(
                             };
                         },
                         .data_const_split_16 => literal: {
-                            const bytes = literal_bytes[0..16];
-                            try fr.interface.readSliceAll(bytes);
-
-                            const key = std.mem.readInt(u128, bytes, .little);
+                            const key = try fr.interface.peekInt(u128, macho.targetEndian());
                             const gop = try macho.literals_16.getOrPut(gpa, key);
                             break :literal .{
                                 16,
@@ -3026,6 +3025,13 @@ fn loadObject(
                                     &macho.mf,
                                     node.alignment(&macho.mf).max(atom_align),
                                 );
+
+                                // C strings were already read above, while
+                                // integer literals were only peeked.
+                                if (section.usage != .data_const_split_c_strings) {
+                                    fr.interface.toss(@intCast(atom_size));
+                                }
+
                                 break :atom index;
                             }
                         }
@@ -3054,8 +3060,6 @@ fn loadObject(
 
                             if (section.usage == .data_const_split_c_strings) {
                                 @memcpy(dest, cstring_buf.written());
-                            } else if (entry != null) {
-                                @memcpy(dest, literal_bytes[0..@intCast(atom_size)]);
                             } else {
                                 try fr.interface.readSliceAll(dest);
                             }
@@ -3433,15 +3437,22 @@ fn loadObject(
             };
             const target_is_undef = macho.targetLoad(&target_symbol.nlist(macho).n_type).bits.type == .undf;
             if (target_is_undef) {
-                const import_addend: u64 =
-                    if (target == .symbol and internal_type == .abs64 and final_addend > std.math.maxInt(u8))
-                        final_addend & ~@as(u64, 0xff)
-                    else
-                        0;
+                var split_addend: Import.Addend = switch (target) {
+                    .symbol => @fromBackingInt(final_addend),
+                    .branch, .got => @fromBackingInt(0),
+                    .tlv => @panic("TODO(MachO2): import addend for tlv"),
+                };
+
+                // Zero the fixup bits, since we only care about the import bits
+                // here. This is essentially the equivalent of doing & ~0xFF,
+                // but in a nicer way.
+                split_addend.fixup_bits = 0;
+
                 const imports_gop = try macho.imports.getOrPut(gpa, .{
                     .symbol = target_symbol,
-                    .addend_bits = @intCast(import_addend),
+                    .addend_bits = split_addend.import_bits,
                 });
+
                 if (!imports_gop.found_existing) {
                     assert(imports_gop.index == macho.imports.count() - 1);
                     const index: Import.Index =
@@ -3450,7 +3461,7 @@ fn loadObject(
                     try macho.appendImportEntry(
                         imports_gop.index,
                         target_symbol,
-                        import_addend,
+                        @backingInt(split_addend),
                     );
 
                     imports_gop.value_ptr.* =

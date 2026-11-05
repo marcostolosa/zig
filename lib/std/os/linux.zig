@@ -10556,6 +10556,78 @@ pub const rtnl_link_stats64 = extern struct {
     rx_nohandler: u64,
 };
 
+/// length of family name
+pub const GENL_NAMSIZ = 16;
+
+pub const GENL_MIN_ID = NetlinkMessageType.MIN_TYPE;
+pub const GENL_MAX_ID = 1023;
+
+/// General netlink message header
+pub const genlmsghdr = extern struct {
+    cmd: u8,
+    version: u8,
+    reserved: u16,
+};
+
+pub const GENL_CMD_FLAGS = packed struct(u32) {
+    ADMIN_PERM: bool = false,
+    CAP_DO: bool = false,
+    CAP_DUMP: bool = false,
+    CAP_HASPOL: bool = false,
+
+    _4: u28 = 0,
+};
+
+/// list of reserved static generic netlink identifiers
+pub const GENL_ID_GENERATE = 0;
+pub const GENL_ID_CTRL = NetlinkMessageType.MIN_TYPE;
+
+/// operation to be performed by the controller
+pub const CTRL_CMD = enum(u8) {
+    UNSPEC,
+    NEWFAMILY,
+    DELFAMILY,
+    GETFAMILY,
+    NEWOPS,
+    DELOPS,
+    GETOPS,
+    NEWMCAST_GRP,
+    DELMCAST_GRP,
+    GETMCAST_GRP, // unused
+
+    _,
+};
+
+/// metadata required for the operation
+pub const CTRL_ATTR = enum(c_ushort) {
+    UNSPEC,
+    FAMILY_ID,
+    FAMILY_NAME,
+    VERSION,
+    HDRSIZE,
+    MAXATTR,
+    OPS,
+    MCAST_GROUPS,
+
+    _,
+};
+
+pub const CTRL_ATTR_OP = enum(c_ushort) {
+    UNSPEC,
+    ID,
+    FLAGS,
+
+    _,
+};
+
+pub const CTRL_ATTR_MCAST_GRP = enum(c_ushort) {
+    UNSPEC,
+    NAME,
+    ID,
+
+    _,
+};
+
 pub const perf_event_attr = extern struct {
     /// Major type: hardware/software/tracepoint/etc.
     type: PERF.TYPE = undefined,

@@ -1479,3 +1479,15 @@ test "local variable name begins with primitive integer type" {
     const i0_ = 789;
     comptime assert(i0_ == 789);
 }
+
+test "assignment allowed in if/for/while expressions" {
+    var x: u32 = 0;
+    if (true) if (true) x += 1;
+    try std.testing.expectEqual(x, 1);
+
+    if (true) for (0..1) |_| x += 1;
+    try std.testing.expectEqual(x, 2);
+
+    if (true) while (false) x = 0;
+    try std.testing.expectEqual(x, 2);
+}

@@ -2118,7 +2118,7 @@ fn expectTypeExpr(p: *Parse) Error!Node.Index {
 fn parsePrimaryExpr(p: *Parse) !?Node.Index {
     switch (p.tokenTag(p.tok_i)) {
         .keyword_asm => return try p.expectAsmExpr(),
-        .keyword_if => return try p.expectIf(expectExpr),
+        .keyword_if => return try p.expectIf(expectSingleAssignExpr),
         .keyword_break => {
             return try p.addNode(.{
                 .tag = .@"break",
@@ -2173,14 +2173,14 @@ fn parsePrimaryExpr(p: *Parse) !?Node.Index {
                     .keyword_inline => {
                         p.tok_i += 3;
                         switch (p.tokenTag(p.tok_i)) {
-                            .keyword_for => return try p.expectFor(expectExpr),
+                            .keyword_for => return try p.expectFor(expectSingleAssignExpr),
                             .keyword_while => return try p.expectWhileExpr(),
                             else => return p.fail(.expected_inlinable),
                         }
                     },
                     .keyword_for => {
                         p.tok_i += 2;
-                        return try p.expectFor(expectExpr);
+                        return try p.expectFor(expectSingleAssignExpr);
                     },
                     .keyword_while => {
                         p.tok_i += 2;
@@ -2195,12 +2195,12 @@ fn parsePrimaryExpr(p: *Parse) !?Node.Index {
         .keyword_inline => {
             p.tok_i += 1;
             switch (p.tokenTag(p.tok_i)) {
-                .keyword_for => return try p.expectFor(expectExpr),
+                .keyword_for => return try p.expectFor(expectSingleAssignExpr),
                 .keyword_while => return try p.expectWhileExpr(),
                 else => return p.fail(.expected_inlinable),
             }
         },
-        .keyword_for => return try p.expectFor(expectExpr),
+        .keyword_for => return try p.expectFor(expectSingleAssignExpr),
         .keyword_while => return try p.expectWhileExpr(),
         .l_brace => return try p.parseBlock(),
         else => return try p.parseCurlySuffixExpr(),
@@ -2300,7 +2300,7 @@ fn expectWhileExpr(p: *Parse) !Node.Index {
     _ = try p.parsePtrPayload();
     const cont_expr = try p.parseWhileContinueExpr();
 
-    const then_expr = try p.expectExpr();
+    const then_expr = try p.expectSingleAssignExpr();
     _ = p.eatToken(.keyword_else) orelse {
         if (cont_expr == null) {
             return try p.addNode(.{
@@ -2326,7 +2326,7 @@ fn expectWhileExpr(p: *Parse) !Node.Index {
         }
     };
     _ = try p.parsePayload();
-    const else_expr = try p.expectExpr();
+    const else_expr = try p.expectSingleAssignExpr();
     return try p.addNode(.{
         .tag = .@"while",
         .main_token = while_token,

@@ -171,15 +171,15 @@ PrimaryExpr
      / Block
      / CurlySuffixExpr
 
-IfExpr <- IfPrefix Expr (KEYWORD_else Payload? Expr / !KEYWORD_else)
+IfExpr <- IfPrefix SingleAssignExpr (KEYWORD_else Payload? SingleAssignExpr / !KEYWORD_else)
 
 Block <- LBRACE BlockStatement* RBRACE
 
 LoopExpr <- KEYWORD_inline? (ForExpr / WhileExpr)
 
-ForExpr <- ForPrefix Expr (KEYWORD_else Expr / !KEYWORD_else)
+ForExpr <- ForPrefix SingleAssignExpr (KEYWORD_else SingleAssignExpr / !KEYWORD_else)
 
-WhileExpr <- WhilePrefix Expr (KEYWORD_else Payload? Expr)?
+WhileExpr <- WhilePrefix SingleAssignExpr (KEYWORD_else Payload? SingleAssignExpr)?
 
 CurlySuffixExpr <- TypeExpr (InitList / !LBRACE)
 

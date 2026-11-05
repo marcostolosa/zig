@@ -1552,9 +1552,9 @@ const Parser = struct {
         defer p.depths[def_index] -= 1;
         return blk_0: {
             const pos_0 = p.i;
-            if (try p.parseIfPrefix() and try p.parseExpr() and blk_2: {
+            if (try p.parseIfPrefix() and try p.parseSingleAssignExpr() and blk_2: {
                 const pos_2 = p.i;
-                if (try p.parseKEYWORD_else() and (try p.parsePayload() or true) and try p.parseExpr()) break :blk_2 true;
+                if (try p.parseKEYWORD_else() and (try p.parsePayload() or true) and try p.parseSingleAssignExpr()) break :blk_2 true;
                 p.i = pos_2;
                 if (blk_3: {
                     const pos_3 = p.i;
@@ -1614,9 +1614,9 @@ const Parser = struct {
         defer p.depths[def_index] -= 1;
         return blk_0: {
             const pos_0 = p.i;
-            if (try p.parseForPrefix() and try p.parseExpr() and blk_2: {
+            if (try p.parseForPrefix() and try p.parseSingleAssignExpr() and blk_2: {
                 const pos_2 = p.i;
-                if (try p.parseKEYWORD_else() and try p.parseExpr()) break :blk_2 true;
+                if (try p.parseKEYWORD_else() and try p.parseSingleAssignExpr()) break :blk_2 true;
                 p.i = pos_2;
                 if (blk_3: {
                     const pos_3 = p.i;
@@ -1638,9 +1638,9 @@ const Parser = struct {
         defer p.depths[def_index] -= 1;
         return blk_0: {
             const pos_0 = p.i;
-            if (try p.parseWhilePrefix() and try p.parseExpr() and (blk_3: {
+            if (try p.parseWhilePrefix() and try p.parseSingleAssignExpr() and (blk_3: {
                 const pos_3 = p.i;
-                if (try p.parseKEYWORD_else() and (try p.parsePayload() or true) and try p.parseExpr()) break :blk_3 true;
+                if (try p.parseKEYWORD_else() and (try p.parsePayload() or true) and try p.parseSingleAssignExpr()) break :blk_3 true;
                 p.i = pos_3;
                 break :blk_3 false;
             } or true)) break :blk_0 true;

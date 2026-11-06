@@ -40,9 +40,9 @@ pub fn main(init: std.process.Init) !void {
 
     var i: u64 = 0;
     var errors: u64 = 0;
+    var cmd_buf: [256:0]u16 = undefined;
     while (iterations == 0 or i < iterations) {
-        const cmd_line_w = try randomCommandLineW(gpa, rand);
-        defer gpa.free(cmd_line_w);
+        const cmd_line_w = randomCommandLineW(&cmd_buf, rand);
 
         // avoid known difference for 0-length command lines
         if (cmd_line_w.len == 0 or cmd_line_w[0] == '\x00') continue;
@@ -66,7 +66,7 @@ pub fn main(init: std.process.Init) !void {
     }
 }
 
-fn randomCommandLineW(allocator: Allocator, rand: std.Random) ![:0]const u16 {
+fn randomCommandLineW(buf: *[256:0]u16, rand: std.Random) [:0]const u16 {
     const Choice = enum {
         backslash,
         quote,
@@ -78,12 +78,10 @@ fn randomCommandLineW(allocator: Allocator, rand: std.Random) ![:0]const u16 {
     };
 
     const choices = rand.uintAtMostBiased(u16, 256);
-    var buf: std.ArrayList(u16) = try .initCapacity(allocator, choices);
-    errdefer buf.deinit(allocator);
 
-    for (0..choices) |_| {
+    for (buf[0..choices]) |*value| {
         const choice = rand.enumValue(Choice);
-        const code_unit = switch (choice) {
+        value.* = switch (choice) {
             .backslash => '\\',
             .quote => '"',
             .space => ' ',
@@ -95,10 +93,10 @@ fn randomCommandLineW(allocator: Allocator, rand: std.Random) ![:0]const u16 {
             .printable => '!' + rand.uintAtMostBiased(u8, '~' - '!'),
             .non_ascii => rand.intRangeAtMostBiased(u16, 0x80, 0xFFFF),
         };
-        buf.appendAssumeCapacity(std.mem.nativeToLittle(u16, code_unit));
     }
+    buf[choices] = 0;
 
-    return buf.toOwnedSliceSentinel(allocator, 0);
+    return buf[0..choices :0];
 }
 
 /// Returns the exit code of the verify process

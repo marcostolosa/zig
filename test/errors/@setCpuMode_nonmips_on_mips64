@@ -1,0 +1,33 @@
+#write test.zig {
+export fn a() void {
+	@setCpuMode(.mips16);
+}
+export fn b() void {
+	@setCpuMode(.micromips);
+}
+export fn c() void {
+	@setCpuMode(.mips);
+}
+#}
+
+#zig build-obj {
+--name test -fno-emit-bin
+-target mips64-freestanding -fllvm
+-Mroot=test.zig
+#}
+#update
+#check errors {
+test.zig:2:15: error: operand '.mips16' to @setCpuMode is not supported on target architecture 'mips64'
+test.zig:5:15: error: operand '.micromips' to @setCpuMode is not supported on target architecture 'mips64'
+#}
+
+#zig build-obj {
+--name test -fno-emit-bin
+-target mips64-freestanding -ofmt=c -fno-llvm
+-Mroot=test.zig
+#}
+#update
+#check errors {
+test.zig:2:15: error: operand '.mips16' to @setCpuMode is not supported on target architecture 'mips64'
+test.zig:5:15: error: operand '.micromips' to @setCpuMode is not supported on target architecture 'mips64'
+#}

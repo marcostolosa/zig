@@ -600,13 +600,14 @@ pub const Object = struct {
                 },
                 .x86 => switch (cpu_mode.x86) {
                     .@"32" => unreachable,
-                    .@"16" => "+16bit-mode,-32bit-mode",
+                    .@"16" => "-32bit-mode,+16bit-mode",
                 },
                 .mips, .mipsel => switch (cpu_mode.mips) {
                     .mips => unreachable,
                     .mips16 => "+mips16",
                     .micromips => "+micromips",
                 },
+                .mips64, .mips64el => unreachable,
                 else => unreachable,
             };
         } else null;

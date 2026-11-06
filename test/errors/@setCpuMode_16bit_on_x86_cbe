@@ -1,0 +1,18 @@
+#zig build-obj {
+--name test -fno-emit-bin
+-target x86-freestanding -ofmt=c -fno-llvm
+-Mroot=test.zig
+#}
+
+#write test.zig {
+export fn a() void {
+	@setCpuMode(.@"16");
+}
+export fn b() void {
+	@setCpuMode(.@"32");
+}
+#}
+#update
+#check errors {
+test.zig:2:15: error: operand '.16' to @setCpuMode is not supported by compiler backend 'stage2_c' on target architecture 'x86'
+#}

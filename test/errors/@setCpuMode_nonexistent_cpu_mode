@@ -1,0 +1,14 @@
+#zig build-obj {
+--name test -fno-emit-bin
+-Mroot=test.zig
+#}
+
+#write test.zig {
+export fn a() void {
+	@setCpuMode(.nonexistent);
+}
+#}
+#update
+#check errors {
+test.zig:2:15: error: type 'void' has no members
+#}

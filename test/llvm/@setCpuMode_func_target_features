@@ -1,0 +1,96 @@
+# "arm/thumb ISAs"
+
+#write test.zig {
+export fn a() void {
+	@setCpuMode(.arm);
+}
+
+export fn b() void {
+	@setCpuMode(.thumb);
+}
+#}
+
+#zig build-obj {
+--name test -ofmt=llvmir -fno-lld -fno-new-linker
+-target thumb-freestanding
+-Mroot=test.zig
+#}
+
+#update
+#check llvm {
+...
+define ... void @test.b() ... #attrs_b ... {
+  ...
+}
+...
+define ... void @test.a() ... #attrs_a ... {
+  ...
+}
+...
+attributes #attrs_b = { ... "target-features"="...+,+thumb-mode" ... }
+...
+attributes #attrs_a = { ... "target-features"="...+,-thumb-mode" ... }
+
+...
+#}
+
+# "x86 16-bit/32-bit modes"
+
+#write test.zig {
+export fn a() void {
+	@setCpuMode(.@"16");
+}
+#}
+
+#zig build-obj {
+--name test -ofmt=llvmir -fno-lld -fno-new-linker
+-target x86-freestanding
+-Mroot=test.zig
+#}
+
+#update
+#check llvm {
+...
+define ... void @test.a() ... #attrs_a ... {
+  ...
+}
+...
+attributes #attrs_a = { ... "target-features"="...+,+16bit-mode" ... }
+
+...
+#}
+
+# "MIPS mips/mips16/micromips modes"
+
+#write test.zig {
+export fn a() void {
+	@setCpuMode(.mips16);
+}
+export fn b() void {
+	@setCpuMode(.micromips);
+}
+#}
+
+#zig build-obj {
+--name test -ofmt=llvmir -fno-lld -fno-new-linker
+-target mips-freestanding
+-Mroot=test.zig
+#}
+
+#update
+#check llvm {
+...
+define ... void @test.b() ... #attrs_b ... {
+  ...
+}
+...
+define ... void @test.a() ... #attrs_a ... {
+  ...
+}
+...
+attributes #attrs_b = { ... "target-features"="...+,+micromips" ... }
+...
+attributes #attrs_a = { ... "target-features"="...+,+mips16" ... }
+
+...
+#}

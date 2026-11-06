@@ -1,0 +1,15 @@
+#zig build-obj {
+--name test -fno-emit-bin
+-target thumb-freestanding -mcpu=baseline+noarm
+-Mroot=test.zig
+#}
+
+#write test.zig {
+export fn a() void {
+	@setCpuMode(.arm);
+}
+#}
+#update
+#check errors {
+test.zig:2:15: error: operand '.arm' to @setCpuMode is not supported on target architecture 'thumb': 'noarm' feature is enabled
+#}

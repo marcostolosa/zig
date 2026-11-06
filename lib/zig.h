@@ -270,15 +270,15 @@
 #endif
 
 #if zig_has_attribute(mips16)
-#define zig_mips_mips16(name) __attribute__((mips16))
+#define zig_mips_mips16 __attribute__((mips16))
 #else
-#define zig_mips_mips16(name) zig_mips_mips16_unavailable
+#define zig_mips_mips16 zig_mips_mips16_unavailable
 #endif
 
 #if zig_has_attribute(micromips)
-#define zig_mips_micromips(name) __attribute__((micromips))
+#define zig_mips_micromips __attribute__((micromips))
 #else
-#define zig_mips_micromips(name) zig_mips_micromips_unavailable
+#define zig_mips_micromips zig_mips_micromips_unavailable
 #endif
 
 #if zig_has_attribute(patchable_function_entry)

@@ -4960,12 +4960,15 @@ pub fn callconvSupported(zcu: *Zcu, cc: std.lang.CallingConvention) union(enum) 
 pub fn setCpuModeSupported(zcu: *Zcu, requested_mode: InternPool.CpuMode) union(enum) {
     ok,
     bad_backend: std.lang.CompilerBackend, // value is current backend
-    bad_mode: enum { thumb_has_noarm },
+    bad_mode: enum { other, thumb_has_noarm },
 } {
     const target = zcu.getTarget();
     const backend = std.zig.compilerBackend(target, zcu.comp.config.use_llvm);
     if (target.cpu.arch.isThumb() and target.cpu.has(.arm, .noarm) and requested_mode.thumb == .arm) {
         return .{ .bad_mode = .thumb_has_noarm };
+    }
+    if (target.cpu.arch.isMips64() and requested_mode.mips != .mips) {
+        return .{ .bad_mode = .other };
     }
 
     const backend_ok = ok: switch (backend) {
@@ -4976,16 +4979,15 @@ pub fn setCpuModeSupported(zcu: *Zcu, requested_mode: InternPool.CpuMode) union(
         .stage2_llvm => {
             dev.check(.llvm_backend);
             break :ok switch (target.cpu.arch) {
-                .arm, .armeb, .thumb, .thumbeb, .x86, .mips, .mipsel => true,
-                .mips64, .mips64el => requested_mode.mips == .mips,
+                .arm, .armeb, .thumb, .thumbeb, .x86, .mips, .mipsel, .mips64, .mips64el => true,
                 else => false,
             };
         },
         .stage2_c => {
             dev.check(.c_backend);
             break :ok switch (target.cpu.arch) {
-                .arm, .armeb, .thumb, .thumbeb, .mips, .mipsel => true,
-                .mips64, .mips64el => requested_mode.mips == .mips,
+                .arm, .armeb, .thumb, .thumbeb, .mips, .mipsel, .mips64, .mips64el => true,
+                .x86 => requested_mode.x86 == .@"32",
                 else => false,
             };
         },

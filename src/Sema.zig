@@ -5741,14 +5741,20 @@ fn zirSetCpuMode(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.InstDat
         .bad_backend => |backend| return sema.fail(
             block,
             operand_src,
-            "operand '{f}' to @setCpuMode not supported by compiler backend '{t}' for target architecture '{t}'",
+            "operand '{f}' to @setCpuMode is not supported by compiler backend '{t}' on target architecture '{t}'",
             .{ feature_val.fmtValue(zcu), backend, target.cpu.arch },
         ),
         .bad_mode => |why| switch (why) {
+            .other => return sema.fail(
+                block,
+                operand_src,
+                "operand '{f}' to @setCpuMode is not supported on target architecture '{t}'",
+                .{ feature_val.fmtValue(zcu), target.cpu.arch },
+            ),
             .thumb_has_noarm => return sema.fail(
                 block,
                 operand_src,
-                "operand '{f}' to @setCpuMode is not supported for target architecture '{t}': 'noarm' feature is enabled",
+                "operand '{f}' to @setCpuMode is not supported on target architecture '{t}': 'noarm' feature is enabled",
                 .{ feature_val.fmtValue(zcu), target.cpu.arch },
             ),
         },

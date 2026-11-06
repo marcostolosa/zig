@@ -2462,6 +2462,23 @@ const Compiler = struct {
                         .{ .literal = ")" },
                     } },
                 };
+                const target_feature: []const Pattern = &.{
+                    .{ .any = &.{
+                        .{ '+', '+' },
+                        .{ '-', '-' },
+                    } },
+                    .{ .@"+" = &.{
+                        .{ .any = &.{
+                            .{ 'a', 'z' },
+                            .{ 'A', 'Z' },
+                            .{ '0', '9' },
+                            .{ '.', '.' },
+                            .{ '-', '-' },
+                            .{ '_', '_' },
+                        } },
+                    } },
+                    .{ .literal = "," },
+                };
                 var id: Pattern.Compiled = try .init(gpa, &.{
                     .{ .any = &.{
                         .{ '$', '$' },
@@ -2533,6 +2550,10 @@ const Compiler = struct {
                         .{ .@"*" = attr ++ &[_]Pattern{
                             .{ .literal = " " },
                         } },
+                    } },
+                    // Match zero or more comma separated LLVM target features
+                    .{ "...+,", .anon, &.{
+                        .{ .@"*" = target_feature },
                     } },
                     // Match zero or more comma separated parameters or operands.
                     .{ "..., ", .anon, &.{

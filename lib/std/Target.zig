@@ -86,6 +86,8 @@ pub const Os = struct {
             };
         }
 
+        pub const isBSD = @compileError("Deprecated. Check for relevant tags instead");
+
         pub fn exeFileExt(tag: Tag, arch: Cpu.Arch) [:0]const u8 {
             return switch (tag) {
                 .windows => ".exe",
@@ -1516,6 +1518,8 @@ pub const Cpu = struct {
             };
         }
 
+        pub const isAARCH64 = @compileError("Renamed to isAarch64");
+
         pub inline fn isAarch64(arch: Arch) bool {
             return switch (arch) {
                 .aarch64, .aarch64_be => true,
@@ -1544,12 +1548,16 @@ pub const Cpu = struct {
             };
         }
 
+        pub const isLoongArch = @compileError("Renamed to isLoongarch");
+
         pub inline fn isLoongarch(arch: Arch) bool {
             return switch (arch) {
                 .loongarch32, .loongarch64 => true,
                 else => false,
             };
         }
+
+        pub const isRISCV = @compileError("Renamed to isRiscv");
 
         pub inline fn isRiscv(arch: Arch) bool {
             return arch.isRiscv32() or arch.isRiscv64();
@@ -1576,9 +1584,13 @@ pub const Cpu = struct {
             };
         }
 
+        pub const isMIPS = @compileError("Renamed to isMips");
+
         pub inline fn isMips(arch: Arch) bool {
             return arch.isMips32() or arch.isMips64();
         }
+
+        pub const isMIPS32 = @compileError("Renamed to isMips32");
 
         pub inline fn isMips32(arch: Arch) bool {
             return switch (arch) {
@@ -1587,6 +1599,8 @@ pub const Cpu = struct {
             };
         }
 
+        pub const isMIPS64 = @compileError("Renamed to isMips64");
+
         pub inline fn isMips64(arch: Arch) bool {
             return switch (arch) {
                 .mips64, .mips64el => true,
@@ -1594,9 +1608,13 @@ pub const Cpu = struct {
             };
         }
 
+        pub const isPowerPC = @compileError("Renamed to isPowerpc");
+
         pub inline fn isPowerpc(arch: Arch) bool {
             return arch.isPowerpc32() or arch.isPowerpc64();
         }
+
+        pub const isPowerPC32 = @compileError("Renamed to isPowerpc32");
 
         pub inline fn isPowerpc32(arch: Arch) bool {
             return switch (arch) {
@@ -1605,6 +1623,8 @@ pub const Cpu = struct {
             };
         }
 
+        pub const isPowerPC64 = @compileError("Renamed to isPowerpc64");
+
         pub inline fn isPowerpc64(arch: Arch) bool {
             return switch (arch) {
                 .powerpc64, .powerpc64le => true,
@@ -1612,12 +1632,16 @@ pub const Cpu = struct {
             };
         }
 
+        pub const isSPARC = @compileError("Renamed to isSparc");
+
         pub inline fn isSparc(arch: Arch) bool {
             return switch (arch) {
                 .sparc, .sparc64 => true,
                 else => false,
             };
         }
+
+        pub const isSpirV = @compileError("Renamed to isSpirv");
 
         pub inline fn isSpirv(arch: Arch) bool {
             return switch (arch) {
@@ -2213,6 +2237,14 @@ pub const Cpu = struct {
 pub fn zigTriple(target: *const Target, allocator: Allocator) Allocator.Error![]u8 {
     return Query.fromTarget(target).zigTriple(allocator);
 }
+
+pub const hurdTupleSimple = @compileError("Deprecated. Use `std.zig.target.hurdTupleSimple` instead");
+
+pub const hurdTuple = @compileError("Deprecated. Use `std.zig.target.hurdTuple` instead");
+
+pub const linuxTripleSimple = @compileError("Deprecated. Use `std.zig.target.linuxTripleSimple` instead");
+
+pub const linuxTriple = @compileError("Deprecated. Use `std.zig.target.linuxTriple` instead");
 
 pub fn exeFileExt(target: *const Target) [:0]const u8 {
     return target.os.tag.exeFileExt(target.cpu.arch);
@@ -3771,5 +3803,24 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
 test {
-    std.testing.refAllDecls(Cpu.Arch);
+    // Reference Cpu.Arch decls but skip decls that are currently compile errors.
+    // Can be replaced with refAllDecls after 0.18.0 is released.
+    const removed_arch_decls = std.StaticStringMap(enum {
+        isAARCH64,
+        isBSD,
+        isLoongArch,
+        isMIPS,
+        isMIPS32,
+        isMIPS64,
+        isPowerPC,
+        isPowerPC32,
+        isPowerPC64,
+        isRISCV,
+        isSPARC,
+        isSpirV,
+    }).initEnum();
+    inline for (comptime std.meta.declarations(Cpu.Arch)) |decl_name| {
+        if (comptime removed_arch_decls.has(decl_name)) continue;
+        _ = &@field(Cpu.Arch, decl_name);
+    }
 }

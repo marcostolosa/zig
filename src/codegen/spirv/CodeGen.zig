@@ -5503,9 +5503,6 @@ fn airCall(cg: *CodeGen, inst: Air.Inst.Index, modifier: std.lang.CallModifier) 
     defer cg.id_scratch.shrinkRetainingCapacity(scratch_top);
 
     for (args) |arg| {
-        // Note: resolve() might emit instructions, so we need to call it
-        // before starting to emit OpFunctionCall instructions. Hence the
-        // temporary params buffer.
         const arg_ty = cg.typeOf(arg);
         if (!arg_ty.hasRuntimeBits(zcu)) continue;
 

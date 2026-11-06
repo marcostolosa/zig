@@ -210,25 +210,18 @@ const ArgInfo = struct {
     }
 };
 
-fn EnumBackingInt(field_count: usize) type {
-    return if (field_count > 0)
-        std.math.IntFittingRange(0, field_count)
-    else
-        noreturn;
-}
+// for generating exhaustive enum types from just the field names
+fn Enum(fields: []const []const u8) type {
+    if (fields.len == 0)
+        return enum {};
 
-// @Enum wants a noreturn for TagInt if the enum has no members and it wants
-// a *const [count]TagInt for the values but userland code is not allowed to
-// create a *const [0]noreturn even though it's empty, which forces us to use
-// this weird optional api
-inline fn enumValues(BackingType: type, comptime count: usize) if (BackingType != noreturn)
-    ?*const [count]BackingType
-else
-    ?noreturn {
-    return if (count > 0)
-        &std.simd.iota(BackingType, count)
-    else
-        null;
+    const BackingInt = std.math.IntFittingRange(0, fields.len);
+    return @Enum(
+        BackingInt,
+        .exhaustive,
+        fields,
+        &std.simd.iota(BackingInt, fields.len),
+    );
 }
 
 inline fn getArgInfo(Args: type, comptime config: Config(Args)) ArgInfo {
@@ -322,9 +315,6 @@ inline fn getArgInfo(Args: type, comptime config: Config(Args)) ArgInfo {
             }
         }
 
-        const NamedEnumBackingInt = EnumBackingInt(positional_start_idx);
-        const PositionalEnumBackingInt = EnumBackingInt(info.field_names.len - positional_start_idx);
-
         // we could also make sure there are no duplicates within clear_names
         // but @Enum handles that for us with a good enough error message
         // and we are already doing a lot of comptime
@@ -336,13 +326,7 @@ inline fn getArgInfo(Args: type, comptime config: Config(Args)) ArgInfo {
             }
         }
 
-        const ClearEnumBackingInt = EnumBackingInt(clear_names.len);
-        const ClearEnum = @Enum(
-            ClearEnumBackingInt,
-            .exhaustive,
-            clear_names,
-            enumValues(ClearEnumBackingInt, clear_names.len) orelse &.{},
-        );
+        const ClearEnum = Enum(clear_names);
 
         var clear_map: std.EnumMap(ClearEnum, [:0]const u8) = .{};
         for (clear_names, clear_args) |clear, arg| {
@@ -357,20 +341,10 @@ inline fn getArgInfo(Args: type, comptime config: Config(Args)) ArgInfo {
             .field_types = info.field_types,
 
             .named_args = info.field_names[0..positional_start_idx],
-            .NamedFieldEnum = @Enum(
-                NamedEnumBackingInt,
-                .exhaustive,
-                info.field_names[0..positional_start_idx],
-                enumValues(NamedEnumBackingInt, positional_start_idx) orelse &.{},
-            ),
+            .NamedFieldEnum = Enum(info.field_names[0..positional_start_idx]),
 
             .positional_args = info.field_names[positional_start_idx..],
-            .PositionalFieldEnum = @Enum(
-                PositionalEnumBackingInt,
-                .exhaustive,
-                info.field_names[positional_start_idx..],
-                enumValues(PositionalEnumBackingInt, info.field_names.len - positional_start_idx) orelse &.{},
-            ),
+            .PositionalFieldEnum = Enum(info.field_names[positional_start_idx..]),
 
             .AccumulatorArgLists = @Struct(
                 .auto,

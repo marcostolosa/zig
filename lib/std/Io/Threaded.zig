@@ -10066,7 +10066,7 @@ fn fileReadStreaming(userdata: ?*anyopaque, file: File, data: []const []u8) File
 
 fn fileReadStreamingPosix(file: File, data: []const []u8) File.ReadStreamingError!usize {
     var iovecs_buffer: [max_iovecs_len]posix.iovec = undefined;
-    var i: u32 = 0;
+    var i: iovlen_t = 0;
     for (data) |buf| {
         if (iovecs_buffer.len - i == 0) break;
 
@@ -10248,7 +10248,7 @@ fn ntWriteFileResult(io_status_block: *const windows.IO_STATUS_BLOCK) !usize {
 
 fn fileReadPositionalPosix(file: File, data: []const []u8, offset: u64) File.ReadPositionalError!usize {
     var iovecs_buffer: [max_iovecs_len]posix.iovec = undefined;
-    var i: u32 = 0;
+    var i: iovlen_t = 0;
     for (data) |buf| {
         if (iovecs_buffer.len - i == 0) break;
 
@@ -10997,7 +10997,7 @@ fn fileWritePositional(
         },
     };
 
-    limitConstIoVecs(&iovecs, &iovlen);
+    limitIoVecs(&iovecs, &iovlen);
 
     if (iovlen == 0) return 0;
 
@@ -11184,7 +11184,7 @@ fn fileWriteStreaming(
         },
     };
 
-    limitConstIoVecs(&iovecs, &iovlen);
+    limitIoVecs(&iovecs, &iovlen);
 
     if (iovlen == 0) return 0;
 
@@ -13743,7 +13743,8 @@ fn addBuf(v: []posix.iovec_const, i: *iovlen_t, bytes: []const u8) void {
     i.* += 1;
 }
 
-fn limitConstIoVecs(vecs: []posix.iovec_const, vecs_count: *iovlen_t) void {
+// vecs is a slice of iovec or iovec_const
+fn limitIoVecs(vecs: anytype, vecs_count: *iovlen_t) void {
     var accumulated_len: usize = 0;
     for (vecs[0..vecs_count.*], 0..) |vec, i| {
         const remaining_len = rw_limit - accumulated_len;
@@ -13760,29 +13761,6 @@ fn limitConstIoVecs(vecs: []posix.iovec_const, vecs_count: *iovlen_t) void {
 
         accumulated_len += vec.len;
     }
-
-    return;
-}
-
-fn limitIoVecs(vecs: []posix.iovec, vecs_count: *iovlen_t) void {
-    var accumulated_len: usize = 0;
-    for (vecs[0..vecs_count.*], 0..) |vec, i| {
-        const remaining_len = rw_limit - accumulated_len;
-        if (remaining_len == 0) {
-            vecs_count.* = @intCast(i);
-            return;
-        }
-
-        if (remaining_len < vec.len) {
-            vecs[i] = .{ .base = vec.base, .len = remaining_len };
-            vecs_count.* = @intCast(i + 1);
-            return;
-        }
-
-        accumulated_len += vec.len;
-    }
-
-    return;
 }
 
 fn netClose(userdata: ?*anyopaque, sockets: []const net.Socket) void {

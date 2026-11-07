@@ -5798,7 +5798,7 @@ pub const FuncAnalysis = bitpack struct(u32) {
 
 /// Tag determined from target architecture.
 /// Field with value `0` in each enum is the default mode for the given architecture.
-pub const CpuMode = packed union(u2) {
+pub const CpuMode = bitpack union(u2) {
     arm: enum(u2) { arm, thumb },
     thumb: enum(u2) { thumb, arm },
     x86: enum(u2) { @"32", @"16" },

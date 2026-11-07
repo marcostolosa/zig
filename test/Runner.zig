@@ -204,6 +204,7 @@
 //! * `...` at the end of a line matches any possibly empty sequence of lines.
 //! * `... ` matches a possibly empty sequence of attributes.
 //! * `..., ` matches a possibly empty sequence of parameters or operands.
+//! * `...,` or `,...` match a possibly empty comma-separated sequence of CPU features.
 //! * `  ...` at the end of a line matches any possibly empty sequence of lines not starting with
 //!   `}`, which avoids accidentally escaping the current function.
 //! * `, !...` at the end of a line matches any possibly empty sequence of debug attachments of the
@@ -2462,23 +2463,6 @@ const Compiler = struct {
                         .{ .literal = ")" },
                     } },
                 };
-                const target_feature: []const Pattern = &.{
-                    .{ .any = &.{
-                        .{ '+', '+' },
-                        .{ '-', '-' },
-                    } },
-                    .{ .@"+" = &.{
-                        .{ .any = &.{
-                            .{ 'a', 'z' },
-                            .{ 'A', 'Z' },
-                            .{ '0', '9' },
-                            .{ '.', '.' },
-                            .{ '-', '-' },
-                            .{ '_', '_' },
-                        } },
-                    } },
-                    .{ .literal = "," },
-                };
                 var id: Pattern.Compiled = try .init(gpa, &.{
                     .{ .any = &.{
                         .{ '$', '$' },
@@ -2551,10 +2535,6 @@ const Compiler = struct {
                             .{ .literal = " " },
                         } },
                     } },
-                    // Match zero or more comma separated LLVM target features
-                    .{ "...+,", .anon, &.{
-                        .{ .@"*" = target_feature },
-                    } },
                     // Match zero or more comma separated parameters or operands.
                     .{ "..., ", .anon, &.{
                         .{ .@"*" = attr ++ &[_]Pattern{
@@ -2562,6 +2542,32 @@ const Compiler = struct {
                                 .{ .literal = " " },
                             } ++ attr },
                             .{ .literal = ", " },
+                        } },
+                    } },
+                    // Match zero or more comma separated parameters or operands (no space, trailing comma).
+                    .{ "...,", .anon, &.{
+                        .{ .@"*" = &[_]Pattern{
+                            .{ .@"*" = &.{
+                                .{ .none = &.{
+                                    .{ '\"', '\"' },
+                                    .{ ',', ',' },
+                                    .{ ' ', ' ' },
+                                } },
+                            } },
+                            .{ .literal = "," },
+                        } },
+                    } },
+                    // Match zero or more comma separated parameters or operands (no space, leading comma).
+                    .{ ",...", .anon, &.{
+                        .{ .@"*" = &[_]Pattern{
+                            .{ .literal = "," },
+                            .{ .@"*" = &.{
+                                .{ .none = &.{
+                                    .{ '\"', '\"' },
+                                    .{ ',', ',' },
+                                    .{ ' ', ' ' },
+                                } },
+                            } },
                         } },
                     } },
                     // Match zero or more lines not starting with '}'.

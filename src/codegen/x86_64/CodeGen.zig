@@ -173732,13 +173732,15 @@ fn restoreState(self: *CodeGen, state: State, deaths: []const Air.Inst.Index, co
             } else try self.inst_tracking.getPtr(target_inst).?.materialize(self, target_inst, reg_tracking);
         }
         if (opts.update_tracking) {
-            if (current_maybe_inst) |current_inst| {
-                try self.inst_tracking.getPtr(current_inst).?.trackSpill(self, current_inst);
-                self.register_manager.freeRegIndex(reg_index);
-            }
-            if (target_maybe_inst) |target_inst| {
-                self.register_manager.getRegIndexAssumeFree(reg_index, target_inst);
-                self.inst_tracking.getPtr(target_inst).?.trackMaterialize(target_inst, reg_tracking);
+            if (target_maybe_inst != current_maybe_inst) {
+                if (current_maybe_inst) |current_inst| {
+                    try self.inst_tracking.getPtr(current_inst).?.trackSpill(self, current_inst);
+                    self.register_manager.freeRegIndex(reg_index);
+                }
+                if (target_maybe_inst) |target_inst| {
+                    self.register_manager.getRegIndexAssumeFree(reg_index, target_inst);
+                    self.inst_tracking.getPtr(target_inst).?.trackMaterialize(target_inst, reg_tracking);
+                }
             }
         } else if (target_maybe_inst) |_|
             try reg_locks.append(allocator, self.register_manager.lockRegIndexAssumeUnused(reg_index));

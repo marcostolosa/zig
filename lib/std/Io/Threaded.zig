@@ -1611,6 +1611,13 @@ pub fn waitForApcOrAlert() void {
     _ = windows.ntdll.NtDelayExecution(.TRUE, &infinite_timeout);
 }
 
+/// The maximum read / write limit on most POSIX-like systems is `SSIZE_MAX`,
+/// with the man page quoting that if the count of bytes to read / write is
+/// greater than `SSIZE_MAX` the result is "implementation-defined".
+///
+/// On Apple targets however, the manpage states that exceeding INT_MAX
+/// will return EINVAL.
+pub const rw_limit = if (is_darwin) std.math.maxInt(i32) else std.math.maxInt(isize);
 pub const max_iovecs_len = 8;
 pub const splat_buffer_size = 64;
 /// Happens to be the same number that matches maximum number of handles that
@@ -10059,14 +10066,18 @@ fn fileReadStreaming(userdata: ?*anyopaque, file: File, data: []const []u8) File
 
 fn fileReadStreamingPosix(file: File, data: []const []u8) File.ReadStreamingError!usize {
     var iovecs_buffer: [max_iovecs_len]posix.iovec = undefined;
-    var i: usize = 0;
+    var i: u32 = 0;
     for (data) |buf| {
         if (iovecs_buffer.len - i == 0) break;
+
         if (buf.len != 0) {
             iovecs_buffer[i] = .{ .base = buf.ptr, .len = buf.len };
             i += 1;
         }
     }
+
+    limitIoVecs(&iovecs_buffer, &i);
+
     if (i == 0) return 0;
     const dest = iovecs_buffer[0..i];
     assert(dest[0].len > 0);
@@ -10237,14 +10248,18 @@ fn ntWriteFileResult(io_status_block: *const windows.IO_STATUS_BLOCK) !usize {
 
 fn fileReadPositionalPosix(file: File, data: []const []u8, offset: u64) File.ReadPositionalError!usize {
     var iovecs_buffer: [max_iovecs_len]posix.iovec = undefined;
-    var i: usize = 0;
+    var i: u32 = 0;
     for (data) |buf| {
         if (iovecs_buffer.len - i == 0) break;
+
         if (buf.len != 0) {
             iovecs_buffer[i] = .{ .base = buf.ptr, .len = buf.len };
             i += 1;
         }
     }
+
+    limitIoVecs(&iovecs_buffer, &i);
+
     if (i == 0) return 0;
     const dest = iovecs_buffer[0..i];
     assert(dest[0].len > 0);
@@ -10284,10 +10299,7 @@ fn fileReadPositionalPosix(file: File, data: []const []u8, offset: u64) File.Rea
     if (have_preadv) {
         const syscall: Syscall = try .start();
         while (true) {
-            const rc = if (native_os == .haiku)
-                posix.system.readv_pos(file.handle, @bitCast(offset), dest.ptr, @intCast(dest.len))
-            else
-                preadv_sym(file.handle, dest.ptr, @intCast(dest.len), @bitCast(offset));
+            const rc = preadv_sym(file.handle, dest.ptr, @intCast(dest.len), @bitCast(offset));
             switch (posix.errno(rc)) {
                 .SUCCESS => {
                     syscall.finish();
@@ -10985,6 +10997,8 @@ fn fileWritePositional(
         },
     };
 
+    limitConstIoVecs(&iovecs, &iovlen);
+
     if (iovlen == 0) return 0;
 
     if (native_os == .wasi and !builtin.link_libc) {
@@ -11169,6 +11183,8 @@ fn fileWriteStreaming(
             },
         },
     };
+
+    limitConstIoVecs(&iovecs, &iovlen);
 
     if (iovlen == 0) return 0;
 
@@ -13725,6 +13741,48 @@ fn addBuf(v: []posix.iovec_const, i: *iovlen_t, bytes: []const u8) void {
     if (v.len - i.* == 0) return;
     v[i.*] = .{ .base = bytes.ptr, .len = bytes.len };
     i.* += 1;
+}
+
+fn limitConstIoVecs(vecs: []posix.iovec_const, vecs_count: *iovlen_t) void {
+    var accumulated_len: usize = 0;
+    for (vecs[0..vecs_count.*], 0..) |vec, i| {
+        const remaining_len = rw_limit - accumulated_len;
+        if (remaining_len == 0) {
+            vecs_count.* = @intCast(i);
+            return;
+        }
+
+        if (remaining_len < vec.len) {
+            vecs[i] = .{ .base = vec.base, .len = remaining_len };
+            vecs_count.* = @intCast(i + 1);
+            return;
+        }
+
+        accumulated_len += vec.len;
+    }
+
+    return;
+}
+
+fn limitIoVecs(vecs: []posix.iovec, vecs_count: *iovlen_t) void {
+    var accumulated_len: usize = 0;
+    for (vecs[0..vecs_count.*], 0..) |vec, i| {
+        const remaining_len = rw_limit - accumulated_len;
+        if (remaining_len == 0) {
+            vecs_count.* = @intCast(i);
+            return;
+        }
+
+        if (remaining_len < vec.len) {
+            vecs[i] = .{ .base = vec.base, .len = remaining_len };
+            vecs_count.* = @intCast(i + 1);
+            return;
+        }
+
+        accumulated_len += vec.len;
+    }
+
+    return;
 }
 
 fn netClose(userdata: ?*anyopaque, sockets: []const net.Socket) void {
@@ -19606,7 +19664,7 @@ fn mmSyncRead(file: File, memory: []u8, offset: u64) File.ReadPositionalError!vo
                 syscall.finish();
                 break;
             }
-            const rc = pread_sym(file.handle, buf.ptr, buf.len, @intCast(offset + i));
+            const rc = pread_sym(file.handle, buf.ptr, @min(buf.len, rw_limit), @intCast(offset + i));
             switch (posix.errno(rc)) {
                 .SUCCESS => {
                     const n: usize = @intCast(rc);
@@ -19698,7 +19756,7 @@ fn mmSyncWrite(file: File, memory: []u8, offset: u64) File.WritePositionalError!
                 syscall.finish();
                 break;
             }
-            const rc = pwrite_sym(file.handle, buf.ptr, buf.len, @intCast(offset + i));
+            const rc = pwrite_sym(file.handle, buf.ptr, @min(buf.len, rw_limit), @intCast(offset + i));
             switch (posix.errno(rc)) {
                 .SUCCESS => {
                     const n: usize = @bitCast(rc);

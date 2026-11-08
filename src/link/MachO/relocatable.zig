@@ -400,6 +400,7 @@ fn calcSymtabSize(macho_file: *MachO) error{OutOfMemory}!void {
     var nlocals: u32 = 0;
     var nstabs: u32 = 0;
     var nexports: u32 = 0;
+    var ncommons: u32 = 0;
     var nimports: u32 = 0;
     var strsize: u32 = 1;
 
@@ -415,11 +416,13 @@ fn calcSymtabSize(macho_file: *MachO) error{OutOfMemory}!void {
         ctx.ilocal = nlocals;
         ctx.istab = nstabs;
         ctx.iexport = nexports;
+        ctx.icommon = ncommons;
         ctx.iimport = nimports;
         ctx.stroff = strsize;
         nlocals += ctx.nlocals;
         nstabs += ctx.nstabs;
         nexports += ctx.nexports;
+        ncommons += ctx.ncommons;
         nimports += ctx.nimports;
         strsize += ctx.strsize;
     }
@@ -430,12 +433,13 @@ fn calcSymtabSize(macho_file: *MachO) error{OutOfMemory}!void {
         };
         ctx.istab += nlocals;
         ctx.iexport += nlocals + nstabs;
-        ctx.iimport += nlocals + nstabs + nexports;
+        ctx.icommon += nlocals + nstabs + nexports;
+        ctx.iimport += nlocals + nstabs + nexports + ncommons;
     }
 
     {
         const cmd = &macho_file.symtab_cmd;
-        cmd.nsyms = nlocals + nstabs + nexports + nimports;
+        cmd.nsyms = nlocals + nstabs + nexports + ncommons + nimports;
         cmd.strsize = strsize;
     }
 
@@ -446,7 +450,7 @@ fn calcSymtabSize(macho_file: *MachO) error{OutOfMemory}!void {
         cmd.iextdefsym = nlocals + nstabs;
         cmd.nextdefsym = nexports;
         cmd.iundefsym = nlocals + nstabs + nexports;
-        cmd.nundefsym = nimports;
+        cmd.nundefsym = ncommons + nimports;
     }
 }
 

@@ -188,7 +188,9 @@ pub fn getOutputSymtabIndex(symbol: Symbol, macho_file: *MachO) ?u32 {
         inline else => |x| x.output_symtab_ctx,
     };
     var idx = symbol.getExtra(macho_file).symtab;
-    if (symbol.isLocal()) {
+    if (symbol.flags.tentative) {
+        idx += symtab_ctx.icommon;
+    } else if (symbol.isLocal()) {
         idx += symtab_ctx.ilocal;
     } else if (symbol.flags.@"export") {
         idx += symtab_ctx.iexport;
@@ -232,6 +234,22 @@ pub inline fn setExtra(symbol: Symbol, extra: Extra, macho_file: *MachO) void {
 }
 
 pub fn setOutputSym(symbol: Symbol, macho_file: *MachO, out: *macho.nlist_64) void {
+    if (symbol.flags.tentative) {
+        // Relocatable output preserves commons as external N_UNDF symbols.
+        const nlist = symbol.getNlist(macho_file);
+        out.n_type = .{ .bits = .{
+            .ext = true,
+            .type = .undf,
+            .pext = false,
+            .is_stab = 0,
+        } };
+        out.n_sect = 0;
+        // For commons, n_desc bits 8-11 encode the alignment exponent.
+        out.n_desc = @bitCast(@as(u16, @bitCast(nlist.n_desc)) & 0x0f00);
+        out.n_value = nlist.n_value;
+        return;
+    }
+
     if (symbol.isLocal()) {
         out.n_type = .{ .bits = .{
             .ext = false,

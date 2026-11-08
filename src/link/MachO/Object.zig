@@ -925,6 +925,7 @@ fn initSymbols(self: *Object, allocator: Allocator, macho_file: *MachO) !void {
         if (nlist.n_type.bits.ext) {
             if (nlist.n_type.bits.type == .undf) {
                 symbol.flags.weak_ref = nlist.n_desc.weak_ref;
+                if (nlist.tentative()) symbol.visibility = .global;
             } else if (nlist.n_type.bits.pext or (nlist.n_desc.weak_def_or_ref_to_weak and nlist.n_desc.weak_ref) or self.hidden) {
                 symbol.visibility = .hidden;
             } else {
@@ -1845,7 +1846,10 @@ pub fn calcSymtabSize(self: *Object, macho_file: *MachO) void {
             !is_obj)
             continue;
         sym.flags.output_symtab = true;
-        if (sym.isLocal()) {
+        if (sym.flags.tentative) {
+            sym.addExtra(.{ .symtab = self.output_symtab_ctx.ncommons }, macho_file);
+            self.output_symtab_ctx.ncommons += 1;
+        } else if (sym.isLocal()) {
             sym.addExtra(.{ .symtab = self.output_symtab_ctx.nlocals }, macho_file);
             self.output_symtab_ctx.nlocals += 1;
         } else if (sym.flags.@"export") {

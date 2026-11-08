@@ -2682,6 +2682,7 @@ fn calcSymtabSize(self: *MachO) !void {
         const ctx = switch (file) {
             inline else => |x| &x.output_symtab_ctx,
         };
+        assert(ctx.ncommons == 0);
         ctx.ilocal = nlocals;
         ctx.istab = nstabs;
         ctx.iexport = nexports;
@@ -4077,10 +4078,12 @@ pub const SymtabCtx = struct {
     ilocal: u32 = 0,
     istab: u32 = 0,
     iexport: u32 = 0,
+    icommon: u32 = 0,
     iimport: u32 = 0,
     nlocals: u32 = 0,
     nstabs: u32 = 0,
     nexports: u32 = 0,
+    ncommons: u32 = 0,
     nimports: u32 = 0,
     stroff: u32 = 0,
     strsize: u32 = 0,

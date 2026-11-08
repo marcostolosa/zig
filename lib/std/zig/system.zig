@@ -848,9 +848,7 @@ fn glibcVerFromSoFile(file_reader: *Io.File.Reader) !std.SemanticVersion {
         if (file_reader.interface.takeSentinel(0)) |s| {
             if (mem.indexOf(u8, s, needle)) |pos| {
                 const chopped = s[pos + needle.len ..];
-                const end = for (chopped, 0..) |c, i| {
-                    if (!std.ascii.isDigit(c) and c != '.') break i;
-                } else chopped.len;
+                const end = mem.findNone(u8, chopped, "0123456789.") orelse chopped.len;
                 return Target.Query.parseVersion(mem.trimEnd(u8, chopped[0..end], ".")) catch |err| switch (err) {
                     error.Overflow => return error.InvalidGnuLibCVersion,
                     error.InvalidVersion => return error.InvalidGnuLibCVersion,

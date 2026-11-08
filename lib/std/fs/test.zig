@@ -2160,6 +2160,41 @@ test "walker without fully iterating" {
     try expectEqual(@as(usize, 1), num_walked);
 }
 
+test "walker closes remaining dir handles after partial iteration" {
+    const io = testing.io;
+
+    if (native_os == .windows or native_os == .wasi) return error.SkipZigTest;
+
+    var tmp = tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "a/b");
+    try tmp.dir.writeFile(io, .{ .sub_path = "a/b/c", .data = "" });
+
+    var walker = try tmp.dir.walk(testing.allocator);
+
+    while (try walker.next(io)) |entry| {
+        // once we break, a and a/b is left open
+        if (mem.eql(u8, entry.basename, "c")) break;
+    }
+
+    const stack = walker.inner.stack.items;
+
+    try expectEqual(@as(usize, 3), stack.len);
+
+    var fds: [2]std.posix.fd_t = undefined;
+
+    for (stack[1..], &fds) |item, *fd| fd.* = item.iter.reader.dir.handle;
+
+    walker.deinit();
+
+    // according to the documentation all handles get freed
+    for (fds) |fd| {
+        const rc = std.posix.system.fcntl(fd, std.posix.F.GETFD, @as(usize, 0));
+        try expectEqual(std.posix.E.BADF, std.posix.system.errno(rc));
+    }
+}
+
 test "'.' and '..' in Dir functions" {
     if (native_os == .windows) {
         // https://codeberg.org/ziglang/zig/issues/31561

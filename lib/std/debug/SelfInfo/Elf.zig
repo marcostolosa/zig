@@ -12,7 +12,6 @@ pub const init: SelfInfo = .{
     .unwind_cache = null,
 };
 pub fn deinit(si: *SelfInfo, io: Io) void {
-    _ = io;
     const gpa = std.debug.getDebugInfoAllocator();
     for (si.modules.items) |*mod| {
         unwind: {
@@ -21,7 +20,7 @@ pub fn deinit(si: *SelfInfo, io: Io) void {
         }
         loaded: {
             const l = &((mod.loaded_elf orelse break :loaded) catch break :loaded);
-            l.file.deinit(gpa);
+            l.file.deinit(gpa, io);
         }
     }
 
@@ -325,6 +324,7 @@ const Module = struct {
             error.MissingDebugInfo,
             error.OutOfMemory,
             => |e| return e,
+
             error.EndOfStream,
             error.Overflow,
             error.StreamTooLong,
@@ -332,6 +332,7 @@ const Module = struct {
             error.InvalidOpcode,
             error.InvalidOperation,
             => return error.InvalidDebugInfo,
+
             error.UnsupportedAddrSize,
             error.UnimplementedUserOpcode,
             => return error.UnsupportedDebugInfo,
@@ -363,8 +364,9 @@ const Module = struct {
 
         var elf_file = load_result catch |err| switch (err) {
             error.OutOfMemory,
-            error.Unexpected,
             error.Canceled,
+            error.Unexpected,
+            error.ReadFailed,
             => |e| return e,
 
             error.Overflow,
@@ -375,17 +377,8 @@ const Module = struct {
             error.InvalidElfClass,
             error.InvalidElfEndian,
             => return error.InvalidDebugInfo,
-
-            error.SystemResources,
-            error.MemoryMappingNotSupported,
-            error.AccessDenied,
-            error.LockedMemoryLimitExceeded,
-            error.ProcessFdQuotaExceeded,
-            error.SystemFdQuotaExceeded,
-            error.Streaming,
-            => return error.ReadFailed,
         };
-        errdefer elf_file.deinit(gpa);
+        errdefer elf_file.deinit(gpa, io);
 
         if (elf_file.endian != native_endian) return error.InvalidDebugInfo;
         if (elf_file.is_64 != (@sizeOf(usize) == 8)) return error.InvalidDebugInfo;
@@ -430,7 +423,7 @@ fn findModule(si: *SelfInfo, gpa: Allocator, io: Io, address: usize, lock: enum 
             }
             loaded: {
                 const l = &((mod.loaded_elf orelse break :loaded) catch break :loaded);
-                l.file.deinit(gpa);
+                l.file.deinit(gpa, io);
             }
         }
         si.modules.clearRetainingCapacity();

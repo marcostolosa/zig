@@ -482,7 +482,7 @@ fn prepareTables(fuzz: *Fuzz, run_index: Configuration.Step.Index, coverage_id: 
         });
         return error.AlreadyReported;
     };
-    defer debug_info.deinit(gpa);
+    defer debug_info.deinit(gpa, io);
 
     const coverage_file_path: Build.Cache.Path = .{
         .root_dir = cache_root,

@@ -1,4 +1,4 @@
-mapped_memory: []align(std.heap.page_size_min) const u8,
+mapped_file: Io.File.MemoryMap,
 symbols: []const Symbol,
 strings: []const u8,
 text_vmaddr: u64,
@@ -17,17 +17,17 @@ pub const Error = error{
     OutOfMemory,
 };
 
-pub fn deinit(mf: *MachOFile, gpa: Allocator) void {
-    if (mf.adjacent_dsym) |*dsym| dsym.deinit(gpa);
+pub fn deinit(mf: *MachOFile, gpa: Allocator, io: Io) void {
+    if (mf.adjacent_dsym) |*dsym| dsym.deinit(gpa, io);
     for (mf.ofiles.values()) |*maybe_of| {
         const of = &(maybe_of.* catch continue);
-        posix.munmap(of.mapped_memory);
+        of.mapped_file.destroy(io);
         of.dwarf.deinit(gpa);
         of.symbols_by_name.deinit(gpa);
     }
     mf.ofiles.deinit(gpa);
     gpa.free(mf.symbols);
-    posix.munmap(mf.mapped_memory);
+    mf.mapped_file.destroy(io);
 }
 
 pub fn load(gpa: Allocator, io: Io, path: []const u8, arch: std.Target.Cpu.Arch) Error!MachOFile {
@@ -36,10 +36,10 @@ pub fn load(gpa: Allocator, io: Io, path: []const u8, arch: std.Target.Cpu.Arch)
         else => unreachable,
     }
 
-    const all_mapped_memory = try mapDebugInfoFile(io, path);
-    errdefer posix.munmap(all_mapped_memory);
+    var mapped_file = try mapDebugInfoFile(io, path);
+    errdefer mapped_file.destroy(io);
 
-    const mapped_macho = try selectMachOSlice(all_mapped_memory, arch);
+    const mapped_macho = try selectMachOSlice(mapped_file.memory, arch);
 
     var r: Io.Reader = .fixed(mapped_macho);
     const hdr = r.takeStruct(macho.mach_header_64, .little) catch |err| switch (err) {
@@ -226,7 +226,7 @@ pub fn load(gpa: Allocator, io: Io, path: []const u8, arch: std.Target.Cpu.Arch)
         null;
 
     return .{
-        .mapped_memory = all_mapped_memory,
+        .mapped_file = mapped_file,
         .symbols = symbols_slice,
         .strings = strings,
         .ofiles = .empty,
@@ -278,7 +278,7 @@ pub fn lookupSymbolName(mf: *MachOFile, vaddr: u64) error{MissingDebugInfo}![]co
 }
 
 const OFile = struct {
-    mapped_memory: []align(std.heap.page_size_min) const u8,
+    mapped_file: Io.File.MemoryMap,
     dwarf: Dwarf,
     strtab: []const u8,
     symtab_raw: []align(1) const macho.nlist_64,
@@ -304,12 +304,12 @@ const OFile = struct {
 };
 
 const DsymFile = struct {
-    mapped_memory: []align(std.heap.page_size_min) const u8,
+    mapped_file: Io.File.MemoryMap,
     dwarf: Dwarf,
 
-    fn deinit(df: *DsymFile, gpa: Allocator) void {
+    fn deinit(df: *DsymFile, gpa: Allocator, io: Io) void {
         df.dwarf.deinit(gpa);
-        posix.munmap(df.mapped_memory);
+        df.mapped_file.destroy(io);
     }
 };
 
@@ -414,9 +414,9 @@ fn loadDsymFile(
     arch: std.Target.Cpu.Arch,
     expected_uuid: Uuid,
 ) Error!DsymFile {
-    const all_mapped_memory = try mapDebugInfoFile(io, path);
-    errdefer posix.munmap(all_mapped_memory);
-    const mapped_macho = try selectMachOSlice(all_mapped_memory, arch);
+    var mapped_file = try mapDebugInfoFile(io, path);
+    errdefer mapped_file.destroy(io);
+    const mapped_macho = try selectMachOSlice(mapped_file.memory, arch);
 
     var r: Io.Reader = .fixed(mapped_macho);
     const hdr = r.takeStruct(macho.mach_header_64, .little) catch |err| switch (err) {
@@ -445,13 +445,13 @@ fn loadDsymFile(
     if (!mem.eql(u8, &actual_uuid, &expected_uuid)) return error.MissingDebugInfo;
 
     return .{
-        .mapped_memory = all_mapped_memory,
+        .mapped_file = mapped_file,
         .dwarf = try loadDwarfFromSections(gpa, mapped_macho, dwarf_sections orelse return error.MissingDebugInfo),
     };
 }
 
 fn loadOFile(gpa: Allocator, io: Io, o_file_name: []const u8) !OFile {
-    const all_mapped_memory, const mapped_ofile = map: {
+    var mapped_file, const mapped_ofile = map: {
         const open_paren = paren: {
             if (std.mem.endsWith(u8, o_file_name, ")")) {
                 if (std.mem.findScalarLast(u8, o_file_name, '(')) |i| {
@@ -460,17 +460,17 @@ fn loadOFile(gpa: Allocator, io: Io, o_file_name: []const u8) !OFile {
             }
             // Not an archive, just a normal path to a .o file
             const m = try mapDebugInfoFile(io, o_file_name);
-            break :map .{ m, m };
+            break :map .{ m, m.memory };
         };
 
         // We have the form 'path/to/archive.a(entry.o)'. Map the archive and find the object file in question.
 
         const archive_path = o_file_name[0..open_paren];
         const target_name_in_archive = o_file_name[open_paren + 1 .. o_file_name.len - 1];
-        const mapped_archive = try mapDebugInfoFile(io, archive_path);
-        errdefer posix.munmap(mapped_archive);
+        var mapped_archive = try mapDebugInfoFile(io, archive_path);
+        errdefer mapped_archive.destroy(io);
 
-        var ar_reader: Io.Reader = .fixed(mapped_archive);
+        var ar_reader: Io.Reader = .fixed(mapped_archive.memory);
         const ar_magic = ar_reader.take(8) catch return error.InvalidMachO;
         if (!std.mem.eql(u8, ar_magic, "!<arch>\n")) return error.InvalidMachO;
         while (true) {
@@ -499,7 +499,7 @@ fn loadOFile(gpa: Allocator, io: Io, o_file_name: []const u8) !OFile {
             }
         }
     };
-    errdefer posix.munmap(all_mapped_memory);
+    errdefer mapped_file.destroy(io);
 
     var r: Io.Reader = .fixed(mapped_ofile);
     const hdr = r.takeStruct(macho.mach_header_64, .little) catch |err| switch (err) {
@@ -556,7 +556,7 @@ fn loadOFile(gpa: Allocator, io: Io, o_file_name: []const u8) !OFile {
     const dwarf = try loadDwarfFromSections(gpa, mapped_ofile, seg_cmd.getSections());
 
     return .{
-        .mapped_memory = all_mapped_memory,
+        .mapped_file = mapped_file,
         .dwarf = dwarf,
         .strtab = strtab,
         .symtab_raw = symtab_raw,
@@ -667,7 +667,7 @@ fn selectMachOSlice(
 }
 
 /// Uses `mmap` to map the file at `path` into memory.
-fn mapDebugInfoFile(io: Io, path: []const u8) ![]align(std.heap.page_size_min) const u8 {
+fn mapDebugInfoFile(io: Io, path: []const u8) !Io.File.MemoryMap {
     const file = Io.Dir.cwd().openFile(io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return error.MissingDebugInfo,
         else => return error.ReadFailed,
@@ -679,14 +679,10 @@ fn mapDebugInfoFile(io: Io, path: []const u8) ![]align(std.heap.page_size_min) c
         file.length(io) catch return error.ReadFailed,
     ) orelse return error.ReadFailed;
 
-    return posix.mmap(
-        null,
-        file_len,
-        .{ .READ = true },
-        .{ .TYPE = .SHARED },
-        file.handle,
-        0,
-    ) catch return error.ReadFailed;
+    return file.createMemoryMap(io, .{
+        .len = file_len,
+        .protection = .{ .read = true },
+    }) catch return error.ReadFailed;
 }
 
 const std = @import("std");

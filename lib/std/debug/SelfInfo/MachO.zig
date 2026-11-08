@@ -7,7 +7,6 @@ pub const init: SelfInfo = .{
     .modules = .empty,
 };
 pub fn deinit(si: *SelfInfo, io: Io) void {
-    _ = io;
     const gpa = std.debug.getDebugInfoAllocator();
     for (si.modules.keys()) |*module| {
         unwind: {
@@ -16,7 +15,7 @@ pub fn deinit(si: *SelfInfo, io: Io) void {
         }
         file: {
             const f = &((module.file orelse break :file) catch break :file);
-            f.deinit(gpa);
+            f.deinit(gpa, io);
         }
     }
     si.modules.deinit(gpa);

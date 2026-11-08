@@ -43,7 +43,7 @@ pub fn load(
             defer file.close(io);
 
             var elf_file: ElfFile = try .load(gpa, io, file, null, &.none);
-            errdefer elf_file.deinit(gpa);
+            errdefer elf_file.deinit(gpa, io);
 
             if (elf_file.dwarf == null) return error.MissingDebugInfo;
             try elf_file.dwarf.?.open(gpa, elf_file.endian);
@@ -70,10 +70,10 @@ pub fn load(
     }
 }
 
-pub fn deinit(info: *Info, gpa: Allocator) void {
+pub fn deinit(info: *Info, gpa: Allocator, io: std.Io) void {
     switch (info.impl) {
-        .elf => |*ef| ef.deinit(gpa),
-        .macho => |*mf| mf.deinit(gpa),
+        .elf => |*ef| ef.deinit(gpa, io),
+        .macho => |*mf| mf.deinit(gpa, io),
     }
     info.* = undefined;
 }

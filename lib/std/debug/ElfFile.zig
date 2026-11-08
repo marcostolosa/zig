@@ -31,11 +31,11 @@ symbol_search_table: ?[]usize,
 
 /// The memory-mapped ELF file, which is referenced by `dwarf`. This field is here only so that
 /// this memory can be unmapped by `ElfFile.deinit`.
-mapped_file: []align(std.heap.page_size_min) const u8,
+mapped_file: Io.File.MemoryMap,
 /// Sometimes, debug info is stored separately to the main ELF file. In that case, `mapped_file`
 /// is the mapped ELF binary, and `mapped_debug_file` is the mapped debug info file. Both must
 /// be unmapped by `ElfFile.deinit`.
-mapped_debug_file: ?[]align(std.heap.page_size_min) const u8,
+mapped_debug_file: ?Io.File.MemoryMap,
 
 arena: std.heap.ArenaAllocator.State,
 
@@ -90,20 +90,21 @@ pub const DebugInfoSearchPaths = struct {
     }
 };
 
-pub fn deinit(ef: *ElfFile, gpa: Allocator) void {
+pub fn deinit(ef: *ElfFile, gpa: Allocator, io: std.Io) void {
     if (ef.dwarf) |*dwarf| dwarf.deinit(gpa);
     if (ef.symbol_search_table) |t| gpa.free(t);
     var arena = ef.arena.promote(gpa);
     arena.deinit();
 
-    std.posix.munmap(ef.mapped_file);
-    if (ef.mapped_debug_file) |m| std.posix.munmap(m);
+    ef.mapped_file.destroy(io);
+    if (ef.mapped_debug_file) |*m| m.destroy(io);
 
     ef.* = undefined;
 }
 
-pub const LoadError = error{
-    OutOfMemory,
+pub const LoadError = Allocator.Error || Io.Cancelable || error{
+    Unexpected,
+    ReadFailed,
     Overflow,
     TruncatedElfFile,
     InvalidCompressedSection,
@@ -111,16 +112,6 @@ pub const LoadError = error{
     InvalidElfVersion,
     InvalidElfClass,
     InvalidElfEndian,
-    // The remaining errors all occur when attemping to stat or mmap a file.
-    SystemResources,
-    MemoryMappingNotSupported,
-    AccessDenied,
-    LockedMemoryLimitExceeded,
-    ProcessFdQuotaExceeded,
-    SystemFdQuotaExceeded,
-    Streaming,
-    Canceled,
-    Unexpected,
 };
 
 pub fn load(
@@ -138,11 +129,11 @@ pub fn load(
         error.CrcMismatch => unreachable, // we passed crc as null
         else => |e| return e,
     };
-    errdefer std.posix.munmap(result.mapped_mem);
+    errdefer result.mapped_file.destroy(io);
 
     // `loadInner` did most of the work, but we might need to load an external debug info file
 
-    const di_mapped_mem: ?[]align(std.heap.page_size_min) const u8 = load_di: {
+    const di_mapped_file: ?Io.File.MemoryMap = load_di: {
         if (result.sections.get(.debug_info) != null and
             result.sections.get(.debug_abbrev) != null and
             result.sections.get(.debug_str) != null and
@@ -241,8 +232,8 @@ pub fn load(
             .bytes = s.bytes,
         } else null,
         .symbol_search_table = null,
-        .mapped_file = result.mapped_mem,
-        .mapped_debug_file = di_mapped_mem,
+        .mapped_file = result.mapped_file,
+        .mapped_debug_file = di_mapped_file,
         .arena = arena_instance.state,
     };
 }
@@ -377,13 +368,15 @@ fn loadSeparateDebugFile(
     opt_crc: ?u32,
     comptime fmt: []const u8,
     args: anytype,
-) Allocator.Error!?[]align(std.heap.page_size_min) const u8 {
+) (Allocator.Error || Io.Cancelable)!?std.Io.File.MemoryMap {
     const path = try arena.print(fmt, args);
     const elf_file = Io.Dir.cwd().openFile(io, path, .{}) catch return null;
     defer elf_file.close(io);
 
-    const result = loadInner(arena, io, elf_file, opt_crc) catch |err| switch (err) {
-        error.OutOfMemory => |e| return e,
+    var result = loadInner(arena, io, elf_file, opt_crc) catch |err| switch (err) {
+        error.OutOfMemory,
+        error.Canceled,
+        => |e| return e,
         error.CrcMismatch => return null,
         else => return null,
     };
@@ -405,7 +398,7 @@ fn loadSeparateDebugFile(
         result.endian != main_loaded.endian or
         !have_debug_sections)
     {
-        std.posix.munmap(result.mapped_mem);
+        result.mapped_file.destroy(io);
         return null;
     }
 
@@ -416,52 +409,55 @@ fn loadSeparateDebugFile(
         }
     }
 
-    return result.mapped_mem;
+    return result.mapped_file;
 }
 
 const LoadInnerResult = struct {
     is_64: bool,
     endian: Endian,
     sections: Section.Array,
-    mapped_mem: []align(std.heap.page_size_min) const u8,
+    mapped_file: Io.File.MemoryMap,
 };
 fn loadInner(
     arena: Allocator,
     io: Io,
     elf_file: Io.File,
     opt_crc: ?u32,
-) (LoadError || error{ CrcMismatch, Streaming, Canceled })!LoadInnerResult {
-    const mapped_mem: []align(std.heap.page_size_min) const u8 = mapped: {
+) (LoadError || error{CrcMismatch})!LoadInnerResult {
+    var mapped_file: Io.File.MemoryMap = mapped: {
         const file_len = std.math.cast(
             usize,
             elf_file.length(io) catch |err| switch (err) {
+                error.Canceled,
+                error.Unexpected,
+                => |e| return e,
                 error.PermissionDenied => unreachable, // not asking for PROT_EXEC
-                else => |e| return e,
+                else => return error.ReadFailed,
             },
         ) orelse return error.Overflow;
 
-        break :mapped std.posix.mmap(
-            null,
-            file_len,
-            .{ .READ = true },
-            .{ .TYPE = .SHARED },
-            elf_file.handle,
-            0,
-        ) catch |err| switch (err) {
-            error.MappingAlreadyExists => unreachable, // not using FIXED_NOREPLACE
+        break :mapped elf_file.createMemoryMap(io, .{
+            .len = file_len,
+            .protection = .{ .read = true },
+        }) catch |err| switch (err) {
+            error.OutOfMemory,
+            error.Canceled,
+            error.Unexpected,
+            => |e| return e,
             error.PermissionDenied => unreachable, // not asking for PROT_EXEC
-            else => |e| return e,
+            error.NotOpenForReading => unreachable, // we open the file with read permission
+            else => return error.ReadFailed,
         };
     };
+    errdefer mapped_file.destroy(io);
 
     if (opt_crc) |crc| {
-        if (std.hash.Crc32.hash(mapped_mem) != crc) {
+        if (std.hash.Crc32.hash(mapped_file.memory) != crc) {
             return error.CrcMismatch;
         }
     }
-    errdefer std.posix.munmap(mapped_mem);
 
-    var fr: std.Io.Reader = .fixed(mapped_mem);
+    var fr: Io.Reader = .fixed(mapped_file.memory);
 
     const header = elf.Header.read(&fr) catch |err| switch (err) {
         error.ReadFailed => unreachable,
@@ -483,17 +479,17 @@ fn loadInner(
     fr.seek = std.math.cast(usize, shstrtab_shdr_off) orelse return error.Overflow;
     const shstrtab: []const u8 = if (header.is_64) shstrtab: {
         const shdr = fr.takeStruct(elf.Elf64_Shdr, endian) catch return error.TruncatedElfFile;
-        if (shdr.sh_offset + shdr.sh_size > mapped_mem.len) return error.TruncatedElfFile;
-        break :shstrtab mapped_mem[@intCast(shdr.sh_offset)..][0..@intCast(shdr.sh_size)];
+        if (shdr.sh_offset + shdr.sh_size > mapped_file.memory.len) return error.TruncatedElfFile;
+        break :shstrtab mapped_file.memory[@intCast(shdr.sh_offset)..][0..@intCast(shdr.sh_size)];
     } else shstrtab: {
         const shdr = fr.takeStruct(elf.Elf32_Shdr, endian) catch return error.TruncatedElfFile;
-        if (shdr.sh_offset + shdr.sh_size > mapped_mem.len) return error.TruncatedElfFile;
-        break :shstrtab mapped_mem[@intCast(shdr.sh_offset)..][0..@intCast(shdr.sh_size)];
+        if (shdr.sh_offset + shdr.sh_size > mapped_file.memory.len) return error.TruncatedElfFile;
+        break :shstrtab mapped_file.memory[@intCast(shdr.sh_offset)..][0..@intCast(shdr.sh_size)];
     };
 
     var sections: Section.Array = .initFill(null);
 
-    var it = header.iterateSectionHeadersBuffer(mapped_mem);
+    var it = header.iterateSectionHeadersBuffer(mapped_file.memory);
     while (it.next() catch return error.TruncatedElfFile) |shdr| {
         if (shdr.sh_type == elf.SHT_NULL or shdr.sh_type == elf.SHT_NOBITS) continue;
         if (shdr.sh_name > shstrtab.len) return error.TruncatedElfFile;
@@ -510,12 +506,12 @@ fn loadInner(
 
         if (sections.get(section_id) != null) continue;
 
-        if (shdr.sh_offset + shdr.sh_size > mapped_mem.len) return error.TruncatedElfFile;
-        const raw_section_bytes = mapped_mem[@intCast(shdr.sh_offset)..][0..@intCast(shdr.sh_size)];
+        if (shdr.sh_offset + shdr.sh_size > mapped_file.memory.len) return error.TruncatedElfFile;
+        const raw_section_bytes = mapped_file.memory[@intCast(shdr.sh_offset)..][0..@intCast(shdr.sh_size)];
         const section_bytes: []const u8 = bytes: {
             if ((shdr.sh_flags & elf.SHF_COMPRESSED) == 0) break :bytes raw_section_bytes;
 
-            var section_reader: std.Io.Reader = .fixed(raw_section_bytes);
+            var section_reader: Io.Reader = .fixed(raw_section_bytes);
             const ch_type: elf.COMPRESS, const ch_size: u64 = if (header.is_64) ch: {
                 const chdr = section_reader.takeStruct(elf.Elf64_Chdr, endian) catch return error.InvalidCompressedSection;
                 break :ch .{ chdr.ch_type, chdr.ch_size };
@@ -530,7 +526,7 @@ fn loadInner(
             }
 
             const buf = try arena.alloc(u8, std.math.cast(usize, ch_size) orelse return error.Overflow);
-            var fw: std.Io.Writer = .fixed(buf);
+            var fw: Io.Writer = .fixed(buf);
             var decompress: std.compress.flate.Decompress = .init(&section_reader, .zlib, &.{});
             const n = decompress.reader.streamRemaining(&fw) catch |err| switch (err) {
                 // If a write failed, then `buf` filled up, so `ch_size` was incorrect
@@ -549,6 +545,6 @@ fn loadInner(
         .is_64 = header.is_64,
         .endian = endian,
         .sections = sections,
-        .mapped_mem = mapped_mem,
+        .mapped_file = mapped_file,
     };
 }

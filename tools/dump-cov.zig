@@ -46,7 +46,7 @@ pub fn main(init: std.process.Init) !void {
     var debug_info = std.debug.Info.load(gpa, io, exe_path, &coverage, target.ofmt, target.cpu.arch) catch |err| {
         fatal("failed to load debug info for {f}: {t}", .{ exe_path, err });
     };
-    defer debug_info.deinit(gpa);
+    defer debug_info.deinit(gpa, io);
 
     const cov_bytes = cov_path.root_dir.handle.readFileAllocOptions(
         io,

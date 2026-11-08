@@ -13743,8 +13743,9 @@ fn addBuf(v: []posix.iovec_const, i: *iovlen_t, bytes: []const u8) void {
     i.* += 1;
 }
 
-// vecs is a slice of iovec or iovec_const
-fn limitIoVecs(vecs: anytype, vecs_count: *iovlen_t) void {
+// vecs is a slice of iovec or iovec_const. This function limits the sum of the iovec
+// regions cumulatively to rw_limit.
+pub fn limitIoVecs(vecs: anytype, vecs_count: *iovlen_t) void {
     var accumulated_len: usize = 0;
     for (vecs[0..vecs_count.*], 0..) |vec, i| {
         const remaining_len = rw_limit - accumulated_len;
@@ -20186,4 +20187,66 @@ pub fn closeFd(fd: posix.fd_t) void {
         .BADF => recoverableOsBugDetected(), // use after free
         else => recoverableOsBugDetected(), // unexpected failure
     }
+}
+
+test limitIoVecs {
+    if (!is_darwin) return;
+
+    var iovecs_buffer: [max_iovecs_len]posix.iovec = undefined;
+
+    // Just small enough not to be limited
+    iovecs_buffer[0] = .{ .base = undefined, .len = std.math.maxInt(i32) };
+    var i: iovlen_t = 1;
+
+    limitIoVecs(&iovecs_buffer, &i);
+
+    try std.testing.expectEqual(1, i);
+    try std.testing.expectEqual(std.math.maxInt(i32), iovecs_buffer[0].len);
+
+    // Just small enough not to be limited across multiple
+    iovecs_buffer[0] = .{ .base = undefined, .len = std.math.maxInt(i32) - 2 };
+    iovecs_buffer[1] = .{ .base = undefined, .len = 1 };
+    iovecs_buffer[2] = .{ .base = undefined, .len = 1 };
+    i = 3;
+
+    limitIoVecs(&iovecs_buffer, &i);
+
+    try std.testing.expectEqual(3, i);
+    try std.testing.expectEqual(std.math.maxInt(i32) - 2, iovecs_buffer[0].len);
+    try std.testing.expectEqual(1, iovecs_buffer[1].len);
+    try std.testing.expectEqual(1, iovecs_buffer[2].len);
+
+    // Just big enough to be limited
+    iovecs_buffer[0] = .{ .base = undefined, .len = std.math.maxInt(i32) };
+    iovecs_buffer[1] = .{ .base = undefined, .len = 10 };
+    i = 2;
+
+    limitIoVecs(&iovecs_buffer, &i);
+
+    try std.testing.expectEqual(1, i);
+    try std.testing.expectEqual(std.math.maxInt(i32), iovecs_buffer[0].len);
+
+    // Just big enough to be limited in a single buf
+    iovecs_buffer[0] = .{ .base = undefined, .len = std.math.maxInt(i32) + 1 };
+    iovecs_buffer[1] = .{ .base = undefined, .len = 10 };
+    i = 2;
+
+    limitIoVecs(&iovecs_buffer, &i);
+
+    try std.testing.expectEqual(1, i);
+    try std.testing.expectEqual(std.math.maxInt(i32), iovecs_buffer[0].len);
+
+    // Big enough to be limited across multiple
+    iovecs_buffer[0] = .{ .base = undefined, .len = std.math.maxInt(i32) - 2 };
+    iovecs_buffer[1] = .{ .base = undefined, .len = 1 };
+    iovecs_buffer[2] = .{ .base = undefined, .len = 2 };
+    iovecs_buffer[3] = .{ .base = undefined, .len = 10 };
+    i = 4;
+
+    limitIoVecs(&iovecs_buffer, &i);
+
+    try std.testing.expectEqual(3, i);
+    try std.testing.expectEqual(std.math.maxInt(i32) - 2, iovecs_buffer[0].len);
+    try std.testing.expectEqual(1, iovecs_buffer[1].len);
+    try std.testing.expectEqual(1, iovecs_buffer[2].len);
 }

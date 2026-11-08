@@ -20,6 +20,8 @@ const iovec = std.posix.iovec;
 const iovec_const = std.posix.iovec_const;
 const log = std.log.scoped(.dispatch);
 const max_iovecs_len = Io.Threaded.max_iovecs_len;
+const rw_limit = Io.Threaded.rw_limit;
+const limitIoVecs = Io.Threaded.limitIoVecs;
 const nanosecondsFromPosix = Io.Threaded.nanosecondsFromPosix;
 const net = Io.net;
 const pathToPosix = Io.Threaded.pathToPosix;
@@ -1758,6 +1760,7 @@ fn fileReadStreamingLimit(
     // in which case the buffer still needs to be drained
     var remaining = if (limit == .nothing) .unlimited else limit;
     for (data) |buf| addBuf(false, &iovecs, &iovlen, &remaining, buf);
+    limitIoVecs(&iovecs, &iovlen);
     if (iovlen == 0) return 0;
     while (true) {
         const rc = c.readv(handle, &iovecs, iovlen);
@@ -1863,6 +1866,7 @@ fn fileWriteStreamingLimit(
             },
         },
     };
+    limitIoVecs(&iovecs, &iovlen);
     if (iovlen == 0) return 0;
     while (true) {
         const rc = c.writev(handle, &iovecs, iovlen);
@@ -3317,6 +3321,7 @@ fn fileWritePositional(
             },
         },
     };
+    limitIoVecs(&iovecs, &iovlen);
     if (iovlen == 0) return 0;
     while (true) {
         const rc = c.pwritev(file.handle, &iovecs, iovlen, @bitCast(offset));
@@ -3537,6 +3542,7 @@ fn fileReadPositional(
     var iovlen: iovlen_t = 0;
     var remaining: Io.Limit = .unlimited;
     for (data) |buf| addBuf(false, &iovecs, &iovlen, &remaining, buf);
+    limitIoVecs(&iovecs, &iovlen);
     if (iovlen == 0) return 0;
     while (true) {
         const rc = c.preadv(file.handle, &iovecs, iovlen, @bitCast(offset));

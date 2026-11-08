@@ -1527,7 +1527,7 @@ fn testFilenameLimits(io: Io, iterable_dir: Dir, maxed_filename: []const u8, max
     // High level walk API
     {
         var walker = try iterable_dir.walk(testing.allocator);
-        defer walker.deinit();
+        defer walker.deinit(io);
 
         var file_count: usize = 0;
         var dir_count: usize = 0;
@@ -2045,7 +2045,7 @@ test "walker" {
     }
 
     var walker = try tmp.dir.walk(testing.allocator);
-    defer walker.deinit();
+    defer walker.deinit(io);
 
     var num_walked: usize = 0;
     while (try walker.next(io)) |entry| {
@@ -2107,7 +2107,7 @@ test "selective walker, skip entries that start with ." {
     }
 
     var walker = try tmp.dir.walkSelectively(testing.allocator);
-    defer walker.deinit();
+    defer walker.deinit(io);
 
     var num_walked: usize = 0;
     while (try walker.next(io)) |entry| {
@@ -2144,7 +2144,7 @@ test "walker without fully iterating" {
     defer tmp.cleanup();
 
     var walker = try tmp.dir.walk(testing.allocator);
-    defer walker.deinit();
+    defer walker.deinit(io);
 
     // Create 2 directories inside the tmp directory, but then only iterate once before breaking.
     // This ensures that walker doesn't try to close the initial directory when not fully iterating.
@@ -2163,8 +2163,6 @@ test "walker without fully iterating" {
 test "walker closes remaining dir handles after partial iteration" {
     const io = testing.io;
 
-    if (native_os == .windows or native_os == .wasi) return error.SkipZigTest;
-
     var tmp = tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
 
@@ -2180,18 +2178,39 @@ test "walker closes remaining dir handles after partial iteration" {
 
     const stack = walker.inner.stack.items;
 
-    try expectEqual(@as(usize, 3), stack.len);
+    try expectEqual(3, stack.len);
 
-    var fds: [2]std.posix.fd_t = undefined;
+    // Check that the non-initial dir handles get closed during deinit.
+    switch (native_os) {
+        .wasi => walker.deinit(io),
+        .windows => {
+            var handles: [2]std.os.windows.HANDLE = undefined;
+            for (stack[1..], &handles) |item, *handle| handle.* = item.iter.reader.dir.handle;
+            walker.deinit(io);
 
-    for (stack[1..], &fds) |item, *fd| fd.* = item.iter.reader.dir.handle;
+            for (handles) |handle| {
+                var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+                var device_info: windows.FILE.FS_DEVICE_INFORMATION = undefined;
+                const status = windows.ntdll.NtQueryVolumeInformationFile(
+                    handle,
+                    &io_status_block,
+                    &device_info,
+                    @sizeOf(windows.FILE.FS_DEVICE_INFORMATION),
+                    .Device,
+                );
+                try expectEqual(.INVALID_HANDLE, status);
+            }
+        },
+        else => {
+            var fds: [2]std.posix.fd_t = undefined;
+            for (stack[1..], &fds) |item, *fd| fd.* = item.iter.reader.dir.handle;
+            walker.deinit(io);
 
-    walker.deinit();
-
-    // according to the documentation all handles get freed
-    for (fds) |fd| {
-        const rc = std.posix.system.fcntl(fd, std.posix.F.GETFD, @as(usize, 0));
-        try expectEqual(std.posix.E.BADF, std.posix.system.errno(rc));
+            for (fds) |fd| {
+                const rc = std.posix.system.fcntl(fd, std.posix.F.GETFD, @as(usize, 0));
+                try expectEqual(std.posix.E.BADF, std.posix.system.errno(rc));
+            }
+        },
     }
 }
 

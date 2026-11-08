@@ -629,6 +629,8 @@ fn abiAndDynamicLinkerFromFile(
         }
 
         if (result.dynamic_linker.get()) |dl_path| glibc_ver: {
+            // There is no DT_RUNPATH so we try to find libc.so.6 inside the same
+            // directory as the dynamic linker.
             if (fs.path.dirname(dl_path)) |rpath| {
                 if (glibcVerFromRPath(io, rpath)) |ver| {
                     result.os.version_range.linux.glibc = ver;

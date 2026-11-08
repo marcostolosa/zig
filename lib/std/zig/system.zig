@@ -860,7 +860,10 @@ fn glibcVerFromSoFile(file_reader: *Io.File.Reader) !std.SemanticVersion {
             // `.rodata` also holds long non-zero byte sections.
             // Skip until we find C-strings.
             error.StreamTooLong => {
-                const skipped = file_reader.interface.bufferedLen();
+                const buffered = file_reader.interface.buffered();
+                // always keep the last needle length in case of a partial match at the end
+                const skipped = mem.find(u8, buffered, needle) orelse (buffered.len -| needle.len);
+                if (skipped == 0) return error.InvalidGnuLibCVersion;
                 file_reader.interface.toss(skipped);
                 offset += skipped;
             },

@@ -218,6 +218,8 @@ pub fn binNameAlloc(allocator: Allocator, options: BinNameOptions) error{OutOfMe
             },
             .Obj => return std.fmt.allocPrint(allocator, "{s}.o", .{root_name}),
         },
+        .llvmbc => return std.fmt.allocPrint(allocator, "{s}.bc", .{root_name}),
+        .llvmir => return std.fmt.allocPrint(allocator, "{s}.ll", .{root_name}),
         .macho => switch (options.output_mode) {
             .Exe => return allocator.dupe(u8, root_name),
             .Lib => {
@@ -404,12 +406,12 @@ pub const RcIncludes = enum(u2) {
 /// Renders a `std.Target.Cpu` value into a textual representation that can be parsed
 /// via the `-mcpu` flag passed to the Zig compiler.
 /// Appends the result to `buffer`.
-pub fn serializeCpu(buffer: *std.array_list.Managed(u8), cpu: std.Target.Cpu) Allocator.Error!void {
+pub fn serializeCpu(gpa: Allocator, buffer: *std.ArrayList(u8), cpu: std.Target.Cpu) Allocator.Error!void {
     const all_features = cpu.arch.allFeaturesList();
     var populated_cpu_features = cpu.model.features;
     populated_cpu_features.populateDependencies(all_features);
 
-    try buffer.appendSlice(cpu.model.name);
+    try buffer.appendSlice(gpa, cpu.model.name);
 
     if (populated_cpu_features.eql(cpu.features)) {
         // The CPU name alone is sufficient.
@@ -420,7 +422,7 @@ pub fn serializeCpu(buffer: *std.array_list.Managed(u8), cpu: std.Target.Cpu) Al
         const i: std.Target.Cpu.Feature.Set.Index = @intCast(i_usize);
         const in_cpu_set = populated_cpu_features.isEnabled(i);
         const in_actual_set = cpu.features.isEnabled(i);
-        try buffer.ensureUnusedCapacity(feature.name.len + 1);
+        try buffer.ensureUnusedCapacity(gpa, feature.name.len + 1);
         if (in_cpu_set and !in_actual_set) {
             buffer.appendAssumeCapacity('-');
             buffer.appendSliceAssumeCapacity(feature.name);
@@ -431,10 +433,10 @@ pub fn serializeCpu(buffer: *std.array_list.Managed(u8), cpu: std.Target.Cpu) Al
     }
 }
 
-pub fn serializeCpuAlloc(ally: Allocator, cpu: std.Target.Cpu) Allocator.Error![]u8 {
-    var buffer = std.array_list.Managed(u8).init(ally);
-    try serializeCpu(&buffer, cpu);
-    return buffer.toOwnedSlice();
+pub fn serializeCpuAlloc(gpa: Allocator, cpu: std.Target.Cpu) Allocator.Error![]u8 {
+    var buffer: std.ArrayList(u8) = .empty;
+    try serializeCpu(gpa, &buffer, cpu);
+    return buffer.toOwnedSlice(gpa);
 }
 
 /// Return a Formatter for a Zig identifier, escaping it with `@""` syntax if needed.
@@ -487,6 +489,8 @@ test fmtId {
     try expectFmt("_underscore", "{f}", .{fmtId("_underscore")});
     try expectFmt("@\"11\\\"23\"", "{f}", .{fmtId("11\"23")});
     try expectFmt("@\"11\\x0f23\"", "{f}", .{fmtId("11\x0F23")});
+
+    try expectFmt("@\"\\r\\\"\\n\\xff😎\\xe2\\x80\\xa8\"", "{f}", .{fmtId("\r\"\n\xFF😎\u{2028}")});
 
     // These are technically not currently legal in Zig.
     try expectFmt("@\"\"", "{f}", .{fmtId("")});
@@ -541,93 +545,213 @@ test fmtChar {
 ///
 /// The following transformations are made:
 /// * escaped: '\n', '\r', '\t', '\\', '"'
-/// * hex-encoded: ascii control characters
+/// * hex-encoded:
+///   * ascii control characters
+///   * invalid UTF-8 sequences
+///   * non-ascii line endings (U+0085, U+2028, U+2029)
+///   * byte order marks (U+FEFF)
 ///
 /// Everything else is passed through unmodified.
 pub fn stringEscape(bytes: []const u8, w: *Writer) Writer.Error!void {
-    _ = try stringEscapeCounting(bytes, w);
+    var remaining = bytes.len;
+    while (remaining > 0) {
+        remaining -= try stringEscapeInner(bytes[bytes.len - remaining ..], w);
+
+        // Escape the first byte and try again.
+        // Needing to escape the rest is not guaranteed.
+        if (remaining > 0) {
+            try w.writeAll("\\x");
+            try w.printInt(bytes[bytes.len - remaining], 16, .lower, .{ .width = 2, .fill = '0' });
+            remaining -= 1;
+        }
+    }
 }
 
-pub fn stringEscapeCounting(bytes: []const u8, w: *Writer) Writer.Error!usize {
-    var n: usize = 0;
-    for (bytes) |byte| switch (byte) {
-        '\t' => {
-            try w.writeAll("\\t");
-            n += 2;
-        },
-        '\n' => {
-            try w.writeAll("\\n");
-            n += 2;
-        },
-        '\r' => {
-            try w.writeAll("\\r");
-            n += 2;
-        },
-        '\\' => {
-            try w.writeAll("\\\\");
-            n += 2;
-        },
-        '"' => {
-            try w.writeAll("\\\"");
-            n += 2;
-        },
-        0...8, 11, 12, 14...0x1f, 0x7f => {
-            try w.writeAll("\\x");
-            try w.printInt(byte, 16, .lower, .{ .width = 2, .fill = '0' });
-            n += 4;
-        },
-        else => {
-            try w.writeByte(byte);
-            n += 1;
-        },
-    };
-    return n;
+/// Returns the number of bytes consumed from `bytes`, which may be less than `bytes.len`.
+fn stringEscapeInner(bytes: []const u8, w: *Writer) Writer.Error!usize {
+    var i: usize = 0;
+    while (i < bytes.len) {
+        const byte = bytes[i];
+        switch (byte) {
+            '\t' => {
+                try w.writeAll("\\t");
+            },
+            '\n' => {
+                try w.writeAll("\\n");
+            },
+            '\r' => {
+                try w.writeAll("\\r");
+            },
+            '\\' => {
+                try w.writeAll("\\\\");
+            },
+            '"' => {
+                try w.writeAll("\\\"");
+            },
+            0...8, 11, 12, 14...0x1f, 0x7f => {
+                try w.writeAll("\\x");
+                try w.printInt(byte, 16, .lower, .{ .width = 2, .fill = '0' });
+            },
+            0x20, 0x21, 0x23...0x5b, 0x5d...0x7e => {
+                try w.writeByte(byte);
+            },
+            0x80...0xff => {
+                const len, const escape = blk: {
+                    const len = std.unicode.utf8ByteSequenceLength(byte) catch break :blk .{ 1, true };
+                    if (i + len > bytes.len) {
+                        return i;
+                    }
+                    const sequence = bytes[i..][0..len];
+                    const code_point = std.unicode.utf8Decode(sequence) catch |err| switch (err) {
+                        error.Utf8CodepointTooLarge => break :blk .{ len, true },
+                        else => break :blk .{ 1, true },
+                    };
+                    switch (code_point) {
+                        '\u{feff}', '\u{0085}', '\u{2028}', '\u{2029}' => break :blk .{ len, true },
+                        else => break :blk .{ len, false },
+                    }
+                };
+
+                const sequence = bytes[i..][0..len];
+                if (escape) {
+                    for (sequence) |b| {
+                        try w.writeAll("\\x");
+                        try w.printInt(b, 16, .lower, .{ .width = 2, .fill = '0' });
+                    }
+                } else {
+                    try w.writeAll(sequence);
+                }
+                i += len;
+                continue;
+            },
+        }
+        i += 1;
+    }
+    return i;
 }
 
 pub const StringEscapeWriter = struct {
     out: *Writer,
     writer: Writer,
 
+    pub const min_buffer_len = 4;
+
     pub fn init(out: *Writer, buffer: []u8) @This() {
+        assert(buffer.len >= min_buffer_len);
         return .{
             .out = out,
             .writer = .{
-                .vtable = &.{ .drain = @This().drain },
+                .vtable = &.{ .drain = @This().drain, .flush = @This().flush },
                 .buffer = buffer,
             },
         };
     }
 
     fn drain(w: *Writer, data: []const []const u8, splat: usize) Io.Writer.Error!usize {
-        const sew: *StringEscapeWriter = @alignCast(@fieldParentPtr("writer", w));
-        const out = sew.out;
-        try stringEscape(w.buffered(), out);
-        w.end = 0;
-        var n: usize = 0;
+        var n: usize = try drainBufferRemaining(w, "");
         for (data[0 .. data.len - 1]) |bytes| {
-            try stringEscape(bytes, out);
-            n += bytes.len;
+            n += try drainBufferRemaining(w, bytes);
         }
         const pattern = data[data.len - 1];
         for (0..splat) |_| {
-            try stringEscape(pattern, out);
-            n += pattern.len;
+            n += try drainBufferRemaining(w, pattern);
         }
         return n;
     }
+
+    fn flush(w: *Writer) Io.Writer.Error!void {
+        const sew: *StringEscapeWriter = @alignCast(@fieldParentPtr("writer", w));
+        const out = sew.out;
+        while (w.end != 0) {
+            _ = try drainBufferRemaining(w, "");
+
+            // Escape the first byte and try again.
+            // Needing to escape the rest is not guaranteed.
+            const remaining = w.buffered();
+            if (remaining.len > 0) {
+                try out.writeAll("\\x");
+                try out.printInt(remaining[0], 16, .lower, .{ .width = 2, .fill = '0' });
+                _ = w.consume(1);
+            }
+        }
+    }
+
+    /// Drain from the buffer first, taking from `bytes` as necessary to complete any
+    /// incomplete UTF-8 sequences. Then, consume whatever is remaining of `bytes`,
+    /// storing a possible trailing incomplete UTF-8 sequence in the buffer.
+    ///
+    /// On success, `w.buffered().len` is guaranteed to be < 4.
+    fn drainBufferRemaining(w: *Writer, bytes: []const u8) Io.Writer.Error!usize {
+        const sew: *StringEscapeWriter = @alignCast(@fieldParentPtr("writer", w));
+        const out = sew.out;
+        var remaining_bytes = bytes;
+        while (w.end != 0) {
+            const n = try stringEscapeInner(w.buffered(), out);
+            _ = w.consume(n);
+
+            if (w.end != 0) {
+                if (remaining_bytes.len == 0) return bytes.len;
+                const len = std.unicode.utf8ByteSequenceLength(w.buffer[0]) catch unreachable;
+                const missing = len - w.end;
+                const available = remaining_bytes.len;
+                const copy_len = @min(missing, available);
+                const start = len - missing;
+                @memcpy(w.buffer[start..][0..copy_len], remaining_bytes[0..copy_len]);
+                w.end = start + copy_len;
+                remaining_bytes = remaining_bytes[copy_len..];
+            }
+        }
+
+        const n = try stringEscapeInner(remaining_bytes, out);
+        if (n < remaining_bytes.len) {
+            const remaining = remaining_bytes.len - n;
+            @memcpy(w.buffer[0..remaining], remaining_bytes[n..]);
+            w.end = remaining;
+        }
+
+        return bytes.len;
+    }
 };
 
-test StringEscapeWriter {
-    const bytes = "\x7f\t\n\r\\\"abc";
-    const escaped = "\\x7f\\t\\n\\r\\\\\\\"abc";
+test stringEscape {
+    const bytes = "\x7f\t\n\r\\\"abc\xff\u{feff}\u{0085}\u{2028}\u{2029}\xed\xa0\x80\xf4\x90\x80\x80\xf4\x90a";
+    const escaped = "\\x7f\\t\\n\\r\\\\\\\"abc\\xff\\xef\\xbb\\xbf\\xc2\\x85\\xe2\\x80\\xa8\\xe2\\x80\\xa9\\xed\\xa0\\x80\\xf4\\x90\\x80\\x80\\xf4\\x90a";
 
     var out_buf: [escaped.len]u8 = undefined;
     var out: Io.Writer = .fixed(&out_buf);
-    var w: StringEscapeWriter = .init(&out, &.{});
 
-    const n = try w.writer.write(bytes);
-    try std.testing.expectEqual(bytes.len, n);
+    try stringEscape(bytes, &out);
     try std.testing.expectEqualStrings(escaped, out.buffered());
+}
+
+test StringEscapeWriter {
+    const bytes = "\x7f\t\n\r\\\"abc\xff\u{feff}\u{0085}\u{2028}\u{2029}\xed\xa0\x80\xf4\x90\x80\x80\xf4\x90a";
+    const escaped = "\\x7f\\t\\n\\r\\\\\\\"abc\\xff\\xef\\xbb\\xbf\\xc2\\x85\\xe2\\x80\\xa8\\xe2\\x80\\xa9\\xed\\xa0\\x80\\xf4\\x90\\x80\\x80\\xf4\\x90a";
+
+    var sew_buf: [StringEscapeWriter.min_buffer_len]u8 = undefined;
+    {
+        var out_buf: [escaped.len]u8 = undefined;
+        var out: Io.Writer = .fixed(&out_buf);
+        var w: StringEscapeWriter = .init(&out, &sew_buf);
+
+        const n = try w.writer.write(bytes);
+        try w.writer.flush();
+
+        try std.testing.expectEqual(bytes.len, n);
+        try std.testing.expectEqualStrings(escaped, out.buffered());
+    }
+    {
+        var out_buf: [escaped.len]u8 = undefined;
+        var out: Io.Writer = .fixed(&out_buf);
+        var w: StringEscapeWriter = .init(&out, &sew_buf);
+
+        for (bytes) |byte| {
+            try w.writer.writeByte(byte);
+        }
+        try w.writer.flush();
+
+        try std.testing.expectEqualStrings(escaped, out.buffered());
+    }
 }
 
 /// Print as escaped contents of a single-quoted string.
@@ -727,8 +851,7 @@ pub fn readSourceFileToEndAlloc(gpa: Allocator, file_reader: *Io.File.Reader) ![
 }
 
 pub fn printAstErrorsToStderr(gpa: Allocator, io: Io, tree: Ast, path: []const u8, color: Color) !void {
-    var wip_errors: ErrorBundle.Wip = undefined;
-    try wip_errors.init(gpa);
+    var wip_errors: ErrorBundle.Wip = try .init(gpa);
     defer wip_errors.deinit();
 
     try putAstErrorsIntoBundle(gpa, tree, path, &wip_errors);
@@ -777,10 +900,10 @@ pub fn parseTargetQueryOrReportFatalError(
     return std.Target.Query.parse(opts_with_diags) catch |err| switch (err) {
         error.UnknownCpuModel => {
             help: {
-                var help_text = std.array_list.Managed(u8).init(allocator);
-                defer help_text.deinit();
+                var help_text: std.ArrayList(u8) = .empty;
+                defer help_text.deinit(allocator);
                 for (diags.arch.?.allCpuModels()) |cpu| {
-                    help_text.print(" {s}\n", .{cpu.name}) catch break :help;
+                    help_text.print(allocator, " {s}\n", .{cpu.name}) catch break :help;
                 }
                 log.info("available CPUs for architecture '{s}':\n{s}", .{
                     @tagName(diags.arch.?), help_text.items,
@@ -790,10 +913,10 @@ pub fn parseTargetQueryOrReportFatalError(
         },
         error.UnknownCpuFeature => {
             help: {
-                var help_text = std.array_list.Managed(u8).init(allocator);
-                defer help_text.deinit();
+                var help_text: std.ArrayList(u8) = .empty;
+                defer help_text.deinit(allocator);
                 for (diags.arch.?.allFeaturesList()) |feature| {
-                    help_text.print(" {s}: {s}\n", .{ feature.name, feature.description }) catch break :help;
+                    help_text.print(allocator, " {s}: {s}\n", .{ feature.name, feature.description }) catch break :help;
                 }
                 log.info("available CPU features for architecture '{s}':\n{s}", .{
                     @tagName(diags.arch.?), help_text.items,
@@ -803,10 +926,10 @@ pub fn parseTargetQueryOrReportFatalError(
         },
         error.UnknownObjectFormat => {
             help: {
-                var help_text = std.array_list.Managed(u8).init(allocator);
-                defer help_text.deinit();
+                var help_text: std.ArrayList(u8) = .empty;
+                defer help_text.deinit(allocator);
                 inline for (@typeInfo(std.Target.ObjectFormat).@"enum".field_names) |field_name| {
-                    help_text.print(" {s}\n", .{field_name}) catch break :help;
+                    help_text.print(allocator, " {s}\n", .{field_name}) catch break :help;
                 }
                 log.info("available object formats:\n{s}", .{help_text.items});
             }
@@ -814,10 +937,10 @@ pub fn parseTargetQueryOrReportFatalError(
         },
         error.UnknownArchitecture => {
             help: {
-                var help_text = std.array_list.Managed(u8).init(allocator);
-                defer help_text.deinit();
+                var help_text: std.ArrayList(u8) = .empty;
+                defer help_text.deinit(allocator);
                 inline for (@typeInfo(std.Target.Cpu.Arch).@"enum".field_names) |field_name| {
-                    help_text.print(" {s}\n", .{field_name}) catch break :help;
+                    help_text.print(allocator, " {s}\n", .{field_name}) catch break :help;
                 }
                 log.info("available architectures:\n{s} native\n", .{help_text.items});
             }
@@ -939,8 +1062,8 @@ pub const SimpleComptimeReason = enum(u32) {
     enum_field_values,
     union_enum_tag_type,
     enum_int_tag_type,
-    packed_struct_backing_int_type,
-    packed_union_backing_int_type,
+    bitpack_struct_backing_int_type,
+    bitpack_union_backing_int_type,
 
     // Evaluating at comptime because decl/field name must be comptime-known.
     decl_name,
@@ -1024,8 +1147,8 @@ pub const SimpleComptimeReason = enum(u32) {
 
             .union_enum_tag_type            => "enum tag type of union must be comptime-known",
             .enum_int_tag_type              => "integer tag type of enum must be comptime-known",
-            .packed_struct_backing_int_type => "packed struct backing integer type must be comptime-known",
-            .packed_union_backing_int_type  => "packed struct backing integer type must be comptime-known",
+            .bitpack_struct_backing_int_type => "bitpack struct backing integer type must be comptime-known",
+            .bitpack_union_backing_int_type  => "bitpack struct backing integer type must be comptime-known",
 
             .decl_name         => "declaration name must be comptime-known",
             .field_name        => "field name must be comptime-known",
@@ -1202,6 +1325,7 @@ pub const ClangCliParam = struct {
         static,
         dynamic,
         version,
+        patchable_function_entry,
     };
 
     pub fn matchEql(self: @This(), arg: []const u8) u2 {
@@ -1712,6 +1836,9 @@ pub const BuildExeSubprocessOptions = struct {
     cpu_features: ?[]const u8 = null,
     progress_node: std.Progress.Node = .none,
     skip_log_cmdline_on_compile_errors: bool = false,
+    /// If this is provided, compilation errors are sent here. Otherwise, they are printed to stderr.
+    /// Must be an initialized `ErrorBundle`; if it is updated then it is cleared first.
+    error_bundle: ?*ErrorBundle = null,
 };
 
 pub const BuildExeSubprocessError = error{
@@ -1780,8 +1907,10 @@ pub fn buildExeSubprocess(
     var result: ?Cache.Path = null;
     defer if (result) |r| gpa.free(r.sub_path);
 
-    var result_error_bundle: ErrorBundle = .empty;
-    defer result_error_bundle.deinit(gpa);
+    var default_error_bundle: ErrorBundle = .empty;
+    defer default_error_bundle.deinit(gpa);
+
+    const error_bundle = options.error_bundle orelse &default_error_bundle;
 
     var received_fs_inputs = false;
     var cache_hit = false;
@@ -1815,8 +1944,8 @@ pub fn buildExeSubprocess(
                 }
             },
             .error_bundle => {
-                result_error_bundle.deinit(gpa);
-                result_error_bundle = Server.allocErrorBundle(gpa, body) catch |err| switch (err) {
+                error_bundle.deinit(gpa);
+                error_bundle.* = Server.allocErrorBundle(gpa, body) catch |err| switch (err) {
                     error.EndOfStream => break,
                     else => |e| return e,
                 };
@@ -1837,12 +1966,12 @@ pub fn buildExeSubprocess(
                 var it = mem.splitScalar(u8, body, 0);
                 while (it.next()) |prefixed_path| {
                     const prefix: Server.Message.PathPrefix = @fromBackingInt(@intCast(prefixed_path[0] - 1));
-                    const sub_path = try gpa.dupe(u8, prefixed_path[1..]);
-                    var keep = false;
-                    defer if (!keep) gpa.free(sub_path);
-                    keep = man.addPrefixedPathPost(.{
-                        .prefix = @backingInt(prefix),
-                        .sub_path = sub_path,
+                    const sub_path = prefixed_path[1..];
+                    man.addDiscoveredPath(.{
+                        .discovered_path = .{ .prefixed = .{
+                            .prefix = @intCast(@backingInt(prefix)),
+                            .sub_path = sub_path,
+                        } },
                     }) catch |err| switch (err) {
                         error.Canceled, error.OutOfMemory => |e| return e,
                         else => |e| {
@@ -1877,14 +2006,14 @@ pub fn buildExeSubprocess(
         },
     };
 
-    if (!term.success()) {
+    if (!term.eql(.success)) {
         log.err("command {f}: {f}", .{ term, cmd });
         if (received_fs_inputs) return error.FailedButCacheIntact;
         return error.AlreadyReported;
     }
 
-    if (result_error_bundle.errorMessageCount() > 0) {
-        result_error_bundle.renderToStderr(io, .{}, .auto) catch |err| switch (err) {
+    if (default_error_bundle.errorMessageCount() > 0) {
+        default_error_bundle.renderToStderr(io, .{}, .auto) catch |err| switch (err) {
             error.Canceled => |e| return e,
             else => |e| {
                 log.err("failed rendering error bundle: {t}", .{e});
@@ -1892,8 +2021,13 @@ pub fn buildExeSubprocess(
             },
         };
         if (!options.skip_log_cmdline_on_compile_errors) log.err("command reported {d} compilation errors: {f}", .{
-            result_error_bundle.errorMessageCount(), cmd,
+            default_error_bundle.errorMessageCount(), cmd,
         });
+        if (received_fs_inputs) return error.FailedButCacheIntact;
+        return error.AlreadyReported;
+    }
+
+    if (error_bundle.errorMessageCount() > 0) {
         if (received_fs_inputs) return error.FailedButCacheIntact;
         return error.AlreadyReported;
     }
@@ -1920,6 +2054,46 @@ pub fn buildExeSubprocess(
         .cache_hit = cache_hit,
         .path = try base_path.join(gpa, bin_name),
     };
+}
+
+pub fn compilerBackend(t: *const std.Target, use_llvm: bool) std.lang.CompilerBackend {
+    if (use_llvm) return .stage2_llvm;
+    if (t.ofmt == .c) return .stage2_c;
+    return switch (t.cpu.arch) {
+        .aarch64, .aarch64_be => .stage2_aarch64,
+        .arm, .armeb, .thumb, .thumbeb => .stage2_arm,
+        .loongarch32, .loongarch64 => .stage2_loongarch,
+        .powerpc, .powerpcle, .powerpc64, .powerpc64le => .stage2_powerpc,
+        .riscv64 => .stage2_riscv64,
+        .sparc64 => .stage2_sparc64,
+        .spirv32, .spirv64 => .stage2_spirv,
+        .wasm32, .wasm64 => .stage2_wasm,
+        .x86, .x86c16 => .stage2_x86,
+        .x86_64 => .stage2_x86_64,
+        .spork8 => .zsf_spork8,
+        else => .other,
+    };
+}
+
+pub fn defaultOmitFramePointer(t: *const std.Target, optimize: std.lang.Optimize) bool {
+    if (optimize == .small) {
+        // On x86, in most cases, keeping the frame pointer usually results in smaller binary size.
+        // This has to do with how instructions for memory access via the stack base pointer register
+        // (when keeping the frame pointer) are smaller than instructions for memory access via the
+        // stack pointer register (when omitting the frame pointer).
+        return !t.cpu.arch.isX86();
+    }
+    return false;
+}
+
+pub fn defaultUnwindTables(t: *const std.Target) std.lang.UnwindTables {
+    switch (t.cpu.arch) {
+        else => {},
+        // The old 32-bit x86 variant of SEH doesn't support tables.
+        .x86 => if (t.os.tag == .windows) return .none,
+        .nvptx, .nvptx64, .spirv32, .spirv64 => return .none,
+    }
+    return .async;
 }
 
 test {

@@ -298,6 +298,43 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
     }.impl);
 }
 
+test "File.stat on a File that is a named pipe returns Kind.named_pipe" {
+    // Creating pipes is Io.Threaded-specific
+    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var read_end: Io.File = undefined;
+    var write_end: Io.File = undefined;
+    switch (builtin.target.os.tag) {
+        .wasi => return error.SkipZigTest,
+        .windows => {
+            const pipe = try threaded.windowsCreatePipe(.{
+                .server = .{ .mode = .{ .IO = .SYNCHRONOUS_NONALERT } },
+                .client = .{ .mode = .{ .IO = .SYNCHRONOUS_NONALERT } },
+                .inbound = true,
+            });
+            read_end = .{ .handle = pipe[0], .flags = .{ .nonblocking = false } };
+            write_end = .{ .handle = pipe[1], .flags = .{ .nonblocking = false } };
+        },
+        else => {
+            const pipe = try std.Io.Threaded.pipe2(.{ .CLOEXEC = true });
+            read_end = .{ .handle = pipe[0], .flags = .{ .nonblocking = false } };
+            write_end = .{ .handle = pipe[1], .flags = .{ .nonblocking = false } };
+        },
+    }
+    defer {
+        read_end.close(io);
+        write_end.close(io);
+    }
+
+    try expectEqual(.named_pipe, (try read_end.stat(io)).kind);
+    try expectEqual(.named_pipe, (try write_end.stat(io)).kind);
+}
+
 test "Dir.statFile on a symlink" {
     const io = testing.io;
 
@@ -499,24 +536,24 @@ test "Dir.Iterator" {
 
     try tmp_dir.dir.createDir(io, "some_dir", .default_dir);
 
-    var arena = ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    var arena_instance = ArenaAllocator.init(testing.allocator);
+    defer arena_instance.deinit();
+    const arena = arena_instance.allocator();
 
-    var entries = std.array_list.Managed(Dir.Entry).init(allocator);
+    var entries: std.ArrayList(Dir.Entry) = .empty;
 
     // Create iterator.
     var iter = tmp_dir.dir.iterate();
     while (try iter.next(io)) |entry| {
         // We cannot just store `entry` as on Windows, we're re-using the name buffer
         // which means we'll actually share the `name` pointer between entries!
-        const name = try allocator.dupe(u8, entry.name);
-        try entries.append(Dir.Entry{ .name = name, .kind = entry.kind, .inode = 0 });
+        const name = try arena.dupe(u8, entry.name);
+        try entries.append(arena, Dir.Entry{ .name = name, .kind = entry.kind, .inode = 0 });
     }
 
     try expectEqual(@as(usize, 2), entries.items.len); // note that the Iterator skips '.' and '..'
-    try expect(contains(&entries, .{ .name = "some_file", .kind = .file, .inode = 0 }));
-    try expect(contains(&entries, .{ .name = "some_dir", .kind = .directory, .inode = 0 }));
+    try expect(contains(entries.items, .{ .name = "some_file", .kind = .file, .inode = 0 }));
+    try expect(contains(entries.items, .{ .name = "some_dir", .kind = .directory, .inode = 0 }));
 }
 
 test "Dir.Iterator many entries" {
@@ -529,30 +566,30 @@ test "Dir.Iterator many entries" {
     var i: usize = 0;
     var buf: [4]u8 = undefined; // Enough to store "1024".
     while (i < num) : (i += 1) {
-        const name = try std.fmt.bufPrint(&buf, "{}", .{i});
+        const name = try std.mem.print(&buf, "{}", .{i});
         const file = try tmp_dir.dir.createFile(io, name, .{});
         file.close(io);
     }
 
-    var arena = ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    var arena_instance = ArenaAllocator.init(testing.allocator);
+    defer arena_instance.deinit();
+    const arena = arena_instance.allocator();
 
-    var entries = std.array_list.Managed(Dir.Entry).init(allocator);
+    var entries: std.ArrayList(Dir.Entry) = .empty;
 
     // Create iterator.
     var iter = tmp_dir.dir.iterate();
     while (try iter.next(io)) |entry| {
         // We cannot just store `entry` as on Windows, we're re-using the name buffer
         // which means we'll actually share the `name` pointer between entries!
-        const name = try allocator.dupe(u8, entry.name);
-        try entries.append(.{ .name = name, .kind = entry.kind, .inode = 0 });
+        const name = try arena.dupe(u8, entry.name);
+        try entries.append(arena, .{ .name = name, .kind = entry.kind, .inode = 0 });
     }
 
     i = 0;
     while (i < num) : (i += 1) {
-        const name = try std.fmt.bufPrint(&buf, "{}", .{i});
-        try expect(contains(&entries, .{ .name = name, .kind = .file, .inode = 0 }));
+        const name = try std.mem.print(&buf, "{}", .{i});
+        try expect(contains(entries.items, .{ .name = name, .kind = .file, .inode = 0 }));
     }
 }
 
@@ -568,26 +605,26 @@ test "Dir.Iterator twice" {
 
     try tmp_dir.dir.createDir(io, "some_dir", .default_dir);
 
-    var arena = ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    var arena_instance = ArenaAllocator.init(testing.allocator);
+    defer arena_instance.deinit();
+    const arena = arena_instance.allocator();
 
     var i: u8 = 0;
     while (i < 2) : (i += 1) {
-        var entries = std.array_list.Managed(Dir.Entry).init(allocator);
+        var entries: std.ArrayList(Dir.Entry) = .empty;
 
         // Create iterator.
         var iter = tmp_dir.dir.iterate();
         while (try iter.next(io)) |entry| {
             // We cannot just store `entry` as on Windows, we're re-using the name buffer
             // which means we'll actually share the `name` pointer between entries!
-            const name = try allocator.dupe(u8, entry.name);
-            try entries.append(Dir.Entry{ .name = name, .kind = entry.kind, .inode = 0 });
+            const name = try arena.dupe(u8, entry.name);
+            try entries.append(arena, Dir.Entry{ .name = name, .kind = entry.kind, .inode = 0 });
         }
 
         try expectEqual(@as(usize, 2), entries.items.len); // note that the Iterator skips '.' and '..'
-        try expect(contains(&entries, .{ .name = "some_file", .kind = .file, .inode = 0 }));
-        try expect(contains(&entries, .{ .name = "some_dir", .kind = .directory, .inode = 0 }));
+        try expect(contains(entries.items, .{ .name = "some_file", .kind = .file, .inode = 0 }));
+        try expect(contains(entries.items, .{ .name = "some_dir", .kind = .directory, .inode = 0 }));
     }
 }
 
@@ -603,27 +640,27 @@ test "Dir.Iterator reset" {
 
     try tmp_dir.dir.createDir(io, "some_dir", .default_dir);
 
-    var arena = ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    var arena_instance = ArenaAllocator.init(testing.allocator);
+    defer arena_instance.deinit();
+    const arena = arena_instance.allocator();
 
     // Create iterator.
     var iter = tmp_dir.dir.iterate();
 
     var i: u8 = 0;
     while (i < 2) : (i += 1) {
-        var entries = std.array_list.Managed(Dir.Entry).init(allocator);
+        var entries: std.ArrayList(Dir.Entry) = .empty;
 
         while (try iter.next(io)) |entry| {
             // We cannot just store `entry` as on Windows, we're re-using the name buffer
             // which means we'll actually share the `name` pointer between entries!
-            const name = try allocator.dupe(u8, entry.name);
-            try entries.append(.{ .name = name, .kind = entry.kind, .inode = 0 });
+            const name = try arena.dupe(u8, entry.name);
+            try entries.append(arena, .{ .name = name, .kind = entry.kind, .inode = 0 });
         }
 
         try expectEqual(@as(usize, 2), entries.items.len); // note that the Iterator skips '.' and '..'
-        try expect(contains(&entries, .{ .name = "some_file", .kind = .file, .inode = 0 }));
-        try expect(contains(&entries, .{ .name = "some_dir", .kind = .directory, .inode = 0 }));
+        try expect(contains(entries.items, .{ .name = "some_file", .kind = .file, .inode = 0 }));
+        try expect(contains(entries.items, .{ .name = "some_dir", .kind = .directory, .inode = 0 }));
 
         iter.reader.reset();
     }
@@ -659,11 +696,10 @@ fn entryEql(lhs: Dir.Entry, rhs: Dir.Entry) bool {
     return mem.eql(u8, lhs.name, rhs.name) and lhs.kind == rhs.kind;
 }
 
-fn contains(entries: *const std.array_list.Managed(Dir.Entry), el: Dir.Entry) bool {
-    for (entries.items) |entry| {
-        if (entryEql(entry, el)) return true;
-    }
-    return false;
+fn contains(entries: []const Dir.Entry, el: Dir.Entry) bool {
+    return for (entries) |entry| {
+        if (entryEql(entry, el)) break true;
+    } else false;
 }
 
 test "Dir.realPath smoke test" {
@@ -890,14 +926,8 @@ test "file operations on directories" {
                 },
             }
 
-            if (native_os == .wasi and builtin.link_libc) {
-                // wasmtime unexpectedly succeeds here, see https://github.com/ziglang/zig/issues/20747
-                const handle = try ctx.dir.openFile(io, test_dir_name, .{ .mode = .read_write });
-                handle.close(io);
-            } else {
-                // Note: The `.mode = .read_write` is necessary to ensure the error occurs on all platforms.
-                try expectError(error.IsDir, ctx.dir.openFile(io, test_dir_name, .{ .mode = .read_write }));
-            }
+            // Note: The `.mode = .read_write` is necessary to ensure the error occurs on all platforms.
+            try expectError(error.IsDir, ctx.dir.openFile(io, test_dir_name, .{ .mode = .read_write }));
 
             {
                 const handle = try ctx.dir.openFile(io, test_dir_name, .{ .allow_directory = true, .mode = .read_only });
@@ -2534,7 +2564,7 @@ test "fchmodat smoke test" {
     });
     file.close(io);
 
-    if ((builtin.cpu.arch == .riscv32 or builtin.cpu.arch.isLoongArch()) and
+    if ((builtin.cpu.arch == .riscv32 or builtin.cpu.arch.isLoongarch()) and
         builtin.os.tag == .linux and !builtin.link_libc)
     {
         return error.SkipZigTest; // No `fstatat()`.
@@ -2765,7 +2795,7 @@ test "hard link with different directories" {
 }
 
 test "stat smoke test" {
-    if (native_os == .wasi and !builtin.link_libc) return error.SkipZigTest;
+    if (native_os == .wasi) return error.SkipZigTest;
 
     const io = testing.io;
 

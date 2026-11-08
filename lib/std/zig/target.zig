@@ -77,7 +77,6 @@ pub const available_libcs = [_]ArchOsAbi{
     .{ .arch = .mips64el, .os = .linux, .abi = .gnuabin32, .os_ver = .{ .major = 2, .minor = 6, .patch = 0 }, .glibc_triple = "mips64el-linux-gnu-n32" },
     .{ .arch = .mips64el, .os = .linux, .abi = .muslabi64, .os_ver = .{ .major = 2, .minor = 3, .patch = 48 } },
     .{ .arch = .mips64el, .os = .linux, .abi = .muslabin32, .os_ver = .{ .major = 2, .minor = 6, .patch = 0 } },
-    .{ .arch = .mips64el, .os = .openbsd, .abi = .none, .os_ver = .{ .major = 4, .minor = 7, .patch = 0 } },
     .{ .arch = .powerpc, .os = .linux, .abi = .musleabi, .os_ver = .{ .major = 1, .minor = 3, .patch = 45 } },
     .{ .arch = .powerpc, .os = .linux, .abi = .musleabihf, .os_ver = .{ .major = 1, .minor = 3, .patch = 45 } },
     .{ .arch = .powerpc, .os = .netbsd, .abi = .eabihf, .os_ver = .{ .major = 1, .minor = 4, .patch = 0 } },
@@ -103,7 +102,6 @@ pub const available_libcs = [_]ArchOsAbi{
     .{ .arch = .sparc64, .os = .linux, .abi = .gnu, .os_ver = .{ .major = 2, .minor = 1, .patch = 19 } },
     .{ .arch = .sparc64, .os = .netbsd, .abi = .none, .os_ver = .{ .major = 1, .minor = 4, .patch = 0 } },
     .{ .arch = .sparc64, .os = .openbsd, .abi = .none, .os_ver = .{ .major = 3, .minor = 0, .patch = 0 } },
-    .{ .arch = .wasm32, .os = .wasi, .abi = .musl },
     .{ .arch = .x86, .os = .freebsd, .abi = .none },
     .{ .arch = .x86, .os = .linux, .abi = .gnu, .glibc_triple = "i686-linux-gnu" },
     .{ .arch = .x86, .os = .linux, .abi = .musl },
@@ -241,7 +239,6 @@ pub fn muslArchName(arch: std.Target.Cpu.Arch, abi: std.Target.Abi) [:0]const u8
             .riscv32 => "riscv32",
             .riscv64 => "riscv64",
             .s390x => "s390x",
-            .wasm32, .wasm64 => "wasm",
             .x86 => "i386",
             .x86_64 => "x86_64",
             else => unreachable,
@@ -396,19 +393,6 @@ pub fn isLibCLibName(target: *const std.Target, name: []const u8) bool {
             return true;
         if (eqlIgnoreCase(ignore_case, name, "xnet"))
             return true;
-
-        if (target.os.tag == .wasi) {
-            if (eqlIgnoreCase(ignore_case, name, "setjmp"))
-                return true;
-            if (eqlIgnoreCase(ignore_case, name, "wasi-emulated-getpid"))
-                return true;
-            if (eqlIgnoreCase(ignore_case, name, "wasi-emulated-mman"))
-                return true;
-            if (eqlIgnoreCase(ignore_case, name, "wasi-emulated-process-clocks"))
-                return true;
-            if (eqlIgnoreCase(ignore_case, name, "wasi-emulated-signal"))
-                return true;
-        }
     }
 
     if (target.os.tag.isDarwin()) {
@@ -536,12 +520,12 @@ pub fn intAlignment(target: *const std.Target, bits: u16) u16 {
 }
 
 pub fn compilerRtFloatAbi(target: *const std.Target, bits: u16) std.Target.Abi.Float {
-    if (target.cpu.has(.x86, .soft_float)) return .soft;
+    if (target.cpu.arch.isX86() and target.abi.float() == .soft) return .soft;
     // Marks targets where clang does not even provide a usable C type.
     const no_c_type_available = .soft;
     switch (bits) {
         else => unreachable,
-        16 => if (target.cpu.arch.isMIPS() or target.cpu.arch.isPowerPC()) return no_c_type_available,
+        16 => if (target.cpu.arch.isMips() or target.cpu.arch.isPowerpc()) return no_c_type_available,
         32, 64 => {},
         80 => if (target.cTypeBitSize(.longdouble) != 80) return no_c_type_available,
         128 => {
@@ -550,6 +534,152 @@ pub fn compilerRtFloatAbi(target: *const std.Target, bits: u16) std.Target.Abi.F
         },
     }
     return .hard;
+}
+
+fn supportedCompatArch(host: *const std.Target, arch: std.Target.Cpu.Arch) bool {
+    // aarch64-freebsd and aarch64-linux can technically run 32-bit ARM binaries, but that depends
+    // on AArch32 support in the CPU. Since modern AArch64 CPUs have largely dropped this support,
+    // avoid reporting compatibility for 32-bit here since we'd just build a bunch of test binaries
+    // that never get run anyway. This added almost an hour's worth of useless work to aarch64-linux
+    // CI, for example.
+    //
+    // riscv64-linux and riscv64-netbsd similarly support 32-bit binaries. However, this requires a
+    // very recent kernel and for the kernel feature to be enabled. Additionally, contemporary
+    // RISC-V hardware is just too slow to justify building the 32-bit binaries.
+    return switch (host.os.tag) {
+        .linux => switch (host.cpu.arch) {
+            .mips64 => arch == .mips,
+            .mips64el => arch == .mipsel,
+            .powerpc64 => arch == .powerpc,
+            .sparc64 => arch == .sparc,
+            .x86_64 => arch == .x86,
+            else => false,
+        },
+        .netbsd => switch (host.cpu.arch) {
+            .sparc64 => arch == .sparc,
+            .x86_64 => arch == .x86,
+            else => false,
+        },
+        .windows => switch (host.cpu.arch) {
+            .x86_64 => arch == .x86,
+            else => false,
+        },
+        else => false,
+    };
+}
+
+/// Intended for test code to determine whether it makes sense to run a test for a particular target
+/// on the host. This is not an objective check; it is best-effort and also makes subjective
+/// judgements for some targets.
+pub fn isNative(query: *const std.Target.Query, target: *const std.Target, host: *const std.Target) bool {
+    if (query.isNative()) return true;
+
+    if (target.cpu.arch != host.cpu.arch and !supportedCompatArch(host, target.cpu.arch))
+        return false;
+
+    if (target.os.tag != host.os.tag)
+        return false;
+
+    // This check is really only necessary for the case where `host.cpu.arch.isAarch64()` and
+    // `target.cpu.arch.isArm()`. As they are wholly separate `std.Target` families with their own
+    // feature bits, the logic below would produce complete nonsense.
+    //
+    // This does mean that we aren't actually checking feature compatibility between these two
+    // families even though we should. That's not a problem currently, but in the future, we may
+    // need to add a special code path just for this specific case...
+    if (target.cpu.arch.family() != host.cpu.arch.family())
+        return true;
+
+    // Remove features that don't actually affect compatibility.
+    const irrelevant: std.Target.Cpu.Feature.Set = switch (host.cpu.arch) {
+        .x86_64 => std.Target.x86.featureSet(&.{
+            .@"64bit",
+            .false_deps_bls,
+            .false_deps_compress,
+            .false_deps_expand,
+            .false_deps_getmant,
+            .false_deps_lzcnt,
+            .false_deps_mulc,
+            .false_deps_mullq,
+            .false_deps_perm,
+            .false_deps_popcnt,
+            .false_deps_range,
+            .false_deps_tzcnt,
+            .fast_11bytenop,
+            .fast_15bytenop,
+            .fast_7bytenop,
+            .fast_bextr,
+            .fast_dpwssd,
+            .fast_gather,
+            .fast_hops,
+            .fast_imm16,
+            .fast_lzcnt,
+            .fast_movbe,
+            .fast_scalar_fsqrt,
+            .fast_scalar_shift_masks,
+            .fast_shld_rotate,
+            .fast_variable_crosslane_shuffle,
+            .fast_variable_perlane_shuffle,
+            .fast_vector_fsqrt,
+            .fast_vector_shift_masks,
+            .faster_shift_than_shuffle,
+            .no_bypass_delay,
+            .no_bypass_delay_blend,
+            .no_bypass_delay_mov,
+            .no_bypass_delay_shuffle,
+            .prefer_128_bit,
+            .prefer_256_bit,
+            .prefer_legacy_setcc,
+            .prefer_mask_registers,
+            .prefer_movmsk_over_vtest,
+            .prefer_ndd_mem,
+            .prefer_no_gather,
+            .prefer_no_scatter,
+            .slow_3ops_lea,
+            .slow_incdec,
+            .slow_indirect_call,
+            .slow_lea,
+            .slow_pmaddwd,
+            .slow_pmulld,
+            .slow_pmullq,
+            .slow_shld,
+            .slow_two_mem_ops,
+            .slow_unaligned_mem_16,
+            .slow_unaligned_mem_32,
+        }),
+        .aarch64, .aarch64_be => std.Target.aarch64.featureSet(&.{
+            .addr_lsl_slow_14,
+            .align_cmp_csel_pairs,
+            .alu_lsl_fast,
+            .avoid_ldapur,
+            .disable_fast_inc_vl,
+            .fast_ld1_single,
+            .fuse_address,
+            .fuse_addsub_2reg_const1,
+            .fuse_adrp_add,
+            .fuse_aes,
+            .fuse_arith_logic,
+            .fuse_crypto_eor,
+            .fuse_csel,
+            .fuse_cset,
+            .fuse_fcsel,
+            .fuse_literals,
+            .has_limited_64bit_vector_mul_bandwidth,
+            .predictable_select_expensive,
+            .slow_misaligned_128store,
+            .slow_paired_128,
+            .slow_strqro_store,
+            .use_wzr_to_vec_move,
+        }),
+        else => .empty,
+    };
+    var set = target.cpu.features;
+    set.removeFeatureSet(irrelevant);
+
+    if (!host.cpu.features.isSuperSetOf(set))
+        return false;
+
+    return true;
 }
 
 const std = @import("std");

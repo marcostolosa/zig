@@ -1,6 +1,5 @@
 const std = @import("../std.zig");
 const assert = std.debug.assert;
-const utf8Encode = std.unicode.utf8Encode;
 const Writer = std.Io.Writer;
 
 pub const ParseError = error{
@@ -39,6 +38,11 @@ pub const Error = union(enum) {
     invalid_character: usize,
     /// `''`. Not returned for string literals.
     empty_char_literal,
+    /// The input ended before the end of the literal.
+    end_of_input: usize,
+    /// The literal ended before the end of the input. There was an otherwise successful
+    /// parse of a prefix of the input of length given by this payload written to the writer.
+    end_of_literal: usize,
 
     const FormatMessage = struct {
         err: Error,
@@ -63,7 +67,7 @@ pub const Error = union(enum) {
                 .{self.raw_string[bad_index]},
             ),
             .invalid_unicode_codepoint => try writer.writeAll(
-                "unicode escape does not correspond to a valid unicode scalar value",
+                "unicode escape does not correspond to a unicode code point",
             ),
             .expected_lbrace => |bad_index| try writer.print(
                 "expected '{{', found '{c}'",
@@ -83,6 +87,12 @@ pub const Error = union(enum) {
             ),
             .empty_char_literal => try writer.writeAll(
                 "empty character literal",
+            ),
+            .end_of_input => try writer.writeAll(
+                "expected end of string literal",
+            ),
+            .end_of_literal => try writer.writeAll(
+                "unexpected end of string literal",
             ),
         }
     }
@@ -105,6 +115,8 @@ pub const Error = union(enum) {
             .expected_rbrace,
             .expected_single_quote,
             .invalid_character,
+            .end_of_input,
+            .end_of_literal,
             => |n| n,
             .empty_char_literal => 0,
         };
@@ -334,19 +346,22 @@ pub fn parseWrite(writer: *Writer, bytes: []const u8) Writer.Error!Result {
                     .success => |codepoint| {
                         if (bytes[escape_char_index] == 'u') {
                             var buf: [4]u8 = undefined;
-                            const len = utf8Encode(codepoint, &buf) catch {
-                                return .{ .failure = .{ .invalid_unicode_codepoint = escape_char_index + 1 } };
+                            const len = std.unicode.wtf8Encode(codepoint, &buf) catch |err| switch (err) {
+                                error.CodepointTooLarge => unreachable, // Checked in `parseEscapeSequence`.
                             };
                             try writer.writeAll(buf[0..len]);
                         } else {
                             try writer.writeByte(@as(u8, @intCast(codepoint)));
+                            if (index == bytes.len) return .{ .failure = .{ .end_of_input = index } };
                         }
                     },
                     .failure => |err| return .{ .failure = err },
                 }
             },
             '\n' => return .{ .failure = .{ .invalid_character = index } },
-            '"' => return .success,
+            '"' => return if (index < bytes.len - 1) .{
+                .failure = .{ .end_of_literal = index },
+            } else .success,
             else => {
                 try writer.writeByte(b);
                 index += 1;
@@ -383,6 +398,7 @@ test parseAlloc {
     try expect(eql(u8, "\x12foo", try parseAlloc(alloc, "\"\\x12foo\"")));
     try expect(eql(u8, "bytes\u{1234}foo", try parseAlloc(alloc, "\"bytes\\u{1234}foo\"")));
     try expect(eql(u8, "foo", try parseAlloc(alloc, "\"foo\"")));
-    try expect(eql(u8, "foo", try parseAlloc(alloc, "\"f\x6f\x6f\"")));
-    try expect(eql(u8, "f💯", try parseAlloc(alloc, "\"f\u{1f4af}\"")));
+    try expect(eql(u8, "foo", try parseAlloc(alloc, "\"f\\x6f\\x6f\"")));
+    try expect(eql(u8, "f💯", try parseAlloc(alloc, "\"f\\u{1f4af}\"")));
+    try expect(eql(u8, "\xed\xa0\x80", try parseAlloc(alloc, "\"\\u{d800}\"")));
 }

@@ -7,7 +7,7 @@ set -e
 
 TARGET="aarch64-linux-musl"
 MCPU="baseline"
-CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
+CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.18.0-dev.92+1e1964473"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
@@ -19,48 +19,37 @@ export PATH="$HOME/local/bin:$PATH"
 export ZIG_GLOBAL_CACHE_DIR="$PWD/zig-global-cache"
 export ZIG_LOCAL_CACHE_DIR="$PWD/zig-local-cache"
 
-mkdir build-debug
+mkdir -p build-debug
 cd build-debug
-
-export CC="$ZIG cc -target $TARGET -mcpu=$MCPU"
-export CXX="$ZIG c++ -target $TARGET -mcpu=$MCPU"
 
 cmake .. \
   -DCMAKE_INSTALL_PREFIX="stage3-debug" \
   -DCMAKE_PREFIX_PATH="$PREFIX" \
   -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_COMPILER="$ZIG;cc;-target;$TARGET;-mcpu=$MCPU" \
+  -DCMAKE_CXX_COMPILER="$ZIG;c++;-target;$TARGET;-mcpu=$MCPU" \
   -DZIG_TARGET_TRIPLE="$TARGET" \
   -DZIG_TARGET_MCPU="$MCPU" \
   -DZIG_STATIC=ON \
   -DZIG_NO_LIB=ON \
   -GNinja
 
-# Now cmake will use zig as the C/C++ compiler. We reset the environment variables
-# so that installation and testing do not get affected by them.
-unset CC
-unset CXX
-
 ninja install
 
 # Must be done after zig cc is finished.
 export ZIG_LIB_DIR="$PWD/../lib"
 
-# No -fqemu and -fwasmtime here as they're covered by the x86_64-linux scripts.
-stage3-debug/bin/zig build test docs \
-  --maxrss ${ZSF_MAX_RSS:-0} \
-  -Dstatic-llvm \
-  -Dskip-non-native \
-  -Dtarget=native-native-musl \
-  --search-prefix "$PREFIX" \
-  -Denable-superhtml \
-  --test-timeout 3m
-
-stage3-debug/bin/zig build \
+stage3-debug/bin/zig build install test docs \
+  --maxrss "${ZSF_MAX_RSS:-0}" \
   --prefix stage4-debug \
+  --search-prefix "$PREFIX" \
+  --test-timeout 3m \
+  -Dversion-string="$(stage3-debug/bin/zig version)" \
+  -Dtarget=$TARGET \
+  -Dcpu=$MCPU \
+  -Duse-zig-libcxx \
   -Denable-llvm \
   -Dno-lib \
-  -Dtarget=$TARGET \
-  -Duse-zig-libcxx \
-  -Dversion-string="$(stage3-debug/bin/zig version)"
+  -Dskip-non-native
 
 stage4-debug/bin/zig test ../test/behavior.zig

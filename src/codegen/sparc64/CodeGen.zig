@@ -44,6 +44,7 @@ pub fn legalizeFeatures(_: *const std.Target) ?*const Air.Legalize.Features {
     return comptime &.initMany(&.{
         .expand_array_splat,
         .expand_array_to_vector,
+        .expand_loop_switch_br,
     });
 }
 
@@ -66,7 +67,7 @@ arg_index: usize,
 stack_align: Alignment,
 
 /// MIR Instructions
-mir_instructions: std.MultiArrayList(Mir.Inst) = .{},
+mir_instructions: std.MultiArrayList(Mir.Inst) = .empty,
 /// MIR extra data
 mir_extra: std.ArrayList(u32) = .empty,
 
@@ -88,7 +89,8 @@ reused_operands: std.bit_set.Static(Air.Liveness.bpi - 1) = undefined,
 /// within different branches. Special consideration is needed when a branch
 /// joins with its parent, to make sure all instructions have the same MCValue
 /// across each runtime branch upon joining.
-branch_stack: *std.array_list.Managed(Branch),
+/// Uses `gpa` as its allocator
+branch_stack: *std.ArrayList(Branch),
 
 // Key is the block instruction
 blocks: std.AutoHashMapUnmanaged(Air.Inst.Index, BlockData) = .empty,
@@ -275,13 +277,13 @@ pub fn generate(
     const file_scope = zcu.navFileScope(func.owner_nav);
     const target = &file_scope.mod.?.resolved_target.result;
 
-    var branch_stack = std.array_list.Managed(Branch).init(gpa);
+    var branch_stack: std.ArrayList(Branch) = .empty;
     defer {
         assert(branch_stack.items.len == 1);
         branch_stack.items[0].deinit(gpa);
-        branch_stack.deinit();
+        branch_stack.deinit(gpa);
     }
-    try branch_stack.append(.{});
+    try branch_stack.append(gpa, .{});
 
     var function: Self = .{
         .gpa = gpa,
@@ -644,7 +646,7 @@ fn genBody(self: *Self, body: []const Air.Inst.Index) InnerError!void {
             .field_parent_ptr => @panic("TODO try self.airFieldParentPtr(inst)"),
 
             .switch_br       => try self.airSwitch(inst),
-            .loop_switch_br  => return self.fail("TODO implement `loop_switch_br`", .{}),
+            .loop_switch_br  => unreachable, // legalize .expand_loop_switch_br
             .slice_ptr       => try self.airSlicePtr(inst),
             .slice_len       => try self.airSliceLen(inst),
 
@@ -985,7 +987,7 @@ fn airArg(self: *Self, inst: Air.Inst.Index) InnerError!void {
         switch (self.args[arg_index]) {
             .stack_offset => |off| {
                 const abi_size = math.cast(u32, ty.abiSize(zcu)) orelse {
-                    return self.fail("type '{f}' too big to fit into stack frame", .{ty.fmt(pt)});
+                    return self.fail("type '{f}' too big to fit into stack frame", .{ty.fmt(zcu)});
                 };
                 const offset = off + abi_size;
                 break :blk .{ .stack_offset = offset };
@@ -1469,7 +1471,7 @@ fn airCondBr(self: *Self, inst: Air.Inst.Index) !void {
     const parent_registers = self.register_manager.registers;
     const parent_condition_flags_inst = self.condition_flags_inst;
 
-    try self.branch_stack.append(.{});
+    try self.branch_stack.append(self.gpa, .{});
     errdefer {
         _ = self.branch_stack.pop().?;
     }
@@ -1490,7 +1492,7 @@ fn airCondBr(self: *Self, inst: Air.Inst.Index) !void {
 
     self.stack.deinit(self.gpa);
     self.stack = parent_stack;
-    parent_stack = .{};
+    parent_stack = .empty;
 
     self.next_stack_offset = parent_next_stack_offset;
     self.register_manager.free_registers = parent_free_registers;
@@ -2722,7 +2724,7 @@ fn allocMemPtr(self: *Self, inst: Air.Inst.Index) !u32 {
     }
 
     const abi_size = math.cast(u32, elem_ty.abiSize(zcu)) orelse {
-        return self.fail("type '{f}' too big to fit into stack frame", .{elem_ty.fmt(pt)});
+        return self.fail("type '{f}' too big to fit into stack frame", .{elem_ty.fmt(zcu)});
     };
     // TODO swap this for inst.ty.ptrAlign
     const abi_align = elem_ty.abiAlignment(zcu);
@@ -2734,7 +2736,7 @@ fn allocRegOrMem(self: *Self, inst: Air.Inst.Index, reg_ok: bool) !MCValue {
     const zcu = pt.zcu;
     const elem_ty = self.typeOfIndex(inst);
     const abi_size = math.cast(u32, elem_ty.abiSize(zcu)) orelse {
-        return self.fail("type '{f}' too big to fit into stack frame", .{elem_ty.fmt(pt)});
+        return self.fail("type '{f}' too big to fit into stack frame", .{elem_ty.fmt(zcu)});
     };
     const abi_align = elem_ty.abiAlignment(zcu);
     self.stack_align = self.stack_align.max(abi_align);
@@ -3450,7 +3452,7 @@ fn errUnionPayload(self: *Self, error_union_mcv: MCValue, error_union_ty: Type) 
     }
 }
 
-fn fail(self: *Self, comptime format: []const u8, args: anytype) error{ OutOfMemory, AlreadyReported } {
+fn fail(self: *Self, comptime format: []const u8, args: anytype) codegen.Error {
     @branchHint(.cold);
     const zcu = self.pt.zcu;
     const func = zcu.funcInfo(self.func_index);
@@ -3458,7 +3460,7 @@ fn fail(self: *Self, comptime format: []const u8, args: anytype) error{ OutOfMem
     return zcu.codegenFailMsg(func.owner_nav, msg);
 }
 
-fn failMsg(self: *Self, msg: *ErrorMsg) error{ OutOfMemory, AlreadyReported } {
+fn failMsg(self: *Self, msg: *ErrorMsg) codegen.Error {
     @branchHint(.cold);
     const zcu = self.pt.zcu;
     const func = zcu.funcInfo(self.func_index);
@@ -3475,11 +3477,11 @@ fn finishAirBookkeeping(self: *Self) void {
 fn finishAir(self: *Self, inst: Air.Inst.Index, result: MCValue, operands: [Air.Liveness.bpi - 1]Air.Inst.Ref) void {
     const tomb_bits = self.liveness.getTombBits(inst);
     for (0.., operands) |op_index, op| {
-        if (tomb_bits & @as(Air.Liveness.Bpi, 1) << @intCast(op_index) == 0) continue;
+        if (tomb_bits & (@as(Air.Liveness.Bpi, 1) << @intCast(op_index)) == 0) continue;
         if (self.reused_operands.isSet(op_index)) continue;
         self.processDeath(op.toIndexAllowNone() orelse continue);
     }
-    if (tomb_bits & 1 << (Air.Liveness.bpi - 1) == 0) {
+    if (tomb_bits & (1 << (Air.Liveness.bpi - 1)) == 0) {
         log.debug("%{d} => {}", .{ inst, result });
         const branch = &self.branch_stack.items[self.branch_stack.items.len - 1];
         branch.inst_table.putAssumeCapacityNoClobber(inst, result);

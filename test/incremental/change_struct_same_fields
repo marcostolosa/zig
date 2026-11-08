@@ -1,5 +1,9 @@
-#update=initial version
-#file=main.zig
+#zig build-exe {
+--name test
+-Mroot=test.zig
+#}
+
+#write test.zig {
 const S = extern struct { x: u8, y: u8 };
 pub fn main() !void {
     const val: S = .{ .x = 100, .y = 200 };
@@ -14,10 +18,13 @@ fn foo(val: *const S) !void {
 }
 const std = @import("std");
 const io = std.Io.Threaded.global_single_threaded.io();
-#expect_stdout="100 200\n"
+#}
+#update
+#check stdout {
+100 200
+#}
 
-#update=change struct layout
-#file=main.zig
+#write test.zig {
 const S = extern struct { x: u32, y: u32 };
 pub fn main() !void {
     const val: S = .{ .x = 100, .y = 200 };
@@ -32,10 +39,13 @@ fn foo(val: *const S) !void {
 }
 const std = @import("std");
 const io = std.Io.Threaded.global_single_threaded.io();
-#expect_stdout="100 200\n"
+#}
+#update "change struct layout"
+#check stdout {
+100 200
+#}
 
-#update=change values
-#file=main.zig
+#write test.zig {
 const S = extern struct { x: u32, y: u32 };
 pub fn main() !void {
     const val: S = .{ .x = 1234, .y = 5678 };
@@ -50,4 +60,8 @@ fn foo(val: *const S) !void {
 }
 const std = @import("std");
 const io = std.Io.Threaded.global_single_threaded.io();
-#expect_stdout="1234 5678\n"
+#}
+#update "change values"
+#check stdout {
+1234 5678
+#}

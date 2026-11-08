@@ -48,7 +48,7 @@ fn logFn(
 ) void {
     const prefix = if (scope == .default) "" else @tagName(scope) ++ ": ";
     var buf: [500]u8 = undefined;
-    const line = std.fmt.bufPrint(&buf, prefix ++ format, args) catch l: {
+    const line = std.mem.print(&buf, prefix ++ format, args) catch l: {
         buf[buf.len - 3 ..][0..3].* = "...".*;
         break :l &buf;
     };
@@ -97,7 +97,7 @@ export fn query_exec(ignore_case: bool) [*]Decl.Index {
 const max_matched_items = 1000;
 
 fn query_exec_fallible(query: []const u8, ignore_case: bool) !void {
-    const Score = packed struct(u32) {
+    const Score = bitpack struct(u32) {
         points: u16,
         segments: u16,
     };
@@ -212,7 +212,7 @@ fn query_exec_fallible(query: []const u8, ignore_case: bool) !void {
 const String = Slice(u8);
 
 fn Slice(T: type) type {
-    return packed struct(u64) {
+    return bitpack struct(u64) {
         ptr: u32,
         len: u32,
 
@@ -225,7 +225,7 @@ fn Slice(T: type) type {
     };
 }
 
-const ErrorIdentifier = packed struct(u64) {
+const ErrorIdentifier = bitpack struct(u64) {
     token_index: Ast.TokenIndex,
     decl_index: Decl.Index,
 

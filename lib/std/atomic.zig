@@ -160,6 +160,8 @@ test Value {
 }
 
 test "Value.swap" {
+    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
+
     var x = Value(usize).init(5);
     try testing.expectEqual(@as(usize, 5), x.swap(10, .seq_cst));
     try testing.expectEqual(@as(usize, 10), x.load(.seq_cst));
@@ -358,6 +360,7 @@ pub inline fn spinLoopHint() void {
         // pipelining/power resources
         // https://software.intel.com/content/www/us/en/develop/articles/benefitting-power-and-performance-sleep-loops.html
         .x86,
+        .x86c16,
         .x86_64,
         => asm volatile ("pause"),
 
@@ -413,7 +416,7 @@ pub inline fn spinLoopHint() void {
 
         .sparc,
         .sparc64,
-        => if (comptime builtin.cpu.hasAny(.sparc, &.{ .v8plus, .v9 })) {
+        => if (comptime builtin.cpu.has(.sparc, .v9)) {
             asm volatile ("rd %%ccr, %%g0");
         },
 

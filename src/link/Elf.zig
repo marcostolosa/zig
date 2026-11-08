@@ -22,7 +22,7 @@ ptr_width: PtrWidth,
 
 /// A list of all input files.
 /// First index is a special "null file". Order is otherwise not observed.
-files: std.MultiArrayList(File.Entry) = .{},
+files: std.MultiArrayList(File.Entry) = .empty,
 /// Long-lived list of all file descriptors.
 /// We store them globally rather than per actual File so that we can re-use
 /// one file handle per every object file within an archive.
@@ -33,7 +33,7 @@ objects: std.ArrayList(File.Index) = .empty,
 shared_objects: std.array_hash_map.String(File.Index) = .empty,
 
 /// List of all output sections and their associated metadata.
-sections: std.MultiArrayList(Section) = .{},
+sections: std.MultiArrayList(Section) = .empty,
 /// File offset into the shdr table.
 shdr_table_offset: ?u64 = null,
 
@@ -463,21 +463,21 @@ pub fn deinit(self: *Elf) void {
     self.dump_argv_list.deinit(gpa);
 }
 
-pub fn getNavVAddr(self: *Elf, pt: Zcu.PerThread, nav_index: InternPool.Nav.Index, reloc_info: link.File.RelocInfo) !u64 {
-    return self.zigObjectPtr().?.getNavVAddr(self, pt, nav_index, reloc_info);
+pub fn navSymbol(self: *Elf, nav: InternPool.Nav.Index) link.Error!link.File.SymbolId {
+    return self.zigObjectPtr().?.navSymbol(self, nav);
 }
 
-pub fn lowerUav(
+pub fn relocSymAddr(self: *Elf, reloc_info: link.File.RelocInfo) !void {
+    return self.zigObjectPtr().?.relocSymAddr(self, reloc_info);
+}
+
+pub fn uavSymbol(
     self: *Elf,
     pt: Zcu.PerThread,
     uav: InternPool.Index,
     explicit_alignment: InternPool.Alignment,
 ) !link.File.SymbolId {
-    return self.zigObjectPtr().?.lowerUav(self, pt, uav, explicit_alignment);
-}
-
-pub fn getUavVAddr(self: *Elf, uav: InternPool.Index, reloc_info: link.File.RelocInfo) !u64 {
-    return self.zigObjectPtr().?.getUavVAddr(self, uav, reloc_info);
+    return self.zigObjectPtr().?.uavSymbol(self, pt, uav, explicit_alignment);
 }
 
 /// Returns end pos of collision, if any.
@@ -722,7 +722,7 @@ pub fn loadInput(self: *Elf, input: link.Input) !void {
         const argv = &self.dump_argv_list;
         switch (input) {
             .res => unreachable,
-            .dso_exact => |dso_exact| try argv.appendSlice(gpa, &.{ "-l", dso_exact.name }),
+            .tbd => unreachable,
             .object, .archive => |obj| try argv.append(gpa, try obj.path.toString(comp.arena)),
             .dso => |dso| try argv.append(gpa, try dso.path.toString(comp.arena)),
         }
@@ -730,14 +730,14 @@ pub fn loadInput(self: *Elf, input: link.Input) !void {
 
     switch (input) {
         .res => unreachable,
-        .dso_exact => @panic("TODO"),
+        .tbd => unreachable,
         .object => |obj| try parseObject(self, obj),
         .archive => |obj| if (self.base.isStaticLib()) {
             // Ignore static library inputs when generating a static library.
         } else {
             try parseArchive(gpa, io, diags, &self.file_handles, &self.files, target, debug_fmt_strip, default_sym_version, &self.objects, obj);
         },
-        .dso => |dso| try parseDso(gpa, io, diags, dso, &self.shared_objects, &self.files, target),
+        .dso => |dso| try parseDso(gpa, comp.arena, io, diags, dso, &self.shared_objects, &self.files, target),
     }
 }
 
@@ -860,9 +860,7 @@ fn flushInner(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id) !void {
 
     // Dump the state for easy debugging.
     // State can be dumped via `--debug-log link_state`.
-    if (build_options.enable_logging) {
-        state_log.debug("{f}", .{self.dumpState()});
-    }
+    state_log.debug("{f}", .{self.dumpState()});
 
     // Beyond this point, everything has been allocated a virtual address and we can resolve
     // the relocations, and commit objects to file.
@@ -874,9 +872,9 @@ fn flushInner(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id) !void {
     self.rela_plt.clearRetainingCapacity();
 
     if (self.zigObjectPtr()) |zo| {
-        var undefs: std.array_hash_map.Auto(SymbolResolver.Index, std.array_list.Managed(Ref)) = .empty;
+        var undefs: std.array_hash_map.Auto(SymbolResolver.Index, std.ArrayList(Ref)) = .empty;
         defer {
-            for (undefs.values()) |*refs| refs.deinit();
+            for (undefs.values()) |*refs| refs.deinit(gpa);
             undefs.deinit(gpa);
         }
 
@@ -1108,6 +1106,7 @@ fn parseArchive(
 
 fn parseDso(
     gpa: Allocator,
+    arena: Allocator,
     io: Io,
     diags: *Diags,
     dso: link.Input.Dso,
@@ -1120,11 +1119,16 @@ fn parseDso(
 
     const handle = dso.file;
 
-    const stat = Stat.fromFs(try handle.stat(io));
+    const stat: Stat = .init(try handle.stat(io));
     var header = try SharedObject.parseHeader(gpa, io, diags, dso.path, handle, stat, target);
     defer header.deinit(gpa);
 
-    const soname = header.soname() orelse dso.path.basename();
+    const fallback_soname: []const u8 = switch (dso.fallback_soname) {
+        .full_path => try dso.path.toString(arena),
+        .basename => fs.path.basename(dso.path.sub_path),
+    };
+
+    const soname = header.soname() orelse fallback_soname;
 
     const gop = try shared_objects.getOrPut(gpa, soname);
     if (gop.found_existing) return;
@@ -1156,6 +1160,7 @@ fn parseDso(
             .symbols_extra = .empty,
             .symbols_resolver = .empty,
             .output_symtab_ctx = .{},
+            .fallback_soname = fallback_soname,
         },
     });
     const so = fileLookup(files.*, index, null).?.shared_object;
@@ -1300,9 +1305,9 @@ fn scanRelocs(self: *Elf) !void {
     const gpa = self.base.comp.gpa;
     const shared_objects = self.shared_objects.values();
 
-    var undefs: std.array_hash_map.Auto(SymbolResolver.Index, std.array_list.Managed(Ref)) = .empty;
+    var undefs: std.array_hash_map.Auto(SymbolResolver.Index, std.ArrayList(Ref)) = .empty;
     defer {
-        for (undefs.values()) |*refs| refs.deinit();
+        for (undefs.values()) |*refs| refs.deinit(gpa);
         undefs.deinit(gpa);
     }
 
@@ -1533,14 +1538,11 @@ pub fn writeElfHeader(self: *Elf) !void {
     hdr_buf[index] = @backingInt(@as(elf.OSABI, switch (target.cpu.arch) {
         .amdgcn => switch (target.os.tag) {
             .amdhsa => .AMDGPU_HSA,
-            .amdpal => .AMDGPU_PAL,
-            .mesa3d => .AMDGPU_MESA3D,
             else => .NONE,
         },
         .msp430 => .STANDALONE,
         else => switch (target.os.tag) {
             .freebsd, .ps4 => .FREEBSD,
-            .hermit => .STANDALONE,
             .illumos => .SOLARIS,
             .openbsd => .OPENBSD,
             else => .NONE,
@@ -1677,9 +1679,7 @@ pub fn updateContainerType(
     ty: InternPool.Index,
     success: bool,
 ) link.Error!void {
-    return self.zigObjectPtr().?.updateContainerType(pt, ty, success) catch |err| switch (err) {
-        error.OutOfMemory => |e| return e,
-    };
+    try self.zigObjectPtr().?.updateContainerType(pt, ty, success);
 }
 
 pub fn updateExports(
@@ -1690,8 +1690,8 @@ pub fn updateExports(
     return self.zigObjectPtr().?.updateExports(self, pt, export_indices);
 }
 
-pub fn updateLineNumber(self: *Elf, pt: Zcu.PerThread, ti_id: InternPool.TrackedInst.Index) link.Error!void {
-    return self.zigObjectPtr().?.updateLineNumber(pt, ti_id);
+pub fn updateLineNumber(self: *Elf, pt: Zcu.PerThread, inst: InternPool.TrackedInst.Index, line: u32) link.Error!void {
+    return self.zigObjectPtr().?.updateLineNumber(pt, inst, line);
 }
 
 fn checkDuplicates(self: *Elf) !void {
@@ -1794,14 +1794,14 @@ pub fn updateMergeSectionSizes(self: *Elf) !void {
 
 pub fn writeMergeSections(self: *Elf) !void {
     const gpa = self.base.comp.gpa;
-    var buffer = std.array_list.Managed(u8).init(gpa);
-    defer buffer.deinit();
+    var buffer: std.ArrayList(u8) = .empty;
+    defer buffer.deinit(gpa);
 
     for (self.merge_sections.items) |*msec| {
         const shdr = self.sections.items(.shdr)[msec.output_section_index];
         const fileoff = try self.cast(usize, msec.value + shdr.sh_offset);
         const size = try self.cast(usize, msec.size);
-        try buffer.ensureTotalCapacity(size);
+        try buffer.ensureTotalCapacity(gpa, size);
         buffer.appendNTimesAssumeCapacity(0, size);
 
         for (msec.finalized_subsections.items) |msub_index| {
@@ -2168,9 +2168,8 @@ fn sortInitFini(self: *Elf) !void {
         }
         if (!is_init_fini and !is_ctor_dtor) continue;
 
-        var entries = std.array_list.Managed(Entry).init(gpa);
-        try entries.ensureTotalCapacityPrecise(atom_list.atoms.keys().len);
-        defer entries.deinit();
+        var entries: std.ArrayList(Entry) = try .initCapacity(gpa, atom_list.atoms.keys().len);
+        defer entries.deinit(gpa);
 
         for (atom_list.atoms.keys()) |ref| {
             const atom_ptr = self.atom(ref).?;
@@ -2725,21 +2724,21 @@ pub fn allocateAllocSections(self: *Elf) !void {
     // virtual and file offsets. However, the simple one will do for one
     // as we are more interested in quick turnaround and compatibility
     // with `findFreeSpace` mechanics than anything else.
-    const Cover = std.array_list.Managed(u32);
+    const Cover = std.ArrayList(u32);
     const gpa = self.base.comp.gpa;
     var covers: [max_number_of_object_segments]Cover = undefined;
     for (&covers) |*cover| {
-        cover.* = Cover.init(gpa);
+        cover.* = .empty;
     }
     defer for (&covers) |*cover| {
-        cover.deinit();
+        cover.deinit(gpa);
     };
 
     for (slice.items(.shdr), 0..) |shdr, shndx| {
         if (shdr.sh_type == elf.SHT_NULL) continue;
         if (shdr.sh_flags & elf.SHF_ALLOC == 0) continue;
         const flags = shdrToPhdrFlags(shdr.sh_flags);
-        try covers[flags - 1].append(@intCast(shndx));
+        try covers[flags - 1].append(gpa, @intCast(shndx));
     }
 
     // Now we can proceed with allocating the sections in virtual memory.
@@ -2941,9 +2940,9 @@ fn allocateSpecialPhdrs(self: *Elf) void {
 fn writeAtoms(self: *Elf) !void {
     const gpa = self.base.comp.gpa;
 
-    var undefs: std.array_hash_map.Auto(SymbolResolver.Index, std.array_list.Managed(Ref)) = .empty;
+    var undefs: std.array_hash_map.Auto(SymbolResolver.Index, std.ArrayList(Ref)) = .empty;
     defer {
-        for (undefs.values()) |*refs| refs.deinit();
+        for (undefs.values()) |*refs| refs.deinit(gpa);
         undefs.deinit(gpa);
     }
 
@@ -2990,9 +2989,8 @@ pub fn updateSymtabSize(self: *Elf) !void {
     const gpa = self.base.comp.gpa;
     const shared_objects = self.shared_objects.values();
 
-    var files = std.array_list.Managed(File.Index).init(gpa);
-    defer files.deinit();
-    try files.ensureTotalCapacityPrecise(self.objects.items.len + shared_objects.len + 2);
+    var files: std.ArrayList(File.Index) = try .initCapacity(gpa, self.objects.items.len + shared_objects.len + 2);
+    defer files.deinit(gpa);
 
     if (self.zig_object_index) |index| files.appendAssumeCapacity(index);
     for (self.objects.items) |index| files.appendAssumeCapacity(index);
@@ -4409,10 +4407,9 @@ const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const Hash = std.hash.Wyhash;
 const Path = std.Build.Cache.Path;
-const Stat = std.Build.Cache.File.Stat;
+const Stat = std.Build.Cache.Manifest.Stat;
 
 const codegen = @import("../codegen.zig");
-const dev = @import("../dev.zig");
 const eh_frame = @import("Elf/eh_frame.zig");
 const gc = @import("Elf/gc.zig");
 const musl = @import("../libs/musl.zig");

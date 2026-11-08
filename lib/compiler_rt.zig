@@ -23,26 +23,14 @@ else
     unreachable;
 
 pub inline fn symbol(comptime func: *const anyopaque, comptime name: []const u8) void {
-    @export(func, .{ .name = name, .linkage = linkage, .visibility = visibility });
+    // The function shouldn't be exported at all when testing compiler_rt.
+    // Instead, we just need to reference the function so that it's compiled.
+    if (!builtin.is_test) @export(func, .{
+        .name = name,
+        .linkage = if (ofmt_c) .strong else .weak,
+        .visibility = .hidden,
+    });
 }
-
-/// For now, we prefer weak linkage because some of the routines we implement here may also be
-/// provided by system/dynamic libc. Eventually we should be more disciplined about this on a
-/// per-symbol, per-target basis: https://github.com/ziglang/zig/issues/11883
-pub const linkage: std.builtin.GlobalLinkage = if (builtin.is_test)
-    .internal
-else if (ofmt_c)
-    .strong
-else
-    .weak;
-
-/// Determines the symbol's visibility to other objects.
-/// For WebAssembly this allows the symbol to be resolved to other modules, but will not
-/// export it to the host runtime.
-pub const visibility: std.builtin.SymbolVisibility = if (linkage == .internal or builtin.link_mode == .dynamic)
-    .default
-else
-    .hidden;
 
 pub const test_safety = switch (builtin.zig_backend) {
     .stage2_aarch64 => false,
@@ -161,7 +149,7 @@ comptime {
         _ = @import("compiler_rt/stack_probe.zig");
 
         // macOS has these functions inside libSystem.
-        if (builtin.cpu.arch.isAARCH64() and !builtin.os.tag.isDarwin()) {
+        if (builtin.cpu.arch.isAarch64() and !builtin.os.tag.isDarwin()) {
             if (builtin.zig_backend != .stage2_aarch64) _ = @import("compiler_rt/aarch64_outline_atomics.zig");
         }
 
@@ -174,7 +162,11 @@ comptime {
         symbol(&bcmp, "bcmp");
         _ = @import("compiler_rt/ssp.zig");
         symbol(&strlen, "strlen");
+        symbol(&wcslen, "wcslen");
     }
+
+    _ = @import("compiler_rt/elf.zig");
+    if (!ofmt_c) _ = @import("compiler_rt/fmv.zig");
 
     // Temporarily used for uefi until https://github.com/ziglang/zig/issues/21630 is addressed.
     if (!builtin.link_libc and (builtin.os.tag == .windows or builtin.os.tag == .uefi) and (builtin.abi == .none or builtin.abi == .msvc)) {
@@ -185,6 +177,10 @@ comptime {
 var _fltused: c_int = 1;
 
 fn strlen(s: [*:0]const c_char) callconv(.c) usize {
+    return std.mem.len(s);
+}
+
+fn wcslen(s: [*:0]const std.c.wchar_t) callconv(.c) usize {
     return std.mem.len(s);
 }
 
@@ -255,14 +251,14 @@ pub const want_windows_x86_msvc_abi = e: {
     if (builtin.cpu.arch != .x86) break :e false;
     if (builtin.os.tag != .windows) break :e false;
     switch (builtin.abi) {
-        .none, .msvc, .itanium => {},
+        .none, .msvc => {},
         else => break :e false,
     }
     // The ABI is needed, but it's only our responsibility if libc won't provide it.
     break :e !builtin.link_libc;
 };
 
-pub const want_ppc_abi = builtin.cpu.arch.isPowerPC();
+pub const want_ppc_abi = builtin.cpu.arch.isPowerpc();
 
 pub const want_float_exceptions = !builtin.cpu.arch.isWasm();
 
@@ -279,7 +275,6 @@ pub const want_float_exceptions = !builtin.cpu.arch.isWasm();
 ///   arm-linux-musleabihf => true
 ///   arm-linux-gnueabihf => true
 ///   arm-linux-eabihf => false
-///   wasm32-wasi-musl => false
 ///   wasm32-freestanding-none => false
 ///   x86_64-windows-gnu => true
 ///   x86_64-windows-msvc => true
@@ -293,7 +288,7 @@ pub const gnu_f16_abi = switch (builtin.cpu.arch) {
     .riscv32be,
     => false,
 
-    .x86, .x86_64 => true,
+    .x86, .x86c16, .x86_64 => true,
 
     .arm, .armeb, .thumb, .thumbeb => switch (builtin.abi) {
         .eabi, .eabihf => false,
@@ -337,7 +332,7 @@ pub const @"f80" = switch (std.zig.target.compilerRtFloatAbi(&builtin.target, 80
     .hard => hardFloatAbi(f80),
     .soft => struct {
         pub const Abi = extern struct { mantissa: u64, exponent: u16 };
-        const Repr = packed struct { mantissa: u64, exponent: u16 };
+        const Repr = bitpack struct { mantissa: u64, exponent: u16 };
         pub inline fn toAbi(raw: f80) Abi {
             const repr: Repr = @bitCast(raw);
             return .{ .mantissa = repr.mantissa, .exponent = repr.exponent };
@@ -356,7 +351,7 @@ pub const @"f128" = switch (std.zig.target.compilerRtFloatAbi(&builtin.target, 1
             .big => extern struct { hi: u64, lo: u64 },
             .little => extern struct { lo: u64, hi: u64 },
         };
-        const Repr = packed struct { lo: u64, hi: u64 };
+        const Repr = bitpack struct { lo: u64, hi: u64 };
         pub inline fn toAbi(raw: f128) Abi {
             const repr: Repr = @bitCast(raw);
             return .{ .lo = repr.lo, .hi = repr.hi };
@@ -403,6 +398,14 @@ fn complexAbi(comptime Float: type, comptime float: type) type {
         }
     };
 }
+
+pub const have_c_longdouble = if (builtin.target.cTypeBitSize(.longdouble)) |bits| switch (bits) {
+    else => true,
+    80 => switch (std.zig.target.compilerRtFloatAbi(&builtin.target, bits)) {
+        .soft => false,
+        .hard => true,
+    },
+} else false;
 
 pub fn Complex(comptime Float: type) type {
     return struct { real: Float, imag: Float };

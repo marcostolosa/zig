@@ -6,6 +6,9 @@ const pthread_t = std.c.pthread_t;
 const sigval_t = std.c.sigval_t;
 const uid_t = std.c.uid_t;
 const timespec = std.c.timespec;
+const fd_t = std.c.fd_t;
+
+pub extern "c" fn ioctl(fd: fd_t, request: c_ulong, ...) c_int;
 
 pub extern "c" fn ptrace(request: c_int, pid: pid_t, addr: ?*anyopaque, data: c_int) c_int;
 
@@ -17,7 +20,7 @@ pub extern "c" fn _lwp_self() lwpid_t;
 
 pub extern "c" fn ___lwp_park60(
     clock_id: clockid_t,
-    flags: packed struct(u32) {
+    flags: bitpack struct(u32) {
         ABSTIME: bool = false,
         unused: u31 = 0,
     },
@@ -28,7 +31,7 @@ pub extern "c" fn ___lwp_park60(
 ) c_int;
 
 pub extern "c" fn _lwp_unpark(lwp: lwpid_t, hint: ?*const anyopaque) c_int;
-pub extern "c" fn _lwp_unpark_all(targets: [*]const lwpid_t, ntargets: usize, hint: ?*const anyopaque) c_int;
+pub extern "c" fn _lwp_unpark_all(targets: [*]const lwpid_t, ntargets: usize, hint: ?*const anyopaque) isize;
 
 pub const TCIFLUSH = 1;
 pub const TCOFLUSH = 2;
@@ -80,7 +83,7 @@ pub const _ksiginfo = extern struct {
                 pe_lwp: lwpid_t,
             },
         },
-    } align(@sizeOf(usize)),
+    },
 };
 
 pub const E = enum(u16) {
@@ -372,4 +375,17 @@ pub const IPTOS = struct {
     pub const PREC_IMMEDIATE = 0x40;
     pub const PREC_PRIORITY = 0x20;
     pub const PREC_ROUTINE = 0x00;
+};
+
+// https://github.com/NetBSD/src/blob/2579a44b3da9597de159e42cb1b5db0d382bd511/sys/netinet/tcp.h#L126
+pub const TCP = struct {
+    pub const NODELAY = 1;
+    pub const MAXSEG = 2;
+    pub const KEEPIDLE = 3;
+    pub const KEEPINTVL = 5;
+    pub const KEEPCNT = 6;
+    pub const KEEPINIT = 7;
+    pub const INFO = 9;
+    pub const MD5SIG = 0x10;
+    pub const CONGCTL = 0x20;
 };

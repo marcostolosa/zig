@@ -11,11 +11,11 @@ pub fn deinit(si: *SelfInfo, io: Io) void {
     const gpa = std.debug.getDebugInfoAllocator();
     for (si.modules.keys()) |*module| {
         unwind: {
-            const u = &(module.unwind orelse break :unwind catch break :unwind);
+            const u = &((module.unwind orelse break :unwind) catch break :unwind);
             if (u.dwarf) |*dwarf| dwarf.deinit(gpa);
         }
         file: {
-            const f = &(module.file orelse break :file catch break :file);
+            const f = &((module.file orelse break :file) catch break :file);
             f.deinit(gpa);
         }
     }
@@ -417,7 +417,7 @@ fn unwindFrameInner(si: *SelfInfo, io: Io, context: *UnwindContext) !usize {
                 const rules = try context.computeRules(gpa, dwarf, unwind.vmaddr_slide, encoding.value.arm64.dwarf);
                 return context.next(gpa, &rules);
             },
-            .FRAME => ip: {
+            .FRAME, .FRAME_PAUTH_LR => ip: {
                 const frame = encoding.value.arm64.frame;
 
                 const fp = (try dwarfRegNative(&context.cpu_state, fp_reg_num)).*;
@@ -426,10 +426,10 @@ fn unwindFrameInner(si: *SelfInfo, io: Io, context: *UnwindContext) !usize {
                 var reg_addr = fp - @sizeOf(usize);
                 inline for (@typeInfo(@TypeOf(frame.x_reg_pairs)).@"struct".field_names, 0..) |field_name, i| {
                     if (@field(frame.x_reg_pairs, field_name) != 0) {
-                        (try dwarfRegNative(&context.cpu_state, 19 + i)).* = @as(*const usize, @ptrFromInt(reg_addr)).*;
-                        reg_addr += @sizeOf(usize);
-                        (try dwarfRegNative(&context.cpu_state, 20 + i)).* = @as(*const usize, @ptrFromInt(reg_addr)).*;
-                        reg_addr += @sizeOf(usize);
+                        (try dwarfRegNative(&context.cpu_state, 19 + i * 2)).* = @as(*const usize, @ptrFromInt(reg_addr)).*;
+                        reg_addr -= @sizeOf(usize);
+                        (try dwarfRegNative(&context.cpu_state, 20 + i * 2)).* = @as(*const usize, @ptrFromInt(reg_addr)).*;
+                        reg_addr -= @sizeOf(usize);
                     }
                 }
 
@@ -437,7 +437,7 @@ fn unwindFrameInner(si: *SelfInfo, io: Io, context: *UnwindContext) !usize {
                 // vector registers in the AArch64 `cpu_context` anyway, so there's no reason to
                 // fail a legitimate unwind just because we're asked to restore the registers here.
                 // If some weird/broken unwind info tells us to read them later, we will fail then.
-                reg_addr += 16 * @as(usize, @popCount(@as(u4, @bitCast(frame.d_reg_pairs))));
+                reg_addr -= 16 * @as(usize, @popCount(@as(u4, @bitCast(frame.d_reg_pairs))));
 
                 const new_ip = @as(*const usize, @ptrFromInt(ip_ptr)).*;
                 const new_fp = @as(*const usize, @ptrFromInt(fp)).*;
@@ -451,7 +451,7 @@ fn unwindFrameInner(si: *SelfInfo, io: Io, context: *UnwindContext) !usize {
         else => comptime unreachable, // unimplemented
     };
 
-    const ret_addr = std.debug.stripInstructionPtrAuthCode(new_ip);
+    const ret_addr = std.debug.stripInstructionPtrMarkerBits(new_ip);
 
     // Like `Dwarf.SelfUnwinder.next`, adjust our next lookup pc in case the `call` was this
     // function's last instruction making `ret_addr` one byte past its end.
@@ -578,7 +578,6 @@ const Module = struct {
             error.InvalidOperation,
             => return error.InvalidDebugInfo,
             error.UnsupportedAddrSize,
-            error.UnsupportedDwarfVersion,
             error.UnimplementedUserOpcode,
             => return error.UnsupportedDebugInfo,
         };

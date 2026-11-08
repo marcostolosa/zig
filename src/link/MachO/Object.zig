@@ -3,6 +3,7 @@ const Object = @This();
 const trace = @import("../../tracy.zig").trace;
 const Archive = @import("Archive.zig");
 const Atom = @import("Atom.zig");
+const dev = @import("../../dev.zig");
 const Dwarf = @import("Dwarf.zig");
 const File = @import("file.zig").File;
 const MachO = @import("../MachO.zig");
@@ -37,8 +38,8 @@ index: File.Index,
 in_archive: ?InArchive = null,
 
 header: ?macho.mach_header_64 = null,
-sections: std.MultiArrayList(Section) = .{},
-symtab: std.MultiArrayList(Nlist) = .{},
+sections: std.MultiArrayList(Section) = .empty,
+symtab: std.MultiArrayList(Nlist) = .empty,
 strtab: std.ArrayList(u8) = .empty,
 
 symbols: std.ArrayList(Symbol) = .empty,
@@ -226,8 +227,8 @@ pub fn parse(self: *Object, macho_file: *MachO) !void {
         }
     };
 
-    var nlists = try std.array_list.Managed(NlistIdx).initCapacity(gpa, self.symtab.items(.nlist).len);
-    defer nlists.deinit();
+    var nlists: std.ArrayList(NlistIdx) = try .initCapacity(gpa, self.symtab.items(.nlist).len);
+    defer nlists.deinit(gpa);
     for (self.symtab.items(.nlist), 0..) |nlist, i| {
         if (nlist.n_type.bits.is_stab != 0 or nlist.n_type.bits.type != .sect) continue;
         nlists.appendAssumeCapacity(.{ .nlist = nlist, .idx = i });
@@ -683,8 +684,8 @@ pub fn resolveLiterals(self: *Object, lp: *MachO.LiteralPool, macho_file: *MachO
     const gpa = comp.gpa;
     const file = macho_file.getFileHandle(self.file_handle);
 
-    var buffer = std.array_list.Managed(u8).init(gpa);
-    defer buffer.deinit();
+    var buffer: std.ArrayList(u8) = .empty;
+    defer buffer.deinit(gpa);
 
     var sections_data = std.AutoHashMap(u32, []const u8).init(gpa);
     try sections_data.ensureTotalCapacity(@intCast(self.sections.items(.header).len));
@@ -730,8 +731,7 @@ pub fn resolveLiterals(self: *Object, lp: *MachO.LiteralPool, macho_file: *MachO
                 };
                 const addend = try macho_file.cast(u32, rel.addend);
                 const target_size = try macho_file.cast(usize, target.size);
-                try buffer.ensureUnusedCapacity(target_size);
-                buffer.resize(target_size) catch unreachable;
+                try buffer.resize(gpa, target_size);
                 const gop = try sections_data.getOrPut(target.n_sect);
                 if (!gop.found_existing) {
                     gop.value_ptr.* = try self.readSectionData(gpa, io, file, @intCast(target.n_sect));
@@ -2826,6 +2826,7 @@ const x86_64 = struct {
         handle: File.Handle,
         macho_file: *MachO,
     ) !void {
+        dev.checkAny(&.{ .llvm_backend, .x86_64_backend });
         const comp = macho_file.base.comp;
         const io = comp.io;
         const gpa = comp.gpa;
@@ -2938,6 +2939,7 @@ const x86_64 = struct {
     }
 
     fn validateRelocType(rel: macho.relocation_info, rel_type: macho.reloc_type_x86_64, is_extern: bool) !Relocation.Type {
+        dev.checkAny(&.{ .llvm_backend, .x86_64_backend });
         switch (rel_type) {
             .X86_64_RELOC_UNSIGNED => {
                 if (rel.r_pcrel == 1) return error.Pcrel;
@@ -2995,6 +2997,7 @@ const aarch64 = struct {
         handle: File.Handle,
         macho_file: *MachO,
     ) !void {
+        dev.checkAny(&.{ .llvm_backend, .aarch64_backend });
         const comp = macho_file.base.comp;
         const io = comp.io;
         const gpa = comp.gpa;
@@ -3131,6 +3134,7 @@ const aarch64 = struct {
     }
 
     fn validateRelocType(rel: macho.relocation_info, rel_type: macho.reloc_type_arm64, is_extern: bool) !Relocation.Type {
+        dev.checkAny(&.{ .llvm_backend, .aarch64_backend });
         switch (rel_type) {
             .ARM64_RELOC_UNSIGNED => {
                 if (rel.r_pcrel == 1) return error.Pcrel;

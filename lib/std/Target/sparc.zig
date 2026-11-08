@@ -5,21 +5,19 @@ const CpuFeature = std.Target.Cpu.Feature;
 const CpuModel = std.Target.Cpu.Model;
 
 pub const Feature = enum {
-    @"64bit",
     crypto,
-    deprecated_v8,
-    detectroundchange,
+    divscc,
     fix_tn0009,
     fix_tn0010,
     fix_tn0011,
     fix_tn0012,
     fix_tn0013,
     fixallfdivsqrt,
-    hard_quad_float,
+    fpu,
+    fpu_q,
     hasleoncasa,
     hasumacsmac,
     insertnopload,
-    leon,
     leoncyclecounter,
     leonpwrpsr,
     no_fmuls,
@@ -27,39 +25,14 @@ pub const Feature = enum {
     no_predictor,
     osa2011,
     popc,
-    reserve_g1,
-    reserve_g2,
-    reserve_g3,
-    reserve_g4,
-    reserve_g5,
-    reserve_g6,
-    reserve_g7,
-    reserve_i0,
-    reserve_i1,
-    reserve_i2,
-    reserve_i3,
-    reserve_i4,
-    reserve_i5,
-    reserve_l0,
-    reserve_l1,
-    reserve_l2,
-    reserve_l3,
-    reserve_l4,
-    reserve_l5,
-    reserve_l6,
-    reserve_l7,
-    reserve_o0,
-    reserve_o1,
-    reserve_o2,
-    reserve_o3,
-    reserve_o4,
-    reserve_o5,
+    scan,
     slow_rdpc,
-    soft_float,
     soft_mul_div,
     ua2005,
     ua2007,
-    v8plus,
+    v8,
+    v8_deprecated,
+    v8e,
     v9,
     vis,
     vis2,
@@ -75,13 +48,6 @@ pub const all_features = blk: {
     const len = @typeInfo(Feature).@"enum".field_names.len;
     std.debug.assert(len <= CpuFeature.Set.needed_bit_count);
     var result: [len]CpuFeature = undefined;
-    result[@backingInt(Feature.@"64bit")] = .{
-        .llvm_name = "64bit",
-        .description = "Enable 64-bit mode",
-        .dependencies = featureSet(&[_]Feature{
-            .v9,
-        }),
-    };
     result[@backingInt(Feature.crypto)] = .{
         .llvm_name = "crypto",
         .description = "Enable cryptographic extensions",
@@ -89,14 +55,9 @@ pub const all_features = blk: {
             .osa2011,
         }),
     };
-    result[@backingInt(Feature.deprecated_v8)] = .{
-        .llvm_name = "deprecated-v8",
-        .description = "Enable deprecated V8 instructions in V9 mode",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.detectroundchange)] = .{
-        .llvm_name = "detectroundchange",
-        .description = "LEON3 erratum detection: Detects any rounding mode change request: use only the round-to-nearest rounding mode",
+    result[@backingInt(Feature.divscc)] = .{
+        .llvm_name = null,
+        .description = "Enable divide step instruction",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.fix_tn0009)] = .{
@@ -129,15 +90,25 @@ pub const all_features = blk: {
         .description = "LEON erratum fix: Fix FDIVS/FDIVD/FSQRTS/FSQRTD instructions with NOPs and floating-point store",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.hard_quad_float)] = .{
+    result[@backingInt(Feature.fpu)] = .{
+        .llvm_name = null,
+        .description = "Enable floating-point unit",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
+    result[@backingInt(Feature.fpu_q)] = .{
         .llvm_name = "hard-quad-float",
         .description = "Enable quad-word floating point instructions",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .fpu,
+            .v8,
+        }),
     };
     result[@backingInt(Feature.hasleoncasa)] = .{
         .llvm_name = "hasleoncasa",
         .description = "Enable CASA instruction for LEON3 and LEON4 processors",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v8,
+        }),
     };
     result[@backingInt(Feature.hasumacsmac)] = .{
         .llvm_name = "hasumacsmac",
@@ -149,20 +120,19 @@ pub const all_features = blk: {
         .description = "LEON3 erratum fix: Insert a NOP instruction after every single-cycle load instruction when the next instruction is another load/store instruction",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.leon)] = .{
-        .llvm_name = "leon",
-        .description = "Enable LEON extensions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.leoncyclecounter)] = .{
         .llvm_name = "leoncyclecounter",
         .description = "Use the Leon cycle counter register",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v8,
+        }),
     };
     result[@backingInt(Feature.leonpwrpsr)] = .{
         .llvm_name = "leonpwrpsr",
         .description = "Enable the PWRPSR instruction",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v8,
+        }),
     };
     result[@backingInt(Feature.no_fmuls)] = .{
         .llvm_name = "no-fmuls",
@@ -183,149 +153,20 @@ pub const all_features = blk: {
         .llvm_name = "osa2011",
         .description = "Enable Oracle SPARC Architecture 2011 extensions",
         .dependencies = featureSet(&[_]Feature{
-            .vis,
-            .vis2,
+            .ua2007,
             .vis3,
         }),
     };
     result[@backingInt(Feature.popc)] = .{
         .llvm_name = "popc",
         .description = "Use the popc (population count) instruction",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v9,
+        }),
     };
-    result[@backingInt(Feature.reserve_g1)] = .{
-        .llvm_name = "reserve-g1",
-        .description = "Reserve G1, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_g2)] = .{
-        .llvm_name = "reserve-g2",
-        .description = "Reserve G2, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_g3)] = .{
-        .llvm_name = "reserve-g3",
-        .description = "Reserve G3, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_g4)] = .{
-        .llvm_name = "reserve-g4",
-        .description = "Reserve G4, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_g5)] = .{
-        .llvm_name = "reserve-g5",
-        .description = "Reserve G5, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_g6)] = .{
-        .llvm_name = "reserve-g6",
-        .description = "Reserve G6, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_g7)] = .{
-        .llvm_name = "reserve-g7",
-        .description = "Reserve G7, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_i0)] = .{
-        .llvm_name = "reserve-i0",
-        .description = "Reserve I0, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_i1)] = .{
-        .llvm_name = "reserve-i1",
-        .description = "Reserve I1, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_i2)] = .{
-        .llvm_name = "reserve-i2",
-        .description = "Reserve I2, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_i3)] = .{
-        .llvm_name = "reserve-i3",
-        .description = "Reserve I3, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_i4)] = .{
-        .llvm_name = "reserve-i4",
-        .description = "Reserve I4, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_i5)] = .{
-        .llvm_name = "reserve-i5",
-        .description = "Reserve I5, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_l0)] = .{
-        .llvm_name = "reserve-l0",
-        .description = "Reserve L0, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_l1)] = .{
-        .llvm_name = "reserve-l1",
-        .description = "Reserve L1, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_l2)] = .{
-        .llvm_name = "reserve-l2",
-        .description = "Reserve L2, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_l3)] = .{
-        .llvm_name = "reserve-l3",
-        .description = "Reserve L3, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_l4)] = .{
-        .llvm_name = "reserve-l4",
-        .description = "Reserve L4, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_l5)] = .{
-        .llvm_name = "reserve-l5",
-        .description = "Reserve L5, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_l6)] = .{
-        .llvm_name = "reserve-l6",
-        .description = "Reserve L6, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_l7)] = .{
-        .llvm_name = "reserve-l7",
-        .description = "Reserve L7, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_o0)] = .{
-        .llvm_name = "reserve-o0",
-        .description = "Reserve O0, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_o1)] = .{
-        .llvm_name = "reserve-o1",
-        .description = "Reserve O1, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_o2)] = .{
-        .llvm_name = "reserve-o2",
-        .description = "Reserve O2, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_o3)] = .{
-        .llvm_name = "reserve-o3",
-        .description = "Reserve O3, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_o4)] = .{
-        .llvm_name = "reserve-o4",
-        .description = "Reserve O4, making it unavailable as a GPR",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserve_o5)] = .{
-        .llvm_name = "reserve-o5",
-        .description = "Reserve O5, making it unavailable as a GPR",
+    result[@backingInt(Feature.scan)] = .{
+        .llvm_name = null,
+        .description = "Enable scan for first differing bit instruction",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.slow_rdpc)] = .{
@@ -334,11 +175,6 @@ pub const all_features = blk: {
         .dependencies = featureSet(&[_]Feature{
             .v9,
         }),
-    };
-    result[@backingInt(Feature.soft_float)] = .{
-        .llvm_name = "soft-float",
-        .description = "Use software emulation for floating point",
-        .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.soft_mul_div)] = .{
         .llvm_name = "soft-mul-div",
@@ -349,7 +185,6 @@ pub const all_features = blk: {
         .llvm_name = "ua2005",
         .description = "Enable UltraSPARC Architecture 2005 extensions",
         .dependencies = featureSet(&[_]Feature{
-            .vis,
             .vis2,
         }),
     };
@@ -357,24 +192,38 @@ pub const all_features = blk: {
         .llvm_name = "ua2007",
         .description = "Enable UltraSPARC Architecture 2007 extensions",
         .dependencies = featureSet(&[_]Feature{
-            .vis,
-            .vis2,
+            .ua2005,
         }),
     };
-    result[@backingInt(Feature.v8plus)] = .{
-        .llvm_name = "v8plus",
-        .description = "Enable V8+ mode, allowing use of 64-bit V9 instructions in 32-bit code",
+    result[@backingInt(Feature.v8)] = .{
+        .llvm_name = null,
+        .description = "Enable SPARC-V8 instructions",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
+    result[@backingInt(Feature.v8_deprecated)] = .{
+        .llvm_name = "deprecated-v8",
+        .description = "Enable deprecated V8 instructions in V9 mode",
+        .dependencies = featureSet(&[_]Feature{
+            .v9,
+        }),
+    };
+    result[@backingInt(Feature.v8e)] = .{
+        .llvm_name = null,
+        .description = "Enable SPARC-V8E instructions",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.v9)] = .{
         .llvm_name = "v9",
         .description = "Enable SPARC-V9 instructions",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v8,
+        }),
     };
     result[@backingInt(Feature.vis)] = .{
         .llvm_name = "vis",
         .description = "Enable UltraSPARC Visual Instruction Set extensions",
         .dependencies = featureSet(&[_]Feature{
+            .fpu,
             .v9,
         }),
     };
@@ -382,14 +231,14 @@ pub const all_features = blk: {
         .llvm_name = "vis2",
         .description = "Enable Visual Instruction Set extensions II",
         .dependencies = featureSet(&[_]Feature{
-            .v9,
+            .vis,
         }),
     };
     result[@backingInt(Feature.vis3)] = .{
         .llvm_name = "vis3",
         .description = "Enable Visual Instruction Set extensions III",
         .dependencies = featureSet(&[_]Feature{
-            .v9,
+            .vis2,
         }),
     };
     const ti = @typeInfo(Feature);
@@ -405,43 +254,44 @@ pub const cpu = struct {
         .name = "at697e",
         .llvm_name = "at697e",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .insertnopload,
-            .leon,
+            .v8,
         }),
     };
     pub const at697f: CpuModel = .{
         .name = "at697f",
         .llvm_name = "at697f",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .insertnopload,
-            .leon,
+            .v8,
         }),
     };
     pub const f934: CpuModel = .{
         .name = "f934",
         .llvm_name = "f934",
-        .features = featureSet(&[_]Feature{}),
-    };
-    pub const generic: CpuModel = .{
-        .name = "generic",
-        .llvm_name = "generic",
-        .features = featureSet(&[_]Feature{}),
+        .features = featureSet(&[_]Feature{
+            .divscc,
+            .fpu,
+            .scan,
+        }),
     };
     pub const gr712rc: CpuModel = .{
         .name = "gr712rc",
         .llvm_name = "gr712rc",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const gr740: CpuModel = .{
         .name = "gr740",
         .llvm_name = "gr740",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
             .hasumacsmac,
-            .leon,
             .leoncyclecounter,
             .leonpwrpsr,
         }),
@@ -449,180 +299,184 @@ pub const cpu = struct {
     pub const hypersparc: CpuModel = .{
         .name = "hypersparc",
         .llvm_name = "hypersparc",
-        .features = featureSet(&[_]Feature{}),
+        .features = featureSet(&[_]Feature{
+            .fpu,
+            .v8,
+        }),
     };
     pub const leon2: CpuModel = .{
         .name = "leon2",
         .llvm_name = "leon2",
         .features = featureSet(&[_]Feature{
-            .leon,
+            .fpu,
+            .v8,
         }),
     };
     pub const leon3: CpuModel = .{
         .name = "leon3",
         .llvm_name = "leon3",
         .features = featureSet(&[_]Feature{
+            .fpu,
+            .hasleoncasa,
             .hasumacsmac,
-            .leon,
         }),
     };
     pub const leon4: CpuModel = .{
         .name = "leon4",
         .llvm_name = "leon4",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
             .hasumacsmac,
-            .leon,
         }),
     };
     pub const ma2080: CpuModel = .{
         .name = "ma2080",
         .llvm_name = "ma2080",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const ma2085: CpuModel = .{
         .name = "ma2085",
         .llvm_name = "ma2085",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const ma2100: CpuModel = .{
         .name = "ma2100",
         .llvm_name = "ma2100",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const ma2150: CpuModel = .{
         .name = "ma2150",
         .llvm_name = "ma2150",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const ma2155: CpuModel = .{
         .name = "ma2155",
         .llvm_name = "ma2155",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const ma2450: CpuModel = .{
         .name = "ma2450",
         .llvm_name = "ma2450",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const ma2455: CpuModel = .{
         .name = "ma2455",
         .llvm_name = "ma2455",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const ma2480: CpuModel = .{
         .name = "ma2480",
         .llvm_name = "ma2480",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const ma2485: CpuModel = .{
         .name = "ma2485",
         .llvm_name = "ma2485",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const ma2x5x: CpuModel = .{
         .name = "ma2x5x",
         .llvm_name = "ma2x5x",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const ma2x8x: CpuModel = .{
         .name = "ma2x8x",
         .llvm_name = "ma2x8x",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const myriad2: CpuModel = .{
         .name = "myriad2",
         .llvm_name = "myriad2",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const myriad2_1: CpuModel = .{
         .name = "myriad2_1",
         .llvm_name = "myriad2.1",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const myriad2_2: CpuModel = .{
         .name = "myriad2_2",
         .llvm_name = "myriad2.2",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const myriad2_3: CpuModel = .{
         .name = "myriad2_3",
         .llvm_name = "myriad2.3",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .hasleoncasa,
-            .leon,
         }),
     };
     pub const niagara: CpuModel = .{
         .name = "niagara",
         .llvm_name = "niagara",
         .features = featureSet(&[_]Feature{
-            .deprecated_v8,
             .no_predictor,
             .ua2005,
+            .v8_deprecated,
         }),
     };
     pub const niagara2: CpuModel = .{
         .name = "niagara2",
         .llvm_name = "niagara2",
         .features = featureSet(&[_]Feature{
-            .deprecated_v8,
             .no_predictor,
             .popc,
             .ua2005,
+            .v8_deprecated,
         }),
     };
     pub const niagara3: CpuModel = .{
         .name = "niagara3",
         .llvm_name = "niagara3",
         .features = featureSet(&[_]Feature{
-            .deprecated_v8,
             .no_predictor,
             .popc,
-            .ua2005,
             .ua2007,
+            .v8_deprecated,
             .vis3,
         }),
     };
@@ -631,43 +485,57 @@ pub const cpu = struct {
         .llvm_name = "niagara4",
         .features = featureSet(&[_]Feature{
             .crypto,
-            .deprecated_v8,
             .popc,
-            .ua2005,
-            .ua2007,
+            .v8_deprecated,
         }),
     };
     pub const sparclet: CpuModel = .{
         .name = "sparclet",
         .llvm_name = "sparclet",
-        .features = featureSet(&[_]Feature{}),
+        .features = featureSet(&[_]Feature{
+            .divscc,
+            .fpu,
+            .scan,
+        }),
     };
     pub const sparclite: CpuModel = .{
         .name = "sparclite",
         .llvm_name = "sparclite",
-        .features = featureSet(&[_]Feature{}),
+        .features = featureSet(&[_]Feature{
+            .divscc,
+            .fpu,
+            .scan,
+        }),
     };
     pub const sparclite86x: CpuModel = .{
         .name = "sparclite86x",
         .llvm_name = "sparclite86x",
-        .features = featureSet(&[_]Feature{}),
+        .features = featureSet(&[_]Feature{
+            .divscc,
+            .scan,
+        }),
     };
     pub const supersparc: CpuModel = .{
         .name = "supersparc",
         .llvm_name = "supersparc",
-        .features = featureSet(&[_]Feature{}),
+        .features = featureSet(&[_]Feature{
+            .fpu,
+            .v8,
+        }),
     };
     pub const tsc701: CpuModel = .{
         .name = "tsc701",
         .llvm_name = "tsc701",
-        .features = featureSet(&[_]Feature{}),
+        .features = featureSet(&[_]Feature{
+            .scan,
+        }),
     };
     pub const ultrasparc: CpuModel = .{
         .name = "ultrasparc",
         .llvm_name = "ultrasparc",
         .features = featureSet(&[_]Feature{
-            .deprecated_v8,
             .slow_rdpc,
+            .v8_deprecated,
             .vis,
         }),
     };
@@ -675,9 +543,8 @@ pub const cpu = struct {
         .name = "ultrasparc3",
         .llvm_name = "ultrasparc3",
         .features = featureSet(&[_]Feature{
-            .deprecated_v8,
             .slow_rdpc,
-            .vis,
+            .v8_deprecated,
             .vis2,
         }),
     };
@@ -686,16 +553,18 @@ pub const cpu = struct {
         .llvm_name = "ut699",
         .features = featureSet(&[_]Feature{
             .fixallfdivsqrt,
+            .fpu,
             .insertnopload,
-            .leon,
             .no_fmuls,
             .no_fsmuld,
+            .v8,
         }),
     };
     pub const v7: CpuModel = .{
         .name = "v7",
         .llvm_name = "v7",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .no_fsmuld,
             .soft_mul_div,
         }),
@@ -703,12 +572,16 @@ pub const cpu = struct {
     pub const v8: CpuModel = .{
         .name = "v8",
         .llvm_name = "v8",
-        .features = featureSet(&[_]Feature{}),
+        .features = featureSet(&[_]Feature{
+            .fpu,
+            .v8,
+        }),
     };
     pub const v9: CpuModel = .{
         .name = "v9",
         .llvm_name = "v9",
         .features = featureSet(&[_]Feature{
+            .fpu,
             .v9,
         }),
     };

@@ -12,7 +12,7 @@ const elf = std.elf;
 
 const root = @import("root");
 
-const start_sym_name = if (native_arch.isMIPS()) "__start" else "_start";
+const start_sym_name = if (native_arch.isMips()) "__start" else "_start";
 
 comptime {
     // No matter what, we import the root file, so that any export, test, comptime
@@ -29,49 +29,54 @@ comptime {
             }
         }
     } else if (builtin.output_mode == .Exe or @hasDecl(root, "main")) {
-        if (builtin.link_libc and @hasDecl(root, "main")) {
+        if (builtin.link_libc and (@hasDecl(root, "main") or std.os.requiresLibC())) {
             if (is_wasm) {
                 @export(&mainWithoutEnv, .{ .name = "__main_argc_argv" });
             } else if (!@typeInfo(@TypeOf(root.main)).@"fn".attrs.@"callconv".eql(.c)) {
                 @export(&main, .{ .name = "main" });
             }
-        } else if (native_os == .windows and builtin.link_libc and @hasDecl(root, "wWinMain")) {
-            if (!@typeInfo(@TypeOf(root.wWinMain)).@"fn".attrs.@"callconv".eql(.c)) {
-                @export(&wWinMain, .{ .name = "wWinMain" });
-            }
-        } else if (native_os == .windows) {
-            if (!@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
-                !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
-            {
-                @export(&WinStartup, .{ .name = "wWinMainCRTStartup" });
-            } else if (@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
-                !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
-            {
-                @compileError("WinMain not supported; declare wWinMain or main instead");
-            } else if (@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup") and
-                !@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup"))
-            {
-                @export(&wWinMainCRTStartup, .{ .name = "wWinMainCRTStartup" });
-            }
-        } else if (native_os == .uefi) {
-            if (!@hasDecl(root, "EfiMain")) @export(&EfiMain, .{ .name = "EfiMain" });
-        } else if (native_os == .wasi) {
-            const wasm_start_sym = switch (builtin.wasi_exec_model) {
-                .reactor => "_initialize",
-                .command => "_start",
-            };
-            if (!@hasDecl(root, wasm_start_sym) and @hasDecl(root, "main")) {
+        } else switch (native_os) {
+            .windows => {
+                if (builtin.link_libc and @hasDecl(root, "wWinMain")) {
+                    if (!@typeInfo(@TypeOf(root.wWinMain)).@"fn".attrs.@"callconv".eql(.c)) {
+                        @export(&wWinMain, .{ .name = "wWinMain" });
+                    }
+                } else if (!@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
+                    !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
+                {
+                    @export(&WinStartup, .{ .name = "wWinMainCRTStartup" });
+                } else if (@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
+                    !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
+                {
+                    @compileError("WinMain not supported; declare wWinMain or main instead");
+                } else if (@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup") and
+                    !@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup"))
+                {
+                    @export(&wWinMainCRTStartup, .{ .name = "wWinMainCRTStartup" });
+                }
+            },
+
+            .uefi => {
+                if (!@hasDecl(root, "EfiMain")) @export(&EfiMain, .{ .name = "EfiMain" });
+            },
+            .wasi => {
+                const wasm_start_sym = switch (builtin.wasi_exec_model) {
+                    .reactor => "_initialize",
+                    .command => "_start",
+                };
+                if (!@hasDecl(root, wasm_start_sym) and @hasDecl(root, "main")) {
+                    // Only call main when defined. For WebAssembly it's allowed to pass `-fno-entry` in which
+                    // case it's not required to provide an entrypoint such as main.
+                    @export(&startWasi, .{ .name = wasm_start_sym });
+                }
+            },
+            .freestanding => if (is_wasm) {
                 // Only call main when defined. For WebAssembly it's allowed to pass `-fno-entry` in which
                 // case it's not required to provide an entrypoint such as main.
-                @export(&startWasi, .{ .name = wasm_start_sym });
-            }
-        } else if (is_wasm and native_os == .freestanding) {
-            // Only call main when defined. For WebAssembly it's allowed to pass `-fno-entry` in which
-            // case it's not required to provide an entrypoint such as main.
-            if (!@hasDecl(root, start_sym_name) and @hasDecl(root, "main")) @export(&wasm_freestanding_start, .{ .name = start_sym_name });
-        } else switch (native_os) {
+                if (!@hasDecl(root, start_sym_name) and @hasDecl(root, "main"))
+                    @export(&wasm_freestanding_start, .{ .name = start_sym_name });
+            },
             .other,
-            .freestanding,
             .vulkan,
             .opengl,
             .opencl,
@@ -85,6 +90,7 @@ comptime {
             .psp,
             .vita,
             => {},
+
             else => if (!@hasDecl(root, start_sym_name)) @export(&_start, .{ .name = start_sym_name }),
         }
     }
@@ -189,7 +195,7 @@ fn _start() callconv(.naked) noreturn {
             .m88k => ".cfi_undefined %%r1",
             .microblaze, .microblazeel => "", // No CFI support.
             .mips, .mipsel, .mips64, .mips64el => ".cfi_undefined $ra",
-            .or1k => ".cfi_undefined r9",
+            .or1k => ".cfi_undefined 9",
             .powerpc, .powerpcle, .powerpc64, .powerpc64le => ".cfi_undefined lr",
             .riscv32, .riscv32be, .riscv64, .riscv64be => if (builtin.zig_backend == .stage2_riscv64)
                 ""
@@ -205,7 +211,7 @@ fn _start() callconv(.naked) noreturn {
         });
 
     // Move this to the riscv prong below when this is resolved: https://github.com/ziglang/zig/issues/20918
-    if (builtin.cpu.arch.isRISCV() and builtin.zig_backend != .stage2_riscv64) asm volatile (
+    if (builtin.cpu.arch.isRiscv() and builtin.zig_backend != .stage2_riscv64) asm volatile (
         \\ .weak __global_pointer$
         \\ .hidden __global_pointer$
         \\ .option push
@@ -596,6 +602,12 @@ fn wWinMain(hInstance: *anyopaque, hPrevInstance: ?*anyopaque, pCmdLine: [*:0]u1
     return root.wWinMain(@ptrCast(hInstance), @ptrCast(hPrevInstance), pCmdLine, @intCast(nCmdShow));
 }
 
+/// Provided by compiler-rt.
+extern var __zig_elf_auxv: [*]std.elf.Auxv;
+
+/// Provided by compiler-rt.
+extern fn __zig_elf_static_tls_init(phdrs: [*]elf.ElfN.Phdr, phnum: usize) void;
+
 fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
     // We're not ready to panic until thread local storage is initialized.
     @setRuntimeSafety(false);
@@ -613,32 +625,32 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
     const auxv: [*]elf.Auxv = @ptrCast(@alignCast(envp.ptr + envp_count + 1));
 
     var at_hwcap: usize = 0;
-    const phdrs = init: {
+    const phdrs: [*]elf.ElfN.Phdr, const phnum: usize = init: {
         var i: usize = 0;
         var at_phdr: usize = 0;
         var at_phnum: usize = 0;
-        while (auxv[i].a_type != elf.AT_NULL) : (i += 1) {
+        while (auxv[i].a_type != elf.AT.NULL) : (i += 1) {
             switch (auxv[i].a_type) {
-                elf.AT_PHNUM => at_phnum = auxv[i].a_un.a_val,
-                elf.AT_PHDR => at_phdr = auxv[i].a_un.a_val,
-                elf.AT_HWCAP => at_hwcap = auxv[i].a_un.a_val,
+                elf.AT.PHNUM => at_phnum = auxv[i].a_un.a_val,
+                elf.AT.PHDR => at_phdr = auxv[i].a_un.a_val,
+                elf.AT.HWCAP => at_hwcap = auxv[i].a_un.a_val,
                 else => continue,
             }
         }
-        break :init @as([*]elf.ElfN.Phdr, @ptrFromInt(at_phdr))[0..at_phnum];
+        break :init .{ @ptrFromInt(at_phdr), at_phnum };
     };
 
     // Apply the initial relocations as early as possible in the startup process. We cannot
     // make calls yet on some architectures (e.g. MIPS) *because* they haven't been applied yet,
     // so this must be fully inlined.
     if (builtin.link_mode == .static and builtin.position_independent_executable) {
-        @call(.always_inline, std.pie.relocate, .{phdrs});
+        @call(.always_inline, std.pie.relocate, .{phdrs[0..phnum]});
     }
 
     if (native_os == .linux) {
         // This must be done after PIE relocations have been applied or we may crash
         // while trying to access the global variable (happens on MIPS at least).
-        std.os.linux.elf_aux_maybe = auxv;
+        __zig_elf_auxv = auxv;
 
         if (!builtin.single_threaded) {
             // ARMv6 targets (and earlier) have no support for TLS in hardware.
@@ -654,14 +666,14 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
             }
 
             // Initialize the TLS area.
-            std.os.linux.tls.initStatic(phdrs);
+            __zig_elf_static_tls_init(phdrs, phnum);
         }
 
         // The way Linux executables represent stack size is via the PT.GNU_STACK
         // program header. However the kernel does not recognize it; it always gives 8 MiB.
         // Here we look for the stack size in our program headers and use setrlimit
         // to ask for more stack space.
-        expandStackSize(phdrs);
+        expandStackSize(phdrs[0..phnum]);
     }
 
     const opt_init_array_start = @extern([*]const *const fn () callconv(.c) void, .{
@@ -736,8 +748,8 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) cal
 
     switch (builtin.os.tag) {
         .linux => {
-            const at_phdr = std.c.getauxval(elf.AT_PHDR);
-            const at_phnum = std.c.getauxval(elf.AT_PHNUM);
+            const at_phdr = std.c.getauxval(elf.AT.PHDR);
+            const at_phnum = std.c.getauxval(elf.AT.PHNUM);
             const phdrs = (@as([*]elf.ElfN.Phdr, @ptrFromInt(at_phdr)))[0..at_phnum];
             expandStackSize(phdrs);
         },
@@ -757,7 +769,7 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) cal
 fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
     const argv = @as([*][*:0]u8, @ptrCast(c_argv))[0..@intCast(c_argc)];
     const environ: [:null]?[*:0]u8 = switch (builtin.os.tag) {
-        .wasi, .emscripten => environ: {
+        .emscripten => environ: {
             const c_environ = std.c.environ;
             var env_count: usize = 0;
             while (c_environ[env_count] != null) : (env_count += 1) {}

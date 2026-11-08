@@ -1,5 +1,9 @@
-#update=non-inline version
-#file=main.zig
+#zig build-exe {
+--name test
+-Mroot=test.zig
+#}
+
+#write test.zig {
 pub fn main() !void {
     try foo();
 }
@@ -8,10 +12,13 @@ fn foo() !void {
 }
 const std = @import("std");
 const io = std.Io.Threaded.global_single_threaded.io();
-#expect_stdout="Hello, World!\n"
+#}
+#update "non-inline version"
+#check stdout {
+Hello, World!
+#}
 
-#update=make function inline
-#file=main.zig
+#write test.zig {
 pub fn main() !void {
     try foo();
 }
@@ -20,10 +27,13 @@ inline fn foo() !void {
 }
 const std = @import("std");
 const io = std.Io.Threaded.global_single_threaded.io();
-#expect_stdout="Hello, World!\n"
+#}
+#update "make function inline"
+#check stdout {
+Hello, World!
+#}
 
-#update=change string
-#file=main.zig
+#write test.zig {
 pub fn main() !void {
     try foo();
 }
@@ -32,4 +42,8 @@ inline fn foo() !void {
 }
 const std = @import("std");
 const io = std.Io.Threaded.global_single_threaded.io();
-#expect_stdout="Hello, `inline` World!\n"
+#}
+#update "change string"
+#check stdout {
+Hello, `inline` World!
+#}

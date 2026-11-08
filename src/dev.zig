@@ -33,6 +33,14 @@ pub const Env = enum {
     cbe,
 
     /// - sema
+    /// - zig build-* -fincremental -fllvm -flld --listen=-`
+    llvm,
+
+    /// - sema
+    /// - `zig build-* -fincremental -fno-llvm -fno-lld -target loongarch(32/64)-linux --listen=-`
+    @"loongarch-linux",
+
+    /// - sema
     /// - `zig build-* -fincremental -fno-llvm -fno-lld -target powerpc(64)(le)-linux --listen=-`
     @"powerpc-linux",
 
@@ -45,6 +53,10 @@ pub const Env = enum {
     spirv,
 
     /// - sema
+    /// - `zig build-* -fno-llvm -fno-lld -target spork8-* --listen=-`
+    spork8,
+
+    /// - sema
     /// - `zig build-* -fno-llvm -fno-lld -target wasm32-* --listen=-`
     wasm,
 
@@ -55,14 +67,6 @@ pub const Env = enum {
     /// - sema
     /// - `zig build-* -fincremental -fno-llvm -fno-lld -target x86_64-windows --listen=-`
     @"x86_64-windows",
-
-    /// - sema
-    /// - `zig build-* -fincremental -fno-llvm -fno-lld -target loongarch(32/64)-linux --listen=-`
-    @"loongarch-linux",
-
-    /// - sema
-    /// - `zig build-* -fno-llvm -fno-lld -target spork8-* --listen=-`
-    spork8,
 
     pub inline fn supports(comptime dev_env: Env, comptime feature: Feature) bool {
         return switch (dev_env) {
@@ -108,11 +112,12 @@ pub const Env = enum {
                 .loongarch_backend,
                 .spork8_backend,
                 .lld_linker,
+                .llvm_linker,
                 .coff_linker,
-                .coff2_linker,
                 .elf_linker,
                 .elf2_linker,
                 .macho_linker,
+                .macho2_linker,
                 .c_linker,
                 .wasm_linker,
                 .spirv_linker,
@@ -186,6 +191,24 @@ pub const Env = enum {
                 => true,
                 else => Env.sema.supports(feature),
             },
+            .llvm => switch (feature) {
+                .stdio_listen,
+                .incremental,
+                .legalize,
+                .llvm_backend,
+                .lld_linker,
+                => true,
+                else => Env.sema.supports(feature),
+            },
+            .@"loongarch-linux" => switch (feature) {
+                .stdio_listen,
+                .incremental,
+                .legalize,
+                .loongarch_backend,
+                .elf2_linker,
+                => true,
+                else => Env.sema.supports(feature),
+            },
             .@"powerpc-linux" => switch (feature) {
                 .stdio_listen,
                 .incremental,
@@ -204,6 +227,15 @@ pub const Env = enum {
                 .spirv_backend,
                 .spirv_linker,
                 .legalize,
+                => true,
+                else => Env.sema.supports(feature),
+            },
+            .spork8 => switch (feature) {
+                .stdio_listen,
+                .incremental,
+                .legalize,
+                .spork8_backend,
+                .spork8_linker,
                 => true,
                 else => Env.sema.supports(feature),
             },
@@ -227,30 +259,11 @@ pub const Env = enum {
                 else => Env.sema.supports(feature),
             },
             .@"x86_64-windows" => switch (feature) {
-                .build_command,
                 .stdio_listen,
                 .incremental,
                 .legalize,
                 .x86_64_backend,
-                .coff2_linker,
-                => true,
-                else => Env.sema.supports(feature),
-            },
-            .@"loongarch-linux" => switch (feature) {
-                .stdio_listen,
-                .incremental,
-                .legalize,
-                .loongarch_backend,
-                .elf2_linker,
-                => true,
-                else => Env.sema.supports(feature),
-            },
-            .spork8 => switch (feature) {
-                .stdio_listen,
-                .incremental,
-                .legalize,
-                .spork8_backend,
-                .spork8_linker,
+                .coff_linker,
                 => true,
                 else => Env.sema.supports(feature),
             },
@@ -321,11 +334,12 @@ pub const Feature = enum {
     spork8_backend,
 
     lld_linker,
+    llvm_linker,
     coff_linker,
-    coff2_linker,
     elf_linker,
     elf2_linker,
     macho_linker,
+    macho2_linker,
     c_linker,
     wasm_linker,
     spirv_linker,

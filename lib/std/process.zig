@@ -58,9 +58,14 @@ pub const Init = struct {
 };
 
 pub const CurrentPathError = error{
+    /// Buffer is too small to contain the current path.
     NameTooLong,
     /// Not possible on Windows. Always returned on WASI.
     CurrentDirUnlinked,
+    /// The current path cannot be retrieved due to a limitation of the
+    /// underlying libc or syscall implementation. Retrying with a larger
+    /// buffer will not succeed.
+    PathExceedsLimit,
 } || Io.Cancelable || Io.UnexpectedError;
 
 /// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
@@ -70,11 +75,10 @@ pub fn currentPath(io: Io, buffer: []u8) CurrentPathError!usize {
     return io.vtable.processCurrentPath(io.userdata, buffer);
 }
 
-pub const CurrentPathAllocError = Allocator.Error || error{
-    /// Not possible on Windows. Always returned on WASI.
-    CurrentDirUnlinked,
-} || Io.Cancelable || Io.UnexpectedError;
+pub const CurrentPathAllocError = Allocator.Error || CurrentPathError;
 
+/// Shortcut for calling `currentPath` with a buffer of size `max_path_bytes`.
+///
 /// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On other platforms, the result is an opaque sequence of bytes with no
 /// particular encoding.
@@ -82,10 +86,7 @@ pub const CurrentPathAllocError = Allocator.Error || error{
 /// Caller owns returned memory.
 pub fn currentPathAlloc(io: Io, allocator: Allocator) CurrentPathAllocError![:0]u8 {
     var buffer: [max_path_bytes]u8 = undefined;
-    const n = currentPath(io, &buffer) catch |err| switch (err) {
-        error.NameTooLong => unreachable,
-        else => |e| return e,
-    };
+    const n = try currentPath(io, &buffer);
     return allocator.dupeSentinel(u8, buffer[0..n], 0);
 }
 
@@ -253,13 +254,13 @@ pub fn getBaseAddress() usize {
 /// process image. If this is `false` then calling `replace` or `replaceFile`
 /// functions will return `error.OperationUnsupported`.
 pub const can_replace = switch (native_os) {
-    .windows, .haiku, .wasi => false,
+    .windows, .haiku, .wasi, .tvos, .watchos => false,
     else => true,
 };
 
 /// Tells whether spawning child processes is supported.
 pub const can_spawn = switch (native_os) {
-    .wasi, .ios, .tvos, .visionos, .watchos => false,
+    .wasi, .tvos, .watchos => false,
     else => true,
 };
 
@@ -281,35 +282,48 @@ pub const ReplaceError = error{
 } || Allocator.Error || Io.Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 pub const ReplaceOptions = struct {
+    exe: Exe = .detect,
     argv: []const []const u8,
-    expand_arg0: ArgExpansion = .no_expand,
+
+    /// Set to change the current working directory when spawning the child process.
+    cwd: Child.Cwd = .inherit,
     /// Replaces the environment when provided. The PATH value from here is
     /// never used to resolve `argv[0]`.
     environ_map: ?*const Environ.Map = null,
+    expand_arg0: ArgExpansion = .no_expand,
+
+    inherit_dirs: []const Dir = &.{},
+    inherit_files: []const File = &.{},
+
+    /// Start child process in suspended state.
+    /// For Posix systems it's started as if SIGSTOP was sent.
+    start_suspended: bool = false,
+
+    pub const Exe = union(enum) {
+        /// `argv[0]` is the name of the program to execute. If it is not already a
+        /// file path (i.e. it contains '/'), it is resolved into a file path based on
+        /// PATH from the parent environment.
+        detect,
+        /// `argv[0]` is the name of the program to execute, resolved into a file path
+        /// based on PATH from the parent environment.
+        search,
+        /// `argv[0]` is the file path of the program to execute, relative to `Dir` payload.
+        /// It is *always* treated as a file path, even if it does not contain '/'.
+        path: Dir,
+        /// `File` payload is the program to execute.
+        file: File,
+        /// `path` is the file path of the program to execute, relative to `dir`.
+        /// It is *always* treated as a file path, even if it does not contain '/'.
+        explicit: struct { dir: Dir, path: []const u8 },
+    };
 };
 
 /// Replaces the current process image with the executed process. If this
 /// function succeeds, it does not return.
 ///
-/// `argv[0]` is the name of the process to replace the current one with. If it
-/// is not already a file path (i.e. it contains '/'), it is resolved into a
-/// file path based on PATH from the parent environment.
-///
 /// It is illegal to call this function in a fork() child.
 pub fn replace(io: Io, options: ReplaceOptions) ReplaceError {
     return io.vtable.processReplace(io.userdata, options);
-}
-
-/// Replaces the current process image with the executed process. If this
-/// function succeeds, it does not return.
-///
-/// `argv[0]` is the file path of the process to replace the current one with,
-/// relative to `dir`. It is *always* treated as a file path, even if it does
-/// not contain '/'.
-///
-/// It is illegal to call this function in a fork() child.
-pub fn replacePath(io: Io, dir: Io.Dir, options: ReplaceOptions) ReplaceError {
-    return io.vtable.processReplacePath(io.userdata, dir, options);
 }
 
 pub const ArgExpansion = enum { expand, no_expand };
@@ -367,6 +381,7 @@ pub const SpawnError = error{
 } || Io.File.OpenError || Io.Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 pub const SpawnOptions = struct {
+    exe: ReplaceOptions.Exe = .detect,
     argv: []const []const u8,
 
     /// Set to change the current working directory when spawning the child process.
@@ -384,11 +399,13 @@ pub const SpawnOptions = struct {
     ///
     /// The child's progress tree will be grafted into the parent's progress tree,
     /// by substituting this node with the child's root node.
-    progress_node: std.Progress.Node = std.Progress.Node.none,
+    progress_node: std.Progress.Node = .none,
 
     stdin: StdIo = .inherit,
     stdout: StdIo = .inherit,
     stderr: StdIo = .inherit,
+    inherit_dirs: []const Dir = &.{},
+    inherit_files: []const File = &.{},
 
     /// Set to true to obtain rusage information for the child process.
     /// Depending on the target platform and implementation status, the
@@ -398,20 +415,18 @@ pub const SpawnOptions = struct {
     /// On Linux and Darwin, this obtains rusage statistics from wait4().
     request_resource_usage_statistics: bool = false,
 
-    /// Set to change the user id when spawning the child process.
-    uid: ?posix.uid_t = null,
-    /// Set to change the group id when spawning the child process.
-    gid: ?posix.gid_t = null,
-    /// Set to change the process group id when spawning the child process.
-    pgid: ?posix.pid_t = null,
+    /// Set to change the user id when spawning the child process. Unsupported on Windows.
+    uid: ?File.Uid = null,
+    /// Set to change the group id when spawning the child process. Unsupported on Windows.
+    gid: ?File.Gid = null,
+    /// Set to change the process group id when spawning the child process. Unsupported on Windows.
+    pgid: ?Child.Id = null,
 
     /// Start child process in suspended state.
     /// For Posix systems it's started as if SIGSTOP was sent.
     start_suspended: bool = false,
     /// Windows-only. Sets the CREATE_NO_WINDOW flag in CreateProcess.
     create_no_window: bool = false,
-    /// Darwin-only. Disable ASLR for the child process.
-    disable_aslr: bool = false,
 
     /// Behavior of the child process's standard input, output, and error streams.
     pub const StdIo = union(enum) {
@@ -444,20 +459,8 @@ pub const SpawnOptions = struct {
 };
 
 /// Creates a child process.
-///
-/// `argv[0]` is the name of the program to execute. If it is not already a
-/// file path (i.e. it contains '/'), it is resolved into a file path based on
-/// PATH from the parent environment.
 pub fn spawn(io: Io, options: SpawnOptions) SpawnError!Child {
     return io.vtable.processSpawn(io.userdata, options);
-}
-
-/// Creates a child process.
-///
-/// `argv[0]` is the file path of the program to execute, relative to `dir`. It
-/// is *always* treated as a file path, even if it does not contain '/'.
-pub fn spawnPath(io: Io, dir: Io.Dir, options: SpawnOptions) SpawnError!Child {
-    return io.vtable.processSpawnPath(io.userdata, dir, options);
 }
 
 pub const RunError = error{
@@ -465,6 +468,7 @@ pub const RunError = error{
 } || SpawnError || Io.File.MultiReader.UnendingError || Io.Timeout.Error;
 
 pub const RunOptions = struct {
+    exe: ReplaceOptions.Exe = .detect,
     argv: []const []const u8,
     stderr_limit: Io.Limit = .unlimited,
     stdout_limit: Io.Limit = .unlimited,
@@ -487,10 +491,12 @@ pub const RunOptions = struct {
     /// The child's progress tree will be grafted into the parent's progress tree,
     /// by substituting this node with the child's root node.
     progress_node: std.Progress.Node = std.Progress.Node.none,
+
+    inherit_dirs: []const Dir = &.{},
+    inherit_files: []const File = &.{},
+
     /// Windows-only. Sets the CREATE_NO_WINDOW flag in CreateProcess.
     create_no_window: bool = true,
-    /// Darwin-only. Disable ASLR for the child process.
-    disable_aslr: bool = false,
     timeout: Io.Timeout = .none,
 };
 
@@ -504,17 +510,21 @@ pub const RunResult = struct {
 /// If it succeeds, the caller owns result.stdout and result.stderr memory.
 pub fn run(gpa: Allocator, io: Io, options: RunOptions) RunError!RunResult {
     var child = try spawn(io, .{
+        .exe = options.exe,
         .argv = options.argv,
+
         .cwd = options.cwd,
         .environ_map = options.environ_map,
         .expand_arg0 = options.expand_arg0,
         .progress_node = options.progress_node,
-        .create_no_window = options.create_no_window,
-        .disable_aslr = options.disable_aslr,
 
         .stdin = .ignore,
         .stdout = .pipe,
         .stderr = .pipe,
+        .inherit_dirs = options.inherit_dirs,
+        .inherit_files = options.inherit_files,
+
+        .create_no_window = options.create_no_window,
     });
     defer child.kill(io);
 
@@ -654,7 +664,7 @@ pub fn cleanExit(io: Io) void {
 /// On some systems, this raises the limit before seeing ProcessFdQuotaExceeded
 /// errors. On other systems, this does nothing.
 pub fn raiseFileDescriptorLimit() void {
-    const have_rlimit = posix.rlimit_resource != void;
+    const have_rlimit = native_os != .windows and posix.rlimit_resource != void;
     if (!have_rlimit) return;
 
     var lim = posix.getrlimit(.NOFILE) catch return; // Oh well; we tried.
@@ -962,6 +972,7 @@ pub const LockMemoryOptions = struct {
 pub fn lockMemory(memory: []align(std.heap.page_size_min) const u8, options: LockMemoryOptions) LockMemoryError!void {
     if (native_os == .windows) {
         // TODO call VirtualLock
+        return;
     }
     if (!options.on_fault and @TypeOf(posix.system.mlock) != void) {
         switch (posix.errno(posix.system.mlock(memory.ptr, memory.len))) {
@@ -1000,6 +1011,10 @@ pub const UnlockMemoryError = error{
 /// See also:
 /// * `lockMemory`
 pub fn unlockMemory(memory: []align(std.heap.page_size_min) const u8) UnlockMemoryError!void {
+    if (native_os == .windows) {
+        // TODO call VirtualUnlock
+        return;
+    }
     if (@TypeOf(posix.system.munlock) == void) return;
     switch (posix.errno(posix.system.munlock(memory.ptr, memory.len))) {
         .SUCCESS => return,
@@ -1019,6 +1034,7 @@ pub const LockMemoryAllOptions = struct {
 };
 
 pub fn lockMemoryAll(options: LockMemoryAllOptions) LockMemoryError!void {
+    if (native_os == .windows) return;
     if (@TypeOf(posix.system.mlockall) == void) return error.UnsupportedOperation;
     var flags: posix.MCL = .{
         .CURRENT = options.current,
@@ -1043,6 +1059,7 @@ pub fn lockMemoryAll(options: LockMemoryAllOptions) LockMemoryError!void {
 }
 
 pub fn unlockMemoryAll() UnlockMemoryError!void {
+    if (native_os == .windows) return;
     if (@TypeOf(posix.system.munlockall) == void) return;
     switch (posix.errno(posix.system.munlockall())) {
         .SUCCESS => return,
@@ -1069,7 +1086,7 @@ pub const ProtectMemoryError = error{
     OutOfMemory,
 } || Io.UnexpectedError;
 
-pub const MemoryProtection = packed struct(u3) {
+pub const MemoryProtection = bitpack struct(u3) {
     read: bool = false,
     write: bool = false,
     execute: bool = false,

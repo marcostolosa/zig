@@ -55,7 +55,7 @@ comptime {
         symbol(&__floattitf, "__floattikf");
         symbol(&__floateitf, "__floateikf");
     } else {
-        if (builtin.cpu.arch == .x86) {
+        if (builtin.cpu.arch.isX86_32()) {
             symbol(&__floattitf_x86, "__floattitf");
         } else {
             symbol(&__floattitf, "__floattitf");
@@ -285,12 +285,8 @@ comptime {
         symbol(&__floatuntitf, "__floatuntikf");
         symbol(&__floatuneitf, "__floatuneikf");
     } else {
-        if (builtin.cpu.arch == .x86) {
+        if (builtin.cpu.arch.isX86_32()) {
             symbol(&__floatuntitf_x86, "__floatuntitf");
-        } else if (builtin.cpu.arch == .x86_64 and
-            (builtin.os.tag == .windows or builtin.os.tag == .uefi))
-        {
-            symbol(&__floatuntitf_x86_64_windows, "__floatuntitf");
         } else {
             symbol(&__floatuntitf, "__floatuntitf");
         }
@@ -451,11 +447,6 @@ fn __floatuntitf(a: u128) callconv(.c) compiler_rt.f128.Abi {
 }
 fn __floatuntitf_x86(a: f128) callconv(.c) compiler_rt.f128.Abi {
     return compiler_rt.f128.toAbi(f128_floatFromInt_u128(@bitCast(a)));
-}
-fn __floatuntitf_x86_64_windows(a_lo: u64, a_hi: u64) callconv(.c) compiler_rt.f128.Abi {
-    return compiler_rt.f128.toAbi(f128_floatFromInt_u128(@bitCast(
-        packed struct { lo: u64, hi: u64 }{ .lo = a_lo, .hi = a_hi },
-    )));
 }
 pub fn f128_floatFromInt_u128(a: u128) f128 {
     return floatFromInt(f128, a);

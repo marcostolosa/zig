@@ -23,6 +23,7 @@ const Color = std.zig.Color;
 const Client = std.zig.Client;
 const Server = std.zig.Server;
 const EnvVar = std.zig.EnvVar;
+const ErrorBundle = std.zig.ErrorBundle;
 const default_local_zig_cache_basename = std.zig.default_local_zig_cache_basename;
 const stringToEnum = std.meta.stringToEnum;
 
@@ -35,6 +36,7 @@ const ScannedConfig = @import("Maker/ScannedConfig.zig");
 const PkgConfig = @import("Maker/PkgConfig.zig");
 const Fetch = @import("Maker/Fetch.zig");
 const Package = @import("Maker/Package.zig");
+const Manifest = Package.Manifest;
 
 pub const std_options: std.Options = .{
     .side_channels_mitigations = .none,
@@ -42,14 +44,21 @@ pub const std_options: std.Options = .{
 
 gpa: Allocator,
 graph: *Graph,
-install_paths: InstallPaths,
+install_paths: PrefixPaths,
+deployed_paths: PrefixPaths,
 scanned_config: *const ScannedConfig,
 /// Includes an extra auto-generated placeholder Step at the end that indicates
 /// configure must be rerun. It is done this way so that the hot path of file
 /// system watching does not need to make any special cases, and to avoid more
 /// OS-specific logic in file system watching implementation.
 steps: []Step,
-generated_files: []Path,
+/// Reserved space for all the file paths that are determined at runtime when the associated Step logic runs.
+/// Each element is individually allocated so that steps can access the data without synchronization, and so
+/// that steps can be arbitrarily re-run independently from each other.
+/// Each element is optional because a step might populate any number of generated file paths before ultimately
+/// failing. An element being non-null does not imply that the generated file was successfully generated. Only
+/// the Step success state indicates that information.
+generated_files: []GeneratedFile,
 run_args: ?[]const []const u8,
 
 available_rss: u64,
@@ -63,9 +72,9 @@ protocol_server_mutex: Io.Mutex,
 web_server: ?*AvoidableWebServer,
 /// Allocated into `gpa`.
 memory_blocked_steps: std.ArrayList(Configuration.Step.Index),
-/// Allocated into `gpa`.
+/// Allocated into `gpa` during `prepare`.
 initial_steps: std.array_hash_map.Auto(Configuration.Step.Index, void),
-/// Allocated into `gpa`.
+/// Allocated into `gpa` during `prepare`.
 step_stack: std.array_hash_map.Auto(Configuration.Step.Index, void),
 pkg_config: PkgConfig,
 
@@ -87,7 +96,7 @@ const use_safe_allocator = switch (builtin.mode) {
     .fast, .small => false,
 };
 
-const InstallPaths = struct {
+const PrefixPaths = struct {
     prefix: Path,
     lib: Path,
     bin: Path,
@@ -95,8 +104,30 @@ const InstallPaths = struct {
 };
 
 const PrintNode = struct {
-    parent: ?*PrintNode,
+    parent: ?*const PrintNode,
     last: bool = false,
+
+    fn printPrefix(node: *const PrintNode, writer: *Writer, mode: Io.Terminal.Mode) Writer.Error!void {
+        const parent = node.parent orelse return;
+        if (parent.parent == null) return;
+        try printPrefix(parent, writer, mode);
+        if (parent.last) {
+            try writer.writeAll("   ");
+        } else {
+            try printTreeSibling(writer, mode);
+        }
+    }
+
+    fn printPrefixedChild(node: *const PrintNode, writer: *Writer, mode: Io.Terminal.Mode) Writer.Error!void {
+        try printPrefix(node, writer, mode);
+        if (node.parent != null) {
+            if (node.last) {
+                try printTreeChildLast(writer, mode);
+            } else {
+                try printTreeChild(writer, mode);
+            }
+        }
+    }
 };
 
 const ErrorStyle = enum {
@@ -119,7 +150,39 @@ const ErrorStyle = enum {
 };
 const MultilineErrors = enum { indent, newline, none };
 const Summary = enum { all, new, failures, line, none };
-const PrintConfiguration = enum { none, zon, path };
+const PrintConfiguration = enum { none, zon, path, tree, stop };
+
+const GeneratedFile = struct {
+    data: ?[]const u8,
+
+    const Unpacked = struct {
+        prefix: Server.Message.PathPrefix,
+        sub_path: []const u8,
+    };
+
+    fn unpack(gf: GeneratedFile) ?Unpacked {
+        const slice = gf.data orelse return null;
+        return .{
+            .prefix = @fromBackingInt(slice[0]),
+            .sub_path = slice[1..],
+        };
+    }
+
+    fn toPath(gf: GeneratedFile, graph: *const Graph) ?Path {
+        const unpacked = unpack(gf) orelse return null;
+        return .{
+            .root_dir = prefixToDirectory(graph, unpacked.prefix),
+            .sub_path = unpacked.sub_path,
+        };
+    }
+
+    fn clear(gf: *GeneratedFile, gpa: Allocator) void {
+        if (gf.data) |data| {
+            gpa.free(data);
+            gf.data = null;
+        }
+    }
+};
 
 /// Used to build the -M flags to pass to build-exe.
 pub const CliModule = struct {
@@ -163,7 +226,6 @@ pub fn main(init: process.Init.Minimal) !void {
 
     var arena_instance: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     defer arena_instance.deinit();
-    defer if (debugMakerLeaks()) log.debug("used {Bi} of arena", .{arena_instance.queryCapacity()});
     const arena = arena_instance.allocator();
 
     const args = try init.args.toSlice(arena);
@@ -199,12 +261,13 @@ pub fn main(init: process.Init.Minimal) !void {
         .random_seed = parseRandomSeed(seed_arg),
     };
 
-    const cmd = stringToEnum(enum { libc, init, fetch, build }, cmd_name) orelse
+    const cmd = stringToEnum(enum { libc, init, fetch, build, @"cache-cat" }, cmd_name) orelse
         fatal("bad command name: {q}", .{cmd_name});
     switch (cmd) {
         .libc => return cmdLibC(gpa, &graph, args[arg_i..]),
         .init => return cmdInit(gpa, &graph, args[arg_i..]),
         .fetch => return cmdFetch(gpa, &graph, args[arg_i..]),
+        .@"cache-cat" => return cmdCacheCat(gpa, &graph, args[arg_i..]),
         .build => {},
     }
 
@@ -238,7 +301,6 @@ pub fn main(init: process.Init.Minimal) !void {
     var cached_passthru_configure: std.ArrayList(u32) = .empty;
     var forks: std.ArrayList(Fork) = .empty;
     var system_pkg_dir_path: ?[]const u8 = null;
-    var fetch_only = false;
     var fetch_mode: Fetch.JobQueue.Mode = .needed;
     var debug_target: ?[]const u8 = null;
     var cache_poison: std.Build.Graph.CachePoison = .pure;
@@ -323,12 +385,12 @@ pub fn main(init: process.Init.Minimal) !void {
                 override_local_cache_dir = nextArgOrFatal(args, &arg_i);
             } else if (mem.eql(u8, arg, "--pkg-dir")) {
                 override_pkg_dir = nextArgOrFatal(args, &arg_i);
+            } else if (mem.eql(u8, arg, "--print-tree")) {
+                print_configuration = .tree;
+            } else if (mem.eql(u8, arg, "--configure")) {
+                print_configuration = .stop;
             } else if (mem.eql(u8, arg, "--fetch")) {
-                fetch_only = true;
-            } else if (mem.cutPrefix(u8, arg, "--fetch=")) |rest| {
-                fetch_only = true;
-                fetch_mode = stringToEnum(Fetch.JobQueue.Mode, rest) orelse
-                    fatal("expected [needed|all] after \"--fetch=\", found {q}", .{rest});
+                fetch_mode = .all;
             } else if (mem.cutPrefix(u8, arg, "--fork=")) |rest| {
                 try forks.append(arena, .init(rest));
             } else if (mem.eql(u8, arg, "--fork")) {
@@ -444,19 +506,13 @@ pub fn main(init: process.Init.Minimal) !void {
             } else if (mem.cutPrefix(u8, arg, "--debug-rt=")) |rest| {
                 graph.debug_compiler_runtime_libs = stringToEnum(std.lang.Optimize, rest) orelse
                     fatal("unrecognized optimization mode: {s}", .{rest});
-            } else if (is_debug_mode and mem.eql(u8, arg, "--debug-maker-leaks")) {
-                debug_maker_leaks = true;
             } else if (mem.eql(u8, arg, "--libc-runtimes") or mem.eql(u8, arg, "--glibc-runtimes")) {
                 // --glibc-runtimes was the old name of the flag; kept for compatibility for now.
                 graph.libc_runtimes_dir = nextArgOrFatal(args, &arg_i);
-            } else if (mem.eql(u8, arg, "--verbose-air")) {
-                graph.verbose_air = true;
             } else if (mem.eql(u8, arg, "--verbose-cc")) {
                 graph.verbose_cc = true;
             } else if (mem.eql(u8, arg, "--verbose-link")) {
                 graph.verbose_link = true;
-            } else if (mem.eql(u8, arg, "--verbose-llvm-ir")) {
-                graph.verbose_llvm_ir = true;
             } else if (mem.eql(u8, arg, "--watch")) {
                 watch_flag = true;
             } else if (mem.eql(u8, arg, "--time-report")) {
@@ -557,7 +613,7 @@ pub fn main(init: process.Init.Minimal) !void {
         }
     }
 
-    const early_exit_mode = fetch_only or help_menu or steps_menu or print_configuration != .none;
+    const early_exit_mode = fetch_mode == .all or help_menu or steps_menu or print_configuration != .none;
     const server_mode = !early_exit_mode and (watch_flag or webui_listen != null or fuzz != null or listen);
 
     process.raiseFileDescriptorLimit();
@@ -565,10 +621,16 @@ pub fn main(init: process.Init.Minimal) !void {
     const cwd_path = std.zig.getResolvedCwd(io, arena) catch |err|
         fatal("resolving current directory path failed: {t}", .{err});
 
-    var build_root = try findBuildRoot(arena, io, .{
+    var build_root = findBuildRoot(arena, io, .{
         .cwd_path = cwd_path,
         .build_file = build_file,
-    });
+    }) catch |err| switch (err) {
+        error.BuildZigNotFound => {
+            if (help_menu) printUsageWithoutConfiguration(&graph, "build.zig not found");
+            process.exit(1);
+        },
+        else => |e| return e,
+    };
     defer build_root.deinit(io);
 
     graph.build_root_directory = build_root.directory;
@@ -627,42 +689,62 @@ pub fn main(init: process.Init.Minimal) !void {
     });
     defer main_progress_node.end();
 
-    const install_prefix_path: Path = if (graph.environ_map.get("DESTDIR")) |dest_dir| .{
-        .root_dir = .cwd(),
-        .sub_path = try Dir.path.join(arena, &.{ dest_dir, override_install_prefix orelse "/usr" }),
-    } else if (override_install_prefix) |cwd_relative| .{
-        .root_dir = .cwd(),
-        .sub_path = cwd_relative,
-    } else .{
-        .root_dir = graph.build_root_directory,
-        .sub_path = "zig-out",
+    const deployed_paths: PrefixPaths = blk: {
+        const prefix: Path = if (override_install_prefix) |cwd_relative| .{
+            .root_dir = .cwd(),
+            .sub_path = cwd_relative,
+        } else if (graph.environ_map.get("DESTDIR") != null) .{
+            .root_dir = .cwd(),
+            .sub_path = "/usr",
+        } else .{
+            .root_dir = graph.build_root_directory,
+            .sub_path = "zig-out",
+        };
+        break :blk .{
+            .prefix = prefix,
+            // The lib/bin/include overrides are interpreted relative to the
+            // install prefix unless absolute paths are used.
+            .lib = if (override_lib_dir) |lib_dir|
+                if (Dir.path.isAbsolute(lib_dir)) .{
+                    .root_dir = .cwd(),
+                    .sub_path = lib_dir,
+                } else try prefix.join(arena, lib_dir)
+            else
+                try prefix.join(arena, "lib"),
+            .bin = if (override_bin_dir) |bin_dir|
+                if (Dir.path.isAbsolute(bin_dir)) .{
+                    .root_dir = .cwd(),
+                    .sub_path = bin_dir,
+                } else try prefix.join(arena, bin_dir)
+            else
+                try prefix.join(arena, "bin"),
+            .include = if (override_include_dir) |include_dir|
+                if (Dir.path.isAbsolute(include_dir)) .{
+                    .root_dir = .cwd(),
+                    .sub_path = include_dir,
+                } else try prefix.join(arena, include_dir)
+            else
+                try prefix.join(arena, "include"),
+        };
     };
-
-    // These three overrides are meant to be relative to the install prefix,
-    // not current working directory, unless absolute paths are used.
-    const install_lib_path: Path = if (override_lib_dir) |lib_dir|
-        if (Dir.path.isAbsolute(lib_dir)) .{
+    const install_paths: PrefixPaths = if (graph.environ_map.get("DESTDIR")) |destdir| .{
+        .prefix = .{
             .root_dir = .cwd(),
-            .sub_path = lib_dir,
-        } else try install_prefix_path.join(arena, lib_dir)
-    else
-        try install_prefix_path.join(arena, "lib");
-
-    const install_bin_path: Path = if (override_bin_dir) |bin_dir|
-        if (Dir.path.isAbsolute(bin_dir)) .{
+            .sub_path = try Dir.path.join(arena, &.{ destdir, deployed_paths.prefix.sub_path }),
+        },
+        .lib = .{
             .root_dir = .cwd(),
-            .sub_path = bin_dir,
-        } else try install_prefix_path.join(arena, bin_dir)
-    else
-        try install_prefix_path.join(arena, "bin");
-
-    const install_include_path: Path = if (override_include_dir) |include_dir|
-        if (Dir.path.isAbsolute(include_dir)) .{
+            .sub_path = try Dir.path.join(arena, &.{ destdir, deployed_paths.lib.sub_path }),
+        },
+        .bin = .{
             .root_dir = .cwd(),
-            .sub_path = include_dir,
-        } else try install_prefix_path.join(arena, include_dir)
-    else
-        try install_prefix_path.join(arena, "include");
+            .sub_path = try Dir.path.join(arena, &.{ destdir, deployed_paths.bin.sub_path }),
+        },
+        .include = .{
+            .root_dir = .cwd(),
+            .sub_path = try Dir.path.join(arena, &.{ destdir, deployed_paths.include.sub_path }),
+        },
+    } else deployed_paths;
 
     const now = Io.Clock.Timestamp.now(io, .awake);
 
@@ -681,9 +763,8 @@ pub fn main(init: process.Init.Minimal) !void {
     } else null;
 
     var stdin_buffer: [256]u8 = undefined;
-    var stdout_buffer: [256]u8 = undefined;
     var stdin_reader = Io.File.stdin().reader(io, &stdin_buffer);
-    var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
+    const stdout_writer = initStdoutWriter(io);
 
     var protocol_server_allocation: AvoidableServer = undefined;
     const protocol_server: ?*AvoidableServer = if (listen) s: {
@@ -693,17 +774,22 @@ pub fn main(init: process.Init.Minimal) !void {
         if (step_names.items.len > 0) fatal("build steps must be provided over the protocol instead of using CLI arguments", .{});
         protocol_server_allocation = .{
             .in = &stdin_reader.interface,
-            .out = &stdout_writer.interface,
+            .out = stdout_writer,
         };
-        try serveBSPHandshake(&protocol_server_allocation);
+        try serveBspHandshake(&protocol_server_allocation);
         break :s &protocol_server_allocation;
     } else null;
+
+    var discovered_unlazy_set: Fetch.JobQueue.UnlazySet = .empty; // uses global arena
 
     configure: while (true) {
         // Set of files that, if modified, imply that recompiling and rerunning
         // configurer is needed.
-        var configure_source_files: Cache.Manifest.Files = .empty;
-        defer Cache.Manifest.freeFiles(gpa, &configure_source_files);
+        var configure_source_files: Cache.Manifest.SelfContainedFiles = .empty;
+        defer configure_source_files.deinit(gpa);
+
+        var configure_error_bundle: ErrorBundle = .empty;
+        defer configure_error_bundle.deinit(gpa);
 
         // If this fails, we can still start the server and wait for user
         // to request a rebuild. If it returns error.FailedButCacheIntact
@@ -723,11 +809,14 @@ pub fn main(init: process.Init.Minimal) !void {
             .parent_progress_node = main_progress_node,
             .fetch_mode = fetch_mode,
             .system_pkg_dir_path = system_pkg_dir_path,
-            .fetch_only = fetch_only,
             .print_configuration = print_configuration,
             .forks = forks.items,
+            .unlazy_set = &discovered_unlazy_set,
             .src_files = &configure_source_files,
+            .error_bundle = if (protocol_server != null) &configure_error_bundle else null,
         })) |scanned_config| {
+            discovered_unlazy_set.clearRetainingCapacity();
+
             if (help_menu) {
                 scanned_config.printUsage(&graph, initStdoutWriter(io)) catch |err| switch (err) {
                     error.WriteFailed => return stdout_writer_allocation.err.?,
@@ -750,23 +839,19 @@ pub fn main(init: process.Init.Minimal) !void {
                     return cleanExit(io, &scanned_config);
                 },
                 .path => unreachable,
+                .tree => unreachable,
+                .stop => return cleanExit(io, &scanned_config),
             }
 
             var maker: Maker = .{
                 .gpa = gpa,
                 .graph = &graph,
                 .scanned_config = &scanned_config,
-                .install_paths = .{
-                    .prefix = install_prefix_path,
-                    .lib = install_lib_path,
-                    .bin = install_bin_path,
-                    .include = install_include_path,
-                },
+                .install_paths = install_paths,
+                .deployed_paths = deployed_paths,
 
-                // Extra step at the end which is the autogenerated placeholder
-                // step which indicates that we need to reconfigure.
-                .steps = try arena.alloc(Step, scanned_config.configuration.steps.len + 1),
-                .generated_files = try arena.alloc(Path, scanned_config.configuration.generated_files_len),
+                .steps = &.{},
+                .generated_files = &.{},
                 .run_args = run_args,
 
                 .available_rss = max_rss,
@@ -793,11 +878,7 @@ pub fn main(init: process.Init.Minimal) !void {
                 else
                     .failures,
             };
-            defer {
-                maker.memory_blocked_steps.deinit(gpa);
-                maker.initial_steps.deinit(gpa);
-                maker.step_stack.deinit(gpa);
-            }
+            defer maker.deinit();
 
             if (maker.available_rss == 0) {
                 maker.available_rss = process.totalSystemMemory() catch std.math.maxInt(u64);
@@ -808,7 +889,7 @@ pub fn main(init: process.Init.Minimal) !void {
                 try s.serveStringMessage(.bsp_configuration, try arena.print("{f}", .{scanned_config.path}));
 
                 var watch: ?Watch = null;
-                defer if (watch) |*w| w.deinit();
+                defer if (Watch.have_impl) if (watch) |*w| w.deinit();
 
                 const Event = union(enum) {
                     message: Reader.Error!Client.Message.Header,
@@ -819,6 +900,11 @@ pub fn main(init: process.Init.Minimal) !void {
                 var select: Io.Select(Event) = .init(io, &select_buffer);
                 defer select.cancelDiscard();
 
+                // File watching cannot be canceled without blocking
+                // https://codeberg.org/ziglang/zig/issues/31693
+                var is_fs_watching = false;
+                defer if (is_fs_watching) @panic("(zig build system) TODO file watching cannot be canceled without blocking");
+
                 try select.concurrent(.message, Server.receiveMessage, .{s});
 
                 var in_debounce = false;
@@ -827,10 +913,13 @@ pub fn main(init: process.Init.Minimal) !void {
                         const header: Client.Message.Header = try payload;
                         switch (header.tag) {
                             .exit => {
-                                cleanExit(io, &scanned_config);
-                                process.exit(0);
+                                // exit early until file watching supports cancelation without blocking
+                                if (is_fs_watching) std.process.exit(0);
+                                return cleanExit(io, &scanned_config);
                             },
                             .bsp_build_steps => {
+                                if (is_fs_watching) @panic("(zig build system) TODO file watching cannot be canceled without blocking");
+
                                 // Cancel existing file watching
                                 select.cancelDiscard();
                                 in_debounce = false;
@@ -843,14 +932,15 @@ pub fn main(init: process.Init.Minimal) !void {
                                 try select.concurrent(.message, Server.receiveMessage, .{s});
 
                                 maker.watch = body.flags.watch;
-                                maker.prepare(steps, &configure_source_files) catch |err| switch (err) {
+                                maker.prepare(steps, &configure_source_files, &discovered_unlazy_set) catch |err| switch (err) {
+                                    error.OutOfMemory => |e| return e,
                                     error.DependencyLoopDetected, error.InsufficientMemory => {
-                                        // TODO handle DependencyLoopDetected as error.FailedButCacheIntact
-                                        // and handle InsufficientMemory as error.AlreadyReported
+                                        // TODO handle error.DependencyLoopDetected as error.FailedButCacheIntact
+                                        // TODO handle error.InsufficientMemory as error.AlreadyReported
                                         _ = io.lockStderr(&.{}, graph.stderr_mode) catch {};
                                         process.exit(1);
                                     },
-                                    else => |e| return e,
+                                    error.LazyDependencyNeeded => continue :configure,
                                 };
 
                                 try maker.makeSteps(main_progress_node, null);
@@ -864,6 +954,11 @@ pub fn main(init: process.Init.Minimal) !void {
                                         &watch.?,
                                         if (in_debounce) .{ .ms = debounce_interval_ms } else .none,
                                     });
+                                    is_fs_watching = true;
+                                } else if (watch) |*w| {
+                                    if (!Watch.have_impl) unreachable;
+                                    w.deinit();
+                                    watch = null;
                                 }
 
                                 continue :loop try select.await();
@@ -872,6 +967,7 @@ pub fn main(init: process.Init.Minimal) !void {
                         }
                     },
                     .fs_event => |payload| {
+                        is_fs_watching = false;
                         if (!Watch.have_impl) unreachable;
                         switch (payload catch |err| switch (err) {
                             error.MustReconfigure => {
@@ -893,6 +989,7 @@ pub fn main(init: process.Init.Minimal) !void {
                             &watch.?,
                             if (in_debounce) .{ .ms = debounce_interval_ms } else .none,
                         });
+                        is_fs_watching = true;
                         continue :loop try select.await();
                     },
                 }
@@ -901,14 +998,15 @@ pub fn main(init: process.Init.Minimal) !void {
             const initial_steps = try maker.resolveTopLevelSteps(step_names.items);
             defer gpa.free(initial_steps);
 
-            maker.prepare(initial_steps, &configure_source_files) catch |err| switch (err) {
+            maker.prepare(initial_steps, &configure_source_files, &discovered_unlazy_set) catch |err| switch (err) {
+                error.OutOfMemory => |e| return e,
                 error.DependencyLoopDetected, error.InsufficientMemory => {
-                    // TODO handle DependencyLoopDetected as error.FailedButCacheIntact
-                    // and handle InsufficientMemory as error.AlreadyReported
+                    // TODO handle error.DependencyLoopDetected as error.FailedButCacheIntact
+                    // TODO handle error.InsufficientMemory as error.AlreadyReported
                     _ = io.lockStderr(&.{}, graph.stderr_mode) catch {};
                     process.exit(1);
                 },
-                else => |e| return e,
+                error.LazyDependencyNeeded => continue :configure,
             };
 
             var w: Watch = w: {
@@ -916,7 +1014,7 @@ pub fn main(init: process.Init.Minimal) !void {
                 if (!Watch.have_impl) fatal("--watch not yet implemented for {t}", .{native_os});
                 break :w try .init(&maker);
             };
-            defer w.deinit();
+            defer if (Watch.have_impl and watch_flag) w.deinit();
 
             if (web_server) |ws| try ws.updateConfiguration(&maker);
 
@@ -959,7 +1057,7 @@ pub fn main(init: process.Init.Minimal) !void {
                 // trigger a rebuild on all steps with modified inputs, as well as their
                 // recursive dependants.
                 var caption_buf: [std.Progress.Node.max_name_len]u8 = undefined;
-                const caption = std.fmt.bufPrint(&caption_buf, "watching {d} directories, {d} processes", .{
+                const caption = std.mem.print(&caption_buf, "watching {d} directories, {d} processes", .{
                     w.dir_count, countSubProcesses(&maker),
                 }) catch &caption_buf;
                 var debouncing_node = main_progress_node.start(caption, 0);
@@ -995,7 +1093,13 @@ pub fn main(init: process.Init.Minimal) !void {
         } else |err| {
             const can_fs_watch = switch (err) {
                 error.AlreadyReported => false,
-                error.FailedButCacheIntact => true,
+                error.FailedButCacheIntact => c: {
+                    if (help_menu) printUsageWithoutConfiguration(&graph, "build.zig compilation failure");
+                    break :c true;
+                },
+                error.StdoutWriteFailed => {
+                    fatal("failed writing to stdout: {t}", .{stdout_writer_allocation.err.?});
+                },
                 else => |e| w: {
                     log.err("configuration failed: {t}", .{e});
                     break :w false;
@@ -1005,8 +1109,8 @@ pub fn main(init: process.Init.Minimal) !void {
                 _ = io.lockStderr(&.{}, graph.stderr_mode) catch {};
                 process.exit(1);
             }
-            if (protocol_server != null) {
-                fatal("(zig build system) TODO send error messages to client when build.zig compilation fails", .{});
+            if (protocol_server) |s| {
+                try s.serveErrorBundle(.bsp_configuration_failed, configure_error_bundle);
             }
             if (watch_flag and can_fs_watch) {
                 fatal("(zig build system) TODO set up fs watching even when build.zig compilation fails", .{});
@@ -1015,6 +1119,17 @@ pub fn main(init: process.Init.Minimal) !void {
             }
         }
     }
+}
+
+fn printUsageWithoutConfiguration(graph: *Graph, reason: []const u8) noreturn {
+    const io = graph.io;
+    _ = io.lockStderr(&.{}, graph.stderr_mode) catch {};
+    const writer = initStdoutWriter(io);
+    ScannedConfig.printUsageWithoutConfiguration(graph.zig_exe, writer, reason) catch |err| switch (err) {
+        error.WriteFailed => fatal("failed writing to stdout: {t}", .{stdout_writer_allocation.err.?}),
+    };
+    stdout_writer_allocation.flush() catch |err| fatal("failed writing to stdout: {t}", .{err});
+    return process.exit(0);
 }
 
 /// Temporarily adds the reconfigure pseudostep to step_stack, calls
@@ -1040,13 +1155,21 @@ const ConfigureOptions = struct {
     parent_progress_node: std.Progress.Node,
     fetch_mode: Fetch.JobQueue.Mode,
     system_pkg_dir_path: ?[]const u8,
-    fetch_only: bool,
     print_configuration: PrintConfiguration,
     forks: []Fork,
-    src_files: *Cache.Manifest.Files,
+    unlazy_set: *Fetch.JobQueue.UnlazySet,
+    src_files: *Cache.Manifest.SelfContainedFiles,
+    error_bundle: ?*ErrorBundle = null,
 };
 
-fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
+const ConfigureError = Allocator.Error || Io.Cancelable || error{
+    Unexpected,
+    AlreadyReported,
+    FailedButCacheIntact,
+    StdoutWriteFailed,
+};
+
+fn configure(graph: *Graph, options: ConfigureOptions) ConfigureError!ScannedConfig {
     const configure_argv = options.configure_argv;
     const gpa = graph.cache.gpa;
     const io = graph.io;
@@ -1057,8 +1180,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
     var http_client: std.http.Client = .{ .allocator = gpa, .io = io };
     defer http_client.deinit();
 
-    var unlazy_set: Package.Fetch.JobQueue.UnlazySet = .{};
-    var fork_set: Package.Fetch.JobQueue.ForkSet = .{};
+    var fork_set: Fetch.JobQueue.ForkSet = .{};
 
     {
         // Populate fork_set.
@@ -1193,7 +1315,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                 // Reset fork match counts.
                 for (fork_set.keys()) |*fork| fork.uses = 0;
 
-                var job_queue: Package.Fetch.JobQueue = .{
+                var job_queue: Fetch.JobQueue = .{
                     .io = io,
                     .http_client = &http_client,
                     .global_cache = graph.global_cache_root,
@@ -1203,7 +1325,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                     },
                     .recursive = true,
                     .debug_hash = false,
-                    .unlazy_set = unlazy_set,
+                    .unlazy_set = options.unlazy_set.*,
                     .fork_set = fork_set,
                     .mode = options.fetch_mode,
                     .prog_node = fetch_prog_node,
@@ -1212,7 +1334,19 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                 defer job_queue.deinit();
 
                 if (options.system_pkg_dir_path == null) {
-                    try http_client.initDefaultProxies(arena, &graph.environ_map);
+                    http_client.initDefaultProxies(arena, &graph.environ_map) catch |err| switch (err) {
+                        error.NameTooLong,
+                        error.InvalidHostName,
+                        error.InvalidPort,
+                        error.InvalidFormat,
+                        error.UnexpectedCharacter,
+                        error.UriMissingHost,
+                        => |e| {
+                            log.err("failed to initialize HTTP client: {t}", .{e});
+                            return error.AlreadyReported;
+                        },
+                        else => |e| return e,
+                    };
                 }
 
                 try job_queue.all_fetches.ensureUnusedCapacity(gpa, 1);
@@ -1220,12 +1354,17 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
 
                 const phantom_package_root: Cache.Path = .{ .root_dir = options.build_root.directory };
 
-                var fetch: Package.Fetch = .{
+                var fetch: Fetch = .{
                     .arena = std.heap.ArenaAllocator.init(gpa),
                     .location = .{ .relative_path = phantom_package_root },
                     .location_tok = 0,
                     .hash_tok = .none,
                     .name_tok = 0,
+                    .name = "",
+                    .parent_specified_paths = .empty,
+                    .parent_specified_paths_tok = .none,
+                    .parent_specified_version = undefined,
+                    .parent_specified_version_tok = .none,
                     .lazy_status = .eager,
                     .remote_package_root = phantom_package_root,
                     .parent_package_root = phantom_package_root,
@@ -1252,11 +1391,11 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                 job_queue.all_fetches.appendAssumeCapacity(&fetch);
 
                 job_queue.table.putAssumeCapacityNoClobber(
-                    Package.Fetch.relativePathDigest(phantom_package_root, graph.global_cache_root),
+                    Fetch.relativePathDigest(phantom_package_root, graph.global_cache_root),
                     &fetch,
                 );
 
-                job_queue.group.async(io, Package.Fetch.workerRun, .{ &fetch, "root" });
+                job_queue.group.async(io, Fetch.workerRun, .{ &fetch, "root" });
                 try job_queue.group.await(io);
 
                 {
@@ -1287,10 +1426,26 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                     return error.FailedButCacheIntact;
                 }
 
-                if (options.fetch_only) {
+                if (options.print_configuration == .tree) {
+                    const NO_COLOR = EnvVar.NO_COLOR.isSet(&graph.environ_map);
+                    const CLICOLOR_FORCE = EnvVar.CLICOLOR_FORCE.isSet(&graph.environ_map);
+                    printPkgTree(.{
+                        .writer = initStdoutWriter(io),
+                        .mode = try .detect(io, .stdout(), NO_COLOR, CLICOLOR_FORCE),
+                    }, arena, graph.global_cache_root, &job_queue, &fetch, &fork_set) catch |err| switch (err) {
+                        error.WriteFailed => return error.StdoutWriteFailed,
+                        else => |e| return e,
+                    };
+                    stdout_writer_allocation.flush() catch return error.StdoutWriteFailed;
+                    process.exit(0);
+                }
+
+                if (options.fetch_mode == .all) {
                     _ = io.lockStderr(&.{}, .no_color) catch {};
                     process.exit(0);
                 }
+
+                try validateFingerprints(gpa, &job_queue, &fork_set);
 
                 // Create the dependencies.zig file for configurer to
                 // obtain via `@import("@dependencies")`.
@@ -1312,11 +1467,17 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                         .root_dir = graph.local_cache_root,
                         .sub_path = try arena.print("o/{s}/dependencies.zig", .{&hex_digest}),
                     };
-                    var atomic_file = try dependencies_zig_path.root_dir.handle.createFileAtomic(
+                    var atomic_file = dependencies_zig_path.root_dir.handle.createFileAtomic(
                         io,
                         dependencies_zig_path.sub_path,
                         .{ .make_path = true, .replace = true },
-                    );
+                    ) catch |err| switch (err) {
+                        error.Canceled => |e| return e,
+                        else => |e| {
+                            log.err("failed to write {qf}: {t}", .{ dependencies_zig_path, e });
+                            return error.AlreadyReported;
+                        },
+                    };
                     defer atomic_file.deinit(io);
                     atomic_file.file.writeStreamingAll(io, dependencies_source.items) catch |err|
                         fatal("writing dependencies.zig contents: {t}", .{err});
@@ -1324,6 +1485,10 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                         fatal("replacing {f}: {t}", .{ dependencies_zig_path, err });
 
                     deps_mod.root_path = try dependencies_zig_path.toString(arena);
+
+                    if (config_man) |man| {
+                        man.hash.addBytes(&hex_digest);
+                    }
                 }
 
                 {
@@ -1336,10 +1501,29 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                             // The first one is a dummy package for the current project.
                             continue;
                         }
-                        if (!f.has_build_zig)
-                            continue;
-                        const hash_slice = try arena.dupe(u8, hash.toSlice());
+                        if (!f.has_build_zig) continue;
 
+                        if (f.have_manifest) {
+                            const project_id: Package.ProjectId = .init(f.manifest.name, f.manifest.id);
+                            if (fork_set.getKeyPtrAdapted(project_id, @as(Fetch.JobQueue.Fork.Adapter, .{}))) |fork| {
+                                const path = try fork.path.toString(arena);
+                                const gop = deps_mod.deps.getOrPutAssumeCapacity(path);
+                                if (gop.found_existing) {
+                                    assert(fork.uses > 1);
+                                    f.cli_module = gop.value_ptr.*;
+                                } else {
+                                    const m = try arena.create(CliModule);
+                                    m.* = .{
+                                        .root_path = try f.package_root.toString(arena),
+                                        .name = path,
+                                    };
+                                    gop.value_ptr.* = m;
+                                    f.cli_module = m;
+                                }
+                                continue;
+                            }
+                        }
+                        const hash_slice = try arena.dupe(u8, hash.toSlice());
                         const m = try arena.create(CliModule);
                         m.* = .{
                             .root_path = try f.package_root.toString(arena),
@@ -1349,16 +1533,20 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                         f.cli_module = m;
                     }
 
-                    // Each build.zig module needs access to each of its
-                    // dependencies' build.zig modules by name.
+                    // Each build.zig module needs access to each of its dependencies' build.zig modules by
+                    // name. Also, ensure build.zig.zon files are added to the configuration cache manifest.
                     for (fetches) |f| {
-                        const mod = f.cli_module orelse continue;
                         if (!f.have_manifest) continue;
+                        if (config_man) |man| {
+                            const manifest_path = try f.package_root.join(arena, Manifest.basename);
+                            _ = try man.addInputPath(manifest_path, .{});
+                        }
+                        const mod = f.cli_module orelse continue;
                         const man = &f.manifest;
                         const dep_names = man.dependencies.keys();
                         try mod.deps.ensureUnusedCapacity(arena, @intCast(dep_names.len));
-                        for (dep_names, man.dependencies.values()) |name, dep| {
-                            const dep_digest = Package.Fetch.depDigest(
+                        for (dep_names, man.dependencies.values()) |name, *dep| {
+                            const dep_digest = Fetch.depDigest(
                                 f.package_root,
                                 graph.global_cache_root,
                                 dep,
@@ -1398,8 +1586,14 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
             defer compile_prog_node.end();
 
             if (config_man) |man| {
-                if (try man.hit(compile_prog_node)) {
-                    const digest = man.final();
+                var diagnostic: Cache.Manifest.CheckDiagnostic = undefined;
+                const status = man.check(&diagnostic, compile_prog_node) catch |err| switch (err) {
+                    error.Canceled, error.OutOfMemory => |e| return e,
+                    error.CacheCheckFailed => fatal("checking cache failed: {f}", .{diagnostic.fmt(man)}),
+                };
+                log.debug("configuration cache {f}", .{status.fmt(man)});
+                if (status == .hit) {
+                    const digest = man.hitDigestHex();
                     const path: Path = .{
                         .root_dir = graph.local_cache_root,
                         .sub_path = try arena.print("c/{s}", .{&digest}),
@@ -1418,6 +1612,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                 .arch_os_abi = target_arch_os_abi,
                 .progress_node = compile_prog_node,
                 .skip_log_cmdline_on_compile_errors = !graph.verbose,
+                .error_bundle = options.error_bundle,
             })) |r| r.path else |err| return err;
             defer gpa.free(configure_exe_path.sub_path);
 
@@ -1434,11 +1629,17 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
             .root_dir = graph.local_cache_root,
             .sub_path = try arena.print("tmp" ++ Dir.path.sep_str ++ "{x}", .{randInt(io, u64)}),
         };
-        const config_tmp_file: Io.File = try config_tmp_path.root_dir.handle.createFile(
+        const config_tmp_file: Io.File = config_tmp_path.root_dir.handle.createFile(
             io,
             config_tmp_path.sub_path,
             .{ .read = true, .exclusive = true },
-        );
+        ) catch |err| switch (err) {
+            error.Canceled => |e| return e,
+            else => |e| {
+                log.err("failed to create {qf}: {t}", .{ config_tmp_path, e });
+                return error.AlreadyReported;
+            },
+        };
         defer config_tmp_file.close(io);
 
         const term = term: {
@@ -1453,7 +1654,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
             break :term child.wait(io) catch |err|
                 fatal("failed to wait configure script {q}: {t}", .{ configure_argv[0], err });
         };
-        if (!term.success()) {
+        if (!term.eql(.success)) {
             // Failure to produce the configuration file.
             fatal("configure command {f}: {f}", .{ term, @as(std.zig.SubprocessCommand, .{
                 .argv = configure_argv,
@@ -1470,38 +1671,50 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
 
         if (configuration.unlazy_deps.len != 0) {
             var any_errors = false;
-            for (configuration.unlazy_deps) |hash_string| {
-                const hash = hash_string.slice(&configuration);
-                assert(hash.len != 0);
-                if (hash.len > Package.Hash.max_len) {
-                    log.err("invalid digest (length {d} exceeds maximum): {q}", .{ hash.len, hash });
-                    any_errors = true;
-                    continue;
+            options.unlazy_set.clearRetainingCapacity();
+            for (configuration.unlazy_deps) |unlazy_dep| {
+                if (unlazy_dep.step != .none) continue; // Handled in `prepare`.
+                for (unlazy_dep.list.slice(&configuration)) |hash_string| {
+                    const hash = hash_string.slice(&configuration);
+                    assert(hash.len != 0);
+                    if (hash.len > Package.Hash.max_len) {
+                        log.err("invalid digest (length {d} exceeds maximum): {q}", .{ hash.len, hash });
+                        any_errors = true;
+                        continue;
+                    }
+                    log.info("fetching lazy dependency {s}", .{hash});
+                    try options.unlazy_set.put(arena, .fromSlice(hash), {});
                 }
-                log.info("fetching lazy dependency {s}", .{hash});
-                try unlazy_set.put(arena, .fromSlice(hash), {});
             }
             if (any_errors) return error.FailedButCacheIntact;
             if (options.system_pkg_dir_path) |p| {
-                // In this mode, the system needs to provide these packages; they
-                // cannot be fetched by Zig.
+                // In this mode, the system needs to provide these packages; they cannot be fetched by Zig.
                 const s = Dir.path.sep_str;
-                for (unlazy_set.keys()) |*hash| {
+                for (options.unlazy_set.keys()) |*hash| {
                     log.err("lazy dependency package not found: {s}" ++ s ++ "{s}", .{ p, hash.toSlice() });
                 }
                 log.info("remote package fetching disabled due to --system mode", .{});
                 log.info("dependencies might be avoidable depending on build configuration", .{});
                 return error.FailedButCacheIntact;
             }
-            continue :cp;
+            if (options.unlazy_set.count() != 0) continue :cp;
         }
 
         if (config_man) |man| for (configuration.path_deps) |path_dep| {
-            switch (path_dep.flags.mode) {
-                .directory => {}, // TODO
-                .contents => try man.addPathPost(try confPathDepToCachePath(arena, graph, &configuration, path_dep)),
-                .metadata => {}, // TODO
-            }
+            const path = try confPathDepToCachePath(arena, graph, &configuration, path_dep);
+            var diag: Cache.Manifest.AddDiscoveredPathDiagnostic = undefined;
+            man.addDiscoveredPath(.{
+                .discovered_path = .{ .unresolved = path },
+                .handle = if (path_dep.flags.is_directory) .{ .dir = null } else .{ .file = null },
+                .metadata_only = path_dep.flags.metadata_only,
+                .diagnostic = &diag,
+            }) catch |err| switch (err) {
+                error.FileSystemFailure => {
+                    log.err("failed to register dependency on {qf}: {f}", .{ path, diag });
+                    return error.AlreadyReported;
+                },
+                else => |e| return e,
+            };
         };
 
         // If it is poisoned, there is no point in moving it to cached
@@ -1510,7 +1723,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
             break :cp .{ config_tmp_path, null };
         } else {
             const man = config_man.?;
-            const digest = man.final();
+            const digest = man.missDigestHex();
             const final_path: Path = .{
                 .root_dir = graph.local_cache_root,
                 .sub_path = try arena.print("c/{s}", .{&digest}),
@@ -1541,7 +1754,7 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
                     config_tmp_path, final_path, e,
                 });
             };
-            man.writeManifest() catch |err| log.warn("failed to write cache manifest: {t}", .{err});
+            man.finalize() catch |err| log.warn("failed to write cache manifest: {t}", .{err});
             options.src_files.* = man.takeFiles();
             break :cp .{ final_path, man.toOwnedLock() };
         }
@@ -1558,15 +1771,16 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
             _ = io.lockStderr(&.{}, .no_color) catch {};
             process.exit(0);
         },
-        .none, .zon => {},
+        .none, .zon, .stop => {},
+        .tree => unreachable,
     }
 
     const configuration = c: {
         var file = configuration_path.root_dir.handle.openFile(io, configuration_path.sub_path, .{}) catch |err|
-            fatal("failed to open configuration file {f}: {t}", .{ configuration_path, err });
+            fatal("failed to open configuration file {qf}: {t}", .{ configuration_path, err });
         defer file.close(io);
         break :c Configuration.loadFile(arena, io, file) catch |err|
-            fatal("failed to load configuration file {f}: {t}", .{ configuration_path, err });
+            fatal("failed to load configuration file {qf}: {t}", .{ configuration_path, err });
     };
     // Technically if the configuration is marked as poisoned, we could
     // already delete the file now, but we leave it around in case the
@@ -1594,6 +1808,190 @@ fn configure(graph: *Graph, options: ConfigureOptions) !ScannedConfig {
         .top_level_steps = top_level_steps,
         .path = configuration_path,
     };
+}
+
+const ValidFingerprintKey = struct {
+    project_id: Package.ProjectId,
+    version: std.SemanticVersion,
+
+    const Context = struct {
+        pub fn hash(this: @This(), a: ValidFingerprintKey) u32 {
+            _ = this;
+            var hasher: std.hash.Wyhash = .init(a.project_id.fingerprint_id);
+            hasher.update(&a.project_id.padded_name);
+            hasher.update(@ptrCast((&a.version.major)[0..1]));
+            hasher.update(@ptrCast((&a.version.minor)[0..1]));
+            hasher.update(@ptrCast((&a.version.patch)[0..1]));
+            if (a.version.pre) |pre| hasher.update(pre);
+            return @truncate(hasher.final());
+        }
+        pub fn eql(this: @This(), a: ValidFingerprintKey, b: ValidFingerprintKey, i: usize) bool {
+            _ = this;
+            _ = i;
+            return a.project_id.eql(&b.project_id) and a.version.order(b.version) == .eq;
+        }
+    };
+};
+
+const ValidFingerprintTable = std.array_hash_map.Custom(
+    ValidFingerprintKey,
+    struct { fetch: *Fetch, pkg_hash: Package.Hash, printed: bool },
+    ValidFingerprintKey.Context,
+    true,
+);
+
+/// Ensure that the dependency tree did not have any fingerprint matches with the same semantic version but
+/// differing package hashes.
+fn validateFingerprints(
+    gpa: Allocator,
+    job_queue: *const Fetch.JobQueue,
+    fork_set: *const Fetch.JobQueue.ForkSet,
+) !void {
+    var any_errors = false;
+
+    var table: ValidFingerprintTable = .empty;
+    defer table.deinit(gpa);
+
+    for (job_queue.table.keys(), job_queue.table.values()) |pkg_hash, fetch| {
+        if (!fetch.have_manifest) continue;
+
+        // Forked packages are exempt since they overide multiple package hashes to have the forked contents.
+        const project_id: Package.ProjectId = .init(fetch.manifest.name, fetch.manifest.id);
+        if (fork_set.containsAdapted(project_id, @as(Fetch.JobQueue.Fork.Adapter, .{}))) continue;
+
+        const gop = try table.getOrPut(gpa, .{
+            .project_id = project_id,
+            .version = fetch.manifest.version,
+        });
+        if (gop.found_existing) {
+            any_errors = true;
+            const fingerprint: Package.Fingerprint = .init(fetch.manifest.id, fetch.manifest.name);
+            const stripped_version: std.SemanticVersion = .{
+                .major = fetch.manifest.version.major,
+                .minor = fetch.manifest.version.minor,
+                .patch = fetch.manifest.version.patch,
+                .pre = fetch.manifest.version.pre,
+            };
+            if (!gop.value_ptr.printed) {
+                gop.value_ptr.printed = true;
+                log.err("contradictory hash for package with fingerprint 0x{x} and version {f}: {s}", .{
+                    fingerprint.int(), stripped_version, gop.value_ptr.pkg_hash.toSlice(),
+                });
+            }
+            log.err("contradictory hash for package with fingerprint 0x{x} and version {f}: {s}", .{
+                fingerprint.int(), stripped_version, pkg_hash.toSlice(),
+            });
+        } else {
+            gop.value_ptr.* = .{ .fetch = fetch, .pkg_hash = pkg_hash, .printed = false };
+        }
+    }
+    if (any_errors) {
+        log.info("potential cause: package ownership dispute", .{});
+        log.info("potential cause: maintainer neglected to bump version after making changes", .{});
+        log.info("potential cause: dependency on unreleased changes", .{});
+        log.info("hint: use --print-tree to visualize all package versions and hashes", .{});
+        return error.FailedButCacheIntact;
+    }
+}
+
+fn printPkgTree(
+    terminal: Io.Terminal,
+    arena: Allocator,
+    global_cache_root: Cache.Directory,
+    job_queue: *const Fetch.JobQueue,
+    root_fetch: *const Fetch,
+    fork_set: *const Fetch.JobQueue.ForkSet,
+) !void {
+    if (!root_fetch.have_manifest) return;
+    const names = root_fetch.manifest.dependencies.keys();
+    for (names, root_fetch.manifest.dependencies.values(), 0..) |name, *dep, i| {
+        var print_node: PrintNode = .{
+            .parent = null,
+            .last = i == names.len - 1,
+        };
+        switch (dep.location) {
+            .url => {
+                const child_hash = if (dep.hash) |h| Package.Hash.fromSlice(h) else null;
+                try printPkgTreeChild(terminal, arena, global_cache_root, job_queue, &print_node, name, child_hash, fork_set);
+            },
+            .path => {
+                const child_hash = Fetch.depDigest(root_fetch.package_root, global_cache_root, dep);
+                try printPkgTreeChild(terminal, arena, global_cache_root, job_queue, &print_node, name, child_hash, fork_set);
+            },
+        }
+    }
+}
+
+fn printPkgTreeChild(
+    terminal: Io.Terminal,
+    arena: Allocator,
+    global_cache_root: Cache.Directory,
+    job_queue: *const Fetch.JobQueue,
+    parent_print_node: *const PrintNode,
+    dep_name: []const u8,
+    opt_pkg_hash: ?Package.Hash,
+    fork_set: *const Fetch.JobQueue.ForkSet,
+) !void {
+    const w = terminal.writer;
+    try parent_print_node.printPrefixedChild(w, terminal.mode);
+    try w.writeAll(dep_name);
+
+    const pkg_hash = opt_pkg_hash orelse {
+        try terminal.setColor(.red);
+        try w.writeAll(" (missing hash)\n");
+        try terminal.setColor(.reset);
+        return;
+    };
+    try terminal.setColor(.dim);
+    try w.print(" {s}", .{pkg_hash.toSlice()});
+    try terminal.setColor(.reset);
+    const child_fetch = job_queue.table.get(pkg_hash) orelse {
+        try terminal.setColor(.red);
+        try w.writeAll(" (fetch failed)\n");
+        try terminal.setColor(.reset);
+        return;
+    };
+
+    switch (child_fetch.lazy_status) {
+        .eager, .available => {},
+        .unavailable => {
+            try terminal.setColor(.yellow);
+            try w.writeAll(" (not fetched)\n");
+            try terminal.setColor(.reset);
+            return;
+        },
+    }
+    if (!child_fetch.have_manifest) {
+        try w.writeByte('\n');
+        return;
+    }
+
+    const project_id: Package.ProjectId = .init(child_fetch.manifest.name, child_fetch.manifest.id);
+    if (fork_set.getKeyPtrAdapted(project_id, @as(Fetch.JobQueue.Fork.Adapter, .{}))) |fork| {
+        try terminal.setColor(.yellow);
+        try w.print(" (fork: {f})", .{fork.path});
+        try terminal.setColor(.reset);
+    }
+
+    try w.writeByte('\n');
+
+    const names = child_fetch.manifest.dependencies.keys();
+    for (names, child_fetch.manifest.dependencies.values(), 0..) |name, *dep, i| {
+        var print_node: PrintNode = .{
+            .parent = parent_print_node,
+            .last = i == names.len - 1,
+        };
+        switch (dep.location) {
+            .url => {
+                const child_hash = if (dep.hash) |h| Package.Hash.fromSlice(h) else null;
+                try printPkgTreeChild(terminal, arena, global_cache_root, job_queue, &print_node, name, child_hash, fork_set);
+            },
+            .path => {
+                const child_hash = Fetch.depDigest(child_fetch.package_root, global_cache_root, dep);
+                try printPkgTreeChild(terminal, arena, global_cache_root, job_queue, &print_node, name, child_hash, fork_set);
+            },
+        }
+    }
 }
 
 fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
@@ -1703,9 +2101,14 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
         .location_tok = 0,
         .hash_tok = .none,
         .name_tok = 0,
+        .name = "",
+        .parent_specified_paths = .empty,
+        .parent_specified_paths_tok = .none,
+        .parent_specified_version = undefined,
+        .parent_specified_version_tok = .none,
         .lazy_status = .eager,
         .remote_package_root = undefined,
-        .parent_package_root = undefined,
+        .parent_package_root = if (build_root_initialized) .{ .root_dir = build_root.directory } else .cwd(),
         .parent_manifest_ast = null,
         .prog_node = root_prog_node,
         .job_queue = &job_queue,
@@ -1872,12 +2275,108 @@ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
     try ast.render(gpa, &aw.writer, fixups);
     const rendered = aw.written();
 
-    build_root.directory.handle.writeFile(io, .{ .sub_path = Package.Manifest.basename, .data = rendered }) catch |err| {
-        fatal("unable to write {s} file: {t}", .{ Package.Manifest.basename, err });
+    build_root.directory.handle.writeFile(io, .{ .sub_path = Manifest.basename, .data = rendered }) catch |err| {
+        fatal("unable to write {s} file: {t}", .{ Manifest.basename, err });
     };
 
     return process.cleanExit(io);
 }
+
+fn cmdCacheCat(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
+    const io = graph.io;
+
+    var arg_i: usize = 0;
+    var contents: std.ArrayList(u8) = .empty;
+    defer contents.deinit(gpa);
+
+    while (nextArg(args, &arg_i)) |arg| {
+        if (mem.startsWith(u8, arg, "-")) {
+            if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
+                try Io.File.stdout().writeStreamingAll(io, usage_cache_cat);
+                return process.cleanExit(io);
+            } else {
+                fatal("unrecognized parameter: {q}", .{arg});
+            }
+        } else {
+            var file = Dir.cwd().openFile(io, arg, .{}) catch |err| fatal("opening {q} failed: {t}", .{ arg, err });
+            defer file.close(io);
+
+            var manifest_reader = file.reader(io, &.{}); // Reads positionally from zero.
+            contents.clearRetainingCapacity();
+            manifest_reader.interface.appendRemainingUnlimited(gpa, &contents) catch |err| switch (err) {
+                error.OutOfMemory => |e| return e,
+                error.ReadFailed => switch (manifest_reader.err.?) {
+                    error.Canceled => |e| return e,
+                    else => |e| fatal("reading from {q} failed: {t}", .{ arg, e }),
+                },
+            };
+            const hex_digest = Dir.path.basename(arg);
+            cacheCatOne(hex_digest, contents.items, initStdoutWriter(io)) catch |err| switch (err) {
+                error.WriteFailed => fatal("writing to stdout failed: {t}", .{stdout_writer_allocation.err.?}),
+                else => |e| fatal("parsing {q} failed: {t}", .{ arg, e }),
+            };
+            try stdout_writer_allocation.flush();
+        }
+    }
+}
+
+fn cacheCatOne(input_hex_digest: []const u8, contents: []const u8, writer: *Io.Writer) !void {
+    var bin_digest: Cache.BinDigest = undefined;
+    _ = try fmt.hexToBytes(&bin_digest, input_hex_digest);
+
+    var hh: Cache.HashHelper = .{};
+    hh.hasher.update(&bin_digest);
+
+    var serializer: std.zon.Serializer = .{ .writer = writer };
+    var top_level = try serializer.beginStruct(.{});
+    try top_level.field("input_hash", input_hex_digest, .{});
+    var files_tuple = try top_level.beginTupleField("files", .{});
+    var off: usize = 0;
+    while (off + 1 < contents.len) {
+        const file_off: Cache.Manifest.File.Offset = @fromBackingInt(@intCast(off));
+        const file = try file_off.getFallibleConst(contents);
+        const path = try file_off.pathFallible(contents);
+        if (path.len == 0) return error.InvalidFormat;
+
+        var file_obj = try files_tuple.beginStructField(.{ .whitespace_style = .{ .wrap = false } });
+        try file_obj.field("size", file.size, .{});
+        try file_obj.field("inode", file.inode, .{});
+        try file_obj.field("mtime", file.mtime, .{});
+        const hex_digest = Cache.binToHex(file.digest);
+        try file_obj.field("digest", @as([]const u8, &hex_digest), .{});
+        if (file.flags.is_directory) try file_obj.field("directory", true, .{});
+        if (file.flags.metadata_only) try file_obj.field("metadata", true, .{});
+        if (!file.flags.exists) try file_obj.field("exists", false, .{});
+        try file_obj.field("prefix", file.flags.prefix, .{});
+        try file_obj.field("path", path, .{});
+        try file_obj.end();
+
+        hh.hasher.update(&file.digest);
+
+        off += Cache.Manifest.File.sizeOf(path.len);
+    }
+
+    try files_tuple.end();
+
+    var discovered_bin_digest: Cache.BinDigest = undefined;
+    hh.hasher.final(&discovered_bin_digest);
+    const discovered_hex_digest = Cache.binToHex(discovered_bin_digest);
+    try top_level.field("discovered_hash", @as([]const u8, &discovered_hex_digest), .{});
+
+    try top_level.end();
+    try writer.writeByte('\n');
+}
+
+const usage_cache_cat =
+    \\Usage: zig cache-cat <paths>
+    \\
+    \\   Prints .zig-cache/h/* manifest files in text form.
+    \\
+    \\Options:
+    \\  -h, --help             Print this help and exit
+    \\
+    \\
+;
 
 const usage_fetch =
     \\Usage: zig fetch [options] <url>
@@ -1980,7 +2479,7 @@ fn cmdInit(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
             const s = Dir.path.sep_str;
             const template_paths = [_][]const u8{
                 default_build_zig_basename,
-                Package.Manifest.basename,
+                Manifest.basename,
                 "src" ++ s ++ "main.zig",
                 "src" ++ s ++ "root.zig",
             };
@@ -2004,7 +2503,7 @@ fn cmdInit(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
             return process.cleanExit(io);
         },
         .minimal => {
-            Templates.writeSimpleFile(io, Io.Dir.cwd(), Package.Manifest.basename,
+            Templates.writeSimpleFile(io, Io.Dir.cwd(), Manifest.basename,
                 \\.{{
                 \\    .name = .{s},
                 \\    .version = "0.0.1",
@@ -2018,8 +2517,8 @@ fn cmdInit(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
                 builtin.zig_version_string,
                 fingerprint.int(),
             }) catch |err| switch (err) {
-                else => fatal("failed to create {q}: {t}", .{ Package.Manifest.basename, err }),
-                error.PathAlreadyExists => fatal("refusing to overwrite {q}", .{Package.Manifest.basename}),
+                else => fatal("failed to create {q}: {t}", .{ Manifest.basename, err }),
+                error.PathAlreadyExists => fatal("refusing to overwrite {q}", .{Manifest.basename}),
             };
             Templates.writeSimpleFile(io, Io.Dir.cwd(), default_build_zig_basename,
                 \\const std = @import("std");
@@ -2034,12 +2533,12 @@ fn cmdInit(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
                 // their `build.zig.zon` *after* writing their `build.zig`. So this one isn't fatal.
                 error.PathAlreadyExists => {
                     log.info("successfully populated {q}, preserving existing {q}", .{
-                        Package.Manifest.basename, default_build_zig_basename,
+                        Manifest.basename, default_build_zig_basename,
                     });
                     return process.cleanExit(io);
                 },
             };
-            log.info("successfully populated {q} and {q}", .{ Package.Manifest.basename, default_build_zig_basename });
+            log.info("successfully populated {q} and {q}", .{ Manifest.basename, default_build_zig_basename });
             return process.cleanExit(io);
         },
     }
@@ -2172,7 +2671,7 @@ fn markFailedStepsDirty(maker: *Maker) void {
     for (all_steps) |step_index| {
         const step = maker.stepByIndex(step_index);
         switch (step.state) {
-            .success => step.result_cached = true,
+            .success => step.result_cache_status = .hit,
             else => continue,
         }
     }
@@ -2220,8 +2719,9 @@ fn resolveTopLevelSteps(maker: *Maker, step_names: []const []const u8) ![]const 
 fn prepare(
     maker: *Maker,
     step_indices: []const Configuration.Step.Index,
-    configure_source_files: *const Cache.Manifest.Files,
-) !void {
+    configure_source_files: *const Cache.Manifest.SelfContainedFiles,
+    discovered_unlazy_set: *Fetch.JobQueue.UnlazySet,
+) error{ InsufficientMemory, OutOfMemory, DependencyLoopDetected, LazyDependencyNeeded }!void {
     const gpa = maker.gpa;
     const graph = maker.graph;
     const arena = graph.arena;
@@ -2229,6 +2729,12 @@ fn prepare(
     const initial_steps = &maker.initial_steps;
     const step_stack = &maker.step_stack;
     const c = &maker.scanned_config.configuration;
+
+    // Extra step at the end which is the autogenerated placeholder
+    // step which indicates that we need to reconfigure.
+    maker.steps = try arena.alloc(Step, c.steps.len + 1);
+    maker.generated_files = try arena.alloc(GeneratedFile, c.generated_files_len);
+    @memset(maker.generated_files, .{ .data = null });
 
     // The last element is a reserved special pseudostep which contains the
     // watch inputs for the configurer executable.
@@ -2263,40 +2769,67 @@ fn prepare(
         try constructGraphAndCheckForDependencyLoop(maker, s, &maker.step_stack, rand);
     }
 
-    {
-        // Check that we have enough memory to complete the build.
-        var any_problems = false;
-        var max_needed: u64 = 0;
-        for (step_stack.keys()) |step_index| {
-            const make_step = maker.stepByIndex(step_index);
-            const conf_step = step_index.ptr(c);
-            const max_rss = conf_step.max_rss.toBytes();
-            if (max_rss == 0) continue;
-            max_needed = @max(max_needed, max_rss);
-            if (max_rss > maker.available_rss) {
-                if (maker.skip_oom_steps) {
-                    make_step.state = .skipped_oom;
-                    for (make_step.dependants.items) |dependant| {
-                        maker.stepByIndex(dependant).pending_deps -= 1;
-                    }
-                } else {
-                    log.err("{s}{s}: this step declares an upper bound of {d} bytes of memory, exceeding the available {d} bytes of memory", .{
-                        conf_step.owner.depPrefixSlice(c),
-                        conf_step.name.slice(c),
-                        max_rss,
-                        maker.available_rss,
-                    });
-                    any_problems = true;
+    // Notice when a step's participation in the evaluation graph implies that additional package dependencies
+    // must be fetched.
+    var needed_step_deps: std.array_hash_map.Auto(Configuration.Step.Index, Configuration.StringList) = .empty;
+    defer needed_step_deps.deinit(gpa);
+
+    for (c.unlazy_deps) |unlazy_dep| {
+        const step_index = unlazy_dep.step.unwrap() orelse continue; // Handled in `configure`.
+        try needed_step_deps.put(gpa, step_index, unlazy_dep.list);
+    }
+
+    assert(discovered_unlazy_set.count() == 0);
+    for (step_stack.keys()) |step_index| {
+        const interned_string_list = needed_step_deps.get(step_index) orelse continue;
+        const hash_strings = interned_string_list.slice(c);
+        for (hash_strings) |hash_string| {
+            const hash = hash_string.slice(c);
+            log.debug("due to step {s}, fetching lazy {s}", .{ step_index.ptr(c).name.slice(c), hash });
+            try discovered_unlazy_set.put(arena, .fromSlice(hash), {});
+        }
+    }
+    if (discovered_unlazy_set.count() != 0) return error.LazyDependencyNeeded;
+
+    try checkSufficientMemory(maker);
+}
+
+fn checkSufficientMemory(maker: *Maker) error{InsufficientMemory}!void {
+    const step_stack = &maker.step_stack;
+    const c = &maker.scanned_config.configuration;
+
+    // Check that we have enough memory to complete the build.
+    var any_problems = false;
+    var max_needed: u64 = 0;
+    for (step_stack.keys()) |step_index| {
+        const make_step = maker.stepByIndex(step_index);
+        const conf_step = step_index.ptr(c);
+        const max_rss = conf_step.max_rss.toBytes();
+        if (max_rss == 0) continue;
+        max_needed = @max(max_needed, max_rss);
+        if (max_rss > maker.available_rss) {
+            if (maker.skip_oom_steps) {
+                make_step.state = .skipped_oom;
+                for (make_step.dependants.items) |dependant| {
+                    maker.stepByIndex(dependant).pending_deps -= 1;
                 }
+            } else {
+                log.err("{s}{s}: this step declares an upper bound of {d} bytes of memory, exceeding the available {d} bytes of memory", .{
+                    conf_step.owner.depPrefixSlice(c),
+                    conf_step.name.slice(c),
+                    max_rss,
+                    maker.available_rss,
+                });
+                any_problems = true;
             }
         }
-        if (any_problems) {
-            log.info("use --skip-oom-steps to proceed, skipping memory limited steps", .{});
-            if (maker.max_rss_is_default) {
-                log.info("use --maxrss {d} to proceed, risking system memory exhaustion", .{max_needed});
-            }
-            return error.InsufficientMemory;
+    }
+    if (any_problems) {
+        log.info("use --skip-oom-steps to proceed, skipping memory limited steps", .{});
+        if (maker.max_rss_is_default) {
+            log.info("use --maxrss {d} to proceed, risking system memory exhaustion", .{max_needed});
         }
+        return error.InsufficientMemory;
     }
 }
 
@@ -2524,7 +3057,7 @@ fn makeSteps(
                     const found = switch (maker.summary) {
                         .all, .line, .none => unreachable,
                         .failures => step.state != .success,
-                        .new => !step.result_cached,
+                        .new => step.result_cache_status != .hit,
                     };
                     if (found) break :blk i;
                 }
@@ -2549,8 +3082,7 @@ fn makeSteps(
         break :code 2; // failure; do not print build command
     };
     if (code == 0) {
-        removePoisonedConfiguration(io, maker.scanned_config);
-        if (debugMakerLeaks()) return deinit(maker);
+        return cleanExit(io, maker.scanned_config);
     }
     cleanup_task.await(io); // There is a defer above but an exit below.
     _ = io.lockStderr(&.{}, graph.stderr_mode) catch {};
@@ -2559,12 +3091,12 @@ fn makeSteps(
 
 fn deinit(maker: *Maker) void {
     const gpa = maker.gpa;
-    for (maker.steps) |*step| {
-        step.clearResultStderr(gpa);
-        step.clearFailedCommand(gpa);
-        step.clearErrorBundle(gpa);
-        step.inputs.deinit(gpa);
-    }
+    const io = maker.graph.io;
+    for (maker.steps) |*step| step.deinit(gpa, io);
+    for (maker.generated_files) |*gf| gf.clear(gpa);
+    maker.memory_blocked_steps.deinit(gpa);
+    maker.initial_steps.deinit(gpa);
+    maker.step_stack.deinit(gpa);
 }
 
 fn stepReady(
@@ -2673,7 +3205,8 @@ fn makeStep(
         if (maker.web_server) |ws| {
             ws.updateStepStatus(step_index, if (success) .success else .failure);
         }
-        if (maker.protocol_server != null) {
+        if (maker.protocol_server) |s| {
+            // https://codeberg.org/ziglang/zig/issues/36938
             maker.protocol_server_mutex.lockUncancelable(io);
             defer maker.protocol_server_mutex.unlock(io);
 
@@ -2686,20 +3219,18 @@ fn makeStep(
                 .dependency_skipped, .skipped => .skipped,
                 .skipped_oom => .skipped_oom,
             };
-            serveBuildStepCompleted(
-                maker,
-                step_index,
-                status,
-            ) catch |err| std.debug.panic("TODO propagate error when failing to send protocol message: {t}", .{err});
+            serveBuildStepCompleted(maker, step_index, status, s) catch |err|
+                std.debug.panic("TODO propagate error when failing to send protocol message: {t}", .{err});
         }
 
         if (!success) std.Progress.setStatus(.failure_working);
     }
 
     // No matter the result, we want to display error/warning messages.
-    if (make_step.result_error_bundle.errorMessageCount() > 0 or
-        make_step.result_error_msgs.items.len > 0 or
-        make_step.result_stderr.len > 0)
+    if (maker.protocol_server == null and
+        (make_step.result_error_bundle.errorMessageCount() > 0 or
+            make_step.result_error_msgs.items.len > 0 or
+            make_step.result_stderr.len > 0))
     {
         const stderr = try io.lockStderr(&stdio_buffer_allocation, graph.stderr_mode);
         defer io.unlockStderr();
@@ -2730,6 +3261,7 @@ fn makeStep(
                 const candidate_max_rss = candidate_index.ptr(c).max_rss.toBytes();
                 if (maker.available_rss < candidate_max_rss) break;
                 assert(maker.memory_blocked_steps.pop() == candidate_index);
+                maker.available_rss -= candidate_max_rss;
                 dispatch_set.appendAssumeCapacity(candidate_index);
             }
         }
@@ -2763,22 +3295,11 @@ fn printTreeStep(
     const skip = switch (summary) {
         .none, .line => unreachable,
         .all => false,
-        .new => make_step.result_cached,
+        .new => make_step.result_cache_status == .hit,
         .failures => make_step.state == .success,
     };
     if (skip) return;
-    try printPrefix(parent_node, stderr);
-
-    if (parent_node.parent != null) {
-        if (parent_node.last) {
-            try printChildNodePrefix(stderr);
-        } else {
-            try writer.writeAll(switch (stderr.mode) {
-                .escape_codes => "\x1B\x28\x30\x74\x71\x1B\x28\x42 ", // ├─
-                else => "+- ",
-            });
-        }
-    }
+    try parent_node.printPrefixedChild(writer, stderr.mode);
 
     if (!first) try stderr.setColor(.dim);
 
@@ -2800,7 +3321,7 @@ fn printTreeStep(
                 const found = switch (summary) {
                     .all, .line, .none => unreachable,
                     .failures => dep.state != .success,
-                    .new => !dep.result_cached,
+                    .new => dep.result_cache_status != .hit,
                 };
                 if (found) break :blk i;
             }
@@ -2844,24 +3365,50 @@ fn printStepStatus(maker: *Maker, step_index: Configuration.Step.Index, stderr: 
         },
 
         .success => {
-            try stderr.setColor(.green);
-            if (s.result_cached) {
-                try writer.writeAll(" cached");
-            } else if (s.test_results.test_count > 0) {
-                const pass_count = s.test_results.passCount();
-                assert(s.test_results.test_count == pass_count + s.test_results.skip_count);
-                try writer.print(" {d} pass", .{pass_count});
-                if (s.test_results.skip_count > 0) {
-                    try stderr.setColor(.reset);
-                    try writer.writeAll(", ");
-                    try stderr.setColor(.yellow);
-                    try writer.print("{d} skip", .{s.test_results.skip_count});
+            cs: {
+                switch (s.result_cache_status) {
+                    .hit => {
+                        try stderr.setColor(.green);
+                        try writer.writeAll(" cached");
+                        break :cs;
+                    },
+                    .incomplete_manifest => {
+                        // Common case: first-time cache miss, print nothing.
+                        try stderr.setColor(.green);
+                    },
+                    .invalid_manifest => {
+                        try stderr.setColor(.blue);
+                        try writer.writeAll(" invalid_manifest");
+                        try stderr.setColor(.green);
+                    },
+                    .path_created,
+                    .path_deleted,
+                    .directory_status_changed,
+                    .metadata_changed,
+                    .contents_changed,
+                    => |path, tag| {
+                        try stderr.setColor(.blue);
+                        try writer.print(" {t}: {s}", .{ tag, path });
+                        try stderr.setColor(.green);
+                    },
                 }
-                try stderr.setColor(.reset);
-                try writer.print(" ({d} total)", .{s.test_results.test_count});
-            } else {
-                try writer.writeAll(" success");
+                if (s.test_results.test_count > 0) {
+                    const pass_count = s.test_results.passCount();
+                    assert(s.test_results.test_count == pass_count + s.test_results.skip_count);
+                    try writer.print(" {d} pass", .{pass_count});
+                    if (s.test_results.skip_count > 0) {
+                        try stderr.setColor(.reset);
+                        try writer.writeAll(", ");
+                        try stderr.setColor(.yellow);
+                        try writer.print("{d} skip", .{s.test_results.skip_count});
+                    }
+                    try stderr.setColor(.reset);
+                    try writer.print(" ({d} total)", .{s.test_results.test_count});
+                } else {
+                    try writer.writeAll(" success");
+                }
             }
+
             try stderr.setColor(.reset);
             if (s.result_duration_ns) |ns| {
                 try stderr.setColor(.dim);
@@ -3002,44 +3549,43 @@ fn printStepFailure(
         try w.writeAll(" failure\n");
     } else {
         assert(s.result_stderr.len > 0);
-        try stderr.setColor(.red);
-        try w.writeAll(" w\n");
+        try stderr.setColor(.yellow);
+        try w.writeAll(" stderr\n");
     }
 }
 
-fn printPrefix(node: *PrintNode, stderr: Io.Terminal) !void {
-    const parent = node.parent orelse return;
-    const writer = stderr.writer;
-    if (parent.parent == null) return;
-    try printPrefix(parent, stderr);
-    if (parent.last) {
-        try writer.writeAll("   ");
-    } else {
-        try writer.writeAll(switch (stderr.mode) {
-            .escape_codes => "\x1B\x28\x30\x78\x1B\x28\x42  ", // │
-            else => "|  ",
-        });
-    }
+fn printTreeChild(writer: *Writer, mode: Io.Terminal.Mode) Writer.Error!void {
+    return writer.writeAll(switch (mode) {
+        .escape_codes => "\x1B\x28\x30\x74\x71\x1B\x28\x42 ", // ├─
+        else => "+- ",
+    });
 }
 
-fn printChildNodePrefix(stderr: Io.Terminal) !void {
-    try stderr.writer.writeAll(switch (stderr.mode) {
+fn printTreeSibling(writer: *Writer, mode: Io.Terminal.Mode) Writer.Error!void {
+    return writer.writeAll(switch (mode) {
+        .escape_codes => "\x1B\x28\x30\x78\x1B\x28\x42  ", // │
+        else => "|  ",
+    });
+}
+
+fn printTreeChildLast(writer: *Writer, mode: Io.Terminal.Mode) !void {
+    try writer.writeAll(switch (mode) {
         .escape_codes => "\x1B\x28\x30\x6d\x71\x1B\x28\x42 ", // └─
         else => "+- ",
     });
 }
 
-/// Traverse the dependency graph depth-first and make it undirected by having
-/// steps know their dependants (they only know dependencies at start).
-/// Along the way, check that there is no dependency loop, and record the steps
-/// in traversal order in `step_stack`.
-/// Each step has its dependencies traversed in random order, this accomplishes
-/// two things:
-/// - `step_stack` will be in randomized-depth-first order, so the build runner
-///   spawns initial steps in a random order
-/// - each step's `dependants` list is also filled in a random order, so that
-///   when it finishes executing in `makeStep`, it spawns next steps to run in
+/// Traverse the dependency graph depth-first and make it undirected by having steps know their dependants
+/// (they only know dependencies at start).
+///
+/// Along the way, check that there is no dependency loop, and record the steps in traversal order in
+/// `step_stack`.
+///
+/// Each step has its dependencies traversed in random order, this accomplishes two things:
+/// - `step_stack` will be in randomized-depth-first order, so the build runner spawns initial steps in a
 ///   random order
+/// - each step's `dependants` list is also filled in a random order, so that when it finishes executing in
+///   `makeStep`, it spawns next steps to run in random order
 fn constructGraphAndCheckForDependencyLoop(
     maker: *Maker,
     step_index: Configuration.Step.Index,
@@ -3117,7 +3663,7 @@ pub fn invalidateResult(maker: *Maker, step: *Step) error{MustReconfigure}!bool 
 pub fn printErrorMessages(
     maker: *Maker,
     failing_step_index: Configuration.Step.Index,
-    options: std.zig.ErrorBundle.RenderOptions,
+    options: ErrorBundle.RenderOptions,
     stderr: Io.Terminal,
     error_style: ErrorStyle,
     multiline_errors: MultilineErrors,
@@ -3143,7 +3689,7 @@ pub fn printErrorMessages(
         while (step_stack.pop()) |step_index| : (indent += 1) {
             if (indent > 0) {
                 try writer.splatByteAll(' ', (indent - 1) * 3);
-                try printChildNodePrefix(stderr);
+                try printTreeChildLast(writer, stderr.mode);
             }
 
             try writer.writeAll(step_index.ptr(c).name.slice(c));
@@ -3250,13 +3796,13 @@ fn cleanTmpFiles(maker: *Maker, steps: []const Configuration.Step.Index) void {
         if (wf.flags.mode != .tmp) continue;
         const step = maker.stepByIndex(step_index);
         if (step.state != .success) continue;
-        const tmp_path = generatedPath(maker, wf.generated_directory).*;
+        const tmp_path = generatedPath(maker, wf.generated_directory);
         tmp_path.root_dir.handle.deleteTree(io, tmp_path.subPathOrDot()) catch |err|
             log.warn("failed to delete temporary path {f}: {t}", .{ tmp_path, err });
     }
 }
 
-fn serveBSPHandshake(s: *const std.zig.Server) !void {
+fn serveBspHandshake(s: *const std.zig.Server) !void {
     const handshake_header: Server.Message.Handshake = .{
         .version = Server.build_system_version,
         .flags = .{
@@ -3275,10 +3821,12 @@ fn serveBuildStepCompleted(
     maker: *Maker,
     step_index: Configuration.Step.Index,
     status: Server.Message.BuildStepCompleted.Status,
+    s: *Server,
 ) !void {
-    const s: *Server = maker.protocol_server.?;
     const step = maker.stepByIndex(step_index);
     const error_bundle = step.result_error_bundle;
+
+    const gf_size = countGeneratedFiles(maker.generated_files, step_index, &maker.scanned_config.configuration);
 
     const body: Server.Message.BuildStepCompleted = .{
         .step_index = step_index,
@@ -3287,17 +3835,170 @@ fn serveBuildStepCompleted(
             .extra_len = @intCast(error_bundle.extra.len),
             .string_bytes_len = @intCast(error_bundle.string_bytes.len),
         },
+        .generated_files_len = gf_size.count,
     };
     const eb_bytes_len = @sizeOf(u32) * error_bundle.extra.len + error_bundle.string_bytes.len;
-    const bytes_len = @sizeOf(Server.Message.BuildStepCompleted) + eb_bytes_len;
+    const bytes_len = @sizeOf(Server.Message.BuildStepCompleted) + eb_bytes_len +
+        (gf_size.count * @sizeOf(Server.Message.GeneratedFile)) + gf_size.size;
     try s.serveMessageHeader(.{
         .tag = .bsp_step_completed,
         .bytes_len = @intCast(bytes_len),
     });
     try s.out.writeStruct(body, .little);
+
     try s.out.writeSliceEndian(u32, error_bundle.extra, .little);
     try s.out.writeAll(error_bundle.string_bytes);
+
+    try writeGeneratedFiles(maker.generated_files, step_index, &maker.scanned_config.configuration, s.out);
+    try writeGeneratedFilesData(maker.generated_files, step_index, &maker.scanned_config.configuration, s.out);
+
     try s.out.flush();
+}
+
+fn walkGeneratedFiles(
+    step_index: Configuration.Step.Index,
+    conf: *const Configuration,
+    comptime Context: type,
+    context: Context,
+) void {
+    const conf_step = step_index.ptr(conf);
+    switch (conf_step.extended.get(conf.extra)) {
+        .check_file,
+        .fail,
+        .fmt,
+        .install_artifact,
+        .install_dir,
+        .install_file,
+        .top_level,
+        .update_source_files,
+        => {},
+
+        .compile => |compile| {
+            walkGeneratedFilesOne(context, compile.emit_directory.value);
+            walkGeneratedFilesOne(context, compile.generated_docs.value);
+            walkGeneratedFilesOne(context, compile.generated_asm.value);
+            walkGeneratedFilesOne(context, compile.generated_bin.value);
+            walkGeneratedFilesOne(context, compile.generated_pdb.value);
+            walkGeneratedFilesOne(context, compile.generated_implib.value);
+            walkGeneratedFilesOne(context, compile.generated_llvm_bc.value);
+            walkGeneratedFilesOne(context, compile.generated_llvm_ir.value);
+            walkGeneratedFilesOne(context, compile.generated_h.value);
+        },
+        .config_header => |config_header| {
+            walkGeneratedFilesOne(context, config_header.generated_dir);
+        },
+        .find_program => |find_program| {
+            walkGeneratedFilesOne(context, find_program.found_path);
+        },
+        .obj_copy => |obj_copy| {
+            walkGeneratedFilesOne(context, obj_copy.output_file);
+            walkGeneratedFilesOne(context, obj_copy.debug_file.value);
+        },
+        .options => |options| {
+            walkGeneratedFilesOne(context, options.generated_file);
+        },
+        .run => |run| {
+            if (run.captured_stdout.value) |v| walkGeneratedFilesOne(context, v.generated_file);
+            if (run.captured_stderr.value) |v| walkGeneratedFilesOne(context, v.generated_file);
+            for (run.args.slice) |arg|
+                walkGeneratedFilesOne(context, arg.get(conf).generated.value);
+        },
+        .translate_c => |translate_c| {
+            walkGeneratedFilesOne(context, translate_c.output_file);
+        },
+        .write_file => |write_file| {
+            walkGeneratedFilesOne(context, write_file.generated_directory);
+        },
+    }
+}
+
+fn walkGeneratedFilesOne(
+    context: anytype,
+    opt: ?Configuration.GeneratedFileIndex,
+) void {
+    context.visit(opt orelse return);
+}
+
+fn countGeneratedFiles(
+    generated_files: []const GeneratedFile,
+    step_index: Configuration.Step.Index,
+    conf: *const Configuration,
+) struct { count: u32, size: u32 } {
+    const Visitor = struct {
+        generated_files: []const GeneratedFile,
+        count: u32,
+        size: u32,
+
+        fn visit(this: *@This(), i: Configuration.GeneratedFileIndex) void {
+            const data = this.generated_files[@backingInt(i)].data orelse return;
+            this.count += 1;
+            this.size = @intCast(this.size + data.len);
+        }
+    };
+    var v: Visitor = .{
+        .generated_files = generated_files,
+        .count = 0,
+        .size = 0,
+    };
+    walkGeneratedFiles(step_index, conf, *Visitor, &v);
+    return .{
+        .count = v.count,
+        .size = v.size,
+    };
+}
+
+fn writeGeneratedFiles(
+    generated_files: []const GeneratedFile,
+    step_index: Configuration.Step.Index,
+    conf: *const Configuration,
+    writer: *Io.Writer,
+) Io.Writer.Error!void {
+    const Visitor = struct {
+        generated_files: []const GeneratedFile,
+        writer: *Io.Writer,
+        result: Io.Writer.Error!void,
+
+        fn visit(this: *@This(), i: Configuration.GeneratedFileIndex) void {
+            const unpacked = this.generated_files[@backingInt(i)].unpack() orelse return;
+            const payload: Server.Message.GeneratedFile = .{
+                .index = i,
+                .path_len = @intCast(unpacked.sub_path.len),
+            };
+            this.result = this.writer.writeAll(@ptrCast((&payload)[0..1]));
+        }
+    };
+    var v: Visitor = .{
+        .generated_files = generated_files,
+        .writer = writer,
+        .result = {},
+    };
+    walkGeneratedFiles(step_index, conf, *Visitor, &v);
+    return v.result;
+}
+
+fn writeGeneratedFilesData(
+    generated_files: []const GeneratedFile,
+    step_index: Configuration.Step.Index,
+    conf: *const Configuration,
+    writer: *Io.Writer,
+) Io.Writer.Error!void {
+    const Visitor = struct {
+        generated_files: []const GeneratedFile,
+        writer: *Io.Writer,
+        result: Io.Writer.Error!void,
+
+        fn visit(this: *@This(), i: Configuration.GeneratedFileIndex) void {
+            const data = this.generated_files[@backingInt(i)].data orelse return;
+            this.result = this.writer.writeAll(data);
+        }
+    };
+    var v: Visitor = .{
+        .generated_files = generated_files,
+        .writer = writer,
+        .result = {},
+    };
+    walkGeneratedFiles(step_index, conf, *Visitor, &v);
+    return v.result;
 }
 
 fn initStdoutWriter(io: Io) *Writer {
@@ -3316,9 +4017,9 @@ pub fn resolveLazyPath(
     const c = &maker.scanned_config.configuration;
     return switch (lazy_path) {
         .source_path => |sp| try packagePath(maker, arena, sp.owner, sp.sub_path.slice(c)),
-        .relative => |relative| relativePath(maker, arena, relative),
+        .relative => |relative| try relativePath(maker, arena, relative, stepByIndex(maker, asking_step_index)),
         .generated => |gen| {
-            const base = generatedPath(maker, gen.index).*;
+            const base = generatedPath(maker, gen.index);
             var file_path = base;
             for (0..gen.flags.up) |_| {
                 file_path.sub_path = Dir.path.dirname(file_path.sub_path) orelse {
@@ -3369,8 +4070,65 @@ pub fn resolveLazyPathIndexAbs(
     return resolveLazyPathAbs(maker, arena, lazy_path_index.get(c), asking_step_index);
 }
 
-pub fn generatedPath(maker: *const Maker, index: Configuration.GeneratedFileIndex) *Path {
+pub fn generatedFile(maker: *const Maker, index: Configuration.GeneratedFileIndex) *GeneratedFile {
     return &maker.generated_files[@backingInt(index)];
+}
+
+pub fn generatedPath(maker: *const Maker, index: Configuration.GeneratedFileIndex) Path {
+    return generatedFile(maker, index).toPath(maker.graph).?;
+}
+
+pub fn setGeneratedPath(
+    maker: *Maker,
+    index: Configuration.GeneratedFileIndex,
+    prefix: Server.Message.PathPrefix,
+    sub_paths: []const []const u8,
+) Allocator.Error!Path {
+    const gpa = maker.gpa;
+    const graph = maker.graph;
+    assert(sub_paths.len != 0);
+
+    var buffer: std.ArrayList(u8) = .empty;
+    defer buffer.deinit(gpa);
+    try buffer.append(gpa, @backingInt(prefix));
+    for (sub_paths) |sub_path| {
+        try buffer.ensureUnusedCapacity(gpa, sub_path.len + 1);
+        buffer.appendSliceAssumeCapacity(sub_path);
+        while (Dir.path.isSep(buffer.items[buffer.items.len - 1]))
+            buffer.items.len -= 1;
+        buffer.appendAssumeCapacity(Dir.path.sep);
+    }
+    assert(buffer.pop().? == Dir.path.sep);
+    try buffer.shrinkToLen(gpa);
+
+    const sub_path = buffer.toOwnedSliceAssert();
+    const ptr = generatedFile(maker, index);
+    ptr.clear(gpa);
+    ptr.* = .{ .data = sub_path };
+    return .{
+        .root_dir = prefixToDirectory(graph, prefix),
+        .sub_path = sub_path[1..],
+    };
+}
+
+/// Prefer to use `setGeneratedPath` where possible to keep parent directory information intact.
+pub fn setGeneratedPathPath(
+    maker: *Maker,
+    index: Configuration.GeneratedFileIndex,
+    path: Path,
+) Allocator.Error!Path {
+    const graph = maker.graph;
+    if (path.root_dir.eql(graph.local_cache_root)) {
+        return setGeneratedPath(maker, index, .local_cache, &.{path.sub_path});
+    } else if (path.root_dir.eql(graph.global_cache_root)) {
+        return setGeneratedPath(maker, index, .global_cache, &.{path.sub_path});
+    } else if (path.root_dir.eql(graph.zig_lib_directory)) {
+        return setGeneratedPath(maker, index, .zig_lib, &.{path.sub_path});
+    } else if (path.root_dir.eql(graph.build_root_directory)) {
+        return setGeneratedPath(maker, index, .build_root, &.{path.sub_path});
+    } else {
+        return setGeneratedPath(maker, index, .cwd, &.{path.sub_path});
+    }
 }
 
 pub fn packagePath(
@@ -3396,7 +4154,12 @@ pub fn packagePath(
     };
 }
 
-pub fn relativePath(maker: *const Maker, arena: Allocator, relative: Configuration.LazyPath.Relative) Allocator.Error!Path {
+pub fn relativePath(
+    maker: *const Maker,
+    arena: Allocator,
+    relative: Configuration.LazyPath.Relative,
+    asking_step: *Step,
+) error{ OutOfMemory, MakeFailed }!Path {
     const graph = maker.graph;
     const c = &maker.scanned_config.configuration;
     const sub_path = relative.sub_path.slice(c);
@@ -3417,12 +4180,12 @@ pub fn relativePath(maker: *const Maker, arena: Allocator, relative: Configurati
             .root_dir = graph.build_root_directory,
             .sub_path = sub_path,
         },
-        .zig_exe => .{
-            .root_dir = .cwd(),
-            .sub_path = if (sub_path.len == 0)
-                graph.zig_exe
-            else
-                try Io.Dir.path.join(arena, &.{ graph.zig_exe, sub_path }),
+        .zig_exe => {
+            assert(sub_path.len == 0);
+            return .{
+                .root_dir = .cwd(),
+                .sub_path = graph.zig_exe,
+            };
         },
         .zig_lib => .{
             .root_dir = graph.zig_lib_directory,
@@ -3432,6 +4195,14 @@ pub fn relativePath(maker: *const Maker, arena: Allocator, relative: Configurati
         .install_lib => try maker.install_paths.lib.join(arena, sub_path),
         .install_bin => try maker.install_paths.bin.join(arena, sub_path),
         .install_include => try maker.install_paths.include.join(arena, sub_path),
+        .deployed_prefix => try maker.deployed_paths.prefix.join(arena, sub_path),
+        .deployed_lib => try maker.deployed_paths.lib.join(arena, sub_path),
+        .deployed_bin => try maker.deployed_paths.bin.join(arena, sub_path),
+        .deployed_include => try maker.deployed_paths.include.join(arena, sub_path),
+        .libc_runtimes => if (maker.graph.libc_runtimes_dir) |libc_runtimes_dir| .{
+            .root_dir = .cwd(),
+            .sub_path = try Dir.path.join(arena, &.{ libc_runtimes_dir, sub_path }),
+        } else asking_step.fail(maker, "unknown LazyPath: \"--libc-runtimes\" not specified", .{}),
     };
 }
 
@@ -3484,7 +4255,7 @@ pub fn installGenerated(
     dest_dir: Configuration.InstallDestDir,
     asking_step_index: Configuration.Step.Index,
 ) !Dir.PrevStatus {
-    const src_path = generatedPath(maker, source).*;
+    const src_path = generatedPath(maker, source);
     const dest_dir_path = try resolveInstallDir(maker, arena, dest_dir);
     const dest_path = try dest_dir_path.join(arena, src_path.basename());
     return installPath(maker, arena, src_path, dest_path, asking_step_index);
@@ -3640,11 +4411,6 @@ fn removePoisonedConfiguration(io: Io, scanned_config: *const ScannedConfig) voi
     }
 }
 
-inline fn debugMakerLeaks() bool {
-    if (!is_debug_mode) return false;
-    return debug_maker_leaks;
-}
-
 const BuildRoot = struct {
     directory: Cache.Directory,
     close_directory: bool,
@@ -3661,7 +4427,9 @@ const FindBuildRootOptions = struct {
     cwd_path: []const u8,
 };
 
-fn findBuildRoot(arena: Allocator, io: Io, options: FindBuildRootOptions) !BuildRoot {
+const FindBuildRootError = error{ OutOfMemory, BuildZigNotFound };
+
+fn findBuildRoot(arena: Allocator, io: Io, options: FindBuildRootOptions) FindBuildRootError!BuildRoot {
     const build_zig_basename = if (options.build_file) |bf|
         Dir.path.basename(bf)
     else
@@ -3712,11 +4480,12 @@ fn findBuildRoot(arena: Allocator, io: Io, options: FindBuildRootOptions) !Build
                 dirname = Dir.path.dirname(dirname orelse options.cwd_path) orelse {
                     log.info("initialize {s} template file with \"zig init\"", .{std.zig.build_zig_basename});
                     log.info("see \"zig --help\" for more options", .{});
-                    fatal("no build.zig file found, in the current directory or any parent directories", .{});
+                    log.err("no build.zig file found, in the current directory or any parent directories", .{});
+                    return error.BuildZigNotFound;
                 };
                 continue;
             },
-            else => |e| return e,
+            else => |e| fatal("accessing {q} while searching for build.zig file failed: {t}", .{ joined_path, e }),
         }
     }
 }
@@ -3724,8 +4493,8 @@ fn findBuildRoot(arena: Allocator, io: Io, options: FindBuildRootOptions) !Build
 const Fork = struct {
     path: Path,
     manifest_ast: std.zig.Ast,
-    manifest: Package.Manifest,
-    error_bundle: std.zig.ErrorBundle.Wip,
+    manifest: Manifest,
+    error_bundle: ErrorBundle.Wip,
     failed: bool,
     arena_allocator: std.heap.ArenaAllocator,
 
@@ -3758,13 +4527,12 @@ const Fork = struct {
         fork.arena_allocator = .init(gpa);
         const arena = fork.arena_allocator.allocator();
 
-        var error_bundle: std.zig.ErrorBundle.Wip = undefined;
-        try error_bundle.init(gpa);
+        var error_bundle: ErrorBundle.Wip = try .init(gpa);
         defer error_bundle.deinit();
 
-        const manifest_path = try fork.path.join(arena, Package.Manifest.basename);
+        const manifest_path = try fork.path.join(arena, Manifest.basename);
 
-        Package.Manifest.load(
+        Manifest.load(
             io,
             arena,
             manifest_path,
@@ -3814,20 +4582,20 @@ fn loadManifest(
     arena: Allocator,
     io: Io,
     options: LoadManifestOptions,
-) !struct { Package.Manifest, std.zig.Ast } {
+) !struct { Manifest, std.zig.Ast } {
     const rng: std.Random.IoSource = .{ .io = io };
 
     const manifest_bytes = while (true) {
         break options.dir.readFileAllocOptions(
             io,
-            Package.Manifest.basename,
+            Manifest.basename,
             arena,
-            .limited(Package.Manifest.max_bytes),
+            .limited(Manifest.max_bytes),
             .@"1",
             0,
         ) catch |err| switch (err) {
             error.FileNotFound => {
-                Templates.writeSimpleFile(io, options.dir, Package.Manifest.basename,
+                Templates.writeSimpleFile(io, options.dir, Manifest.basename,
                     \\.{{
                     \\    .name = .{s},
                     \\    .version = "0.0.1",
@@ -3841,30 +4609,29 @@ fn loadManifest(
                     builtin.zig_version_string,
                     Package.Fingerprint.generate(rng.interface(), options.root_name).int(),
                 }) catch |e| {
-                    fatal("unable to write {s}: {t}", .{ Package.Manifest.basename, e });
+                    fatal("unable to write {s}: {t}", .{ Manifest.basename, e });
                 };
                 continue;
             },
-            else => |e| fatal("unable to load {s}: {t}", .{ Package.Manifest.basename, e }),
+            else => |e| fatal("unable to load {s}: {t}", .{ Manifest.basename, e }),
         };
     };
     var ast = try std.zig.Ast.parse(gpa, manifest_bytes, .{ .mode = .zon });
     errdefer ast.deinit(gpa);
 
     if (ast.errors.len > 0) {
-        try std.zig.printAstErrorsToStderr(gpa, io, ast, Package.Manifest.basename, options.color);
+        try std.zig.printAstErrorsToStderr(gpa, io, ast, Manifest.basename, options.color);
         process.exit(2);
     }
 
-    var manifest = try Package.Manifest.parse(gpa, &ast, rng.interface(), .{});
+    var manifest = try Manifest.parse(gpa, &ast, rng.interface(), .{});
     errdefer manifest.deinit(gpa);
 
     if (manifest.errors.len > 0) {
-        var wip_errors: std.zig.ErrorBundle.Wip = undefined;
-        try wip_errors.init(gpa);
+        var wip_errors: ErrorBundle.Wip = try .init(gpa);
         defer wip_errors.deinit();
 
-        const src_path = try wip_errors.addString(Package.Manifest.basename);
+        const src_path = try wip_errors.addString(Manifest.basename);
         try manifest.copyErrorsIntoBundle(ast, src_path, &wip_errors);
 
         var error_bundle = try wip_errors.toOwnedBundle("");
@@ -3888,8 +4655,8 @@ fn sanitizeExampleName(arena: Allocator, bytes: []const u8) error{OutOfMemory}![
         else => continue,
     };
     if (!std.zig.isValidId(result.items)) return "foo";
-    if (result.items.len > Package.Manifest.max_name_len)
-        result.shrinkRetainingCapacity(Package.Manifest.max_name_len);
+    if (result.items.len > Manifest.max_name_len)
+        result.shrinkRetainingCapacity(Manifest.max_name_len);
 
     return result.toOwnedSlice(arena);
 }
@@ -3914,12 +4681,13 @@ test sanitizeExampleName {
 const Templates = struct {
     zig_lib_directory: Cache.Directory,
     dir: Io.Dir,
-    buffer: std.array_list.Managed(u8),
+    buffer: std.ArrayList(u8),
+    gpa: Allocator,
 
     fn deinit(templates: *Templates, io: Io) void {
         templates.zig_lib_directory.handle.close(io);
         templates.dir.close(io);
-        templates.buffer.deinit();
+        templates.buffer.deinit(templates.gpa);
         templates.* = undefined;
     }
 
@@ -3942,29 +4710,30 @@ const Templates = struct {
         const contents = templates.dir.readFileAlloc(io, template_path, arena, .limited(max_bytes)) catch |err| {
             fatal("unable to read template file {q}: {t}", .{ template_path, err });
         };
+        const gpa = templates.gpa;
         templates.buffer.clearRetainingCapacity();
-        try templates.buffer.ensureUnusedCapacity(contents.len);
+        try templates.buffer.ensureUnusedCapacity(gpa, contents.len);
         var i: usize = 0;
         while (i < contents.len) {
             if (contents[i] == '_' or contents[i] == '.') {
                 // Both '_' and '.' are allowed because depending on the context
                 // one prefix will be valid, while the other might not.
                 if (std.mem.startsWith(u8, contents[i + 1 ..], "NAME")) {
-                    try templates.buffer.appendSlice(root_name);
+                    try templates.buffer.appendSlice(gpa, root_name);
                     i += "_NAME".len;
                     continue;
                 } else if (std.mem.startsWith(u8, contents[i + 1 ..], "FINGERPRINT")) {
-                    try templates.buffer.print("0x{x}", .{fingerprint.int()});
+                    try templates.buffer.print(gpa, "0x{x}", .{fingerprint.int()});
                     i += "_FINGERPRINT".len;
                     continue;
                 } else if (std.mem.startsWith(u8, contents[i + 1 ..], "ZIGVER")) {
-                    try templates.buffer.appendSlice(builtin.zig_version_string);
+                    try templates.buffer.appendSlice(gpa, builtin.zig_version_string);
                     i += "_ZIGVER".len;
                     continue;
                 }
             }
 
-            try templates.buffer.append(contents[i]);
+            try templates.buffer.append(gpa, contents[i]);
             i += 1;
         }
 
@@ -3985,7 +4754,8 @@ const Templates = struct {
         return .{
             .zig_lib_directory = zig_lib_directory,
             .dir = template_dir,
-            .buffer = std.array_list.Managed(u8).init(gpa),
+            .buffer = .empty,
+            .gpa = gpa,
         };
     }
 
@@ -4026,15 +4796,26 @@ fn confPathDepToCachePath(
                 else => |index| try Dir.path.join(arena, &.{ index.get(c).?.root_path.slice(c), sub_path }),
             },
         },
+        .zig_exe => {
+            assert(sub_path.len == 0);
+            return .{
+                .root_dir = .cwd(),
+                .sub_path = graph.zig_exe,
+            };
+        },
         .zig_lib => .{
             .root_dir = graph.zig_lib_directory,
             .sub_path = sub_path,
         },
-        .zig_exe => @panic("TODO"),
         .install_prefix => @panic("TODO"),
         .install_lib => @panic("TODO"),
         .install_bin => @panic("TODO"),
         .install_include => @panic("TODO"),
+        .deployed_prefix => @panic("TODO"),
+        .deployed_lib => @panic("TODO"),
+        .deployed_bin => @panic("TODO"),
+        .deployed_include => @panic("TODO"),
+        .libc_runtimes => @panic("TODO"),
     };
 }
 
@@ -4058,4 +4839,14 @@ fn nextEnumArg(args: []const []const u8, i: *usize, comptime E: type) E {
     const arg = args[i.* - 1];
     const next_arg = nextArg(args, i) orelse fatalEnumHint(E, arg, null);
     return stringToEnum(E, next_arg) orelse fatalEnumHint(E, arg, next_arg);
+}
+
+fn prefixToDirectory(graph: *const Graph, prefix: Server.Message.PathPrefix) Cache.Directory {
+    return switch (prefix) {
+        .cwd => .cwd(),
+        .zig_lib => graph.zig_lib_directory,
+        .local_cache => graph.local_cache_root,
+        .global_cache => graph.global_cache_root,
+        .build_root => graph.build_root_directory,
+    };
 }

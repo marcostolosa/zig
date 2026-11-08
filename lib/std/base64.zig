@@ -31,6 +31,9 @@ pub const standard_alphabet_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq
 fn standardBase64DecoderWithIgnore(ignore: []const u8) Base64DecoderWithIgnore {
     return Base64DecoderWithIgnore.init(standard_alphabet_chars, '=', ignore);
 }
+fn standardNoPadBase64DecoderWithIgnore(ignore: []const u8) Base64DecoderWithIgnore {
+    return Base64DecoderWithIgnore.init(standard_alphabet_chars, null, ignore);
+}
 
 /// Standard Base64 codecs, with padding, as defined in
 /// [RFC 4648 section 4](https://datatracker.ietf.org/doc/html/rfc4648#section-4).
@@ -47,7 +50,7 @@ pub const standard = Codecs{
 pub const standard_no_pad = Codecs{
     .alphabet_chars = standard_alphabet_chars,
     .pad_char = null,
-    .decoderWithIgnore = standardBase64DecoderWithIgnore,
+    .decoderWithIgnore = standardNoPadBase64DecoderWithIgnore,
     .Encoder = Base64Encoder.init(standard_alphabet_chars, null),
     .Decoder = Base64Decoder.init(standard_alphabet_chars, null),
 };
@@ -56,6 +59,9 @@ pub const standard_no_pad = Codecs{
 /// [RFC 4648 section 5](https://datatracker.ietf.org/doc/html/rfc4648#section-5).
 pub const url_safe_alphabet_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".*;
 fn urlSafeBase64DecoderWithIgnore(ignore: []const u8) Base64DecoderWithIgnore {
+    return Base64DecoderWithIgnore.init(url_safe_alphabet_chars, '=', ignore);
+}
+fn urlSafeNoPadBase64DecoderWithIgnore(ignore: []const u8) Base64DecoderWithIgnore {
     return Base64DecoderWithIgnore.init(url_safe_alphabet_chars, null, ignore);
 }
 
@@ -74,7 +80,7 @@ pub const url_safe = Codecs{
 pub const url_safe_no_pad = Codecs{
     .alphabet_chars = url_safe_alphabet_chars,
     .pad_char = null,
-    .decoderWithIgnore = urlSafeBase64DecoderWithIgnore,
+    .decoderWithIgnore = urlSafeNoPadBase64DecoderWithIgnore,
     .Encoder = Base64Encoder.init(url_safe_alphabet_chars, null),
     .Decoder = Base64Decoder.init(url_safe_alphabet_chars, null),
 };
@@ -142,7 +148,7 @@ pub const Base64Encoder = struct {
         if (idx + 2 < source.len) {
             dest[out_idx] = encoder.alphabet_chars[source[idx] >> 2];
             dest[out_idx + 1] = encoder.alphabet_chars[((source[idx] & 0x3) << 4) | (source[idx + 1] >> 4)];
-            dest[out_idx + 2] = encoder.alphabet_chars[(source[idx + 1] & 0xf) << 2 | (source[idx + 2] >> 6)];
+            dest[out_idx + 2] = encoder.alphabet_chars[((source[idx + 1] & 0xf) << 2) | (source[idx + 2] >> 6)];
             dest[out_idx + 3] = encoder.alphabet_chars[source[idx + 2] & 0x3f];
             out_idx += 4;
         } else if (idx + 1 < source.len) {
@@ -276,7 +282,7 @@ pub const Base64Decoder = struct {
                 dest_idx += 1;
             }
         }
-        if (acc_len > 4 or (acc & (@as(u12, 1) << acc_len) - 1) != 0) {
+        if (acc_len > 4 or (acc & ((@as(u12, 1) << acc_len) - 1)) != 0) {
             return error.InvalidPadding;
         }
         if (leftover_idx == null) return;
@@ -351,7 +357,7 @@ pub const Base64DecoderWithIgnore = struct {
                 dest_idx += 1;
             }
         }
-        if (acc_len > 4 or (acc & (@as(u12, 1) << acc_len) - 1) != 0) {
+        if (acc_len > 4 or (acc & ((@as(u12, 1) << acc_len) - 1)) != 0) {
             return error.InvalidPadding;
         }
         const padding_len = acc_len / 2;
@@ -399,6 +405,20 @@ test "base64 url_safe_no_pad" {
     @setEvalBranchQuota(8000);
     try testBase64UrlSafeNoPad();
     try comptime testAllApis(url_safe_no_pad, "comptime", "Y29tcHRpbWU");
+}
+
+test "base64 standard_no_pad" {
+    @setEvalBranchQuota(8000);
+    try testAllApis(standard_no_pad, "f", "Zg");
+    try comptime testAllApis(standard_no_pad, "comptime", "Y29tcHRpbWU");
+    try testError(standard_no_pad, "Zg==", error.InvalidCharacter);
+}
+
+test "base64 url_safe" {
+    @setEvalBranchQuota(8000);
+    try testAllApis(url_safe, "f", "Zg==");
+    try comptime testAllApis(url_safe, "comptime", "Y29tcHRpbWU=");
+    try testError(url_safe, "Zg", error.InvalidPadding);
 }
 
 fn testBase64() !void {

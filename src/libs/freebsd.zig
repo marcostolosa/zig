@@ -76,27 +76,23 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
 
     switch (crt_file) {
         .scrt1_o => {
-            var cflags = std.array_list.Managed([]const u8).init(arena);
-            try cflags.appendSlice(&.{
+            var cflags: std.ArrayList([]const u8) = .empty;
+            try cflags.appendSlice(arena, &.{
                 "-O2",
                 "-fno-common",
                 "-std=gnu99",
                 "-w", // Disable all warnings.
             });
 
-            if (target.cpu.arch.isPowerPC64()) {
-                try cflags.append("-mlongcall");
-            }
-
-            var acflags = std.array_list.Managed([]const u8).init(arena);
-            try acflags.appendSlice(&.{
+            var acflags: std.ArrayList([]const u8) = .empty;
+            try acflags.appendSlice(arena, &.{
                 "-DLOCORE",
                 // See `Compilation.addCCArgs`.
                 try std.fmt.allocPrint(arena, "-D__FreeBSD_version={d}", .{target.os.version_range.semver.min.major * 100_000 + 500}),
             });
 
             inline for (.{ &cflags, &acflags }) |flags| {
-                try flags.appendSlice(&.{
+                try flags.appendSlice(arena, &.{
                     "-DPIC",
                     "-DSTRIP_FBSDID",
                     "-I",
@@ -184,7 +180,7 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
                 .{
                     .path = "powerpc64" ++ path.sep_str ++ "crt1_c.c",
                     .flags = cflags.items,
-                    .condition = target.cpu.arch.isPowerPC64(),
+                    .condition = target.cpu.arch.isPowerpc64(),
                 },
 
                 .{
@@ -458,14 +454,28 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
     man.hash.add(target.abi);
     man.hash.add(target_os_version);
 
-    const abilists_index = try man.addFilePath(.{
+    const abilists_index = try man.addInputPath(.{
         .root_dir = comp.dirs.zig_lib,
         .sub_path = abilists_path,
-    }, abilists_max_size);
+    }, .{
+        .request_contents = true,
+    });
 
-    if (try man.hit(prog_node)) {
-        const digest = man.final();
-
+    var diag: Cache.Manifest.CheckDiagnostic = undefined;
+    const status = man.check(&diag, prog_node) catch |err| switch (err) {
+        error.OutOfMemory, error.Canceled => |e| return e,
+        error.CacheCheckFailed => {
+            comp.lockAndSetMiscFailure(
+                .freebsd_shared_objects,
+                "compiling FreeBSD libc shared objects: checking cache failed: {f}",
+                .{diag.fmt(&man)},
+            );
+            return error.AlreadyReported;
+        },
+    };
+    log.debug("freebsd_shared_objects cache {f}", .{status.fmt(&man)});
+    if (status == .hit) {
+        const digest = man.hitDigestHex();
         return queueSharedObjects(comp, .{
             .lock = man.toOwnedLock(),
             .dir_path = .{
@@ -475,7 +485,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         });
     }
 
-    const digest = man.final();
+    const digest = man.missDigestHex();
     const o_sub_path = try path.join(arena, &[_][]const u8{ "o", &digest });
 
     var o_directory: Cache.Directory = .{
@@ -484,7 +494,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
     };
     defer o_directory.handle.close(io);
 
-    const abilists_contents = man.files.keys()[abilists_index].contents.?;
+    const abilists_contents = abilists_index.contents(&man);
     const metadata = try loadMetaData(gpa, abilists_contents);
     defer metadata.destroy(gpa);
 
@@ -518,16 +528,16 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
     };
 
     {
-        var map_contents = std.array_list.Managed(u8).init(arena);
+        var map_contents: std.ArrayList(u8) = .empty;
         for (metadata.all_versions[0 .. target_ver_index + 1]) |ver| {
-            try map_contents.print("FBSD_{d}.{d} {{ }};\n", .{ ver.major, ver.minor });
+            try map_contents.print(arena, "FBSD_{d}.{d} {{ }};\n", .{ ver.major, ver.minor });
         }
         try o_directory.handle.writeFile(io, .{ .sub_path = all_map_basename, .data = map_contents.items });
-        map_contents.deinit();
+        map_contents.deinit(arena);
     }
 
-    var stubs_asm = std.array_list.Managed(u8).init(gpa);
-    defer stubs_asm.deinit();
+    var stubs_asm: std.ArrayList(u8) = .empty;
+    defer stubs_asm.deinit(gpa);
 
     for (libs, 0..) |lib, lib_i| {
         if (lib.added_in) |add_in| {
@@ -537,7 +547,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
 
         stubs_asm.shrinkRetainingCapacity(0);
 
-        try stubs_asm.appendSlice(".text\n");
+        try stubs_asm.appendSlice(gpa, ".text\n");
 
         var sym_i: usize = 0;
         var sym_name_buf: std.Io.Writer.Allocating = .init(arena);
@@ -620,7 +630,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
                 // .globl _Exit
                 // .type _Exit, %function
                 // _Exit: .long 0
-                try stubs_asm.print(
+                try stubs_asm.print(gpa,
                     \\.balign {d}
                     \\.{s} {s}
                     \\.type {s}, %function
@@ -652,7 +662,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
                         .{ sym_name, ver.major, ver.minor },
                     );
 
-                    try stubs_asm.print(
+                    try stubs_asm.print(gpa,
                         \\.balign {d}
                         \\.{s} {s}
                         \\.type {s}, %function
@@ -677,14 +687,14 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
             }
         }
 
-        try stubs_asm.appendSlice(".data\n");
+        try stubs_asm.appendSlice(gpa, ".data\n");
 
         // FreeBSD's `libc.so.7` contains strong references to `__progname` and `environ` which are
         // defined in the statically-linked startup code. Those references cause the linker to put
         // the symbols in the dynamic symbol table. We need to create dummy references to them here
         // to get the same effect.
         if (std.mem.eql(u8, lib.name, "c")) {
-            try stubs_asm.print(
+            try stubs_asm.print(gpa,
                 \\.balign {d}
                 \\.globl __progname
                 \\.globl environ
@@ -772,7 +782,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
                 // .type malloc_conf, %object
                 // .size malloc_conf, 4
                 // malloc_conf: .fill 4, 1, 0
-                try stubs_asm.print(
+                try stubs_asm.print(gpa,
                     \\.balign {d}
                     \\.{s} {s}
                     \\.type {s}, %object
@@ -808,7 +818,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
                         .{ sym_name, ver.major, ver.minor },
                     );
 
-                    try stubs_asm.print(
+                    try stubs_asm.print(gpa,
                         \\.balign {d}
                         \\.{s} {s}
                         \\.type {s}, %object
@@ -836,7 +846,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
             }
         }
 
-        try stubs_asm.appendSlice(".tdata\n");
+        try stubs_asm.appendSlice(gpa, ".tdata\n");
 
         const tls_inclusions_len = try inc_reader.takeInt(u16, .little);
 
@@ -910,7 +920,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
                 // .type _ThreadRuneLocale, %object
                 // .size _ThreadRuneLocale, 4
                 // _ThreadRuneLocale: .fill 4, 1, 0
-                try stubs_asm.print(
+                try stubs_asm.print(gpa,
                     \\.balign {d}
                     \\.{s} {s}
                     \\.type {s}, %tls_object
@@ -946,7 +956,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
                         .{ sym_name, ver.major, ver.minor },
                     );
 
-                    try stubs_asm.print(
+                    try stubs_asm.print(gpa,
                         \\.balign {d}
                         \\.{s} {s}
                         \\.type {s}, %tls_object
@@ -975,14 +985,12 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         }
 
         var lib_name_buf: [32]u8 = undefined; // Larger than each of the names "c", "stdthreads", etc.
-        const asm_file_basename = std.fmt.bufPrint(&lib_name_buf, "{s}.s", .{lib.name}) catch unreachable;
+        const asm_file_basename = std.mem.print(&lib_name_buf, "{s}.s", .{lib.name}) catch unreachable;
         try o_directory.handle.writeFile(io, .{ .sub_path = asm_file_basename, .data = stubs_asm.items });
         try buildSharedLib(comp, arena, o_directory, asm_file_basename, lib, prog_node);
     }
 
-    man.writeManifest() catch |err| {
-        log.warn("failed to write cache manifest for FreeBSD libc stubs: {s}", .{@errorName(err)});
-    };
+    man.finalize() catch |err| log.warn("failed to write cache manifest for FreeBSD libc stubs: {t}", .{err});
 
     return queueSharedObjects(comp, .{
         .lock = man.toOwnedLock(),
@@ -1108,10 +1116,6 @@ fn buildSharedLib(
         .emit_bin = .{ .yes_path = try bin_directory.join(arena, &.{basename}) },
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
-        .verbose_air = comp.verbose_air,
-        .verbose_llvm_ir = comp.verbose_llvm_ir,
-        .verbose_llvm_bc = comp.verbose_llvm_bc,
-        .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .version = version,
         .version_script = .{

@@ -56,7 +56,7 @@ fn logFn(
     const level_txt = comptime message_level.asText();
     const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
     var buf: [500]u8 = undefined;
-    const line = std.fmt.bufPrint(&buf, level_txt ++ prefix2 ++ format, args) catch l: {
+    const line = std.mem.print(&buf, level_txt ++ prefix2 ++ format, args) catch l: {
         buf[buf.len - 3 ..][0..3].* = "...".*;
         break :l &buf;
     };
@@ -68,7 +68,7 @@ export fn alloc(n: usize) [*]u8 {
     return slice.ptr;
 }
 
-var message_buffer: std.ArrayListAlignedUnmanaged(u8, .of(u64)) = .empty;
+var message_buffer: std.array_list.Aligned(u8, .of(u64)) = .empty;
 
 /// Resizes the message buffer to be the correct length; returns the pointer to
 /// the query string.
@@ -101,7 +101,7 @@ export fn message_end() void {
 const String = Slice(u8);
 
 pub fn Slice(T: type) type {
-    return packed struct(u64) {
+    return bitpack struct(u64) {
         ptr: u32,
         len: u32,
 
@@ -116,7 +116,7 @@ pub fn Slice(T: type) type {
 
 pub fn fatal(comptime format: []const u8, args: anytype) noreturn {
     var buf: [500]u8 = undefined;
-    const line = std.fmt.bufPrint(&buf, format, args) catch l: {
+    const line = std.mem.print(&buf, format, args) catch l: {
         buf[buf.len - 3 ..][0..3].* = "...".*;
         break :l &buf;
     };

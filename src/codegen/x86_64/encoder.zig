@@ -237,9 +237,11 @@ pub const Instruction = struct {
                         .sib => |sib| {
                             try w.print("{f} ", .{sib.ptr_size});
 
-                            if (mem.isSegmentRegister()) {
-                                return w.print("{s}:0x{x}", .{ @tagName(sib.base.reg), sib.disp });
-                            }
+                            if (mem.isSegmentRegister()) return w.print("{s}:{s}0x{x}", .{
+                                @tagName(sib.base.reg),
+                                if (sib.disp < 0) "-" else "",
+                                @abs(sib.disp),
+                            });
 
                             try w.writeByte('[');
 
@@ -713,7 +715,7 @@ pub const Instruction = struct {
     }
 };
 
-pub const LegacyPrefixes = packed struct {
+pub const LegacyPrefixes = bitpack struct {
     /// LOCK
     prefix_f0: bool = false,
     /// REPNZ, REPNE, REP, Scalar Double-precision
@@ -842,25 +844,25 @@ fn Encoder(comptime opts: Options) type {
                 try self.w.writeByte(0b1100_0100);
 
                 try self.w.writeByte(
-                    @as(u8, ~@intFromBool(fields.r)) << 7 |
-                        @as(u8, ~@intFromBool(fields.x)) << 6 |
-                        @as(u8, ~@intFromBool(fields.b)) << 5 |
-                        @as(u8, @backingInt(fields.m)) << 0,
+                    (@as(u8, ~@intFromBool(fields.r)) << 7) |
+                        (@as(u8, ~@intFromBool(fields.x)) << 6) |
+                        (@as(u8, ~@intFromBool(fields.b)) << 5) |
+                        (@as(u8, @backingInt(fields.m)) << 0),
                 );
 
                 try self.w.writeByte(
-                    @as(u8, @intFromBool(fields.w)) << 7 |
-                        @as(u8, ~@as(u4, @intCast(fields.v.enc()))) << 3 |
-                        @as(u8, @intFromBool(fields.l)) << 2 |
-                        @as(u8, @backingInt(fields.p)) << 0,
+                    (@as(u8, @intFromBool(fields.w)) << 7) |
+                        (@as(u8, ~@as(u4, @intCast(fields.v.enc()))) << 3) |
+                        (@as(u8, @intFromBool(fields.l)) << 2) |
+                        (@as(u8, @backingInt(fields.p)) << 0),
                 );
             } else {
                 try self.w.writeByte(0b1100_0101);
                 try self.w.writeByte(
-                    @as(u8, ~@intFromBool(fields.r)) << 7 |
-                        @as(u8, ~@as(u4, @intCast(fields.v.enc()))) << 3 |
-                        @as(u8, @intFromBool(fields.l)) << 2 |
-                        @as(u8, @backingInt(fields.p)) << 0,
+                    (@as(u8, ~@intFromBool(fields.r)) << 7) |
+                        (@as(u8, ~@as(u4, @intCast(fields.v.enc()))) << 3) |
+                        (@as(u8, @intFromBool(fields.l)) << 2) |
+                        (@as(u8, @backingInt(fields.p)) << 0),
                 );
             }
         }
@@ -908,7 +910,7 @@ fn Encoder(comptime opts: Options) type {
         ///
         /// Remember to add a REX prefix byte if reg or rm are extended!
         pub fn modRm(self: Self, mod: u2, reg_or_opx: u3, rm: u3) !void {
-            try self.w.writeByte(@as(u8, mod) << 6 | @as(u8, reg_or_opx) << 3 | rm);
+            try self.w.writeByte((@as(u8, mod) << 6) | (@as(u8, reg_or_opx) << 3) | rm);
         }
 
         /// Construct a ModR/M byte using direct r/m addressing
@@ -994,7 +996,7 @@ fn Encoder(comptime opts: Options) type {
         ///
         /// Remember to add a REX prefix byte if index or base are extended!
         pub fn sib(self: Self, scale: u2, index: u3, base: u3) !void {
-            try self.w.writeByte(@as(u8, scale) << 6 | @as(u8, index) << 3 | base);
+            try self.w.writeByte((@as(u8, scale) << 6) | (@as(u8, index) << 3) | base);
         }
 
         /// Construct a SIB byte with scale * index + base, no frills.
@@ -1205,15 +1207,15 @@ const TestEncode = struct {
 };
 
 test "encode" {
-    var buf = std.array_list.Managed(u8).init(testing.allocator);
+    var buf: std.Io.Writer.Allocating = .init(testing.allocator);
     defer buf.deinit();
 
     const inst: Instruction = try .new(.none, .mov, &.{
         .{ .reg = .rbx },
         .{ .imm = .u(4) },
     });
-    try inst.encode(buf.writer(), .{});
-    try testing.expectEqualSlices(u8, &.{ 0x48, 0xc7, 0xc3, 0x4, 0x0, 0x0, 0x0 }, buf.items);
+    try inst.encode(&buf.writer, .{});
+    try testing.expectEqualSlices(u8, &.{ 0x48, 0xc7, 0xc3, 0x4, 0x0, 0x0, 0x0 }, buf.written());
 }
 
 test "lower I encoding" {
@@ -2636,10 +2638,10 @@ test "assemble" {
     // zig fmt: on
 
     var as = Assembler.init(input);
-    var output = std.array_list.Managed(u8).init(testing.allocator);
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
-    try as.assemble(output.writer());
-    try expectEqualHexStrings(expected, output.items, input);
+    try as.assemble(&output.writer);
+    try expectEqualHexStrings(expected, output.written(), input);
 }
 
 test "assemble - Jcc" {
@@ -2680,9 +2682,9 @@ test "assemble - Jcc" {
         const input = @tagName(mnemonic[0]) ++ " 0x0";
         const expected = [_]u8{ 0x0f, mnemonic[1], 0x0, 0x0, 0x0, 0x0 };
         var as = Assembler.init(input);
-        var output = std.array_list.Managed(u8).init(testing.allocator);
+        var output: std.Io.Writer.Allocating = .init(testing.allocator);
         defer output.deinit();
-        try as.assemble(output.writer());
+        try as.assemble(&output.writer);
         try expectEqualHexStrings(&expected, output.items, input);
     }
 }
@@ -2725,9 +2727,9 @@ test "assemble - SETcc" {
         const input = @tagName(mnemonic[0]) ++ " al";
         const expected = [_]u8{ 0x0f, mnemonic[1], 0xC0 };
         var as = Assembler.init(input);
-        var output = std.array_list.Managed(u8).init(testing.allocator);
+        var output: std.Io.Writer.Allocating = .init(testing.allocator);
         defer output.deinit();
-        try as.assemble(output.writer());
+        try as.assemble(&output.writer);
         try expectEqualHexStrings(&expected, output.items, input);
     }
 }
@@ -2770,9 +2772,9 @@ test "assemble - CMOVcc" {
         const input = @tagName(mnemonic[0]) ++ " rax, rbx";
         const expected = [_]u8{ 0x48, 0x0f, mnemonic[1], 0xC3 };
         var as = Assembler.init(input);
-        var output = std.array_list.Managed(u8).init(testing.allocator);
+        var output: std.Io.Writer.Allocating = .init(testing.allocator);
         defer output.deinit();
-        try as.assemble(output.writer());
+        try as.assemble(&output.writer);
         try expectEqualHexStrings(&expected, output.items, input);
     }
 }

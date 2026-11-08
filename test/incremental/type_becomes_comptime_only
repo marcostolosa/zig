@@ -1,5 +1,9 @@
-#update=initial version
-#file=main.zig
+#zig build-exe {
+--name test
+-Mroot=test.zig
+#}
+
+#write test.zig {
 const SomeType = u32;
 const S = struct {
     x: SomeType,
@@ -9,10 +13,11 @@ pub fn main() void {
     const s: S = .{ .x = 456 };
     s.foo();
 }
-#expect_stdout=""
+#}
+#update
+#check stdout
 
-#update=make S comptime-only
-#file=main.zig
+#write test.zig {
 const SomeType = comptime_int;
 const S = struct {
     x: SomeType,
@@ -22,10 +27,11 @@ pub fn main() void {
     const s: S = .{ .x = 456 };
     s.foo();
 }
-#expect_stdout=""
+#}
+#update "make S comptime-only"
+#check stdout
 
-#update=make S runtime again
-#file=main.zig
+#write test.zig {
 const SomeType = u16;
 const S = struct {
     x: SomeType,
@@ -35,4 +41,6 @@ pub fn main() void {
     const s: S = .{ .x = 456 };
     s.foo();
 }
-#expect_stdout=""
+#}
+#update "make S runtime again"
+#check stdout

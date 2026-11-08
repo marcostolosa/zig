@@ -93,11 +93,7 @@ pub fn emit(
         lf,
         zcu,
         atom_index,
-        try @import("../../codegen.zig").genNavRef(
-            lf,
-            pt,
-            nav_reloc.nav,
-        ),
+        try lf.navSymbol(nav_reloc.nav),
         mir.body[nav_reloc.reloc.label],
         body_end - Instruction.size * (1 + nav_reloc.reloc.label),
         nav_reloc.reloc.addend,
@@ -107,7 +103,7 @@ pub fn emit(
         lf,
         zcu,
         atom_index,
-        try lf.lowerUav(
+        try lf.uavSymbol(
             pt,
             uav_reloc.uav.val,
             ZigType.fromInterned(uav_reloc.uav.orig_ty).ptrAlignment(zcu),
@@ -212,7 +208,7 @@ fn emitReloc(
             };
             try atom.addReloc(gpa, .{
                 .r_offset = offset,
-                .r_info = @as(u64, @backingInt(sym_index)) << 32 | @backingInt(r_type),
+                .r_info = (@as(u64, @backingInt(sym_index)) << 32) | @backingInt(r_type),
                 .r_addend = @bitCast(addend),
             }, zo);
         } else if (lf.cast(.macho)) |mf| {
@@ -269,7 +265,7 @@ fn emitReloc(
             };
             try atom.addReloc(gpa, .{
                 .r_offset = offset,
-                .r_info = @as(u64, @backingInt(sym_index)) << 32 | @backingInt(r_type),
+                .r_info = (@as(u64, @backingInt(sym_index)) << 32) | @backingInt(r_type),
                 .r_addend = @bitCast(addend),
             }, zo);
         } else if (lf.cast(.macho)) |mf| {
@@ -332,7 +328,7 @@ fn emitReloc(
             };
             try atom.addReloc(gpa, .{
                 .r_offset = offset,
-                .r_info = @as(u64, @backingInt(sym_index)) << 32 | @backingInt(r_type),
+                .r_info = (@as(u64, @backingInt(sym_index)) << 32) | @backingInt(r_type),
                 .r_addend = @bitCast(addend),
             }, zo);
         } else if (lf.cast(.macho)) |mf| {

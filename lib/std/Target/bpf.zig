@@ -5,10 +5,8 @@ const CpuFeature = std.Target.Cpu.Feature;
 const CpuModel = std.Target.Cpu.Model;
 
 pub const Feature = enum {
-    allows_misaligned_mem_access,
     alu32,
-    dummy,
-    dwarfris,
+    unaligned_access,
 };
 
 pub const featureSet = CpuFeature.FeatureSetFns(Feature).featureSet;
@@ -20,24 +18,14 @@ pub const all_features = blk: {
     const len = @typeInfo(Feature).@"enum".field_names.len;
     std.debug.assert(len <= CpuFeature.Set.needed_bit_count);
     var result: [len]CpuFeature = undefined;
-    result[@backingInt(Feature.allows_misaligned_mem_access)] = .{
-        .llvm_name = "allows-misaligned-mem-access",
-        .description = "Allows misaligned memory access",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.alu32)] = .{
         .llvm_name = "alu32",
         .description = "Enable ALU32 instructions",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.dummy)] = .{
-        .llvm_name = "dummy",
-        .description = "unused feature",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.dwarfris)] = .{
-        .llvm_name = "dwarfris",
-        .description = "Disable MCAsmInfo DwarfUsesRelocationsAcrossSections",
+    result[@backingInt(Feature.unaligned_access)] = .{
+        .llvm_name = "allows-misaligned-mem-access",
+        .description = "Allows misaligned memory access",
         .dependencies = featureSet(&[_]Feature{}),
     };
     const ti = @typeInfo(Feature);
@@ -49,16 +37,6 @@ pub const all_features = blk: {
 };
 
 pub const cpu = struct {
-    pub const generic: CpuModel = .{
-        .name = "generic",
-        .llvm_name = "generic",
-        .features = featureSet(&[_]Feature{}),
-    };
-    pub const probe: CpuModel = .{
-        .name = "probe",
-        .llvm_name = "probe",
-        .features = featureSet(&[_]Feature{}),
-    };
     pub const v1: CpuModel = .{
         .name = "v1",
         .llvm_name = "v1",

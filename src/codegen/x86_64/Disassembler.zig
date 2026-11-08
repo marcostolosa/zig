@@ -378,7 +378,7 @@ fn parseEncoding(dis: *Disassembler, prefixes: Prefixes) !?Encoding {
 }
 
 fn parseGpRegister(low_enc: u3, is_extended: bool, rex: Rex, bit_size: u64) Register {
-    const reg_id: u4 = @as(u4, @intCast(@intFromBool(is_extended))) << 3 | low_enc;
+    const reg_id: u4 = (@as(u4, @intCast(@intFromBool(is_extended))) << 3) | low_enc;
     const reg = @as(Register, @fromBackingInt(@intCast(reg_id))).toBitSize(bit_size);
     return switch (reg) {
         .spl => if (rex.present or rex.isSet()) .spl else .ah,
@@ -415,7 +415,7 @@ fn parseOffset(dis: *Disassembler) !u64 {
     return reader.takeInt(u64, .little);
 }
 
-const ModRm = packed struct {
+const ModRm = bitpack struct {
     mod: u2,
     op1: u3,
     op2: u3,
@@ -452,7 +452,7 @@ fn segmentRegister(prefixes: LegacyPrefixes) Register {
     return .ds;
 }
 
-const Sib = packed struct {
+const Sib = bitpack struct {
     scale: u2,
     index: u3,
     base: u3,

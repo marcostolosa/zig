@@ -5,7 +5,7 @@
 //! `std.process`.
 //!
 //! These APIs are generally lowered to libc function calls if and only if libc
-//! is linked. Most operating systems other than Windows, Linux, and WASI
+//! is linked. Most operating systems other than Linux and WASI
 //! require always linking libc because they use it as the stable syscall ABI.
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
@@ -19,21 +19,19 @@ const assert = std.debug.assert;
 const page_size_min = std.heap.page_size_min;
 
 test {
-    _ = @import("posix/test.zig");
+    if (native_os != .windows) _ = @import("posix/test.zig");
 }
 
 /// Whether to use libc for the POSIX API layer.
-const use_libc = builtin.link_libc or switch (native_os) {
-    .windows, .wasi => true,
-    else => false,
-};
+const use_libc = builtin.link_libc;
 
 const linux = std.os.linux;
-const windows = std.os.windows;
 const wasi = std.os.wasi;
 
 /// A libc-compatible API layer.
-pub const system = if (use_libc)
+pub const system = if (native_os == .windows)
+    @compileError("Windows does not support POSIX")
+else if (use_libc)
     std.c
 else switch (native_os) {
     .linux => linux,
@@ -50,10 +48,13 @@ else switch (native_os) {
         pub const ino_t = u64;
         pub const IFNAMESIZE = {};
         pub const SIG = void;
+        pub const cmsghdr = void;
+        pub const cmsg_align = {};
 
         // https://github.com/pspdev/newlib/blob/9e0a073634ad73e8e088f2e071c55a9fe5d39709/newlib/libc/sys/psp/sys/dirent.h#L19
         pub const NAME_MAX = 255;
     },
+    .wasi => @import("posix/wasi.zig"),
     else => struct {
         pub const pid_t = void;
         pub const pollfd = void;
@@ -66,6 +67,8 @@ else switch (native_os) {
         pub const ino_t = void;
         pub const IFNAMESIZE = {};
         pub const SIG = void;
+        pub const cmsghdr = void;
+        pub const cmsg_align = {};
     },
 };
 
@@ -129,14 +132,11 @@ pub const STDIN_FILENO = system.STDIN_FILENO;
 pub const STDOUT_FILENO = system.STDOUT_FILENO;
 pub const SYS = system.SYS;
 pub const Sigaction = system.Sigaction;
-/// Windows has no concept of `stat`.
-///
 /// On Linux, the `stat` bits/wrappers are removed due to having to maintain
 /// the different varying stat structs per target and libc, leading to runtime
 /// errors. Users targeting Linux should add a comptime check and use statx,
 /// similar to how `Io.File.stat` does.
 pub const Stat = switch (native_os) {
-    .windows => void,
     .linux => void,
     else => system.Stat,
 };
@@ -150,6 +150,8 @@ pub const blkcnt_t = system.blkcnt_t;
 pub const blksize_t = system.blksize_t;
 pub const clock_t = system.clock_t;
 pub const clockid_t = system.clockid_t;
+pub const cmsghdr = system.cmsghdr;
+pub const cmsg_align = system.cmsg_align;
 pub const timerfd_clockid_t = system.timerfd_clockid_t;
 pub const cpu_set_t = system.cpu_set_t;
 pub const dev_t = system.dev_t;
@@ -245,11 +247,14 @@ pub const ACCMODE = switch (native_os) {
     },
 };
 
-pub const TCSA = enum(c_uint) {
-    NOW,
-    DRAIN,
-    FLUSH,
-    _,
+pub const TCSA = switch (native_os) {
+    .illumos => system.TCSA,
+    else => enum(c_uint) {
+        NOW,
+        DRAIN,
+        FLUSH,
+        _,
+    },
 };
 
 pub const winsize = extern struct {
@@ -399,7 +404,6 @@ pub const ReadError = std.Io.File.Reader.Error;
 /// The corresponding POSIX limit is `maxInt(isize)`.
 pub fn read(fd: fd_t, buf: []u8) ReadError!usize {
     if (buf.len == 0) return 0;
-    if (native_os == .windows) @compileError("unsupported OS");
     if (native_os == .wasi) @compileError("unsupported OS");
 
     // Prevents EINVAL.
@@ -434,14 +438,11 @@ pub const OpenError = std.Io.File.OpenError || error{WouldBlock};
 
 /// Open and possibly create a file. Keeps trying if it gets interrupted.
 /// `file_path` is relative to the open directory handle `dir_fd`.
-/// On Windows, `file_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On WASI, `file_path` should be encoded as valid UTF-8.
 /// On other platforms, `file_path` is an opaque sequence of bytes with no particular encoding.
 /// See also `openatZ`.
 pub fn openat(dir_fd: fd_t, file_path: []const u8, flags: O, mode: mode_t) OpenError!fd_t {
-    if (native_os == .windows) {
-        @compileError("Windows does not support POSIX; use Windows-specific API or cross-platform std.fs API");
-    } else if (native_os == .wasi and !builtin.link_libc) {
+    if (native_os == .wasi) {
         @compileError("use std.Io instead");
     }
     const file_path_c = try toPosixPath(file_path);
@@ -450,14 +451,11 @@ pub fn openat(dir_fd: fd_t, file_path: []const u8, flags: O, mode: mode_t) OpenE
 
 /// Open and possibly create a file. Keeps trying if it gets interrupted.
 /// `file_path` is relative to the open directory handle `dir_fd`.
-/// On Windows, `file_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On WASI, `file_path` should be encoded as valid UTF-8.
 /// On other platforms, `file_path` is an opaque sequence of bytes with no particular encoding.
 /// See also `openat`.
 pub fn openatZ(dir_fd: fd_t, file_path: [*:0]const u8, flags: O, mode: mode_t) OpenError!fd_t {
-    if (native_os == .windows) {
-        @compileError("Windows does not support POSIX; use Windows-specific API or cross-platform std.fs API");
-    } else if (native_os == .wasi and !builtin.link_libc) {
+    if (native_os == .wasi) {
         return openat(dir_fd, mem.sliceTo(file_path, 0), flags, mode);
     }
 
@@ -519,21 +517,17 @@ pub const GetSockNameError = error{
 } || UnexpectedError;
 
 pub fn getpeername(sock: socket_t, addr: *sockaddr, addrlen: *socklen_t) GetSockNameError!void {
-    if (native_os == .windows) {
-        @compileError("use std.Io instead");
-    } else {
-        const rc = system.getpeername(sock, addr, addrlen);
-        switch (errno(rc)) {
-            .SUCCESS => return,
-            else => |err| return unexpectedErrno(err),
+    const rc = system.getpeername(sock, addr, addrlen);
+    switch (errno(rc)) {
+        .SUCCESS => return,
+        else => |err| return unexpectedErrno(err),
 
-            .BADF => unreachable, // always a race condition
-            .FAULT => unreachable,
-            .INVAL => unreachable, // invalid parameters
-            .NOTSOCK => return error.FileDescriptorNotASocket,
-            .NOBUFS => return error.SystemResources,
-            .NOTCONN => return error.SocketUnconnected,
-        }
+        .BADF => unreachable, // always a race condition
+        .FAULT => unreachable,
+        .INVAL => unreachable, // invalid parameters
+        .NOTSOCK => return error.FileDescriptorNotASocket,
+        .NOBUFS => return error.SystemResources,
+        .NOTCONN => return error.SocketUnconnected,
     }
 }
 
@@ -775,9 +769,9 @@ pub fn sysctl(
 
 pub fn getSelfPhdrs() []std.elf.ElfN.Phdr {
     const getauxval = if (builtin.link_libc) std.c.getauxval else std.os.linux.getauxval;
-    assert(getauxval(std.elf.AT_PHENT) == @sizeOf(std.elf.ElfN.Phdr));
-    const phdrs: [*]std.elf.ElfN.Phdr = @ptrFromInt(getauxval(std.elf.AT_PHDR));
-    return phdrs[0..getauxval(std.elf.AT_PHNUM)];
+    assert(getauxval(std.elf.AT.PHENT) == @sizeOf(std.elf.ElfN.Phdr));
+    const phdrs: [*]std.elf.ElfN.Phdr = @ptrFromInt(getauxval(std.elf.AT.PHDR));
+    return phdrs[0..getauxval(std.elf.AT.PHNUM)];
 }
 
 pub fn dl_iterate_phdr(
@@ -790,7 +784,7 @@ pub fn dl_iterate_phdr(
     const dl = @import("dynamic_library.zig");
 
     switch (builtin.object_format) {
-        .elf, .c => {},
+        .c, .elf, .llvmbc, .llvmir => {},
         else => @compileError("dl_iterate_phdr is not available for this target"),
     }
 
@@ -819,7 +813,7 @@ pub fn dl_iterate_phdr(
                 .PHDR => break @intFromPtr(phdrs.ptr) - phdr.vaddr,
                 else => {},
             } else unreachable,
-            .name = switch (getauxval(std.elf.AT_EXECFN)) {
+            .name = switch (getauxval(std.elf.AT.EXECFN)) {
                 0 => "/proc/self/exe",
                 else => |name| @ptrFromInt(name),
             },
@@ -1001,9 +995,6 @@ pub const PollError = error{
 } || UnexpectedError;
 
 pub fn poll(fds: []pollfd, timeout: i32) PollError!usize {
-    if (native_os == .windows) {
-        @compileError("use std.Io instead");
-    }
     while (true) {
         const fds_count = cast(nfds_t, fds.len) orelse return error.SystemResources;
         const rc = system.poll(fds.ptr, fds_count, timeout);
@@ -1071,25 +1062,21 @@ pub const SetSockOptError = error{
 
 /// Set a socket's options.
 pub fn setsockopt(fd: socket_t, level: i32, optname: u32, opt: []const u8) SetSockOptError!void {
-    if (native_os == .windows) {
-        @compileError("use std.Io instead");
-    } else {
-        switch (errno(system.setsockopt(fd, level, optname, opt.ptr, @intCast(opt.len)))) {
-            .SUCCESS => {},
-            .BADF => unreachable, // always a race condition
-            .NOTSOCK => unreachable, // always a race condition
-            .INVAL => unreachable,
-            .FAULT => unreachable,
-            .DOM => return error.TimeoutTooBig,
-            .ISCONN => return error.AlreadyConnected,
-            .NOPROTOOPT => return error.InvalidProtocolOption,
-            .NOMEM => return error.SystemResources,
-            .NOBUFS => return error.SystemResources,
-            .PERM => return error.PermissionDenied,
-            .NODEV => return error.NoDevice,
-            .OPNOTSUPP => return error.OperationUnsupported,
-            else => |err| return unexpectedErrno(err),
-        }
+    switch (errno(system.setsockopt(fd, level, optname, opt.ptr, @intCast(opt.len)))) {
+        .SUCCESS => {},
+        .BADF => unreachable, // always a race condition
+        .NOTSOCK => unreachable, // always a race condition
+        .INVAL => unreachable,
+        .FAULT => unreachable,
+        .DOM => return error.TimeoutTooBig,
+        .ISCONN => return error.AlreadyConnected,
+        .NOPROTOOPT => return error.InvalidProtocolOption,
+        .NOMEM => return error.SystemResources,
+        .NOBUFS => return error.SystemResources,
+        .PERM => return error.PermissionDenied,
+        .NODEV => return error.NoDevice,
+        .OPNOTSUPP => return error.OperationUnsupported,
+        else => |err| return unexpectedErrno(err),
     }
 }
 
@@ -1520,7 +1507,6 @@ pub const PtraceError = error{
 
 pub fn ptrace(request: u32, pid: pid_t, addr: usize, data: usize) PtraceError!void {
     return switch (native_os) {
-        .windows,
         .wasi,
         .emscripten,
         .haiku,

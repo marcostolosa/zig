@@ -171,7 +171,7 @@ pub fn parseIpiStream(self: *Pdb) !void {
     const header = try stream.interface.peekStruct(pdb.IpiStreamHeader, .little);
     if (header.version != .v80) // only value observed by LLVM team
         return error.UnknownPDBVersion;
-    self.ipi = try stream.interface.readAlloc(gpa, @sizeOf(pdb.IpiStreamHeader) + header.type_record_bytes);
+    self.ipi = try stream.interface.readAllocAll(gpa, @sizeOf(pdb.IpiStreamHeader) + header.type_record_bytes);
 }
 
 pub fn parseInfoStream(self: *Pdb) !void {
@@ -196,7 +196,7 @@ pub fn parseInfoStream(self: *Pdb) !void {
     // Find the string table.
     const string_table_index = str_tab_index: {
         const name_bytes_len = try reader.takeInt(u32, .little);
-        const name_bytes = try reader.readAlloc(gpa, name_bytes_len);
+        const name_bytes = try reader.readAllocAll(gpa, name_bytes_len);
         defer gpa.free(name_bytes);
 
         const HashTableHeader = extern struct {
@@ -503,7 +503,7 @@ pub const BinaryAnnotation = union(enum) {
                 .change_column_end_delta = try expect(takePackedI32(reader)),
             },
             .change_code_offset_and_line_offset => {
-                const EncodedArgs = packed struct(u32) {
+                const EncodedArgs = bitpack struct(u32) {
                     code_delta: u4,
                     encoded_line_delta: u28,
                 };
@@ -865,9 +865,9 @@ pub fn getModule(self: *Pdb, index: usize) !?*Module {
 
     const gpa = self.allocator;
 
-    mod.symbols = try reader.readAlloc(gpa, mod.mod_info.sym_byte_size - 4);
+    mod.symbols = try reader.readAllocAll(gpa, mod.mod_info.sym_byte_size - 4);
     errdefer gpa.free(mod.symbols);
-    mod.subsect_info = try reader.readAlloc(gpa, mod.mod_info.c13_byte_size);
+    mod.subsect_info = try reader.readAllocAll(gpa, mod.mod_info.c13_byte_size);
     errdefer gpa.free(mod.subsect_info);
     mod.inlinee_source_lines = b: {
         var inlinee_source_lines: std.ArrayList(*align(1) const pdb.InlineeSourceLine) = .empty;

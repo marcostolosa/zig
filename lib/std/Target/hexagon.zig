@@ -7,8 +7,6 @@ const CpuModel = std.Target.Cpu.Model;
 pub const Feature = enum {
     audio,
     cabac,
-    compound,
-    duplex,
     hvx,
     hvx_ieee_fp,
     hvx_length128b,
@@ -26,16 +24,8 @@ pub const Feature = enum {
     hvxv75,
     hvxv79,
     hvxv81,
-    long_calls,
     mem_noshuf,
-    memops,
-    noreturn_stack_elim,
-    nvj,
-    nvs,
-    packets,
     prev65,
-    reserved_r19,
-    small_data,
     tinycore,
     v5,
     v55,
@@ -73,16 +63,6 @@ pub const all_features = blk: {
         .description = "Emit the CABAC instruction",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.compound)] = .{
-        .llvm_name = "compound",
-        .description = "Use compound instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.duplex)] = .{
-        .llvm_name = "duplex",
-        .description = "Enable generation of duplex instruction",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.hvx)] = .{
         .llvm_name = "hvx",
         .description = "Hexagon HVX instructions",
@@ -91,7 +71,9 @@ pub const all_features = blk: {
     result[@backingInt(Feature.hvx_ieee_fp)] = .{
         .llvm_name = "hvx-ieee-fp",
         .description = "Hexagon HVX IEEE floating point instructions",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .hvxv68,
+        }),
     };
     result[@backingInt(Feature.hvx_length128b)] = .{
         .llvm_name = "hvx-length128b",
@@ -110,7 +92,9 @@ pub const all_features = blk: {
     result[@backingInt(Feature.hvx_qfloat)] = .{
         .llvm_name = "hvx-qfloat",
         .description = "Hexagon HVX QFloating point instructions",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .hvxv68,
+        }),
     };
     result[@backingInt(Feature.hvxv60)] = .{
         .llvm_name = "hvxv60",
@@ -197,58 +181,14 @@ pub const all_features = blk: {
             .hvxv79,
         }),
     };
-    result[@backingInt(Feature.long_calls)] = .{
-        .llvm_name = "long-calls",
-        .description = "Use constant-extended calls",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.mem_noshuf)] = .{
         .llvm_name = "mem_noshuf",
         .description = "Supports mem_noshuf feature",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.memops)] = .{
-        .llvm_name = "memops",
-        .description = "Use memop instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.noreturn_stack_elim)] = .{
-        .llvm_name = "noreturn-stack-elim",
-        .description = "Eliminate stack allocation in a noreturn function when possible",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.nvj)] = .{
-        .llvm_name = "nvj",
-        .description = "Support for new-value jumps",
-        .dependencies = featureSet(&[_]Feature{
-            .packets,
-        }),
-    };
-    result[@backingInt(Feature.nvs)] = .{
-        .llvm_name = "nvs",
-        .description = "Support for new-value stores",
-        .dependencies = featureSet(&[_]Feature{
-            .packets,
-        }),
-    };
-    result[@backingInt(Feature.packets)] = .{
-        .llvm_name = "packets",
-        .description = "Support for instruction packets",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
     result[@backingInt(Feature.prev65)] = .{
         .llvm_name = "prev65",
         .description = "Support features deprecated in v65",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.reserved_r19)] = .{
-        .llvm_name = "reserved-r19",
-        .description = "Reserve register R19",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.small_data)] = .{
-        .llvm_name = "small-data",
-        .description = "Allow GP-relative addressing of global variables",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.tinycore)] = .{
@@ -264,67 +204,93 @@ pub const all_features = blk: {
     result[@backingInt(Feature.v55)] = .{
         .llvm_name = "v55",
         .description = "Enable Hexagon V55 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v5,
+        }),
     };
     result[@backingInt(Feature.v60)] = .{
         .llvm_name = "v60",
         .description = "Enable Hexagon V60 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v55,
+        }),
     };
     result[@backingInt(Feature.v62)] = .{
         .llvm_name = "v62",
         .description = "Enable Hexagon V62 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v60,
+        }),
     };
     result[@backingInt(Feature.v65)] = .{
         .llvm_name = "v65",
         .description = "Enable Hexagon V65 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v62,
+        }),
     };
     result[@backingInt(Feature.v66)] = .{
         .llvm_name = "v66",
         .description = "Enable Hexagon V66 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v65,
+        }),
     };
     result[@backingInt(Feature.v67)] = .{
         .llvm_name = "v67",
         .description = "Enable Hexagon V67 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v66,
+        }),
     };
     result[@backingInt(Feature.v68)] = .{
         .llvm_name = "v68",
         .description = "Enable Hexagon V68 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v67,
+        }),
     };
     result[@backingInt(Feature.v69)] = .{
         .llvm_name = "v69",
         .description = "Enable Hexagon V69 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v68,
+        }),
     };
     result[@backingInt(Feature.v71)] = .{
         .llvm_name = "v71",
         .description = "Enable Hexagon V71 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v69,
+        }),
     };
     result[@backingInt(Feature.v73)] = .{
         .llvm_name = "v73",
         .description = "Enable Hexagon V73 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v71,
+        }),
     };
     result[@backingInt(Feature.v75)] = .{
         .llvm_name = "v75",
         .description = "Enable Hexagon V75 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v73,
+        }),
     };
     result[@backingInt(Feature.v79)] = .{
         .llvm_name = "v79",
         .description = "Enable Hexagon V79 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v75,
+        }),
     };
     result[@backingInt(Feature.v81)] = .{
         .llvm_name = "v81",
         .description = "Enable Hexagon V81 architecture",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .v79,
+        }),
     };
     result[@backingInt(Feature.zreg)] = .{
         .llvm_name = "zreg",
@@ -340,35 +306,12 @@ pub const all_features = blk: {
 };
 
 pub const cpu = struct {
-    pub const generic: CpuModel = .{
-        .name = "generic",
-        .llvm_name = "generic",
-        .features = featureSet(&[_]Feature{
-            .cabac,
-            .compound,
-            .duplex,
-            .memops,
-            .nvj,
-            .nvs,
-            .prev65,
-            .small_data,
-            .v5,
-            .v55,
-            .v60,
-        }),
-    };
     pub const hexagonv5: CpuModel = .{
         .name = "hexagonv5",
         .llvm_name = "hexagonv5",
         .features = featureSet(&[_]Feature{
             .cabac,
-            .compound,
-            .duplex,
-            .memops,
-            .nvj,
-            .nvs,
             .prev65,
-            .small_data,
             .v5,
         }),
     };
@@ -377,14 +320,7 @@ pub const cpu = struct {
         .llvm_name = "hexagonv55",
         .features = featureSet(&[_]Feature{
             .cabac,
-            .compound,
-            .duplex,
-            .memops,
-            .nvj,
-            .nvs,
             .prev65,
-            .small_data,
-            .v5,
             .v55,
         }),
     };
@@ -393,15 +329,7 @@ pub const cpu = struct {
         .llvm_name = "hexagonv60",
         .features = featureSet(&[_]Feature{
             .cabac,
-            .compound,
-            .duplex,
-            .memops,
-            .nvj,
-            .nvs,
             .prev65,
-            .small_data,
-            .v5,
-            .v55,
             .v60,
         }),
     };
@@ -410,16 +338,7 @@ pub const cpu = struct {
         .llvm_name = "hexagonv62",
         .features = featureSet(&[_]Feature{
             .cabac,
-            .compound,
-            .duplex,
-            .memops,
-            .nvj,
-            .nvs,
             .prev65,
-            .small_data,
-            .v5,
-            .v55,
-            .v60,
             .v62,
         }),
     };
@@ -428,17 +347,7 @@ pub const cpu = struct {
         .llvm_name = "hexagonv65",
         .features = featureSet(&[_]Feature{
             .cabac,
-            .compound,
-            .duplex,
             .mem_noshuf,
-            .memops,
-            .nvj,
-            .nvs,
-            .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
             .v65,
         }),
     };
@@ -447,18 +356,7 @@ pub const cpu = struct {
         .llvm_name = "hexagonv66",
         .features = featureSet(&[_]Feature{
             .cabac,
-            .compound,
-            .duplex,
             .mem_noshuf,
-            .memops,
-            .nvj,
-            .nvs,
-            .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
             .v66,
         }),
     };
@@ -467,19 +365,7 @@ pub const cpu = struct {
         .llvm_name = "hexagonv67",
         .features = featureSet(&[_]Feature{
             .cabac,
-            .compound,
-            .duplex,
             .mem_noshuf,
-            .memops,
-            .nvj,
-            .nvs,
-            .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
             .v67,
         }),
     };
@@ -488,18 +374,8 @@ pub const cpu = struct {
         .llvm_name = "hexagonv67t",
         .features = featureSet(&[_]Feature{
             .audio,
-            .compound,
             .mem_noshuf,
-            .memops,
-            .nvs,
-            .small_data,
             .tinycore,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
             .v67,
         }),
     };
@@ -508,20 +384,7 @@ pub const cpu = struct {
         .llvm_name = "hexagonv68",
         .features = featureSet(&[_]Feature{
             .cabac,
-            .compound,
-            .duplex,
             .mem_noshuf,
-            .memops,
-            .nvj,
-            .nvs,
-            .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
             .v68,
         }),
     };
@@ -530,21 +393,7 @@ pub const cpu = struct {
         .llvm_name = "hexagonv69",
         .features = featureSet(&[_]Feature{
             .cabac,
-            .compound,
-            .duplex,
             .mem_noshuf,
-            .memops,
-            .nvj,
-            .nvs,
-            .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
-            .v68,
             .v69,
         }),
     };
@@ -553,22 +402,7 @@ pub const cpu = struct {
         .llvm_name = "hexagonv71",
         .features = featureSet(&[_]Feature{
             .cabac,
-            .compound,
-            .duplex,
             .mem_noshuf,
-            .memops,
-            .nvj,
-            .nvs,
-            .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
-            .v68,
-            .v69,
             .v71,
         }),
     };
@@ -577,21 +411,8 @@ pub const cpu = struct {
         .llvm_name = "hexagonv71t",
         .features = featureSet(&[_]Feature{
             .audio,
-            .compound,
             .mem_noshuf,
-            .memops,
-            .nvs,
-            .small_data,
             .tinycore,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
-            .v68,
-            .v69,
             .v71,
         }),
     };
@@ -599,23 +420,7 @@ pub const cpu = struct {
         .name = "hexagonv73",
         .llvm_name = "hexagonv73",
         .features = featureSet(&[_]Feature{
-            .compound,
-            .duplex,
             .mem_noshuf,
-            .memops,
-            .nvj,
-            .nvs,
-            .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
-            .v68,
-            .v69,
-            .v71,
             .v73,
         }),
     };
@@ -623,24 +428,7 @@ pub const cpu = struct {
         .name = "hexagonv75",
         .llvm_name = "hexagonv75",
         .features = featureSet(&[_]Feature{
-            .compound,
-            .duplex,
             .mem_noshuf,
-            .memops,
-            .nvj,
-            .nvs,
-            .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
-            .v68,
-            .v69,
-            .v71,
-            .v73,
             .v75,
         }),
     };
@@ -648,25 +436,7 @@ pub const cpu = struct {
         .name = "hexagonv79",
         .llvm_name = "hexagonv79",
         .features = featureSet(&[_]Feature{
-            .compound,
-            .duplex,
             .mem_noshuf,
-            .memops,
-            .nvj,
-            .nvs,
-            .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
-            .v68,
-            .v69,
-            .v71,
-            .v73,
-            .v75,
             .v79,
         }),
     };
@@ -674,26 +444,7 @@ pub const cpu = struct {
         .name = "hexagonv81",
         .llvm_name = "hexagonv81",
         .features = featureSet(&[_]Feature{
-            .compound,
-            .duplex,
             .mem_noshuf,
-            .memops,
-            .nvj,
-            .nvs,
-            .small_data,
-            .v5,
-            .v55,
-            .v60,
-            .v62,
-            .v65,
-            .v66,
-            .v67,
-            .v68,
-            .v69,
-            .v71,
-            .v73,
-            .v75,
-            .v79,
             .v81,
         }),
     };

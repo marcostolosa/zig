@@ -47,7 +47,7 @@ Ensure you have the required dependencies:
 
  * CMake >= 3.15
  * System C/C++ Toolchain
- * LLVM, Clang, LLD development libraries, version 22.x, compiled with the
+ * LLVM, Clang, LLD development libraries, version 23.x, compiled with the
    same system C/C++ toolchain.
    - If the system package manager lacks these libraries, or has them misconfigured,
      see below for how to build them from source.
@@ -120,9 +120,9 @@ directory `out/zig-$target-$cpu` and `out/$target-$cpu`, to be used as
 
 ```sh
 "$ZIG_PREFIX/zig" build \
+  --zig-lib=lib \
   -p stage3 \
   --search-prefix "$LLVM_PREFIX" \
-  --zig-lib-dir "lib" \
   -Dstatic-llvm
 ```
 
@@ -193,7 +193,7 @@ You now have the `zig.exe` binary at `stage3\bin\zig.exe`.
 Unzip the dev kit and then in cmd.exe in your Zig source checkout:
 
 ```bat
-$DEVKIT\bin\zig.exe build -p stage3 --search-prefix $DEVKIT --zig-lib-dir lib -Dstatic-llvm -Duse-zig-libcxx -Dtarget=x86_64-windows-gnu
+$DEVKIT\bin\zig.exe build --zig-lib=lib -p stage3 --search-prefix $DEVKIT -Dstatic-llvm -Duse-zig-libcxx -Dtarget=x86_64-windows-gnu
 ```
 
 Replace `$DEVKIT` with the path to the folder that you unzipped after
@@ -257,15 +257,15 @@ that you have **no** trailing slash (`/` or `\`) at the end of the
 
 Install [CMake](https://cmake.org/), version 3.20.0 or newer.
 
-[Download LLVM, Clang, and LLD sources](https://releases.llvm.org/download.html#22.0.0)
+[Download LLVM, Clang, and LLD sources](https://releases.llvm.org/download.html#23.0.0)
 The downloads from llvm lead to the github release pages, where the source's
-will be listed as : `llvm-22.X.X.src.tar.xz`, `clang-22.X.X.src.tar.xz`,
-`lld-22.X.X.src.tar.xz`. Unzip each to their own directory. Ensure no
+will be listed as : `llvm-23.X.X.src.tar.xz`, `clang-23.X.X.src.tar.xz`,
+`lld-23.X.X.src.tar.xz`. Unzip each to their own directory. Ensure no
 directories have spaces in them. For example:
 
- * `C:\Users\Andy\llvm-22.0.0.src`
- * `C:\Users\Andy\clang-22.0.0.src`
- * `C:\Users\Andy\lld-22.0.0.src`
+ * `C:\Users\Andy\llvm-23.0.0.src`
+ * `C:\Users\Andy\clang-23.0.0.src`
+ * `C:\Users\Andy\lld-23.0.0.src`
 
 Install [Build Tools for Visual Studio
 2019](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2019).
@@ -298,9 +298,9 @@ Using the start menu, run **x64 Native Tools Command Prompt for VS 2019** and ex
 ##### Release Mode
 
 ```bat
-mkdir C:\Users\Andy\llvm-22.0.0.src\build-release
-cd C:\Users\Andy\llvm-22.0.0.src\build-release
-"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\Andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-release-mt -DCMAKE_PREFIX_PATH=C:\Users\Andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-release-mt -
+mkdir C:\Users\Andy\llvm-23.0.0.src\build-release
+cd C:\Users\Andy\llvm-23.0.0.src\build-release
+"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\Andy\llvm+clang+lld-23.0.0-x86_64-windows-msvc-release-mt -DCMAKE_PREFIX_PATH=C:\Users\Andy\llvm+clang+lld-23.0.0-x86_64-windows-msvc-release-mt -
 DLLVM_ENABLE_ZLIB=OFF -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_USE_CRT_RELEASE=MT
 msbuild /m -p:Configuration=Release INSTALL.vcxproj
 ```
@@ -308,10 +308,10 @@ msbuild /m -p:Configuration=Release INSTALL.vcxproj
 ##### Debug Mode
 
 ```bat
-mkdir C:\Users\Andy\llvm-22.0.0.src\build-debug
-cd C:\Users\Andy\llvm-22.0.0.src\build-debug
-"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-debug -
-DLLVM_ENABLE_ZLIB=OFF -DCMAKE_PREFIX_PATH=C:\Users\andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-debug -DCMAKE_BUILD_TYPE=Debug -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="AVR" -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_USE_CRT_DEBUG=MTd
+mkdir C:\Users\Andy\llvm-23.0.0.src\build-debug
+cd C:\Users\Andy\llvm-23.0.0.src\build-debug
+"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\andy\llvm+clang+lld-23.0.0-x86_64-windows-msvc-debug -
+DLLVM_ENABLE_ZLIB=OFF -DCMAKE_PREFIX_PATH=C:\Users\andy\llvm+clang+lld-23.0.0-x86_64-windows-msvc-debug -DCMAKE_BUILD_TYPE=Debug -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="AVR" -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_USE_CRT_DEBUG=MTd
 msbuild /m INSTALL.vcxproj
 ```
 
@@ -322,18 +322,18 @@ Using the start menu, run **x64 Native Tools Command Prompt for VS 2019** and ex
 ##### Release Mode
 
 ```bat
-mkdir C:\Users\Andy\lld-22.0.0.src\build-release
-cd C:\Users\Andy\lld-22.0.0.src\build-release
-"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\Andy\llvm+clang+lld-14.0.6-x86_64-windows-msvc-release-mt -DCMAKE_PREFIX_PATH=C:\Users\Andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-release-mt -DCMAKE_BUILD_TYPE=Release -DLLVM_USE_CRT_RELEASE=MT
+mkdir C:\Users\Andy\lld-23.0.0.src\build-release
+cd C:\Users\Andy\lld-23.0.0.src\build-release
+"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\Andy\llvm+clang+lld-14.0.6-x86_64-windows-msvc-release-mt -DCMAKE_PREFIX_PATH=C:\Users\Andy\llvm+clang+lld-23.0.0-x86_64-windows-msvc-release-mt -DCMAKE_BUILD_TYPE=Release -DLLVM_USE_CRT_RELEASE=MT
 msbuild /m -p:Configuration=Release INSTALL.vcxproj
 ```
 
 ##### Debug Mode
 
 ```bat
-mkdir C:\Users\Andy\lld-22.0.0.src\build-debug
-cd C:\Users\Andy\lld-22.0.0.src\build-debug
-"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-debug -DCMAKE_PREFIX_PATH=C:\Users\andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-debug -DCMAKE_BUILD_TYPE=Debug -DLLVM_USE_CRT_DEBUG=MTd
+mkdir C:\Users\Andy\lld-23.0.0.src\build-debug
+cd C:\Users\Andy\lld-23.0.0.src\build-debug
+"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\andy\llvm+clang+lld-23.0.0-x86_64-windows-msvc-debug -DCMAKE_PREFIX_PATH=C:\Users\andy\llvm+clang+lld-23.0.0-x86_64-windows-msvc-debug -DCMAKE_BUILD_TYPE=Debug -DLLVM_USE_CRT_DEBUG=MTd
 msbuild /m INSTALL.vcxproj
 ```
 
@@ -344,18 +344,18 @@ Using the start menu, run **x64 Native Tools Command Prompt for VS 2019** and ex
 ##### Release Mode
 
 ```bat
-mkdir C:\Users\Andy\clang-22.0.0.src\build-release
-cd C:\Users\Andy\clang-22.0.0.src\build-release
-"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\Andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-release-mt -DCMAKE_PREFIX_PATH=C:\Users\Andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-release-mt -DCMAKE_BUILD_TYPE=Release -DLLVM_USE_CRT_RELEASE=MT
+mkdir C:\Users\Andy\clang-23.0.0.src\build-release
+cd C:\Users\Andy\clang-23.0.0.src\build-release
+"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\Andy\llvm+clang+lld-23.0.0-x86_64-windows-msvc-release-mt -DCMAKE_PREFIX_PATH=C:\Users\Andy\llvm+clang+lld-23.0.0-x86_64-windows-msvc-release-mt -DCMAKE_BUILD_TYPE=Release -DLLVM_USE_CRT_RELEASE=MT
 msbuild /m -p:Configuration=Release INSTALL.vcxproj
 ```
 
 ##### Debug Mode
 
 ```bat
-mkdir C:\Users\Andy\clang-22.0.0.src\build-debug
-cd C:\Users\Andy\clang-22.0.0.src\build-debug
-"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-debug -DCMAKE_PREFIX_PATH=C:\Users\andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-debug -DCMAKE_BUILD_TYPE=Debug -DLLVM_USE_CRT_DEBUG=MTd
+mkdir C:\Users\Andy\clang-23.0.0.src\build-debug
+cd C:\Users\Andy\clang-23.0.0.src\build-debug
+"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\andy\llvm+clang+lld-23.0.0-x86_64-windows-msvc-debug -DCMAKE_PREFIX_PATH=C:\Users\andy\llvm+clang+lld-23.0.0-x86_64-windows-msvc-debug -DCMAKE_BUILD_TYPE=Debug -DLLVM_USE_CRT_DEBUG=MTd
 msbuild /m INSTALL.vcxproj
 ```
 
@@ -371,20 +371,21 @@ This is the generally recommended approach.
 
 ```sh
 cd ~/Downloads
-git clone --depth 1 --branch release/22.x https://github.com/llvm/llvm-project llvm-project-22
-cd llvm-project-22
-git checkout release/22.x
+git clone --depth 1 --branch release/23.x https://github.com/llvm/llvm-project llvm-project-23
+cd llvm-project-23
+git checkout release/23.x
 
 mkdir build-release
 cd build-release
 cmake ../llvm \
-  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm22-assert \
+  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm23-assert \
   -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_ENABLE_PROJECTS="lld;clang" \
   -DLLVM_ENABLE_LIBXML2=OFF \
   -DLLVM_ENABLE_TERMINFO=OFF \
   -DLLVM_ENABLE_LIBEDIT=OFF \
   -DLLVM_ENABLE_ASSERTIONS=ON \
+  -DLLVM_ENABLE_ZSTD=OFF \
   -DLLVM_PARALLEL_LINK_JOBS=1 \
   -G Ninja
 ninja install
@@ -398,16 +399,16 @@ others are in Release mode.
 
 ```sh
 cd ~/Downloads
-git clone --depth 1 --branch release/22.x https://github.com/llvm/llvm-project llvm-project-22
-cd llvm-project-22
-git checkout release/22.x
+git clone --depth 1 --branch release/23.x https://github.com/llvm/llvm-project llvm-project-23
+cd llvm-project-23
+git checkout release/23.x
 
 # LLVM
 mkdir llvm/build-debug
 cd llvm/build-debug
 cmake .. \
-  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm22-debug \
-  -DCMAKE_PREFIX_PATH=$HOME/local/llvm22-debug \
+  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm23-debug \
+  -DCMAKE_PREFIX_PATH=$HOME/local/llvm23-debug \
   -DCMAKE_BUILD_TYPE=Debug \
   -DLLVM_ENABLE_LIBXML2=OFF \
   -DLLVM_ENABLE_TERMINFO=OFF \
@@ -421,8 +422,8 @@ cd ../..
 mkdir lld/build-debug
 cd lld/build-debug
 cmake .. \
-  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm22-debug \
-  -DCMAKE_PREFIX_PATH=$HOME/local/llvm22-debug \
+  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm23-debug \
+  -DCMAKE_PREFIX_PATH=$HOME/local/llvm23-debug \
   -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_PARALLEL_LINK_JOBS=1 \
   -DCMAKE_CXX_STANDARD=17 \
@@ -434,8 +435,8 @@ cd ../..
 mkdir clang/build-debug
 cd clang/build-debug
 cmake .. \
-  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm22-debug \
-  -DCMAKE_PREFIX_PATH=$HOME/local/llvm22-debug \
+  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm23-debug \
+  -DCMAKE_PREFIX_PATH=$HOME/local/llvm23-debug \
   -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_PARALLEL_LINK_JOBS=1 \
   -DLLVM_INCLUDE_TESTS=OFF \
@@ -445,8 +446,8 @@ cd ../..
 ```
 
 Then add to your Zig CMake line that you got from the README.md:
-`-DCMAKE_PREFIX_PATH=$HOME/local/llvm22-debug` or
-`-DCMAKE_PREFIX_PATH=$HOME/local/llvm22-assert` depending on whether you want
+`-DCMAKE_PREFIX_PATH=$HOME/local/llvm23-debug` or
+`-DCMAKE_PREFIX_PATH=$HOME/local/llvm23-assert` depending on whether you want
 Debug or Release LLVM.
 
 
@@ -781,12 +782,20 @@ If you will be debugging the Zig compiler itself, or if you will be debugging
 any project compiled with Zig's LLVM backend (not recommended with the LLDB
 fork, prefer vanilla LLDB with a version that matches the version of LLVM that
 Zig is using), you can get a better debugging experience by using
-[`lldb_pretty_printers.py`](https://codeberg.org/ziglang/zig/src/branch/master/tools/lldb_pretty_printers.py).
+[`lldb/pretty_printers.py`](https://codeberg.org/ziglang/zig/src/branch/master/lib/lldb/pretty_printers.py)
+which is included in Zig's installed lib dir.
 
 Put this line in `~/.lldbinit`:
 
 ```
-command script import /path/to/zig/tools/lldb_pretty_printers.py
+command script import /path/to/zig/lib/lldb/pretty_printers.py
+```
+
+If you will be debugging a Zig compiler built using Zig's self-hosted backends,
+you will also want this line:
+
+```
+type category enable zig.compiler
 ```
 
 If you will be using Zig's LLVM backend (again, not recommended with the LLDB
@@ -797,10 +806,9 @@ type category enable zig.lang
 type category enable zig.std
 ```
 
-If you will be debugging a Zig compiler built using Zig's LLVM backend (again,
-not recommended with the LLDB fork), you will also want this line:
+If you will be debugging a Zig compiler built using Zig's LLVM backend without
+using the LLDB fork, you will also want this line:
 
 ```
-type category enable zig.stage2
+type category enable zig
 ```
-

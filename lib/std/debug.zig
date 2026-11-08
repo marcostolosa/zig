@@ -76,7 +76,7 @@ pub fn TargetInfo(os: std.Target.Os.Tag, arch: std.Target.Cpu.Arch) type {
         },
         .macho => @import("debug/SelfInfo/MachO.zig"),
         .plan9, .spirv, .wasm, .raw, .hex => void,
-        .c => unreachable,
+        .c, .llvmbc, .llvmir => unreachable,
     };
 }
 
@@ -271,9 +271,6 @@ pub const sys_can_stack_trace = switch (builtin.cpu.arch) {
     .bpfeb,
     => false,
 
-    // https://codeberg.org/ziglang/zig/issues/31127
-    .avr => false,
-
     else => true,
 };
 
@@ -438,7 +435,6 @@ pub const CpuContextPtr = if (cpu_context.Native == noreturn) noreturn else *con
 /// fast and small mode. Outside of a test block, this assert
 /// function is the correct function to use.
 pub fn assert(ok: bool) void {
-    @disableInstrumentation();
     if (!ok) unreachable; // assertion failure
 }
 
@@ -504,6 +500,7 @@ const use_trap_panic = switch (builtin.zig_backend) {
     .stage2_spirv,
     .stage2_x86,
     => true,
+    .stage2_llvm => builtin.cpu.arch.isSpirv(),
     else => false,
 };
 
@@ -695,7 +692,7 @@ pub noinline fn captureCurrentStackTrace(options: StackUnwindOptions, addr_buf: 
 
     var total_frames: usize = 0;
     var index: usize = 0;
-    var wait_for = options.first_address;
+    var wait_for: ?usize = options.first_address orelse @returnAddress();
     // Ideally, we would iterate the whole stack so that the `index - min(buf.len, index)` would be
     // indicative of how many frames were skipped. However, this has a significant runtime cost
     // in some cases, so at least for now, we don't do that.
@@ -934,6 +931,58 @@ pub fn dumpErrorReturnTrace(et: *const std.builtin.StackTrace) void {
     };
 }
 
+pub const FpUsability = enum {
+    /// FP unwinding is impractical on this target. For example, due to its very silly ABI
+    /// design decisions, it's not possible to do generic FP unwinding on MIPS without a
+    /// complicated code scanning algorithm.
+    useless,
+    /// FP unwinding is unsafe on this target; we may crash when doing so. We will only perform
+    /// FP unwinding in the case of crashes/panics, or if the user opts in.
+    unsafe,
+    /// FP unwinding is guaranteed to be safe on this target. We will do so if unwinding with
+    /// debug info does not work, and if this compilation has frame pointers enabled.
+    safe,
+    /// FP unwinding is the best option on this target. This is usually because the ABI requires
+    /// a backchain pointer, thus making it always available, safe, and fast.
+    ideal,
+
+    pub fn of(target: *const std.Target) FpUsability {
+        return switch (target.cpu.arch) {
+            .alpha,
+            .avr,
+            .csky,
+            .microblaze,
+            .microblazeel,
+            .mips,
+            .mipsel,
+            .mips64,
+            .mips64el,
+            .msp430,
+            .sh,
+            .sheb,
+            .xcore,
+            .xtensa,
+            .xtensaeb,
+            => .useless,
+            .hexagon,
+            // The PowerPC ABIs don't actually strictly require a backchain pointer; they allow omitting
+            // it when full unwind info is present. Despite this, both GCC and Clang always enforce the
+            // presence of the backchain pointer no matter what options they are given. This seems to be
+            // a case of "the spec is only a polite suggestion", except it works in our favor this time!
+            .powerpc,
+            .powerpcle,
+            .powerpc64,
+            .powerpc64le,
+            .sparc,
+            .sparc64,
+            => .ideal,
+            // https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms#Respect-the-purpose-of-specific-CPU-registers
+            .aarch64 => if (target.os.tag.isDarwin()) .safe else .unsafe,
+            else => .unsafe,
+        };
+    }
+};
+
 const StackIterator = union(enum) {
     /// We will first report the current PC of this `CpuContextPtr`, then we will switch to a
     /// different strategy to actually unwind.
@@ -978,7 +1027,7 @@ const StackIterator = union(enum) {
             // Instead, start at the stack pointer so we get the return address from the
             // current frame's save area. The addition of the stack bias cannot fail here
             // since we know we have a valid stack pointer.
-            .fp = if (native_arch.isSPARC()) sp: {
+            .fp = if (native_arch.isSparc()) sp: {
                 flushSparcWindows();
                 break :sp asm (""
                     : [_] "={o6}" (-> usize),
@@ -1003,55 +1052,7 @@ const StackIterator = union(enum) {
             asm volatile ("ta 3" ::: .{ .memory = true }); // ST_FLUSH_WINDOWS
     }
 
-    const FpUsability = enum {
-        /// FP unwinding is impractical on this target. For example, due to its very silly ABI
-        /// design decisions, it's not possible to do generic FP unwinding on MIPS without a
-        /// complicated code scanning algorithm.
-        useless,
-        /// FP unwinding is unsafe on this target; we may crash when doing so. We will only perform
-        /// FP unwinding in the case of crashes/panics, or if the user opts in.
-        unsafe,
-        /// FP unwinding is guaranteed to be safe on this target. We will do so if unwinding with
-        /// debug info does not work, and if this compilation has frame pointers enabled.
-        safe,
-        /// FP unwinding is the best option on this target. This is usually because the ABI requires
-        /// a backchain pointer, thus making it always available, safe, and fast.
-        ideal,
-    };
-
-    const fp_usability: FpUsability = switch (builtin.target.cpu.arch) {
-        .alpha,
-        .avr,
-        .csky,
-        .microblaze,
-        .microblazeel,
-        .mips,
-        .mipsel,
-        .mips64,
-        .mips64el,
-        .msp430,
-        .sh,
-        .sheb,
-        .xcore,
-        .xtensa,
-        .xtensaeb,
-        => .useless,
-        .hexagon,
-        // The PowerPC ABIs don't actually strictly require a backchain pointer; they allow omitting
-        // it when full unwind info is present. Despite this, both GCC and Clang always enforce the
-        // presence of the backchain pointer no matter what options they are given. This seems to be
-        // a case of "the spec is only a polite suggestion", except it works in our favor this time!
-        .powerpc,
-        .powerpcle,
-        .powerpc64,
-        .powerpc64le,
-        .sparc,
-        .sparc64,
-        => .ideal,
-        // https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms#Respect-the-purpose-of-specific-CPU-registers
-        .aarch64 => if (builtin.target.os.tag.isDarwin()) .safe else .unsafe,
-        else => .unsafe,
-    };
+    const fp_usability: FpUsability = .of(&builtin.target);
 
     /// Whether the current unwind strategy is allowed given `allow_unsafe`.
     fn stratOk(it: *const StackIterator, allow_unsafe: bool) bool {
@@ -1086,10 +1087,12 @@ const StackIterator = union(enum) {
         switch (it.*) {
             .ctx_first => |context_ptr| {
                 // After the first frame, start actually unwinding.
-                it.* = if (SelfInfo != void and SelfInfo.can_unwind and fp_usability != .ideal)
-                    .{ .di = .init(context_ptr) }
-                else
-                    .{ .fp = context_ptr.getFp() };
+                if (SelfInfo != void and SelfInfo.can_unwind and fp_usability != .ideal) {
+                    it.* = .{ .di = .init(context_ptr) };
+                } else {
+                    const fp = applyOffset(context_ptr.getFp(), stack_bias) orelse return .end;
+                    it.* = .{ .fp = fp };
+                }
 
                 // The caller expects *return* addresses, where they will subtract 1 to find the address of the call.
                 // However, we have the actual current PC, which should not be adjusted. Compensate by adding 1.
@@ -1099,7 +1102,7 @@ const StackIterator = union(enum) {
                 const di = getSelfDebugInfo() catch unreachable;
                 const ret_addr = di.unwindFrame(io, unwind_context) catch |err| {
                     const pc = unwind_context.pc;
-                    const fp = unwind_context.getFp();
+                    const fp = applyOffset(unwind_context.getFp(), stack_bias) orelse return .end;
                     unwind_context.deinit();
                     it.* = .{ .fp = fp };
                     return .{ .switch_to_fp = .{
@@ -1138,7 +1141,7 @@ const StackIterator = union(enum) {
                 }) return .end;
 
                 it.fp = bp;
-                const ra = stripInstructionPtrAuthCode(ra_ptr.*);
+                const ra = stripInstructionPtrMarkerBits(ra_ptr.*);
                 if (ra <= 1) return .end;
                 return .{ .frame = ra };
             },
@@ -1154,12 +1157,12 @@ const StackIterator = union(enum) {
         if (native_arch == .hppa64) break :off -1 * @sizeOf(usize);
         // On LoongArch and RISC-V, the frame pointer points to the top of the saved register area,
         // in which the base pointer is the first word.
-        if (native_arch.isLoongArch() or native_arch.isRISCV()) break :off -2 * @sizeOf(usize);
+        if (native_arch.isLoongarch() or native_arch.isRiscv()) break :off -2 * @sizeOf(usize);
         // On OpenRISC, the frame pointer is stored below the return address.
         if (native_arch == .or1k) break :off -2 * @sizeOf(usize);
         // On SPARC, the frame pointer points to the save area which holds 16 slots for the local
         // and incoming registers. The base pointer (i6) is stored in its customary save slot.
-        if (native_arch.isSPARC()) break :off 14 * @sizeOf(usize);
+        if (native_arch.isSparc()) break :off 14 * @sizeOf(usize);
         // Everywhere else, the frame pointer points directly to the location of the base pointer.
         break :off 0;
     };
@@ -1173,16 +1176,16 @@ const StackIterator = union(enum) {
         if (native_arch == .hppa64) break :off -2 * @sizeOf(usize);
         // On LoongArch and RISC-V, the frame pointer points to the top of the saved register area,
         // in which the return address is the second word.
-        if (native_arch.isLoongArch() or native_arch.isRISCV()) break :off -1 * @sizeOf(usize);
+        if (native_arch.isLoongarch() or native_arch.isRiscv()) break :off -1 * @sizeOf(usize);
         // On OpenRISC, the return address is stored below the stack parameter area.
         if (native_arch == .or1k) break :off -1 * @sizeOf(usize);
-        if (native_arch.isPowerPC64()) break :off 2 * @sizeOf(usize);
+        if (native_arch.isPowerpc64()) break :off 2 * @sizeOf(usize);
         // On s390x, r14 is the link register and we need to grab it from its customary slot in the
         // register save area (ELF ABI s390x Supplement §1.2.2.2).
         if (native_arch == .s390x) break :off 14 * @sizeOf(usize);
         // On SPARC, the frame pointer points to the save area which holds 16 slots for the local
         // and incoming registers. The return address (i7) is stored in its customary save slot.
-        if (native_arch.isSPARC()) break :off 15 * @sizeOf(usize);
+        if (native_arch.isSparc()) break :off 15 * @sizeOf(usize);
         break :off @sizeOf(usize);
     };
 
@@ -1196,7 +1199,7 @@ const StackIterator = union(enum) {
     /// On some oddball architectures, a return address points to the call instruction rather than
     /// the instruction following it.
     const ra_call_offset = off: {
-        if (native_arch.isSPARC()) break :off 0;
+        if (native_arch.isSparc()) break :off 0;
         break :off 1;
     };
 
@@ -1206,10 +1209,17 @@ const StackIterator = union(enum) {
     }
 };
 
+/// Removes any bits that do not represent part of the logical address of an instruction.
+///
 /// Some platforms use pointer authentication: the upper bits of instruction pointers contain a
 /// signature. This function clears those signature bits to make the pointer directly usable.
-pub inline fn stripInstructionPtrAuthCode(ptr: usize) usize {
-    if (native_arch.isAARCH64()) {
+///
+/// For Arm/thumb architectures, when executing in thumb mode, the LSB of branches and return
+/// addresses will be set, however this bit is not actually part of the instruction address;
+/// all instructions must be align(2). So we want to ensure it's cleared when unwinding to ensure
+/// we can convert a return address to an address within the calling instruction by subtracting 1.
+pub inline fn stripInstructionPtrMarkerBits(ptr: usize) usize {
+    if (native_arch.isAarch64()) {
         // `hint 0x07` maps to `xpaclri` (or `nop` if the hardware doesn't support it)
         // The save / restore is because `xpaclri` operates on x30 (LR)
         return asm (
@@ -1221,6 +1231,9 @@ pub inline fn stripInstructionPtrAuthCode(ptr: usize) usize {
             : [ret] "={x15}" (-> usize),
             : [ptr] "{x15}" (ptr),
             : .{ .x16 = true });
+    } else if (native_arch.isArm()) {
+        const thumb_bit: usize = 1;
+        return ptr & ~thumb_bit;
     }
 
     return ptr;
@@ -1308,7 +1321,7 @@ fn printLineInfo(
     try writer.print("0x{x} in {s} ({s})", .{
         address,
         symbol.name orelse "???",
-        symbol.compile_unit_name orelse debug_info.getModuleName(io, address) catch "???",
+        symbol.compile_unit_name orelse (debug_info.getModuleName(io, address) catch "???"),
     });
     t.setColor(.reset) catch {};
     try writer.writeAll("\n");
@@ -1647,21 +1660,6 @@ fn handleSegfaultPosix(sig: posix.SIG, info: *const posix.siginfo_t, ctx_ptr: ?*
     };
     const opt_cpu_context: ?cpu_context.Native = cpu_context.fromPosixSignalContext(ctx_ptr);
 
-    if (native_arch.isSPARC()) {
-        // It's unclear to me whether this is a QEMU bug or also real kernel behavior, but in the
-        // former, I observed that the most recent register window wasn't getting spilled on the
-        // stack as expected when a signal arrived. A `flushw` from the signal handler does not
-        // appear to be sufficient either. On the other hand, when doing a synchronous stack trace
-        // and using `flushw`, this all appears to work as expected. So, *probably* a QEMU bug, but
-        // someone with real SPARC hardware should verify.
-        //
-        // In any case, the register save area exists specifically so that register windows can be
-        // spilled asynchronously. This means that it should be perfectly fine for us to manually do
-        // so here.
-        const ctx = opt_cpu_context.?;
-        @as(*[16]usize, @ptrFromInt(ctx.o[6] + StackIterator.stack_bias)).* = ctx.l ++ ctx.i;
-    }
-
     handleSegfault(addr, name, if (opt_cpu_context) |*ctx| ctx else null);
 }
 
@@ -1864,18 +1862,44 @@ pub fn ConfigurableTrace(comptime size: usize, comptime stack_frame_count: usize
 pub const SafetyLock = struct {
     state: State = if (runtime_safety) .unlocked else .unknown,
 
-    pub const State = if (runtime_safety) enum { unlocked, locked } else enum { unknown };
+    pub const State = if (runtime_safety) enum(usize) {
+        unlocked = 0,
+        exclusive = math.maxInt(usize),
+        _, // shared lock count
 
+        fn isShared(state: State) bool {
+            return switch (state) {
+                _ => true,
+                else => false,
+            };
+        }
+    } else enum { unknown };
+
+    /// Exclusive. Use when mutating data.
     pub fn lock(l: *SafetyLock) void {
         if (!runtime_safety) return;
         assert(l.state == .unlocked);
-        l.state = .locked;
+        l.state = .exclusive;
     }
 
     pub fn unlock(l: *SafetyLock) void {
         if (!runtime_safety) return;
-        assert(l.state == .locked);
+        assert(l.state == .exclusive);
         l.state = .unlocked;
+    }
+
+    /// Use when consuming data in a read-only manner.
+    pub fn lockShared(l: *SafetyLock) void {
+        if (!runtime_safety) return;
+        assert(l.state != .exclusive);
+        l.state = @fromBackingInt(@backingInt(l.state) + 1);
+        assert(l.state.isShared()); // Catch overflow to `exclusive`.
+    }
+
+    pub fn unlockShared(l: *SafetyLock) void {
+        if (!runtime_safety) return;
+        assert(l.state.isShared());
+        l.state = @fromBackingInt(@backingInt(l.state) - 1);
     }
 
     pub fn assertUnlocked(l: SafetyLock) void {
@@ -1885,7 +1909,12 @@ pub const SafetyLock = struct {
 
     pub fn assertLocked(l: SafetyLock) void {
         if (!runtime_safety) return;
-        assert(l.state == .locked);
+        assert(l.state == .exclusive);
+    }
+
+    pub fn assertLockedShared(l: SafetyLock) void {
+        if (!runtime_safety) return;
+        assert(l.state.isShared());
     }
 };
 
@@ -1895,6 +1924,12 @@ test SafetyLock {
     safety_lock.lock();
     safety_lock.assertLocked();
     safety_lock.unlock();
+    safety_lock.assertUnlocked();
+    safety_lock.lockShared();
+    safety_lock.assertLockedShared();
+    for (0..3) |_| safety_lock.lockShared();
+    safety_lock.assertLockedShared();
+    for (0..4) |_| safety_lock.unlockShared();
     safety_lock.assertUnlocked();
 }
 

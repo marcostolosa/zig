@@ -80,7 +80,7 @@ pub fn defaultQueryPageSize() usize {
         .linux => if (builtin.link_libc)
             @max(std.c.sysconf(@backingInt(std.c._SC.PAGESIZE)), 0)
         else
-            std.os.linux.getauxval(std.elf.AT_PAGESZ),
+            std.os.linux.getauxval(std.elf.AT.PAGESZ),
         .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
             const task_port = std.c.mach_task_self();
             // mach_task_self may fail "if there are any resource failures or other errors".
@@ -544,13 +544,13 @@ pub fn testAllocatorAlignedShrink(base_allocator: mem.Allocator) !void {
     var slice = try allocator.alignedAlloc(u8, .@"16", alloc_size);
     defer allocator.free(slice);
 
-    var stuff_to_free = std.array_list.Managed([]align(16) u8).init(debug_allocator);
+    var stuff_to_free: std.ArrayList([]align(16) u8) = .empty;
     // On Windows, VirtualAlloc returns addresses aligned to a 64K boundary,
     // which is 16 pages, hence the 32. This test may require to increase
     // the size of the allocations feeding the `allocator` parameter if they
     // fail, because of this high over-alignment we want to have.
     while (@intFromPtr(slice.ptr) == mem.alignForward(usize, @intFromPtr(slice.ptr), pageSize() * 32)) {
-        try stuff_to_free.append(slice);
+        try stuff_to_free.append(debug_allocator, slice);
         slice = try allocator.alignedAlloc(u8, .@"16", alloc_size);
     }
     while (stuff_to_free.pop()) |item| {
@@ -624,7 +624,7 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
         .x86, .x86_64 => 4 << 10,
         .thumb, .thumbeb, .arm, .armeb, .aarch64, .aarch64_be => 4 << 10,
         .m88k => 4 << 10,
-        .mips64, .mips64el => 4 << 10,
+        .mips64 => 4 << 10,
         .powerpc, .powerpc64, .powerpc64le, .powerpcle => 4 << 10,
         .riscv64 => 4 << 10,
         .sh, .sheb => 4 << 10,
@@ -633,8 +633,7 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
     },
     .illumos => switch (builtin.cpu.arch) {
         // src/uts/*/sys/machparam.h
-        .x86, .x86_64 => 4 << 10,
-        .sparc, .sparc64 => 8 << 10,
+        .x86_64 => 4 << 10,
         else => null,
     },
     .fuchsia => switch (builtin.cpu.arch) {
@@ -722,7 +721,7 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
     },
     .freestanding, .other => switch (builtin.cpu.arch) {
         .wasm32, .wasm64 => 64 << 10,
-        .x86, .x86_64 => 4 << 10,
+        .x86, .x86c16, .x86_64 => 4 << 10,
         .aarch64, .aarch64_be => 4 << 10,
         else => null,
     },
@@ -788,7 +787,7 @@ const page_size_max_default: ?usize = switch (builtin.os.tag) {
         .x86, .x86_64 => 4 << 10,
         .thumb, .thumbeb, .arm, .armeb, .aarch64, .aarch64_be => 4 << 10,
         .m88k => 4 << 10,
-        .mips64, .mips64el => 16 << 10,
+        .mips64 => 16 << 10,
         .powerpc, .powerpc64, .powerpc64le, .powerpcle => 4 << 10,
         .riscv64 => 4 << 10,
         .sh, .sheb => 4 << 10,
@@ -797,8 +796,7 @@ const page_size_max_default: ?usize = switch (builtin.os.tag) {
     },
     .illumos => switch (builtin.cpu.arch) {
         // src/uts/*/sys/machparam.h
-        .x86, .x86_64 => 4 << 10,
-        .sparc, .sparc64 => 8 << 10,
+        .x86_64 => 4 << 10,
         else => null,
     },
     .fuchsia => switch (builtin.cpu.arch) {

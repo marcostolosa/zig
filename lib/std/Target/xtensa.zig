@@ -13,9 +13,9 @@ pub const Feature = enum {
     density,
     dfpaccel,
     div32,
+    esp32s2ops,
     exception,
     extendedl32r,
-    forced_atomics,
     fp,
     highpriinterrupts,
     highpriinterrupts_level3,
@@ -93,6 +93,11 @@ pub const all_features = blk: {
         .description = "Enable Xtensa Div32 option",
         .dependencies = featureSet(&[_]Feature{}),
     };
+    result[@backingInt(Feature.esp32s2ops)] = .{
+        .llvm_name = "esp32s2ops",
+        .description = "Support Xtensa esp32-s2 ISA extension",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
     result[@backingInt(Feature.exception)] = .{
         .llvm_name = "exception",
         .description = "Enable Xtensa Exception option",
@@ -101,11 +106,6 @@ pub const all_features = blk: {
     result[@backingInt(Feature.extendedl32r)] = .{
         .llvm_name = "extendedl32r",
         .description = "Enable Xtensa Extended L32R option",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.forced_atomics)] = .{
-        .llvm_name = "forced-atomics",
-        .description = "Assume that lock-free native-width atomics are available",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.fp)] = .{
@@ -291,6 +291,35 @@ pub const cpu = struct {
             .windowed,
         }),
     };
+    pub const esp32s2: CpuModel = .{
+        .name = "esp32s2",
+        .llvm_name = "esp32s2",
+        .features = featureSet(&[_]Feature{
+            .clamps,
+            .coprocessor,
+            .dcache,
+            .debug,
+            .density,
+            .div32,
+            .esp32s2ops,
+            .exception,
+            .highpriinterrupts_level7,
+            .interrupt,
+            .minmax,
+            .miscsr,
+            .mul16,
+            .mul32,
+            .mul32high,
+            .nsa,
+            .prid,
+            .regprotect,
+            .rvector,
+            .sext,
+            .threadptr,
+            .timers3,
+            .windowed,
+        }),
+    };
     pub const esp8266: CpuModel = .{
         .name = "esp8266",
         .llvm_name = "esp8266",
@@ -310,8 +339,8 @@ pub const cpu = struct {
             .timers1,
         }),
     };
-    pub const generic: CpuModel = .{
-        .name = "generic",
+    pub const xtensa: CpuModel = .{
+        .name = "xtensa",
         .llvm_name = "generic",
         .features = featureSet(&[_]Feature{}),
     };

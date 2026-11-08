@@ -1,6 +1,6 @@
 index: File.Index,
 
-sections: std.MultiArrayList(Section) = .{},
+sections: std.MultiArrayList(Section) = .empty,
 atoms: std.ArrayList(Atom) = .empty,
 atoms_indexes: std.ArrayList(Atom.Index) = .empty,
 atoms_extra: std.ArrayList(u32) = .empty,
@@ -402,8 +402,8 @@ pub fn resolveLiterals(self: *InternalObject, lp: *MachO.LiteralPool, macho_file
 
     const gpa = macho_file.base.comp.gpa;
 
-    var buffer = std.array_list.Managed(u8).init(gpa);
-    defer buffer.deinit();
+    var buffer: std.ArrayList(u8) = .empty;
+    defer buffer.deinit(gpa);
 
     const slice = self.sections.slice();
     for (slice.items(.header), self.getAtoms()) |header, atom_index| {
@@ -415,8 +415,7 @@ pub fn resolveLiterals(self: *InternalObject, lp: *MachO.LiteralPool, macho_file
         assert(rel.tag == .@"extern");
         const target = rel.getTargetSymbol(atom.*, macho_file).getAtom(macho_file).?;
         const target_size = try macho_file.cast(usize, target.size);
-        try buffer.ensureUnusedCapacity(target_size);
-        buffer.resize(target_size) catch unreachable;
+        try buffer.resize(gpa, target_size);
         const section_data = try self.getSectionData(target.n_sect, macho_file);
         @memcpy(buffer.items, section_data);
         const res = try lp.insert(gpa, header.type(), buffer.items);
@@ -884,7 +883,7 @@ const Section = struct {
     relocs: std.ArrayList(Relocation) = .empty,
     extra: Extra = .{},
 
-    const Extra = packed struct {
+    const Extra = bitpack struct {
         is_objc_methname: bool = false,
         is_objc_selref: bool = false,
     };

@@ -43,7 +43,7 @@ fn runServer(ids: *IncrementalDebugServer) void {
     const io = ids.zcu.comp.io;
 
     const addr: Io.net.IpAddress = .{ .ip6 = .loopback(port) };
-    var server = addr.listen(io, .{}) catch |err| switch (err) {
+    var server = addr.listen(io, .{ .reuse_address = true }) catch |err| switch (err) {
         error.Canceled => return,
         else => |e| {
             log.err("listen failed ({t}); closing server", .{e});
@@ -223,13 +223,12 @@ fn handleCommand(zcu: *Zcu, w: *Io.Writer, cmd_str: []const u8, arg_str: []const
             create_gen,
         });
         if (nav.resolved) |r| {
-            try w.writeAll("status: resolved\n  type: ");
-            try printType(.fromInterned(r.type), zcu, w);
+            try w.print("status: resolved\n  type: {f}", .{Type.fromInterned(r.type).fmt(zcu)});
             try w.writeAll("\n  value: ");
             if (r.value == .none) {
                 try w.writeAll("(unresolved)");
             } else {
-                try printType(.fromInterned(r.type), zcu, w);
+                try w.print("{f}", .{Value.fromInterned(r.value).fmtValue(zcu)});
             }
             try w.writeByte('\n');
         } else {
@@ -243,8 +242,8 @@ fn handleCommand(zcu: *Zcu, w: *Io.Writer, cmd_str: []const u8, arg_str: []const
         var num_results: usize = 0;
         for (zcu.incremental_debug_state.types.keys()) |type_ip_index| {
             const ty: Type = .fromInterned(type_ip_index);
-            const ty_name = ty.containerTypeName(ip).toSlice(ip);
-            const success = switch (@as(u2, @intFromBool(anchor_start)) << 1 | @intFromBool(anchor_end)) {
+            const ty_name = ty.containerTypeName(ip).fqn.toSlice(ip);
+            const success = switch ((@as(u2, @intFromBool(anchor_start)) << 1) | @intFromBool(anchor_end)) {
                 0b00 => std.mem.find(u8, ty_name, query) != null,
                 0b01 => std.mem.endsWith(u8, ty_name, query),
                 0b10 => std.mem.startsWith(u8, ty_name, query),
@@ -265,7 +264,7 @@ fn handleCommand(zcu: *Zcu, w: *Io.Writer, cmd_str: []const u8, arg_str: []const
         for (zcu.incremental_debug_state.navs.keys()) |nav_index| {
             const nav = ip.getNav(nav_index);
             const nav_fqn = nav.fqn.toSlice(ip);
-            const success = switch (@as(u2, @intFromBool(anchor_start)) << 1 | @intFromBool(anchor_end)) {
+            const success = switch ((@as(u2, @intFromBool(anchor_start)) << 1) | @intFromBool(anchor_end)) {
                 0b00 => std.mem.find(u8, nav_fqn, query) != null,
                 0b01 => std.mem.endsWith(u8, nav_fqn, query),
                 0b10 => std.mem.startsWith(u8, nav_fqn, query),
@@ -347,7 +346,7 @@ fn handleCommand(zcu: *Zcu, w: *Io.Writer, cmd_str: []const u8, arg_str: []const
             \\created on generation: {d}
             \\
         , .{
-            Type.fromInterned(ip_index).containerTypeName(ip).fmt(ip),
+            Type.fromInterned(ip_index).containerTypeName(ip).fqn.fmt(ip),
             create_gen,
         });
     } else if (std.mem.eql(u8, cmd_str, "type_namespace")) {
@@ -405,56 +404,10 @@ fn parseAnalUnit(str: []const u8) ?AnalUnit {
 }
 fn printAnalUnit(unit: AnalUnit, buf: *[32]u8) []const u8 {
     const idx: u32 = switch (unit.unwrap()) {
-        .memoized_state => |stage| return std.fmt.bufPrint(buf, "memoized_state {s}", .{@tagName(stage)}) catch unreachable,
+        .memoized_state => |stage| return std.mem.print(buf, "memoized_state {s}", .{@tagName(stage)}) catch unreachable,
         inline else => |i| @backingInt(i),
     };
-    return std.fmt.bufPrint(buf, "{s} {d}", .{ @tagName(unit.unwrap()), idx }) catch unreachable;
-}
-
-fn printType(ty: Type, zcu: *const Zcu, w: *Io.Writer) Io.Writer.Error!void {
-    const ip = &zcu.intern_pool;
-    switch (ip.indexToKey(ty.toIntern())) {
-        .int_type => |int| try w.print("{c}{d}", .{
-            @as(u8, if (int.signedness == .unsigned) 'u' else 'i'),
-            int.bits,
-        }),
-        .tuple_type => try w.writeAll("(tuple)"),
-        .error_set_type => try w.writeAll("(error set)"),
-        .inferred_error_set_type => try w.writeAll("(inferred error set)"),
-        .func_type => try w.writeAll("(function)"),
-        .anyframe_type => try w.writeAll("(anyframe)"),
-        .vector_type => {
-            try w.print("@Vector({d}, ", .{ty.vectorLen(zcu)});
-            try printType(ty.childType(zcu), zcu, w);
-            try w.writeByte(')');
-        },
-        .array_type => {
-            try w.print("[{d}]", .{ty.arrayLen(zcu)});
-            try printType(ty.childType(zcu), zcu, w);
-        },
-        .opt_type => {
-            try w.writeByte('?');
-            try printType(ty.optionalChild(zcu), zcu, w);
-        },
-        .error_union_type => {
-            try printType(ty.errorUnionSet(zcu), zcu, w);
-            try w.writeByte('!');
-            try printType(ty.errorUnionPayload(zcu), zcu, w);
-        },
-        .ptr_type => {
-            try w.writeAll("*(attrs) ");
-            try printType(ty.childType(zcu), zcu, w);
-        },
-        .simple_type => |simple| try w.writeAll(@tagName(simple)),
-
-        .struct_type,
-        .union_type,
-        .enum_type,
-        .opaque_type,
-        => try w.print("{f}[{d}]", .{ ty.containerTypeName(ip).fmt(ip), @backingInt(ty.toIntern()) }),
-
-        else => unreachable,
-    }
+    return std.mem.print(buf, "{s} {d}", .{ @tagName(unit.unwrap()), idx }) catch unreachable;
 }
 
 const std = @import("std");
@@ -466,6 +419,7 @@ const Compilation = @import("Compilation.zig");
 const Zcu = @import("Zcu.zig");
 const InternPool = @import("InternPool.zig");
 const Type = @import("Type.zig");
+const Value = @import("Value.zig");
 const AnalUnit = InternPool.AnalUnit;
 
 const IncrementalDebugServer = @This();

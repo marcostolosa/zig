@@ -13,7 +13,7 @@ const symbol = compiler_rt.symbol;
 // detail to keep the export logic clean and because we need some kind of CAS to
 // implement the spinlocks.
 const supports_atomic_ops = switch (arch) {
-    .msp430, .avr, .bpfel, .bpfeb => false,
+    .msp430, .avr, .bpfel, .bpfeb, .lanai => false,
     .arm, .armeb, .thumb, .thumbeb =>
     // The ARM v6m ISA has no ldrex/strex and so it's impossible to do CAS
     // operations (unless we're targeting Linux, the kernel provides a way to
@@ -30,7 +30,7 @@ const largest_atomic_size = switch (arch) {
     // On SPARC systems that lacks CAS and/or swap instructions, the only
     // available atomic operation is a test-and-set (`ldstub`), so we force
     // every atomic memory access to go through the lock.
-    .sparc => if (builtin.cpu.has(.sparc, .hasleoncasa)) @sizeOf(usize) else 0,
+    .sparc => if (builtin.cpu.hasAny(.sparc, &.{ .hasleoncasa, .v9 })) @sizeOf(usize) else 0,
 
     // XXX: On x86/x86_64 we could check the presence of cmpxchg8b/cmpxchg16b
     // and set this parameter accordingly.
@@ -63,11 +63,11 @@ const SpinlockTable = struct {
 
         // Prevent false sharing by providing enough padding between two
         // consecutive spinlock elements
-        v: if (arch.isSPARC()) sparc_lock else other_lock align(cache_line_size) = .Unlocked,
+        v: if (arch.isSparc()) sparc_lock else other_lock align(cache_line_size) = .Unlocked,
 
         fn acquire(self: *@This()) void {
             while (true) {
-                const flag = if (comptime arch.isSPARC()) flag: {
+                const flag = if (comptime arch.isSparc()) flag: {
                     break :flag asm volatile ("ldstub [%[addr]], %[flag]"
                         : [flag] "=r" (-> @TypeOf(self.v)),
                         : [addr] "r" (&self.v),
@@ -83,7 +83,7 @@ const SpinlockTable = struct {
             }
         }
         fn release(self: *@This()) void {
-            if (comptime arch.isSPARC()) {
+            if (comptime arch.isSparc()) {
                 _ = asm volatile ("clrb [%[addr]]"
                     :
                     : [addr] "r" (&self.v),
@@ -241,7 +241,7 @@ fn wideUpdate(comptime T: type, ptr: *T, val: T, update: anytype) T {
     while (true) {
         const old = @as(T, @truncate((wide_old & mask) >> inner_shift));
         const new = update(val, old);
-        const wide_new = wide_old & ~mask | (@as(WideAtomic, new) << inner_shift);
+        const wide_new = (wide_old & ~mask) | (@as(WideAtomic, new) << inner_shift);
         if (@cmpxchgWeak(WideAtomic, wide_ptr, wide_old, wide_new, .seq_cst, .seq_cst)) |new_wide_old| {
             wide_old = new_wide_old;
         } else {

@@ -31,7 +31,7 @@ comptime {
         symbol(&math.snan(c_longdouble), "__SNANL");
     }
 
-    if (builtin.target.isMinGW() or builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
+    if (builtin.target.isMinGW() or builtin.target.isMuslLibC()) {
         symbol(&frexpf, "frexpf");
         symbol(&frexpl, "frexpl");
         symbol(&hypotf, "hypotf");
@@ -42,14 +42,14 @@ comptime {
         symbol(&rintl, "rintl");
     }
 
-    if ((builtin.target.isMinGW() and @sizeOf(f64) != @sizeOf(c_longdouble)) or builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
+    if ((builtin.target.isMinGW() and @sizeOf(f64) != @sizeOf(c_longdouble)) or builtin.target.isMuslLibC()) {
         symbol(&atanl, "atanl");
         symbol(&copysignl, "copysignl");
         symbol(&fdiml, "fdiml");
         symbol(&nanl, "nanl");
     }
 
-    if ((builtin.target.isMinGW() and builtin.cpu.arch == .x86) or builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
+    if ((builtin.target.isMinGW() and builtin.cpu.arch == .x86) or builtin.target.isMuslLibC()) {
         symbol(&acosf, "acosf");
         symbol(&atanf, "atanf");
         symbol(&coshf, "coshf");
@@ -57,7 +57,7 @@ comptime {
         symbol(&tanhf, "tanhf");
     }
 
-    if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
+    if (builtin.target.isMuslLibC()) {
         symbol(&acos, "acos");
         symbol(&acoshf, "acoshf");
         symbol(&asin, "asin");
@@ -355,7 +355,7 @@ fn pow10f(x: f32) callconv(.c) f32 {
 fn rint(x: f64) callconv(.c) f64 {
     const toint: f64 = 1.0 / math.floatEps(f64);
     const a: u64 = @bitCast(x);
-    const e = a >> 52 & 0x7ff;
+    const e = (a >> 52) & 0x7ff;
     const s = a >> 63;
     var y: f64 = undefined;
 
@@ -376,7 +376,7 @@ fn rint(x: f64) callconv(.c) f64 {
 fn rintf(x: f32) callconv(.c) f32 {
     const toint: f32 = 1.0 / math.floatEps(f32);
     const a: u32 = @bitCast(x);
-    const e = a >> 23 & 0xff;
+    const e = (a >> 23) & 0xff;
     const s = a >> 31;
     var y: f32 = undefined;
 

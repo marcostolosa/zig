@@ -109,11 +109,11 @@ link_emit_relocs: bool = false,
 
 /// Place every function in its own section so that unused ones may be
 /// safely garbage-collected during the linking phase.
-link_function_sections: bool = false,
+function_sections: ?bool = null,
 
-/// Place every data in its own section so that unused ones may be
+/// Place every datum in its own section so that unused ones may be
 /// safely garbage-collected during the linking phase.
-link_data_sections: bool = false,
+data_sections: ?bool = null,
 
 /// Remove functions and data that are unreachable by the entry point or
 /// exported symbols.
@@ -240,6 +240,11 @@ sanitize_coverage_trace_pc_guard: ?bool = null,
 /// Incremental compilation reduces compile time by mutating an existing build artifact. Non-
 /// incremental compilation is slower but preserves previous build artifacts.
 incremental: ?bool = null,
+
+/// Corresponds to the `-flegalize-all` CLI flag.
+///
+/// This is a debug feature intended solely for Zig compiler development.
+legalize_all: bool = false,
 
 emit_directory: Configuration.OptionalGeneratedFileIndex = .none,
 generated_docs: Configuration.OptionalGeneratedFileIndex = .none,

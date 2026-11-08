@@ -514,9 +514,9 @@ pub const AtomicsOpcode = enum(u32) {
     i64_atomic_rmw32_add_u = 0x24,
     i32_atomic_rmw_sub = 0x25,
     i64_atomic_rmw_sub = 0x26,
-    i32_atomic_rmw8_sub_u = 0x27A,
-    i32_atomic_rmw16_sub_u = 0x28A,
-    i64_atomic_rmw8_sub_u = 0x29A,
+    i32_atomic_rmw8_sub_u = 0x27,
+    i32_atomic_rmw16_sub_u = 0x28,
+    i64_atomic_rmw8_sub_u = 0x29,
     i64_atomic_rmw16_sub_u = 0x2A,
     i64_atomic_rmw32_sub_u = 0x2B,
     i32_atomic_rmw_and = 0x2C,
@@ -580,7 +580,7 @@ pub const Limits = struct {
     min: u32,
     max: u32,
 
-    pub const Flags = packed struct(u8) {
+    pub const Flags = bitpack struct(u8) {
         has_max: bool,
         is_shared: bool,
         reserved: u6 = 0,

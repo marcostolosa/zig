@@ -2186,6 +2186,11 @@ pub const Inst = struct {
         /// For example: Provided with `error{Foo}!?f64`, returns `f64`.
         /// `operand` is payload index to `UnNode`.
         float_op_result_ty,
+        /// Validate that the given `CType` is valid for the current target.
+        /// This can be folded into the `@CType` tag once that is implemented.
+        /// `operand` is `src_node: Ast.Node.Offset`.
+        /// `small` is  a `std.Target.CType`.
+        validate_c_type,
 
         pub const InstData = struct {
             opcode: Extended,
@@ -2449,7 +2454,7 @@ pub const Inst = struct {
         int: u64,
         float: f64,
         ptr_type: struct {
-            flags: packed struct {
+            flags: bitpack struct {
                 is_allowzero: bool,
                 is_mutable: bool,
                 is_volatile: bool,
@@ -2577,7 +2582,7 @@ pub const Inst = struct {
         output_type_bits: u32,
         clobbers: Ref,
 
-        pub const Small = packed struct(u16) {
+        pub const Small = bitpack struct(u16) {
             is_volatile: bool,
             outputs_len: u7,
             inputs_len: u8,
@@ -2618,7 +2623,7 @@ pub const Inst = struct {
         param_block: Index,
         body_len: u32,
 
-        pub const RetTy = packed struct(u32) {
+        pub const RetTy = bitpack struct(u32) {
             /// 0 means `void`.
             /// 1 means the type is a simple `Ref`.
             /// Otherwise, the length of a trailing body.
@@ -2667,7 +2672,7 @@ pub const Inst = struct {
 
         /// If both has_cc_ref and has_cc_body are false, it means auto calling convention.
         /// If both has_ret_ty_ref and has_ret_ty_body are false, it means void return type.
-        pub const Bits = packed struct(u32) {
+        pub const Bits = bitpack struct(u32) {
             is_var_args: bool,
             is_inferred_error: bool,
             is_noinline: bool,
@@ -2788,7 +2793,7 @@ pub const Inst = struct {
             value_body: ?[]const Inst.Index,
         };
 
-        pub const Flags = packed struct(u64) {
+        pub const Flags = bitpack struct(u64) {
             src_line: u30,
             src_column: u29,
             id: Id,
@@ -3091,7 +3096,7 @@ pub const Inst = struct {
         flags: Flags,
         callee: Ref,
 
-        pub const Flags = packed struct {
+        pub const Flags = bitpack struct {
             /// std.lang.CallModifier in packed form
             pub const PackedModifier = u3;
             pub const PackedArgsLen = u27;
@@ -3140,7 +3145,7 @@ pub const Inst = struct {
         callee: Ref,
         args: Ref,
 
-        pub const Flags = packed struct {
+        pub const Flags = bitpack struct {
             is_nosuspend: bool,
             ensure_result_used: bool,
             _: u30 = 0,
@@ -3277,6 +3282,7 @@ pub const Inst = struct {
 
     pub const ReifyStruct = struct {
         src_line: u32,
+        src_column: u32,
         /// This node is absolute, because `reify` instructions are tracked across updates, and
         /// this simplifies the logic for getting source locations for types.
         node: Ast.Node.Index,
@@ -3289,6 +3295,7 @@ pub const Inst = struct {
 
     pub const ReifyUnion = struct {
         src_line: u32,
+        src_column: u32,
         /// This node is absolute, because `reify` instructions are tracked across updates, and
         /// this simplifies the logic for getting source locations for types.
         node: Ast.Node.Index,
@@ -3301,6 +3308,7 @@ pub const Inst = struct {
 
     pub const ReifyEnum = struct {
         src_line: u32,
+        src_column: u32,
         /// This node is absolute, because `reify` instructions are tracked across updates, and
         /// this simplifies the logic for getting source locations for types.
         node: Ast.Node.Index,
@@ -3312,6 +3320,7 @@ pub const Inst = struct {
 
     pub const ReifySpirvType = struct {
         src_line: u32,
+        src_column: u32,
         /// This node is absolute, because `reify` instructions are tracked across updates, and
         /// this simplifies the logic for getting source locations for types.
         node: Ast.Node.Index,
@@ -3370,7 +3379,7 @@ pub const Inst = struct {
         raw_operand: Ref,
         bits: Bits,
 
-        pub const Bits = packed struct(u32) {
+        pub const Bits = bitpack struct(u32) {
             /// If true, one or more prongs have multiple items.
             has_multi_cases: bool,
             /// If true, one or more prongs have ranges.
@@ -3393,7 +3402,7 @@ pub const Inst = struct {
             pub const ScalarCasesLen = u24;
         };
 
-        pub const ProngInfo = packed struct(u32) {
+        pub const ProngInfo = bitpack struct(u32) {
             body_len: u27,
             capture: ProngInfo.Capture,
             is_inline: bool,
@@ -3406,13 +3415,13 @@ pub const Inst = struct {
                 by_ref,
             };
 
-            pub const NonErr = packed struct(u32) {
+            pub const NonErr = bitpack struct(u32) {
                 body_len: u29,
                 capture: ProngInfo.Capture,
                 operand_is_ref: bool,
             };
 
-            pub const Else = packed struct(u32) {
+            pub const Else = bitpack struct(u32) {
                 body_len: u27,
                 capture: ProngInfo.Capture,
                 is_inline: bool,
@@ -3421,7 +3430,7 @@ pub const Inst = struct {
             };
         };
 
-        pub const ItemInfo = packed struct(u32) {
+        pub const ItemInfo = bitpack struct(u32) {
             kind: ItemInfo.Kind,
             data: u30,
 
@@ -3489,18 +3498,20 @@ pub const Inst = struct {
     /// 0.  captures_len: u32 // if `has_captures_len`
     /// 1.  decls_len: u32, // if `has_decls_len`
     /// 2.  fields_len: u32, // if `has_fields_len`
-    /// 3.  backing_int_body_len: u32 // if `has_backing_int`
-    /// 4.  capture: Capture // for every `captures_len`
-    /// 5.  capture_name: NullTerminatedString // for every `captures_len`
-    /// 6.  decl: Index, // for every `decls_len`; points to a `declaration` instruction
-    /// 7.  field_name: NullTerminatedString // for every `fields_len`
-    /// 8.  field_type_body_len: u32 // for every `fields_len`
-    /// 9.  field_align_body_len: u32 // for every `fields_len` if `any_field_aligns`
-    /// 10. field_default_body_len: u32 // for every `fields_len` if `any_field_defaults`
-    /// 11. field_comptime_bits: u32 // one bit per `fields_len` if `any_comptime_fields`
+    /// 3.  arg_baseline_src_node: Ast.Node.Index // if `has_backing_int`
+    /// 4.  fields_baseline_src_node: Ast.Node.Index // if `has_fields_len`
+    /// 5.  backing_int_body_len: u32 // if `has_backing_int`
+    /// 6.  capture: Capture // for every `captures_len`
+    /// 7.  capture_name: NullTerminatedString // for every `captures_len`
+    /// 8.  decl: Index, // for every `decls_len`; points to a `declaration` instruction
+    /// 9.  field_name: NullTerminatedString // for every `fields_len`
+    /// 10. field_type_body_len: u32 // for every `fields_len`
+    /// 11. field_align_body_len: u32 // for every `fields_len` if `any_field_aligns`
+    /// 12. field_default_body_len: u32 // for every `fields_len` if `any_field_defaults`
+    /// 13. field_comptime_bits: u32 // one bit per `fields_len` if `any_comptime_fields`
     ///                              // LSB is first field, minimum number of `u32` needed
-    /// 12. backing_int_body_inst: Inst.Index // for each `backing_int_body_len`
-    /// 13. body_inst: Inst.Index // type body, then align body, then default body, for each field
+    /// 14. backing_int_body_inst: Inst.Index // for each `backing_int_body_len`
+    /// 15. body_inst: Inst.Index // type body, then align body, then default body, for each field
     pub const StructDecl = struct {
         // These fields should be concatenated and reinterpreted as a `std.zig.SrcHash`.
         // This hash contains the source of all fields, and any specified attributes (`extern`, backing type, etc).
@@ -3509,16 +3520,17 @@ pub const Inst = struct {
         fields_hash_2: u32,
         fields_hash_3: u32,
         src_line: u32,
+        src_column: u32,
         /// This node provides a new absolute baseline node for all instructions within this struct.
         src_node: Ast.Node.Index,
 
-        pub const Small = packed struct(u16) {
+        pub const Small = bitpack struct(u16) {
             has_captures_len: bool,
             has_decls_len: bool,
             has_fields_len: bool,
             name_strategy: NameStrategy,
             layout: std.lang.Type.ContainerLayout,
-            /// Always `false` if `layout != .@"packed"`.
+            /// Always `false` if `layout != .@"bitpack"`.
             has_backing_int_type: bool,
             any_field_aligns: bool,
             any_field_defaults: bool,
@@ -3528,7 +3540,7 @@ pub const Inst = struct {
     };
 
     /// Represents a single value being captured in a type declaration's closure.
-    pub const Capture = packed struct(u32) {
+    pub const Capture = bitpack struct(u32) {
         tag: enum(u3) {
             /// `data` is a `u16` index into the parent closure.
             nested,
@@ -3598,7 +3610,7 @@ pub const Inst = struct {
         dbg_var,
     };
 
-    pub const FullPtrCastFlags = packed struct(u5) {
+    pub const FullPtrCastFlags = bitpack struct(u5) {
         ptr_cast: bool = false,
         align_cast: bool = false,
         addrspace_cast: bool = false,
@@ -3664,10 +3676,11 @@ pub const Inst = struct {
         fields_hash_2: u32,
         fields_hash_3: u32,
         src_line: u32,
+        src_column: u32,
         /// This node provides a new absolute baseline node for all instructions within this struct.
         src_node: Ast.Node.Index,
 
-        pub const Small = packed struct(u16) {
+        pub const Small = bitpack struct(u16) {
             has_captures_len: bool,
             has_decls_len: bool,
             has_fields_len: bool,
@@ -3701,10 +3714,11 @@ pub const Inst = struct {
         fields_hash_2: u32,
         fields_hash_3: u32,
         src_line: u32,
+        src_column: u32,
         /// This node provides a new absolute baseline node for all instructions within this struct.
         src_node: Ast.Node.Index,
 
-        pub const Small = packed struct(u16) {
+        pub const Small = bitpack struct(u16) {
             has_captures_len: bool,
             has_decls_len: bool,
             has_fields_len: bool,
@@ -3726,15 +3740,15 @@ pub const Inst = struct {
             tagged_enum_explicit,
             /// `extern union`
             @"extern",
-            /// `packed union`
-            @"packed",
-            /// `packed union(T)`
-            packed_explicit,
+            /// `bitpack union`
+            @"bitpack",
+            /// `bitpack union(T)`
+            bitpack_explicit,
 
             pub fn hasArgType(k: Kind) bool {
                 return switch (k) {
-                    .auto, .tagged_enum, .@"extern", .@"packed" => false,
-                    .tagged_explicit, .tagged_enum_explicit, .packed_explicit => true,
+                    .auto, .tagged_enum, .@"extern", .@"bitpack" => false,
+                    .tagged_explicit, .tagged_enum_explicit, .bitpack_explicit => true,
                 };
             }
 
@@ -3742,7 +3756,7 @@ pub const Inst = struct {
                 return switch (k) {
                     .auto, .tagged_explicit, .tagged_enum, .tagged_enum_explicit => .auto,
                     .@"extern" => .@"extern",
-                    .@"packed", .packed_explicit => .@"packed",
+                    .@"bitpack", .bitpack_explicit => .@"bitpack",
                 };
             }
         };
@@ -3756,10 +3770,11 @@ pub const Inst = struct {
     /// 4. decl: Index, // for every decls_len; points to a `declaration` instruction
     pub const OpaqueDecl = struct {
         src_line: u32,
+        src_column: u32,
         /// This node provides a new absolute baseline node for all instructions within this struct.
         src_node: Ast.Node.Index,
 
-        pub const Small = packed struct(u16) {
+        pub const Small = bitpack struct(u16) {
             has_captures_len: bool,
             has_decls_len: bool,
             name_strategy: NameStrategy,
@@ -3803,8 +3818,8 @@ pub const Inst = struct {
         /// If this is an anonymous initialization (the operand is poison), this instruction becomes the owner of a type.
         /// To resolve source locations, we need an absolute source node.
         abs_node: Ast.Node.Index,
-        /// Likewise, we need an absolute line number.
-        abs_line: u32,
+        src_line: u32,
+        src_column: u32,
         fields_len: u32,
 
         pub const Item = struct {
@@ -3823,8 +3838,8 @@ pub const Inst = struct {
         /// This is an anonymous initialization, meaning this instruction becomes the owner of a type.
         /// To resolve source locations, we need an absolute source node.
         abs_node: Ast.Node.Index,
-        /// Likewise, we need an absolute line number.
-        abs_line: u32,
+        src_line: u32,
+        src_column: u32,
         fields_len: u32,
 
         pub const Item = struct {
@@ -3914,7 +3929,7 @@ pub const Inst = struct {
         name: NullTerminatedString,
         type: Type,
 
-        pub const Type = packed struct(u32) {
+        pub const Type = bitpack struct(u32) {
             /// The body contains the type of the parameter.
             body_len: u31,
             /// Whether the type is generic, i.e. refers to one or more previous parameters.
@@ -3928,7 +3943,7 @@ pub const Inst = struct {
     pub const AllocExtended = struct {
         src_node: Ast.Node.Offset,
 
-        pub const Small = packed struct(u16) {
+        pub const Small = bitpack struct(u16) {
             has_type: bool,
             has_align: bool,
             is_const: bool,
@@ -4431,6 +4446,7 @@ fn findTrackableInner(
                 .astgen_error,
                 .float_op_result_ty,
                 .round_op_ty,
+                .validate_c_type,
                 => return,
 
                 // `@TypeOf` has a body.
@@ -5128,7 +5144,7 @@ pub const UnwrappedSwitchBlock = struct {
         item_infos: []const Inst.SwitchBlock.ItemInfo,
         range_infos: []const [2]Inst.SwitchBlock.ItemInfo,
 
-        pub const Index = packed struct(u32) {
+        pub const Index = bitpack struct(u32) {
             kind: enum(u1) { scalar, multi },
             value: u31,
 
@@ -5219,12 +5235,12 @@ pub fn assertTrackable(zir: Zir, inst_idx: Zir.Inst.Index) void {
         .struct_init_anon,
         => {}, // tracked in order, as the owner instructions of anonymous struct types
         .func, .func_inferred => {
-            // These are tracked provided they are actual function declarations, not just bodies.
+            // These are tracked if they are actual function declarations rather than prototypes.
             const extra = zir.extraData(Inst.Func, inst.data.pl_node.payload_index);
             assert(extra.data.body_len != 0);
         },
         .func_fancy => {
-            // These are tracked provided they are actual function declarations, not just bodies.
+            // These are tracked if they are actual function declarations rather than prototypes.
             const extra = zir.extraData(Inst.FuncFancy, inst.data.pl_node.payload_index);
             assert(extra.data.body_len != 0);
         },
@@ -5279,6 +5295,14 @@ pub fn getStructDecl(zir: *const Zir, struct_decl: Inst.Index) UnwrappedStructDe
         extra_index += 1;
         break :blk fields_len;
     } else 0;
+    const arg_baseline_src_node: Ast.Node.Index = if (small.has_backing_int_type) node: {
+        defer extra_index += 1;
+        break :node @fromBackingInt(zir.extra[extra_index]);
+    } else extra.data.src_node;
+    const fields_baseline_src_node: Ast.Node.Index = if (small.has_fields_len) node: {
+        defer extra_index += 1;
+        break :node @fromBackingInt(zir.extra[extra_index]);
+    } else extra.data.src_node;
     const backing_int_type_body_len: u32 = if (small.has_backing_int_type) len: {
         const body_len = zir.extra[extra_index];
         extra_index += 1;
@@ -5318,8 +5342,11 @@ pub fn getStructDecl(zir: *const Zir, struct_decl: Inst.Index) UnwrappedStructDe
     const field_bodies_overlong: []const Inst.Index = @ptrCast(zir.extra[extra_index..]);
     return .{
         .src_line = extra.data.src_line,
+        .src_column = extra.data.src_column,
         .src_node = extra.data.src_node,
         .name_strategy = small.name_strategy,
+        .arg_baseline_src_node = arg_baseline_src_node,
+        .fields_baseline_src_node = fields_baseline_src_node,
         .captures = captures,
         .capture_names = capture_names,
         .decls = decls,
@@ -5335,8 +5362,12 @@ pub fn getStructDecl(zir: *const Zir, struct_decl: Inst.Index) UnwrappedStructDe
 }
 pub const UnwrappedStructDecl = struct {
     src_line: u32,
+    src_column: u32,
     src_node: Ast.Node.Index,
     name_strategy: Inst.NameStrategy,
+
+    arg_baseline_src_node: Ast.Node.Index,
+    fields_baseline_src_node: Ast.Node.Index,
 
     captures: []const Inst.Capture,
     capture_names: []const NullTerminatedString,
@@ -5430,6 +5461,14 @@ pub fn getUnionDecl(zir: *const Zir, union_decl: Inst.Index) UnwrappedUnionDecl 
         extra_index += 1;
         break :blk fields_len;
     } else 0;
+    const arg_baseline_src_node: Ast.Node.Index = if (small.kind.hasArgType()) node: {
+        defer extra_index += 1;
+        break :node @fromBackingInt(zir.extra[extra_index]);
+    } else extra.data.src_node;
+    const fields_baseline_src_node: Ast.Node.Index = if (small.has_fields_len) node: {
+        defer extra_index += 1;
+        break :node @fromBackingInt(zir.extra[extra_index]);
+    } else extra.data.src_node;
     const arg_type_body_len: u32 = if (small.kind.hasArgType()) len: {
         const body_len = zir.extra[extra_index];
         extra_index += 1;
@@ -5463,8 +5502,11 @@ pub fn getUnionDecl(zir: *const Zir, union_decl: Inst.Index) UnwrappedUnionDecl 
     const field_bodies_overlong: []const Inst.Index = @ptrCast(zir.extra[extra_index..]);
     return .{
         .src_line = extra.data.src_line,
+        .src_column = extra.data.src_column,
         .src_node = extra.data.src_node,
         .name_strategy = small.name_strategy,
+        .arg_baseline_src_node = arg_baseline_src_node,
+        .fields_baseline_src_node = fields_baseline_src_node,
         .captures = captures,
         .capture_names = capture_names,
         .decls = decls,
@@ -5479,8 +5521,12 @@ pub fn getUnionDecl(zir: *const Zir, union_decl: Inst.Index) UnwrappedUnionDecl 
 }
 pub const UnwrappedUnionDecl = struct {
     src_line: u32,
+    src_column: u32,
     src_node: Ast.Node.Index,
     name_strategy: Inst.NameStrategy,
+
+    arg_baseline_src_node: Ast.Node.Index,
+    fields_baseline_src_node: Ast.Node.Index,
 
     captures: []const Inst.Capture,
     capture_names: []const NullTerminatedString,
@@ -5564,6 +5610,14 @@ pub fn getEnumDecl(zir: *const Zir, enum_decl: Inst.Index) UnwrappedEnumDecl {
         extra_index += 1;
         break :blk fields_len;
     } else 0;
+    const arg_baseline_src_node: Ast.Node.Index = if (small.has_tag_type) node: {
+        defer extra_index += 1;
+        break :node @fromBackingInt(zir.extra[extra_index]);
+    } else extra.data.src_node;
+    const fields_baseline_src_node: Ast.Node.Index = if (small.has_fields_len) node: {
+        defer extra_index += 1;
+        break :node @fromBackingInt(zir.extra[extra_index]);
+    } else extra.data.src_node;
     const tag_type_body_len: u32 = if (small.has_tag_type) len: {
         const body_len = zir.extra[extra_index];
         extra_index += 1;
@@ -5590,8 +5644,11 @@ pub fn getEnumDecl(zir: *const Zir, enum_decl: Inst.Index) UnwrappedEnumDecl {
     const field_bodies_overlong: []const Inst.Index = @ptrCast(zir.extra[extra_index..]);
     return .{
         .src_line = extra.data.src_line,
+        .src_column = extra.data.src_column,
         .src_node = extra.data.src_node,
         .name_strategy = small.name_strategy,
+        .arg_baseline_src_node = arg_baseline_src_node,
+        .fields_baseline_src_node = fields_baseline_src_node,
         .captures = captures,
         .capture_names = capture_names,
         .decls = decls,
@@ -5604,8 +5661,12 @@ pub fn getEnumDecl(zir: *const Zir, enum_decl: Inst.Index) UnwrappedEnumDecl {
 }
 pub const UnwrappedEnumDecl = struct {
     src_line: u32,
+    src_column: u32,
     src_node: Ast.Node.Index,
     name_strategy: Inst.NameStrategy,
+
+    arg_baseline_src_node: Ast.Node.Index,
+    fields_baseline_src_node: Ast.Node.Index,
 
     captures: []const Inst.Capture,
     capture_names: []const NullTerminatedString,
@@ -5682,6 +5743,7 @@ pub fn getOpaqueDecl(zir: *const Zir, opaque_decl: Inst.Index) UnwrappedOpaqueDe
     extra_index += decls_len;
     return .{
         .src_line = extra.data.src_line,
+        .src_column = extra.data.src_column,
         .src_node = extra.data.src_node,
         .name_strategy = small.name_strategy,
         .captures = captures,
@@ -5691,6 +5753,7 @@ pub fn getOpaqueDecl(zir: *const Zir, opaque_decl: Inst.Index) UnwrappedOpaqueDe
 }
 pub const UnwrappedOpaqueDecl = struct {
     src_line: u32,
+    src_column: u32,
     src_node: Ast.Node.Index,
     name_strategy: Inst.NameStrategy,
     captures: []const Inst.Capture,

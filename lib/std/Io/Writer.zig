@@ -269,36 +269,43 @@ fn writeSplatHeaderLimitFinish(
     limit: usize,
 ) Error!usize {
     var remaining = limit;
+    var total: usize = 0;
     var vecs: [8][]const u8 = undefined;
     var i: usize = 0;
-    v: {
-        if (header.len != 0) {
-            const copy_len = @min(header.len, remaining);
-            vecs[i] = header[0..copy_len];
-            i += 1;
-            remaining -= copy_len;
-            if (remaining == 0) break :v;
-        }
-        for (data[0 .. data.len - 1]) |buf| {
-            if (buf.len == 0) continue;
-            const copy_len = @min(buf.len, remaining);
-            vecs[i] = buf[0..copy_len];
-            i += 1;
-            remaining -= copy_len;
-            if (remaining == 0) break :v;
-            if (vecs.len - i == 0) break :v;
-        }
-        const pattern = data[data.len - 1];
-        if (splat == 1 or remaining < pattern.len) {
-            vecs[i] = pattern[0..@min(remaining, pattern.len)];
-            i += 1;
-            break :v;
-        }
-        vecs[i] = pattern;
+    if (header.len != 0) {
+        const copy_len = @min(header.len, remaining);
+        vecs[i] = header[0..copy_len];
         i += 1;
-        return w.vtable.drain(w, (&vecs)[0..i], @min(remaining / pattern.len, splat));
+        remaining -= copy_len;
+        if (remaining == 0) {
+            return w.vtable.drain(w, (&vecs)[0..i], 1);
+        }
     }
-    return w.vtable.drain(w, (&vecs)[0..i], 1);
+    for (data[0 .. data.len - 1]) |buf| {
+        if (buf.len == 0) continue;
+        const copy_len = @min(buf.len, remaining);
+        vecs[i] = buf[0..copy_len];
+        i += 1;
+        remaining -= copy_len;
+        if (remaining == 0) {
+            return w.vtable.drain(w, (&vecs)[0..i], 1);
+        }
+        if (i == vecs.len) {
+            total += try w.vtable.drain(w, &vecs, 1);
+            i = 0;
+        }
+    }
+    const pattern = data[data.len - 1];
+    if (splat == 1 or remaining < pattern.len) {
+        vecs[i] = pattern[0..@min(remaining, pattern.len)];
+        i += 1;
+        total += try w.vtable.drain(w, (&vecs)[0..i], 1);
+        return total;
+    }
+    vecs[i] = pattern;
+    i += 1;
+    total += try w.vtable.drain(w, (&vecs)[0..i], @min(remaining / pattern.len, splat));
+    return total;
 }
 
 const SplatHeaderTestCase = struct {
@@ -357,6 +364,8 @@ test "fixed writer writeSplatHeaderLimit" {
 
     // allocating writer that needs to expand capacity during splat
     try testWriteSplatHeaderLimit(.{ .writer_type = .allocating, .buf_len = 8, .header = "hhhh", .data = &.{"PP"}, .splat = 3, .limit = 100, .expected_res = .{ .written = 10 }, .expected_buf_content = "hhhhPPPPPP" });
+    try testWriteSplatHeaderLimit(.{ .writer_type = .allocating, .buf_len = 2, .header = "", .data = &.{ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "X", "Y", "ZZ" }, .splat = 2, .limit = 100, .expected_res = .{ .written = 16 }, .expected_buf_content = "0123456789XYZZZZ" });
+    try testWriteSplatHeaderLimit(.{ .writer_type = .allocating, .buf_len = 2, .header = "", .data = &.{ "0", "1", "2", "", "", "3", "4" }, .splat = 2, .limit = 4, .expected_res = .{ .written = 4 }, .expected_buf_content = "0123" });
 }
 
 test "writeSplatHeader splatting avoids buffer aliasing temptation" {
@@ -367,9 +376,9 @@ test "writeSplatHeader splatting avoids buffer aliasing temptation" {
     const n = try aw.writer.writeSplatHeader("header which is longer than buf ", &.{
         "1", "2", "3", "4", "5", "6", "foo", "bar", "foo",
     }, 3);
-    try testing.expectEqual(41, n);
+    try testing.expectEqual(53, n);
     try testing.expectEqualStrings(
-        "header which is longer than buf 123456foo",
+        "header which is longer than buf 123456foobarfoofoofoo",
         aw.writer.buffered(),
     );
 }
@@ -478,7 +487,7 @@ pub fn writableSliceGreedyPreserve(w: *Writer, preserve: usize, minimum_len: usi
         @branchHint(.likely);
         return w.buffer[w.end..];
     }
-    try rebase(w, preserve, minimum_len);
+    try w.vtable.rebase(w, preserve, minimum_len);
     assert(w.buffer.len >= preserve + minimum_len);
     return w.buffer[w.end..];
 }
@@ -679,7 +688,8 @@ pub fn writeAll(w: *Writer, bytes: []const u8) Error!void {
 ///   string, everything is passed through unmodified, except for the following
 ///   transformations:
 ///   - escaped: '\n', '\r', '\t', '\\', '"'
-///   - hex-encoded: ASCII control characters
+///   - hex-encoded: ASCII control characters, invalid UTF-8 sequences,
+///     non-ASCII line endings (U+0085, U+2028, U+2029), byte order marks (U+FEFF).
 /// - "qf": delegates to the `format` method of the type, while double-quote
 ///   escaping.
 ///
@@ -836,13 +846,10 @@ pub fn writeByte(w: *Writer, byte: u8) Error!void {
 ///
 /// Asserts buffer capacity is at least `preserve`.
 pub fn writeBytePreserve(w: *Writer, preserve: usize, byte: u8) Error!void {
-    if (w.buffer.len - w.end != 0) {
-        @branchHint(.likely);
-        w.buffer[w.end] = byte;
-        w.end += 1;
-        return;
+    if (w.buffer.len - w.end == 0) {
+        @branchHint(.unlikely);
+        try w.vtable.rebase(w, preserve -| 1, 1);
     }
-    try w.vtable.rebase(w, preserve -| 1, 1);
     w.buffer[w.end] = byte;
     w.end += 1;
 }
@@ -966,7 +973,7 @@ pub inline fn writeStruct(w: *Writer, value: anytype, endian: std.lang.Endian) E
                     return w.writeAll(@ptrCast((&copy)[0..1]));
                 }
             },
-            .@"packed" => {
+            .@"bitpack" => {
                 return writeInt(w, info.backing_integer.?, @bitCast(value), endian);
             },
         },
@@ -1422,7 +1429,7 @@ pub fn printValue(
                 .auto => {
                     return w.writeAll(".{ ... }");
                 },
-                .@"extern", .@"packed" => {
+                .@"extern", .@"bitpack" => {
                     if (info.field_names.len == 0) return w.writeAll(".{}");
                     try w.writeAll(".{ ");
                     inline for (info.field_names, 1..) |field_name, i| {
@@ -1554,7 +1561,7 @@ fn printEnumNonexhaustive(w: *Writer, value: anytype) Error!void {
         try w.writeVecAll(&vecs);
         return;
     }
-    try w.writeAll("@enumFromInt(");
+    try w.writeAll("@fromBackingInt(");
     try w.printInt(@backingInt(value), 10, .lower, .{});
     try w.writeByte(')');
 }
@@ -1820,7 +1827,7 @@ pub fn printFloatHex(w: *Writer, value: anytype, case: std.fmt.Case, opt_precisi
             // Restore the alignment.
             mantissa <<= @as(std.math.Log2Int(TU), @intCast((mantissa_digits - precision) * 4));
 
-            const overflow = mantissa & (1 << 1 + mantissa_digits * 4) != 0;
+            const overflow = mantissa & (1 << (1 + mantissa_digits * 4)) != 0;
             // Prefer a normalized result in case of overflow.
             if (overflow) {
                 mantissa >>= 1;
@@ -1990,7 +1997,7 @@ pub fn writeLeb128(w: *Writer, value: anytype) Error!void {
         return;
     }
 
-    const Byte = packed struct { bits: u7, more: bool };
+    const Byte = bitpack struct { bits: u7, more: bool };
     const Int = std.math.ByteAlignedInt(T);
 
     const max_bytes = @divFloor(info.bits - 1, 7) + 1;

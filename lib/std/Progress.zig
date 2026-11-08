@@ -71,14 +71,14 @@ pub const Status = enum {
     failure_working,
 };
 
-const Freelist = packed struct(u32) {
+const Freelist = bitpack struct(u32) {
     head: Node.OptionalIndex,
     /// Whenever `node_freelist` is added to, this generation is incremented
     /// to avoid ABA bugs when acquiring nodes. Wrapping arithmetic is used.
     generation: u24,
 };
 
-pub const Ipc = packed struct(u32) {
+pub const Ipc = bitpack struct(u32) {
     /// mutex protecting `file` use, only locked by `serializeIpc`
     locked: bool,
     /// when unlocked: whether `file` is defined
@@ -92,7 +92,7 @@ pub const Ipc = packed struct(u32) {
 
     const SlotAtomic = @Int(.unsigned, std.math.ceilPowerOfTwoAssert(usize, @min(@bitSizeOf(Slot), 8)));
 
-    pub const Index = packed struct(u32) {
+    pub const Index = bitpack struct(u32) {
         slot: Slot,
         generation: Generation,
     };
@@ -202,14 +202,6 @@ pub const Node = struct {
             s.estimated_total_count = @byteSwap(s.estimated_total_count);
         }
 
-        fn copyRoot(dest: *Node.Storage, src: *align(1) const Node.Storage) void {
-            dest.* = .{
-                .completed_count = src.completed_count,
-                .estimated_total_count = src.estimated_total_count,
-                .name = if (src.name[0] == 0) dest.name else src.name,
-            };
-        }
-
         comptime {
             assert((@sizeOf(Storage) % 4) == 0);
         }
@@ -308,7 +300,7 @@ pub const Node = struct {
 
     pub fn startFmt(node: Node, estimated_total_items: usize, comptime format: []const u8, args: anytype) Node {
         var buffer: [max_name_len]u8 = undefined;
-        const name = std.fmt.bufPrint(&buffer, format, args) catch &buffer;
+        const name = std.mem.print(&buffer, format, args) catch &buffer;
         return Node.start(node, name, estimated_total_items);
     }
 
@@ -1175,7 +1167,10 @@ fn serialize(io: Io, serialized_buffer: *Serialized.Buffer) !Serialized {
                 const start_index = ipc_data.start_index;
                 const nodes_len = @min(ipc_data.nodes_len, node_storage_buffer_len - serialized_len);
 
-                main_storage.copyRoot(&prev_storage[ipc_data.main_index]);
+                const prev_root = &prev_storage[ipc_data.main_index];
+                main_storage.completed_count = prev_root.completed_count;
+                main_storage.estimated_total_count = prev_root.estimated_total_count;
+                if (main_storage.name[0] == 0) main_storage.name = prev_root.name;
                 @memcpy(
                     serialized_buffer.storage[serialized_len..][0..nodes_len],
                     prev_storage[start_index..][0..nodes_len],
@@ -1223,7 +1218,10 @@ fn serialize(io: Io, serialized_buffer: *Serialized.Buffer) !Serialized {
                     };
 
                     // Mount the root here.
-                    main_storage.copyRoot(&storage[0]);
+                    const new_root = &storage[0];
+                    main_storage.completed_count = new_root.completed_count;
+                    main_storage.estimated_total_count = new_root.estimated_total_count;
+                    if (new_root.name[0] != 0) main_storage.name = new_root.name;
                     if (is_big_endian) main_storage.byteSwap();
 
                     // Copy the rest of the tree to the end.
@@ -1355,7 +1353,7 @@ fn computeRedraw(io: Io, serialized_buffer: *Serialized.Buffer) !struct { []u8, 
                         i += progress_pulsing.len;
                     } else {
                         const percent = @as(u64, completed_items) * 100 / estimated_total;
-                        if (std.fmt.bufPrint(buf[i..], @"progress_normal {d}", .{percent})) |b| {
+                        if (std.mem.print(buf[i..], @"progress_normal {d}", .{percent})) |b| {
                             i += b.len;
                         } else |_| {}
                     }
@@ -1374,7 +1372,7 @@ fn computeRedraw(io: Io, serialized_buffer: *Serialized.Buffer) !struct { []u8, 
                         i += progress_pulsing_error.len;
                     } else {
                         const percent = @as(u64, completed_items) * 100 / estimated_total;
-                        if (std.fmt.bufPrint(buf[i..], @"progress_error {d}", .{percent})) |b| {
+                        if (std.mem.print(buf[i..], @"progress_error {d}", .{percent})) |b| {
                             i += b.len;
                         } else |_| {}
                     }
@@ -1457,7 +1455,7 @@ fn computeNode(
     const storage = &serialized.storage[@backingInt(node_index)];
     const estimated_total = storage.estimated_total_count;
     const completed_items = storage.completed_count;
-    const name = if (std.mem.findScalar(u8, &storage.name, 0)) |end| storage.name[0..end] else &storage.name;
+    const name = std.mem.sliceTo(&storage.name, 0);
     const parent = serialized.parents[@backingInt(node_index)];
 
     if (parent != .none) p: {
@@ -1475,16 +1473,16 @@ fn computeNode(
     if (!is_empty_root) {
         if (name.len != 0 or estimated_total > 0) {
             if (estimated_total > 0) {
-                if (std.fmt.bufPrint(buf[i..], "[{d}/{d}] ", .{ completed_items, estimated_total })) |b| {
+                if (std.mem.print(buf[i..], "[{d}/{d}] ", .{ completed_items, estimated_total })) |b| {
                     i += b.len;
                 } else |_| {}
             } else if (completed_items != 0) {
-                if (std.fmt.bufPrint(buf[i..], "[{d}] ", .{completed_items})) |b| {
+                if (std.mem.print(buf[i..], "[{d}] ", .{completed_items})) |b| {
                     i += b.len;
                 } else |_| {}
             }
             if (name.len != 0) {
-                if (std.fmt.bufPrint(buf[i..], "{s}", .{name})) |b| {
+                if (std.mem.print(buf[i..], "{s}", .{name})) |b| {
                     i += b.len;
                 } else |_| {}
             }

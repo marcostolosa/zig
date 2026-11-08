@@ -16,11 +16,11 @@ pub fn deinit(si: *SelfInfo, io: Io) void {
     const gpa = std.debug.getDebugInfoAllocator();
     for (si.modules.items) |*mod| {
         unwind: {
-            const u = &(mod.unwind orelse break :unwind catch break :unwind);
+            const u = &((mod.unwind orelse break :unwind) catch break :unwind);
             for (u.buf[0..u.len]) |*unwind| unwind.deinit(gpa);
         }
         loaded: {
-            const l = &(mod.loaded_elf orelse break :loaded catch break :loaded);
+            const l = &((mod.loaded_elf orelse break :loaded) catch break :loaded);
             l.file.deinit(gpa);
         }
     }
@@ -124,7 +124,6 @@ pub const can_unwind: bool = s: {
             .x86_64,
         },
         .illumos => &.{
-            .x86,
             .x86_64,
         },
         // Not supported yet: hppa, hppa64, microblaze/microblazeel, sh/sheb
@@ -189,7 +188,6 @@ pub const can_unwind: bool = s: {
             .arm,
             .m88k,
             .mips64,
-            .mips64el,
             .riscv64,
             .x86,
             .x86_64,
@@ -202,11 +200,6 @@ pub const can_unwind: bool = s: {
     }
     break :s false;
 };
-comptime {
-    if (can_unwind) {
-        std.debug.assert(Dwarf.supportsUnwinding(&builtin.target));
-    }
-}
 pub const UnwindContext = Dwarf.SelfUnwinder;
 pub fn unwindFrame(si: *SelfInfo, io: Io, context: *UnwindContext) Error!usize {
     comptime assert(can_unwind);
@@ -340,7 +333,6 @@ const Module = struct {
             error.InvalidOperation,
             => return error.InvalidDebugInfo,
             error.UnsupportedAddrSize,
-            error.UnsupportedDwarfVersion,
             error.UnimplementedUserOpcode,
             => return error.UnsupportedDebugInfo,
         };
@@ -433,11 +425,11 @@ fn findModule(si: *SelfInfo, gpa: Allocator, io: Io, address: usize, lock: enum 
         }
         for (si.modules.items) |*mod| {
             unwind: {
-                const u = &(mod.unwind orelse break :unwind catch break :unwind);
+                const u = &((mod.unwind orelse break :unwind) catch break :unwind);
                 for (u.buf[0..u.len]) |*unwind| unwind.deinit(gpa);
             }
             loaded: {
-                const l = &(mod.loaded_elf orelse break :loaded catch break :loaded);
+                const l = &((mod.loaded_elf orelse break :loaded) catch break :loaded);
                 l.file.deinit(gpa);
             }
         }

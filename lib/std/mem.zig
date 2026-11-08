@@ -269,6 +269,39 @@ pub fn copyBackwards(comptime T: type, dest: []T, source: []const T) void {
     }
 }
 
+/// Copy `source` into `dest`, excluding the sentinel.
+///
+/// Asserts no overlap. Asserts `dest.len` greater or equal to source len. Returns number of elements copied,
+/// not counting the sentinel.
+pub fn copySentinel(comptime T: type, comptime s: T, dest: []T, source: [*:s]const T) usize {
+    const i = findSentinel(T, s, source);
+    @memcpy(dest[0..i], source[0..i]);
+    return i;
+}
+
+test copySentinel {
+    var dst: [11]u8 = @splat(0xff);
+    const n = copySentinel(u8, 0, &dst, "hello this\x00is my null-terminated string");
+    try testing.expectEqualStrings("hello this\xff", &dst);
+    try testing.expectEqual(n, 10);
+}
+
+/// Copy `source` into `dest`, including the sentinel.
+///
+/// Asserts no overlap. Asserts `dest.len` greater or equal to source len, including room for the sentinel.
+/// Returns number of elements copied, including the sentinel.
+pub fn copySentinelInclusive(comptime T: type, comptime s: T, dest: []T, source: [*:s]const T) usize {
+    const i = findSentinel(T, s, source) + 1;
+    @memcpy(dest[0..i], source[0..i]);
+    return i;
+}
+
+test copySentinelInclusive {
+    var dst: [12]u8 = @splat(0xff);
+    const n = copySentinelInclusive(u8, 0, &dst, "hello this\x00is my null-terminated string");
+    try testing.expectEqualStrings("hello this\x00\xff", &dst);
+    try testing.expectEqual(n, 11);
+}
 /// Generally, Zig users are encouraged to explicitly initialize all fields of a struct explicitly rather than using this function.
 /// However, it is recognized that there are sometimes use cases for initializing all fields to a "zero" value. For example, when
 /// interfacing with a C API where this practice is more common and relied upon. If you are performing code review and see this
@@ -731,6 +764,19 @@ test lessThan {
     try testing.expect(lessThan(u8, "abc", "abc0"));
     try testing.expect(!lessThan(u8, "", ""));
     try testing.expect(lessThan(u8, "", "a"));
+}
+
+/// Returns `true` if `lhs < rhs`; `false` otherwise, operating on null-terminated arrays.
+pub fn lessThanZ(comptime T: type, lhs: [*:0]const T, rhs: [*:0]const T) bool {
+    return orderZ(T, lhs, rhs) == .lt;
+}
+
+test lessThanZ {
+    try testing.expect(lessThanZ(u8, "abcd", "bee"));
+    try testing.expect(!lessThanZ(u8, "abc", "abc"));
+    try testing.expect(lessThanZ(u8, "abc", "abc0"));
+    try testing.expect(!lessThanZ(u8, "", ""));
+    try testing.expect(lessThanZ(u8, "", "a"));
 }
 
 const use_vectors = switch (builtin.zig_backend) {
@@ -1899,7 +1945,7 @@ pub fn readVarPackedInt(
 }
 
 test readVarPackedInt {
-    const T = packed struct(u16) { a: u3, b: u7, c: u6 };
+    const T = bitpack struct(u16) { a: u3, b: u7, c: u6 };
     var st = T{ .a = 1, .b = 2, .c = 4 };
     const b_field = readVarPackedInt(u64, std.mem.asBytes(&st), @bitOffsetOf(T, "b"), 7, builtin.cpu.arch.endian(), .unsigned);
     try std.testing.expectEqual(st.b, b_field);
@@ -2008,7 +2054,7 @@ pub fn readPackedInt(comptime T: type, bytes: []const u8, bit_offset: usize, end
 }
 
 test readPackedInt {
-    const T = packed struct(u16) { a: u3, b: u7, c: u6 };
+    const T = bitpack struct(u16) { a: u3, b: u7, c: u6 };
     var st = T{ .a = 1, .b = 2, .c = 4 };
     const b_field = readPackedInt(u7, std.mem.asBytes(&st), @bitOffsetOf(T, "b"), builtin.cpu.arch.endian());
     try std.testing.expectEqual(st.b, b_field);
@@ -2156,7 +2202,7 @@ pub fn writePackedInt(comptime T: type, bytes: []u8, bit_offset: usize, value: T
 }
 
 test writePackedInt {
-    const T = packed struct(u16) { a: u3, b: u7, c: u6 };
+    const T = bitpack struct(u16) { a: u3, b: u7, c: u6 };
     var st = T{ .a = 1, .b = 2, .c = 4 };
     writePackedInt(u7, std.mem.asBytes(&st), @bitOffsetOf(T, "b"), 0x7f, builtin.cpu.arch.endian());
     try std.testing.expectEqual(T{ .a = 1, .b = 0x7f, .c = 4 }, st);
@@ -2219,7 +2265,7 @@ pub fn writeVarPackedInt(bytes: []u8, bit_offset: usize, bit_count: usize, value
 }
 
 test writeVarPackedInt {
-    const T = packed struct(u16) { a: u3, b: u7, c: u6 };
+    const T = bitpack struct(u16) { a: u3, b: u7, c: u6 };
     var st = T{ .a = 1, .b = 2, .c = 4 };
     const value: u64 = 0x7f;
     writeVarPackedInt(std.mem.asBytes(&st), @bitOffsetOf(T, "b"), 7, value, builtin.cpu.arch.endian());
@@ -2257,7 +2303,7 @@ pub fn byteSwapAligned(
                 ptr.* = @bitCast(@byteSwap(@as(Int, @bitCast(ptr.*))));
             } else {
                 if (@"struct".layout != .@"extern") {
-                    @compileError("byteSwapAligned expects a packed or extern struct");
+                    @compileError("byteSwapAligned expects a bitpack or extern struct");
                 }
                 inline for (@"struct".field_types, @"struct".field_names, @"struct".field_attrs) |f_type, f_name, f_attr| {
                     switch (@typeInfo(f_type)) {
@@ -2281,7 +2327,7 @@ pub fn byteSwapAligned(
             ptr.* = @bitCast(@byteSwap(@as(Int, @bitCast(ptr.*))));
         } else {
             if (@"union".layout != .@"extern") {
-                @compileError("byteSwapAligned expects a packed or extern union");
+                @compileError("byteSwapAligned expects a bitpack or extern union");
             }
 
             const first_size = @bitSizeOf(@"union".field_types[0]);
@@ -2330,7 +2376,7 @@ test byteSwap {
         f4: bool,
         f5: f32,
     };
-    const P = packed struct(u32) {
+    const P = bitpack struct(u32) {
         f0: u1,
         f1: u7,
         f2: u4,
@@ -4308,7 +4354,7 @@ pub fn alignPointerOffset(ptr: anytype, align_to: usize) ?usize {
         @compileError("expected many item pointer, got " ++ @typeName(T));
 
     // Do nothing if the pointer is already well-aligned.
-    if (align_to <= info.pointer.attrs.@"align" orelse @alignOf(info.pointer.child))
+    if (align_to <= (info.pointer.attrs.@"align" orelse @alignOf(info.pointer.child)))
         return 0;
 
     // Calculate the aligned base address with an eye out for overflow.
@@ -4398,7 +4444,7 @@ test asBytes {
         b.* = 0;
     try testing.expect(codeface == 0);
 
-    const S = packed struct {
+    const S = bitpack struct {
         a: u8,
         b: u8,
         c: u8,
@@ -4490,7 +4536,7 @@ test bytesAsValue {
     for (codeface_bytes) |b|
         try testing.expect(b == 0);
 
-    const S = packed struct {
+    const S = bitpack struct {
         a: u8,
         b: u8,
         c: u8,
@@ -4593,8 +4639,8 @@ test "bytesAsSlice keeps pointer alignment" {
     }
 }
 
-test "bytesAsSlice on a packed struct" {
-    const F = packed struct {
+test "bytesAsSlice on a bitpack struct" {
+    const F = bitpack struct {
         a: u8,
     };
 
@@ -4683,8 +4729,8 @@ test "sliceAsBytes with zero-bit element type" {
     try testing.expect(bytes.len == 0);
 }
 
-test "sliceAsBytes packed struct at runtime and comptime" {
-    const Foo = packed struct {
+test "sliceAsBytes bitpack struct at runtime and comptime" {
+    const Foo = bitpack struct {
         a: u4,
         b: u4,
     };
@@ -4843,7 +4889,7 @@ pub fn doNotOptimizeAway(val: anytype) void {
             // tied to IDs that can be passed to valid instructions. Some
             // SPIR-V targets do not define c_long, so we just allow any sized
             // integer on these targets
-            const val_fits_in_gp_register = builtin.target.cpu.arch.isSpirV() or fits: {
+            const val_fits_in_gp_register = builtin.target.cpu.arch.isSpirv() or fits: {
                 const max_gp_register_bits = @bitSizeOf(c_long);
                 break :fits int.bits <= max_gp_register_bits;
             };

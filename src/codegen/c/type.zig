@@ -12,7 +12,7 @@ pub const CType = union(enum) {
 
     @"fn": Type,
     @"enum": Type,
-    bitpack: Type,
+    @"bitpack": Type,
     @"struct": Type,
     union_auto: Type,
     union_extern: Type,
@@ -63,6 +63,7 @@ pub const CType = union(enum) {
         regcall,
 
         preserve_none,
+        preserve_most,
 
         aarch64_vector_pcs,
         aarch64_sve_pcs,
@@ -142,7 +143,17 @@ pub const CType = union(enum) {
 
                 .x86_64_preserve_none,
                 .aarch64_preserve_none,
+                .loongarch32_preserve_none,
+                .loongarch64_preserve_none,
                 => .preserve_none,
+
+                .x86_64_preserve_most,
+                .aarch64_preserve_most,
+                .riscv32_preserve_most,
+                .riscv64_preserve_most,
+                .loongarch32_preserve_most,
+                .loongarch64_preserve_most,
+                => .preserve_most,
 
                 .aarch64_vfabi => .aarch64_vector_pcs,
                 .aarch64_vfabi_sve => .aarch64_sve_pcs,
@@ -212,7 +223,9 @@ pub const CType = union(enum) {
                 .x86_64_interrupt,
                 => .interrupt,
 
-                .ez80_tiflags => .tiflags,
+                .z80_tiflags,
+                .ez80_tiflags,
+                => .tiflags,
 
                 else => unreachable, // `Zcu.callconvSupported`
             };
@@ -243,7 +256,7 @@ pub const CType = union(enum) {
             .float,
             .@"fn",
             .@"enum",
-            .bitpack,
+            .@"bitpack",
             .@"struct",
             .union_auto,
             .union_extern,
@@ -560,7 +573,7 @@ pub const CType = union(enum) {
                     try deps.addType(gpa, cur_ty, allow_incomplete);
                     switch (cur_ty.containerLayout(zcu)) {
                         .auto, .@"extern" => return .{ .@"struct" = cur_ty },
-                        .@"packed" => return .{ .bitpack = cur_ty },
+                        .@"bitpack" => return .{ .@"bitpack" = cur_ty },
                     }
                 },
                 .@"union" => {
@@ -568,7 +581,7 @@ pub const CType = union(enum) {
                     switch (cur_ty.containerLayout(zcu)) {
                         .auto => return .{ .union_auto = cur_ty },
                         .@"extern" => return .{ .union_extern = cur_ty },
-                        .@"packed" => return .{ .bitpack = cur_ty },
+                        .@"bitpack" => return .{ .@"bitpack" = cur_ty },
                     }
                 },
                 .@"enum" => {
@@ -896,7 +909,7 @@ pub const CType = union(enum) {
             .float => |float| try w.writeAll(@tagName(float)),
             .@"fn" => |ty| try w.print("{f}_{d}", .{ fmtZigType(ty, zcu), ty.toIntern() }),
             .@"enum" => |ty| try w.print("enum__{f}_{d}", .{ fmtZigType(ty, zcu), ty.toIntern() }),
-            .bitpack => |ty| try w.print("bitpack__{f}_{d}", .{ fmtZigType(ty, zcu), ty.toIntern() }),
+            .@"bitpack" => |ty| try w.print("bitpack__{f}_{d}", .{ fmtZigType(ty, zcu), ty.toIntern() }),
             .@"struct" => |ty| try w.print("struct {f}_{d}", .{ fmtZigType(ty, zcu), ty.toIntern() }),
             .union_auto => |ty| try w.print("struct {f}_{d}", .{ fmtZigType(ty, zcu), ty.toIntern() }),
             .union_extern => |ty| try w.print("union {f}_{d}", .{ fmtZigType(ty, zcu), ty.toIntern() }),
@@ -979,7 +992,7 @@ pub const CType = union(enum) {
             .float,
             .@"fn",
             .@"enum",
-            .bitpack,
+            .@"bitpack",
             .@"struct",
             .union_auto,
             .union_extern,
@@ -1140,17 +1153,17 @@ pub const CType = union(enum) {
                         try w.print("_{f}", .{fmtZigType(field_ty, zcu)});
                     }
                 } else {
-                    const name = ty.containerTypeName(ip).toSlice(ip);
+                    const name = ty.containerTypeName(ip).fqn.toSlice(ip);
                     try w.print("{f}", .{@import("../c.zig").fmtIdentUnsolo(name)});
                 },
                 .@"opaque" => if (ty.toIntern() == .anyopaque_type) {
                     try w.writeAll("anyopaque");
                 } else {
-                    const name = ty.containerTypeName(ip).toSlice(ip);
+                    const name = ty.containerTypeName(ip).fqn.toSlice(ip);
                     try w.print("{f}", .{@import("../c.zig").fmtIdentUnsolo(name)});
                 },
                 .@"union", .@"enum" => {
-                    const name = ty.containerTypeName(ip).toSlice(ip);
+                    const name = ty.containerTypeName(ip).fqn.toSlice(ip);
                     try w.print("{f}", .{@import("../c.zig").fmtIdentUnsolo(name)});
                 },
             }
@@ -1205,7 +1218,7 @@ pub const CType = union(enum) {
             .opt,
             .aggregate,
             .un,
-            .bitpack,
+            .@"bitpack",
             // memoization, not types
             .memoized_call,
             => unreachable,

@@ -15,11 +15,9 @@ pub const StackTrace = struct {
 
 /// This data structure is used by the Zig language code generation and
 /// therefore must be kept in sync with the compiler implementation.
-pub const GlobalLinkage = enum(u2) {
-    internal,
+pub const GlobalLinkage = enum(u1) {
     strong,
     weak,
-    link_once,
 };
 
 /// This data structure is used by the Zig language code generation and
@@ -211,8 +209,9 @@ pub const CallingConvention = union(enum(u8)) {
     x86_64_vectorcall: CommonOptions,
     x86_64_interrupt: CommonOptions,
     x86_64_preserve_none: CommonOptions,
+    x86_64_preserve_most: CommonOptions,
 
-    // Calling conventions for the `x86` architecture.
+    // Calling conventions for the `x86` and `x86c16` architectures.
     x86_sysv: X86RegparmOptions,
     x86_win: X86RegparmOptions,
     x86_mingw: X86RegparmOptions,
@@ -239,6 +238,7 @@ pub const CallingConvention = union(enum(u8)) {
     aarch64_vfabi: CommonOptions,
     aarch64_vfabi_sve: CommonOptions,
     aarch64_preserve_none: CommonOptions,
+    aarch64_preserve_most: CommonOptions,
 
     /// The standard `alpha` calling convention.
     alpha_osf: CommonOptions,
@@ -263,11 +263,13 @@ pub const CallingConvention = union(enum(u8)) {
     riscv64_lp64: CommonOptions,
     riscv64_lp64_v: CommonOptions,
     riscv64_interrupt: RiscvInterruptOptions,
+    riscv64_preserve_most: CommonOptions,
 
     // Calling conventions for the `riscv32` architecture.
     riscv32_ilp32: CommonOptions,
     riscv32_ilp32_v: CommonOptions,
     riscv32_interrupt: RiscvInterruptOptions,
+    riscv32_preserve_most: CommonOptions,
 
     // Calling conventions for the `sparc64` architecture.
     sparc64_sysv: CommonOptions,
@@ -324,9 +326,13 @@ pub const CallingConvention = union(enum(u8)) {
 
     /// The standard `loongarch64` calling convention.
     loongarch64_lp64: CommonOptions,
+    loongarch64_preserve_none: CommonOptions,
+    loongarch64_preserve_most: CommonOptions,
 
     /// The standard `loongarch32` calling convention.
     loongarch32_ilp32: CommonOptions,
+    loongarch32_preserve_none: CommonOptions,
+    loongarch32_preserve_most: CommonOptions,
 
     // Calling conventions for the `m68k` architecture.
     m68k_sysv: CommonOptions,
@@ -386,6 +392,10 @@ pub const CallingConvention = union(enum(u8)) {
     spirv_fragment: SpirvFragmentOptions,
     spirv_task: SpirvKernelOptions,
     spirv_mesh: SpirvMeshOptions,
+
+    // Calling conventions for the `z80` architecture.
+    z80_cet,
+    z80_tiflags,
 
     // Calling conventions for the `ez80` architecture.
     ez80_cet,
@@ -591,6 +601,7 @@ pub const AddressSpace = enum(u5) {
     param,
     shared,
     local,
+    private,
     input,
     output,
     uniform,
@@ -616,10 +627,6 @@ pub const AddressSpace = enum(u5) {
 
     /// This address space only addresses the "lookup" ram
     lut,
-
-    // Web Assembly
-    externref,
-    funcref,
 };
 
 /// This data structure is used by the Zig language code generation and
@@ -743,7 +750,7 @@ pub const Type = union(enum) {
     pub const ContainerLayout = enum(u2) {
         auto,
         @"extern",
-        @"packed",
+        @"bitpack",
     };
 
     /// This data structure is used by the Zig language code generation and
@@ -751,7 +758,7 @@ pub const Type = union(enum) {
     pub const Struct = struct {
         is_tuple: bool,
         layout: ContainerLayout,
-        /// Always `null` if `layout != .@"packed"`.
+        /// Always `null` if `layout != .@"bitpack"`.
         backing_integer: ?type,
 
         field_names: []const [:0]const u8,
@@ -825,7 +832,7 @@ pub const Type = union(enum) {
     pub const Union = struct {
         layout: ContainerLayout,
         tag_type: ?type,
-        /// Always `null` if `layout != .@"packed"`.
+        /// Always `null` if `layout != .@"bitpack"`.
         backing_integer: ?type,
 
         field_names: []const [:0]const u8,
@@ -972,7 +979,7 @@ pub const Signedness = enum(u1) {
 
 /// This data structure is used by the Zig language code generation and
 /// therefore must be kept in sync with the compiler implementation.
-pub const OutputMode = enum {
+pub const OutputMode = enum(u2) {
     Exe,
     Lib,
     Obj,
@@ -1114,6 +1121,7 @@ pub const VaList = switch (builtin.cpu.arch) {
     .powerpc64,
     .powerpc64le,
     .x86,
+    .x86c16,
     => *u8,
     .arc,
     .arceb,
@@ -1360,6 +1368,11 @@ pub const panic: type = p: {
         .stage2_powerpc,
         .stage2_riscv64,
         => std.debug.simple_panic,
+        .stage2_spirv => std.debug.no_panic,
+        .stage2_llvm => {
+            if (builtin.cpu.arch.isSpirv()) break :p std.debug.no_panic;
+            break :p std.debug.FullPanic(std.debug.defaultPanic);
+        },
         else => std.debug.FullPanic(std.debug.defaultPanic),
     };
 };

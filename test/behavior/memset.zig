@@ -5,7 +5,7 @@ const expect = std.testing.expect;
 test "@memset on array pointers" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     try testMemsetArray();
     try comptime testMemsetArray();
@@ -33,7 +33,7 @@ fn testMemsetArray() !void {
 test "@memset preserves array sentinel" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     try testMemsetArraySentinel();
     try comptime testMemsetArraySentinel();
@@ -55,7 +55,7 @@ fn testMemsetArraySentinel() !void {
 test "@memset on slices" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     try testMemsetSlice();
@@ -90,7 +90,7 @@ fn testMemsetSlice() !void {
 test "memset with bool element" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     var buf: [5]bool = undefined;
     @memset(&buf, true);
@@ -101,7 +101,7 @@ test "memset with bool element" {
 test "memset with 1-byte struct element" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct { x: bool };
     var buf: [5]S = undefined;
@@ -113,7 +113,7 @@ test "memset with 1-byte struct element" {
 test "memset with 1-byte array element" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const A = [1]bool;
     var buf: [5]A = undefined;
@@ -126,7 +126,7 @@ test "memset with large array element, runtime known" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const A = [128]u64;
@@ -144,7 +144,7 @@ test "memset with large array element, runtime known" {
 test "memset with large array element, comptime known" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const A = [128]u64;
@@ -161,7 +161,7 @@ test "memset with large array element, comptime known" {
 test "@memset provides result type" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const S = struct { x: u32 };
@@ -179,7 +179,7 @@ test "@memset provides result type" {
 test "zero keys with @memset" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const Keys = struct {
         up: bool,
@@ -201,20 +201,38 @@ test "@memset with zero-length array" {
 }
 
 test "@memset a global array" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
-        var buf: [1]u32 = .{123};
+        var array_u8: [1]u8 = .{1};
+        const slice_u8: []u8 = &array_u8;
+        var array_u32: [1]u32 = .{10};
+        const slice_u32: []u32 = &array_u32;
     };
-    try expect(S.buf[0] == 123);
-    @memset(&S.buf, 456);
-    try expect(S.buf[0] == 456);
-    @memset(&S.buf, S.buf[0] + 333);
-    try expect(S.buf[0] == 789);
+
+    try expect(S.array_u8[0] == 1);
+    @memset(&S.array_u8, 2);
+    try expect(S.array_u8[0] == 2);
+    @memset(&S.array_u8, S.array_u8[0] + 1);
+    try expect(S.array_u8[0] == 3);
+    @memset(S.slice_u8, 4);
+    try expect(S.array_u8[0] == 4);
+    @memset(S.slice_u8, S.array_u8[0] + 1);
+    try expect(S.array_u8[0] == 5);
+
+    try expect(S.array_u32[0] == 10);
+    @memset(&S.array_u32, 20);
+    try expect(S.array_u32[0] == 20);
+    @memset(&S.array_u32, S.array_u32[0] + 10);
+    try expect(S.array_u32[0] == 30);
+    @memset(S.slice_u32, 40);
+    try expect(S.array_u32[0] == 40);
+    @memset(S.slice_u32, S.array_u32[0] + 10);
+    try expect(S.array_u32[0] == 50);
 }
 
 test "@memset array of booleans" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
         var x: bool = false;

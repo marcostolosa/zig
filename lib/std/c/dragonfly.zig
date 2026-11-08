@@ -5,13 +5,28 @@ const caddr_t = std.c.caddr_t;
 const gid_t = std.c.gid_t;
 const iovec = std.c.iovec;
 const pid_t = std.c.pid_t;
+const sockaddr = std.c.sockaddr;
 const socklen_t = std.c.socklen_t;
 const uid_t = std.c.uid_t;
+const fd_t = std.c.fd_t;
+const NI = std.c.NI;
+const EAI = std.c.EAI;
+
+pub extern "c" fn ioctl(fd: fd_t, request: c_ulong, ...) c_int;
 
 pub extern "c" fn lwp_gettid() c_int;
 pub extern "c" fn ptrace(request: c_int, pid: pid_t, addr: caddr_t, data: c_int) c_int;
 pub extern "c" fn umtx_sleep(ptr: *const volatile c_int, value: c_int, timeout: c_int) c_int;
 pub extern "c" fn umtx_wakeup(ptr: *const volatile c_int, count: c_int) c_int;
+pub extern "c" fn getnameinfo(
+    noalias addr: *const sockaddr,
+    addrlen: socklen_t,
+    noalias host: ?[*]u8,
+    hostlen: usize,
+    noalias serv: ?[*]u8,
+    servlen: usize,
+    flags: NI,
+) EAI;
 
 pub const E = enum(u16) {
     /// No error occurred.
@@ -301,4 +316,18 @@ pub const IPTOS = struct {
     pub const ECN_ECT0 = 0x02;
     pub const ECN_CE = 0x03;
     pub const ECN_MASK = 0x03;
+};
+
+// https://github.com/DragonFlyBSD/DragonFlyBSD/blob/8410ea0817ce17438e0a10fc4ba6c9697281048a/sys/netinet/tcp.h#L156
+pub const TCP = struct {
+    pub const NODELAY = 0x01;
+    pub const MAXSEG = 0x02;
+    pub const NOPUSH = 0x04;
+    pub const NOOPT = 0x08;
+    pub const SIGNATURE_ENABLE = 0x10;
+    pub const KEEPINIT = 0x20;
+    pub const FASTKEEP = 0x80;
+    pub const KEEPIDLE = 0x100;
+    pub const KEEPINTVL = 0x200;
+    pub const KEEPCNT = 0x400;
 };

@@ -122,17 +122,16 @@ pub fn classifyWindows(init_ty: Type, zcu: *Zcu, target: *const std.Target, ctx:
             1, 2, 4, 8 => .integer,
             else => switch (ty.zigTypeTag(zcu)) {
                 .int => .win_i128,
-                .@"struct", .@"union" => if (ty.containerLayout(zcu) != .@"packed" or
-                    target.cpu.has(.x86, .soft_float)) .memory else .win_i128,
+                .@"struct", .@"union" => if (ty.containerLayout(zcu) != .@"bitpack" or
+                    target.abi.float() == .soft) .memory else .win_i128,
                 else => .memory,
             },
         },
         .noreturn => unreachable,
         .float => switch (ty.floatBits(target)) {
             else => unreachable,
-            16, 32, 64 => if (target.cpu.has(.x86, .soft_float)) .integer else .sse,
-            80 => .memory,
-            128 => if (target.cpu.has(.x86, .soft_float)) .memory else .win_i128,
+            16, 32, 64 => if (target.abi.float() == .soft) .integer else .sse,
+            80, 128 => .memory,
         },
         .vector => {
             const len = ty.vectorLen(zcu);
@@ -194,7 +193,7 @@ pub fn classifySystemV(ty: Type, zcu: *Zcu, target: *const std.Target, ctx: Cont
             if (bits <= 64 * 4) return Class.four_integers;
             return Class.stack;
         },
-        .float => if (target.cpu.has(.x86, .soft_float)) switch (ty.floatBits(target)) {
+        .float => if (target.abi.float() == .soft) switch (ty.floatBits(target)) {
             else => unreachable,
             16, 32, 64 => return Class.one_integer,
             80, 128 => return Class.two_integers,
@@ -292,7 +291,7 @@ pub fn classifySystemV(ty: Type, zcu: *Zcu, target: *const std.Target, ctx: Cont
             switch (ty.containerLayout(zcu)) {
                 .auto => unreachable,
                 .@"extern" => {},
-                .@"packed" => {
+                .@"bitpack" => {
                     if (ty_size <= 8) return Class.one_integer;
                     if (ty_size <= 16) return Class.two_integers;
                     unreachable; // frontend should not have allowed this type as extern
@@ -371,7 +370,7 @@ fn classifySystemVStruct(
                     byte_offset = classifySystemVStruct(result, byte_offset, field_loaded_struct, zcu, target);
                     continue;
                 },
-                .@"packed" => {},
+                .@"bitpack" => {},
             }
         } else if (zcu.typeToUnion(field_ty)) |field_loaded_union| {
             switch (field_loaded_union.layout) {
@@ -380,7 +379,7 @@ fn classifySystemVStruct(
                     byte_offset = classifySystemVUnion(result, byte_offset, field_loaded_union, zcu, target);
                     continue;
                 },
-                .@"packed" => {},
+                .@"bitpack" => {},
             }
         } else if (field_ty.zigTypeTag(zcu) == .array) {
             byte_offset = classifySystemVArray(result, byte_offset, field_ty, zcu, target);
@@ -413,7 +412,7 @@ fn classifySystemVUnion(
                     _ = classifySystemVStruct(result, starting_byte_offset, field_loaded_struct, zcu, target);
                     continue;
                 },
-                .@"packed" => {},
+                .@"bitpack" => {},
             }
         } else if (zcu.typeToUnion(field_ty)) |field_loaded_union| {
             switch (field_loaded_union.layout) {
@@ -422,7 +421,7 @@ fn classifySystemVUnion(
                     _ = classifySystemVUnion(result, starting_byte_offset, field_loaded_union, zcu, target);
                     continue;
                 },
-                .@"packed" => {},
+                .@"bitpack" => {},
             }
         } else if (field_ty.zigTypeTag(zcu) == .array) {
             _ = classifySystemVArray(result, starting_byte_offset, field_ty, zcu, target);
@@ -554,7 +553,7 @@ pub fn getCAbiSseParamRegs(cc: std.lang.CallingConvention.Tag, target: *const st
     return switch (cc) {
         .auto => switch (target.cpu.arch) {
             else => unreachable,
-            .x86 => zigcc.sse_param_regs[0 .. zigcc.sse_param_regs.len / 2],
+            .x86, .x86c16 => zigcc.sse_param_regs[0 .. zigcc.sse_param_regs.len / 2],
             .x86_64 => zigcc.sse_param_regs,
         },
         .x86_64_sysv => SysV.c_abi_sse_param_regs,

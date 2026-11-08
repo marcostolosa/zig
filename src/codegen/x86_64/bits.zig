@@ -179,7 +179,7 @@ pub const Condition = enum(u5) {
 };
 
 /// The immediate operand of vroundss/vroundps/vcvtps2ph/round??.
-pub const RoundMode = packed struct(u4) {
+pub const RoundMode = bitpack struct(u4) {
     direction: Direction = .mxcsr,
     precision: enum(u1) {
         normal = 0b0,
@@ -555,7 +555,7 @@ pub const Register = enum(u8) {
             .ptr => reg.toBitSize(target.ptrBitWidth()),
             .gpr => switch (target.cpu.arch) {
                 else => unreachable,
-                .x86 => reg.to32(),
+                .x86, .x86c16 => reg.to32(),
                 .x86_64 => reg.to64(),
             },
             .low_byte => reg.toLo8(),
@@ -664,7 +664,7 @@ pub const Register = enum(u8) {
             .general_purpose, .gphi => if (reg.isExtended())
                 reg.enc()
             else
-                @as(u3, @truncate(@as(u24, 0o54673120) >> @as(u5, reg.enc()) * 3)),
+                @as(u3, @truncate(@as(u24, 0o54673120) >> (@as(u5, reg.enc()) * 3))),
             .sse => 17 + @as(u6, reg.enc()),
             .x87 => 33 + @as(u6, reg.enc()),
             .mmx => 41 + @as(u6, reg.enc()),
@@ -821,7 +821,7 @@ pub const Memory = struct {
                 .ptr => target.ptrBitWidth(),
                 .gpr => switch (target.cpu.arch) {
                     else => unreachable,
-                    .x86 => 32,
+                    .x86, .x86c16 => 32,
                     .x86_64 => 64,
                 },
                 .low_byte, .high_byte, .byte => 8,

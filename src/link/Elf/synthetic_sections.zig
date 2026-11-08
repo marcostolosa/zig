@@ -18,11 +18,11 @@ pub const DynamicSection = struct {
         if (rpath_list.len == 0) return;
         const comp = elf_file.base.comp;
         const gpa = comp.gpa;
-        var rpath = std.array_list.Managed(u8).init(gpa);
-        defer rpath.deinit();
+        var rpath: std.ArrayList(u8) = .empty;
+        defer rpath.deinit(gpa);
         for (rpath_list, 0..) |path, i| {
-            if (i > 0) try rpath.append(':');
-            try rpath.appendSlice(path);
+            if (i > 0) try rpath.append(gpa, ':');
+            try rpath.appendSlice(gpa, path);
         }
         dt.rpath = try elf_file.insertDynString(rpath.items);
     }
@@ -241,7 +241,7 @@ pub const GotSection = struct {
 
     pub const Index = u32;
 
-    const Flags = packed struct {
+    const Flags = bitpack struct {
         needs_rela: bool = false,
         needs_tlsld: bool = false,
     };
@@ -772,6 +772,7 @@ pub const PltSection = struct {
 
     const x86_64 = struct {
         fn write(plt: PltSection, elf_file: *Elf, writer: *std.Io.Writer) !void {
+            dev.checkAny(&.{ .llvm_backend, .x86_64_backend });
             const shdrs = elf_file.sections.items(.shdr);
             const plt_addr = shdrs[elf_file.section_indexes.plt.?].sh_addr;
             const got_plt_addr = shdrs[elf_file.section_indexes.got_plt.?].sh_addr;
@@ -807,6 +808,7 @@ pub const PltSection = struct {
 
     const aarch64 = struct {
         fn write(plt: PltSection, elf_file: *Elf, writer: *std.Io.Writer) !void {
+            dev.checkAny(&.{ .llvm_backend, .aarch64_backend });
             {
                 const shdrs = elf_file.sections.items(.shdr);
                 const plt_addr: i64 = @intCast(shdrs[elf_file.section_indexes.plt.?].sh_addr);
@@ -949,6 +951,7 @@ pub const PltGotSection = struct {
 
     const x86_64 = struct {
         pub fn write(plt_got: PltGotSection, elf_file: *Elf, writer: *std.Io.Writer) !void {
+            dev.checkAny(&.{ .llvm_backend, .x86_64_backend });
             for (plt_got.symbols.items) |ref| {
                 const sym = elf_file.symbol(ref).?;
                 const target_addr = sym.gotAddress(elf_file);
@@ -967,6 +970,7 @@ pub const PltGotSection = struct {
 
     const aarch64 = struct {
         fn write(plt_got: PltGotSection, elf_file: *Elf, writer: *std.Io.Writer) !void {
+            dev.checkAny(&.{ .llvm_backend, .aarch64_backend });
             for (plt_got.symbols.items) |ref| {
                 const sym = elf_file.symbol(ref).?;
                 const target_addr = sym.gotAddress(elf_file);
@@ -1355,9 +1359,9 @@ pub const VerneedSection = struct {
 
         const comp = elf_file.base.comp;
         const gpa = comp.gpa;
-        var verneed = std.array_list.Managed(VersionedSymbol).init(gpa);
-        defer verneed.deinit();
-        try verneed.ensureTotalCapacity(dynsyms.len);
+        var verneed: std.ArrayList(VersionedSymbol) = .empty;
+        defer verneed.deinit(gpa);
+        try verneed.ensureTotalCapacity(gpa, dynsyms.len);
 
         for (dynsyms, 1..) |entry, i| {
             const symbol = elf_file.symbol(entry.ref).?;
@@ -1518,6 +1522,7 @@ fn writeInt(value: anytype, elf_file: *Elf, writer: *std.Io.Writer) !void {
 
 const assert = std.debug.assert;
 const builtin = @import("builtin");
+const dev = @import("../../dev.zig");
 const elf = std.elf;
 const math = std.math;
 const mem = std.mem;

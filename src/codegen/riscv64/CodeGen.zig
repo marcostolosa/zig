@@ -27,7 +27,7 @@ const Target = std.Target;
 const log = std.log.scoped(.riscv_codegen);
 const tracking_log = std.log.scoped(.tracking);
 const verbose_tracking_log = std.log.scoped(.verbose_tracking);
-const wip_mir_log = std.log.scoped(.wip_mir);
+const wip_mir_log = std.log.scoped(.@"wip-mir");
 const Alignment = InternPool.Alignment;
 
 const bits = @import("bits.zig");
@@ -78,7 +78,7 @@ func_index: InternPool.Index,
 fn_type: Type,
 arg_index: usize,
 
-mir_instructions: std.MultiArrayList(Mir.Inst) = .{},
+mir_instructions: std.MultiArrayList(Mir.Inst) = .empty,
 
 owner: Owner,
 
@@ -102,7 +102,8 @@ reused_operands: std.bit_set.Static(Air.Liveness.bpi - 1) = undefined,
 /// within different branches. Special consideration is needed when a branch
 /// joins with its parent, to make sure all instructions have the same MCValue
 /// across each runtime branch upon joining.
-branch_stack: *std.array_list.Managed(Branch),
+/// Uses `gpa` as its allocator
+branch_stack: *std.ArrayList(Branch),
 
 // Currently set vector properties, null means they haven't been set yet in the function.
 avl: ?u64,
@@ -112,19 +113,19 @@ vtype: ?bits.VType,
 blocks: std.AutoHashMapUnmanaged(Air.Inst.Index, BlockData) = .empty,
 register_manager: RegisterManager = .{},
 
-const_tracking: ConstTrackingMap = .{},
-inst_tracking: InstTrackingMap = .{},
+const_tracking: ConstTrackingMap = .empty,
+inst_tracking: InstTrackingMap = .empty,
 
-frame_allocs: std.MultiArrayList(FrameAlloc) = .{},
+frame_allocs: std.MultiArrayList(FrameAlloc) = .empty,
 free_frame_indices: std.array_hash_map.Auto(FrameIndex, void) = .empty,
-frame_locs: std.MultiArrayList(Mir.FrameLoc) = .{},
+frame_locs: std.MultiArrayList(Mir.FrameLoc) = .empty,
 
 loops: std.AutoHashMapUnmanaged(Air.Inst.Index, struct {
     /// The state to restore before branching.
     state: State,
     /// The branch target.
     jmp_target: Mir.Inst.Index,
-}) = .{},
+}) = .empty,
 
 /// Debug field, used to find bugs in the compiler.
 air_bookkeeping: @TypeOf(air_bookkeeping_init) = air_bookkeeping_init,
@@ -676,13 +677,13 @@ fn restoreState(func: *Func, state: State, deaths: []const Air.Inst.Index, compt
     var bfa_buf: [stack_buf_len]ExpectedContents = undefined;
     var bfa = if (opts.update_tracking) {} else std.heap.BufferFirstAllocator.init(@ptrCast(&bfa_buf), func.gpa);
 
-    var reg_locks = if (opts.update_tracking) {} else try std.array_list.Managed(RegisterLock).initCapacity(
+    var reg_locks = if (opts.update_tracking) {} else try std.ArrayList(RegisterLock).initCapacity(
         bfa.allocator(),
         @typeInfo(ExpectedContents).array.len,
     );
     defer if (!opts.update_tracking) {
         for (reg_locks.items) |lock| func.register_manager.unlockReg(lock);
-        reg_locks.deinit();
+        reg_locks.deinit(bfa.allocator());
     };
 
     for (0..state.registers.len) |index| {
@@ -722,7 +723,7 @@ fn restoreState(func: *Func, state: State, deaths: []const Air.Inst.Index, compt
                 );
             }
         } else if (target_maybe_inst) |_|
-            try reg_locks.append(func.register_manager.lockRegIndexAssumeUnused(@intCast(index)));
+            try reg_locks.append(bfa.allocator(), func.register_manager.lockRegIndexAssumeUnused(@intCast(index)));
     }
 
     if (opts.update_tracking and std.debug.runtime_safety) {
@@ -754,13 +755,13 @@ pub fn generate(
     const fn_type = Type.fromInterned(func.ty);
     const mod = zcu.navFileScope(func.owner_nav).mod.?;
 
-    var branch_stack = std.array_list.Managed(Branch).init(gpa);
+    var branch_stack: std.ArrayList(Branch) = .empty;
     defer {
         assert(branch_stack.items.len == 1);
         branch_stack.items[0].deinit(gpa);
-        branch_stack.deinit();
+        branch_stack.deinit(gpa);
     }
-    try branch_stack.append(.{});
+    try branch_stack.append(gpa, .{});
 
     var function: Func = .{
         .gpa = gpa,
@@ -856,7 +857,7 @@ pub fn generateLazy(
     atom_index: link.File.AtomId,
     w: *std.Io.Writer,
     debug_output: link.File.DebugInfoOutput,
-) (codegen.Error || std.Io.Writer.Error)!void {
+) link.EmitError!void {
     _ = atom_index;
     const comp = bin_file.comp;
     const gpa = comp.gpa;
@@ -903,9 +904,6 @@ pub fn generateLazy(
             .mir = mir,
             .cc = .auto,
             .src_loc = Type.fromInterned(lazy_sym.ty).srcLocOrNull(pt.zcu) orelse .unneeded,
-            .output_mode = comp.config.output_mode,
-            .link_mode = comp.config.link_mode,
-            .pic = mod.pic,
         },
         .bin_file = bin_file,
         .debug_output = debug_output,
@@ -929,7 +927,6 @@ const FormatWipMirData = struct {
 };
 fn formatWipMir(data: FormatWipMirData, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     const pt = data.func.pt;
-    const comp = pt.zcu.comp;
     var lower: Lower = .{
         .pt = pt,
         .allocator = data.func.gpa,
@@ -942,9 +939,6 @@ fn formatWipMir(data: FormatWipMirData, writer: *std.Io.Writer) std.Io.Writer.Er
             .nav_index => |nav| pt.zcu.navSrcLoc(nav),
             .lazy_sym => |lazy_sym| Type.fromInterned(lazy_sym.ty).srcLocOrNull(pt.zcu) orelse .unneeded,
         },
-        .output_mode = comp.config.output_mode,
-        .link_mode = comp.config.link_mode,
-        .pic = comp.root_mod.pic,
     };
     var first = true;
     for ((lower.lowerMir(data.inst, .{ .allow_frame_locs = false }) catch |err| switch (err) {
@@ -1126,6 +1120,17 @@ fn gen(func: *Func) !void {
         }
     }
 
+    for (0..func.mod.patchable_function_entry) |_| {
+        _ = try func.addInst(.{
+            .tag = .addi,
+            .data = .{ .i_type = .{
+                .rd = .zero,
+                .rs1 = .zero,
+                .imm12 = Immediate.s(0),
+            } },
+        });
+    }
+
     if (fn_info.cc != .naked) {
         _ = try func.addPseudo(.pseudo_dbg_prologue_end);
 
@@ -1280,7 +1285,7 @@ fn genLazy(func: *Func, lazy_sym: link.File.LazySymbol) InnerError!void {
     switch (Type.fromInterned(lazy_sym.ty).zigTypeTag(zcu)) {
         .@"enum" => {
             const enum_ty = Type.fromInterned(lazy_sym.ty);
-            wip_mir_log.debug("{f}.@tagName:", .{enum_ty.fmt(pt)});
+            wip_mir_log.debug("{f}.@tagName:", .{enum_ty.fmt(zcu)});
 
             const param_regs = abi.Registers.Integer.function_arg_regs;
             const ret_reg = param_regs[0];
@@ -1363,7 +1368,7 @@ fn genLazy(func: *Func, lazy_sym: link.File.LazySymbol) InnerError!void {
         },
         else => return func.fail(
             "TODO implement {s} for {f}",
-            .{ @tagName(lazy_sym.kind), Type.fromInterned(lazy_sym.ty).fmt(pt) },
+            .{ @tagName(lazy_sym.kind), Type.fromInterned(lazy_sym.ty).fmt(zcu) },
         ),
     }
 }
@@ -1753,7 +1758,7 @@ fn finishAir(
 ) !void {
     const tomb_bits = func.liveness.getTombBits(inst);
     for (0.., operands) |op_index, op| {
-        if (tomb_bits & @as(Air.Liveness.Bpi, 1) << @intCast(op_index) == 0) continue;
+        if (tomb_bits & (@as(Air.Liveness.Bpi, 1) << @intCast(op_index)) == 0) continue;
         if (func.reused_operands.isSet(op_index)) continue;
         try func.processDeath(op.toIndexAllowNone() orelse continue);
     }
@@ -1900,7 +1905,7 @@ fn splitType(func: *Func, ty: Type) ![2]Type {
             else => return func.fail("TODO: splitType class {}", .{class}),
         };
     } else if (parts[0].abiSize(zcu) + parts[1].abiSize(zcu) == ty.abiSize(zcu)) return parts;
-    return func.fail("TODO implement splitType for {f}", .{ty.fmt(func.pt)});
+    return func.fail("TODO implement splitType for {f}", .{ty.fmt(zcu)});
 }
 
 /// Truncates the value in the register in place.
@@ -2013,7 +2018,7 @@ fn allocMemPtr(func: *Func, inst: Air.Inst.Index) !FrameIndex {
     const val_ty = ptr_ty.childType(zcu);
     return func.allocFrameIndex(FrameAlloc.init(.{
         .size = math.cast(u32, val_ty.abiSize(zcu)) orelse {
-            return func.fail("type '{f}' too big to fit into stack frame", .{val_ty.fmt(pt)});
+            return func.fail("type '{f}' too big to fit into stack frame", .{val_ty.fmt(zcu)});
         },
         .alignment = ptr_ty.ptrAlignment(zcu).max(.@"1"),
     }));
@@ -2153,7 +2158,7 @@ pub fn spillRegisters(func: *Func, comptime registers: []const Register) !void {
 /// allocated. A second call to `copyToTmpRegister` may return the same register.
 /// This can have a side effect of spilling instructions to the stack to free up a register.
 fn copyToTmpRegister(func: *Func, ty: Type, mcv: MCValue) !Register {
-    log.debug("copyToTmpRegister ty: {f}", .{ty.fmt(func.pt)});
+    log.debug("copyToTmpRegister ty: {f}", .{ty.fmt(func.pt.zcu)});
     const reg = try func.register_manager.allocReg(null, func.regTempClassForType(ty));
     try func.genSetReg(ty, reg, mcv);
     return reg;
@@ -2238,7 +2243,7 @@ fn airIntCast(func: *Func, inst: Air.Inst.Index) !void {
 
         break :result dst_mcv;
     } orelse return func.fail("TODO: implement airIntCast from {f} to {f}", .{
-        src_ty.fmt(pt), dst_ty.fmt(pt),
+        src_ty.fmt(zcu), dst_ty.fmt(zcu),
     });
 
     return func.finishAir(inst, result, .{ ty_op.operand, .none, .none });
@@ -2625,7 +2630,7 @@ fn genBinOp(
         .add_sat,
         => {
             if (bit_size != 64 or !is_unsigned)
-                return func.fail("TODO: genBinOp ty: {f}", .{lhs_ty.fmt(pt)});
+                return func.fail("TODO: genBinOp ty: {f}", .{lhs_ty.fmt(zcu)});
 
             const tmp_reg = try func.copyToTmpRegister(rhs_ty, .{ .register = rhs_reg });
             const tmp_lock = func.register_manager.lockRegAssumeUnused(tmp_reg);
@@ -4046,7 +4051,7 @@ fn airGetUnionTag(func: *Func, inst: Air.Inst.Index) !void {
             } else {
                 return func.fail(
                     "TODO implement get_union_tag for ABI larger than 8 bytes and operand {}, tag {f}",
-                    .{ frame_mcv, tag_ty.fmt(pt) },
+                    .{ frame_mcv, tag_ty.fmt(zcu) },
                 );
             }
         },
@@ -4166,7 +4171,7 @@ fn airAbs(func: *Func, inst: Air.Inst.Index) !void {
 
         switch (scalar_ty.zigTypeTag(zcu)) {
             .int => if (ty.zigTypeTag(zcu) == .vector) {
-                return func.fail("TODO implement airAbs for {f}", .{ty.fmt(pt)});
+                return func.fail("TODO implement airAbs for {f}", .{ty.fmt(zcu)});
             } else {
                 const int_info = scalar_ty.intInfo(zcu);
                 const int_bits = int_info.bits;
@@ -4247,7 +4252,7 @@ fn airAbs(func: *Func, inst: Air.Inst.Index) !void {
 
                 break :result return_mcv;
             },
-            else => return func.fail("TODO: implement airAbs {f}", .{scalar_ty.fmt(pt)}),
+            else => return func.fail("TODO: implement airAbs {f}", .{scalar_ty.fmt(zcu)}),
         }
 
         break :result .unreach;
@@ -4311,7 +4316,7 @@ fn airByteSwap(func: *Func, inst: Air.Inst.Index) !void {
 
                 break :result dest_mcv;
             },
-            else => return func.fail("TODO: airByteSwap {f}", .{ty.fmt(pt)}),
+            else => return func.fail("TODO: airByteSwap {f}", .{ty.fmt(zcu)}),
         }
     };
     return func.finishAir(inst, result, .{ ty_op.operand, .none, .none });
@@ -4377,7 +4382,7 @@ fn airUnaryMath(func: *Func, inst: Air.Inst.Index, tag: Air.Inst.Tag) !void {
                     else => return func.fail("TODO: airUnaryMath Float {s}", .{@tagName(tag)}),
                 }
             },
-            else => return func.fail("TODO: airUnaryMath ty: {f}", .{ty.fmt(pt)}),
+            else => return func.fail("TODO: airUnaryMath ty: {f}", .{ty.fmt(zcu)}),
         }
 
         break :result MCValue{ .register = dst_reg };
@@ -4477,7 +4482,7 @@ fn load(func: *Func, dst_mcv: MCValue, ptr_mcv: MCValue, ptr_ty: Type) InnerErro
     const zcu = pt.zcu;
     const dst_ty = ptr_ty.childType(zcu);
 
-    log.debug("loading {}:{f} into {}", .{ ptr_mcv, ptr_ty.fmt(pt), dst_mcv });
+    log.debug("loading {}:{f} into {}", .{ ptr_mcv, ptr_ty.fmt(zcu), dst_mcv });
 
     switch (ptr_mcv) {
         .none,
@@ -4530,7 +4535,7 @@ fn airStore(func: *Func, inst: Air.Inst.Index, safety: bool) !void {
 fn store(func: *Func, ptr_mcv: MCValue, src_mcv: MCValue, ptr_ty: Type) !void {
     const zcu = func.pt.zcu;
     const src_ty = ptr_ty.childType(zcu);
-    log.debug("storing {}:{f} in {}:{f}", .{ src_mcv, src_ty.fmt(func.pt), ptr_mcv, ptr_ty.fmt(func.pt) });
+    log.debug("storing {}:{f} in {}:{f}", .{ src_mcv, src_ty.fmt(zcu), ptr_mcv, ptr_ty.fmt(zcu) });
 
     switch (ptr_mcv) {
         .none => unreachable,
@@ -4584,7 +4589,7 @@ fn structFieldPtr(func: *Func, inst: Air.Inst.Index, operand: Air.Inst.Ref, inde
 
     const field_offset: i32 = switch (container_ty.containerLayout(zcu)) {
         .auto, .@"extern" => @intCast(container_ty.structFieldOffset(index, zcu)),
-        .@"packed" => @divExact(@as(i32, ptr_container_ty.ptrInfo(zcu).packed_offset.bit_offset) +
+        .@"bitpack" => @divExact(@as(i32, ptr_container_ty.ptrInfo(zcu).packed_offset.bit_offset) +
             (if (zcu.typeToStruct(container_ty)) |struct_obj| zcu.structPackedFieldBitOffset(struct_obj, index) else 0) -
             ptr_field_ty.ptrInfo(zcu).packed_offset.bit_offset, 8),
     };
@@ -4615,7 +4620,7 @@ fn airAggFieldVal(func: *Func, inst: Air.Inst.Index) !void {
 
         const field_off: u32 = switch (struct_ty.containerLayout(zcu)) {
             .auto, .@"extern" => @intCast(struct_ty.structFieldOffset(index, zcu) * 8),
-            .@"packed" => if (zcu.typeToStruct(struct_ty)) |struct_type|
+            .@"bitpack" => if (zcu.typeToStruct(struct_ty)) |struct_type|
                 zcu.structPackedFieldBitOffset(struct_type, index)
             else
                 0,
@@ -4882,9 +4887,9 @@ fn genCall(
         stack_frame_align.* = stack_frame_align.max(needed_call_frame.abi_align);
     }
 
-    var reg_locks = std.array_list.Managed(?RegisterLock).init(allocator);
-    defer reg_locks.deinit();
-    try reg_locks.ensureTotalCapacity(8);
+    var reg_locks: std.ArrayList(?RegisterLock) = .empty;
+    defer reg_locks.deinit(allocator);
+    try reg_locks.ensureTotalCapacity(allocator, 8);
     defer for (reg_locks.items) |reg_lock| if (reg_lock) |lock| func.register_manager.unlockReg(lock);
 
     const frame_indices = try allocator.alloc(FrameIndex, args.len);
@@ -4900,17 +4905,17 @@ fn genCall(
             .none => {},
             .register => |reg| {
                 try func.register_manager.getReg(reg, null);
-                try reg_locks.append(func.register_manager.lockReg(reg));
+                try reg_locks.append(allocator, func.register_manager.lockReg(reg));
             },
             .register_pair => |regs| {
                 for (regs) |reg| try func.register_manager.getReg(reg, null);
-                try reg_locks.appendSlice(&func.register_manager.lockRegs(2, regs));
+                try reg_locks.appendSlice(allocator, &func.register_manager.lockRegs(2, regs));
             },
             .indirect => |reg_off| {
                 frame_index.* = try func.allocFrameIndex(FrameAlloc.initType(arg_ty, zcu));
                 try func.genSetMem(.{ .frame = frame_index.* }, 0, arg_ty, src_arg);
                 try func.register_manager.getReg(reg_off.reg, null);
-                try reg_locks.append(func.register_manager.lockReg(reg_off.reg));
+                try reg_locks.append(allocator, func.register_manager.lockReg(reg_off.reg));
             },
             else => return func.fail("TODO: genCall set arg {s}", .{@tagName(dst_arg)}),
         }
@@ -4925,7 +4930,7 @@ fn genCall(
                 .lea_frame = .{ .index = frame_index, .off = -reg_off.off },
             });
             call_info.return_value.short = .{ .load_frame = .{ .index = frame_index } };
-            try reg_locks.append(func.register_manager.lockReg(reg_off.reg));
+            try reg_locks.append(allocator, func.register_manager.lockReg(reg_off.reg));
         },
         else => unreachable,
     }
@@ -4964,7 +4969,7 @@ fn genCall(
                             const zo = elf_file.zigObjectPtr().?;
                             const sym_index: link.File.SymbolId = @fromBackingInt(@intCast(try zo.getOrCreateMetadataForNav(zcu, func_val.owner_nav)));
 
-                            if (func.mod.pic) {
+                            if (pt.zcu.comp.config.pic) {
                                 return func.fail("TODO: genCall pic", .{});
                             } else {
                                 try func.genSetReg(Type.u64, .ra, .{ .lea_symbol = .{ .sym = sym_index } });
@@ -6035,13 +6040,13 @@ fn airAsm(func: *Func, inst: Air.Inst.Index) !void {
     const inputs = unwrapped_asm.inputs;
 
     var result: MCValue = .none;
-    var args = std.array_list.Managed(MCValue).init(func.gpa);
-    try args.ensureTotalCapacity(outputs.len + inputs.len);
+    var args: std.ArrayList(MCValue) = .empty;
+    try args.ensureTotalCapacity(func.gpa, outputs.len + inputs.len);
     defer {
         for (args.items) |arg| if (arg.getReg()) |reg| func.register_manager.unlockReg(.{
             .tracked_index = RegisterManager.indexOfRegIntoTracked(reg) orelse continue,
         });
-        args.deinit();
+        args.deinit(func.gpa);
     }
     var arg_map = std.StringHashMap(u8).init(func.gpa);
     try arg_map.ensureTotalCapacity(@intCast(outputs.len + inputs.len));
@@ -6261,7 +6266,7 @@ fn airAsm(func: *Func, inst: Air.Inst.Index) !void {
                     "";
 
                 op.* = switch (args.items[
-                    arg_map.get(op_str["%[".len .. mod_index orelse op_str.len - "]".len]) orelse
+                    arg_map.get(op_str["%[".len .. mod_index orelse (op_str.len - "]".len)]) orelse
                         return func.fail("no matching constraint: '{s}'", .{op_str})
                 ]) {
                     .lea_symbol => |sym_off| if (mem.eql(u8, modifier, "plt")) blk: {
@@ -7258,7 +7263,7 @@ fn airBitCast(func: *Func, inst: Air.Inst.Index) !void {
         const bit_size = dst_ty.bitSize(zcu);
         if (abi_size * 8 <= bit_size) break :result dst_mcv;
 
-        return func.fail("TODO: airBitCast {f} to {f}", .{ src_ty.fmt(pt), dst_ty.fmt(pt) });
+        return func.fail("TODO: airBitCast {f} to {f}", .{ src_ty.fmt(zcu), dst_ty.fmt(zcu) });
     };
     return func.finishAir(inst, result, .{ ty_op.operand, .none, .none });
 }
@@ -7998,7 +8003,7 @@ fn airAggregateInit(func: *Func, inst: Air.Inst.Index) !void {
         switch (result_ty.zigTypeTag(zcu)) {
             .@"struct" => {
                 const frame_index = try func.allocFrameIndex(FrameAlloc.initSpill(result_ty, zcu));
-                if (result_ty.containerLayout(zcu) == .@"packed") {
+                if (result_ty.containerLayout(zcu) == .@"bitpack") {
                     const struct_obj = zcu.typeToStruct(result_ty).?;
                     try func.genInlineMemset(
                         .{ .lea_frame = .{ .index = frame_index } },
@@ -8014,7 +8019,7 @@ fn airAggregateInit(func: *Func, inst: Air.Inst.Index) !void {
                         const elem_bit_size: u32 = @intCast(elem_ty.bitSize(zcu));
                         if (elem_bit_size > 64) {
                             return func.fail(
-                                "TODO airAggregateInit implement packed structs with large fields",
+                                "TODO airAggregateInit implement bitpack structs with large fields",
                                 .{},
                             );
                         }
@@ -8039,7 +8044,7 @@ fn airAggregateInit(func: *Func, inst: Air.Inst.Index) !void {
                         };
                         defer if (elem_lock) |lock| func.register_manager.unlockReg(lock);
 
-                        return func.fail("TODO: airAggregateInit packed structs", .{});
+                        return func.fail("TODO: airAggregateInit bitpack structs", .{});
                     }
                 } else for (elements, 0..) |elem, elem_i| {
                     if ((try result_ty.structFieldValueComptime(pt, elem_i)) != null) continue;
@@ -8074,7 +8079,7 @@ fn airAggregateInit(func: *Func, inst: Air.Inst.Index) !void {
                 );
                 break :result .{ .load_frame = .{ .index = frame_index } };
             },
-            else => return func.fail("TODO: airAggregate {f}", .{result_ty.fmt(pt)}),
+            else => return func.fail("TODO: airAggregate {f}", .{result_ty.fmt(zcu)}),
         }
     };
 
@@ -8149,7 +8154,7 @@ fn genTypedValue(func: *Func, val: Value) InnerError!MCValue {
     const lf = func.bin_file;
 
     const result: codegen.MCValue = if (val.isUndef(pt.zcu))
-        .{ .load_symbol = try lf.lowerUav(pt, val.toIntern(), .none) }
+        .{ .load_symbol = try lf.uavSymbol(pt, val.toIntern(), .none) }
     else
         try codegen.genTypedValue(lf, pt, val, func.target);
     const mcv: MCValue = switch (result) {
@@ -8268,7 +8273,7 @@ fn resolveCallingConventionValues(
                 };
 
                 result.return_value = switch (ret_tracking_i) {
-                    else => return func.fail("ty {f} took {} tracking return indices", .{ ret_ty.fmt(pt), ret_tracking_i }),
+                    else => return func.fail("ty {f} took {} tracking return indices", .{ ret_ty.fmt(zcu), ret_tracking_i }),
                     1 => ret_tracking[0],
                     2 => InstTracking.init(.{ .register_pair = .{
                         ret_tracking[0].short.register, ret_tracking[1].short.register,
@@ -8323,7 +8328,7 @@ fn resolveCallingConventionValues(
                     else => return func.fail("TODO: C calling convention arg class {}", .{class}),
                 } else {
                     arg.* = switch (arg_mcv_i) {
-                        else => return func.fail("ty {f} took {} tracking arg indices", .{ ty.fmt(pt), arg_mcv_i }),
+                        else => return func.fail("ty {f} took {} tracking arg indices", .{ ty.fmt(zcu), arg_mcv_i }),
                         1 => arg_mcv[0],
                         2 => .{ .register_pair = .{ arg_mcv[0].register, arg_mcv[1].register } },
                     };
@@ -8349,7 +8354,7 @@ fn wantSafety(func: *Func) bool {
     };
 }
 
-fn fail(func: *const Func, comptime format: []const u8, args: anytype) error{ OutOfMemory, AlreadyReported } {
+fn fail(func: *const Func, comptime format: []const u8, args: anytype) codegen.Error {
     @branchHint(.cold);
     const zcu = func.pt.zcu;
     switch (func.owner) {
@@ -8359,7 +8364,7 @@ fn fail(func: *const Func, comptime format: []const u8, args: anytype) error{ Ou
     return error.AlreadyReported;
 }
 
-fn failMsg(func: *const Func, msg: *ErrorMsg) error{ OutOfMemory, AlreadyReported } {
+fn failMsg(func: *const Func, msg: *ErrorMsg) codegen.Error {
     @branchHint(.cold);
     const zcu = func.pt.zcu;
     switch (func.owner) {

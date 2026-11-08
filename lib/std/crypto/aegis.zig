@@ -19,13 +19,17 @@
 //!
 //! Finally, leaking the state does not leak the key.
 //!
-//! https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/
+//! https://www.rfc-editor.org/rfc/rfc10032.html
 
 const std = @import("std");
 const crypto = std.crypto;
 const mem = std.mem;
 const assert = std.debug.assert;
 const AuthenticationError = crypto.errors.AuthenticationError;
+const bitsliced = @import("aegis/bitsliced.zig");
+
+const use_bitsliced = !crypto.core.aes.has_hardware_support and
+    std.options.side_channels_mitigations != .none;
 
 /// AEGIS-128X4 with a 128 bit tag
 pub const Aegis128X4 = Aegis128XGeneric(4, 128);
@@ -270,13 +274,13 @@ fn State128X(comptime degree: u7) type {
 ///
 /// The 128 bits variants of AEGIS have a 128 bit key and a 128 bit nonce.
 ///
-/// https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/
+/// https://www.rfc-editor.org/rfc/rfc10032.html
 fn Aegis128XGeneric(comptime degree: u7, comptime tag_bits: u9) type {
     comptime assert(degree > 0); // degree must be greater than 0
     comptime assert(tag_bits == 128 or tag_bits == 256); // tag must be 128 or 256 bits
 
     return struct {
-        const State = State128X(degree);
+        const State = if (use_bitsliced) bitsliced.State128X(degree) else State128X(degree);
 
         pub const tag_length = tag_bits / 8;
         pub const nonce_length = 16;
@@ -347,10 +351,9 @@ fn Aegis128XGeneric(comptime degree: u7, comptime tag_bits: u9) type {
             if (m.len % block_length != 0) {
                 state.decLast(m[i..], c[i..]);
             }
-            var computed_tag = state.finalize(tag_bits, ad.len, m.len);
+            const computed_tag = state.finalize(tag_bits, ad.len, m.len);
             const verify = crypto.timing_safe.eql([tag_length]u8, computed_tag, tag);
             if (!verify) {
-                crypto.secureZero(u8, &computed_tag);
                 @memset(m, undefined);
                 return error.AuthenticationFailed;
             }
@@ -565,13 +568,13 @@ fn State256X(comptime degree: u7) type {
 ///
 /// The 256 bits variants of AEGIS have a 256 bit key and a 256 bit nonce.
 ///
-/// https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/
+/// https://www.rfc-editor.org/rfc/rfc10032.html
 fn Aegis256XGeneric(comptime degree: u7, comptime tag_bits: u9) type {
     comptime assert(degree > 0); // degree must be greater than 0
     comptime assert(tag_bits == 128 or tag_bits == 256); // tag must be 128 or 256 bits
 
     return struct {
-        const State = State256X(degree);
+        const State = if (use_bitsliced) bitsliced.State256X(degree) else State256X(degree);
 
         pub const tag_length = tag_bits / 8;
         pub const nonce_length = 32;
@@ -642,10 +645,9 @@ fn Aegis256XGeneric(comptime degree: u7, comptime tag_bits: u9) type {
             if (m.len % block_length != 0) {
                 state.decLast(m[i..], c[i..]);
             }
-            var computed_tag = state.finalize(tag_bits, ad.len, m.len);
+            const computed_tag = state.finalize(tag_bits, ad.len, m.len);
             const verify = crypto.timing_safe.eql([tag_length]u8, computed_tag, tag);
             if (!verify) {
-                crypto.secureZero(u8, &computed_tag);
                 @memset(m, undefined);
                 return error.AuthenticationFailed;
             }
@@ -794,6 +796,12 @@ fn AegisMac(comptime T: type) type {
             out.* = self.state.finalizeMac(T.tag_length * 8, self.msg_len);
         }
 
+        pub fn finalResult(d: *Mac) [mac_length]u8 {
+            var result: [mac_length]u8 = undefined;
+            d.final(&result);
+            return result;
+        }
+
         /// Return an authentication tag for a message, a key and a nonce
         pub fn createWithNonce(out: *[mac_length]u8, msg: []const u8, key: *const [key_length]u8, nonce: *const [nonce_length]u8) void {
             var ctx = Mac.initWithNonce(key, nonce);
@@ -812,6 +820,44 @@ fn AegisMac(comptime T: type) type {
 
 const htest = @import("test.zig");
 const testing = std.testing;
+
+fn hashStateOutputs(comptime State: type, key: anytype, nonce: anytype) [32]u8 {
+    var msg: [State.rate]u8 = undefined;
+    for (&msg, 0..) |*x, i| x.* = @truncate(i *% 31 +% 5);
+    var out: [State.rate]u8 = undefined;
+    var h: crypto.hash.sha2.Sha256 = .init(.{});
+
+    var st = State.init(key, nonce);
+    st.absorb(&msg);
+    st.enc(&out, &msg);
+    h.update(&out);
+    st.dec(&out, &msg);
+    h.update(&out);
+    st.decLast(out[3..], msg[3..]);
+    h.update(out[3..]);
+    inline for (.{ 128, 256 }) |tag_bits| {
+        var st2 = st;
+        h.update(&st2.finalize(tag_bits, 33, 12345));
+        st2 = st;
+        h.update(&st2.finalizeMac(tag_bits, 54321));
+    }
+    return h.finalResult();
+}
+
+test "Aegis bitsliced states" {
+    const key = "0123456789abcdef0123456789ABCDEF";
+    const nonce = "nonce0123456789Nnonce0123456789N";
+    inline for (.{ 1, 2, 4 }) |degree| {
+        try testing.expectEqual(
+            hashStateOutputs(State128X(degree), key[0..16].*, nonce[0..16].*),
+            hashStateOutputs(bitsliced.State128X(degree), key[0..16].*, nonce[0..16].*),
+        );
+        try testing.expectEqual(
+            hashStateOutputs(State256X(degree), key.*, nonce.*),
+            hashStateOutputs(bitsliced.State256X(degree), key.*, nonce.*),
+        );
+    }
+}
 
 test "Aegis128L test vector 1" {
     const key: [Aegis128L.key_length]u8 = [_]u8{ 0x10, 0x01 } ++ @as([14]u8, @splat(0x00));

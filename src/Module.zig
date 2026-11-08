@@ -26,12 +26,12 @@ fully_qualified_name: []const u8,
 deps: Deps = .{},
 
 resolved_target: ResolvedTarget,
+llvm_cpu_features: ?[:0]const u8,
 optimize_mode: std.lang.Optimize,
 code_model: std.lang.CodeModel,
 single_threaded: bool,
 error_tracing: bool,
 valgrind: bool,
-pic: bool,
 strip: bool,
 omit_frame_pointer: bool,
 stack_check: bool,
@@ -43,6 +43,7 @@ fuzz: bool,
 unwind_tables: std.lang.UnwindTables,
 cc_argv: []const []const u8,
 no_builtin: bool,
+patchable_function_entry: u16,
 
 pub const Deps = std.array_hash_map.String(*Module);
 
@@ -70,7 +71,6 @@ pub const CreateOptions = struct {
         single_threaded: ?bool = null,
         error_tracing: ?bool = null,
         valgrind: ?bool = null,
-        pic: ?bool = null,
         strip: ?bool = null,
         omit_frame_pointer: ?bool = null,
         stack_check: ?bool = null,
@@ -84,6 +84,7 @@ pub const CreateOptions = struct {
         sanitize_thread: ?bool = null,
         fuzz: ?bool = null,
         no_builtin: ?bool = null,
+        patchable_function_entry: u16 = 0,
     };
 };
 
@@ -92,7 +93,6 @@ pub const ResolvedTarget = struct {
     is_native_os: bool,
     is_native_abi: bool,
     is_explicit_dynamic_linker: bool,
-    llvm_cpu_features: ?[*:0]const u8 = null,
 };
 
 pub const CreateError = error{
@@ -100,13 +100,11 @@ pub const CreateError = error{
     ValgrindUnsupportedOnTarget,
     TargetRequiresSingleThreaded,
     BackendRequiresSingleThreaded,
-    TargetRequiresPic,
-    PieRequiresPic,
-    DynamicLinkingRequiresPic,
     TargetHasNoRedZone,
     StackCheckUnsupportedByTarget,
     StackProtectorUnsupportedByTarget,
     StackProtectorUnavailableWithoutLibC,
+    PatchableFunctionEntryUnsupportedByBackend,
 };
 
 /// At least one of `parent` and `resolved_target` must be non-null.
@@ -130,7 +128,7 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         break :b options.global.root_strip;
     };
 
-    const zig_backend = target_util.zigBackend(target, options.global.use_llvm);
+    const zig_backend = std.zig.compilerBackend(target, options.global.use_llvm);
 
     const valgrind = b: {
         if (!target_util.hasValgrindSupport(target, zig_backend)) {
@@ -170,31 +168,6 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         break :b options.global.root_error_tracing;
     };
 
-    const pic = b: {
-        if (target_util.requiresPic(target, options.global.link_libc)) {
-            if (options.inherited.pic == false)
-                return error.TargetRequiresPic;
-            break :b true;
-        }
-        if (options.global.pie) {
-            if (options.inherited.pic == false)
-                return error.PieRequiresPic;
-            break :b true;
-        }
-        if (options.global.link_mode == .dynamic and target_util.requiresPicForDynamicLink(target)) {
-            if (options.inherited.pic == false)
-                return error.DynamicLinkingRequiresPic;
-            break :b true;
-        }
-        if (options.inherited.pic) |x| break :b x;
-        if (options.parent) |p| break :b p.pic;
-
-        // Default to PIC on targets where we default to producing PIEs to make
-        // the common case of linking objects and static libraries into an
-        // executable work out of the box.
-        break :b target_util.defaultPie(target);
-    };
-
     const red_zone = b: {
         if (!target_util.hasRedZone(target)) {
             if (options.inherited.red_zone == true)
@@ -209,13 +182,7 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
     const omit_frame_pointer = b: {
         if (options.inherited.omit_frame_pointer) |x| break :b x;
         if (options.parent) |p| break :b p.omit_frame_pointer;
-        if (optimize_mode == .small) {
-            // On x86, in most cases, keeping the frame pointer usually results in smaller binary size.
-            // This has to do with how instructions for memory access via the stack base pointer register (when keeping the frame pointer)
-            // are smaller than instructions for memory access via the stack pointer register (when omitting the frame pointer).
-            break :b !target.cpu.arch.isX86();
-        }
-        break :b false;
+        break :b std.zig.defaultOmitFramePointer(target, optimize_mode);
     };
 
     const sanitize_thread = b: {
@@ -228,11 +195,7 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         if (options.inherited.unwind_tables) |x| break :b x;
         if (options.parent) |p| break :b p.unwind_tables;
 
-        break :b target_util.defaultUnwindTables(
-            target,
-            options.global.link_libunwind,
-            sanitize_thread or options.global.any_sanitize_thread,
-        );
+        break :b std.zig.defaultUnwindTables(target);
     };
 
     const fuzz = b: {
@@ -324,49 +287,110 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         break :b target.cpu.arch.isBpf();
     };
 
-    const llvm_cpu_features: ?[*:0]const u8 = b: {
-        if (resolved_target.llvm_cpu_features) |x| break :b x;
-        if (!options.global.use_llvm) break :b null;
+    const patchable_function_entry = b: {
+        const x = options.inherited.patchable_function_entry;
+        if (x > 0) {
+            switch (zig_backend) {
+                .stage2_llvm,
+                .stage2_x86_64,
+                .stage2_aarch64,
+                .stage2_c,
+                .stage2_riscv64,
+                .stage2_loongarch,
+                => {},
 
-        var buf = std.array_list.Managed(u8).init(arena);
-        var disabled_features = std.array_list.Managed(u8).init(arena);
-        defer disabled_features.deinit();
+                // Does not apply to this architecture.
+                .stage2_spirv,
+                .zsf_spork8,
+                .stage2_wasm,
+                => return error.PatchableFunctionEntryUnsupportedByBackend,
+
+                // Not implemented.
+                .stage2_sparc64,
+                .stage2_x86,
+                .stage2_arm,
+                .stage2_powerpc,
+                => return error.PatchableFunctionEntryUnsupportedByBackend,
+
+                .other, .stage1, _ => unreachable,
+            }
+            break :b x;
+        }
+        if (options.parent) |p| break :b p.patchable_function_entry;
+        break :b 0;
+    };
+
+    const llvm_cpu_features: ?[:0]const u8 = b: {
+        if (!options.global.use_llvm) break :b null;
+        if (options.inherited.resolved_target == null) break :b options.parent.?.llvm_cpu_features;
 
         // Append disabled features after enabled ones, so that their effects aren't overwritten.
+        var buf: std.ArrayList(u8) = .empty;
+        var disabled_features: std.ArrayList(u8) = .empty;
         for (target.cpu.arch.allFeaturesList()) |feature| {
             if (feature.llvm_name) |llvm_name| {
-                // Ignore these until we figure out how to handle the concept of omitting features.
-                // See https://github.com/ziglang/zig/issues/23539
-                if (target_util.isDynamicAMDGCNFeature(target, feature)) continue;
-
-                if (target.cpu.arch.isPowerPC() and @as(std.Target.powerpc.Feature, @fromBackingInt(@intCast(feature.index))) == .@"64bit") continue;
-                if (target.cpu.arch.isX86() and @as(std.Target.x86.Feature, @fromBackingInt(@intCast(feature.index))) == .x32) continue;
-
-                var is_enabled = target.cpu.features.isEnabled(feature.index);
-                if (target.cpu.arch == .s390x and @as(std.Target.s390x.Feature, @fromBackingInt(@intCast(feature.index))) == .backchain) {
-                    is_enabled = !omit_frame_pointer;
-                }
-
-                if (is_enabled) {
-                    try buf.ensureUnusedCapacity(2 + llvm_name.len);
+                if (target.cpu.features.isEnabled(feature.index)) {
+                    try buf.ensureUnusedCapacity(arena, 2 + llvm_name.len);
                     buf.appendAssumeCapacity('+');
                     buf.appendSliceAssumeCapacity(llvm_name);
                     buf.appendAssumeCapacity(',');
                 } else {
-                    try disabled_features.ensureUnusedCapacity(2 + llvm_name.len);
+                    try disabled_features.ensureUnusedCapacity(arena, 2 + llvm_name.len);
                     disabled_features.appendAssumeCapacity('-');
                     disabled_features.appendSliceAssumeCapacity(llvm_name);
                     disabled_features.appendAssumeCapacity(',');
                 }
             }
         }
+        try buf.appendSlice(arena, disabled_features.items);
 
-        try buf.appendSlice(disabled_features.items);
+        if (target.cpu.arch.isArm()) {
+            try buf.append(arena, if (target.cpu.arch.isThumb()) '+' else '-');
+            try buf.appendSlice(arena, "thumb-mode,");
+        }
+
+        if (target.cpu.arch == .hexagon) {
+            try buf.appendSlice(arena, "-small-data,"); // Unsupported by LLD.
+        }
+
+        if (target.cpu.arch.isMips()) {
+            try buf.append(arena, if (options.global.pic) '-' else '+');
+            try buf.appendSlice(arena, "noabicalls,");
+            try buf.appendSlice(arena, if (target.cpu.has(.mips, .fpu_s) and !target.cpu.has(.mips, .fpu_d))
+                "-fpxx,+nooddspreg,+single-float,"
+            else if (target.cpu.arch.isMips64() or target.cpu.hasAny(.mips, &.{ .mips32r6, .msa }))
+                "-fpxx,-nooddspreg,+fp64,"
+            else if (target.cpu.has(.mips, .mips2))
+                "+fpxx,+nooddspreg,"
+            else
+                "-fpxx,+nooddspreg,");
+        }
+
+        if (target.cpu.arch.isPowerpc32()) {
+            // https://github.com/llvm/llvm-project/issues/235393
+            try buf.appendSlice(arena, "-crbits,");
+        }
+
+        if (target.cpu.arch == .s390x) {
+            try buf.append(arena, if (omit_frame_pointer) '-' else '+');
+            try buf.appendSlice(arena, "backchain,");
+        }
+
+        if (target.cpu.arch == .x86c16) {
+            try buf.appendSlice(arena, "+16bit-mode,-32bit-mode,");
+        }
+
+        if (target.cpu.arch.isXtensa()) {
+            // LLVM does not currently support specifying windowed vs call0 ABI any other way than
+            // disabling all windowed instructions altogether. That's kind of silly because a
+            // windowed core can do call0 just fine.
+            if (target.abi == .call0) try buf.appendSlice(arena, "-windowed,");
+        }
+
         if (buf.items.len == 0) break :b "";
-        assert(std.mem.endsWith(u8, buf.items, ","));
+        assert(buf.items[buf.items.len - 1] == ',');
         buf.items[buf.items.len - 1] = 0;
-        buf.shrinkAndFree(buf.items.len);
-        break :b buf.items[0 .. buf.items.len - 1 :0].ptr;
+        break :b buf.items[0 .. buf.items.len - 1 :0];
     };
 
     const mod = try arena.create(Module);
@@ -379,13 +403,12 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
             .is_native_os = resolved_target.is_native_os,
             .is_native_abi = resolved_target.is_native_abi,
             .is_explicit_dynamic_linker = resolved_target.is_explicit_dynamic_linker,
-            .llvm_cpu_features = llvm_cpu_features,
         },
+        .llvm_cpu_features = llvm_cpu_features,
         .optimize_mode = optimize_mode,
         .single_threaded = single_threaded,
         .error_tracing = error_tracing,
         .valgrind = valgrind,
-        .pic = pic,
         .strip = strip,
         .omit_frame_pointer = omit_frame_pointer,
         .stack_check = stack_check,
@@ -398,6 +421,7 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Module {
         .unwind_tables = unwind_tables,
         .cc_argv = options.cc_argv,
         .no_builtin = no_builtin,
+        .patchable_function_entry = patchable_function_entry,
     };
     return mod;
 }
@@ -424,7 +448,6 @@ pub fn createLimited(gpa: Allocator, options: LimitedOptions) Allocator.Error!*M
         .single_threaded = undefined,
         .error_tracing = undefined,
         .valgrind = undefined,
-        .pic = undefined,
         .strip = undefined,
         .omit_frame_pointer = undefined,
         .stack_check = undefined,
@@ -436,6 +459,7 @@ pub fn createLimited(gpa: Allocator, options: LimitedOptions) Allocator.Error!*M
         .unwind_tables = undefined,
         .cc_argv = undefined,
         .no_builtin = undefined,
+        .patchable_function_entry = undefined,
     };
     return mod;
 }
@@ -454,13 +478,12 @@ pub fn createBuiltin(arena: Allocator, opts: Builtin, dirs: std.zig.Directories)
             .is_native_os = false,
             .is_native_abi = false,
             .is_explicit_dynamic_linker = false,
-            .llvm_cpu_features = null,
         },
+        .llvm_cpu_features = null,
         .optimize_mode = opts.optimize_mode,
         .single_threaded = opts.single_threaded,
         .error_tracing = opts.error_tracing,
         .valgrind = opts.valgrind,
-        .pic = opts.pic,
         .strip = opts.strip,
         .omit_frame_pointer = opts.omit_frame_pointer,
         .code_model = opts.code_model,
@@ -474,6 +497,7 @@ pub fn createBuiltin(arena: Allocator, opts: Builtin, dirs: std.zig.Directories)
         .red_zone = false,
         .sanitize_c = .off,
         .no_builtin = false,
+        .patchable_function_entry = 0,
     };
     return new;
 }
@@ -483,7 +507,7 @@ pub fn getBuiltinOptions(m: Module, global: Compilation.Config) Builtin {
     assert(global.have_zcu);
     return .{
         .target = m.resolved_target.result,
-        .zig_backend = target_util.zigBackend(&m.resolved_target.result, global.use_llvm),
+        .zig_backend = std.zig.compilerBackend(&m.resolved_target.result, global.use_llvm),
         .output_mode = global.output_mode,
         .link_mode = global.link_mode,
         .unwind_tables = m.unwind_tables,
@@ -496,7 +520,7 @@ pub fn getBuiltinOptions(m: Module, global: Compilation.Config) Builtin {
         .valgrind = m.valgrind,
         .sanitize_thread = m.sanitize_thread,
         .fuzz = m.fuzz,
-        .pic = m.pic,
+        .pic = global.pic,
         .pie = global.pie,
         .strip = m.strip,
         .code_model = m.code_model,

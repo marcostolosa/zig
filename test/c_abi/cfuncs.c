@@ -1,6 +1,7 @@
 #include <complex.h>
 #include <inttypes.h>
 #include <stdalign.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15834,6 +15835,13 @@ struct BigStruct {
 
 void zig_big_struct(struct BigStruct);
 
+struct Struct_u64_u64_u64_u64 zig_sret_gpr_straddle(
+    struct Struct_u64_u64, struct Struct_u64_u64, struct Struct_u64_u64);
+uint64_t zig_sse_then_gpr(double, double, double, double, double, double,
+                          struct Struct_u64_u64);
+double zig_sse_budget_straddle(double, double, double, double, double, double,
+                               double, double, struct Struct_f64_f64);
+
 union BigUnion {
     struct BigStruct a;
 };
@@ -15850,9 +15858,9 @@ struct MedStructMixed {
 void zig_med_struct_mixed(struct MedStructMixed);
 struct MedStructMixed zig_ret_med_struct_mixed();
 
-void zig_small_packed_struct(uint8_t);
+void zig_small_bitpack_struct(uint8_t);
 #ifndef ZIG_NO_I128
-void zig_big_packed_struct(__int128);
+void zig_big_bitpack_struct(__int128);
 #endif
 
 struct SplitStructInts {
@@ -15975,7 +15983,7 @@ void run_c_tests(void) {
         __int128 s = 0;
         s |= 1 << 0;
         s |= (__int128)2 << 64;
-        zig_big_packed_struct(s);
+        zig_big_bitpack_struct(s);
     }
 #endif
 
@@ -15985,7 +15993,7 @@ void run_c_tests(void) {
         s |= 1 << 2;
         s |= 2 << 4;
         s |= 3 << 6;
-        zig_small_packed_struct(s);
+        zig_small_bitpack_struct(s);
     }
 
 #ifndef __hexagon__
@@ -16238,7 +16246,7 @@ void c_split_struct_mixed(struct SplitStructMixed x) {
     assert_or_panic(y.c == 1337.0f);
 }
 
-uint8_t c_ret_small_packed_struct(void) {
+uint8_t c_ret_small_bitpack_struct(void) {
     uint8_t s = 0;
     s |= 0 << 0;
     s |= 1 << 2;
@@ -16247,7 +16255,7 @@ uint8_t c_ret_small_packed_struct(void) {
     return s;
 }
 
-void c_small_packed_struct(uint8_t x) {
+void c_small_bitpack_struct(uint8_t x) {
     assert_or_panic(((x >> 0) & 0x3) == 0);
     assert_or_panic(((x >> 2) & 0x3) == 1);
     assert_or_panic(((x >> 4) & 0x3) == 2);
@@ -16255,14 +16263,14 @@ void c_small_packed_struct(uint8_t x) {
 }
 
 #ifndef ZIG_NO_I128
-__int128 c_ret_big_packed_struct(void) {
+__int128 c_ret_big_bitpack_struct(void) {
     __int128 s = 0;
     s |= 1 << 0;
     s |= (__int128)2 << 64;
     return s;
 }
 
-void c_big_packed_struct(__int128 x) {
+void c_big_bitpack_struct(__int128 x) {
     assert_or_panic(((x >> 0) & 0xFFFFFFFFFFFFFFFF) == 1);
     assert_or_panic(((x >> 64) & 0xFFFFFFFFFFFFFFFF) == 2);
 }
@@ -16275,6 +16283,64 @@ struct SplitStructMixed c_ret_split_struct_mixed(void) {
         .c = 1337.0f,
     };
     return s;
+}
+
+struct Struct_u64_u64_u64_u64 c_sret_gpr_straddle(
+    struct Struct_u64_u64 p, struct Struct_u64_u64 q, struct Struct_u64_u64 r) {
+    assert_or_panic(p.a == 1);
+    assert_or_panic(p.b == 2);
+    assert_or_panic(q.a == 3);
+    assert_or_panic(q.b == 4);
+    assert_or_panic(r.a == 5);
+    assert_or_panic(r.b == 6);
+    struct Struct_u64_u64_u64_u64 res = {p.a, q.b, r.a, r.b};
+    return res;
+}
+
+uint64_t c_sse_then_gpr(double a, double b, double c, double d, double e, double f,
+                        struct Struct_u64_u64 s) {
+    assert_or_panic(a == 1.0);
+    assert_or_panic(b == 2.0);
+    assert_or_panic(c == 3.0);
+    assert_or_panic(d == 4.0);
+    assert_or_panic(e == 5.0);
+    assert_or_panic(f == 6.0);
+    return s.a + s.b;
+}
+
+double c_sse_budget_straddle(double a, double b, double c, double d, double e, double f,
+                             double g, double h, struct Struct_f64_f64 s) {
+    assert_or_panic(a == 1.0);
+    assert_or_panic(b == 2.0);
+    assert_or_panic(c == 3.0);
+    assert_or_panic(d == 4.0);
+    assert_or_panic(e == 5.0);
+    assert_or_panic(f == 6.0);
+    assert_or_panic(g == 7.0);
+    assert_or_panic(h == 8.0);
+    return s.a + s.b;
+}
+
+void c_test_sret_gpr_straddle(void) {
+    struct Struct_u64_u64 p = {10, 20};
+    struct Struct_u64_u64 q = {30, 40};
+    struct Struct_u64_u64 r = {50, 60};
+    struct Struct_u64_u64_u64_u64 res = zig_sret_gpr_straddle(p, q, r);
+    assert_or_panic(res.a == 10);
+    assert_or_panic(res.b == 40);
+    assert_or_panic(res.c == 50);
+    assert_or_panic(res.d == 60);
+}
+
+void c_test_sse_then_gpr(void) {
+    struct Struct_u64_u64 s = {100, 23};
+    assert_or_panic(zig_sse_then_gpr(10.0, 20.0, 30.0, 40.0, 50.0, 60.0, s) == 123);
+}
+
+void c_test_sse_budget_straddle(void) {
+    struct Struct_f64_f64 s = {100.0, 23.0};
+    assert_or_panic(zig_sse_budget_straddle(10.0, 20.0, 30.0, 40.0, 50.0, 60.0,
+                                            70.0, 80.0, s) == 123.0);
 }
 
 struct BigStruct c_big_struct_both(struct BigStruct x) {
@@ -16624,13 +16690,23 @@ struct ByRef __attribute__((sysv_abi)) c_explict_sys_v(struct ByRef in) {
 }
 #endif
 
-#if defined __x86_64__ || defined __aarch64__
+#if defined __x86_64__ || defined __aarch64__ || defined __loongarch__
 int __attribute__((preserve_none)) c_preserve_none(int x) {
     return x + 1;
 }
 int __attribute__((preserve_none)) zig_preserve_none(int);
 void c_preserve_none_check(void) {
     assert_or_panic(zig_preserve_none(41) == 42);
+}
+#endif
+
+#if defined __x86_64__ || defined __aarch64__ || defined __riscv || defined __loongarch__
+int __attribute__((preserve_most)) c_preserve_most(int x) {
+    return x + 1;
+}
+int __attribute__((preserve_most)) zig_preserve_most(int);
+void c_preserve_most_check(void) {
+    assert_or_panic(zig_preserve_most(41) == 42);
 }
 #endif
 
@@ -16773,6 +16849,16 @@ void c_x86_64_sysv_uint_int_uint_int(unsigned a, int b, unsigned c, int d) {
     assert_or_panic(b == -2);
     assert_or_panic(c == 3);
     assert_or_panic(d == -4);
+}
+
+void c_varargs_fn_ptr(int n, ...) {
+    assert_or_panic(n == 2);
+    va_list ap;
+    va_start(ap, n);
+    void (*fn_ptr)(int) = va_arg(ap, void (*)(int));
+    int arg = va_arg(ap, int);
+    va_end(ap);
+    fn_ptr(arg);
 }
 
 void c_win64_varargs_u64_f64_u64_f64(uint64_t a, double b, uint64_t c, double d) {

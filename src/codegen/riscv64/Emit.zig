@@ -13,12 +13,13 @@ prev_di_pc: usize,
 code_offset_mapping: std.AutoHashMapUnmanaged(Mir.Inst.Index, usize) = .empty,
 relocs: std.ArrayList(Reloc) = .empty,
 
-pub const Error = Lower.Error || std.Io.Writer.Error || error{
+pub const Error = Lower.Error || link.EmitError || error{
     EmitFail,
 };
 
 pub fn emitMir(emit: *Emit) Error!void {
-    const gpa = emit.bin_file.comp.gpa;
+    const comp = emit.bin_file.comp;
+    const gpa = comp.gpa;
     log.debug("mir instruction len: {}", .{emit.lower.mir.instructions.len});
     for (0..emit.lower.mir.instructions.len) |mir_i| {
         const mir_index: Mir.Inst.Index = @intCast(mir_i);
@@ -50,7 +51,7 @@ pub fn emitMir(emit: *Emit) Error!void {
                     const atom_ptr = zo.symbol(@backingInt(symbol.atom_index)).atom(elf_file).?;
                     const sym = zo.symbol(@backingInt(symbol.sym_index));
 
-                    if (emit.lower.pic) {
+                    if (comp.config.pic) {
                         return emit.fail("know when to emit GOT relocation for symbol '{s}'", .{sym.name(elf_file)});
                     }
 
@@ -118,14 +119,14 @@ pub fn emitMir(emit: *Emit) Error!void {
                 else => unreachable,
                 .pseudo_dbg_prologue_end => {
                     switch (emit.debug_output) {
-                        .dwarf => |dw| {
+                        inline .dwarf, .dwarf2 => |dw| {
                             try dw.setPrologueEnd();
                             log.debug("mirDbgPrologueEnd (line={d}, col={d})", .{
                                 emit.prev_di_line, emit.prev_di_column,
                             });
                             try emit.dbgAdvancePCAndLine(emit.prev_di_line, emit.prev_di_column);
                         },
-                        .none => {},
+                        .eh_frame, .none => {},
                     }
                 },
                 .pseudo_dbg_line_column => try emit.dbgAdvancePCAndLine(
@@ -134,14 +135,14 @@ pub fn emitMir(emit: *Emit) Error!void {
                 ),
                 .pseudo_dbg_epilogue_begin => {
                     switch (emit.debug_output) {
-                        .dwarf => |dw| {
+                        inline .dwarf, .dwarf2 => |dw| {
                             try dw.setEpilogueBegin();
                             log.debug("mirDbgEpilogueBegin (line={d}, col={d})", .{
                                 emit.prev_di_line, emit.prev_di_column,
                             });
                             try emit.dbgAdvancePCAndLine(emit.prev_di_line, emit.prev_di_column);
                         },
-                        .none => {},
+                        .eh_frame, .none => {},
                     }
                 },
                 .pseudo_dead => {},
@@ -190,15 +191,14 @@ fn dbgAdvancePCAndLine(emit: *Emit, line: u32, column: u32) Error!void {
     const delta_pc: usize = emit.w.end - emit.prev_di_pc;
     log.debug("  (advance pc={d} and line={d})", .{ delta_pc, delta_line });
     switch (emit.debug_output) {
-        .dwarf => |dw| {
+        inline .dwarf, .dwarf2 => |dw| {
             if (column != emit.prev_di_column) try dw.setColumn(column);
-            if (delta_line == 0) return; // TODO: fix these edge cases.
-            try dw.advancePCAndLine(delta_line, delta_pc);
+            try dw.advanceLineAndPc(delta_line, delta_pc, false);
             emit.prev_di_line = line;
             emit.prev_di_column = column;
             emit.prev_di_pc = emit.w.end;
         },
-        .none => {},
+        .eh_frame, .none => {},
     }
 }
 
@@ -209,6 +209,7 @@ fn fail(emit: *Emit, comptime format: []const u8, args: anytype) Error {
     };
 }
 
+const codegen = @import("../../codegen.zig");
 const link = @import("../../link.zig");
 const log = std.log.scoped(.emit);
 const mem = std.mem;

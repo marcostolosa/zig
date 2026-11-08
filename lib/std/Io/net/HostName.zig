@@ -230,7 +230,7 @@ pub fn expand(noalias packet: []const u8, start_i: usize, noalias dest_buffer: [
             i += 1 + label_len;
         } else {
             return .{
-                len orelse i - start_i + 1,
+                len orelse (i - start_i + 1),
                 try .init(dest[0..dest_i]),
             };
         }
@@ -484,6 +484,7 @@ pub const ResolvConf = struct {
                 },
                 .domain, .search => {
                     const rest = line_it.rest();
+                    if (rest.len > rc.search_buffer.len) continue;
                     @memcpy(rc.search_buffer[0..rest.len], rest);
                     rc.search_len = rest.len;
                 },

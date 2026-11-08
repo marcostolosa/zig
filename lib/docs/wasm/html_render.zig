@@ -32,7 +32,7 @@ pub const Annotation = struct {
 
 pub fn fileSourceLineNumbersHtml(
     file_index: Walk.File.Index,
-    out: *std.ArrayListUnmanaged(u8),
+    out: *std.ArrayList(u8),
     root_node: Ast.Node.Index,
 ) !void {
     const ast = file_index.get_ast();
@@ -116,6 +116,7 @@ pub fn fileSourceHtml(
             .keyword_align,
             .keyword_and,
             .keyword_asm,
+            .keyword_bitpack,
             .keyword_break,
             .keyword_catch,
             .keyword_comptime,

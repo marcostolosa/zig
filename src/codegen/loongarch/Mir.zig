@@ -13,7 +13,8 @@ internal_relocs: []const Reloc.Internal,
 
 pub const Reloc = struct {
     label: u32,
-    addend: i64 align(@alignOf(u32)) = 0,
+    type: std.elf.R_LARCH,
+    addend: i64 = 0,
 
     pub const Nav = struct {
         nav: InternPool.Nav.Index,
@@ -35,14 +36,10 @@ pub const Reloc = struct {
         reloc: Reloc,
     };
 
-    pub const Literal = struct {
-        label: u32,
-    };
-
     pub const Internal = struct {
         // Target MIR index
         target: usize = 0,
-        label: u32,
+        reloc: Reloc,
     };
 };
 
@@ -86,12 +83,8 @@ pub fn emit(
         lf,
         zcu,
         atom_index,
-        try @import("../../codegen.zig").genNavRef(
-            lf,
-            pt,
-            nav_reloc.nav,
-        ),
-        mir.body[nav_reloc.reloc.label],
+        try lf.navSymbol(nav_reloc.nav),
+        nav_reloc.reloc.type,
         body_end - @sizeOf(Instruction) * (1 + nav_reloc.reloc.label),
         nav_reloc.reloc.addend,
     ) catch |err|
@@ -100,12 +93,12 @@ pub fn emit(
         lf,
         zcu,
         atom_index,
-        try lf.lowerUav(
+        try lf.uavSymbol(
             pt,
             uav_reloc.uav.val,
             ZigType.fromInterned(uav_reloc.uav.orig_ty).ptrAlignment(zcu),
         ),
-        mir.body[uav_reloc.reloc.label],
+        uav_reloc.reloc.type,
         body_end - @sizeOf(Instruction) * (1 + uav_reloc.reloc.label),
         uav_reloc.reloc.addend,
     ) catch |err|
@@ -122,7 +115,7 @@ pub fn emit(
                 return zcu.codegenFail(func.owner_nav, "emit lazy symbol: {t}", .{err})
         else
             return zcu.codegenFail(func.owner_nav, "external symbols unimplemented for {s}", .{@tagName(lf.tag)}),
-        mir.body[lazy_reloc.reloc.label],
+        lazy_reloc.reloc.type,
         body_end - @sizeOf(Instruction) * (1 + lazy_reloc.reloc.label),
         lazy_reloc.reloc.addend,
     ) catch |err|
@@ -139,24 +132,19 @@ pub fn emit(
             .type = .FUNC,
         }) catch |err|
             return zcu.codegenFail(func.owner_nav, "emit global symbol failed: {t}", .{err}) else return zcu.codegenFail(func.owner_nav, "external symbols unimplemented for {s}", .{@tagName(lf.tag)}),
-        mir.body[global_reloc.reloc.label],
+        global_reloc.reloc.type,
         body_end - @sizeOf(Instruction) * (1 + global_reloc.reloc.label),
         global_reloc.reloc.addend,
     ) catch |err|
         return zcu.codegenFail(func.owner_nav, "emit reloc failed: {t}", .{err});
 
-    const func_nav = try @import("../../codegen.zig").genNavRef(
-        lf,
-        pt,
-        func.owner_nav,
-    );
     for (mir.internal_relocs) |internal_reloc| emitReloc(
         lf,
         zcu,
         atom_index,
-        func_nav,
-        mir.body[internal_reloc.label],
-        body_end - @sizeOf(Instruction) * (1 + internal_reloc.label),
+        try lf.navSymbol(func.owner_nav),
+        internal_reloc.reloc.type,
+        body_end - @sizeOf(Instruction) * (1 + internal_reloc.reloc.label),
         @sizeOf(Instruction) * (@as(i64, @intCast(mir.prologue.len + mir.body.len - internal_reloc.target))),
     ) catch |err|
         return zcu.codegenFail(func.owner_nav, "emit reloc failed: {t}", .{err});
@@ -182,86 +170,21 @@ fn emitReloc(
     zcu: *Zcu,
     atom_index: link.File.AtomId,
     sym_index: link.File.SymbolId,
-    instruction: Instruction,
+    reloc_type: std.elf.R_LARCH,
     offset: u32,
     addend: i64,
 ) !void {
-    const mnemonic = Disassemble.decodeMnemonic(instruction) orelse {
-        mir_log.debug("cannot decode instruction 0x{x}", .{instruction.word});
-        unreachable;
-    };
-    switch (mnemonic) {
-        else => {
-            mir_log.debug("unimplemented reloc on {t}", .{mnemonic});
-            unreachable;
-        },
-        .pcaddu18i => if (lf.cast(.elf2)) |ef| {
-            try ef.addReloc(atom_index, offset, sym_index, addend, .{ .LARCH = .CALL36 });
-        } else if (lf.cast(.elf)) |ef| {
-            const zo = ef.zigObjectPtr().?;
-            const atom = zo.symbol(@backingInt(atom_index)).atom(ef).?;
-            try atom.addReloc(zcu.gpa, .{
-                .r_offset = offset,
-                .r_info = @as(u64, @backingInt(sym_index)) << 32 | @backingInt(std.elf.R_LARCH.CALL36),
-                .r_addend = @bitCast(addend),
-            }, zo);
-        } else unreachable,
-        .b, .bl => if (lf.cast(.elf2)) |ef| {
-            try ef.addReloc(atom_index, offset, sym_index, addend, .{ .LARCH = .B26 });
-        } else if (lf.cast(.elf)) |ef| {
-            const zo = ef.zigObjectPtr().?;
-            const atom = zo.symbol(@backingInt(atom_index)).atom(ef).?;
-            try atom.addReloc(zcu.gpa, .{
-                .r_offset = offset,
-                .r_info = @as(u64, @backingInt(sym_index)) << 32 | @backingInt(std.elf.R_LARCH.B26),
-                .r_addend = @bitCast(addend),
-            }, zo);
-        } else unreachable,
-        .beq, .bne, .ble, .bgt, .bleu, .bgtu => if (lf.cast(.elf2)) |ef| {
-            try ef.addReloc(atom_index, offset, sym_index, addend, .{ .LARCH = .B16 });
-        } else if (lf.cast(.elf)) |ef| {
-            const zo = ef.zigObjectPtr().?;
-            const atom = zo.symbol(@backingInt(atom_index)).atom(ef).?;
-            try atom.addReloc(zcu.gpa, .{
-                .r_offset = offset,
-                .r_info = @as(u64, @backingInt(sym_index)) << 32 | @backingInt(std.elf.R_LARCH.B16),
-                .r_addend = @bitCast(addend),
-            }, zo);
-        } else unreachable,
-        .beqz, .bnez, .bceqz, .bcnez => if (lf.cast(.elf2)) |ef| {
-            try ef.addReloc(atom_index, offset, sym_index, addend, .{ .LARCH = .B21 });
-        } else if (lf.cast(.elf)) |ef| {
-            const zo = ef.zigObjectPtr().?;
-            const atom = zo.symbol(@backingInt(atom_index)).atom(ef).?;
-            try atom.addReloc(zcu.gpa, .{
-                .r_offset = offset,
-                .r_info = @as(u64, @backingInt(sym_index)) << 32 | @backingInt(std.elf.R_LARCH.B21),
-                .r_addend = @bitCast(addend),
-            }, zo);
-        } else unreachable,
-        .pcalau12i => if (lf.cast(.elf2)) |ef| {
-            try ef.addReloc(atom_index, offset, sym_index, addend, .{ .LARCH = .PCALA_HI20 });
-        } else if (lf.cast(.elf)) |ef| {
-            const zo = ef.zigObjectPtr().?;
-            const atom = zo.symbol(@backingInt(atom_index)).atom(ef).?;
-            try atom.addReloc(zcu.gpa, .{
-                .r_offset = offset,
-                .r_info = @as(u64, @backingInt(sym_index)) << 32 | @backingInt(std.elf.R_LARCH.PCALA_HI20),
-                .r_addend = @bitCast(addend),
-            }, zo);
-        } else unreachable,
-        .@"addi.d" => if (lf.cast(.elf2)) |ef| {
-            try ef.addReloc(atom_index, offset, sym_index, addend, .{ .LARCH = .PCALA_LO12 });
-        } else if (lf.cast(.elf)) |ef| {
-            const zo = ef.zigObjectPtr().?;
-            const atom = zo.symbol(@backingInt(atom_index)).atom(ef).?;
-            try atom.addReloc(zcu.gpa, .{
-                .r_offset = offset,
-                .r_info = @as(u64, @backingInt(sym_index)) << 32 | @backingInt(std.elf.R_LARCH.PCALA_LO12),
-                .r_addend = @bitCast(addend),
-            }, zo);
-        } else unreachable,
-    }
+    if (lf.cast(.elf2)) |ef| {
+        try ef.addReloc(atom_index, offset, sym_index, addend, .{ .LARCH = reloc_type });
+    } else if (lf.cast(.elf)) |ef| {
+        const zo = ef.zigObjectPtr().?;
+        const atom = zo.symbol(@backingInt(atom_index)).atom(ef).?;
+        try atom.addReloc(zcu.gpa, .{
+            .r_offset = offset,
+            .r_info = (@as(u64, @backingInt(sym_index)) << 32) | @backingInt(reloc_type),
+            .r_addend = @bitCast(addend),
+        }, zo);
+    } else unreachable;
 }
 
 const Air = @import("../../Air.zig");

@@ -48,6 +48,7 @@ use_lib_llvm: bool,
 use_lld: bool,
 c_frontend: CFrontend,
 use_new_linker: bool,
+pic: bool,
 pie: bool,
 lto: std.zig.LtoMode,
 incremental: bool,
@@ -58,6 +59,7 @@ import_memory: bool,
 export_memory: bool,
 shared_memory: bool,
 is_test: bool,
+legalize_all: bool,
 debug_format: DebugFormat,
 root_optimize_mode: std.lang.Optimize,
 root_strip: bool,
@@ -65,6 +67,8 @@ root_error_tracing: bool,
 dll_export_fns: bool,
 rdynamic: bool,
 san_cov_trace_pc_guard: bool,
+function_sections: bool,
+data_sections: bool,
 
 pub const CFrontend = enum { clang, aro };
 
@@ -72,6 +76,8 @@ pub const DebugFormat = union(enum) {
     strip,
     dwarf: std.dwarf.Format,
     code_view,
+    /// Non-semantic Shader Debug Info
+    nsdi,
 };
 
 pub const Options = struct {
@@ -105,8 +111,10 @@ pub const Options = struct {
     use_lld: ?bool = null,
     use_clang: ?bool = null,
     use_new_linker: ?bool = null,
+    pic: ?bool = null,
     pie: ?bool = null,
     lto: ?std.zig.LtoMode = null,
+    legalize_all: bool = false,
     incremental: bool = false,
     /// WASI-only. Type of WASI execution model ("command" or "reactor").
     wasi_exec_model: ?std.lang.WasiExecModel = null,
@@ -117,6 +125,8 @@ pub const Options = struct {
     dll_export_fns: ?bool = null,
     rdynamic: ?bool = null,
     san_cov_trace_pc_guard: bool = false,
+    function_sections: ?bool = null,
+    data_sections: ?bool = null,
 };
 
 pub const ResolveError = error{
@@ -143,10 +153,14 @@ pub const ResolveError = error{
     SharedLibrariesRequireDynamicLinking,
     DynamicLinkingWithLldRequiresSharedLibraries,
     ExportMemoryAndDynamicIncompatible,
+    TargetRequiresPic,
+    PieRequiresPic,
+    DynamicLinkingRequiresPic,
     DynamicLibraryPrecludesPie,
     TargetRequiresPie,
     SanitizeThreadRequiresPie,
     SanitizeThreadRequiresLlvmBackend,
+    FuzzRequiresLlvmBackend,
     BackendLacksErrorTracing,
     LlvmLibraryUnavailable,
     LldUnavailable,
@@ -154,6 +168,7 @@ pub const ResolveError = error{
     DllExportFnsRequiresWindows,
     NewLinkerIncompatibleWithLld,
     NewLinkerIncompatibleObjectFormat,
+    LegalizeAllRequiresLlvm,
 };
 
 pub fn resolve(options: Options) ResolveError!Config {
@@ -189,14 +204,15 @@ pub fn resolve(options: Options) ResolveError!Config {
     // *If* the LLVM backend were to be selected, should Zig use the LLVM
     // library to build the LLVM module?
     const use_lib_llvm = b: {
-        if (!build_options.have_llvm) {
+        if (!build_options.have_llvm or target.ofmt == .llvmbc or target.ofmt == .llvmir) {
             if (options.use_lib_llvm == true) return error.LlvmLibraryUnavailable;
             break :b false;
         }
         break :b options.use_lib_llvm orelse true;
     };
 
-    const root_optimize_mode = options.root_optimize_mode orelse .debug;
+    const root_optimize_mode = options.root_optimize_mode orelse
+        @as(std.lang.OptimizeMode, if (options.any_fuzz) .safe else .debug);
 
     // Make a decision on whether to use Clang or Aro for translate-c and compiling C files.
     const c_frontend: CFrontend = b: {
@@ -322,7 +338,7 @@ pub fn resolve(options: Options) ResolveError!Config {
         if (!options.have_zcu) break :b false;
 
         // If emitting to LLVM bitcode object format, must use LLVM backend.
-        if (options.emit_llvm_ir or options.emit_llvm_bc) {
+        if (target.ofmt == .llvmbc or target.ofmt == .llvmir or options.emit_llvm_bc or options.emit_llvm_ir) {
             if (options.use_llvm == false)
                 return error.EmittingLlvmModuleRequiresLlvmBackend;
             if (!target_util.hasLlvmSupport(target, target.ofmt))
@@ -338,7 +354,7 @@ pub fn resolve(options: Options) ResolveError!Config {
         }
 
         // If Zig does not support the target, then we can't use it.
-        if (target_util.zigBackend(target, false) == .other) {
+        if (std.zig.compilerBackend(target, false) == .other) {
             if (options.use_llvm == false) return error.ZigLacksTargetSupport;
             break :b true;
         }
@@ -346,6 +362,12 @@ pub fn resolve(options: Options) ResolveError!Config {
         if (options.any_sanitize_thread) {
             // Thread sanitization instrumentation requires the LLVM backend.
             if (options.use_llvm == false) return error.SanitizeThreadRequiresLlvmBackend;
+            break :b true;
+        }
+
+        if (options.any_fuzz) {
+            // Fuzzing instrumentation requires the LLVM backend.
+            if (options.use_llvm == false) return error.FuzzRequiresLlvmBackend;
             break :b true;
         }
 
@@ -368,10 +390,10 @@ pub fn resolve(options: Options) ResolveError!Config {
         // we are confident in the robustness of the backend.
         break :b !target_util.selfHostedBackendIsAsRobustAsLlvm(target);
     };
-    const backend = target_util.zigBackend(target, use_llvm);
+    const backend = std.zig.compilerBackend(target, use_llvm);
 
     if (options.emit_bin and options.have_zcu) {
-        if (!use_lib_llvm and use_llvm) {
+        if (target.ofmt != .llvmbc and target.ofmt != .llvmir and !use_lib_llvm and use_llvm) {
             // Explicit request to use LLVM to produce an object file, but without
             // using LLVM libraries. Impossible.
             return error.EmittingBinaryRequiresLlvmLibrary;
@@ -380,6 +402,10 @@ pub fn resolve(options: Options) ResolveError!Config {
         if (backend == .other) {
             // There is no compiler backend available for this target.
             return error.ZigLacksTargetSupport;
+        }
+
+        if (options.legalize_all and !use_llvm) {
+            return error.LegalizeAllRequiresLlvm;
         }
     }
 
@@ -412,6 +438,12 @@ pub fn resolve(options: Options) ResolveError!Config {
         // If the user didn't specify whether to use LLD but did specify to use the new linker,
         // assume no LLD.
         if (options.use_new_linker == true) break :b false;
+
+        if (options.use_new_linker == null and
+            target_util.preferNewLinkerOverLld(target))
+        {
+            break :b false;
+        }
 
         // If we have no zig code to compile, no need for the self-hosted linker.
         if (!options.have_zcu) break :b true;
@@ -448,6 +480,8 @@ pub fn resolve(options: Options) ResolveError!Config {
 
         if (options.use_new_linker) |x| break :b x;
 
+        if (target_util.preferNewLinkerOverLld(target)) break :b true;
+
         break :b options.incremental;
     };
 
@@ -469,6 +503,31 @@ pub fn resolve(options: Options) ResolveError!Config {
         }
         if (options.pie) |pie| break :b pie;
         break :b if (options.output_mode == .Exe) target_util.defaultPie(target) else false;
+    };
+
+    const pic = b: {
+        if (target_util.requiresPic(target)) {
+            if (options.pic == false)
+                return error.TargetRequiresPic;
+            break :b true;
+        }
+        if (pie) {
+            if (options.pic == false)
+                return error.PieRequiresPic;
+            break :b true;
+        }
+        if (link_mode == .dynamic and
+            target_util.requiresPicForDynamicLink(target, options.output_mode))
+        {
+            if (options.pic == false)
+                return error.DynamicLinkingRequiresPic;
+            break :b true;
+        }
+        if (options.pic) |x| break :b x;
+
+        // Default to PIC for objects and static libraries to make the common
+        // cases of linking those into a PIE or a shared library just work.
+        break :b options.output_mode != .Exe;
     };
 
     const lto: std.zig.LtoMode = b: {
@@ -497,11 +556,12 @@ pub fn resolve(options: Options) ResolveError!Config {
         break :b switch (target.ofmt) {
             .elf, .macho, .wasm => .{ .dwarf = .@"32" },
             .coff => .code_view,
-            .c => switch (target.os.tag) {
+            .c, .llvmbc, .llvmir => switch (target.os.tag) {
                 .windows, .uefi => .code_view,
                 else => .{ .dwarf = .@"32" },
             },
-            .spirv, .hex, .raw, .plan9 => .strip,
+            .spirv => .nsdi,
+            .hex, .raw, .plan9 => .strip,
         };
     };
 
@@ -537,10 +597,60 @@ pub fn resolve(options: Options) ResolveError!Config {
         };
     };
 
+    const function_sections = b: {
+        if (options.function_sections) |x| break :b x;
+
+        // Xtensa *really* wants per-function literal pools or branches will start to break once the
+        // program grows past 256 KiB. This can only be accomplished with function sections.
+        if (target.cpu.arch.isXtensa()) break :b true;
+
+        break :b switch (backend) {
+            // LLVM uses short branches on these targets and is not capable of intelligently using
+            // long branches when the output object grows big enough. So on these targets, it makes
+            // for a better user experience to enable function sections by default.
+            //
+            // Rule of thumb: If a target needs thunks to reach +/- 2 GiB, it belongs on this list.
+            .stage2_llvm => switch (target.cpu.arch) {
+                // +/- 128 MiB
+                .aarch64,
+                .aarch64_be,
+                // +/- 32 MiB
+                .arm,
+                .armeb,
+                // +/- 8 MiB
+                .hexagon,
+                // +/- 32 KiB
+                .m68k,
+                // 256 MiB region
+                .mips,
+                .mipsel,
+                .mips64,
+                .mips64el,
+                // +/- 32 MiB
+                .powerpc,
+                .powerpcle,
+                .powerpc64,
+                .powerpc64le,
+                // +/- 4 MiB (Thumb-1), 16 MiB (Thumb-2)
+                .thumb,
+                .thumbeb,
+                => true,
+                else => false,
+            },
+            else => false,
+        };
+    };
+
+    const data_sections = b: {
+        if (options.data_sections) |x| break :b x;
+        break :b false;
+    };
+
     return .{
         .output_mode = options.output_mode,
         .have_zcu = options.have_zcu,
         .is_test = options.is_test,
+        .legalize_all = options.legalize_all,
         .link_mode = link_mode,
         .link_libc = link_libc,
         .link_libcpp = link_libcpp,
@@ -555,6 +665,7 @@ pub fn resolve(options: Options) ResolveError!Config {
         .san_cov_trace_pc_guard = options.san_cov_trace_pc_guard,
         .root_error_tracing = root_error_tracing,
         .use_new_linker = use_new_linker,
+        .pic = pic,
         .pie = pie,
         .lto = lto,
         .incremental = options.incremental,
@@ -571,6 +682,8 @@ pub fn resolve(options: Options) ResolveError!Config {
         .root_strip = root_strip,
         .dll_export_fns = dll_export_fns,
         .rdynamic = rdynamic,
+        .function_sections = function_sections,
+        .data_sections = data_sections,
     };
 }
 

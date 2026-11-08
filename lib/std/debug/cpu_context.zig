@@ -23,7 +23,7 @@ else switch (native_arch) {
     .ve => Ve,
     .s390x => S390x,
     .x86_16 => X86_16,
-    .x86 => X86,
+    .x86, .x86c16 => X86,
     .x86_64 => X86_64,
     else => noreturn,
 };
@@ -42,7 +42,7 @@ pub fn fromPosixSignalContext(ctx_ptr: ?*const anyopaque) ?Native {
     // Deal with some special cases first.
     if (native_arch.isArc() and native_os == .linux) {
         var native: Native = .{
-            .r = [_]u32{ uc.mcontext.r31, uc.mcontext.r30, 0, uc.mcontext.r28 } ++
+            .r = [_]Arc.Gpr{ uc.mcontext.r31, uc.mcontext.r30, 0, uc.mcontext.r28 } ++
                 uc.mcontext.r27_26 ++
                 uc.mcontext.r25_13 ++
                 uc.mcontext.r12_0,
@@ -70,7 +70,7 @@ pub fn fromPosixSignalContext(ctx_ptr: ?*const anyopaque) ?Native {
             .r = uc.mcontext.r,
             .xip = uc.mcontext.xip & ~@as(u32, 0b11),
         };
-    } else if (native_arch.isMIPS32() and native_os == .linux) {
+    } else if (native_arch.isMips32() and native_os == .linux) {
         // The O32 kABI uses 64-bit fields for some reason.
         return .{
             .r = s: {
@@ -80,7 +80,7 @@ pub fn fromPosixSignalContext(ctx_ptr: ?*const anyopaque) ?Native {
             },
             .pc = @truncate(uc.mcontext.pc),
         };
-    } else if (native_arch.isSPARC() and native_os == .linux) {
+    } else if (native_arch.isSparc() and native_os == .linux) {
         const SparcStackFrame = extern struct {
             l: [8]usize,
             i: [8]usize,
@@ -100,15 +100,29 @@ pub fn fromPosixSignalContext(ctx_ptr: ?*const anyopaque) ?Native {
             .i = frame.i,
             .pc = uc.mcontext.pc,
         };
+    } else if (native_arch.isSparc() and native_os == .netbsd) {
+        // The kernel flushes all user windows before delivering a signal.
+        const save: *const [16]usize = @ptrFromInt(uc.mcontext.o[6] +% if (native_arch == .sparc64) 2047 else 0);
+
+        return .{
+            .g = [_]Sparc.Gpr{0} ++ uc.mcontext.g1_7,
+            .o = uc.mcontext.o,
+            .l = save[0..8].*,
+            .i = save[8..16].*,
+            .pc = uc.mcontext.pc,
+        };
+    } else if (native_arch == .sparc64 and native_os == .openbsd) {
+        // https://codeberg.org/ziglang/zig/issues/30958
+        return null;
     }
 
     // Only unified conversions from here.
     return switch (native_arch) {
         .arm, .armeb, .thumb, .thumbeb => .{
-            .r = uc.mcontext.r ++ [_]u32{uc.mcontext.pc},
+            .r = uc.mcontext.r ++ [_]Arm.Gpr{uc.mcontext.pc},
         },
         .aarch64, .aarch64_be => .{
-            .x = uc.mcontext.x ++ [_]u64{uc.mcontext.lr},
+            .x = uc.mcontext.x ++ [_]Aarch64.Gpr{uc.mcontext.lr},
             .sp = uc.mcontext.sp,
             .pc = uc.mcontext.pc,
         },
@@ -118,9 +132,9 @@ pub fn fromPosixSignalContext(ctx_ptr: ?*const anyopaque) ?Native {
         },
         .csky => .{
             .r = uc.mcontext.r0_13 ++
-                [_]u32{ uc.mcontext.r14, uc.mcontext.r15 } ++
+                [_]Csky.Gpr{ uc.mcontext.r14, uc.mcontext.r15 } ++
                 uc.mcontext.r16_30 ++
-                [_]u32{uc.mcontext.r31},
+                [_]Csky.Gpr{uc.mcontext.r31},
             .pc = uc.mcontext.pc,
         },
         .hexagon, .loongarch32, .loongarch64, .mips, .mipsel, .mips64, .mips64el, .or1k => .{
@@ -156,7 +170,7 @@ pub fn fromPosixSignalContext(ctx_ptr: ?*const anyopaque) ?Native {
                 .addr = uc.mcontext.psw.addr,
             },
         },
-        .x86 => .{ .gprs = .init(.{
+        .x86, .x86c16 => .{ .gprs = .init(.{
             .eax = uc.mcontext.eax,
             .ecx = uc.mcontext.ecx,
             .edx = uc.mcontext.edx,
@@ -459,21 +473,49 @@ const Arm = struct {
 
     pub inline fn current() Arm {
         var ctx: Arm = undefined;
+        // thumb1 only supports STM with writeback enabled, and in that case r0 shouldn't be
+        // included in the register list, as that creates an ambiguity between whether r0 is
+        // modified before or after r0 is written to memory.  So to avoid this we store it
+        // separately.
+        //
+        // Additionally R8-R15 cannot be stored directly by STM nor STR on thumb1, so we copy
+        // them to R1-R2 and STM those.  We could save a couple extra bytes/cycles by doing two
+        // groups of 4xMOV+STM instead of four groups of 2xMOV+STM, but that would require
+        // clobbering five registers instead of three, and that probably negates the advantage.
+        //
+        // r0 is both an input register and a clobber. musl and glibc achieve this with
+        // a "+" constraint, which isn't supported in Zig, so instead we separately list
+        // r0 as both an input and an output. Listing it as an input and a clobber would
+        // cause the C backend to emit invalid code that results in:
+        // "error: asm-specifier for input or output variable conflicts with asm clobber list"
+        var r0_out: usize = undefined;
         asm volatile (
-            \\ // For compatibility with Thumb, we can't write r13 (sp) or r15 (pc) with stm.
-            \\ stm r0, {r0-r12}
-            \\ str r13, [r0, #0x34]
-            \\ str r14, [r0, #0x38]
-            \\ mov r1, pc
-            \\ str r1, [r0, #0x3c]
-            :
-            : [r] "{r0}" (&ctx.r),
-            : .{ .r1 = true, .memory = true });
+            \\ str r0, [r0, #-4]
+            \\ stm r0!, {r1-r7}
+            \\ // r0 is now &ctx.r[8]
+            \\ mov r1, r8
+            \\ mov r2, r9
+            \\ stm r0!, {r1-r2}
+            \\ // r0 is now &ctx.r[10]
+            \\ mov r1, r10
+            \\ mov r2, r11
+            \\ stm r0!, {r1-r2}
+            \\ // r0 is now &ctx.r[12]
+            \\ mov r1, r12
+            \\ mov r2, r13
+            \\ stm r0!, {r1-r2}
+            \\ // r0 is now &ctx.r[14]
+            \\ mov r1, r14
+            \\ mov r2, r15
+            \\ stm r0!, {r1-r2}
+            : [r0_out] "={r0}" (r0_out),
+            : [r] "{r0}" (&ctx.r[1]),
+            : .{ .r1 = true, .r2 = true, .memory = true });
         return ctx;
     }
 
     pub fn getFp(ctx: *const Arm) usize {
-        return ctx.r[11];
+        return ctx.r[if (native_arch.isThumb()) 7 else 11];
     }
     pub fn getPc(ctx: *const Arm) usize {
         return ctx.r[15];
@@ -999,7 +1041,7 @@ const Mips = extern struct {
     r: [32]Gpr,
     pc: Gpr,
 
-    pub const Gpr = if (native_arch.isMIPS64()) u64 else u32;
+    pub const Gpr = if (native_arch.isMips64()) u64 else u32;
 
     pub inline fn current() Mips {
         var ctx: Mips = undefined;
@@ -1201,7 +1243,7 @@ const Powerpc = extern struct {
     pc: Gpr,
     lr: Gpr,
 
-    pub const Gpr = if (native_arch.isPowerPC64()) u64 else u32;
+    pub const Gpr = if (native_arch.isPowerpc64()) u64 else u32;
 
     pub inline fn current() Powerpc {
         var ctx: Powerpc = undefined;
@@ -2413,24 +2455,6 @@ const signal_ucontext_t = switch (native_os) {
         _stack: std.c.stack_t,
         mcontext: switch (native_arch) {
             // https://github.com/illumos/illumos-gate/blob/d4ce137bba3bd16823db6374d9e9a643264ce245/usr/src/uts/intel/sys/mcontext.h
-            .x86 => extern struct {
-                _gs: u32,
-                _fs: u32,
-                _es: u32,
-                _ds: u32,
-                edi: u32,
-                esi: u32,
-                ebp: u32,
-                esp: u32,
-                ebx: u32,
-                edx: u32,
-                ecx: u32,
-                eax: u32,
-                _trapno: i32,
-                _err: i32,
-                eip: u32,
-            },
-            // https://github.com/illumos/illumos-gate/blob/d4ce137bba3bd16823db6374d9e9a643264ce245/usr/src/uts/intel/sys/mcontext.h
             .x86_64 => extern struct {
                 r15: u64 align(16),
                 r14: u64,
@@ -2520,7 +2544,7 @@ const signal_ucontext_t = switch (native_os) {
             },
         },
         // https://github.com/openbsd/src/blob/42468faed8369d07ae49ae02dd71ec34f59b66cd/sys/arch/mips64/include/signal.h
-        .mips64, .mips64el => extern struct {
+        .mips64 => extern struct {
             _cookie: i64,
             _mask: i64,
             mcontext: extern struct {
@@ -2557,7 +2581,17 @@ const signal_ucontext_t = switch (native_os) {
             },
         },
         // https://github.com/openbsd/src/blob/42468faed8369d07ae49ae02dd71ec34f59b66cd/sys/arch/sparc64/include/signal.h
-        .sparc64 => @compileError("sparc64-openbsd ucontext_t missing"),
+        .sparc64 => extern struct {
+            _cookie: i64,
+            mcontext: extern struct {
+                sp: u64,
+                pc: u64,
+                _npc: i64,
+                _tstate: i64,
+                g1: u64,
+                o0: u64,
+            },
+        },
         // https://github.com/openbsd/src/blob/42468faed8369d07ae49ae02dd71ec34f59b66cd/sys/arch/sh/include/signal.h
         .sh => extern struct {
             pc: u32,
@@ -2694,8 +2728,22 @@ const signal_ucontext_t = switch (native_os) {
                 pc: usize,
             },
             // https://github.com/NetBSD/src/blob/861008c62187bf7bc0aac4d81e52ed6eee4d0c74/sys/arch/sparc/include/mcontext.h
-            .sparc => @compileError("sparc-netbsd mcontext_t missing"),
-            .sparc64 => @compileError("sparc64-netbsd mcontext_t missing"),
+            .sparc => extern struct {
+                _psr: i32 align(8),
+                pc: u32,
+                _npc: i32,
+                _y: i32,
+                g1_7: [7]u32,
+                o: [8]u32,
+            },
+            .sparc64 => extern struct {
+                _ccr: i64 align(16),
+                pc: u64,
+                _npc: i64,
+                _y: i64,
+                g1_7: [7]u64,
+                o: [8]u64,
+            },
             // https://github.com/NetBSD/src/blob/861008c62187bf7bc0aac4d81e52ed6eee4d0c74/sys/arch/sh3/include/mcontext.h
             .sh, .sheb => extern struct {
                 _gbr: i32,

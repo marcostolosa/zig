@@ -57,7 +57,7 @@ pub const EXC = enum(exception_type_t) {
     pub const TYPES_COUNT = @typeInfo(EXC).@"enum".field_names.len;
     pub const SOFT_SIGNAL = 0x10003;
 
-    pub const MASK = packed struct(u32) {
+    pub const MASK = bitpack struct(u32) {
         _0: u1 = 0,
         BAD_ACCESS: bool = false,
         BAD_INSTRUCTION: bool = false,
@@ -112,7 +112,7 @@ pub const EXCEPTION = enum(u32) {
 
 pub const KEVENT = struct {
     /// Used as the `flags` arg for `kevent64`.
-    pub const FLAG = packed struct(c_uint) {
+    pub const FLAG = bitpack struct(c_uint) {
         /// immediate timeout
         IMMEDIATE: bool = false,
         /// output events only include change
@@ -128,7 +128,7 @@ pub const KEVENT = struct {
 };
 
 pub const MACH = struct {
-    pub const EXCEPTION = packed struct(exception_mask_t) {
+    pub const EXCEPTION = bitpack struct(exception_mask_t) {
         _: u29 = 0,
         /// Prefer sending a catch_exception_raice_backtrace message, if applicable.
         BACKTRACE_PREFERRED: bool = false,
@@ -144,7 +144,7 @@ pub const MACH = struct {
         });
     };
 
-    pub const MSG = packed struct(kern_return_t) {
+    pub const MSG = bitpack struct(kern_return_t) {
         _0: u10 = 0,
         /// Kernel resource shortage handling an IPC capability.
         VM_KERNEL: bool = false,
@@ -175,7 +175,7 @@ pub const MACH = struct {
         pub const RIGHT = mach_port_right_t;
     };
 
-    pub const RCV = packed struct(integer_t) {
+    pub const RCV = bitpack struct(integer_t) {
         _0: u1 = 0,
         /// Other flags are only valid if this one is set.
         MSG: bool = true,
@@ -194,7 +194,7 @@ pub const MACH = struct {
         _16: u16 = 0,
     };
 
-    pub const SEND = packed struct(integer_t) {
+    pub const SEND = bitpack struct(integer_t) {
         /// Other flags are only valid if this one is set.
         MSG: bool = true,
         _1: u3 = 0,
@@ -368,7 +368,7 @@ pub const dl_info = extern struct {
     saddr: ?*anyopaque,
 };
 
-pub const COPYFILE = packed struct(u32) {
+pub const COPYFILE = bitpack struct(u32) {
     ACL: bool = false,
     STAT: bool = false,
     XATTR: bool = false,
@@ -380,7 +380,7 @@ pub const copyfile_state_t = *opaque {};
 pub extern "c" fn fcopyfile(from: fd_t, to: fd_t, state: ?copyfile_state_t, flags: COPYFILE) c_int;
 pub extern "c" fn __getdirentries64(fd: c_int, buf_ptr: [*]u8, buf_len: usize, basep: *i64) isize;
 
-pub const RENAME = packed struct(u32) {
+pub const RENAME = bitpack struct(u32) {
     SECLUDE: bool = false,
     SWAP: bool = false,
     EXCL: bool = false,
@@ -448,7 +448,7 @@ pub const thread_state_flavor_t = c_int;
 pub const ipc_space_t = mach_port_t;
 pub const ipc_space_port_t = ipc_space_t;
 
-pub const mach_msg_option_t = packed union(integer_t) {
+pub const mach_msg_option_t = bitpack union(integer_t) {
     RCV: MACH.RCV,
     SEND: MACH.SEND,
 
@@ -923,7 +923,7 @@ pub const qos_class_t = enum(c_uint) {
 ///
 /// [ulock.h]: https://github.com/apple/darwin-xnu/blob/master/bsd/sys/ulock.h
 /// [sys_ulock.c]: https://github.com/apple/darwin-xnu/blob/master/bsd/kern/sys_ulock.c
-pub const UL = packed struct(u32) {
+pub const UL = bitpack struct(u32) {
     op: Op,
     WAKE_ALL: bool = false,
     WAKE_THREAD: bool = false,
@@ -987,8 +987,6 @@ pub const os_log_type_t = enum(u8) {
 pub extern "c" fn os_log_create(subsystem: [*]const u8, category: [*]const u8) os_log_t;
 pub extern "c" fn os_log_type_enabled(log: os_log_t, tpe: os_log_type_t) bool;
 pub extern "c" fn os_signpost_id_generate(log: os_log_t) os_signpost_id_t;
-pub extern "c" fn os_signpost_interval_begin(log: os_log_t, signpos: os_signpost_id_t, func: [*]const u8, ...) void;
-pub extern "c" fn os_signpost_interval_end(log: os_log_t, signpos: os_signpost_id_t, func: [*]const u8, ...) void;
 pub extern "c" fn os_signpost_id_make_with_pointer(log: os_log_t, ptr: ?*anyopaque) os_signpost_id_t;
 pub extern "c" fn os_signpost_enabled(log: os_log_t) bool;
 
@@ -1232,7 +1230,7 @@ pub const PT = enum(c_int) {
 
 pub extern "c" fn ptrace(request: PT, pid: pid_t, addr: caddr_t, data: c_int) c_int;
 
-pub const POSIX_SPAWN = packed struct(c_short) {
+pub const POSIX_SPAWN = bitpack struct(c_short) {
     RESETIDS: bool = false,
     SETPGROUP: bool = false,
     SETSIGDEF: bool = false,
@@ -1253,8 +1251,10 @@ pub const posix_spawnattr_t = *opaque {};
 pub const posix_spawn_file_actions_t = *opaque {};
 pub extern "c" fn posix_spawnattr_init(attr: *posix_spawnattr_t) c_int;
 pub extern "c" fn posix_spawnattr_destroy(attr: *posix_spawnattr_t) c_int;
-pub extern "c" fn posix_spawnattr_setflags(attr: *posix_spawnattr_t, flags: POSIX_SPAWN) c_int;
 pub extern "c" fn posix_spawnattr_getflags(attr: *const posix_spawnattr_t, flags: *POSIX_SPAWN) c_int;
+pub extern "c" fn posix_spawnattr_getpgroup(attr: *const posix_spawnattr_t, pgroup: *pid_t) c_int;
+pub extern "c" fn posix_spawnattr_setflags(attr: *posix_spawnattr_t, flags: POSIX_SPAWN) c_int;
+pub extern "c" fn posix_spawnattr_setpgroup(attr: *posix_spawnattr_t, pgroup: pid_t) c_int;
 pub extern "c" fn posix_spawn_file_actions_init(actions: *posix_spawn_file_actions_t) c_int;
 pub extern "c" fn posix_spawn_file_actions_destroy(actions: *posix_spawn_file_actions_t) c_int;
 pub extern "c" fn posix_spawn_file_actions_addclose(actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;

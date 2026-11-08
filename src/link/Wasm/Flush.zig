@@ -247,7 +247,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
         .wasm64 => true,
         else => unreachable,
     };
-    const is_obj = comp.config.output_mode == .Obj;
+    const is_obj = wasm.base.isRelocatable();
     const allow_undefined = is_obj or wasm.import_symbols;
     const zcu_references = if (comp.zcu) |zcu| try zcu.resolveReferences() else null;
 
@@ -319,10 +319,8 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                     .function_index = function_index,
                     .flags = .{
                         .binding = switch (opts.linkage) {
-                            .internal => .local,
                             .strong => .strong,
                             .weak => .weak,
-                            .link_once => @panic("TODO: COMDAT"),
                         },
                         .visibility_hidden = is_hidden,
                         .exported = !is_hidden,
@@ -346,10 +344,8 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                     .resolution = .fromIpNav(wasm, nav_export.nav_index),
                     .flags = if (is_obj) .{
                         .binding = switch (opts.linkage) {
-                            .internal => .local,
                             .strong => .strong,
                             .weak => .weak,
-                            .link_once => @panic("TODO: COMDAT"),
                         },
                         .visibility_hidden = !explicit and switch (opts.visibility) {
                             .default => false,
@@ -383,10 +379,8 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                 .resolution = .fromIpIndex(wasm, uav_export.uav_index),
                 .flags = if (is_obj) .{
                     .binding = switch (opts.linkage) {
-                        .internal => .local,
                         .strong => .strong,
                         .weak => .weak,
-                        .link_once => @panic("TODO: COMDAT"),
                     },
                     .visibility_hidden = !explicit and switch (opts.visibility) {
                         .default => false,
@@ -1134,7 +1128,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
         // indirect function table elements
         const table_index: u32 = @intCast(
             wasm.table_imports.getIndex(wasm.preloaded_strings.__indirect_function_table) orelse
-                wasm.table_imports.entries.len + wasm.tables.getIndex(.__indirect_function_table).?,
+                (wasm.table_imports.entries.len + wasm.tables.getIndex(.__indirect_function_table).?),
         );
         // passive with implicit 0-index table or set table index manually
         const flags: u32 = if (table_index == 0) 0x0 else 0x02;
@@ -1706,14 +1700,14 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                 var id: [16]u8 = undefined;
                 std.crypto.hash.sha3.TurboShake128(null).hash(binary_bytes.items, &id, .{});
                 var uuid: [36]u8 = undefined;
-                _ = try std.fmt.bufPrint(&uuid, "{x}-{x}-{x}-{x}-{x}", .{
+                _ = try std.mem.print(&uuid, "{x}-{x}-{x}-{x}-{x}", .{
                     id[0..4], id[4..6], id[6..8], id[8..10], id[10..],
                 });
                 try emitBuildIdSection(gpa, binary_bytes, &uuid);
             },
             .hexstring => |hs| {
                 var buffer: [32 * 2]u8 = undefined;
-                const str = std.fmt.bufPrint(&buffer, "{x}", .{hs.toSlice()}) catch unreachable;
+                const str = std.mem.print(&buffer, "{x}", .{hs.toSlice()}) catch unreachable;
                 try emitBuildIdSection(gpa, binary_bytes, str);
             },
             else => |mode| {
@@ -1722,18 +1716,38 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
             },
         }
 
-        var debug_bytes = std.array_list.Managed(u8).init(gpa);
-        defer debug_bytes.deinit();
-
         try emitProducerSection(gpa, binary_bytes);
         try emitFeaturesSection(gpa, binary_bytes, target);
     }
 
     // Finally, write the entire binary into the file.
     var file_writer = wasm.base.file.?.writer(io, &.{});
-    file_writer.interface.writeAll(binary_bytes.items) catch |err| switch (err) {
-        error.WriteFailed => return file_writer.err.?,
-    };
+    if (wasm.base.isStaticLib()) {
+        const builder = &wasm.archive_builder;
+        // restore for incremental
+        const file_names_len = builder.file_names.items.len;
+        defer builder.file_names.shrinkRetainingCapacity(file_names_len);
+        const members_len = builder.members.items.len;
+        defer builder.members.shrinkRetainingCapacity(members_len);
+        const symbol_names_len = builder.symbol_names.items.len;
+        defer builder.symbol_names.shrinkRetainingCapacity(symbol_names_len);
+        const symbol_offsets_len = builder.symbol_offsets.items.len;
+        defer builder.symbol_offsets.shrinkRetainingCapacity(symbol_offsets_len);
+
+        // TODO: pass ZCU data and symbols to write, so reparsing not needed
+        if (comp.zcu != null) {
+            const name = try std.fmt.allocPrint(gpa, "{s}_zcu.o", .{comp.root_name});
+            defer gpa.free(name);
+            try builder.append(gpa, name, binary_bytes.items);
+        }
+        builder.write(&file_writer.interface) catch |err| switch (err) {
+            error.WriteFailed => return file_writer.err.?,
+        };
+    } else {
+        file_writer.interface.writeAll(binary_bytes.items) catch |err| switch (err) {
+            error.WriteFailed => return file_writer.err.?,
+        };
+    }
     file_writer.end() catch |err| switch (err) {
         error.WriteFailed => return file_writer.err.?,
         else => |e| return e,

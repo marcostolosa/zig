@@ -213,13 +213,13 @@ pub const VTable = struct {
     processSetCurrentDir: *const fn (?*anyopaque, Dir) std.process.SetCurrentDirError!void,
     processSetCurrentPath: *const fn (?*anyopaque, []const u8) std.process.SetCurrentPathError!void,
     processReplace: *const fn (?*anyopaque, std.process.ReplaceOptions) std.process.ReplaceError,
-    processReplacePath: *const fn (?*anyopaque, Dir, std.process.ReplaceOptions) std.process.ReplaceError,
     processSpawn: *const fn (?*anyopaque, std.process.SpawnOptions) std.process.SpawnError!std.process.Child,
-    processSpawnPath: *const fn (?*anyopaque, Dir, std.process.SpawnOptions) std.process.SpawnError!std.process.Child,
     childWait: *const fn (?*anyopaque, *std.process.Child) std.process.Child.WaitError!std.process.Child.Term,
     childKill: *const fn (?*anyopaque, *std.process.Child) void,
 
     progressParentFile: *const fn (?*anyopaque) std.Progress.ParentFileError!File,
+    inheritParentDir: *const fn (?*anyopaque, handle: Dir.Handle) InheritParentHandleError!Dir,
+    inheritParentFile: *const fn (?*anyopaque, handle: File.Handle, flags: File.Flags) InheritParentHandleError!File,
 
     now: *const fn (?*anyopaque, Clock) Timestamp,
     clockResolution: *const fn (?*anyopaque, Clock) Clock.ResolutionError!Duration,
@@ -229,7 +229,6 @@ pub const VTable = struct {
     randomSecure: *const fn (?*anyopaque, buffer: []u8) RandomSecureError!void,
 
     netListenIp: *const fn (?*anyopaque, address: *const net.IpAddress, net.IpAddress.ListenOptions) net.IpAddress.ListenError!net.Socket,
-    netAccept: *const fn (?*anyopaque, server: net.Socket.Handle, options: net.Server.AcceptOptions) net.Server.AcceptError!net.Socket,
     netBindIp: *const fn (?*anyopaque, address: *const net.IpAddress, options: net.IpAddress.BindOptions) net.IpAddress.BindError!net.Socket,
     netConnectIp: *const fn (?*anyopaque, address: *const net.IpAddress, options: net.IpAddress.ConnectOptions) net.IpAddress.ConnectError!net.Socket,
     netListenUnix: *const fn (?*anyopaque, *const net.UnixAddress, net.UnixAddress.ListenOptions) net.UnixAddress.ListenError!net.Socket.Handle,
@@ -251,6 +250,7 @@ pub const Operation = union(enum) {
     device_io_control: DeviceIoControl,
     net_receive: NetReceive,
     net_send: NetSend,
+    net_accept: NetAccept,
     net_read: NetRead,
     net_write: NetWrite,
 
@@ -333,13 +333,45 @@ pub const Operation = union(enum) {
         else => struct {
             file: File,
             /// Device-dependent operation code.
-            code: u32,
+            code: switch (builtin.target.os.tag) {
+                .dragonfly, .freebsd, .netbsd, .openbsd => usize,
+                else => u32,
+            },
             arg: ?*anyopaque,
 
             /// Device and operation dependent result. Negative values are
             /// negative errno.
             pub const Result = i32;
         },
+    };
+
+    pub const NetAccept = struct {
+        socket_handle: net.Socket.Handle,
+        options: net.Server.AcceptOptions,
+
+        pub const Error = error{
+            /// The per-process limit on the number of open file descriptors has been reached.
+            ProcessFdQuotaExceeded,
+            /// The system-wide limit on the total number of open files has been reached.
+            SystemFdQuotaExceeded,
+            /// Not enough free memory. This often means that the memory allocation is limited
+            /// by the socket buffer limits, not by the system memory.
+            SystemResources,
+            /// Either `listen` was never called, or `shutdown` was called (possibly while
+            /// this call was blocking). This allows `shutdown` to be used as a concurrent
+            /// cancellation mechanism.
+            SocketNotListening,
+            /// The network subsystem has failed.
+            NetworkDown,
+            /// An incoming connection was indicated, but was subsequently terminated by the
+            /// remote peer prior to accepting the call.
+            ConnectionAborted,
+            /// Firewall rules forbid connection.
+            BlockedByFirewall,
+            ProtocolFailure,
+        } || Io.UnexpectedError;
+
+        pub const Result = Error!net.Socket;
     };
 
     pub const NetReceive = struct {
@@ -430,6 +462,7 @@ pub const Operation = union(enum) {
     pub const NetRead = struct {
         socket_handle: net.Socket.Handle,
         data: [][]u8,
+        control: []u8 = &.{},
 
         pub const Error = error{
             SystemResources,
@@ -443,7 +476,7 @@ pub const Operation = union(enum) {
             ConnectionTimedOut,
         } || Io.UnexpectedError;
 
-        pub const Result = Error!usize;
+        pub const Result = Error!net.Stream.ReadResult;
     };
 
     pub const NetWrite = struct {
@@ -451,6 +484,7 @@ pub const Operation = union(enum) {
         header: []const u8 = &.{},
         data: []const []const u8,
         splat: usize = 1,
+        control: []const u8 = &.{},
 
         pub const Error = error{
             /// Another TCP Fast Open is already in progress.
@@ -826,6 +860,10 @@ pub const UnexpectedError = error{
     /// the respective function.
     Unexpected,
 };
+
+pub const InheritParentHandleError = error{
+    UnsupportedOperation,
+} || Cancelable || UnexpectedError;
 
 pub const Clock = enum {
     /// A settable system-wide clock that measures real (i.e. wall-clock)
@@ -1705,9 +1743,11 @@ pub fn futexWake(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, m
 /// Mutex is a synchronization primitive which enforces atomic access to a
 /// shared region of code known as the "critical section".
 ///
-/// Mutex is an extern struct so that it may be used as a field inside another
-/// extern struct.
-pub const Mutex = extern struct {
+/// Mutex is not an extern struct because locking and unlocking go through the
+/// futex calls of `Io`, which are not required to work across processes or
+/// compilation units. Code that needs a fixed layout can build its own lock on
+/// a `u32` with the same futex calls.
+pub const Mutex = struct {
     state: std.atomic.Value(State),
 
     pub const init: Mutex = .{ .state = .init(.unlocked) };
@@ -1778,7 +1818,7 @@ pub const Condition = struct {
     /// Incremented whenever the condition is signaled
     epoch: std.atomic.Value(u32),
 
-    const State = packed struct(u32) {
+    const State = bitpack struct(u32) {
         waiters: u16,
         signals: u16,
     };
@@ -2015,9 +2055,7 @@ pub const Event = enum(u32) {
 
     pub const WaitTimeoutError = error{Timeout} || Cancelable;
 
-    /// Blocks the calling thread until either the logical boolean is set, the timeout expires, or a
-    /// spurious wakeup occurs. If the timeout expires or a spurious wakeup occurs, `error.Timeout`
-    /// is returned.
+    /// Blocks the calling thread until either the logical boolean is set or the timeout expires.
     pub fn waitTimeout(event: *Event, io: Io, timeout: Timeout) WaitTimeoutError!void {
         if (@cmpxchgStrong(Event, event, .unset, .waiting, .acquire, .acquire)) |prev| switch (prev) {
             .unset => unreachable,
@@ -2031,11 +2069,19 @@ pub const Event = enum(u32) {
             // waiters would wake up when a *new waiter* was added. So it's easiest to just leave
             // the state at `.waiting`---at worst it causes one redundant call to `futexWake`.
         }
-        try io.futexWaitTimeout(Event, event, .waiting, timeout);
-        switch (@atomicLoad(Event, event, .acquire)) {
-            .unset => unreachable, // `reset` called before pending `wait` returned
-            .waiting => return error.Timeout,
-            .is_set => return,
+
+        const deadline = timeout.toDeadline(io);
+
+        while (true) {
+            try io.futexWaitTimeout(Event, event, .waiting, timeout);
+            switch (@atomicLoad(Event, event, .acquire)) {
+                .unset => unreachable, // `reset` called before pending `wait` returned
+                .waiting => {
+                    const remaining = deadline.toDurationFromNow(io) orelse continue;
+                    if (remaining.raw.nanoseconds <= 0) return error.Timeout;
+                },
+                .is_set => return,
+            }
         }
     }
 
@@ -2797,13 +2843,13 @@ pub const failing: std.Io = .{
         .processSetCurrentDir = failingProcessSetCurrentDir,
         .processSetCurrentPath = failingProcessSetCurrentPath,
         .processReplace = failingProcessReplace,
-        .processReplacePath = failingProcessReplacePath,
         .processSpawn = failingProcessSpawn,
-        .processSpawnPath = failingProcessSpawnPath,
         .childWait = unreachableChildWait,
         .childKill = unreachableChildKill,
 
         .progressParentFile = failingProgressParentFile,
+        .inheritParentDir = failingInheritParentDir,
+        .inheritParentFile = failingInheritParentFile,
 
         .random = noRandom,
         .randomSecure = failingRandomSecure,
@@ -2813,7 +2859,6 @@ pub const failing: std.Io = .{
         .sleep = noSleep,
 
         .netListenIp = failingNetListenIp,
-        .netAccept = failingNetAccept,
         .netBindIp = failingNetBindIp,
         .netConnectIp = failingNetConnectIp,
         .netListenUnix = failingNetListenUnix,
@@ -2966,6 +3011,7 @@ pub fn failingOperate(userdata: ?*anyopaque, operation: Operation) Cancelable!Op
         .device_io_control => unreachable,
         .net_receive => .{ .net_receive = .{ error.NetworkDown, 0 } },
         .net_send => .{ .net_send = .{ error.NetworkDown, 0 } },
+        .net_accept => .{ .net_accept = error.NetworkDown },
         .net_read => .{ .net_read = error.NetworkDown },
         .net_write => .{ .net_write = error.NetworkDown },
     };
@@ -3077,8 +3123,8 @@ pub fn unreachableDirClose(userdata: ?*anyopaque, dirs: []const Dir) void {
 
 pub fn noDirRead(userdata: ?*anyopaque, dir_reader: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
     _ = userdata;
-    _ = dir_reader;
     _ = buffer;
+    dir_reader.state = .finished;
     return 0;
 }
 
@@ -3219,8 +3265,8 @@ pub fn unreachableFileClose(userdata: ?*anyopaque, files: []const File) void {
 pub fn failingFileWritePositional(userdata: ?*anyopaque, file: File, header: []const u8, data: []const []const u8, splat: usize, offset: u64) File.WritePositionalError!usize {
     _ = userdata;
     _ = file;
-    _ = header;
     _ = offset;
+    if (header.len != 0) return error.BrokenPipe;
     for (data[0 .. data.len - 1]) |item| {
         if (item.len > 0) return error.BrokenPipe;
     }
@@ -3451,22 +3497,8 @@ pub fn failingProcessReplace(userdata: ?*anyopaque, options: std.process.Replace
     return error.OperationUnsupported;
 }
 
-pub fn failingProcessReplacePath(userdata: ?*anyopaque, dir: Dir, options: std.process.ReplaceOptions) std.process.ReplaceError {
-    _ = userdata;
-    _ = dir;
-    _ = options;
-    return error.OperationUnsupported;
-}
-
 pub fn failingProcessSpawn(userdata: ?*anyopaque, options: std.process.SpawnOptions) std.process.SpawnError!std.process.Child {
     _ = userdata;
-    _ = options;
-    return error.OperationUnsupported;
-}
-
-pub fn failingProcessSpawnPath(userdata: ?*anyopaque, dir: Dir, options: std.process.SpawnOptions) std.process.SpawnError!std.process.Child {
-    _ = userdata;
-    _ = dir;
     _ = options;
     return error.OperationUnsupported;
 }
@@ -3485,6 +3517,19 @@ pub fn unreachableChildKill(userdata: ?*anyopaque, child: *std.process.Child) vo
 
 pub fn failingProgressParentFile(userdata: ?*anyopaque) std.Progress.ParentFileError!File {
     _ = userdata;
+    return error.UnsupportedOperation;
+}
+
+pub fn failingInheritParentDir(userdata: ?*anyopaque, handle: Dir.Handle) InheritParentHandleError!Dir {
+    _ = userdata;
+    _ = handle;
+    return error.UnsupportedOperation;
+}
+
+pub fn failingInheritParentFile(userdata: ?*anyopaque, handle: File.Handle, flags: File.Flags) InheritParentHandleError!File {
+    _ = userdata;
+    _ = handle;
+    _ = flags;
     return error.UnsupportedOperation;
 }
 

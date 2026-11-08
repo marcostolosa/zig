@@ -712,14 +712,20 @@ const Writer = struct {
             .std_lang_value => try self.writeStdLangValue(stream, extended),
             .inplace_arith_result_ty => try self.writeInplaceArithResultTy(stream, extended),
 
-            .dbg_empty_stmt => try stream.writeAll("))"),
-            .astgen_error => try stream.writeAll("))"),
+            .dbg_empty_stmt, .astgen_error => try stream.writeAll("))"),
+
+            .validate_c_type => {
+                const c_type: std.Target.CType = @fromBackingInt(@intCast(extended.small));
+                const src_node: Ast.Node.Offset = @fromBackingInt(@bitCast(extended.operand));
+                try stream.print("{t})) ", .{c_type});
+                try self.writeSrcNode(stream, src_node);
+            },
         }
     }
 
     fn writeExtNode(self: *Writer, stream: *std.Io.Writer, extended: Zir.Inst.Extended.InstData) !void {
         try stream.writeAll(")) ");
-        const src_node: Ast.Node.Offset = @fromBackingInt(@intCast(@as(i32, @bitCast(extended.operand))));
+        const src_node: Ast.Node.Offset = @fromBackingInt(@bitCast(extended.operand));
         try self.writeSrcNode(stream, src_node);
     }
 
@@ -813,25 +819,25 @@ const Writer = struct {
         var extra_index = extra.end;
         if (inst_data.flags.has_sentinel) {
             try stream.writeAll(", ");
-            try self.writeInstRef(stream, @as(Zir.Inst.Ref, @fromBackingInt(@intCast(self.code.extra[extra_index]))));
+            try self.writeInstRef(stream, @fromBackingInt(self.code.extra[extra_index]));
             extra_index += 1;
         }
         if (inst_data.flags.has_align) {
             try stream.writeAll(", align(");
-            try self.writeInstRef(stream, @as(Zir.Inst.Ref, @fromBackingInt(@intCast(self.code.extra[extra_index]))));
+            try self.writeInstRef(stream, @fromBackingInt(self.code.extra[extra_index]));
             extra_index += 1;
             if (inst_data.flags.has_bit_range) {
                 const bit_start = extra_index + @intFromBool(inst_data.flags.has_addrspace);
                 try stream.writeAll(":");
-                try self.writeInstRef(stream, @as(Zir.Inst.Ref, @fromBackingInt(@intCast(self.code.extra[bit_start]))));
+                try self.writeInstRef(stream, @fromBackingInt(self.code.extra[bit_start]));
                 try stream.writeAll(":");
-                try self.writeInstRef(stream, @as(Zir.Inst.Ref, @fromBackingInt(@intCast(self.code.extra[bit_start + 1]))));
+                try self.writeInstRef(stream, @fromBackingInt(self.code.extra[bit_start + 1]));
             }
             try stream.writeAll(")");
         }
         if (inst_data.flags.has_addrspace) {
             try stream.writeAll(", addrspace(");
-            try self.writeInstRef(stream, @as(Zir.Inst.Ref, @fromBackingInt(@intCast(self.code.extra[extra_index]))));
+            try self.writeInstRef(stream, @fromBackingInt(self.code.extra[extra_index]));
             try stream.writeAll(")");
         }
         try stream.writeAll(") ");
@@ -1288,7 +1294,7 @@ const Writer = struct {
 
         try self.writeFlag(stream, "volatile, ", small.is_volatile);
         if (tmpl_is_expr) {
-            try self.writeInstRef(stream, @fromBackingInt(@intCast(@backingInt(extra.data.asm_source))));
+            try self.writeInstRef(stream, @fromBackingInt(@backingInt(extra.data.asm_source)));
         } else {
             const asm_source = self.code.nullTerminatedString(extra.data.asm_source);
             try stream.print("\"{f}\"", .{std.zig.fmtString(asm_source)});
@@ -1452,15 +1458,17 @@ const Writer = struct {
         self.parent_decl_node = struct_decl.src_node;
         defer self.parent_decl_node = prev_parent_decl_node;
 
+        try stream.print(":{d}:{d} ", .{ struct_decl.src_line + 1, struct_decl.src_column + 1 });
+
         const fields_hash = self.code.getAssociatedSrcHash(inst).?;
         try stream.print("hash({x}) ", .{&fields_hash});
 
         try stream.print("{s}, ", .{@tagName(struct_decl.name_strategy)});
 
         if (struct_decl.backing_int_type_body) |backing_int_type_body| {
-            assert(struct_decl.layout == .@"packed");
-            try stream.writeAll("packed(");
-            try self.writeBracedDecl(stream, backing_int_type_body);
+            assert(struct_decl.layout == .@"bitpack");
+            try stream.writeAll("bitpack(");
+            try self.writeBracedDeclWithBaseline(stream, backing_int_type_body, struct_decl.arg_baseline_src_node);
             try stream.writeAll("), ");
         } else {
             try stream.print("{s}, ", .{@tagName(struct_decl.layout)});
@@ -1485,15 +1493,15 @@ const Writer = struct {
                 try stream.print("{f}: ", .{std.zig.fmtIdP(field_name)});
 
                 self.indent += 2;
-                try self.writeBracedDecl(stream, field.type_body);
+                try self.writeBracedDeclWithBaseline(stream, field.type_body, struct_decl.fields_baseline_src_node);
                 if (field.align_body) |body| {
                     try stream.writeAll(" align(");
-                    try self.writeBracedDecl(stream, body);
+                    try self.writeBracedDeclWithBaseline(stream, body, struct_decl.fields_baseline_src_node);
                     try stream.writeByte(')');
                 }
                 if (field.default_body) |body| {
                     try stream.writeAll(" = ");
-                    try self.writeBracedDecl(stream, body);
+                    try self.writeBracedDeclWithBaseline(stream, body, struct_decl.fields_baseline_src_node);
                 }
                 self.indent -= 2;
 
@@ -1514,6 +1522,8 @@ const Writer = struct {
         self.parent_decl_node = union_decl.src_node;
         defer self.parent_decl_node = prev_parent_decl_node;
 
+        try stream.print(":{d}:{d} ", .{ union_decl.src_line + 1, union_decl.src_column + 1 });
+
         const fields_hash = self.code.getAssociatedSrcHash(inst).?;
         try stream.print("hash({x}) ", .{&fields_hash});
 
@@ -1522,21 +1532,21 @@ const Writer = struct {
         switch (union_decl.kind) {
             .auto => try stream.writeAll("auto, "),
             .@"extern" => try stream.writeAll("extern, "),
-            .@"packed" => try stream.writeAll("packed, "),
-            .packed_explicit => {
-                try stream.writeAll("packed(");
-                try self.writeBracedDecl(stream, union_decl.arg_type_body.?);
+            .@"bitpack" => try stream.writeAll("bitpack, "),
+            .bitpack_explicit => {
+                try stream.writeAll("bitpack(");
+                try self.writeBracedDeclWithBaseline(stream, union_decl.arg_type_body.?, union_decl.arg_baseline_src_node);
                 try stream.writeAll("), ");
             },
             .tagged_explicit => {
                 try stream.writeAll("tagged(");
-                try self.writeBracedDecl(stream, union_decl.arg_type_body.?);
+                try self.writeBracedDeclWithBaseline(stream, union_decl.arg_type_body.?, union_decl.arg_baseline_src_node);
                 try stream.writeAll("), ");
             },
             .tagged_enum => try stream.writeAll("tagged(enum), "),
             .tagged_enum_explicit => {
                 try stream.writeAll("tagged(enum(");
-                try self.writeBracedDecl(stream, union_decl.arg_type_body.?);
+                try self.writeBracedDeclWithBaseline(stream, union_decl.arg_type_body.?, union_decl.arg_baseline_src_node);
                 try stream.writeAll(")), ");
             },
         }
@@ -1561,16 +1571,16 @@ const Writer = struct {
                 self.indent += 2;
                 if (field.type_body) |body| {
                     try stream.writeAll(": ");
-                    try self.writeBracedDecl(stream, body);
+                    try self.writeBracedDeclWithBaseline(stream, body, union_decl.fields_baseline_src_node);
                 }
                 if (field.align_body) |body| {
                     try stream.writeAll(" align(");
-                    try self.writeBracedDecl(stream, body);
+                    try self.writeBracedDeclWithBaseline(stream, body, union_decl.fields_baseline_src_node);
                     try stream.writeByte(')');
                 }
                 if (field.value_body) |body| {
                     try stream.writeAll(" = ");
-                    try self.writeBracedDecl(stream, body);
+                    try self.writeBracedDeclWithBaseline(stream, body, union_decl.fields_baseline_src_node);
                 }
                 self.indent -= 2;
 
@@ -1590,6 +1600,8 @@ const Writer = struct {
         self.parent_decl_node = enum_decl.src_node;
         defer self.parent_decl_node = prev_parent_decl_node;
 
+        try stream.print(":{d}:{d} ", .{ enum_decl.src_line + 1, enum_decl.src_column + 1 });
+
         const fields_hash = self.code.getAssociatedSrcHash(inst).?;
         try stream.print("hash({x}) ", .{&fields_hash});
 
@@ -1597,7 +1609,7 @@ const Writer = struct {
         try self.writeFlag(stream, "nonexhaustive, ", enum_decl.nonexhaustive);
         if (enum_decl.tag_type_body) |tag_type_body| {
             try stream.writeAll("tag(");
-            try self.writeBracedDecl(stream, tag_type_body);
+            try self.writeBracedDeclWithBaseline(stream, tag_type_body, enum_decl.arg_baseline_src_node);
             try stream.writeAll("), ");
         }
 
@@ -1619,7 +1631,7 @@ const Writer = struct {
                 try stream.print("{f}", .{std.zig.fmtIdP(field_name)});
                 if (field.value_body) |body| {
                     try stream.writeAll(" = ");
-                    try self.writeBracedDecl(stream, body);
+                    try self.writeBracedDeclWithBaseline(stream, body, enum_decl.fields_baseline_src_node);
                 }
                 try stream.writeAll(",\n");
             }
@@ -1636,6 +1648,8 @@ const Writer = struct {
         const prev_parent_decl_node = self.parent_decl_node;
         self.parent_decl_node = opaque_decl.src_node;
         defer self.parent_decl_node = prev_parent_decl_node;
+
+        try stream.print(":{d}:{d} ", .{ opaque_decl.src_line + 1, opaque_decl.src_column + 1 });
 
         try stream.print("{s}, ", .{@tagName(opaque_decl.name_strategy)});
         try self.writeCaptures(stream, opaque_decl.captures, opaque_decl.capture_names);
@@ -1661,9 +1675,9 @@ const Writer = struct {
             extra_index += 2;
 
             try stream.print("@\"{d}\": ", .{field_idx});
-            try self.writeInstRef(stream, @fromBackingInt(@intCast(field_ty)));
+            try self.writeInstRef(stream, @fromBackingInt(field_ty));
             try stream.writeAll(" = ");
-            try self.writeInstRef(stream, @fromBackingInt(@intCast(field_init)));
+            try self.writeInstRef(stream, @fromBackingInt(field_init));
         }
 
         try stream.writeAll(" }) ");
@@ -1682,10 +1696,10 @@ const Writer = struct {
         try stream.writeAll("{\n");
         self.indent += 2;
 
-        var extra_index = @as(u32, @intCast(extra.end));
+        var extra_index: u32 = @intCast(extra.end);
         const extra_index_end = extra_index + extra.data.fields_len;
         while (extra_index < extra_index_end) : (extra_index += 1) {
-            const name_index: Zir.NullTerminatedString = @fromBackingInt(@intCast(self.code.extra[extra_index]));
+            const name_index: Zir.NullTerminatedString = @fromBackingInt(self.code.extra[extra_index]);
             const name = self.code.nullTerminatedString(name_index);
             try stream.splatByteAll(' ', self.indent);
             try stream.print("{f},\n", .{std.zig.fmtIdP(name)});
@@ -1909,7 +1923,7 @@ const Writer = struct {
                 ret_ty_ref = .void_type;
             },
             1 => {
-                ret_ty_ref = @as(Zir.Inst.Ref, @fromBackingInt(@intCast(self.code.extra[extra_index])));
+                ret_ty_ref = @fromBackingInt(self.code.extra[extra_index]);
                 extra_index += 1;
             },
             else => {
@@ -1960,7 +1974,7 @@ const Writer = struct {
             cc_body = self.code.bodySlice(extra_index, body_len);
             extra_index += cc_body.len;
         } else if (extra.data.bits.has_cc_ref) {
-            cc_ref = @as(Zir.Inst.Ref, @fromBackingInt(@intCast(self.code.extra[extra_index])));
+            cc_ref = @fromBackingInt(self.code.extra[extra_index]);
             extra_index += 1;
         }
         if (extra.data.bits.has_ret_ty_body) {
@@ -1969,7 +1983,7 @@ const Writer = struct {
             ret_ty_body = self.code.bodySlice(extra_index, body_len);
             extra_index += ret_ty_body.len;
         } else if (extra.data.bits.has_ret_ty_ref) {
-            ret_ty_ref = @as(Zir.Inst.Ref, @fromBackingInt(@intCast(self.code.extra[extra_index])));
+            ret_ty_ref = @fromBackingInt(self.code.extra[extra_index]);
             extra_index += 1;
         }
 
@@ -2005,16 +2019,16 @@ const Writer = struct {
 
     fn writeAllocExtended(self: *Writer, stream: *std.Io.Writer, extended: Zir.Inst.Extended.InstData) !void {
         const extra = self.code.extraData(Zir.Inst.AllocExtended, extended.operand);
-        const small = @as(Zir.Inst.AllocExtended.Small, @bitCast(extended.small));
+        const small: Zir.Inst.AllocExtended.Small = @bitCast(extended.small);
 
         var extra_index: usize = extra.end;
         const type_inst: Zir.Inst.Ref = if (!small.has_type) .none else blk: {
-            const type_inst = @as(Zir.Inst.Ref, @fromBackingInt(@intCast(self.code.extra[extra_index])));
+            const type_inst: Zir.Inst.Ref = @fromBackingInt(self.code.extra[extra_index]);
             extra_index += 1;
             break :blk type_inst;
         };
         const align_inst: Zir.Inst.Ref = if (!small.has_align) .none else blk: {
-            const align_inst = @as(Zir.Inst.Ref, @fromBackingInt(@intCast(self.code.extra[extra_index])));
+            const align_inst: Zir.Inst.Ref = @fromBackingInt(self.code.extra[extra_index]);
             extra_index += 1;
             break :blk align_inst;
         };
@@ -2203,6 +2217,8 @@ const Writer = struct {
         defer self.parent_decl_node = prev_parent_decl_node;
         self.parent_decl_node = decl.src_node;
 
+        try stream.print(":{d}:{d} ", .{ decl.src_line + 1, decl.src_column + 1 });
+
         if (decl.is_pub) try stream.writeAll("pub ");
         switch (decl.linkage) {
             .normal => {},
@@ -2216,10 +2232,9 @@ const Writer = struct {
                 try stream.print("{s} '{s}'", .{ @tagName(decl.kind), self.code.nullTerminatedString(decl.name) });
             },
         }
+
         const src_hash = self.code.getAssociatedSrcHash(inst).?;
-        try stream.print(" line({d}) column({d}) hash({x})", .{
-            decl.src_line, decl.src_column, &src_hash,
-        });
+        try stream.print(" hash({x})", .{&src_hash});
 
         {
             if (decl.type_body) |b| {
@@ -2254,20 +2269,20 @@ const Writer = struct {
 
     fn writeClosureGet(self: *Writer, stream: *std.Io.Writer, extended: Zir.Inst.Extended.InstData) !void {
         try stream.print("{d})) ", .{extended.small});
-        const src_node: Ast.Node.Offset = @fromBackingInt(@intCast(@as(i32, @bitCast(extended.operand))));
+        const src_node: Ast.Node.Offset = @fromBackingInt(@bitCast(extended.operand));
         try self.writeSrcNode(stream, src_node);
     }
 
     fn writeStdLangValue(self: *Writer, stream: *std.Io.Writer, extended: Zir.Inst.Extended.InstData) !void {
-        const val: Zir.Inst.StdLangValue = @fromBackingInt(@intCast(extended.small));
+        const val: Zir.Inst.StdLangValue = @fromBackingInt(extended.small);
         try stream.print("{s})) ", .{@tagName(val)});
-        const src_node: Ast.Node.Offset = @fromBackingInt(@intCast(@as(i32, @bitCast(extended.operand))));
+        const src_node: Ast.Node.Offset = @fromBackingInt(@bitCast(extended.operand));
         try self.writeSrcNode(stream, src_node);
     }
 
     fn writeInplaceArithResultTy(self: *Writer, stream: *std.Io.Writer, extended: Zir.Inst.Extended.InstData) !void {
-        const op: Zir.Inst.InplaceOp = @fromBackingInt(@intCast(extended.small));
-        try self.writeInstRef(stream, @fromBackingInt(@intCast(extended.operand)));
+        const op: Zir.Inst.InplaceOp = @fromBackingInt(extended.small);
+        try self.writeInstRef(stream, @fromBackingInt(extended.operand));
         try stream.print(", {s}))", .{@tagName(op)});
     }
 
@@ -2277,7 +2292,7 @@ const Writer = struct {
         } else if (ref.toIndex()) |i| {
             return self.writeInstIndex(stream, i);
         } else {
-            const val: InternPool.Index = @fromBackingInt(@intCast(@backingInt(ref)));
+            const val: InternPool.Index = @fromBackingInt(@backingInt(ref));
             return stream.print("@{s}", .{@tagName(val)});
         }
     }
@@ -2398,6 +2413,18 @@ const Writer = struct {
 
     fn writeBracedDecl(self: *Writer, stream: *std.Io.Writer, body: []const Zir.Inst.Index) !void {
         try self.writeBracedBodyConditional(stream, body, self.recurse_decls);
+    }
+
+    fn writeBracedDeclWithBaseline(
+        self: *Writer,
+        stream: *std.Io.Writer,
+        body: []const Zir.Inst.Index,
+        src_baseline: Ast.Node.Index,
+    ) !void {
+        const prev_parent_decl_node = self.parent_decl_node;
+        self.parent_decl_node = src_baseline;
+        defer self.parent_decl_node = prev_parent_decl_node;
+        try self.writeBracedDecl(stream, body);
     }
 
     fn writeBracedBody(self: *Writer, stream: *std.Io.Writer, body: []const Zir.Inst.Index) !void {

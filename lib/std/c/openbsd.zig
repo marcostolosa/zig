@@ -9,10 +9,27 @@ const passwd = std.c.passwd;
 const timespec = std.c.timespec;
 const uid_t = std.c.uid_t;
 const pid_t = std.c.pid_t;
+const fd_t = std.c.fd_t;
+const sockaddr = std.c.sockaddr;
+const socklen_t = std.c.socklen_t;
+const NI = std.c.NI;
+const EAI = std.c.EAI;
 
 comptime {
     assert(builtin.os.tag == .openbsd); // Prevent access of std.c symbols on wrong OS.
 }
+
+pub extern "c" fn ioctl(fd: fd_t, request: c_ulong, ...) c_int;
+
+pub extern "c" fn getnameinfo(
+    noalias addr: *const sockaddr,
+    addrlen: socklen_t,
+    noalias host: ?[*]u8,
+    hostlen: usize,
+    noalias serv: ?[*]u8,
+    servlen: usize,
+    flags: NI,
+) EAI;
 
 pub extern "c" fn ptrace(request: c_int, pid: pid_t, addr: caddr_t, data: c_int) c_int;
 
@@ -268,45 +285,26 @@ pub const E = enum(u16) {
     _,
 };
 
-pub const MAX_PAGE_SHIFT = switch (builtin.cpu.arch) {
-    .x86 => 12,
-    .sparc64 => 13,
+pub const MAX_PAGE_SHIFT = switch (builtin.target.cpu.arch) {
+    .alpha,
+    .sparc64,
+    => 13,
+    .arm,
+    .aarch64,
+    .hppa,
+    .m88k,
+    .powerpc,
+    .powerpc64,
+    .riscv64,
+    .sh,
+    .x86,
+    .x86_64,
+    => 12,
+    .mips64,
+    => 14,
 };
 
-pub const HW = struct {
-    pub const MACHINE = 1;
-    pub const MODEL = 2;
-    pub const NCPU = 3;
-    pub const BYTEORDER = 4;
-    pub const PHYSMEM = 5;
-    pub const USERMEM = 6;
-    pub const PAGESIZE = 7;
-    pub const DISKNAMES = 8;
-    pub const DISKSTATS = 9;
-    pub const DISKCOUNT = 10;
-    pub const SENSORS = 11;
-    pub const CPUSPEED = 12;
-    pub const SETPERF = 13;
-    pub const VENDOR = 14;
-    pub const PRODUCT = 15;
-    pub const VERSION = 16;
-    pub const SERIALNO = 17;
-    pub const UUID = 18;
-    pub const PHYSMEM64 = 19;
-    pub const USERMEM64 = 20;
-    pub const NCPUFOUND = 21;
-    pub const ALLOWPOWERDOWN = 22;
-    pub const PERFPOLICY = 23;
-    pub const SMT = 24;
-    pub const NCPUONLINE = 25;
-    pub const POWER = 26;
-};
-
-pub const PTHREAD_STACK_MIN = switch (builtin.cpu.arch) {
-    .sparc64 => 1 << 13,
-    .mips64 => 1 << 14,
-    else => 1 << 12,
-};
+pub const PTHREAD_STACK_MIN = 1 << MAX_PAGE_SHIFT;
 
 // https://github.com/openbsd/src/blob/718a31b40d39fc6064de6355eb144e74633133fc/sys/netinet/in.h#L283
 pub const IP = struct {
@@ -442,4 +440,14 @@ pub const IPTOS = struct {
     pub const ECN_ECT0 = 0x02;
     pub const ECN_CE = 0x03;
     pub const ECN_MASK = 0x03;
+};
+
+// https://github.com/openbsd/src/blob/5761484065d1eed341f812f818ecf3f79138e7c6/sys/netinet/tcp.h#L215
+pub const TCP = struct {
+    pub const NODELAY = 0x01;
+    pub const MAXSEG = 0x02;
+    pub const MD5SIG = 0x04;
+    pub const SACK_ENABLE = 0x08;
+    pub const INFO = 0x09;
+    pub const NOPUSH = 0x10;
 };

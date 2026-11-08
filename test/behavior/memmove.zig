@@ -5,7 +5,7 @@ const expect = std.testing.expect;
 test "memmove and memset intrinsics" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     try testMemmoveMemset();
@@ -32,7 +32,7 @@ fn testMemmoveMemset() !void {
 test "@memmove with both operands single-ptr-to-array, one is null-terminated" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     try testMemmoveBothSinglePtrArrayOneIsNullTerminated();
@@ -75,7 +75,7 @@ fn testMemmoveBothSinglePtrArrayOneIsNullTerminated() !void {
 test "@memmove dest many pointer" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     try testMemmoveDestManyPtr();
@@ -117,7 +117,7 @@ test "@memmove slice" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     try testMemmoveSlice();
@@ -169,4 +169,35 @@ comptime {
     var s = S{};
     s.set("hello");
     if (!std.mem.eql(u8, s.buffer[0..8], "hehelloo")) @compileError("bad");
+}
+
+test "@memmove a global array" {
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+
+    const S = struct {
+        var array_u8: [1]u8 = .{1};
+        const slice_u8: []u8 = &array_u8;
+        var array_u32: [1]u32 = .{10};
+        const slice_u32: []u32 = &array_u32;
+    };
+
+    try expect(S.array_u8[0] == 1);
+    @memmove(&S.array_u8, &[1]u8{2});
+    try expect(S.array_u8[0] == 2);
+    @memmove(&S.array_u8, &[1]u8{S.array_u8[0] + 1});
+    try expect(S.array_u8[0] == 3);
+    @memmove(S.slice_u8, &[1]u8{4});
+    try expect(S.array_u8[0] == 4);
+    @memmove(S.slice_u8, &[1]u8{S.array_u8[0] + 1});
+    try expect(S.array_u8[0] == 5);
+
+    try expect(S.array_u32[0] == 10);
+    @memmove(&S.array_u32, &[1]u32{20});
+    try expect(S.array_u32[0] == 20);
+    @memmove(&S.array_u32, &[1]u32{S.array_u32[0] + 10});
+    try expect(S.array_u32[0] == 30);
+    @memmove(S.slice_u32, &[1]u32{40});
+    try expect(S.array_u32[0] == 40);
+    @memmove(S.slice_u32, &[1]u32{S.array_u32[0] + 10});
+    try expect(S.array_u32[0] == 50);
 }

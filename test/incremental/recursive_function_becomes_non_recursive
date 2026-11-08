@@ -1,5 +1,9 @@
-#update=initial version
-#file=main.zig
+#zig build-exe {
+--name test
+-Mroot=test.zig
+#}
+
+#write test.zig {
 pub fn main() !void {
     try foo(false);
 }
@@ -10,10 +14,13 @@ fn foo(recurse: bool) !void {
 }
 const std = @import("std");
 const io = std.Io.Threaded.global_single_threaded.io();
-#expect_stdout="non-recursive path\n"
+#}
+#update
+#check stdout {
+non-recursive path
+#}
 
-#update=eliminate recursion and change argument
-#file=main.zig
+#write test.zig {
 pub fn main() !void {
     try foo(true);
 }
@@ -24,4 +31,8 @@ fn foo(recurse: bool) !void {
 }
 const std = @import("std");
 const io = std.Io.Threaded.global_single_threaded.io();
-#expect_stdout="x==1\n"
+#}
+#update "eliminate recursion and change argument"
+#check stdout {
+x==1
+#}

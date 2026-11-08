@@ -110,7 +110,7 @@ const Fiber = struct {
 
     var next_name: u64 = 0;
 
-    const CancelStatus = packed struct(usize) {
+    const CancelStatus = bitpack struct(usize) {
         requested: bool,
         awaiting: Awaiting,
 
@@ -150,7 +150,7 @@ const Fiber = struct {
         }
     };
 
-    const CancelProtection = packed struct {
+    const CancelProtection = bitpack struct {
         user: Io.CancelProtection,
         acknowledged: bool,
 
@@ -234,13 +234,13 @@ const Fiber = struct {
     const Queue = struct { head: *Fiber, tail: *Fiber };
 
     /// Like a `*Fiber`, but 2 bits smaller than a pointer (because the LSBs are always 0 due to
-    /// alignment) so that those two bits can be used in a `packed struct`.
+    /// alignment) so that those two bits can be used in a `bitpack struct`.
     const PackedPtr = enum(@Int(.unsigned, @bitSizeOf(usize) - 2)) {
         null = 0,
         all_ones = std.math.maxInt(@Int(.unsigned, @bitSizeOf(usize) - 2)),
         _,
 
-        const Split = packed struct(usize) { low: u2, high: PackedPtr };
+        const Split = bitpack struct(usize) { low: u2, high: PackedPtr };
         fn pack(ptr: ?*Fiber) PackedPtr {
             const split: Split = @bitCast(@intFromPtr(ptr));
             assert(split.low == 0);
@@ -436,9 +436,7 @@ pub fn io(ev: *Evented) Io {
             .processSetCurrentDir = processSetCurrentDir,
             .processSetCurrentPath = processSetCurrentPath,
             .processReplace = processReplace,
-            .processReplacePath = processReplacePath,
             .processSpawn = processSpawn,
-            .processSpawnPath = processSpawnPath,
             .childWait = childWait,
             .childKill = childKill,
 
@@ -452,7 +450,6 @@ pub fn io(ev: *Evented) Io {
             .randomSecure = randomSecure,
 
             .netListenIp = netListenIpUnavailable,
-            .netAccept = netAcceptUnavailable,
             .netBindIp = netBindIpUnavailable,
             .netConnectIp = netConnectIpUnavailable,
             .netListenUnix = netListenUnixUnavailable,
@@ -464,6 +461,8 @@ pub fn io(ev: *Evented) Io {
             .netInterfaceNameResolve = netInterfaceNameResolveUnavailable,
             .netInterfaceName = netInterfaceNameUnavailable,
             .netLookup = netLookupUnavailable,
+            .inheritParentDir = Io.failingInheritParentDir,
+            .inheritParentFile = Io.failingInheritParentFile,
         },
     };
 }
@@ -813,7 +812,7 @@ const Mutex = struct {
     queue: c.dispatch.queue_t,
     waiters: std.DoublyLinkedList,
 
-    const State = packed struct(usize) {
+    const State = bitpack struct(usize) {
         locked: bool,
         num_waiters: NumWaiters,
 
@@ -1127,7 +1126,7 @@ fn cancel(
 const Group = struct {
     ptr: *Io.Group,
 
-    const List = packed struct(usize) {
+    const List = bitpack struct(usize) {
         cancel_requested: bool,
         awaiter_delayed: bool,
         fibers: Fiber.PackedPtr,
@@ -1136,7 +1135,7 @@ const Group = struct {
         return @ptrCast(&group.ptr.token);
     }
 
-    const Mutex = packed struct(u32) {
+    const Mutex = bitpack struct(u32) {
         locked: bool,
         contended: bool,
         shared2: u30,
@@ -1150,7 +1149,7 @@ const Group = struct {
         };
     }
 
-    const Awaiter = packed struct(usize) {
+    const Awaiter = bitpack struct(usize) {
         locked: bool,
         contended: bool,
         awaiter: Fiber.PackedPtr,
@@ -1712,6 +1711,7 @@ fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Oper
         .device_io_control => |*o| return .{ .device_io_control = try deviceIoControl(o) },
         .net_receive => @panic("TODO implement net_receive operation"),
         .net_send => @panic("TODO implement net_send operation"),
+        .net_accept => @panic("TODO implement net_accept operation"),
         .net_read => @panic("TODO implement net_read operation"),
         .net_write => @panic("TODO implement net_write operation"),
     }
@@ -1931,10 +1931,10 @@ const BatchWaiter = struct {
 
 fn batchAwaitAsync(userdata: ?*anyopaque, batch: *Io.Batch) Io.Cancelable!void {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
-    const queue = ev.batchDrainSubmitted(batch, false) catch |err| switch (err) {
+    const queue = (ev.batchDrainSubmitted(batch, false) catch |err| switch (err) {
         error.ConcurrencyUnavailable => unreachable, // passed concurrency=false
         error.Canceled => |e| return e,
-    } orelse return;
+    }) orelse return;
     if (batch.pending.head == .none) return;
     var waiter: BatchWaiter = .{
         .sleeper = .init(ev.queue, Thread.current().currentFiber()),
@@ -2134,7 +2134,9 @@ fn batchDrainSubmitted(
                     break :result null;
                 },
                 .device_io_control => {},
+                .net_accept => @panic("TODO implement batched net_accept"),
                 .net_receive => @panic("TODO implement batched net_receive"),
+                .net_send => @panic("TODO implement batched net_send"),
                 .net_read => @panic("TODO implement batched net_read"),
                 .net_write => @panic("TODO implement batched net_write"),
             };
@@ -2195,7 +2197,9 @@ fn batchSourceEvent(context: ?*anyopaque) callconv(.c) void {
             } };
         },
         .device_io_control => unreachable,
+        .net_accept => @panic("TODO implement batched net_accept"),
         .net_receive => @panic("TODO implement batched net_receive"),
+        .net_send => @panic("TODO implement batched net_send"),
         .net_read => @panic("TODO implement batched net_read"),
         .net_write => @panic("TODO implement batched net_write"),
     };
@@ -4797,18 +4801,6 @@ fn netListenIpUnavailable(
     const ev: *Evented = @ptrCast(@alignCast(userdata));
     _ = ev;
     _ = address;
-    _ = options;
-    return error.NetworkDown;
-}
-
-fn netAcceptUnavailable(
-    userdata: ?*anyopaque,
-    listen_handle: net.Socket.Handle,
-    options: net.Server.AcceptOptions,
-) net.Server.AcceptError!net.Socket {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = listen_handle;
     _ = options;
     return error.NetworkDown;
 }

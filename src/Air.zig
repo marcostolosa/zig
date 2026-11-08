@@ -13,10 +13,10 @@ const InternPool = @import("InternPool.zig");
 const Type = @import("Type.zig");
 const Value = @import("Value.zig");
 const Zcu = @import("Zcu.zig");
-const print = @import("Air/print.zig");
 
 pub const Legalize = @import("Air/Legalize.zig");
 pub const Liveness = @import("Air/Liveness.zig");
+pub const Print = @import("Air/Print.zig");
 pub const Verify = @import("Air/Verify.zig");
 
 instructions: std.MultiArrayList(Inst).Slice,
@@ -1397,7 +1397,7 @@ pub const CondBr = struct {
     then_body_len: u32,
     else_body_len: u32,
     branch_hints: BranchHints,
-    pub const BranchHints = packed struct(u32) {
+    pub const BranchHints = bitpack struct(u32) {
         true: std.lang.BranchHint = .none,
         false: std.lang.BranchHint = .none,
         then_cov: CoveragePoint = .none,
@@ -1472,7 +1472,7 @@ pub const VectorCmp = struct {
 
 /// Used by `Inst.Tag.shuffle_one`. Represents a mask element which either indexes into a
 /// runtime-known vector, or is a comptime-known value.
-pub const ShuffleOneMask = packed struct(u32) {
+pub const ShuffleOneMask = bitpack struct(u32) {
     index: u31,
     kind: enum(u1) { elem, value },
     pub fn elem(idx: u32) ShuffleOneMask {
@@ -1505,7 +1505,7 @@ pub const ShuffleTwoMask = enum(u32) {
         return @fromBackingInt(@intCast(idx << 1));
     }
     pub fn bElem(idx: u32) ShuffleTwoMask {
-        return @fromBackingInt(@intCast(idx << 1 | 1));
+        return @fromBackingInt(@intCast((idx << 1) | 1));
     }
     pub const Unwrapped = union(enum) {
         /// The resulting element is this index into the first runtime vector.
@@ -1551,7 +1551,7 @@ pub const Asm = struct {
     clobbers: InternPool.Index,
     flags: Flags,
 
-    pub const Flags = packed struct(u32) {
+    pub const Flags = bitpack struct(u32) {
         outputs_len: u31,
         is_volatile: bool,
     };
@@ -2517,10 +2517,10 @@ pub fn unwrapShuffleTwo(air: *const Air, zcu: *const Zcu, inst_index: Inst.Index
 }
 
 pub const legalize = Legalize.legalize;
-pub const write = print.write;
-pub const writeInst = print.writeInst;
-pub const dump = print.dump;
-pub const dumpInst = print.dumpInst;
+pub const write = Print.write;
+pub const writeInst = Print.writeInst;
+pub const dump = Print.dump;
+pub const dumpInst = Print.dumpInst;
 
 pub const CoveragePoint = enum(u1) {
     /// Indicates the block is not a place of interest corresponding to
@@ -2541,34 +2541,34 @@ pub const CompilerRtFunc = enum(u32) {
     __divhf3, __divsf3, __divdf3, __divxf3, __divtf3,
 
     // float minmax
-    __fminh, fminf, fmin, __fminx, fminq,
-    __fmaxh, fmaxf, fmax, __fmaxx, fmaxq,
+    __fminh, fminf, fmin, __fminx, fminf128,
+    __fmaxh, fmaxf, fmax, __fmaxx, fmaxf128,
 
     // float round
-    __ceilh,  ceilf,  ceil,  __ceilx,  ceilq,
-    __floorh, floorf, floor, __floorx, floorq,
-    __trunch, truncf, trunc, __truncx, truncq,
-    __roundh, roundf, round, __roundx, roundq,
+    __ceilh,  ceilf,  ceil,  __ceilx,  ceilf128,
+    __floorh, floorf, floor, __floorx, floorf128,
+    __trunch, truncf, trunc, __truncx, truncf128,
+    __roundh, roundf, round, __roundx, roundf128,
 
     // float log
-    __logh,   logf,   log,   __logx,   logq,
-    __log2h,  log2f,  log2,  __log2x,  log2q,
-    __log10h, log10f, log10, __log10x, log10q,
+    __logh,   logf,   log,   __logx,   logf128,
+    __log2h,  log2f,  log2,  __log2x,  log2f128,
+    __log10h, log10f, log10, __log10x, log10f128,
 
     // float exp
-    __exph,  expf,  exp,  __expx,  expq,
-    __exp2h, exp2f, exp2, __exp2x, exp2q,
+    __exph,  expf,  exp,  __expx,  expf128,
+    __exp2h, exp2f, exp2, __exp2x, exp2f128,
 
     // float trigonometry
-    __sinh, sinf, sin, __sinx, sinq,
-    __cosh, cosf, cos, __cosx, cosq,
-    __tanh, tanf, tan, __tanx, tanq,
+    __sinh, sinf, sin, __sinx, sinf128,
+    __cosh, cosf, cos, __cosx, cosf128,
+    __tanh, tanf, tan, __tanx, tanf128,
 
     // float misc ops
-    __fabsh, fabsf, fabs, __fabsx, fabsq,
-    __sqrth, sqrtf, sqrt, __sqrtx, sqrtq,
-    __fmodh, fmodf, fmod, __fmodx, fmodq,
-    __fmah,  fmaf,  fma,  __fmax,  fmaq,
+    __fabsh, fabsf, fabs, __fabsx, fabsf128,
+    __sqrth, sqrtf, sqrt, __sqrtx, sqrtf128,
+    __fmodh, fmodf, fmod, __fmodx, fmodf128,
+    __fmah,  fmaf,  fma,  __fmax,  fmaf128,
 
     // float comparison
     __eqhf2, __eqsf2, __eqdf2, __eqxf2, __eqtf2, // == iff return == 0
@@ -2635,7 +2635,7 @@ pub const CompilerRtFunc = enum(u32) {
             .riscv32,
             .riscv32be,
             => false,
-            .x86, .x86_64 => true,
+            .x86, .x86c16, .x86_64 => true,
             .arm, .armeb, .thumb, .thumbeb => switch (target.abi) {
                 .eabi, .eabihf => false,
                 else => true,
@@ -2729,7 +2729,7 @@ pub const CompilerRtFunc = enum(u32) {
             .riscv32,
             .riscv32be,
             => false,
-            .x86, .x86_64 => true,
+            .x86, .x86c16, .x86_64 => true,
             .arm, .armeb, .thumb, .thumbeb => switch (target.abi) {
                 .eabi, .eabihf => false,
                 else => true,
@@ -2811,12 +2811,12 @@ pub const CompilerRtFunc = enum(u32) {
             .__sinx, .__cosx, .__tanx,
             .__fabsx, .__sqrtx, .__fmodx, .__fmax,
             => .f80,
-            .fminq, .fmaxq,
-            .ceilq, .floorq, .truncq, .roundq,
-            .logq, .log2q, .log10q,
-            .expq, .exp2q,
-            .sinq, .cosq, .tanq,
-            .fabsq, .sqrtq, .fmodq, .fmaq,
+            .fminf128, .fmaxf128,
+            .ceilf128, .floorf128, .truncf128, .roundf128,
+            .logf128, .log2f128, .log10f128,
+            .expf128, .exp2f128,
+            .sinf128, .cosf128, .tanf128,
+            .fabsf128, .sqrtf128, .fmodf128, .fmaf128,
             => .f128,
             // zig fmt: on
 

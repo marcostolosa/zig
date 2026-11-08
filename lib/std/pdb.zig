@@ -310,6 +310,7 @@ pub const SymbolKind = enum(u16) {
     gmandata = 4381,
     lthread32 = 4370,
     gthread32 = 4371,
+    _,
 };
 
 pub const TypeIndex = u32;
@@ -330,7 +331,7 @@ pub const ProcSym = extern struct {
     name: [1]u8, // null-terminated
 };
 
-pub const ProcSymFlags = packed struct(u8) {
+pub const ProcSymFlags = bitpack struct(u8) {
     has_fp: bool,
     has_iret: bool,
     has_fret: bool,
@@ -371,7 +372,7 @@ pub const LineFragmentHeader = extern struct {
     code_size: u32,
 };
 
-pub const LineFlags = packed struct(u16) {
+pub const LineFlags = bitpack struct(u16) {
     /// CV_LINES_HAVE_COLUMNS
     have_columns: bool,
     unused: u15,
@@ -398,7 +399,7 @@ pub const LineNumberEntry = extern struct {
     offset: u32,
     flags: Flags,
 
-    pub const Flags = packed struct(u32) {
+    pub const Flags = bitpack struct(u32) {
         /// Start line number
         start: u24,
         /// Delta of lines to the end of the expression. Still unclear.

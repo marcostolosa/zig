@@ -83,7 +83,7 @@ fn zonCast(comptime Result: type, zon_value: anytype, symbols: anytype) Result {
                                 .unsigned => std.math.maxInt(Symbol),
                             }})
                         ]u8 = undefined;
-                        return std.meta.stringToEnum(Result, std.fmt.bufPrint(&buf, "{d}", .{symbol}) catch unreachable).?;
+                        return std.meta.stringToEnum(Result, std.mem.print(&buf, "{d}", .{symbol}) catch unreachable).?;
                     },
                     else => return symbol,
                 },
@@ -164,7 +164,7 @@ const matchers = matchers: {
                     return @call(.auto, encode, args);
                 } else if (pattern_token[0] == '<') {
                     const symbol_name = comptime pattern_token[1 .. std.mem.findScalarPos(u8, pattern_token, 1, '|') orelse
-                        pattern_token.len - 1];
+                        (pattern_token.len - 1)];
                     const symbol = @field(Symbol, symbol_name);
                     const symbol_ptr = &@field(symbols, symbol_name);
                     const symbol_value = zonCast(SymbolSpec, @field(instruction.symbols, symbol_name), .{}).parse(source_token) orelse {
@@ -256,7 +256,7 @@ fn nextToken(as: *Assemble, buf: *[token_buf_len]u8, comptime opts: struct {
             switch (modified_operand) {
                 .register => |reg| {
                     as.source = as.source[index + 1 ..];
-                    return std.fmt.bufPrint(buf, "{f}", .{reg.fmt()}) catch unreachable;
+                    return std.mem.print(buf, "{f}", .{reg.fmt()}) catch unreachable;
                 },
             }
         } else continue :c invalid_syntax,
@@ -453,7 +453,7 @@ const SymbolSpec = union(enum) {
                 } else {
                     const Repr = std.math.FloatRepr(f16);
                     const repr: Repr = @bitCast(fimm);
-                    if (repr.mantissa & std.math.maxInt(Repr.Mantissa) >> 5 != 0 or switch (repr.exponent) {
+                    if ((repr.mantissa & (std.math.maxInt(Repr.Mantissa) >> 5)) != 0 or switch (repr.exponent) {
                         .denormal, .infinite => true,
                         else => std.math.cast(i3, repr.exponent.unbias() - 1) == null,
                     }) {

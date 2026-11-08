@@ -1120,7 +1120,7 @@ test "zig fmt: empty enum decls" {
         \\const A = enum {};
         \\const B = enum(u32) {};
         \\const C = extern enum(c_int) {};
-        \\const D = packed enum(noreturn) {};
+        \\const D = bitpack enum(noreturn) {};
         \\
     );
 }
@@ -1131,7 +1131,7 @@ test "zig fmt: empty union decls" {
         \\const B = union(enum) {};
         \\const C = union(Foo) {};
         \\const D = extern union {};
-        \\const E = packed union {};
+        \\const E = bitpack union {};
         \\
     );
 }
@@ -1937,6 +1937,12 @@ test "zig fmt: array literal with hint" {
         \\    5, 6, //
         \\    7, 8, //
         \\};
+        \\const a = .{
+        \\    1,
+        \\    2, 3, '±', //
+        \\    4, 5,
+        \\    6, 7, //
+        \\};
     ,
         \\const a = []u8{
         \\    1, 2, //
@@ -1972,6 +1978,15 @@ test "zig fmt: array literal with hint" {
         \\    3, 4, //
         \\    5, 6, //
         \\    7, 8, //
+        \\};
+        \\const a = .{
+        \\    1,
+        \\    2,
+        \\    3,
+        \\    '±', //
+        \\    4,
+        \\    5,
+        \\    6, 7, //
         \\};
         \\
     );
@@ -3031,25 +3046,61 @@ test "zig fmt: precedence" {
         \\    !(a{});
         \\    a + b{};
         \\    (a + b){};
-        \\    a << b + c;
         \\    (a << b) + c;
-        \\    a & b << c;
         \\    (a & b) << c;
-        \\    a ^ b & c;
         \\    (a ^ b) & c;
-        \\    a | b ^ c;
         \\    (a | b) ^ c;
         \\    a == b | c;
         \\    (a == b) | c;
         \\    a and b == c;
         \\    (a and b) == c;
-        \\    a or b and c;
         \\    (a or b) and c;
         \\    (a or b) and c;
         \\    a == b and c == d;
         \\}
         \\
     );
+}
+
+test "zig fmt: ambiguous precedence" {
+    try testError(
+        \\test "ambiguous precedence" {
+        \\    a & b << c;
+        \\    a << b + c;
+        \\    a << b | c;
+        \\    a ^ b & c;
+        \\    a | b ^ c;
+        \\    a or b and c;
+        \\    a orelse b catch c;
+        \\    a % b % c;
+        \\}
+        \\
+    , &[_]Error{
+        .ambiguous_operator_precedence,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_right,
+        .ambiguous_operator_precedence,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_right,
+        .ambiguous_operator_precedence,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_left,
+        .ambiguous_operator_precedence,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_left,
+        .ambiguous_operator_precedence,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_left,
+        .ambiguous_operator_precedence,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_right,
+        .ambiguous_operator_precedence,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_left,
+        .illegal_chained_operators,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_left,
+    });
 }
 
 test "zig fmt: prefix operators" {
@@ -3191,14 +3242,14 @@ test "zig fmt: struct declaration" {
         \\    }
         \\};
         \\
-        \\const Ps = packed struct {
+        \\const Ps = bitpack struct {
         \\    a: u8,
         \\    b: u8,
         \\
         \\    c: u8,
         \\};
         \\
-        \\const Ps = packed struct(u32) {
+        \\const Ps = bitpack struct(u32) {
         \\    a: u1,
         \\    b: u2,
         \\
@@ -3234,7 +3285,7 @@ test "zig fmt: enum declaration" {
         \\    SomethingThird,
         \\};
         \\
-        \\const Ep = packed enum {
+        \\const Ep = bitpack enum {
         \\    Ok,
         \\    SomethingElse,
         \\    SomethingThird,
@@ -5006,6 +5057,10 @@ test "zig fmt: single argument trailing commas in @builtins()" {
 test "zig fmt: trailing comma should force multiline 1 column" {
     try testTransform(
         \\pub const UUID_NULL: uuid_t = [16]u8{0,0,0,0,};
+        \\pub const UUID_NULL: uuid_t = [16]u8{
+        \\0,0,0,0, };
+        \\pub const UUID_NULL: uuid_t = [16]u8{0,0,0,0,
+        \\};
         \\
     ,
         \\pub const UUID_NULL: uuid_t = [16]u8{
@@ -5013,6 +5068,15 @@ test "zig fmt: trailing comma should force multiline 1 column" {
         \\    0,
         \\    0,
         \\    0,
+        \\};
+        \\pub const UUID_NULL: uuid_t = [16]u8{
+        \\    0,
+        \\    0,
+        \\    0,
+        \\    0,
+        \\};
+        \\pub const UUID_NULL: uuid_t = [16]u8{
+        \\    0, 0, 0, 0,
         \\};
         \\
     );
@@ -7051,6 +7115,101 @@ test "zig fmt: canonicalize @enumFromInt(x) to @fromBackingInt(@intCast(x))" {
     );
 }
 
+test "zig fmt: linear time for nested array inits" {
+    const source = comptime source: {
+        var source: []const u8 = "const a = .{\n";
+        var indent: []const u8 = "    ";
+
+        for (0..32) |_| {
+            source = source ++ indent ++ ".{},\n" ++ indent ++ ".{\n";
+            indent = indent ++ "    ";
+        }
+        source = source ++ indent ++ ".{},\n";
+        for (0..32) |_| {
+            indent = indent[4..];
+            source = source ++ indent ++ "},\n";
+        }
+
+        break :source source ++ "};\n";
+    };
+    try testCanonical(source);
+}
+
+test "zig fmt: on/off with nested array inits" {
+    try testCanonical(
+        \\const a = .{
+        \\    .{
+        \\        0, // zig fmt: off
+        \\    },
+        \\    1, 2, // zig fmt: on
+        \\    3,
+        \\    4,
+        \\};
+        \\const b = .{
+        \\    // zig fmt: off
+        \\    .{
+        \\        0, // zig fmt: on
+        \\    },
+        \\    1, 2, //
+        \\    3, 4,
+        \\};
+        \\const c = .{
+        \\    .{
+        \\        // zig fmt: off
+        \\        0, // zig fmt: on
+        \\    },
+        \\    1, 2, //
+        \\    3, 4,
+        \\};
+        \\
+    );
+}
+
+test "zig fmt: empty lines in array inits" {
+    try testTransform(
+        \\const a = .{
+        \\    1,
+        \\
+        \\    2, //
+        \\    3,
+        \\
+        \\    4, 5, //
+        \\    6,
+        \\
+        \\    7,
+        \\
+        \\    8,
+        \\};
+        \\
+    ,
+        \\const a = .{
+        \\    1,
+        \\
+        \\    2, //
+        \\    3,
+        \\
+        \\    4, 5, //
+        \\    6, 7,
+        \\
+        \\    8,
+        \\};
+        \\
+    );
+}
+
+test "zig fmt: nested array init with asm" {
+    try testCanonical(
+        \\const a = .{
+        \\    asm (.{
+        \\            0,
+        \\        }
+        \\        : [_] "" (_),
+        \\    ),
+        \\};
+        \\
+    );
+}
+
 test "recovery: top level" {
     try testError(
         \\test "" {inline}
@@ -7082,7 +7241,7 @@ test "recovery: missing comma" {
         \\        2 => {}
         \\        3 => {}
         \\        else => {
-        \\            foo & bar +;
+        \\            foo & bar &;
         \\        }
         \\    }
         \\}

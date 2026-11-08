@@ -19,7 +19,6 @@ comptime {
     assert(builtin.os.tag == .illumos); // Prevent access of std.c symbols on wrong OS.
 }
 
-pub extern "c" fn pthread_setname_np(thread: pthread_t, name: [*:0]const u8, arg: ?*anyopaque) c_int;
 pub extern "c" fn sysconf(sc: c_int) i64;
 
 pub const major_t = u32;
@@ -35,6 +34,13 @@ pub const GETCONTEXT = 0;
 pub const SETCONTEXT = 1;
 pub const GETUSTACK = 2;
 pub const SETUSTACK = 3;
+
+pub const TCSA = enum(c_uint) {
+    NOW = 0x540e,
+    DRAIN = 0x540f,
+    FLUSH = 0x5410,
+    _,
+};
 
 pub const POSIX_FADV = struct {
     pub const NORMAL = 0;
@@ -297,7 +303,7 @@ pub const lifreq = extern struct {
         /// Maximum transmission unit
         mtu: u32,
         // Technically [2]i32
-        muxid: packed struct(u64) { ip: i32, arp: i32 },
+        muxid: bitpack struct(u64) { ip: i32, arp: i32 },
         /// Neighbor reachability determination entries
         nd_req: lif_nd_req,
         /// Link info
@@ -454,4 +460,32 @@ pub const IPTOS = struct {
     pub const PREC_IMMEDIATE = 0x40;
     pub const PREC_PRIORITY = 0x20;
     pub const PREC_ROUTINE = 0x00;
+};
+
+// https://github.com/illumos/illumos-gate/blob/e1e6b944360d951edf36ef4198261818ed2d9b2f/usr/src/uts/common/netinet/tcp.h#L94
+pub const TCP = struct {
+    pub const NODELAY = 0x01;
+    pub const MAXSEG = 0x02;
+    pub const KEEPALIVE = 0x8;
+    pub const NOTIFY_THRESHOLD = 0x10;
+    pub const ABORT_THRESHOLD = 0x11;
+    pub const CONN_NOTIFY_THRESHOLD = 0x12;
+    pub const CONN_ABORT_THRESHOLD = 0x13;
+    pub const RECVDSTADDR = 0x14;
+    pub const INIT_CWND = 0x15;
+    pub const KEEPALIVE_THRESHOLD = 0x16;
+    pub const KEEPALIVE_ABORT_THRESHOLD = 0x17;
+    pub const CORK = 0x18;
+    pub const RTO_INITIAL = 0x19;
+    pub const RTO_MIN = 0x1A;
+    pub const RTO_MAX = 0x1B;
+    pub const LINGER2 = 0x1C;
+    pub const ANONPRIVBIND = 0x20;
+    pub const EXCLBIND = 0x21;
+    pub const KEEPIDLE = 0x22;
+    pub const KEEPCNT = 0x23;
+    pub const KEEPINTVL = 0x24;
+    pub const CONGESTION = 0x25;
+    pub const QUICKACK = 0x26;
+    pub const MD5SIG = 0x27;
 };

@@ -19,6 +19,7 @@ pub const Feature = enum {
     nontrapping_bulk_memory_len0,
     nontrapping_fptoint,
     reference_types,
+    relaxed_atomics,
     relaxed_simd,
     sign_ext,
     simd128,
@@ -60,7 +61,10 @@ pub const all_features = blk: {
     result[@backingInt(Feature.exception_handling)] = .{
         .llvm_name = "exception-handling",
         .description = "Enable Wasm exception handling",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .multivalue,
+            .reference_types,
+        }),
     };
     result[@backingInt(Feature.extended_const)] = .{
         .llvm_name = "extended-const",
@@ -70,12 +74,16 @@ pub const all_features = blk: {
     result[@backingInt(Feature.fp16)] = .{
         .llvm_name = "fp16",
         .description = "Enable FP16 instructions",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .simd128,
+        }),
     };
     result[@backingInt(Feature.gc)] = .{
         .llvm_name = "gc",
         .description = "Enable wasm gc",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .reference_types,
+        }),
     };
     result[@backingInt(Feature.multimemory)] = .{
         .llvm_name = "multimemory",
@@ -108,13 +116,23 @@ pub const all_features = blk: {
         .llvm_name = "reference-types",
         .description = "Enable reference types",
         .dependencies = featureSet(&[_]Feature{
+            .bulk_memory,
             .call_indirect_overlong,
+        }),
+    };
+    result[@backingInt(Feature.relaxed_atomics)] = .{
+        .llvm_name = "relaxed-atomics",
+        .description = "Enable relaxed-atomics proposal",
+        .dependencies = featureSet(&[_]Feature{
+            .atomics,
         }),
     };
     result[@backingInt(Feature.relaxed_simd)] = .{
         .llvm_name = "relaxed-simd",
         .description = "Enable relaxed-simd instructions",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .simd128,
+        }),
     };
     result[@backingInt(Feature.sign_ext)] = .{
         .llvm_name = "sign-ext",
@@ -145,39 +163,6 @@ pub const all_features = blk: {
 };
 
 pub const cpu = struct {
-    pub const bleeding_edge: CpuModel = .{
-        .name = "bleeding_edge",
-        .llvm_name = "bleeding-edge",
-        .features = featureSet(&[_]Feature{
-            .atomics,
-            .bulk_memory,
-            .exception_handling,
-            .extended_const,
-            .fp16,
-            .gc,
-            .multimemory,
-            .multivalue,
-            .mutable_globals,
-            .nontrapping_fptoint,
-            .reference_types,
-            .relaxed_simd,
-            .sign_ext,
-            .simd128,
-            .tail_call,
-        }),
-    };
-    pub const generic: CpuModel = .{
-        .name = "generic",
-        .llvm_name = "generic",
-        .features = featureSet(&[_]Feature{
-            .bulk_memory,
-            .multivalue,
-            .mutable_globals,
-            .nontrapping_fptoint,
-            .reference_types,
-            .sign_ext,
-        }),
-    };
     pub const lime1: CpuModel = .{
         .name = "lime1",
         .llvm_name = "lime1",
@@ -195,5 +180,39 @@ pub const cpu = struct {
         .name = "mvp",
         .llvm_name = "mvp",
         .features = featureSet(&[_]Feature{}),
+    };
+    pub const v1_0: CpuModel = .{
+        .name = "v1_0",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .mutable_globals,
+        }),
+    };
+    pub const v2_0: CpuModel = .{
+        .name = "v2_0",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .multivalue,
+            .mutable_globals,
+            .nontrapping_fptoint,
+            .reference_types,
+            .sign_ext,
+            .simd128,
+        }),
+    };
+    pub const v3_0: CpuModel = .{
+        .name = "v3_0",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .exception_handling,
+            .extended_const,
+            .gc,
+            .multimemory,
+            .mutable_globals,
+            .nontrapping_fptoint,
+            .relaxed_simd,
+            .sign_ext,
+            .tail_call,
+        }),
     };
 };

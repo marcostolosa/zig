@@ -58,7 +58,8 @@ available_deps: AvailableDeps,
 
 pub const ConfigureDependency = struct {
     lazy_path: LazyPath,
-    mode: std.Build.Configuration.PathDep.Mode,
+    is_directory: bool,
+    metadata_only: bool,
 };
 
 pub const ReleaseMode = enum {
@@ -79,7 +80,11 @@ pub const Graph = struct {
     system_package_mode: bool = false,
     zig_exe: []const u8,
     environ_map: process.Environ.Map,
-    needed_lazy_dependencies: std.array_hash_map.String(void) = .empty,
+    /// Managed by:
+    /// * `Build.declareDependency`
+    /// * `Build.dependency`
+    /// * `Build.dependencyLazy`
+    unlazy_deps: std.array_hash_map.Auto(Configuration.String, void) = .empty,
     /// Information about the native target. Computed before build() is invoked.
     host: ResolvedTarget,
     dependency_cache: PackageInstanceMap = .empty,
@@ -102,7 +107,8 @@ pub const Graph = struct {
     /// Populated by calling one of:
     /// * `dependOnFileContents`
     /// * `dependOnFileMetadata`
-    /// * `dependOnDirectory`
+    /// * `dependOnDirectoryContents`
+    /// * `dependOnDirectoryMetadata`
     configure_dependencies: ArrayList(ConfigureDependency) = .empty,
 
     /// If the cache is poisoned means that the **configure logic** had side
@@ -766,9 +772,8 @@ pub fn addRunArtifact(b: *Build, exe: *Step.Compile) *Step.Run {
 
     const run_step = Step.Run.create(b, step_name);
     run_step.producer = exe;
+    run_step.addArtifactArg(exe);
     if (exe.kind == .@"test") {
-        run_step.addArtifactArg(exe);
-
         const test_server_mode: bool = s: {
             if (exe.test_runner) |r| break :s r.mode == .server;
             if (exe.use_llvm == false) {
@@ -800,8 +805,6 @@ pub fn addRunArtifact(b: *Build, exe: *Step.Compile) *Step.Run {
             // communicate failure via its exit code.
             run_step.expectExitCode(0);
         }
-    } else {
-        run_step.addArtifactArg(exe);
     }
 
     return run_step;
@@ -1864,6 +1867,9 @@ pub const Dependency = struct {
             }
         }
         return found orelse {
+            if (d.builder.graph.unlazy_deps.count() != 0) {
+                d.builder.serializeConfigurationExiting();
+            }
             for (d.builder.install_tls.step.dependencies.items) |dep_step| {
                 const inst = dep_step.cast(Step.InstallArtifact) orelse continue;
                 log.info("available artifact: {q}", .{inst.artifact.name});
@@ -1874,18 +1880,27 @@ pub const Dependency = struct {
 
     pub fn module(d: *Dependency, name: []const u8) *Module {
         return d.builder.modules.get(name) orelse {
+            if (d.builder.graph.unlazy_deps.count() != 0) {
+                d.builder.serializeConfigurationExiting();
+            }
             panic("unable to find module {q}", .{name});
         };
     }
 
     pub fn namedWriteFiles(d: *Dependency, name: []const u8) *Step.WriteFile {
         return d.builder.named_writefiles.get(name) orelse {
+            if (d.builder.graph.unlazy_deps.count() != 0) {
+                d.builder.serializeConfigurationExiting();
+            }
             panic("unable to find named writefiles {q}", .{name});
         };
     }
 
     pub fn namedLazyPath(d: *Dependency, name: []const u8) LazyPath {
         return d.builder.named_lazy_paths.get(name) orelse {
+            if (d.builder.graph.unlazy_deps.count() != 0) {
+                d.builder.serializeConfigurationExiting();
+            }
             panic("unable to find named lazypath {q}", .{name});
         };
     }
@@ -1935,7 +1950,9 @@ inline fn findImportPkgHashOrFatal(b: *Build, comptime asking_build_zig: type, c
 }
 
 fn markNeededLazyDep(b: *Build, pkg_hash: []const u8) void {
-    b.graph.needed_lazy_dependencies.put(b.graph.arena, pkg_hash, {}) catch @panic("OOM");
+    const graph = b.graph;
+    const interned_hash = graph.wip_configuration.addString(pkg_hash) catch @panic("OOM");
+    graph.unlazy_deps.put(graph.arena, interned_hash, {}) catch @panic("OOM");
 }
 
 /// Deprecated in favor of `dependencyLazy`.
@@ -1945,21 +1962,80 @@ pub fn lazyDependency(b: *Build, name: []const u8, args: anytype) ?*Dependency {
     };
 }
 
-/// Declares that the current configuration does in fact require a potentially
-/// lazy dependency.
+/// Indicates that the current configuration needs a potentially lazy dependency.
 ///
-/// If the dependency is already fetched, it is returned. However if the
-/// dependency is not yet fetched, then when the build script is finished
-/// running, the toolchain will not proceed to the make phase. Instead, the
-/// parent process will additionally fetch all the lazy dependencies that were
-/// actually required by running the build script, recompile the build script,
-/// and then run it again. In other words, if this function returns
-/// `error.LazyDependencyNeeded` it means that the only purpose of completing
-/// the configure phase is to find out all the other lazy dependencies that are
-/// also required. In this case, one must propagate the error all the way up
-/// and return it from the main build function.
+/// Related:
+/// * `declareDependencyStep`
+/// * `dependency`
+/// * `dependencyLazy`
+/// * `dependencyStep`
+pub fn declareDependency(b: *Build, name: []const u8) void {
+    const pkg_hash = findPkgHashOrFatal(b, name);
+    const entry = package_map.get(pkg_hash).?;
+    if (entry.available) return;
+    markNeededLazyDep(b, pkg_hash);
+}
+
+/// Indicates that the current configuration needs a potentially lazy dependency for the provided `Step`.
+///
+/// Related:
+/// * `declareDependency`
+/// * `dependency`
+/// * `dependencyLazy`
+/// * `dependencyStep`
+pub fn declareDependencyStep(b: *Build, s: *Step, name: []const u8) void {
+    const graph = b.graph;
+    const pkg_hash = findPkgHashOrFatal(b, name);
+    const entry = package_map.get(pkg_hash).?;
+    if (entry.available) return;
+    const interned_hash = graph.wip_configuration.addString(pkg_hash) catch @panic("OOM");
+    s.unlazy_deps.put(graph.arena, interned_hash, {}) catch @panic("OOM");
+}
+
+/// Indicates that the current configuration needs a potentially lazy dependency for the provided `Step`.
+///
+/// If the dependency is already fetched, it is returned, otherwise `null` is returned. After configuration
+/// completes, if the dependency is needed after all, it will be fetched and configuration will re-run.
+///
+/// For non-lazy dependencies, this never returns `null`.
+///
+/// Related:
+/// * `dependency`
+/// * `dependencyLazy`
+/// * `declareDependency`
+/// * `declareDependencyStep`
+pub fn dependencyStep(b: *Build, s: *Step, name: []const u8, args: anytype) ?*Dependency {
+    const pkg_hash = findPkgHashOrFatal(b, name);
+    const graph = b.graph;
+    const arena = graph.arena;
+    const entry = package_map.get(pkg_hash).?;
+    if (!entry.available) {
+        const interned_hash = graph.wip_configuration.addString(pkg_hash) catch @panic("OOM");
+        s.unlazy_deps.put(arena, interned_hash, {}) catch @panic("OOM");
+        return null;
+    }
+    var map: PackageOptions.Map = .empty;
+    PackageOptions.fromArgs(arena, &map, args);
+    return dependencyResolved(b, name, entry, &map);
+}
+
+/// Declares that the current configuration does in fact require a potentially lazy dependency.
+///
+/// If the dependency is already fetched, it is returned. However if the dependency is not yet fetched, then
+/// when the build script is finished running, the toolchain will not proceed to the make phase. Instead, the
+/// parent process will additionally fetch all the lazy dependencies that were actually required by running the
+/// build script, recompile the build script, and then run it again. In other words, if this function returns
+/// `error.LazyDependencyNeeded` it means that the only purpose of completing the configure phase is to find
+/// out all the other lazy dependencies that are also required. In this case, one must propagate the error all
+/// the way up and return it from the main build function.
 ///
 /// For non-lazy dependencies, this always succeeds.
+///
+/// Related:
+/// * `dependency`
+/// * `dependencyStep`
+/// * `declareDependency`
+/// * `declareDependencyStep`
 pub fn dependencyLazy(b: *Build, name: []const u8, args: anytype) error{LazyDependencyNeeded}!*Dependency {
     const pkg_hash = findPkgHashOrFatal(b, name);
     const entry = package_map.get(pkg_hash) orelse unreachable;
@@ -2019,7 +2095,7 @@ pub const package_map: std.StaticStringMap(PackageEntry) = blk: {
 pub fn dependency(b: *Build, name: []const u8, args: anytype) *Dependency {
     return dependencyLazy(b, name, args) catch |err| switch (err) {
         error.LazyDependencyNeeded => {
-            assert(b.graph.needed_lazy_dependencies.count() != 0);
+            assert(b.graph.unlazy_deps.count() != 0);
             serializeConfigurationExiting(b);
         },
     };
@@ -2144,7 +2220,7 @@ fn dependencyResolved(
 pub inline fn runPackageScript(b: *Build, comptime build_zig: anytype) void {
     const result: anyerror!void = build_zig.build(b);
     result catch |err| switch (err) {
-        error.LazyDependencyNeeded => assert(b.graph.needed_lazy_dependencies.count() != 0),
+        error.LazyDependencyNeeded => assert(b.graph.unlazy_deps.count() != 0),
         else => {
             if (b.dep_prefix.len == 0) {
                 log.err("package {q} configuration failed: {t}", .{ b.dep_prefix, err });
@@ -2152,7 +2228,7 @@ pub inline fn runPackageScript(b: *Build, comptime build_zig: anytype) void {
                 log.err("configuration failed: {t}", .{err});
             }
             if (@errorReturnTrace()) |trace| std.debug.dumpErrorReturnTrace(trace);
-            const lazy_count = b.graph.needed_lazy_dependencies.count();
+            const lazy_count = b.graph.unlazy_deps.count();
             if (lazy_count == 0) process.exit(1);
             log.info("{d} lazy dependencies detected; fetching and retrying configuration", .{lazy_count});
         },
@@ -2583,9 +2659,11 @@ pub fn systemIntegrationOption(
 
 /// Indicates that the build.zig logic depends on a particular file's contents.
 ///
-/// If the file is created, deleted, or has its contents changed, the configure
-/// phase will be repeated. If the inode or mtime change, but the file contents
-/// remain the same, it will not cause the configure logic to be repeated.
+/// The file must exist when this function is called.
+///
+/// If the file is deleted, or has its contents changed, the configure phase
+/// will be repeated. If the inode or mtime change, but the file contents remain
+/// the same, it will not cause the configure logic to be repeated.
 ///
 /// This is an alternative to `Graph.poisonCache` that avoids making every invocation
 /// of `zig build` into a cache miss.
@@ -2602,7 +2680,8 @@ pub fn dependOnFileContents(b: *Build, lazy_path: LazyPath) void {
     const graph = b.graph;
     graph.configure_dependencies.append(graph.arena, .{
         .lazy_path = lazy_path.dupe(graph),
-        .mode = .contents,
+        .is_directory = false,
+        .metadata_only = false,
     }) catch @panic("OOM");
 }
 
@@ -2627,11 +2706,43 @@ pub fn dependOnFileMetadata(b: *Build, lazy_path: LazyPath) void {
     const graph = b.graph;
     graph.configure_dependencies.append(graph.arena, .{
         .lazy_path = lazy_path.dupe(graph),
-        .mode = .metadata,
+        .is_directory = false,
+        .metadata_only = true,
     }) catch @panic("OOM");
 }
 
 /// Indicates that the build.zig logic depends on a particular directory's entries.
+///
+/// The directory must exist when this function is called.
+///
+/// This is an alternative to `Graph.poisonCache` that avoids making every invocation
+/// of `zig build` into a cache miss.
+///
+/// If any file is created, deleted, or renamed in this directory, leaving the
+/// directory in a different state than last configuration with respect to
+/// existence and naming of entries, the configure phase will be repeated.
+///
+/// Only a subset of `LazyPath` are supported:
+/// - Relative to cwd
+/// - Relative to any package root
+/// - Relative to zig cache or zig installation
+///
+/// If the directory would be inside one of the search prefixes, then the dependency
+/// cannot be tracked; `Graph.poisonCache` must be used instead.
+///
+/// Not recursive.
+pub fn dependOnDirectoryContents(b: *Build, lazy_path: LazyPath) void {
+    validateConfigureDependency(lazy_path);
+    const graph = b.graph;
+    graph.configure_dependencies.append(graph.arena, .{
+        .lazy_path = lazy_path.dupe(graph),
+        .is_directory = true,
+        .metadata_only = false,
+    }) catch @panic("OOM");
+}
+
+/// Indicates that the build.zig logic depends on a particular directory's last
+/// modification date.
 ///
 /// This is an alternative to `Graph.poisonCache` that avoids making every invocation
 /// of `zig build` into a cache miss.
@@ -2646,12 +2757,15 @@ pub fn dependOnFileMetadata(b: *Build, lazy_path: LazyPath) void {
 ///
 /// If the directory would be inside one of the search prefixes, then the dependency
 /// cannot be tracked; `Graph.poisonCache` must be used instead.
-pub fn dependOnDirectory(b: *Build, lazy_path: LazyPath) void {
+///
+/// Not recursive.
+pub fn dependOnDirectoryMetadata(b: *Build, lazy_path: LazyPath) void {
     validateConfigureDependency(lazy_path);
     const graph = b.graph;
     graph.configure_dependencies.append(graph.arena, .{
         .lazy_path = lazy_path.dupe(graph),
-        .mode = .directory,
+        .is_directory = true,
+        .metadata_only = true,
     }) catch @panic("OOM");
 }
 
@@ -2660,12 +2774,19 @@ fn validateConfigureDependency(lazy_path: LazyPath) void {
         .src_path, .cwd_relative, .dependency => {}, // OK
         .generated => @panic("configure phase cannot depend on files generated during make phase"),
         .relative => |relative| switch (relative.base) {
-            .cwd, .build_root, .local_cache, .global_cache, .zig_exe, .zig_lib => {}, // OK
+            .cwd, .build_root, .local_cache, .global_cache, .zig_lib => {}, // OK
+            .zig_exe => if (relative.sub_path.len > 0) @panic("file base cannot have a sub path"),
             .install_prefix,
             .install_lib,
             .install_bin,
             .install_include,
+            .deployed_prefix,
+            .deployed_lib,
+            .deployed_bin,
+            .deployed_include,
             => @panic("configure phase cannot depend on files installed during make phase"),
+            .libc_runtimes,
+            => @panic("configure phase cannot depend on directory known only during make phase"),
         },
     }
 }

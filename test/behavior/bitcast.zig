@@ -9,6 +9,7 @@ const minInt = std.math.minInt;
 const native_endian = builtin.target.cpu.arch.endian();
 
 test "@bitCast iX -> uX (32, 64)" {
+    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
 
     const bit_values = [_]usize{ 32, 64 };
@@ -20,6 +21,7 @@ test "@bitCast iX -> uX (32, 64)" {
 }
 
 test "@bitCast iX -> uX (8, 16, 128)" {
+    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
@@ -32,6 +34,7 @@ test "@bitCast iX -> uX (8, 16, 128)" {
 }
 
 test "@bitCast iX -> uX exotic integers" {
+    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
@@ -98,7 +101,7 @@ test "bitcast literal [4]u8 param to u32" {
 }
 
 test "bitcast generates a temporary value" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     var y: u16 = 0x55AA;
     _ = &y;
@@ -106,16 +109,16 @@ test "bitcast generates a temporary value" {
     try expect(y == x);
 }
 
-test "@bitCast packed structs at runtime and comptime" {
+test "@bitCast bitpack structs at runtime and comptime" {
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
-    const Full = packed struct {
+    const Full = bitpack struct {
         number: u16,
     };
-    const Divided = packed struct {
+    const Divided = bitpack struct {
         half1: u8,
         quarter3: u4,
         quarter4: u4,
@@ -134,12 +137,13 @@ test "@bitCast packed structs at runtime and comptime" {
     try comptime S.doTheTest();
 }
 
-test "bitcast packed struct to integer and back" {
+test "bitcast bitpack struct to integer and back" {
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
-    const LevelUpMove = packed struct {
+    const LevelUpMove = bitpack struct {
         move_id: u9,
         level: u7,
     };
@@ -158,6 +162,7 @@ test "bitcast packed struct to integer and back" {
 }
 
 test "implicit cast to error union by returning" {
+    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -173,8 +178,8 @@ test "implicit cast to error union by returning" {
     try comptime S.entry();
 }
 
-test "bitcast packed struct literal to byte" {
-    const Foo = packed struct {
+test "bitcast bitpack struct literal to byte" {
+    const Foo = bitpack struct {
         value: u8,
     };
     const casted = @as(u8, @bitCast(Foo{ .value = 0xF }));
@@ -182,7 +187,7 @@ test "bitcast packed struct literal to byte" {
 }
 
 test "comptime bitcast used in expression has the correct type" {
-    const Foo = packed struct {
+    const Foo = bitpack struct {
         value: u8,
     };
     try expect(@as(u8, @bitCast(Foo{ .value = 0xF })) == 0xf);
@@ -208,21 +213,21 @@ test "triple level result location with bitcast sandwich passed as tuple element
     try S.foo(.{@as(f64, @as(f32, @bitCast(@as(u32, 0x414570A4))))});
 }
 
-test "@bitCast packed struct of floats" {
+test "@bitCast bitpack struct of floats" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
-    const Foo = packed struct {
+    const Foo = bitpack struct {
         a: f16 = 0,
         b: f32 = 1,
         c: f64 = 2,
         d: f128 = 3,
     };
 
-    const Foo2 = packed struct {
+    const Foo2 = bitpack struct {
         a: f16 = 0,
         b: f32 = 1,
         c: f64 = 2,
@@ -244,14 +249,14 @@ test "@bitCast packed struct of floats" {
     try comptime S.doTheTest();
 }
 
-test "comptime @bitCast packed struct to int and back" {
+test "comptime @bitCast bitpack struct to int and back" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
-    const S = packed struct {
+    const S = bitpack struct {
         void: void = {},
         uint: u8 = 13,
         uint_bit_aligned: u3 = 2,
@@ -281,7 +286,7 @@ test "comptime @bitCast packed struct to int and back" {
 test "bitcast vector to integer and back" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     var vec: @Vector(16, bool) = @splat(true);
@@ -312,6 +317,37 @@ test "bitcast vector to integer and back" {
     try expect(int_again == 0b1111_1111_1111_1101);
 }
 
+test "bitcast vector elementwise" {
+    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+
+    const S = struct {
+        fn doTheTest(comptime len: comptime_int) !void {
+            var floats: @Vector(len, f32) = std.simd.iota(f32, len) + @as(@Vector(len, f32), @splat(0.5));
+            _ = &floats;
+            const bits: @Vector(len, i32) = @bitCast(floats);
+            inline for (0..len) |i| try expect(bits[i] == @as(i32, @bitCast(@as(f32, @floatFromInt(i)) + 0.5)));
+            const floats_again: @Vector(len, f32) = @bitCast(bits);
+            inline for (0..len) |i| try expect(floats_again[i] == @as(f32, @floatFromInt(i)) + 0.5);
+
+            var unsigned: @Vector(len, u3) = std.simd.iota(u3, len);
+            _ = &unsigned;
+            const signed: @Vector(len, i3) = @bitCast(unsigned);
+            inline for (0..len) |i| try expect(signed[i] == @as(i3, @bitCast(@as(u3, i))));
+            const unsigned_again: @Vector(len, u3) = @bitCast(signed);
+            inline for (0..len) |i| try expect(unsigned_again[i] == i);
+        }
+    };
+
+    inline for (.{ 1, 2, 3, 4, 8 }) |len| {
+        try S.doTheTest(len);
+        try comptime S.doTheTest(len);
+    }
+}
+
 fn bitCastWrapper16(x: f16) u16 {
     return @as(u16, @bitCast(x));
 }
@@ -326,9 +362,9 @@ fn bitCastWrapper128(x: f128) u128 {
 }
 test "bitcast nan float does not modify signaling bit" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch.isPowerPC()) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch.isPowerpc()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
 
     const snan_u16: u16 = 0x7D00;
@@ -377,13 +413,13 @@ test "bitcast nan float does not modify signaling bit" {
     try expectEqual(snan_u128, bitCastWrapper128(snan_f128_var));
 }
 
-test "@bitCast of packed struct of bools all true" {
+test "@bitCast of bitpack struct of bools all true" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
 
-    const P = packed struct {
+    const P = bitpack struct {
         b0: bool,
         b1: bool,
         b2: bool,
@@ -397,12 +433,12 @@ test "@bitCast of packed struct of bools all true" {
     try expect(@as(u8, @as(u4, @bitCast(p))) == 15);
 }
 
-test "@bitCast of packed struct of bools all false" {
+test "@bitCast of bitpack struct of bools all false" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest; // TODO
 
-    const P = packed struct {
+    const P = bitpack struct {
         b0: bool,
         b1: bool,
         b2: bool,
@@ -416,8 +452,8 @@ test "@bitCast of packed struct of bools all false" {
     try expect(@as(u8, @as(u4, @bitCast(p))) == 0);
 }
 
-test "@bitCast of packed struct with void field to integer" {
-    const S = packed struct(u8) {
+test "@bitCast of bitpack struct with void field to integer" {
+    const S = bitpack struct(u8) {
         v: void,
         x: u8,
 
@@ -432,8 +468,8 @@ test "@bitCast of packed struct with void field to integer" {
     try comptime S.doTheTest(123);
 }
 
-test "@bitCast of packed struct with void field and multiple integers" {
-    const S = packed struct {
+test "@bitCast of bitpack struct with void field and multiple integers" {
+    const S = bitpack struct {
         x: u8,
         v: void,
         y: u8,
@@ -441,7 +477,7 @@ test "@bitCast of packed struct with void field and multiple integers" {
         fn doTheTest(x: u8, y: u8) !void {
             const foo = @as(@This(), .{ .x = x, .v = {}, .y = y });
             const as_int: u16 = @bitCast(foo);
-            try expect(as_int == @as(u16, y) << 8 | x);
+            try expect(as_int == (@as(u16, y) << 8) | x);
         }
     };
     try S.doTheTest(123, 45);
@@ -449,7 +485,7 @@ test "@bitCast of packed struct with void field and multiple integers" {
 }
 
 test "@bitCast vector to array with different element size" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const static = struct {
         fn doTheTest(v: @Vector(4, u5)) !void {
@@ -473,10 +509,10 @@ test "@bitCast vector to array with different element size" {
     try comptime static.doTheTest(v);
 }
 
-test "@bitCast packed struct to array of bits" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+test "@bitCast bitpack struct to array of bits" {
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
-    const S = packed struct(u16) {
+    const S = bitpack struct(u16) {
         foo: u5,
         bar: i7,
         baz: u3,
@@ -522,7 +558,7 @@ test "@bitCast packed struct to array of bits" {
 }
 
 test "@bitCast nested arrays of vectors" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const Src = [2][2]@Vector(4, u5);
     const Dest = [5]@Vector(2, u8);
@@ -559,7 +595,7 @@ test "@bitCast nested arrays of vectors" {
 }
 
 test "@bitCast nested arrays of bool to scalar" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const static = struct {
         fn doTheTest(src: [4][4]bool) !void {
@@ -578,7 +614,7 @@ test "@bitCast nested arrays of bool to scalar" {
 }
 
 test "@bitCast deeply nested arrays to scalar" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const static = struct {
         fn doTheTest(src: [2][1][3][5]u4) !void {
@@ -601,4 +637,64 @@ test "@bitCast deeply nested arrays to scalar" {
     }} };
     try static.doTheTest(src);
     try comptime static.doTheTest(src);
+}
+
+test "@bitCast between float and vector" {
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+
+    const static = struct {
+        fn doTheTest() !void {
+            {
+                var v: @Vector(5, u16) = undefined;
+                v = .{ 0xf5c3, 0x5c28, 0xc28f, 0xc8f5, 0x4000 };
+                const f: f80 = @bitCast(v);
+                try expect(f == 3.14);
+            }
+            {
+                var f: f80 = undefined;
+                f = 3.14;
+                const v: @Vector(5, u16) = @bitCast(f);
+                try expect(std.mem.eql(u16, &@as([5]u16, v), &.{ 0xf5c3, 0x5c28, 0xc28f, 0xc8f5, 0x4000 }));
+            }
+            {
+                var v: @Vector(4, u32) = undefined;
+                v = .{ 0x51eb851f, 0xeb851eb8, 0x851eb851, 0x400191eb };
+                const f: f128 = @bitCast(v);
+                try expect(f == 6.28);
+            }
+            {
+                var f: f128 = undefined;
+                f = 6.28;
+                const v: @Vector(4, u32) = @bitCast(f);
+                try expect(std.mem.eql(u32, &@as([4]u32, v), &.{ 0x51eb851f, 0xeb851eb8, 0x851eb851, 0x400191eb }));
+            }
+        }
+    };
+    try static.doTheTest();
+    try comptime static.doTheTest();
+}
+
+test "@bitCast to vectors of f80 and f128" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
+    const static = struct {
+        fn doTheTest() !void {
+            {
+                var x: u160 = undefined;
+                x = 0xc000_d000000000000000_3fff_c000000000000000;
+                const v: @Vector(2, f80) = @bitCast(x);
+                try expect(v[0] == 1.5);
+                try expect(v[1] == -3.25);
+            }
+            {
+                var v: @Vector(4, u64) = undefined;
+                v = .{ 0x1, 0x3fff000000000000, 0x0, 0xc000400000000000 };
+                const f: @Vector(2, f128) = @bitCast(v);
+                try expect(f[0] == 1.0 + 0x1p-112);
+                try expect(f[1] == -2.5);
+            }
+        }
+    };
+    try static.doTheTest();
+    try comptime static.doTheTest();
 }

@@ -7,7 +7,7 @@ const elf = std.elf;
 const log = std.log.scoped(.elf);
 const mem = std.mem;
 const Path = std.Build.Cache.Path;
-const Stat = std.Build.Cache.File.Stat;
+const Stat = std.Build.Cache.Manifest.Stat;
 const Allocator = mem.Allocator;
 
 const Elf = @import("../Elf.zig");
@@ -30,6 +30,8 @@ needed: bool,
 alive: bool,
 
 output_symtab_ctx: Elf.SymtabCtx,
+
+fallback_soname: []const u8,
 
 pub fn deinit(so: *SharedObject, gpa: Allocator) void {
     gpa.free(so.path.sub_path);
@@ -427,7 +429,7 @@ pub fn asFile(self: *SharedObject) File {
 }
 
 pub fn soname(self: *SharedObject) []const u8 {
-    return self.parsed.soname() orelse self.path.basename();
+    return self.parsed.soname() orelse self.fallback_soname;
 }
 
 pub fn initSymbolAliases(self: *SharedObject, elf_file: *Elf) !void {
@@ -446,9 +448,8 @@ pub fn initSymbolAliases(self: *SharedObject, elf_file: *Elf) !void {
 
     const comp = elf_file.base.comp;
     const gpa = comp.gpa;
-    var aliases = std.array_list.Managed(Symbol.Index).init(gpa);
-    defer aliases.deinit();
-    try aliases.ensureTotalCapacityPrecise(self.symbols.items.len);
+    var aliases: std.ArrayList(Symbol.Index) = try .initCapacity(gpa, self.symbols.items.len);
+    errdefer aliases.deinit(gpa);
 
     for (self.symbols_resolver.items, 0..) |resolv, index| {
         const ref = elf_file.resolver.get(resolv).?;
@@ -459,7 +460,7 @@ pub fn initSymbolAliases(self: *SharedObject, elf_file: *Elf) !void {
 
     mem.sort(u32, aliases.items, SortAlias{ .so = self, .ef = elf_file }, SortAlias.lessThan);
 
-    self.aliases = aliases.moveToUnmanaged();
+    self.aliases = aliases;
 }
 
 pub fn symbolAliases(self: *SharedObject, index: u32, elf_file: *Elf) []const u32 {

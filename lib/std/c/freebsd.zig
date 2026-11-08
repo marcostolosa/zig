@@ -16,15 +16,21 @@ const nlink_t = std.c.nlink_t;
 const off_t = std.c.off_t;
 const pid_t = std.c.pid_t;
 const sockaddr = std.c.sockaddr;
+const socklen_t = std.c.socklen_t;
 const time_t = std.c.time_t;
 const timespec = std.c.timespec;
 const uid_t = std.c.uid_t;
 const sf_hdtr = std.c.sf_hdtr;
 const clockid_t = std.c.clockid_t;
+const mmsghdr = std.c.mmsghdr;
+const NI = std.c.NI;
+const EAI = std.c.EAI;
 
 comptime {
     assert(builtin.os.tag == .freebsd); // Prevent access of std.c symbols on wrong OS.
 }
+
+pub extern "c" fn ioctl(fd: fd_t, request: c_ulong, ...) c_int;
 
 pub extern "c" fn ptrace(request: c_int, pid: pid_t, addr: caddr_t, data: c_int) c_int;
 
@@ -40,6 +46,18 @@ pub extern "c" fn sendfile(
     sbytes: ?*off_t,
     flags: u32,
 ) c_int;
+
+pub extern "c" fn sendmmsg(sockfd: fd_t, msgvec: [*]mmsghdr, vlen: usize, flags: u32) isize;
+
+pub extern "c" fn getnameinfo(
+    noalias addr: *const sockaddr,
+    addrlen: socklen_t,
+    noalias host: ?[*]u8,
+    hostlen: usize,
+    noalias serv: ?[*]u8,
+    servlen: usize,
+    flags: NI,
+) EAI;
 
 pub const UMTX_OP = enum(c_int) {
     LOCK = 0,
@@ -585,4 +603,47 @@ pub const IPTOS = struct {
     pub const ECN_ECT0 = 0x02;
     pub const ECN_CE = 0x03;
     pub const ECN_MASK = 0x03;
+};
+
+// https://cgit.freebsd.org/src/tree/sys/netinet/tcp.h?id=52c0d52b91e34f9190c9ba8fab7b6bc463bc4cbb#n183
+pub const TCP = struct {
+    pub const NODELAY = 1;
+    pub const MAXSEG = 2;
+    pub const NOPUSH = 4;
+    pub const NOOPT = 8;
+    pub const MD5SIG = 16;
+    pub const INFO = 32;
+    pub const STATS = 33;
+    pub const LOG = 34;
+    pub const LOGBUF = 35;
+    pub const LOGID = 36;
+    pub const LOGDUMP = 37;
+    pub const LOGDUMPID = 38;
+    pub const TXTLS_ENABLE = 39;
+    pub const TXTLS_MODE = 40;
+    pub const RXTLS_ENABLE = 41;
+    pub const RXTLS_MODE = 42;
+    pub const IWND_NB = 43;
+    pub const IWND_NSEG = 44;
+    pub const USE_DDP = 45;
+    pub const LOGID_CNT = 46;
+    pub const LOG_TAG = 47;
+    pub const USER_LOG = 48;
+    pub const CONGESTION = 64;
+    pub const CCALGOOPT = 65;
+    pub const MAXUNACKTIME = 68;
+    pub const IDLE_REDUCE = 70;
+    pub const REMOTE_UDP_ENCAPS_PORT = 71;
+    pub const DELACK = 72;
+    pub const FIN_IS_RST = 73;
+    pub const LOG_LIMIT = 74;
+    pub const SHARED_CWND_ALLOWED = 75;
+    pub const PROC_ACCOUNTING = 76;
+    pub const USE_CMP_ACKS = 77;
+    pub const PERF_INFO = 78;
+    pub const KEEPINIT = 128;
+    pub const KEEPIDLE = 256;
+    pub const KEEPINTVL = 512;
+    pub const KEEPCNT = 1024;
+    pub const FASTOPEN = 1025;
 };

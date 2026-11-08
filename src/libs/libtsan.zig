@@ -67,8 +67,11 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         .link_libc = true,
         .link_libcpp = link_libcpp,
         .any_unwind_tables = unwind_tables != .none,
+        .pic = true,
         // LLVM disables LTO for its libtsan.
         .lto = .none,
+        .function_sections = true,
+        .data_sections = true,
     }) catch |err| {
         comp.lockAndSetMiscFailure(
             .libtsan,
@@ -100,7 +103,6 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
             .valgrind = false,
             .unwind_tables = unwind_tables,
             .optimize_mode = optimize_mode,
-            .pic = true,
             .no_builtin = true,
             .code_model = comp.root_mod.code_model,
         },
@@ -116,17 +118,17 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         return error.AlreadyReported;
     };
 
-    var c_source_files = std.array_list.Managed(Compilation.CSourceFile).init(arena);
-    try c_source_files.ensureUnusedCapacity(tsan_sources.len);
+    var c_source_files: std.ArrayList(Compilation.CSourceFile) = .empty;
+    try c_source_files.ensureUnusedCapacity(arena, tsan_sources.len);
 
     const tsan_include_path = try comp.dirs.zig_lib.join(arena, &.{"libtsan"});
     for (tsan_sources) |tsan_src| {
-        var cflags = std.array_list.Managed([]const u8).init(arena);
+        var cflags: std.ArrayList([]const u8) = .empty;
 
-        try cflags.append("-I");
-        try cflags.append(tsan_include_path);
+        try cflags.append(arena, "-I");
+        try cflags.append(arena, tsan_include_path);
 
-        try addCcArgs(target, &cflags);
+        try addCcArgs(target, arena, &cflags);
 
         c_source_files.appendAssumeCapacity(.{
             .src_path = try comp.dirs.zig_lib.join(arena, &.{ "libtsan", tsan_src }),
@@ -140,14 +142,14 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         .windows => &windows_tsan_sources,
         else => &unix_tsan_sources,
     };
-    try c_source_files.ensureUnusedCapacity(platform_tsan_sources.len);
+    try c_source_files.ensureUnusedCapacity(arena, platform_tsan_sources.len);
     for (platform_tsan_sources) |tsan_src| {
-        var cflags = std.array_list.Managed([]const u8).init(arena);
+        var cflags: std.ArrayList([]const u8) = .empty;
 
-        try cflags.append("-I");
-        try cflags.append(tsan_include_path);
+        try cflags.append(arena, "-I");
+        try cflags.append(arena, tsan_include_path);
 
-        try addCcArgs(target, &cflags);
+        try addCcArgs(target, arena, &cflags);
 
         c_source_files.appendAssumeCapacity(.{
             .src_path = try comp.dirs.zig_lib.join(arena, &.{ "libtsan", tsan_src }),
@@ -166,12 +168,12 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
             .x86_64 => "tsan_rtl_amd64.S",
             else => return error.TSANUnsupportedCPUArchitecture,
         };
-        var cflags = std.array_list.Managed([]const u8).init(arena);
+        var cflags: std.ArrayList([]const u8) = .empty;
 
-        try cflags.append("-I");
-        try cflags.append(tsan_include_path);
-
-        try cflags.append("-DNDEBUG");
+        try cflags.appendSlice(arena, &.{
+            "-I",       tsan_include_path,
+            "-DNDEBUG",
+        });
 
         c_source_files.appendAssumeCapacity(.{
             .src_path = try comp.dirs.zig_lib.join(arena, &.{ "libtsan", asm_source }),
@@ -180,19 +182,19 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         });
     }
 
-    try c_source_files.ensureUnusedCapacity(sanitizer_common_sources.len);
+    try c_source_files.ensureUnusedCapacity(arena, sanitizer_common_sources.len);
     const sanitizer_common_include_path = try comp.dirs.zig_lib.join(arena, &.{
         "libtsan", "sanitizer_common",
     });
     for (sanitizer_common_sources) |common_src| {
-        var cflags = std.array_list.Managed([]const u8).init(arena);
+        var cflags: std.ArrayList([]const u8) = .empty;
 
-        try cflags.append("-I");
-        try cflags.append(sanitizer_common_include_path);
-        try cflags.append("-I");
-        try cflags.append(tsan_include_path);
+        try cflags.appendSlice(arena, &.{
+            "-I", sanitizer_common_include_path,
+            "-I", tsan_include_path,
+        });
 
-        try addCcArgs(target, &cflags);
+        try addCcArgs(target, arena, &cflags);
 
         c_source_files.appendAssumeCapacity(.{
             .src_path = try comp.dirs.zig_lib.join(arena, &.{
@@ -207,16 +209,16 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         &sanitizer_libcdep_sources
     else
         &sanitizer_nolibc_sources;
-    try c_source_files.ensureUnusedCapacity(to_c_or_not_to_c_sources.len);
+    try c_source_files.ensureUnusedCapacity(arena, to_c_or_not_to_c_sources.len);
     for (to_c_or_not_to_c_sources) |c_src| {
-        var cflags = std.array_list.Managed([]const u8).init(arena);
+        var cflags: std.ArrayList([]const u8) = .empty;
 
-        try cflags.append("-I");
-        try cflags.append(sanitizer_common_include_path);
-        try cflags.append("-I");
-        try cflags.append(tsan_include_path);
+        try cflags.appendSlice(arena, &.{
+            "-I", sanitizer_common_include_path,
+            "-I", tsan_include_path,
+        });
 
-        try addCcArgs(target, &cflags);
+        try addCcArgs(target, arena, &cflags);
 
         c_source_files.appendAssumeCapacity(.{
             .src_path = try comp.dirs.zig_lib.join(arena, &.{
@@ -227,14 +229,15 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         });
     }
 
-    try c_source_files.ensureUnusedCapacity(sanitizer_symbolizer_sources.len);
+    try c_source_files.ensureUnusedCapacity(arena, sanitizer_symbolizer_sources.len);
     for (sanitizer_symbolizer_sources) |c_src| {
-        var cflags = std.array_list.Managed([]const u8).init(arena);
+        var cflags: std.ArrayList([]const u8) = .empty;
 
-        try cflags.append("-I");
-        try cflags.append(tsan_include_path);
+        try cflags.appendSlice(arena, &.{
+            "-I", tsan_include_path,
+        });
 
-        try addCcArgs(target, &cflags);
+        try addCcArgs(target, arena, &cflags);
 
         c_source_files.appendAssumeCapacity(.{
             .src_path = try comp.dirs.zig_lib.join(arena, &.{
@@ -247,17 +250,16 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
 
     const interception_include_path = try comp.dirs.zig_lib.join(arena, &.{"interception"});
 
-    try c_source_files.ensureUnusedCapacity(interception_sources.len);
+    try c_source_files.ensureUnusedCapacity(arena, interception_sources.len);
     for (interception_sources) |c_src| {
-        var cflags = std.array_list.Managed([]const u8).init(arena);
+        var cflags: std.ArrayList([]const u8) = .empty;
 
-        try cflags.append("-I");
-        try cflags.append(interception_include_path);
+        try cflags.appendSlice(arena, &.{
+            "-I", interception_include_path,
+            "-I", tsan_include_path,
+        });
 
-        try cflags.append("-I");
-        try cflags.append(tsan_include_path);
-
-        try addCcArgs(target, &cflags);
+        try addCcArgs(target, arena, &cflags);
 
         c_source_files.appendAssumeCapacity(.{
             .src_path = try comp.dirs.zig_lib.join(arena, &.{
@@ -290,15 +292,9 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         .root_name = root_name,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
-        .function_sections = true,
-        .data_sections = true,
         .c_source_files = c_source_files.items,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
-        .verbose_air = comp.verbose_air,
-        .verbose_llvm_ir = comp.verbose_llvm_ir,
-        .verbose_llvm_bc = comp.verbose_llvm_bc,
-        .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .skip_linker_dependencies = skip_linker_dependencies,
         .linker_allow_shlib_undefined = linker_allow_shlib_undefined,
@@ -329,8 +325,12 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
     comp.tsan_lib = crt_file;
 }
 
-fn addCcArgs(target: *const std.Target, args: *std.array_list.Managed([]const u8)) error{OutOfMemory}!void {
-    try args.appendSlice(&[_][]const u8{
+fn addCcArgs(
+    target: *const std.Target,
+    allocator: std.mem.Allocator,
+    args: *std.ArrayList([]const u8),
+) error{OutOfMemory}!void {
+    try args.appendSlice(allocator, &.{
         "-nostdinc++",
         "-fvisibility=hidden",
         "-fvisibility-inlines-hidden",
@@ -341,15 +341,16 @@ fn addCcArgs(target: *const std.Target, args: *std.array_list.Managed([]const u8
     });
 
     if (target.abi.isAndroid() and target.os.version_range.linux.android >= 29) {
-        try args.append("-fno-emulated-tls");
+        try args.append(allocator, "-fno-emulated-tls");
     }
 
     if (target.isMinGW()) {
-        try args.append("-fms-extensions");
+        try args.append(allocator, "-fms-extensions");
     }
 }
 
 const tsan_sources = [_][]const u8{
+    "tsan_adaptive_delay.cpp",
     "tsan_debugging.cpp",
     "tsan_external.cpp",
     "tsan_fd.cpp",

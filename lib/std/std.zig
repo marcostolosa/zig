@@ -1,6 +1,7 @@
 pub const AutoHashMap = hash_map.AutoHashMap;
 pub const AutoHashMapUnmanaged = hash_map.AutoHashMapUnmanaged;
 pub const BitStack = @import("BitStack.zig");
+pub const BitStackUnmanaged = BitStack.Unmanaged;
 pub const Build = @import("Build.zig");
 pub const BufMap = @import("buf_map.zig").BufMap;
 pub const BufSet = @import("buf_set.zig").BufSet;
@@ -53,13 +54,6 @@ pub fn ArrayList(comptime T: type) type {
     return array_list.Aligned(T, null);
 }
 pub const array_list = @import("array_list.zig");
-
-/// Deprecated; use `array_list.Aligned`.
-pub const ArrayListAligned = array_list.Aligned;
-/// Deprecated; use `array_list.Aligned`.
-pub const ArrayListAlignedUnmanaged = array_list.Aligned;
-/// Deprecated; use `ArrayList`.
-pub const ArrayListUnmanaged = ArrayList;
 
 pub const array_hash_map = @import("array_hash_map.zig");
 pub const atomic = @import("atomic.zig");

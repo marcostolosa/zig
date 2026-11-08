@@ -24,11 +24,8 @@ pub const empty: Environ = .{ .block = .empty };
 /// operating system `void` is also used.
 pub const Block = switch (native_os) {
     .windows => GlobalBlock,
-    .wasi, .emscripten => switch (builtin.link_libc) {
-        false => GlobalBlock,
-        true => PosixBlock,
-    },
-    .freestanding, .other => GlobalBlock,
+    .emscripten => if (builtin.link_libc) PosixBlock else GlobalBlock,
+    .wasi, .freestanding, .other => GlobalBlock,
     else => PosixBlock,
 };
 
@@ -466,7 +463,7 @@ pub const Map = struct {
             );
             i += "ZIG_PROGRESS=".len;
             var value_buf: [std.fmt.count("{d}", .{std.math.maxInt(usize)})]u8 = undefined;
-            const value = std.fmt.bufPrint(&value_buf, "{d}", .{@intFromPtr(handle)}) catch unreachable;
+            const value = std.mem.print(&value_buf, "{d}", .{@intFromPtr(handle)}) catch unreachable;
             for (block[i..][0..value.len], value) |*r, v| r.* = v;
             i += value.len;
             block[i] = 0;
@@ -513,7 +510,7 @@ pub fn createMap(env: Environ, allocator: Allocator) CreateMapError!Map {
         assert(std.os.windows.ntdll.RtlEnterCriticalSection(peb.FastPebLock) == .SUCCESS);
         defer assert(std.os.windows.ntdll.RtlLeaveCriticalSection(peb.FastPebLock) == .SUCCESS);
         try map.putWindowsBlock(.{ .ptr = peb.ProcessParameters.Environment });
-    } else if (native_os == .wasi and !builtin.link_libc) empty: {
+    } else if (native_os == .wasi) empty: {
         if (!env.block.use_global) break :empty;
 
         var environ_count: usize = undefined;
@@ -840,7 +837,7 @@ pub fn createWindowsBlock(
         @memcpy(block[i..][0..zig_progress_key.len], &zig_progress_key);
         i += zig_progress_key.len;
         var value_buf: [std.fmt.count("{d}", .{std.math.maxInt(usize)})]u8 = undefined;
-        const value = std.fmt.bufPrint(&value_buf, "{d}", .{@intFromPtr(handle)}) catch unreachable;
+        const value = std.mem.print(&value_buf, "{d}", .{@intFromPtr(handle)}) catch unreachable;
         for (block[i..][0..value.len], value) |*r, v| r.* = v;
         i += value.len;
         block[i] = 0;
@@ -951,7 +948,7 @@ test Map {
 
 test "convert from Environ to Map and back again" {
     if (native_os == .windows) return;
-    if (native_os == .wasi and !builtin.link_libc) return;
+    if (native_os == .wasi) return;
 
     const gpa = testing.allocator;
 

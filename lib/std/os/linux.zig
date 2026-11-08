@@ -13,11 +13,11 @@ const dl = @import("../dynamic_library.zig");
 const native_arch = builtin.cpu.arch;
 const native_abi = builtin.abi;
 const native_endian = native_arch.endian();
-const is_loongarch = native_arch.isLoongArch();
-const is_mips = native_arch.isMIPS();
-const is_ppc = native_arch.isPowerPC();
-const is_riscv = native_arch.isRISCV();
-const is_sparc = native_arch.isSPARC();
+const is_loongarch = native_arch.isLoongarch();
+const is_mips = native_arch.isMips();
+const is_ppc = native_arch.isPowerpc();
+const is_riscv = native_arch.isRiscv();
+const is_sparc = native_arch.isSparc();
 const is_hppa = native_arch.isHppa();
 const iovec = std.posix.iovec;
 const iovec_const = std.posix.iovec_const;
@@ -123,7 +123,6 @@ pub const gid_t = u32;
 pub const clock_t = isize;
 pub const time_t = arch_bits.time_t;
 
-pub const tls = @import("linux/tls.zig");
 pub const BPF = @import("linux/bpf.zig");
 pub const IOCTL = @import("linux/ioctl.zig");
 pub const SECCOMP = @import("linux/seccomp.zig");
@@ -173,7 +172,7 @@ pub const MAP_TYPE = enum(u4) {
 };
 
 pub const MAP = switch (native_arch) {
-    .x86_64, .x86 => packed struct(u32) {
+    .x86_64, .x86 => bitpack struct(u32) {
         TYPE: MAP_TYPE,
         FIXED: bool = false,
         ANONYMOUS: bool = false,
@@ -195,7 +194,7 @@ pub const MAP = switch (native_arch) {
         UNINITIALIZED: bool = false,
         _: u5 = 0,
     },
-    .aarch64, .aarch64_be, .arm, .armeb, .thumb, .thumbeb => packed struct(u32) {
+    .aarch64, .aarch64_be, .arm, .armeb, .thumb, .thumbeb => bitpack struct(u32) {
         TYPE: MAP_TYPE,
         FIXED: bool = false,
         ANONYMOUS: bool = false,
@@ -216,7 +215,7 @@ pub const MAP = switch (native_arch) {
         UNINITIALIZED: bool = false,
         _: u5 = 0,
     },
-    .riscv32, .riscv64, .loongarch32, .loongarch64 => packed struct(u32) {
+    .riscv32, .riscv64, .loongarch32, .loongarch64 => bitpack struct(u32) {
         TYPE: MAP_TYPE,
         FIXED: bool = false,
         ANONYMOUS: bool = false,
@@ -231,7 +230,7 @@ pub const MAP = switch (native_arch) {
         UNINITIALIZED: bool = false,
         _: u5 = 0,
     },
-    .sparc, .sparc64 => packed struct(u32) {
+    .sparc, .sparc64 => bitpack struct(u32) {
         TYPE: MAP_TYPE,
         FIXED: bool = false,
         ANONYMOUS: bool = false,
@@ -253,7 +252,7 @@ pub const MAP = switch (native_arch) {
         UNINITIALIZED: bool = false,
         _: u5 = 0,
     },
-    .mips, .mipsel, .mips64, .mips64el => packed struct(u32) {
+    .mips, .mipsel, .mips64, .mips64el => bitpack struct(u32) {
         TYPE: MAP_TYPE,
         FIXED: bool = false,
         _5: u1 = 0,
@@ -274,7 +273,7 @@ pub const MAP = switch (native_arch) {
         UNINITIALIZED: bool = false,
         _: u5 = 0,
     },
-    .powerpc, .powerpcle, .powerpc64, .powerpc64le => packed struct(u32) {
+    .powerpc, .powerpcle, .powerpc64, .powerpc64le => bitpack struct(u32) {
         TYPE: MAP_TYPE,
         FIXED: bool = false,
         ANONYMOUS: bool = false,
@@ -306,7 +305,7 @@ pub const MAP = switch (native_arch) {
     .s390x,
     .sh,
     .sheb,
-    => packed struct(u32) {
+    => bitpack struct(u32) {
         TYPE: MAP_TYPE,
         FIXED: bool = false,
         ANONYMOUS: bool = false,
@@ -329,7 +328,7 @@ pub const MAP = switch (native_arch) {
         UNINITIALIZED: bool = false,
         _: u5 = 0,
     },
-    .alpha => packed struct(u32) {
+    .alpha => bitpack struct(u32) {
         TYPE: MAP_TYPE,
         ANONYMOUS: bool = false,
         _3: u1 = 0,
@@ -353,7 +352,7 @@ pub const MAP = switch (native_arch) {
         _20: u1 = 0,
         _: u5 = 0,
     },
-    .xtensa, .xtensaeb => packed struct(u32) {
+    .xtensa, .xtensaeb => bitpack struct(u32) {
         TYPE: MAP_TYPE,
         FIXED: bool = false,
         _RENAME: bool = false,
@@ -379,7 +378,7 @@ pub const MAP = switch (native_arch) {
     else => @compileError("missing std.os.linux.MAP constants for this architecture"),
 };
 
-pub const MREMAP = packed struct(u32) {
+pub const MREMAP = bitpack struct(u32) {
     MAYMOVE: bool = false,
     FIXED: bool = false,
     DONTUNMAP: bool = false,
@@ -387,7 +386,7 @@ pub const MREMAP = packed struct(u32) {
 };
 
 pub const O = switch (native_arch) {
-    .x86_64 => packed struct(u32) {
+    .x86_64 => bitpack struct(u32) {
         ACCMODE: ACCMODE = .RDONLY,
         _2: u4 = 0,
         CREAT: bool = false,
@@ -410,7 +409,7 @@ pub const O = switch (native_arch) {
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
-    .x86, .riscv32, .riscv64, .loongarch32, .loongarch64 => packed struct(u32) {
+    .x86, .riscv32, .riscv64, .loongarch32, .loongarch64 => bitpack struct(u32) {
         ACCMODE: ACCMODE = .RDONLY,
         _2: u4 = 0,
         CREAT: bool = false,
@@ -433,7 +432,7 @@ pub const O = switch (native_arch) {
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
-    .aarch64, .aarch64_be, .arm, .armeb, .thumb, .thumbeb => packed struct(u32) {
+    .aarch64, .aarch64_be, .arm, .armeb, .thumb, .thumbeb => bitpack struct(u32) {
         ACCMODE: ACCMODE = .RDONLY,
         _2: u4 = 0,
         CREAT: bool = false,
@@ -456,7 +455,7 @@ pub const O = switch (native_arch) {
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
-    .sparc, .sparc64 => packed struct(u32) {
+    .sparc, .sparc64 => bitpack struct(u32) {
         ACCMODE: ACCMODE = .RDONLY,
         _2: u1 = 0,
         APPEND: bool = false,
@@ -482,7 +481,7 @@ pub const O = switch (native_arch) {
         TMPFILE: bool = false,
         _27: u6 = 0,
     },
-    .mips, .mipsel, .mips64, .mips64el => packed struct(u32) {
+    .mips, .mipsel, .mips64, .mips64el => bitpack struct(u32) {
         ACCMODE: ACCMODE = .RDONLY,
         _2: u1 = 0,
         APPEND: bool = false,
@@ -507,7 +506,7 @@ pub const O = switch (native_arch) {
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
-    .powerpc, .powerpcle, .powerpc64, .powerpc64le => packed struct(u32) {
+    .powerpc, .powerpcle, .powerpc64, .powerpc64le => bitpack struct(u32) {
         ACCMODE: ACCMODE = .RDONLY,
         _2: u4 = 0,
         CREAT: bool = false,
@@ -542,7 +541,7 @@ pub const O = switch (native_arch) {
     .sheb,
     .xtensa,
     .xtensaeb,
-    => packed struct(u32) {
+    => bitpack struct(u32) {
         ACCMODE: ACCMODE = .RDONLY,
         _2: u4 = 0,
         CREAT: bool = false,
@@ -571,7 +570,7 @@ pub const O = switch (native_arch) {
         // #define O_SYNC     04010000
         // #define O_NDELAY O_NONBLOCK
     },
-    .m68k => packed struct(u32) {
+    .m68k => bitpack struct(u32) {
         ACCMODE: ACCMODE = .RDONLY,
         _2: u4 = 0,
         CREAT: bool = false,
@@ -592,7 +591,7 @@ pub const O = switch (native_arch) {
         PATH: bool = false,
         _22: u10 = 0,
     },
-    .alpha => packed struct(u32) {
+    .alpha => bitpack struct(u32) {
         ACCMODE: ACCMODE = .RDONLY,
         NONBLOCK: bool = false,
         APPEND: bool = false,
@@ -619,6 +618,138 @@ pub const O = switch (native_arch) {
 };
 
 pub const HWCAP = switch (native_arch) {
+    .aarch64, .aarch64_be => struct {
+        pub const FP = 1 << 0;
+        pub const ASIMD = 1 << 1;
+        pub const EVTSTRM = 1 << 2;
+        pub const AES = 1 << 3;
+        pub const PMULL = 1 << 4;
+        pub const SHA1 = 1 << 5;
+        pub const SHA2 = 1 << 6;
+        pub const CRC32 = 1 << 7;
+        pub const ATOMICS = 1 << 8;
+        pub const FPHP = 1 << 9;
+        pub const ASIMDHP = 1 << 10;
+        pub const CPUID = 1 << 11;
+        pub const ASIMDRDM = 1 << 12;
+        pub const JSCVT = 1 << 13;
+        pub const FCMA = 1 << 14;
+        pub const LRCPC = 1 << 15;
+        pub const DCPOP = 1 << 16;
+        pub const SHA3 = 1 << 17;
+        pub const SM3 = 1 << 18;
+        pub const SM4 = 1 << 19;
+        pub const ASIMDDP = 1 << 20;
+        pub const SHA512 = 1 << 21;
+        pub const SVE = 1 << 22;
+        pub const ASIMDFHM = 1 << 23;
+        pub const DIT = 1 << 24;
+        pub const USCAT = 1 << 25;
+        pub const ILRCPC = 1 << 26;
+        pub const FLAGM = 1 << 27;
+        pub const SSBS = 1 << 28;
+        pub const SB = 1 << 29;
+        pub const PACA = 1 << 30;
+        pub const PACG = 1 << 31;
+        pub const GCS = 1 << 32;
+        pub const CMPBR = 1 << 33;
+        pub const FPRCVT = 1 << 34;
+        pub const F8MM8 = 1 << 35;
+        pub const F8MM4 = 1 << 36;
+        pub const SVE_F16MM = 1 << 37;
+        pub const SVE_ELTPERM = 1 << 38;
+        pub const SVE_AES2 = 1 << 39;
+        pub const SVE_BFSCALE = 1 << 40;
+        pub const SVE2P2 = 1 << 41;
+        pub const SME2P2 = 1 << 42;
+        pub const SME_SBITPERM = 1 << 43;
+        pub const SME_AES = 1 << 44;
+        pub const SME_SFEXPA = 1 << 45;
+        pub const SME_STMOP = 1 << 46;
+        pub const SME_SMOP4 = 1 << 47;
+
+        pub const @"2" = struct {
+            pub const DCPODP = 1 << 0;
+            pub const SVE2 = 1 << 1;
+            pub const SVEAES = 1 << 2;
+            pub const SVEPMULL = 1 << 3;
+            pub const SVEBITPERM = 1 << 4;
+            pub const SVESHA3 = 1 << 5;
+            pub const SVESM4 = 1 << 6;
+            pub const FLAGM2 = 1 << 7;
+            pub const FRINT = 1 << 8;
+            pub const SVEI8MM = 1 << 9;
+            pub const SVEF32MM = 1 << 10;
+            pub const SVEF64MM = 1 << 11;
+            pub const SVEBF16 = 1 << 12;
+            pub const I8MM = 1 << 13;
+            pub const BF16 = 1 << 14;
+            pub const DGH = 1 << 15;
+            pub const RNG = 1 << 16;
+            pub const BTI = 1 << 17;
+            pub const MTE = 1 << 18;
+            pub const ECV = 1 << 19;
+            pub const AFP = 1 << 20;
+            pub const RPRES = 1 << 21;
+            pub const MTE3 = 1 << 22;
+            pub const SME = 1 << 23;
+            pub const SME_I16I64 = 1 << 24;
+            pub const SME_F64F64 = 1 << 25;
+            pub const SME_I8I32 = 1 << 26;
+            pub const SME_F16F32 = 1 << 27;
+            pub const SME_B16F32 = 1 << 28;
+            pub const SME_F32F32 = 1 << 29;
+            pub const SME_FA64 = 1 << 30;
+            pub const WFXT = 1 << 31;
+            pub const EBF16 = 1 << 32;
+            pub const SVE_EBF16 = 1 << 33;
+            pub const CSSC = 1 << 34;
+            pub const RPRFM = 1 << 35;
+            pub const SVE2P1 = 1 << 36;
+            pub const SME2 = 1 << 37;
+            pub const SME2P1 = 1 << 38;
+            pub const SME_I16I32 = 1 << 39;
+            pub const SME_BI32I32 = 1 << 40;
+            pub const SME_B16B16 = 1 << 41;
+            pub const SME_F16F16 = 1 << 42;
+            pub const MOPS = 1 << 43;
+            pub const HBC = 1 << 44;
+            pub const SVE_B16B16 = 1 << 45;
+            pub const LRCPC3 = 1 << 46;
+            pub const LSE128 = 1 << 47;
+            pub const FPMR = 1 << 48;
+            pub const LUT = 1 << 49;
+            pub const FAMINMAX = 1 << 50;
+            pub const F8CVT = 1 << 51;
+            pub const F8FMA = 1 << 52;
+            pub const F8DP4 = 1 << 53;
+            pub const F8DP2 = 1 << 54;
+            pub const F8E4M3 = 1 << 55;
+            pub const F8E5M2 = 1 << 56;
+            pub const SME_LUTV2 = 1 << 57;
+            pub const SME_F8F16 = 1 << 58;
+            pub const SME_F8F32 = 1 << 59;
+            pub const SME_SF8FMA = 1 << 60;
+            pub const SME_SF8DP4 = 1 << 61;
+            pub const SME_SF8DP2 = 1 << 62;
+            pub const POE = 1 << 63;
+        };
+
+        pub const @"3" = struct {
+            pub const MTE_FAR = 1 << 0;
+            pub const MTE_STORE_ONLY = 1 << 1;
+            pub const LSFE = 1 << 2;
+            pub const LS64 = 1 << 3;
+            pub const SVE_B16MM = 1 << 4;
+            pub const SVE2P3 = 1 << 5;
+            pub const SME_LUT6 = 1 << 6;
+            pub const SME2P3 = 1 << 7;
+            pub const F16MM = 1 << 8;
+            pub const F16F32DOT = 1 << 9;
+            pub const F16F32MM = 1 << 10;
+            pub const SVE_LUT6 = 1 << 11;
+        };
+    },
     .arm, .armeb, .thumb, .thumbeb => struct {
         pub const SWP = 1 << 0;
         pub const HALF = 1 << 1;
@@ -643,6 +774,22 @@ pub const HWCAP = switch (native_arch) {
         pub const IDIV = IDIVA | IDIVT;
         pub const LPAE = 1 << 20;
         pub const EVTSTRM = 1 << 21;
+        pub const FPHP = 1 << 22;
+        pub const ASIMDHP = 1 << 23;
+        pub const ASIMDDP = 1 << 24;
+        pub const ASIMDFHM = 1 << 25;
+        pub const ASIMDBF16 = 1 << 26;
+        pub const I8MM = 1 << 27;
+
+        pub const @"2" = struct {
+            pub const AES = 1 << 0;
+            pub const PMULL = 1 << 1;
+            pub const SHA1 = 1 << 2;
+            pub const SHA2 = 1 << 3;
+            pub const CRC32 = 1 << 4;
+            pub const SB = 1 << 5;
+            pub const SSBS = 1 << 6;
+        };
     },
     .loongarch32, .loongarch64 => struct {
         pub const CPUCFG = 1 << 0;
@@ -661,11 +808,149 @@ pub const HWCAP = switch (native_arch) {
         pub const PTW = 1 << 13;
         pub const LSPW = 1 << 14;
         pub const SCQ = 1 << 15;
+        pub const LAM_BH = 1 << 16;
+    },
+    .mips, .mipsel, .mips64, .mips64el => struct {
+        pub const R6 = 1 << 0;
+        pub const MSA = 1 << 1;
+        pub const CRC32 = 1 << 2;
+        pub const MIPS16 = 1 << 3;
+        pub const MDMX = 1 << 4;
+        pub const MIPS3D = 1 << 5;
+        pub const SMARTMIPS = 1 << 6;
+        pub const DSP = 1 << 7;
+        pub const DSP2 = 1 << 8;
+        pub const DSP3 = 1 << 9;
+        pub const MIPS16E2 = 1 << 10;
+        pub const LOONGSON_MMI = 1 << 11;
+        pub const LOONGSON_EXT = 1 << 12;
+        pub const LOONGSON_EXT2 = 1 << 13;
+        pub const LOONGSON_CPUCFG = 1 << 14;
+    },
+    .powerpc, .powerpcle, .powerpc64, .powerpc64le => struct {
+        pub const PPC_LE = 1 << 0;
+        pub const TRUE_LE = 1 << 1;
+        pub const PSERIES_PERFMON_COMPAT = 1 << 6;
+        pub const HAS_VSX = 1 << 7;
+        pub const ARCH_2_06 = 1 << 8;
+        pub const POWER6_EXT = 1 << 9;
+        pub const HAS_DFP = 1 << 10;
+        pub const PA6T = 1 << 11;
+        pub const ARCH_2_05 = 1 << 12;
+        pub const ICACHE_SNOOP = 1 << 13;
+        pub const SMT = 1 << 14;
+        pub const BOOKE = 1 << 15;
+        pub const CELL = 1 << 16;
+        pub const POWER5_PLUS = 1 << 17;
+        pub const POWER5 = 1 << 18;
+        pub const POWER4 = 1 << 19;
+        pub const NO_TB = 1 << 20;
+        pub const HAS_EFP_DOUBLE = 1 << 21;
+        pub const HAS_EFP_SINGLE = 1 << 22;
+        pub const HAS_SPE = 1 << 23;
+        pub const UNIFIED_CACHE = 1 << 24;
+        pub const HAS_4xxMAC = 1 << 25;
+        pub const HAS_MMU = 1 << 26;
+        pub const HAS_FPU = 1 << 27;
+        pub const HAS_ALTIVEC = 1 << 28;
+        pub const @"601_INSTR" = 1 << 29;
+        pub const @"64" = 1 << 30;
+        pub const @"32" = 1 << 31;
+
+        pub const @"2" = struct {
+            pub const DMF = 1 << 15;
+            pub const ARCH_3_2 = 1 << 16;
+            pub const MMA = 1 << 17;
+            pub const ARCH_3_1 = 1 << 18;
+            pub const HTM_NO_SUSPEND = 1 << 19;
+            pub const SCV = 1 << 20;
+            pub const DARN = 1 << 21;
+            pub const HAS_IEEE128 = 1 << 22;
+            pub const ARCH_3_00 = 1 << 23;
+            pub const HTM_NOSC = 1 << 24;
+            pub const VEC_CRYPTO = 1 << 25;
+            pub const TAR = 1 << 26;
+            pub const ISEL = 1 << 27;
+            pub const EBB = 1 << 28;
+            pub const DSCR = 1 << 29;
+            pub const HTM = 1 << 30;
+            pub const ARCH_2_07 = 1 << 31;
+        };
+    },
+    .riscv32, .riscv64 => struct {
+        pub const ISA_A = 1 << 0;
+        pub const ISA_C = 1 << 2;
+        pub const ISA_D = 1 << 3;
+        pub const ISA_F = 1 << 5;
+        pub const ISA_I = 1 << 8;
+        pub const ISA_M = 1 << 12;
+        pub const ISA_V = 1 << 21;
+    },
+    .s390x => struct {
+        pub const ESAN3 = 1 << 0;
+        pub const ZARCH = 1 << 1;
+        pub const STFLE = 1 << 2;
+        pub const MSA = 1 << 3;
+        pub const LDISP = 1 << 4;
+        pub const EIMM = 1 << 5;
+        pub const DFP = 1 << 6;
+        pub const HPAGE = 1 << 7;
+        pub const ETF3EH = 1 << 8;
+        pub const HIGH_GPRS = 1 << 9;
+        pub const TE = 1 << 10;
+        pub const VXRS = 1 << 11;
+        pub const VXRS_BCD = 1 << 12;
+        pub const VXRS_EXT = 1 << 13;
+        pub const GS = 1 << 14;
+        pub const VXRS_EXT2 = 1 << 15;
+        pub const VXRS_PDE = 1 << 16;
+        pub const SORT = 1 << 17;
+        pub const DFLT = 1 << 18;
+        pub const VXRS_PDE2 = 1 << 19;
+        pub const NNPA = 1 << 20;
+        pub const PCI_MIO = 1 << 21;
+        pub const SIE = 1 << 22;
+    },
+    .sparc, .sparc64 => struct {
+        pub const FLUSH = 1 << 0;
+        pub const STBAR = 1 << 1;
+        pub const SWAP = 1 << 2;
+        pub const MULDIV = 1 << 3;
+        pub const V9 = 1 << 4;
+        pub const ULTRA3 = 1 << 5;
+        pub const BLKINIT = 1 << 6;
+        pub const N2 = 1 << 7;
+        pub const MUL32 = 1 << 8;
+        pub const DIV32 = 1 << 9;
+        pub const FSMULD = 1 << 10;
+        pub const V8PLUS = 1 << 11;
+        pub const POPC = 1 << 12;
+        pub const VIS = 1 << 13;
+        pub const VIS2 = 1 << 14;
+        pub const ASI_BLK_INIT = 1 << 15;
+        pub const FMAF = 1 << 16;
+        pub const VIS3 = 1 << 17;
+        pub const HPC = 1 << 18;
+        pub const RANDOM = 1 << 19;
+        pub const TRANS = 1 << 20;
+        pub const FJFMAU = 1 << 21;
+        pub const IMA = 1 << 22;
+        pub const ASI_CACHE_SPARING = 1 << 23;
+        pub const PAUSE = 1 << 24;
+        pub const CBCOND = 1 << 25;
+        pub const CRYPTO = 1 << 26;
+        pub const ADI = 1 << 27;
+    },
+    .x86, .x86_64 => struct {
+        pub const @"2" = struct {
+            pub const RING3MWAIT = 1 << 0;
+            pub const FSGSBASE = 1 << 1;
+        };
     },
     else => struct {},
 };
 
-pub const RENAME = packed struct(u32) {
+pub const RENAME = bitpack struct(u32) {
     /// Cannot be set together with `EXCHANGE`.
     NOREPLACE: bool = false,
     /// Cannot be set together with `NOREPLACE`.
@@ -674,43 +959,22 @@ pub const RENAME = packed struct(u32) {
     _: u29 = 0,
 };
 
-/// Set by startup code, used by `getauxval`.
-pub var elf_aux_maybe: ?[*]std.elf.Auxv = null;
+/// Available only when libc is *not* linked; use `std.c.getauxval` if libc is linked.
+pub const getauxval = if (builtin.link_libc) {} else struct {
+    /// Provided by compiler-rt and set by `std.start`.
+    extern var __zig_elf_auxv: [*]std.elf.Auxv;
 
-/// Whether an external or internal getauxval implementation is used.
-const extern_getauxval = switch (builtin.zig_backend) {
-    // Calling extern functions is not yet supported with these backends
-    .stage2_arm,
-    .stage2_loongarch,
-    .stage2_powerpc,
-    .stage2_riscv64,
-    .stage2_sparc64,
-    => false,
-    else => !builtin.link_libc,
-};
+    pub fn getauxval(index: usize) usize {
+        @disableInstrumentation();
 
-pub const getauxval = if (extern_getauxval) struct {
-    comptime {
-        const root = @import("root");
-        // Export this only when building an executable, otherwise it is overriding
-        // the libc implementation
-        if (builtin.output_mode == .Exe or @hasDecl(root, "main")) {
-            @export(&getauxvalImpl, .{ .name = "getauxval", .linkage = .weak });
+        var i: usize = 0;
+        while (__zig_elf_auxv[i].a_type != std.elf.AT.NULL) : (i += 1) {
+            if (__zig_elf_auxv[i].a_type == index) return __zig_elf_auxv[i].a_un.a_val;
         }
-    }
-    extern fn getauxval(index: usize) usize;
-}.getauxval else getauxvalImpl;
 
-fn getauxvalImpl(index: usize) callconv(.c) usize {
-    @disableInstrumentation();
-    const auxv = elf_aux_maybe orelse return 0;
-    var i: usize = 0;
-    while (auxv[i].a_type != std.elf.AT_NULL) : (i += 1) {
-        if (auxv[i].a_type == index)
-            return auxv[i].a_un.a_val;
+        return 0;
     }
-    return 0;
-}
+}.getauxval;
 
 // Some architectures (and some syscalls) require 64bit parameters to be passed
 // in a even-aligned register pair.
@@ -718,8 +982,8 @@ const require_aligned_register_pair =
     builtin.cpu.arch.isArm() or
     builtin.cpu.arch == .csky or
     builtin.cpu.arch == .hexagon or
-    builtin.cpu.arch.isMIPS32() or
-    builtin.cpu.arch.isPowerPC32() or
+    builtin.cpu.arch.isMips32() or
+    builtin.cpu.arch.isPowerpc32() or
     builtin.cpu.arch.isXtensa();
 
 // Split a 64bit value into a {LSB,MSB} pair.
@@ -753,10 +1017,9 @@ fn splitValue64(val: i64) [2]u32 {
 }
 
 /// Get the errno from a syscall return value. SUCCESS means no error.
-pub fn errno(r: u64) E {
-    const signed_r: i32 = @bitCast(@as(u32, @truncate(r)));
-    const int = if (signed_r > -4096 and signed_r < 0) -signed_r else 0;
-    return @fromBackingInt(@intCast(int));
+pub fn errno(r: anytype) E {
+    const signed_r: @Int(.signed, @typeInfo(@TypeOf(r)).int.bits) = @bitCast(r);
+    return @fromBackingInt(@intCast(if (signed_r > -4096 and signed_r < 0) -signed_r else 0));
 }
 
 pub fn brk(addr: usize) usize {
@@ -803,7 +1066,7 @@ pub fn execve(path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:
     return syscall3(.execve, @intFromPtr(path), @intFromPtr(argv), @intFromPtr(envp));
 }
 
-pub const EXECVEAT = packed struct(u32) {
+pub const EXECVEAT = bitpack struct(u32) {
     _1: u8 = 0, // 0x00000001
     /// Do not follow symbolic links.
     SYMLINK_NOFOLLOW: bool, // 0x00000100
@@ -818,7 +1081,7 @@ pub fn execveat(dirfd: fd_t, path: [*:0]const u8, argv: [*:null]const ?[*:0]cons
 }
 
 pub fn fork() usize {
-    if (comptime native_arch.isSPARC()) {
+    if (comptime native_arch.isSparc()) {
         return syscall_fork();
     } else if (@hasField(SYS, "fork")) {
         return syscall0(.fork);
@@ -1158,7 +1421,7 @@ pub fn umount2(special: [*:0]const u8, flags: u32) usize {
     return syscall2(.umount2, @intFromPtr(special), flags);
 }
 
-pub const MOVE_MOUNT = packed struct(u32) {
+pub const MOVE_MOUNT = bitpack struct(u32) {
     /// Follow symlinks on from path.
     F_SYMLINKS: bool, // 0x00000001
     /// Follow automounts on from path.
@@ -1189,7 +1452,7 @@ pub fn move_mount(from_dirfd: fd_t, from_path: [*:0]const u8, to_dirfd: fd_t, to
     );
 }
 
-pub const MOUNT_ATTR = packed struct(u32) {
+pub const MOUNT_ATTR = bitpack struct(u32) {
     /// Update atime relative to mtime/ctime.
     RELATIME: u0, // This is the default ATIME, it's true unless a different ATIME is set.
     /// Mount read-only.
@@ -1221,7 +1484,7 @@ pub fn mount_setattr(dirfd: fd_t, path: [*:0]const u8, flags: MOUNT_ATTR) usize 
     return syscall3(.mount_setattr, @as(u32, @bitCast(dirfd)), @intFromPtr(path), @as(u32, @bitCast(flags)));
 }
 
-pub const FSOPEN = packed struct(u32) {
+pub const FSOPEN = bitpack struct(u32) {
     /// Set CLOEXEC on the new fd.
     CLOEXEC: bool, // 0x00000001
     _: u31 = 0,
@@ -1254,7 +1517,7 @@ pub fn fsconfig(fd: fd_t, cmd: FSCONFIG_CMD, key: ?[*:0]const u8, value: ?[*:0]c
     return syscall5(.fsconfig, @as(u32, @bitCast(fd)), @backingInt(cmd), @intFromPtr(key), @intFromPtr(value), aux);
 }
 
-pub const FSMOUNT = packed struct(u32) {
+pub const FSMOUNT = bitpack struct(u32) {
     /// Set CLOEXEC on the fd.
     CLOEXEC: bool, // 0x00000001
     _31: u31 = 0,
@@ -1264,7 +1527,7 @@ pub fn fsmount(fsfd: fd_t, flags: FSMOUNT, attr_flags: MOUNT_ATTR) usize {
     return syscall3(.fsmount, @as(u32, @bitCast(fsfd)), @as(u32, @bitCast(flags)), @as(u32, @bitCast(attr_flags)));
 }
 
-pub const FSPICK = packed struct(u32) {
+pub const FSPICK = bitpack struct(u32) {
     /// Set CLOEXEC on the new fd.
     CLOEXEC: bool, // 0x00000001
     SYMLINK_NOFOLLOW: bool, // 0x00000002
@@ -1367,7 +1630,7 @@ pub fn munlock(address: [*]const u8, length: usize) usize {
     return syscall2(.munlock, @intFromPtr(address), length);
 }
 
-pub const MLOCK = packed struct(u32) {
+pub const MLOCK = bitpack struct(u32) {
     ONFAULT: bool = false,
     _1: u31 = 0,
 };
@@ -1376,13 +1639,13 @@ pub fn mlock2(address: [*]const u8, length: usize, flags: MLOCK) usize {
     return syscall3(.mlock2, @intFromPtr(address), length, @as(u32, @bitCast(flags)));
 }
 
-pub const MCL = if (native_arch.isSPARC() or native_arch.isPowerPC()) packed struct(u32) {
+pub const MCL = if (native_arch.isSparc() or native_arch.isPowerpc()) bitpack struct(u32) {
     _0: u13 = 0,
     CURRENT: bool = false,
     FUTURE: bool = false,
     ONFAULT: bool = false,
     _4: u16 = 0,
-} else packed struct(u32) {
+} else bitpack struct(u32) {
     CURRENT: bool = false,
     FUTURE: bool = false,
     ONFAULT: bool = false,
@@ -1608,7 +1871,7 @@ pub fn acct(path: [*:0]const u8) usize {
 }
 
 pub fn pipe(fd: *[2]fd_t) usize {
-    if (native_arch.isMIPS() or native_arch.isSPARC()) {
+    if (native_arch.isMips() or native_arch.isSparc()) {
         return syscall_pipe(fd);
     } else if (@hasField(SYS, "pipe")) {
         return syscall1(.pipe, @intFromPtr(fd));
@@ -1746,7 +2009,7 @@ pub fn close(fd: fd_t) usize {
     return syscall1(.close, @as(u32, @bitCast(fd)));
 }
 
-pub const CLOSE_RANGE = packed struct(u32) {
+pub const CLOSE_RANGE = bitpack struct(u32) {
     _0: u1 = 0,
     /// Unshare the file descriptor table before closing file descriptors.
     UNSHARE: bool, // 0x00000001
@@ -2046,7 +2309,11 @@ pub const F = struct {
             const GETOWN = 23;
             const SETOWN = 24;
         },
-        .alpha, .sparc, .sparc64 => struct {
+        .alpha => struct {
+            const SETOWN = 5;
+            const GETOWN = 6;
+        },
+        .sparc, .sparc64 => struct {
             const GETOWN = 5;
             const SETOWN = 6;
         },
@@ -2055,8 +2322,8 @@ pub const F = struct {
             const SETOWN = 12;
         },
         else => struct {
-            const GETOWN = 8;
-            const SETOWN = 9;
+            const SETOWN = 8;
+            const GETOWN = 9;
         },
     };
 
@@ -2489,7 +2756,7 @@ pub fn sigaddset(set: *sigset_t, sig: SIG) void {
 
 pub fn sigdelset(set: *sigset_t, sig: SIG) void {
     const index = sigset_bit_index(sig);
-    (set.*)[index.word] ^= index.mask;
+    (set.*)[index.word] &= ~index.mask;
 }
 
 pub fn sigismember(set: *const sigset_t, sig: SIG) bool {
@@ -2708,7 +2975,7 @@ pub const sched_param = extern struct {
     priority: i32,
 };
 
-pub const SCHED = packed struct(i32) {
+pub const SCHED = bitpack struct(i32) {
     pub const Mode = enum(u3) {
         /// normal multi-user scheduling
         NORMAL = 0,
@@ -3065,7 +3332,7 @@ pub fn process_vm_writev(pid: pid_t, local: []const iovec_const, remote: []const
 }
 
 pub fn fadvise(fd: fd_t, offset: i64, len: i64, advice: usize) usize {
-    if (native_arch.isMIPS32()) {
+    if (native_arch.isMips32()) {
         // MIPS O32 weirdly differs from the other architectures that require
         // aligned register pairs for this specific syscall.
 
@@ -4270,7 +4537,7 @@ pub const FUTEX_COMMAND = enum(u7) {
 };
 
 /// Futex v1 API command and flags for the `futex_op` parameter
-pub const FUTEX_OP = packed struct(u32) {
+pub const FUTEX_OP = bitpack struct(u32) {
     cmd: FUTEX_COMMAND,
     private: bool,
     realtime: bool = false, // realtime clock vs. monotonic clock
@@ -4278,7 +4545,7 @@ pub const FUTEX_OP = packed struct(u32) {
 };
 
 /// Futex v1 FUTEX_WAKE_OP `val3` operation:
-pub const FUTEX_WAKE_OP = packed struct(u32) {
+pub const FUTEX_WAKE_OP = bitpack struct(u32) {
     cmd: FUTEX_WAKE_OP_CMD,
     /// From C API `FUTEX_OP_ARG_SHIFT`:  Use (1 << oparg) as operand
     arg_shift: bool = false,
@@ -4325,18 +4592,18 @@ pub const FUTEX2_SIZE = enum(u2) {
 };
 
 /// As of kernel 6.14 there are no defined flags to futex2_waitv.
-pub const FUTEX2_FLAGS_WAITV = packed struct(u32) {
+pub const FUTEX2_FLAGS_WAITV = bitpack struct(u32) {
     _reserved: u32 = 0,
 };
 
 /// As of kernel 6.14 there are no defined flags to futex2_requeue.
-pub const FUTEX2_FLAGS_REQUEUE = packed struct(u32) {
+pub const FUTEX2_FLAGS_REQUEUE = bitpack struct(u32) {
     _reserved: u32 = 0,
 };
 
 /// Flags for futex v2 APIs (futex2_wait, futex2_wake, futex2_requeue, but
 /// not the futex2_waitv syscall, but also used in the futex2_waitone struct).
-pub const FUTEX2_FLAGS = packed struct(u32) {
+pub const FUTEX2_FLAGS = bitpack struct(u32) {
     size: FUTEX2_SIZE,
     numa: bool = false,
     _reserved: u4 = 0,
@@ -4345,7 +4612,7 @@ pub const FUTEX2_FLAGS = packed struct(u32) {
 };
 
 pub const PROT = switch (native_arch) {
-    .mips, .mipsel, .mips64, .mips64el, .xtensa, .xtensaeb => packed struct(u32) {
+    .mips, .mipsel, .mips64, .mips64el, .xtensa, .xtensaeb => bitpack struct(u32) {
         READ: bool = false,
         WRITE: bool = false,
         EXEC: bool = false,
@@ -4357,7 +4624,7 @@ pub const PROT = switch (native_arch) {
         GROWSUP: bool = false,
         ___: u6 = 0,
     },
-    else => packed struct(u32) {
+    else => bitpack struct(u32) {
         READ: bool = false,
         WRITE: bool = false,
         EXEC: bool = false,
@@ -6309,7 +6576,7 @@ pub const timerfd_clockid_t = enum(u32) {
     _,
 };
 
-pub const TIMER = packed struct(u32) {
+pub const TIMER = bitpack struct(u32) {
     ABSTIME: bool,
     _: u31 = 0,
 };
@@ -6441,7 +6708,7 @@ pub const IN = struct {
 };
 
 pub const fanotify = struct {
-    pub const InitFlags = packed struct(u32) {
+    pub const InitFlags = bitpack struct(u32) {
         CLOEXEC: bool = false,
         NONBLOCK: bool = false,
         CLASS: enum(u2) {
@@ -6461,7 +6728,7 @@ pub const fanotify = struct {
         _: u19 = 0,
     };
 
-    pub const MarkFlags = packed struct(u32) {
+    pub const MarkFlags = bitpack struct(u32) {
         ADD: bool = false,
         REMOVE: bool = false,
         DONT_FOLLOW: bool = false,
@@ -6478,7 +6745,7 @@ pub const fanotify = struct {
         _: u21 = 0,
     };
 
-    pub const MarkMask = packed struct(u64) {
+    pub const MarkMask = bitpack struct(u64) {
         /// File was accessed
         ACCESS: bool = false,
         /// File was modified
@@ -6646,14 +6913,14 @@ pub const S = struct {
     }
 };
 
-const TFD_TIMER = packed struct(u32) {
+const TFD_TIMER = bitpack struct(u32) {
     ABSTIME: bool = false,
     CANCEL_ON_SET: bool = false,
     _: u30 = 0,
 };
 
 pub const TFD = switch (native_arch) {
-    .sparc, .sparc64 => packed struct(u32) {
+    .sparc, .sparc64 => bitpack struct(u32) {
         _0: u14 = 0,
         NONBLOCK: bool = false,
         _15: u7 = 0,
@@ -6662,7 +6929,7 @@ pub const TFD = switch (native_arch) {
 
         pub const TIMER = TFD_TIMER;
     },
-    .mips, .mipsel, .mips64, .mips64el => packed struct(u32) {
+    .mips, .mipsel, .mips64, .mips64el => bitpack struct(u32) {
         _0: u7 = 0,
         NONBLOCK: bool = false,
         _8: u11 = 0,
@@ -6671,7 +6938,7 @@ pub const TFD = switch (native_arch) {
 
         pub const TIMER = TFD_TIMER;
     },
-    .alpha => packed struct(u32) {
+    .alpha => bitpack struct(u32) {
         _0: u2 = 0,
         NONBLOCK: bool = false,
         _3: u18 = 0,
@@ -6680,7 +6947,7 @@ pub const TFD = switch (native_arch) {
 
         pub const TIMER = TFD_TIMER;
     },
-    else => packed struct(u32) {
+    else => bitpack struct(u32) {
         _0: u11 = 0,
         NONBLOCK: bool = false,
         _12: u7 = 0,
@@ -7836,7 +8103,7 @@ pub const io_uring_buf_reg = extern struct {
     flags: Flags,
     resv: [3]u64,
 
-    pub const Flags = packed struct(u16) {
+    pub const Flags = bitpack struct(u16) {
         _0: u1 = 0,
         /// Incremental buffer consumption.
         inc: bool,
@@ -7885,7 +8152,7 @@ pub const utsname = extern struct {
 };
 pub const HOST_NAME_MAX = 64;
 
-pub const STATX = packed struct(u32) {
+pub const STATX = bitpack struct(u32) {
     /// Want `mode & S.IFMT`.
     TYPE: bool = false,
     /// Want `mode & ~S.IFMT`.
@@ -7934,7 +8201,7 @@ pub const STATX = packed struct(u32) {
 /// Flags marked [I] correspond to the `FS_IOC_SETFLAGS` values semantically.
 /// See [FS_IOC_SETFLAGS(2const)](https://man7.org/linux/man-pages/man2/FS_IOC_GETFLAGS.2const.html)
 /// for more.
-pub const STATX_ATTR = packed struct(u64) {
+pub const STATX_ATTR = bitpack struct(u64) {
     __pad1: u3 = 0,
     /// [I] File is compressed by the fs.
     COMPRESSED: bool = false,
@@ -8050,7 +8317,7 @@ pub const addrinfo = extern struct {
     next: ?*addrinfo,
 };
 
-pub const AI = packed struct(u32) {
+pub const AI = bitpack struct(u32) {
     PASSIVE: bool = false,
     CANONNAME: bool = false,
     NUMERICHOST: bool = false,
@@ -8342,7 +8609,7 @@ pub const speed_t = if (is_ppc) enum(c_uint) {
 
 pub const tcflag_t = if (native_arch == .sparc) c_ulong else c_uint;
 
-pub const tc_iflag_t = if (is_ppc or native_arch == .alpha) packed struct(tcflag_t) {
+pub const tc_iflag_t = if (is_ppc or native_arch == .alpha) bitpack struct(tcflag_t) {
     IGNBRK: bool = false,
     BRKINT: bool = false,
     IGNPAR: bool = false,
@@ -8359,7 +8626,7 @@ pub const tc_iflag_t = if (is_ppc or native_arch == .alpha) packed struct(tcflag
     IMAXBEL: bool = false,
     IUTF8: bool = false,
     _15: u17 = 0,
-} else packed struct(tcflag_t) {
+} else bitpack struct(tcflag_t) {
     IGNBRK: bool = false,
     BRKINT: bool = false,
     IGNPAR: bool = false,
@@ -8419,7 +8686,7 @@ pub const FFDLY = enum(u1) {
     FF1 = 1,
 };
 
-pub const tc_oflag_t = if (is_ppc or native_arch == .alpha) packed struct(tcflag_t) {
+pub const tc_oflag_t = if (is_ppc or native_arch == .alpha) bitpack struct(tcflag_t) {
     OPOST: bool = false,
     ONLCR: bool = false,
     OLCUC: bool = false,
@@ -8435,7 +8702,7 @@ pub const tc_oflag_t = if (is_ppc or native_arch == .alpha) packed struct(tcflag
     BSDLY: BSDLY = .BS0,
     VTDLY: VTDLY = .VT0,
     _17: u15 = 0,
-} else if (is_sparc) packed struct(tcflag_t) {
+} else if (is_sparc) bitpack struct(tcflag_t) {
     OPOST: bool = false,
     OLCUC: bool = false,
     ONLCR: bool = false,
@@ -8453,7 +8720,7 @@ pub const tc_oflag_t = if (is_ppc or native_arch == .alpha) packed struct(tcflag
     PAGEOUT: bool = false,
     WRAP: bool = false,
     _18: u14 = 0,
-} else packed struct(tcflag_t) {
+} else bitpack struct(tcflag_t) {
     OPOST: bool = false,
     OLCUC: bool = false,
     ONLCR: bool = false,
@@ -8478,7 +8745,7 @@ pub const CSIZE = enum(u2) {
     CS8 = 3,
 };
 
-pub const tc_cflag_t = if (is_ppc or native_arch == .alpha) packed struct(tcflag_t) {
+pub const tc_cflag_t = if (is_ppc or native_arch == .alpha) bitpack struct(tcflag_t) {
     _0: u8 = 0,
     CSIZE: CSIZE = .CS5,
     CSTOPB: bool = false,
@@ -8491,7 +8758,7 @@ pub const tc_cflag_t = if (is_ppc or native_arch == .alpha) packed struct(tcflag
     ADDRB: bool = false,
     CMSPAR: bool = false,
     CRTSCTS: bool = false,
-} else packed struct(tcflag_t) {
+} else bitpack struct(tcflag_t) {
     _0: u4 = 0,
     CSIZE: CSIZE = .CS5,
     CSTOPB: bool = false,
@@ -8506,7 +8773,7 @@ pub const tc_cflag_t = if (is_ppc or native_arch == .alpha) packed struct(tcflag
     CRTSCTS: bool = false,
 };
 
-pub const tc_lflag_t = if (is_mips) packed struct(tcflag_t) {
+pub const tc_lflag_t = if (is_mips) bitpack struct(tcflag_t) {
     ISIG: bool = false,
     ICANON: bool = false,
     XCASE: bool = false,
@@ -8525,7 +8792,7 @@ pub const tc_lflag_t = if (is_mips) packed struct(tcflag_t) {
     TOSTOP: bool = false,
     EXTPROC: bool = false,
     _17: u15 = 0,
-} else if (is_ppc or native_arch == .alpha) packed struct(tcflag_t) {
+} else if (is_ppc or native_arch == .alpha) bitpack struct(tcflag_t) {
     ECHOKE: bool = false,
     ECHOE: bool = false,
     ECHOK: bool = false,
@@ -8547,7 +8814,7 @@ pub const tc_lflag_t = if (is_mips) packed struct(tcflag_t) {
     PENDIN: bool = false,
     _30: u1 = 0,
     NOFLSH: bool = false,
-} else if (is_sparc) packed struct(tcflag_t) {
+} else if (is_sparc) bitpack struct(tcflag_t) {
     ISIG: bool = false,
     ICANON: bool = false,
     XCASE: bool = false,
@@ -8566,7 +8833,7 @@ pub const tc_lflag_t = if (is_mips) packed struct(tcflag_t) {
     IEXTEN: bool = false,
     EXTPROC: bool = false,
     _17: u15 = 0,
-} else packed struct(tcflag_t) {
+} else bitpack struct(tcflag_t) {
     ISIG: bool = false,
     ICANON: bool = false,
     XCASE: bool = false,
@@ -9002,7 +9269,7 @@ pub const SIOCPROTOPRIVATE = 0x89E0;
 
 pub const IFNAMESIZE = 16;
 
-pub const IFF = packed struct(u16) {
+pub const IFF = bitpack struct(u16) {
     UP: bool = false,
     BROADCAST: bool = false,
     DEBUG: bool = false,
@@ -9117,7 +9384,7 @@ pub const tpacket_bd_ts = extern struct {
 };
 
 pub const TP_STATUS = extern union {
-    rx: packed struct(u32) {
+    rx: bitpack struct(u32) {
         USER: bool,
         COPY: bool,
         LOSING: bool,
@@ -9132,7 +9399,7 @@ pub const TP_STATUS = extern union {
         TS_SYS_HARDWARE: bool,
         TS_RAW_HARDWARE: bool,
     },
-    tx: packed struct(u32) {
+    tx: bitpack struct(u32) {
         SEND_REQUEST: bool,
         SENDING: bool,
         WRONG_FORMAT: bool,
@@ -9192,7 +9459,7 @@ pub const tpacket_stats_v3 = extern struct {
 };
 
 // doc comments copied from musl
-pub const rlimit_resource = if (native_arch.isMIPS()) enum(c_int) {
+pub const rlimit_resource = if (native_arch.isMips()) enum(c_int) {
     /// Per-process CPU limit, in seconds.
     CPU = 0,
 
@@ -9250,7 +9517,7 @@ pub const rlimit_resource = if (native_arch.isMIPS()) enum(c_int) {
     RTTIME = 15,
 
     _,
-} else if (native_arch.isSPARC()) enum(c_int) {
+} else if (native_arch.isSparc()) enum(c_int) {
     /// Per-process CPU limit, in seconds.
     CPU = 0,
 
@@ -10305,7 +10572,7 @@ pub const perf_event_attr = extern struct {
     sample_type: u64 = 0,
     read_format: u64 = 0,
 
-    flags: packed struct(u64) {
+    flags: bitpack struct(u64) {
         /// off by default
         disabled: bool = false,
         /// children inherit it
@@ -10436,7 +10703,7 @@ pub const perf_event_attr = extern struct {
     __reserved_2: u16 = 0,
 
     aux_sample_size: u32 = 0,
-    aux_action: packed struct(u32) {
+    aux_action: bitpack struct(u32) {
         /// start AUX area tracing paused
         start_paused: bool = false,
         /// on overflow, pause AUX area tracing
@@ -10458,17 +10725,17 @@ pub const perf_event_header = extern struct {
     /// Event type: sample/mmap/fork/etc.
     type: PERF.RECORD,
     /// Additional informations on the event: kernel/user/hypervisor/etc.
-    misc: packed struct(u16) {
+    misc: bitpack struct(u16) {
         cpu_mode: PERF.RECORD.MISC.CPU_MODE,
         _: u9,
         PROC_MAP_PARSE_TIMEOUT: bool,
-        bit13: packed union {
+        bit13: bitpack union {
             MMAP_DATA: bool,
             COMM_EXEC: bool,
             FORK_EXEC: bool,
             SWITCH_OUT: bool,
         },
-        bit14: packed union {
+        bit14: bitpack union {
             EXACT_IP: bool,
             SWITCH_OUT_PREEMPT: bool,
             MMAP_BUILD_ID: bool,
@@ -10494,7 +10761,7 @@ pub const perf_event_mmap_page = extern struct {
     time_enabled: u64,
     /// Time the event was running
     time_running: u64,
-    capabilities: packed struct(u64) {
+    capabilities: bitpack struct(u64) {
         /// If kernel version < 3.12
         /// this rapresents both user_rdpmc and user_time (user_rdpmc | user_time)
         /// otherwise deprecated.
@@ -10958,6 +11225,9 @@ pub const cmsghdr = extern struct {
     level: i32,
     type: i32,
 };
+
+// https://github.com/torvalds/linux/blob/72d3fcf802c45d00b300f25b848a93c3a2bd7c7e/include/linux/socket.h#L133
+pub const cmsg_align = @sizeOf(c_long);
 
 pub const riscv_hwprobe = extern struct {
     key: i64,

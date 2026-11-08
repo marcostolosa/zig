@@ -32,7 +32,7 @@
 /// The root node of the trie.
 root: ?Node.Index = null,
 buffer: std.ArrayList(u8) = .empty,
-nodes: std.MultiArrayList(Node) = .{},
+nodes: std.MultiArrayList(Node) = .empty,
 edges: std.ArrayList(Edge) = .empty,
 
 /// Insert a symbol into the trie, updating the prefixes in the process.
@@ -134,9 +134,8 @@ fn finalize(self: *Trie, allocator: Allocator) !void {
     const tracy = trace(@src());
     defer tracy.end();
 
-    var ordered_nodes = std.array_list.Managed(Node.Index).init(allocator);
-    defer ordered_nodes.deinit();
-    try ordered_nodes.ensureTotalCapacityPrecise(self.nodes.items(.is_terminal).len);
+    var ordered_nodes: std.ArrayList(Node.Index) = try .initCapacity(allocator, self.nodes.items(.is_terminal).len);
+    defer ordered_nodes.deinit(allocator);
 
     {
         var fifo: std.ArrayList(Node.Index) = .empty;

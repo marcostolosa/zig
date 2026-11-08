@@ -896,7 +896,7 @@ pub fn finishAnalysis(isel: *Select) !void {
     }
 }
 
-pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory, AlreadyReported }!void {
+pub fn body(isel: *Select, air_body: []const Air.Inst.Index) codegen.Error!void {
     const zcu = isel.pt.zcu;
     const ip = &zcu.intern_pool;
     const gpa = zcu.gpa;
@@ -946,7 +946,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
             isel: *Select,
             inst: Air.Inst.Index,
             pub fn format(fmt_air: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-                fmt_air.isel.air.writeInst(writer, fmt_air.inst, fmt_air.isel.pt, null);
+                fmt_air.isel.air.writeInst(writer, fmt_air.inst, fmt_air.isel.pt.zcu, null);
             }
         } {
             return .{ .isel = it.isel, .inst = inst };
@@ -5842,8 +5842,8 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                         8 * field_ty.abiSize(zcu),
                         false,
                     },
-                    .@"packed" => .{
-                        if (zcu.typeToPackedStruct(agg_ty)) |loaded_struct|
+                    .@"bitpack" => .{
+                        if (zcu.typeToBitpackStruct(agg_ty)) |loaded_struct|
                             zcu.structPackedFieldBitOffset(loaded_struct, extra.field_index)
                         else
                             0,
@@ -7757,6 +7757,11 @@ pub fn layout(
 
     {
         wip_mir_log.debug("{f}<prologue>:", .{nav.fqn.fmt(ip)});
+
+        for (0..mod.patchable_function_entry) |_| {
+            try isel.emit(.nop());
+        }
+
         var save_index: usize = 0;
         while (save_index < saves.len) if (save_index + 2 <= saves.len and
             saves[save_index + 0].class == saves[save_index + 1].class and
@@ -7969,11 +7974,11 @@ fn fmtLoopLive(isel: *Select, loop_inst: Air.Inst.Index) struct {
 }
 
 fn fmtType(isel: *Select, ty: ZigType) ZigType.Formatter {
-    return ty.fmt(isel.pt);
+    return ty.fmt(isel.pt.zcu);
 }
 
 fn fmtConstant(isel: *Select, constant: Constant) @typeInfo(@TypeOf(Constant.fmtValue)).@"fn".return_type.? {
-    return constant.fmtValue(isel.pt);
+    return constant.fmtValue(isel.pt.zcu);
 }
 
 fn block(
@@ -8024,7 +8029,7 @@ fn emitLiteral(isel: *Select, bytes: []const u8) !void {
     }
 }
 
-fn fail(isel: *Select, comptime format: []const u8, args: anytype) error{ OutOfMemory, AlreadyReported } {
+fn fail(isel: *Select, comptime format: []const u8, args: anytype) codegen.Error {
     @branchHint(.cold);
     return isel.pt.zcu.codegenFail(isel.nav_index, format, args);
 }
@@ -8094,7 +8099,7 @@ fn movImmediate(isel: *Select, dst_reg: Register, src_imm: u64) !void {
                     .{ .immediate = .{
                         .N = @fromBackingInt(@intCast(elem_width >> 6)),
                         .immr = hi + mid_masked,
-                        .imms = ((((lo + hi) & smask) | mid_masked) - 1) | -%@as(u6, @truncate(elem_width)) << 1,
+                        .imms = ((((lo + hi) & smask) | mid_masked) - 1) | (-%@as(u6, @truncate(elem_width)) << 1),
                     } },
                 ));
             }
@@ -8897,7 +8902,7 @@ pub const Value = struct {
         if (!std.debug.runtime_safety) assert(@sizeOf(Value) == 32);
     }
 
-    pub const Flags = packed struct(u32) {
+    pub const Flags = bitpack struct(u32) {
         alignment: InternPool.Alignment,
         parent_tag: Parent.Tag,
         location_tag: Location.Tag,
@@ -8938,7 +8943,7 @@ pub const Value = struct {
         };
     };
 
-    pub const Indirect = packed struct(u32) {
+    pub const Indirect = bitpack struct(u32) {
         base: Register.Alias,
         offset: i25,
 
@@ -10395,8 +10400,8 @@ pub const Value = struct {
                         const loaded_struct = ip.loadStructType(ty.toIntern());
                         switch (loaded_struct.layout) {
                             .auto, .@"extern" => {},
-                            .@"packed" => continue :type_key .{
-                                .int_type = ip.indexToKey(loaded_struct.packed_backing_int_type).int_type,
+                            .@"bitpack" => continue :type_key .{
+                                .int_type = ip.indexToKey(loaded_struct.bitpack_backing_int_type).int_type,
                             },
                         }
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
@@ -10511,7 +10516,7 @@ pub const Value = struct {
                         const loaded_union = ip.loadUnionType(ty.toIntern());
                         switch (loaded_union.layout) {
                             .auto, .@"extern" => {},
-                            .@"packed" => continue :type_key .{ .int_type = .{
+                            .@"bitpack" => continue :type_key .{ .int_type = .{
                                 .signedness = .unsigned,
                                 .bits = @intCast(ty.bitSize(zcu)),
                             } },
@@ -10618,7 +10623,7 @@ pub const Value = struct {
         vi: Value.Index,
         ra: Register.Alias,
 
-        fn finish(mat: Value.Materialize, isel: *Select) error{ OutOfMemory, AlreadyReported }!void {
+        fn finish(mat: Value.Materialize, isel: *Select) codegen.Error!void {
             const live_vi = isel.live_registers.getPtr(mat.ra);
             assert(live_vi.* == .allocating);
             var vi = mat.vi;
@@ -10826,7 +10831,7 @@ pub const Value = struct {
                                         if (feat_fp16) {
                                             const Repr = std.math.FloatRepr(f16);
                                             const repr: Repr = @bitCast(imm);
-                                            if (repr.mantissa & std.math.maxInt(Repr.Mantissa) >> 5 == 0 and switch (repr.exponent) {
+                                            if (repr.mantissa & (std.math.maxInt(Repr.Mantissa) >> 5) == 0 and switch (repr.exponent) {
                                                 .denormal, .infinite => false,
                                                 else => std.math.cast(i3, repr.exponent.unbias() - 1) != null,
                                             }) break :free try isel.emit(.fmov(mat.ra.h(), .{ .immediate = imm }));
@@ -10850,7 +10855,7 @@ pub const Value = struct {
                                         } };
                                         const Repr = std.math.FloatRepr(f32);
                                         const repr: Repr = @bitCast(imm);
-                                        if (repr.mantissa & std.math.maxInt(Repr.Mantissa) >> 5 == 0 and switch (repr.exponent) {
+                                        if (repr.mantissa & (std.math.maxInt(Repr.Mantissa) >> 5) == 0 and switch (repr.exponent) {
                                             .denormal, .infinite => false,
                                             else => std.math.cast(i3, repr.exponent.unbias() - 1) != null,
                                         }) break :free try isel.emit(.fmov(mat.ra.s(), .{ .immediate = @floatCast(imm) }));
@@ -10873,7 +10878,7 @@ pub const Value = struct {
                                         } };
                                         const Repr = std.math.FloatRepr(f64);
                                         const repr: Repr = @bitCast(imm);
-                                        if (repr.mantissa & std.math.maxInt(Repr.Mantissa) >> 5 == 0 and switch (repr.exponent) {
+                                        if (repr.mantissa & (std.math.maxInt(Repr.Mantissa) >> 5) == 0 and switch (repr.exponent) {
                                             .denormal, .infinite => false,
                                             else => std.math.cast(i3, repr.exponent.unbias() - 1) != null,
                                         }) break :free try isel.emit(.fmov(mat.ra.d(), .{ .immediate = @floatCast(imm) }));
@@ -11100,7 +11105,7 @@ pub const Value = struct {
                                                     field_offset += field_size;
                                                 }
                                             },
-                                            .@"extern", .@"packed" => {},
+                                            .@"extern", .@"bitpack" => {},
                                         }
                                     },
                                     .tuple_type => |tuple_type| {
@@ -11486,7 +11491,7 @@ fn writeKeyToMemory(isel: *Select, constant_key: InternPool.Key, buffer: []u8) e
                             field_offset += field_size;
                         }
                     },
-                    .@"extern", .@"packed" => return false,
+                    .@"extern", .@"bitpack" => return false,
                 }
             },
             .tuple_type => |tuple_type| {
@@ -11659,7 +11664,7 @@ fn use(isel: *Select, air_ref: Air.Inst.Ref) !Value.Index {
     return vi;
 }
 
-fn fill(isel: *Select, dst_ra: Register.Alias) error{ OutOfMemory, AlreadyReported }!bool {
+fn fill(isel: *Select, dst_ra: Register.Alias) codegen.Error!bool {
     switch (dst_ra) {
         else => {},
         Register.Alias.fp, .zr, .sp, .pc, .fpcr, .fpsr, .ffr => return false,
@@ -11692,7 +11697,7 @@ fn fill(isel: *Select, dst_ra: Register.Alias) error{ OutOfMemory, AlreadyReport
     return true;
 }
 
-fn fillMemory(isel: *Select, dst_ra: Register.Alias) error{ OutOfMemory, AlreadyReported }!bool {
+fn fillMemory(isel: *Select, dst_ra: Register.Alias) codegen.Error!bool {
     const dst_live_vi = isel.live_registers.getPtr(dst_ra);
     const dst_vi = switch (dst_live_vi.*) {
         _ => |dst_vi| dst_vi,
@@ -12178,7 +12183,7 @@ pub const CallAbiIterator = struct {
                 const loaded_struct = ip.loadStructType(ty.toIntern());
                 switch (loaded_struct.layout) {
                     .auto, .@"extern" => {},
-                    .@"packed" => continue :type_key ip.indexToKey(loaded_struct.packed_backing_int_type),
+                    .@"bitpack" => continue :type_key ip.indexToKey(loaded_struct.bitpack_backing_int_type),
                 }
                 const size = wip_vi.size(isel);
                 if (size <= 16 * 4) homogeneous_aggregate: {
@@ -12269,7 +12274,7 @@ pub const CallAbiIterator = struct {
                 const loaded_union = ip.loadUnionType(ty.toIntern());
                 switch (loaded_union.layout) {
                     .auto, .@"extern" => {},
-                    .@"packed" => continue :type_key .{ .int_type = .{
+                    .@"bitpack" => continue :type_key .{ .int_type = .{
                         .signedness = .unsigned,
                         .bits = @intCast(ty.bitSize(zcu)),
                     } },

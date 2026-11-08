@@ -65,21 +65,21 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
 
     switch (crt_file) {
         .scrt0_o => {
-            var cflags = std.array_list.Managed([]const u8).init(arena);
-            try cflags.appendSlice(&.{
+            var cflags: std.ArrayList([]const u8) = .empty;
+            try cflags.appendSlice(arena, &.{
                 "-w", // Disable all warnings.
             });
 
             // See `Compilation.addCommonCCArgs`.
-            try cflags.append(try std.fmt.allocPrint(arena, "-D___OpenBSD={d}", .{
+            try cflags.append(arena, try std.fmt.allocPrint(arena, "-D___OpenBSD={d}", .{
                 202510,
             }));
-            try cflags.append(try std.fmt.allocPrint(arena, "-DOpenBSD{d}_{d}", .{
+            try cflags.append(arena, try std.fmt.allocPrint(arena, "-DOpenBSD{d}_{d}", .{
                 target_version.major,
                 target_version.minor,
             }));
 
-            try cflags.appendSlice(&.{
+            try cflags.appendSlice(arena, &.{
                 "-I",
                 try includePath(comp, arena, try std.fmt.allocPrint(arena, "{s}-{s}-{s}", .{
                     std.zig.target.openbsdArchNameHeaders(target.cpu.arch),
@@ -90,7 +90,6 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
                 try includePath(comp, arena, "generic-openbsd"),
                 "-I",
                 try csuPath(comp, arena, switch (target.cpu.arch) {
-                    .mips64el => "mips64",
                     .x86 => "i386",
                     .x86_64 => "amd64",
                     else => |t| @tagName(t),
@@ -327,14 +326,28 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
     man.hash.add(target.abi);
     man.hash.add(target_version);
 
-    const abilists_index = try man.addFilePath(.{
+    const abilists_index = try man.addInputPath(.{
         .root_dir = comp.dirs.zig_lib,
         .sub_path = abilists_path,
-    }, abilists_max_size);
+    }, .{
+        .request_contents = true,
+    });
 
-    if (try man.hit(prog_node)) {
-        const digest = man.final();
-
+    var diag: Cache.Manifest.CheckDiagnostic = undefined;
+    const status = man.check(&diag, prog_node) catch |err| switch (err) {
+        error.OutOfMemory, error.Canceled => |e| return e,
+        error.CacheCheckFailed => {
+            comp.lockAndSetMiscFailure(
+                .openbsd_shared_objects,
+                "compiling OpenBSD libc shared objects: checking cache failed: {f}",
+                .{diag.fmt(&man)},
+            );
+            return error.AlreadyReported;
+        },
+    };
+    log.debug("openbsd_shared_objects cache {f}", .{status.fmt(&man)});
+    if (status == .hit) {
+        const digest = man.hitDigestHex();
         return queueSharedObjects(comp, .{
             .lock = man.toOwnedLock(),
             .dir_path = .{
@@ -344,7 +357,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         });
     }
 
-    const digest = man.final();
+    const digest = man.missDigestHex();
     const o_sub_path = try path.join(arena, &[_][]const u8{ "o", &digest });
 
     var o_directory: Cache.Directory = .{
@@ -353,7 +366,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
     };
     defer o_directory.handle.close(io);
 
-    const abilists_contents = man.files.keys()[abilists_index].contents.?;
+    const abilists_contents = abilists_index.contents(&man);
     const metadata = try loadMetaData(gpa, abilists_contents);
     defer metadata.destroy(gpa);
 
@@ -386,13 +399,13 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         break :blk latest_index;
     };
 
-    var stubs_asm = std.array_list.Managed(u8).init(gpa);
-    defer stubs_asm.deinit();
+    var stubs_asm: std.ArrayList(u8) = .empty;
+    defer stubs_asm.deinit(gpa);
 
     for (libs, 0..) |lib, lib_i| {
         stubs_asm.shrinkRetainingCapacity(0);
 
-        try stubs_asm.appendSlice(".text\n");
+        try stubs_asm.appendSlice(gpa, ".text\n");
 
         var sym_i: usize = 0;
         var sym_name_buf: std.Io.Writer.Allocating = .init(arena);
@@ -456,7 +469,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
                 // .globl _Exit
                 // .type _Exit, %function
                 // _Exit: .long 0
-                try stubs_asm.print(
+                try stubs_asm.print(gpa,
                     \\.balign {d}
                     \\.{s} {s}
                     \\.type {s}, %function
@@ -473,7 +486,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
             }
         }
 
-        try stubs_asm.appendSlice(".data\n");
+        try stubs_asm.appendSlice(gpa, ".data\n");
 
         const obj_inclusions_len = try inc_reader.takeInt(u16, .little);
 
@@ -536,7 +549,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
                 // .type malloc_conf, %object
                 // .size malloc_conf, 4
                 // malloc_conf: .fill 4, 1, 0
-                try stubs_asm.print(
+                try stubs_asm.print(gpa,
                     \\.balign {d}
                     \\.{s} {s}
                     \\.type {s}, %object
@@ -557,14 +570,12 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         }
 
         var lib_name_buf: [32]u8 = undefined; // Larger than each of the names "c", "pthread", etc.
-        const asm_file_basename = std.fmt.bufPrint(&lib_name_buf, "{s}.s", .{lib.name}) catch unreachable;
+        const asm_file_basename = std.mem.print(&lib_name_buf, "{s}.s", .{lib.name}) catch unreachable;
         try o_directory.handle.writeFile(io, .{ .sub_path = asm_file_basename, .data = stubs_asm.items });
         try buildSharedLib(comp, arena, o_directory, asm_file_basename, lib, prog_node);
     }
 
-    man.writeManifest() catch |err| {
-        log.warn("failed to write cache manifest for OpenBSD libc stubs: {s}", .{@errorName(err)});
-    };
+    man.finalize() catch |err| log.warn("failed to write cache manifest for OpenBSD libc stubs: {t}", .{err});
 
     return queueSharedObjects(comp, .{
         .lock = man.toOwnedLock(),
@@ -679,10 +690,6 @@ fn buildSharedLib(
         .emit_bin = .{ .yes_path = try bin_directory.join(arena, &.{basename}) },
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
-        .verbose_air = comp.verbose_air,
-        .verbose_llvm_ir = comp.verbose_llvm_ir,
-        .verbose_llvm_bc = comp.verbose_llvm_bc,
-        .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .soname = soname,
         .c_source_files = &c_source_files,

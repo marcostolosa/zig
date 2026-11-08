@@ -18,14 +18,13 @@ const Mir = @import("../codegen/spork8/Mir.zig");
 const link = @import("../link.zig");
 const Compilation = @import("../Compilation.zig");
 const Liveness = @import("../Air/Liveness.zig");
-const dev = @import("../dev.zig");
 const Value = @import("../Value.zig");
 
 base: link.File,
 /// All MIR instructions for all Zcu functions.
-mir_instructions: std.MultiArrayList(Mir.Inst) = .{},
+mir_instructions: std.MultiArrayList(Mir.Inst) = .empty,
 /// Corresponds to `mir_instructions`.
-mir_extra: std.ArrayListUnmanaged(u32) = .empty,
+mir_extra: std.ArrayList(u32) = .empty,
 /// When the key is an enum type, this represents a `@tagName` function.
 zcu_funcs: std.array_hash_map.Auto(InternPool.Index, ZcuFunc) = .empty,
 
@@ -89,7 +88,6 @@ pub fn updateFunc(
     func_index: InternPool.Index,
     any_mir: *const codegen.AnyMir,
 ) !void {
-    dev.check(.spork8_backend);
     // This linker implementation only works with `std.lang.CompilerBackend.zsf_spork8`.
     const mir = &any_mir.spork8;
     const zcu = pt.zcu;
@@ -168,10 +166,11 @@ pub fn updateNav(spork8: *Spork8, pt: Zcu.PerThread, nav_index: InternPool.Nav.I
     log.debug("updateNav {f}", .{nav.fqn.fmt(ip)});
 }
 
-pub fn updateLineNumber(spork8: *Spork8, pt: Zcu.PerThread, ti_id: InternPool.TrackedInst.Index) !void {
+pub fn updateLineNumber(spork8: *Spork8, pt: Zcu.PerThread, inst: InternPool.TrackedInst.Index, line: u32) !void {
     _ = spork8;
     _ = pt;
-    _ = ti_id;
+    _ = inst;
+    _ = line;
 }
 
 pub fn deleteExport(

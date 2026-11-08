@@ -84,6 +84,8 @@ skip_foreign_checks: bool,
 /// external executor (such as qemu) but not fail if the executor is unavailable.
 failing_to_execute_foreign_is_an_error: bool,
 
+protocol_test_timeout_scale: u32,
+
 /// If stderr or stdout exceeds this amount, the child process is killed and
 /// the step fails.
 stdio_limit: std.Io.Limit,
@@ -92,7 +94,6 @@ captured_stdout: ?*CapturedStdIo,
 captured_stderr: ?*CapturedStdIo,
 
 has_side_effects: bool,
-test_runner_mode: bool = false,
 
 /// If this Run step was produced by a Compile step, it is tracked here.
 producer: ?*Step.Compile,
@@ -127,7 +128,10 @@ pub const StdIo = union(enum) {
     check: std.ArrayList(Check),
     /// This Run step is running a zig unit test binary and will communicate
     /// extra metadata over the IPC protocol.
+    /// Deprecated, use `.protocol`.
     zig_test,
+    /// This Run step is running a binary that will communicate over the IPC protocol.
+    protocol,
 
     pub const Check = union(enum) {
         expect_stderr_exact: []const u8,
@@ -229,6 +233,7 @@ pub fn create(owner: *std.Build, name: []const u8) *Run {
         .rename_step_with_output_arg = true,
         .skip_foreign_checks = false,
         .failing_to_execute_foreign_is_an_error = true,
+        .protocol_test_timeout_scale = 1,
         .stdio_limit = .unlimited,
         .captured_stdout = null,
         .captured_stderr = null,
@@ -239,14 +244,21 @@ pub fn create(owner: *std.Build, name: []const u8) *Run {
 }
 
 pub fn setName(run: *Run, name: []const u8) void {
-    run.step.name = name;
+    run.step.name = run.step.owner.graph.dupeString(name);
     run.rename_step_with_output_arg = false;
 }
 
+/// Deprecated, use `enableProtocolMode`.
 pub fn enableTestRunnerMode(run: *Run) void {
-    if (run.test_runner_mode) return;
     run.stdio = .zig_test;
-    run.test_runner_mode = true;
+}
+
+pub fn enableProtocolMode(run: *Run, opts: struct {
+    /// The `--test-timeout` provided by the user is scaled by this amount for these tests.
+    test_timeout_scale: u32 = 1,
+}) void {
+    run.stdio = .protocol;
+    run.protocol_test_timeout_scale = opts.test_timeout_scale;
 }
 
 pub const ArgOptions = struct {
@@ -750,8 +762,10 @@ pub fn addCheck(run: *Run, new_check: StdIo.Check) void {
 }
 
 pub fn captureStdErr(run: *Run, options: CapturedStdIo.Options) std.Build.LazyPath {
-    assert(run.stdio != .inherit);
-    assert(run.stdio != .zig_test);
+    switch (run.stdio) {
+        .infer_from_args, .check => {},
+        .inherit, .zig_test, .protocol => unreachable,
+    }
 
     const b = run.step.owner;
     const graph = b.graph;
@@ -771,8 +785,10 @@ pub fn captureStdErr(run: *Run, options: CapturedStdIo.Options) std.Build.LazyPa
 }
 
 pub fn captureStdOut(run: *Run, options: CapturedStdIo.Options) std.Build.LazyPath {
-    assert(run.stdio != .inherit);
-    assert(run.stdio != .zig_test);
+    switch (run.stdio) {
+        .infer_from_args, .check => {},
+        .inherit, .zig_test, .protocol => unreachable,
+    }
 
     const b = run.step.owner;
     const graph = b.graph;

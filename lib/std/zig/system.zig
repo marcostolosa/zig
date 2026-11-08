@@ -818,7 +818,7 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
 }
 
 /// Reads the glibc release version from the banner string that `csu/version.c` places in
-/// `.rodata`, e.g. "GNU C Library (GNU libc) stable release version 2.39.".
+/// `.rodata`, e.g. "GNU C Library (GNU libc) stable release version 2.39." or "GNU C Library (GNU libc) development release version 2.44.9000".
 /// See https://sourceware.org/cgit/glibc/tree/csu/version.c#n26
 fn glibcVerFromSoFile(file_reader: *Io.File.Reader) !std.SemanticVersion {
     const header = try elf.Header.read(&file_reader.interface);
@@ -841,7 +841,7 @@ fn glibcVerFromSoFile(file_reader: *Io.File.Reader) !std.SemanticVersion {
         } else return error.InvalidGnuLibCVersion;
     };
 
-    const needle = "stable release version ";
+    const needle = " release version ";
     var offset: u64 = 0;
     try file_reader.seekTo(rodata.offset);
     while (offset < rodata.size) {
@@ -849,10 +849,12 @@ fn glibcVerFromSoFile(file_reader: *Io.File.Reader) !std.SemanticVersion {
             if (mem.indexOf(u8, s, needle)) |pos| {
                 const chopped = s[pos + needle.len ..];
                 const end = mem.findNone(u8, chopped, "0123456789.") orelse chopped.len;
-                return Target.Query.parseVersion(mem.trimEnd(u8, chopped[0..end], ".")) catch |err| switch (err) {
+                var version = Target.Query.parseVersion(mem.trimEnd(u8, chopped[0..end], ".")) catch |err| switch (err) {
                     error.Overflow => return error.InvalidGnuLibCVersion,
                     error.InvalidVersion => return error.InvalidGnuLibCVersion,
                 };
+                version.patch = 0;
+                return version;
             }
             offset += s.len + 1;
         } else |err| switch (err) {

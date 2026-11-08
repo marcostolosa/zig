@@ -13,8 +13,8 @@
 
 const std = @import("std");
 const testing = std.testing;
-const builtin = @import("builtin");
 const io = std.Options.debug_io;
+const builtin = @import("builtin");
 
 /// Invokes detectable illegal behavior when `ok` is `false`.
 ///
@@ -187,7 +187,7 @@ pub fn ConfigurableState(States: type, config: Config, messages: StateMessages) 
         last_transition: TransitionTrace,
 
         /// Initializes the state to `initial_state`, without capturing a
-        /// stack trace.
+        /// stack trace, so it can be used as a default field value.
         pub fn init(initial_state: Enum) S {
             return .{
                 .state = if (config.enabled) initial_state else {},
@@ -197,16 +197,13 @@ pub fn ConfigurableState(States: type, config: Config, messages: StateMessages) 
 
         /// Initializes the state to `initial_state` and captures the current
         /// stack trace.
-        pub fn initAndCapture(initial_state: Enum) S {
-            return .initAndCaptureAt(initial_state, @returnAddress());
+        pub fn initTraced(initial_state: Enum) S {
+            return .initTracedAt(initial_state, @returnAddress());
         }
 
-        /// `initAndCapture`, capturing from `ret_addr`.
-        pub fn initAndCaptureAt(initial_state: Enum, ret_addr: usize) S {
-            if (!config.enabled) return .{
-                .state = {},
-                .last_transition = .empty,
-            };
+        /// `initTraced`, capturing from `ret_addr`.
+        pub fn initTracedAt(initial_state: Enum, ret_addr: usize) S {
+            if (!config.enabled) return .init(initial_state);
 
             return .{
                 .state = initial_state,
@@ -240,23 +237,23 @@ pub fn ConfigurableState(States: type, config: Config, messages: StateMessages) 
 
         /// Asserts that the current state is equal to the one provided.
         pub fn assertEql(self: *const S, comptime expected: Enum) void {
-            self.assertEqlAnyOfAt(&.{expected}, @returnAddress());
+            self.assertOneOfAt(&.{expected}, @returnAddress());
         }
 
         /// `assertEql`, reporting from `ret_addr`.
         pub fn assertEqlAt(self: *const S, comptime expected: Enum, ret_addr: usize) void {
-            self.assertEqlAnyOfAt(&.{expected}, ret_addr);
+            self.assertOneOfAt(&.{expected}, ret_addr);
         }
 
-        /// Asserts that the current state is equal to any of the provided states.
-        pub fn assertEqlAnyOf(self: *const S, comptime expect_any_of: []const Enum) void {
-            self.assertEqlAnyOfAt(expect_any_of, @returnAddress());
+        /// Asserts that the current state is one of the provided states.
+        pub fn assertOneOf(self: *const S, comptime expected: []const Enum) void {
+            self.assertOneOfAt(expected, @returnAddress());
         }
 
-        /// `assertEqlAnyOf`, reporting from `ret_addr`.
-        pub fn assertEqlAnyOfAt(
+        /// `assertOneOf`, reporting from `ret_addr`.
+        pub fn assertOneOfAt(
             self: *const S,
-            comptime expect_any_of: []const Enum,
+            comptime expected: []const Enum,
             ret_addr: usize,
         ) void {
             if (!config.enabled) return;
@@ -264,11 +261,11 @@ pub fn ConfigurableState(States: type, config: Config, messages: StateMessages) 
             mutex.lock();
             defer mutex.unlock();
 
-            for (expect_any_of) |expected| {
-                if (self.state == expected) return;
+            for (expected) |e| {
+                if (self.state == e) return;
             }
 
-            self.failUnsafe(expect_any_of, ret_addr);
+            self.failUnsafe(expected, ret_addr);
         }
 
         fn failUnsafe(
@@ -328,7 +325,7 @@ test ConfigurableState {
     var disabled: Disabled = .init(.a);
     disabled.assertEql(.b);
     disabled.transition(.b);
-    disabled.assertEqlAnyOf(&.{.a});
+    disabled.assertOneOf(&.{.a});
     try violation.expectNone();
 
     // Test correct behavior
@@ -336,16 +333,16 @@ test ConfigurableState {
     var enabled: Enabled = .init(.a);
     enabled.assertEql(.a);
     enabled.transition(.b);
-    enabled.assertEqlAnyOf(&.{ .a, .b });
+    enabled.assertOneOf(&.{ .a, .b });
     try violation.expectNone();
 
     // Test that a state other than the expected one fails
     enabled.assertEql(.a);
     try violation.expect();
-    enabled.assertEqlAnyOf(&.{ .a, .c });
+    enabled.assertOneOf(&.{ .a, .c });
     try violation.expect();
     enabled.transition(.c);
-    enabled.assertEqlAnyOf(&.{ .a, .b });
+    enabled.assertOneOf(&.{ .a, .b });
     try violation.expect();
 
     // Test that a tagged union is tracked by its tag
@@ -355,15 +352,16 @@ test ConfigurableState {
     tracked.assertEql(.content_length);
     body = .end;
     tracked.transition(body);
-    tracked.assertEqlAnyOf(&.{ .none, .end });
+    tracked.assertOneOf(&.{ .none, .end });
     try violation.expectNone();
     tracked.assertEql(.content_length);
     try violation.expect();
     try testing.expectEqual(@sizeOf(ConfigurableState(Body, .{ .enabled = false }, .{})), 0);
 }
 
-/// Tracks which state the program is in, and asserts the transitions respect the
-/// ones it declares, much like a finite state machine.
+/// Tracks which state the program is in. Instead of a transition table, each
+/// call site declares the transition it makes: `assertEql` or `assertOneOf`
+/// for the states it may start from, then `transition` to the next one.
 /// A failure reports the state found and where the last transition was made.
 ///
 /// See `ConfigurableState` to name the thing being tracked, and to configure
@@ -461,14 +459,14 @@ pub fn ConfigurableObligations(config: Config, messages: ObligationsMessages) ty
         }
 
         /// Asserts the outstanding count compares to `rhs` as `op` says:
-        /// `assertCount(.eq, 0)` expects nothing outstanding,
-        /// `assertCount(.gte, 1)` expects at least one.
-        pub fn assertCount(self: *const O, op: std.math.CompareOperator, rhs: u32) void {
-            self.assertCountAt(op, rhs, @returnAddress());
+        /// `assert(.eq, 0)` expects nothing outstanding,
+        /// `assert(.gte, 1)` expects at least one.
+        pub fn assert(self: *const O, op: std.math.CompareOperator, rhs: u32) void {
+            self.assertAt(op, rhs, @returnAddress());
         }
 
-        /// `assertCount`, reporting from `ret_addr`.
-        pub fn assertCountAt(self: *const O, op: std.math.CompareOperator, rhs: u32, ret_addr: usize) void {
+        /// `assert`, reporting from `ret_addr`.
+        pub fn assertAt(self: *const O, op: std.math.CompareOperator, rhs: u32, ret_addr: usize) void {
             if (!config.enabled) return;
 
             mutex.lock();
@@ -528,56 +526,56 @@ test ConfigurableObligations {
 
     // Test that once disabled the checks don't run
     var disabled: Disabled = .none;
-    disabled.assertCount(.gte, 1);
+    disabled.assert(.gte, 1);
     disabled.discharge();
     try violation.expectNone();
 
     // Test correct behavior
     const Enabled = ConfigurableObligations(.{ .enabled = true }, .{});
     var enabled: Enabled = .none;
-    enabled.assertCount(.eq, 0);
+    enabled.assert(.eq, 0);
     enabled.incur();
-    enabled.assertCount(.gte, 1);
+    enabled.assert(.gte, 1);
     enabled.discharge();
-    enabled.assertCount(.eq, 0);
+    enabled.assert(.eq, 0);
 
     // Test that obligations are counted rather than collapsed
     enabled.incur();
     enabled.incur();
-    enabled.assertCount(.eq, 2);
+    enabled.assert(.eq, 2);
     enabled.discharge();
-    enabled.assertCount(.gte, 1);
-    enabled.assertCount(.lt, 2);
+    enabled.assert(.gte, 1);
+    enabled.assert(.lt, 2);
     enabled.discharge();
-    enabled.assertCount(.eq, 0);
+    enabled.assert(.eq, 0);
     try violation.expectNone();
 
     // Test that discharging with nothing outstanding fails, and leaves the count at 0
     enabled.discharge();
     try violation.expect();
-    enabled.assertCount(.eq, 0);
+    enabled.assert(.eq, 0);
     try violation.expectNone();
 
     // Test that every comparison operator fails when it does not hold
     enabled.incur();
-    enabled.assertCount(.eq, 0);
+    enabled.assert(.eq, 0);
     try violation.expect();
-    enabled.assertCount(.lt, 1);
+    enabled.assert(.lt, 1);
     try violation.expect();
-    enabled.assertCount(.lte, 0);
+    enabled.assert(.lte, 0);
     try violation.expect();
-    enabled.assertCount(.gt, 1);
+    enabled.assert(.gt, 1);
     try violation.expect();
-    enabled.assertCount(.neq, 1);
+    enabled.assert(.neq, 1);
     try violation.expect();
     enabled.discharge();
-    enabled.assertCount(.neq, 0);
+    enabled.assert(.neq, 0);
     try violation.expect();
 }
 
 /// Declares that what is taken must later be given back, and asserts the
 /// program does it. Every `incur` leaves one obligation outstanding until a
-/// `discharge` settles it; `assertCount` checks the outstanding count wherever
+/// `discharge` settles it; `assert` checks the outstanding count wherever
 /// the program has an expectation about it.
 ///
 /// Obligations are counted, not identified: discharging the same one twice
@@ -722,16 +720,16 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
             defer mutex.unlock();
 
             self.state.assertEqlAt(.free, ret_addr);
-            self.readers.assertCountAt(.gte, 1, ret_addr);
+            self.readers.assertAt(.gte, 1, ret_addr);
         }
 
         fn assertUnlockedUnsafe(self: *const L, ret_addr: usize) void {
-            self.readers.assertCountAt(.eq, 0, ret_addr);
+            self.readers.assertAt(.eq, 0, ret_addr);
             self.state.assertEqlAt(.free, ret_addr);
         }
 
         fn assertLockedUnsafe(self: *const L, ret_addr: usize) void {
-            self.readers.assertCountAt(.eq, 0, ret_addr);
+            self.readers.assertAt(.eq, 0, ret_addr);
             self.state.assertEqlAt(.held, ret_addr);
         }
     };
@@ -847,16 +845,22 @@ pub fn ConfigurableBoundTo(
     config: Config,
     messages: BoundToMessages,
 ) type {
-    if (@typeInfo(@TypeOf(identityFn)) != .@"fn")
-        @compileError("identityFn must be a function");
+    const fn_info = switch (@typeInfo(@TypeOf(identityFn))) {
+        .@"fn" => |info| info,
+        else => @compileError("identityFn must be a function, found " ++ @typeName(@TypeOf(identityFn))),
+    };
 
-    if (@typeInfo(@TypeOf(identityFn)).@"fn".param_types.len != 1)
-        @compileError("identityFn must take one parameter, the *const to the BoundTo instance");
+    if (fn_info.param_types.len != 1)
+        @compileError("identityFn must take exactly one parameter, of type anytype or *const anyopaque");
+
+    if (fn_info.param_types[0]) |Param| if (Param != *const anyopaque)
+        @compileError("identityFn's parameter must be anytype or *const anyopaque, found " ++ @typeName(Param));
 
     return struct {
         const B = @This();
 
-        pub const Identity = @typeInfo(@TypeOf(identityFn)).@"fn".return_type.?;
+        pub const Identity = fn_info.return_type orelse
+            @compileError("identityFn must not have a generic return type");
 
         fn queryIdentity(self: *const B) Identity {
             return identityFn(self);
@@ -878,7 +882,8 @@ pub fn ConfigurableBoundTo(
             .last_change = .empty,
         };
 
-        /// Binds `identity`, without capturing a stack trace.
+        /// Binds `identity`, without capturing a stack trace, so it can be used
+        /// as a default field value.
         pub fn init(identity: Identity) B {
             return .{
                 .identity = if (config.enabled) identity else {},
@@ -887,16 +892,13 @@ pub fn ConfigurableBoundTo(
         }
 
         /// `init`, capturing the current stack trace.
-        pub fn initAndCapture(identity: Identity) B {
-            return .initAndCaptureAt(identity, @returnAddress());
+        pub fn initTraced(identity: Identity) B {
+            return .initTracedAt(identity, @returnAddress());
         }
 
-        /// `initAndCapture`, capturing from `ret_addr`.
-        pub fn initAndCaptureAt(identity: Identity, ret_addr: usize) B {
-            if (!config.enabled) return .{
-                .identity = {},
-                .last_change = .empty,
-            };
+        /// `initTraced`, capturing from `ret_addr`.
+        pub fn initTracedAt(identity: Identity, ret_addr: usize) B {
+            if (!config.enabled) return .init(identity);
 
             return .{
                 .identity = identity,
@@ -926,13 +928,13 @@ pub fn ConfigurableBoundTo(
         }
 
         /// Binds `identityFn`'s identity if nothing is bound, otherwise does
-        /// `assertCurrent`.
-        pub fn bindOrAssert(self: *B) void {
-            self.bindOrAssertAt(@returnAddress());
+        /// `assertUnchanged`.
+        pub fn bindOrAssertUnchanged(self: *B) void {
+            self.bindOrAssertUnchangedAt(@returnAddress());
         }
 
-        /// `bindOrAssert`, capturing and reporting from `ret_addr`.
-        pub fn bindOrAssertAt(self: *B, ret_addr: usize) void {
+        /// `bindOrAssertUnchanged`, capturing and reporting from `ret_addr`.
+        pub fn bindOrAssertUnchangedAt(self: *B, ret_addr: usize) void {
             if (!config.enabled) return;
 
             const identity = self.queryIdentity();
@@ -948,23 +950,23 @@ pub fn ConfigurableBoundTo(
         }
 
         /// Asserts `identityFn`'s identity is the bound one.
-        pub fn assertCurrent(self: *const B) void {
-            self.assertCurrentAt(@returnAddress());
+        pub fn assertUnchanged(self: *const B) void {
+            self.assertUnchangedAt(@returnAddress());
         }
 
-        /// `assertCurrent`, reporting from `ret_addr`.
-        pub fn assertCurrentAt(self: *const B, ret_addr: usize) void {
+        /// `assertUnchanged`, reporting from `ret_addr`.
+        pub fn assertUnchangedAt(self: *const B, ret_addr: usize) void {
             if (!config.enabled) return;
             self.assertEqlAt(self.queryIdentity(), ret_addr);
         }
 
-        /// `assertCurrent`, passing when nothing is bound.
-        pub fn assertCurrentIfBound(self: *const B) void {
-            self.assertCurrentIfBoundAt(@returnAddress());
+        /// `assertUnchanged`, passing when nothing is bound.
+        pub fn assertUnchangedOrUnbound(self: *const B) void {
+            self.assertUnchangedOrUnboundAt(@returnAddress());
         }
 
-        /// `assertCurrentIfBound`, reporting from `ret_addr`.
-        pub fn assertCurrentIfBoundAt(self: *const B, ret_addr: usize) void {
+        /// `assertUnchangedOrUnbound`, reporting from `ret_addr`.
+        pub fn assertUnchangedOrUnboundAt(self: *const B, ret_addr: usize) void {
             if (!config.enabled) return;
 
             const identity = self.queryIdentity();
@@ -997,7 +999,7 @@ pub fn ConfigurableBoundTo(
                 self.failMismatchUnsafe(messages.mismatch, bound_identity, identity, ret_addr);
         }
 
-        /// Does `assertCurrent`, then drops the binding.
+        /// Does `assertUnchanged`, then drops the binding.
         pub fn unbind(self: *B) void {
             self.unbindAt(@returnAddress());
         }
@@ -1099,12 +1101,12 @@ test ConfigurableBoundTo {
     // Test that once disabled the checks don't run
     Id.current = 1;
     var disabled: Disabled = .unbound;
-    disabled.bindOrAssert();
+    disabled.bindOrAssertUnchanged();
     Id.current = 2;
-    disabled.bindOrAssert();
+    disabled.bindOrAssertUnchanged();
     disabled.assertEql(3);
-    disabled.assertCurrent();
-    disabled.assertCurrentIfBound();
+    disabled.assertUnchanged();
+    disabled.assertUnchangedOrUnbound();
     disabled.bind();
     disabled.unbind();
     disabled.unbind();
@@ -1115,24 +1117,24 @@ test ConfigurableBoundTo {
     Id.current = 7;
     var enabled: Enabled = .unbound;
 
-    // Test that `assertEql` and `assertCurrent` never bind, so they fail before the first access
+    // Test that `assertEql` and `assertUnchanged` never bind, so they fail before the first access
     enabled.assertEql(7);
     try violation.expect();
-    enabled.assertCurrent();
+    enabled.assertUnchanged();
     try violation.expect();
 
-    enabled.bindOrAssert(); // The first access binds.
+    enabled.bindOrAssertUnchanged(); // The first access binds.
     enabled.assertEql(7);
-    enabled.assertCurrent();
+    enabled.assertUnchanged();
     try violation.expectNone();
 
     // Test that a different identity fails
     Id.current = 8;
-    enabled.bindOrAssert();
+    enabled.bindOrAssertUnchanged();
     try violation.expect();
     enabled.assertEql(8);
     try violation.expect();
-    enabled.assertCurrent();
+    enabled.assertUnchanged();
     try violation.expect();
 
     // Test that `unbind` fails under a different identity, and leaves the binding in place
@@ -1145,11 +1147,11 @@ test ConfigurableBoundTo {
     Id.current = 7;
     enabled.unbind();
     Id.current = 8;
-    enabled.bindOrAssert();
+    enabled.bindOrAssertUnchanged();
 
     Id.current = 9;
     enabled.rebind();
-    enabled.bindOrAssert();
+    enabled.bindOrAssertUnchanged();
 
     Id.current = 10;
     enabled.rebind();
@@ -1160,10 +1162,10 @@ test ConfigurableBoundTo {
     var eager: Enabled = .init(11);
     try testing.expectEqual(11, eager.identity.?);
     eager.assertEql(11);
-    eager.bindOrAssert(); // `Id.current` is still 10, so this checks rather than binds.
+    eager.bindOrAssertUnchanged(); // `Id.current` is still 10, so this checks rather than binds.
     try violation.expect();
     Id.current = 11;
-    eager.bindOrAssert();
+    eager.bindOrAssertUnchanged();
     try violation.expectNone();
 
     // Test that `bind` and `unbind` each assert the opposite state first
@@ -1171,12 +1173,12 @@ test ConfigurableBoundTo {
     strict.unbind();
     try violation.expect();
     strict.bind();
-    strict.assertCurrent();
+    strict.assertUnchanged();
     try violation.expectNone();
     strict.bind();
     try violation.expect();
     strict.unbind();
-    strict.assertCurrent();
+    strict.assertUnchanged();
     try violation.expect();
     strict.unbind();
     try violation.expect();
@@ -1184,15 +1186,15 @@ test ConfigurableBoundTo {
     strict.assertEql(11);
     try violation.expectNone();
 
-    // Test that `assertCurrentIfBound` passes when unbound, and checks otherwise
+    // Test that `assertUnchangedOrUnbound` passes when unbound, and checks otherwise
     var stamp: Enabled = .unbound;
-    stamp.assertCurrentIfBound();
+    stamp.assertUnchangedOrUnbound();
     try violation.expectNone();
     stamp = .init(12);
-    stamp.assertCurrentIfBound();
+    stamp.assertUnchangedOrUnbound();
     try violation.expect();
     stamp = .init(11);
-    stamp.assertCurrentIfBound();
+    stamp.assertUnchangedOrUnbound();
     try violation.expectNone();
 }
 
@@ -1200,10 +1202,10 @@ test ConfigurableBoundTo {
 /// identity is whatever `identityFn(self)` returns: the current thread,
 /// task, generation counter, and so on.
 ///
-/// `identityFn` shall take `anytype` as its first parameter and it will be a
-/// `*const` pointer to the `BoundTo` specification instance itself, which you
-/// can pass to `@alignCast(@fieldParentPtr(...))` to reach other values in the
-/// struct that contains it.
+/// `identityFn` shall take `anytype` or `*const anyopaque` as its only
+/// parameter and it will be a `*const` pointer to the `BoundTo` specification
+/// instance itself, which you can pass to `@alignCast(@fieldParentPtr(...))`
+/// to reach other values in the struct that contains it.
 ///
 /// A failure reports the bound and found identities, and where the binding
 /// was made.
@@ -1229,7 +1231,7 @@ test BoundTo {
         fn handle(arena: *const @This()) Handle {
             return .{
                 .arena_generation = &arena.generation,
-                .generation = .initAndCapture(arena.generation),
+                .generation = .initTraced(arena.generation),
             };
         }
 
@@ -1252,110 +1254,49 @@ test BoundTo {
     var handle_into_a = a.handle();
     var handle_into_b = b.handle();
 
-    handle_into_a.generation.bindOrAssert();
-    handle_into_b.generation.bindOrAssert();
+    handle_into_a.generation.bindOrAssertUnchanged();
+    handle_into_b.generation.bindOrAssertUnchanged();
 
     b.reset();
 
     // `a` was not reset, so its handle is still valid.
-    handle_into_a.generation.bindOrAssert();
+    handle_into_a.generation.bindOrAssertUnchanged();
 
     var new_handle_into_b = b.handle();
-    new_handle_into_b.generation.bindOrAssert();
+    new_handle_into_b.generation.bindOrAssertUnchanged();
 
-    handle_into_b.generation.bindOrAssert();
+    handle_into_b.generation.bindOrAssertUnchanged();
     if (@as(Config, .{}).enabled)
         try violation.expect()
     else
         try violation.expectNone();
 }
 
-fn addressOf(self: anytype) *const anyopaque {
-    return self;
-}
-
-pub fn ConfigurablePinned(config: Config) type {
-    return ConfigurableBoundTo(addressOf, config, .{
-        .mismatch = "pinned value accessed at a different address",
-        .unbound = "accessed while not pinned",
-        .already_bound = "pinned while already pinned",
-        .last_bind = "pinned at",
-        .last_unbind = "unpinned at",
-    });
-}
-
-test ConfigurablePinned {
-    violation.startCapture();
-    defer violation.stopCapture();
-
-    const Disabled = ConfigurablePinned(.{ .enabled = false });
-
-    // Test that the size is 0
-    try testing.expect(@sizeOf(Disabled) == 0);
-
-    // Test that once disabled the checks don't run
-    var disabled: Disabled = .unbound;
-    disabled.bindOrAssert();
-    var disabled_copy = disabled;
-    disabled_copy.bindOrAssert();
-    disabled_copy.bind();
-    disabled_copy.unbind();
-    try violation.expectNone();
-
-    // Test correct behavior
-    const Enabled = ConfigurablePinned(.{ .enabled = true });
-    var enabled: Enabled = .unbound;
-    enabled.bindOrAssert(); // The first access pins it here.
-    enabled.bindOrAssert();
-    try violation.expectNone();
-
-    // Test that a copy fails
-    var copy = enabled;
-    copy.bindOrAssert();
-    try violation.expect();
-
-    // Test that releasing the pin lets the value move
-    enabled.unbind();
-    var moved = enabled;
-    moved.bindOrAssert();
-
-    // Test that a move can be acknowledged after the fact instead
-    var moved_again = moved;
-    moved_again.rebind();
-    moved_again.bindOrAssert();
-    try violation.expectNone();
-
-    // Test that a node pinned while linked catches double insert and double remove
-    var node: Enabled = .unbound;
-    node.bind(); // insert
-    node.bind(); // insert again
-    try violation.expect();
-    node.unbind(); // remove
-    node.unbind(); // remove again
-    try violation.expect();
-
-    // Test that a node moved while linked fails at its next remove, through either copy
-    node.bind();
-    var moved_node = node;
-    moved_node.unbind();
-    try violation.expect();
-    moved_node.assertCurrent();
-    try violation.expect();
-    node.unbind(); // The original is still where it was pinned.
-    try violation.expectNone();
-}
-
 /// Detects when an address-sensitive value has been copied or moved.
 ///
 /// Embed it in any struct that other code reaches through a pointer to one of
 /// its fields (`@fieldParentPtr`), or that intrusive data structures point
-/// into. `bindOrAssert` pins the value at its current address the first time it
-/// is called and asserts it has not moved on every later call, so it can be
-/// called on every use.
+/// into. `bindOrAssertUnchanged` pins the value at its current address the
+/// first time it is called and asserts it has not moved on every later call,
+/// so it can be called on every use.
 ///
 /// A copy panics, reporting both addresses and where the original was pinned.
 /// A copy carries the original's pin trace with it, so that trace shows where
 /// the original was first checked, not where the copy was made.
 ///
-/// See `ConfigurablePinned` to configure enable/disabled, thread safety and more.
-pub const Pinned = ConfigurablePinned(.{});
+/// See `ConfigurableBoundTo` to configure enable/disabled, thread safety and more.
+pub const Pinned = ConfigurableBoundTo(addressOf, .{}, pinned_messages);
+
+pub const pinned_messages: BoundToMessages = .{
+    .mismatch = "pinned value accessed at a different address",
+    .unbound = "accessed while not pinned",
+    .already_bound = "pinned while already pinned",
+    .last_bind = "pinned at",
+    .last_unbind = "unpinned at",
+};
+
+/// An `identityFn` for `BoundTo` that returns the address of the `BoundTo`
+/// itself.
+pub fn addressOf(self: anytype) *const anyopaque {
+    return self;
+}

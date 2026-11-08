@@ -263,6 +263,7 @@ pub const Object = struct {
         o.enum_tag_name_map.deinit(gpa);
         o.named_enum_map.deinit(gpa);
         o.type_map.deinit(gpa);
+        o.used.deinit(gpa);
         o.builder.deinit();
         o.* = undefined;
     }

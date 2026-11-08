@@ -3036,79 +3036,132 @@ pub fn reset(zcu: *Zcu, arena: Allocator) Allocator.Error!void {
     }
 }
 
+/// Frees the state of a successful non-incremental update ahead of `reset`. After this, nothing may
+/// use the ZCU until `reset`, except for reading the (empty) error tables.
+pub fn freeUpdateState(zcu: *Zcu) void {
+    assert(!zcu.comp.config.incremental);
+    zcu.deinitAnalysisState();
+}
+
+/// Frees analysis state cleared or rebuilt by `reset`; persistent resources are freed by `deinit`.
+fn deinitAnalysisState(zcu: *Zcu) void {
+    const io = zcu.comp.io;
+    const gpa = zcu.gpa;
+
+    zcu.all_exports.deinit(gpa);
+    zcu.all_exports = .empty;
+    zcu.free_exports.deinit(gpa);
+    zcu.free_exports = .empty;
+    zcu.single_exports.deinit(gpa);
+    zcu.single_exports = .empty;
+    zcu.multi_exports.deinit(gpa);
+    zcu.multi_exports = .empty;
+
+    zcu.module_roots.deinit(gpa);
+    zcu.module_roots = .empty;
+
+    for (zcu.import_table.keys()) |file| zcu.destroyFile(file);
+    zcu.import_table.deinit(gpa);
+    zcu.import_table = .empty;
+    zcu.alive_files.deinit(gpa);
+    zcu.alive_files = .empty;
+    for (zcu.embed_table.keys()) |*ef| ef.deinit(gpa);
+    zcu.embed_table.deinit(gpa);
+    zcu.embed_table = .empty;
+
+    zcu.compile_logs.deinit(gpa);
+    zcu.compile_logs = .empty;
+    zcu.compile_log_lines.deinit(gpa);
+    zcu.compile_log_lines = .empty;
+    zcu.free_compile_log_lines.deinit(gpa);
+    zcu.free_compile_log_lines = .empty;
+
+    zcu.failed_imports.deinit(gpa);
+    zcu.failed_imports = .empty;
+    for (zcu.failed_files.values()) |maybe_msg| if (maybe_msg) |msg| gpa.free(msg);
+    zcu.failed_files.deinit(gpa);
+    zcu.failed_files = .empty;
+    zcu.analysis_in_progress.deinit(gpa);
+    zcu.analysis_in_progress = .empty;
+    for (zcu.failed_analysis.values()) |msg| msg.destroy(gpa);
+    zcu.failed_analysis.deinit(gpa);
+    zcu.failed_analysis = .empty;
+    zcu.transitive_failed_analysis.deinit(gpa);
+    zcu.transitive_failed_analysis = .empty;
+    zcu.dependency_loops.deinit(gpa);
+    zcu.dependency_loops = .empty;
+    zcu.dependency_loop_nodes.deinit(gpa);
+    zcu.dependency_loop_nodes = .empty;
+    for (zcu.failed_codegen.values()) |msg| msg.destroy(gpa);
+    zcu.failed_codegen.deinit(gpa);
+    zcu.failed_codegen = .empty;
+    for (zcu.failed_types.values()) |msg| msg.destroy(gpa);
+    zcu.failed_types.deinit(gpa);
+    zcu.failed_types = .empty;
+    for (zcu.failed_exports.values()) |msg| msg.destroy(gpa);
+    zcu.failed_exports.deinit(gpa);
+    zcu.failed_exports = .empty;
+
+    zcu.potentially_outdated.deinit(gpa);
+    zcu.potentially_outdated = .empty;
+    zcu.outdated.deinit(gpa);
+    zcu.outdated = .empty;
+    zcu.outdated_ready.funcs.deinit(gpa);
+    zcu.outdated_ready.funcs = .empty;
+    zcu.outdated_ready.other.deinit(gpa);
+    zcu.outdated_ready.other = .empty;
+    zcu.retryable_failures.deinit(gpa);
+    zcu.retryable_failures = .empty;
+
+    zcu.clearCachedResolvedReferences();
+
+    zcu.test_functions.deinit(gpa);
+    zcu.test_functions = .empty;
+
+    for (zcu.global_assembly.values()) |s| gpa.free(s);
+    zcu.global_assembly.deinit(gpa);
+    zcu.global_assembly = .empty;
+
+    zcu.reference_table.deinit(gpa);
+    zcu.reference_table = .empty;
+    zcu.all_references.deinit(gpa);
+    zcu.all_references = .empty;
+    zcu.free_references.deinit(gpa);
+    zcu.free_references = .empty;
+
+    zcu.inline_reference_frames.deinit(gpa);
+    zcu.inline_reference_frames = .empty;
+    zcu.free_inline_reference_frames.deinit(gpa);
+    zcu.free_inline_reference_frames = .empty;
+
+    zcu.type_reference_table.deinit(gpa);
+    zcu.type_reference_table = .empty;
+    zcu.all_type_references.deinit(gpa);
+    zcu.all_type_references = .empty;
+    zcu.free_type_references.deinit(gpa);
+    zcu.free_type_references = .empty;
+
+    // Files are looked up through the intern pool, so this must come after `destroyFile`.
+    zcu.intern_pool.deinit(gpa, io);
+    zcu.intern_pool = .empty;
+}
+
 pub fn deinit(zcu: *Zcu) void {
     const comp = zcu.comp;
     const io = comp.io;
     const gpa = zcu.gpa;
-    {
-        if (zcu.llvm_object) |llvm_object| llvm_object.deinit();
 
-        zcu.global_zir_cache.handle.close(io);
-        zcu.local_zir_cache.handle.close(io);
+    if (zcu.llvm_object) |llvm_object| llvm_object.deinit();
 
-        zcu.all_exports.deinit(gpa);
-        zcu.free_exports.deinit(gpa);
-        zcu.single_exports.deinit(gpa);
-        zcu.multi_exports.deinit(gpa);
+    zcu.global_zir_cache.handle.close(io);
+    zcu.local_zir_cache.handle.close(io);
+    zcu.builtin_modules.deinit(gpa);
 
-        zcu.module_roots.deinit(gpa);
-        zcu.builtin_modules.deinit(gpa);
-
-        for (zcu.import_table.keys()) |file| zcu.destroyFile(file);
-        zcu.import_table.deinit(gpa);
-        zcu.alive_files.deinit(gpa);
-        for (zcu.embed_table.keys()) |*ef| ef.deinit(gpa);
-        zcu.embed_table.deinit(gpa);
-
-        zcu.compile_logs.deinit(gpa);
-        zcu.compile_log_lines.deinit(gpa);
-        zcu.free_compile_log_lines.deinit(gpa);
-
-        zcu.failed_imports.deinit(gpa);
-        for (zcu.failed_files.values()) |maybe_msg| if (maybe_msg) |msg| gpa.free(msg);
-        zcu.failed_files.deinit(gpa);
-        zcu.analysis_in_progress.deinit(gpa);
-        for (zcu.failed_analysis.values()) |msg| msg.destroy(gpa);
-        zcu.failed_analysis.deinit(gpa);
-        zcu.transitive_failed_analysis.deinit(gpa);
-        zcu.dependency_loops.deinit(gpa);
-        zcu.dependency_loop_nodes.deinit(gpa);
-        for (zcu.failed_codegen.values()) |msg| msg.destroy(gpa);
-        zcu.failed_codegen.deinit(gpa);
-        for (zcu.failed_types.values()) |msg| msg.destroy(gpa);
-        zcu.failed_types.deinit(gpa);
-        for (zcu.failed_exports.values()) |msg| msg.destroy(gpa);
-        zcu.failed_exports.deinit(gpa);
-
-        zcu.potentially_outdated.deinit(gpa);
-        zcu.outdated.deinit(gpa);
-        zcu.outdated_ready.funcs.deinit(gpa);
-        zcu.outdated_ready.other.deinit(gpa);
-        zcu.retryable_failures.deinit(gpa);
-
-        if (zcu.resolved_references) |*r| r.deinit(gpa);
-
-        zcu.test_functions.deinit(gpa);
-
-        for (zcu.global_assembly.values()) |s| gpa.free(s);
-        zcu.global_assembly.deinit(gpa);
-
-        zcu.reference_table.deinit(gpa);
-        zcu.all_references.deinit(gpa);
-        zcu.free_references.deinit(gpa);
-
-        zcu.inline_reference_frames.deinit(gpa);
-        zcu.free_inline_reference_frames.deinit(gpa);
-
-        zcu.type_reference_table.deinit(gpa);
-        zcu.all_type_references.deinit(gpa);
-        zcu.free_type_references.deinit(gpa);
-
-        if (comp.debugIncremental()) {
-            zcu.incremental_debug_state.deinit(gpa);
-        }
+    if (comp.debugIncremental()) {
+        zcu.incremental_debug_state.deinit(gpa);
     }
-    zcu.intern_pool.deinit(gpa, io);
+
+    zcu.deinitAnalysisState();
 }
 
 fn deinitFile(zcu: *Zcu, file_index: Zcu.File.Index) void {

@@ -3262,12 +3262,17 @@ fn flush(comp: *Compilation, arena: Allocator) (Io.Cancelable || Allocator.Error
             defer gpa.free(llvm_triple);
 
             // At this point we've emitted the IR/bitcode, so unless we're using incremental (where
-            // we need to preserve state for future updates), we are allowed to free `llvm_object`.
-            // We want to do this if possible because it can sometimes significantly reduce peak RSS
-            // during LLVM emit.
+            // we need to preserve state for future updates), we are allowed to free `llvm_object`
+            // and the ZCU analysis state. We want to do this if possible because it can sometimes
+            // significantly reduce peak RSS during LLVM emit.
             if (!comp.config.incremental) {
                 llvm_object.deinit();
                 zcu.llvm_object = null;
+                if (comp.time_report == null and
+                    (comp.bin_file == null or comp.bin_file.?.tag == .lld))
+                {
+                    zcu.freeUpdateState();
+                }
             }
 
             if (!want_libllvm_emit) return;

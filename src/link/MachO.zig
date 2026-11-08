@@ -2397,16 +2397,16 @@ fn writeSectionsAndUpdateLinkeditSizes(self: *MachO) !void {
         updateLinkeditSizeWorker(self, .data_in_code);
 
         if (self.getZigObject()) |zo| {
-            File.writeSymtab(zo.asFile(), self, self);
+            File.writeSymtab(zo.asFile(), self, self, .final);
         }
         for (self.objects.items) |index| {
-            File.writeSymtab(self.getFile(index).?, self, self);
+            File.writeSymtab(self.getFile(index).?, self, self, .final);
         }
         for (self.dylibs.items) |index| {
-            File.writeSymtab(self.getFile(index).?, self, self);
+            File.writeSymtab(self.getFile(index).?, self, self, .final);
         }
         if (self.getInternalObject()) |obj| {
-            File.writeSymtab(obj.asFile(), self, self);
+            File.writeSymtab(obj.asFile(), self, self, .final);
         }
         if (self.requiresThunks()) for (self.thunks.items) |th| {
             Thunk.writeSymtab(th, self, self);

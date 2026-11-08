@@ -591,12 +591,12 @@ fn writeSections(macho_file: *MachO) link.Error!void {
     {
         for (macho_file.objects.items) |index| {
             writeAtomsWorker(macho_file, macho_file.getFile(index).?);
-            File.writeSymtab(macho_file.getFile(index).?, macho_file, macho_file);
+            File.writeSymtab(macho_file.getFile(index).?, macho_file, macho_file, .relocatable);
         }
 
         if (macho_file.getZigObject()) |zo| {
             writeAtomsWorker(macho_file, zo.asFile());
-            File.writeSymtab(zo.asFile(), macho_file, macho_file);
+            File.writeSymtab(zo.asFile(), macho_file, macho_file, .relocatable);
         }
 
         if (macho_file.eh_frame_sect_index) |_| {

@@ -1,4 +1,6 @@
 pub const File = union(enum) {
+    pub const SymtabWriteMode = enum { final, relocatable };
+
     zig_object: *ZigObject,
     internal: *InternalObject,
     object: *Object,
@@ -301,9 +303,9 @@ pub const File = union(enum) {
         };
     }
 
-    pub fn writeSymtab(file: File, macho_file: *MachO, ctx: anytype) void {
+    pub fn writeSymtab(file: File, macho_file: *MachO, ctx: anytype, comptime mode: SymtabWriteMode) void {
         return switch (file) {
-            inline else => |x| x.writeSymtab(macho_file, ctx),
+            inline else => |x| x.writeSymtab(macho_file, ctx, mode),
         };
     }
 

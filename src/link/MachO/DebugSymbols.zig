@@ -14,6 +14,7 @@ const Allocator = std.mem.Allocator;
 
 const link = @import("../../link.zig");
 const MachO = @import("../MachO.zig");
+const File = @import("file.zig").File;
 const StringTable = @import("../StringTable.zig");
 const Type = @import("../../Type.zig");
 const trace = @import("../../tracy.zig").trace;
@@ -411,16 +412,16 @@ pub fn writeSymtab(self: *DebugSymbols, off: u32, macho_file: *MachO) !u32 {
     self.strtab.items[0] = 0;
 
     if (macho_file.getZigObject()) |zo| {
-        zo.writeSymtab(macho_file, self);
+        zo.writeSymtab(macho_file, self, .final);
     }
     for (macho_file.objects.items) |index| {
-        macho_file.getFile(index).?.writeSymtab(macho_file, self);
+        macho_file.getFile(index).?.writeSymtab(macho_file, self, .final);
     }
     for (macho_file.dylibs.items) |index| {
-        macho_file.getFile(index).?.writeSymtab(macho_file, self);
+        macho_file.getFile(index).?.writeSymtab(macho_file, self, .final);
     }
     if (macho_file.getInternalObject()) |internal| {
-        internal.writeSymtab(macho_file, self);
+        internal.writeSymtab(macho_file, self, .final);
     }
 
     try self.file.?.writePositionalAll(io, @ptrCast(self.symtab.items), cmd.symoff);

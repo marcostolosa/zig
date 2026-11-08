@@ -618,7 +618,7 @@ pub fn writeAtoms(self: *InternalObject, macho_file: *MachO) !void {
     }
 }
 
-pub fn writeSymtab(self: InternalObject, macho_file: *MachO, ctx: anytype) void {
+pub fn writeSymtab(self: InternalObject, macho_file: *MachO, ctx: anytype, comptime _: File.SymtabWriteMode) void {
     var n_strx = self.output_symtab_ctx.stroff;
     for (self.symbols.items, 0..) |sym, i| {
         const ref = self.getSymbolRef(@intCast(i), macho_file);

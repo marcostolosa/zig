@@ -524,7 +524,7 @@ pub fn calcSymtabSize(self: *ZigObject, macho_file: *MachO) void {
     }
 }
 
-pub fn writeSymtab(self: ZigObject, macho_file: *MachO, ctx: anytype) void {
+pub fn writeSymtab(self: ZigObject, macho_file: *MachO, ctx: anytype, comptime _: File.SymtabWriteMode) void {
     const tracy = trace(@src());
     defer tracy.end();
 

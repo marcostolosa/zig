@@ -26,6 +26,8 @@ dylibs: std.ArrayList(File.Index) = .empty,
 
 segments: std.ArrayList(macho.segment_command_64) = .empty,
 sections: std.MultiArrayList(Section) = .empty,
+/// Whether the current relocatable output carries MH_SUBSECTIONS_VIA_SYMBOLS.
+subsections_via_symbols: bool = false,
 /// Populated by `allocateSections`.
 header_size: ?u32 = null,
 

@@ -2102,9 +2102,12 @@ pub fn writeCompactUnwindRelocatable(self: *Object, macho_file: *MachO) !void {
     }
 }
 
-pub fn writeSymtab(self: Object, macho_file: *MachO, ctx: anytype, comptime _: File.SymtabWriteMode) void {
+pub fn writeSymtab(self: Object, macho_file: *MachO, ctx: anytype, comptime mode: File.SymtabWriteMode) void {
     const tracy = trace(@src());
     defer tracy.end();
+
+    const annotate = mode == .relocatable and macho_file.base.isObject() and
+        macho_file.subsections_via_symbols;
 
     var n_strx = self.output_symtab_ctx.stroff;
     for (self.symbols.items, 0..) |sym, i| {
@@ -2115,6 +2118,12 @@ pub fn writeSymtab(self: Object, macho_file: *MachO, ctx: anytype, comptime _: F
         const out_sym = &ctx.symtab.items[idx];
         out_sym.n_strx = n_strx;
         sym.setOutputSym(macho_file, out_sym);
+        if (annotate and out_sym.n_sect != 0) {
+            out_sym.n_desc.alt_entry = if (self.hasSubsections())
+                self.symtab.items(.nlist)[sym.nlist_idx].n_desc.alt_entry
+            else
+                true;
+        }
         const name = sym.getName(macho_file);
         @memcpy(ctx.strtab.items[n_strx..][0..name.len], name);
         n_strx += @intCast(name.len);

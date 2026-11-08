@@ -43,6 +43,15 @@ pub fn flushObject(macho_file: *MachO, comp: *Compilation) link.Error!void {
     if (diags.hasErrors()) return error.AlreadyReported;
 
     try macho_file.resolveSymbols();
+    macho_file.subsections_via_symbols = macho_file.getZigObject() != null;
+    if (!macho_file.subsections_via_symbols) {
+        for (macho_file.objects.items) |index| {
+            if (macho_file.getFile(index).?.object.hasSubsections()) {
+                macho_file.subsections_via_symbols = true;
+                break;
+            }
+        }
+    }
     macho_file.dedupLiterals() catch |err| switch (err) {
         error.OutOfMemory, error.AlreadyReported => |e| return e,
         else => |e| return diags.fail("failed to update ar size: {s}", .{@errorName(e)}),
@@ -94,6 +103,7 @@ pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation) link.Error!void {
 
     // First, we flush relocatable object file generated with our backends.
     if (macho_file.getZigObject()) |zo| {
+        macho_file.subsections_via_symbols = true;
         try zo.resolveSymbols(macho_file);
         zo.asFile().markExportsRelocatable(macho_file);
         zo.asFile().claimUnresolvedRelocatable(macho_file);
@@ -724,12 +734,7 @@ fn writeHeader(macho_file: *MachO, ncmds: usize, sizeofcmds: usize) !void {
     var header: macho.mach_header_64 = .{};
     header.filetype = macho.MH_OBJECT;
 
-    // Only mark the output as having subsections if *every* input object does.
-    const subsections_via_symbols = for (macho_file.objects.items) |index| {
-        const object = macho_file.getFile(index).?.object;
-        if (!object.hasSubsections()) break false;
-    } else true;
-    if (subsections_via_symbols) {
+    if (macho_file.subsections_via_symbols) {
         header.flags |= macho.MH_SUBSECTIONS_VIA_SYMBOLS;
     }
 

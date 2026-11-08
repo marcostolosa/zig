@@ -681,7 +681,11 @@ const Future = struct {
     ) Allocator.Error!*Future {
         const max_context_misalignment = context_alignment.toByteUnits() -| @alignOf(Future);
         const worst_case_context_offset = context_alignment.forward(@sizeOf(Future) + max_context_misalignment);
-        const worst_case_result_offset = result_alignment.forward(worst_case_context_offset + context.len);
+
+        const max_result_misalignment = result_alignment.toByteUnits() -| @alignOf(Future);
+        const worst_case_result_offset = result_alignment.forward(worst_case_context_offset + context.len +
+            max_result_misalignment);
+
         const alloc_len = worst_case_result_offset + result_len;
 
         const future: *Future = @ptrCast(@alignCast(try gpa.alignedAlloc(u8, .of(Future), alloc_len)));

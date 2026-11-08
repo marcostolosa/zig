@@ -68,16 +68,15 @@ test "concurrent vs concurrent prevents deadlock via oversubscription" {
 
 const ByteArray256 = struct { x: [32]u8 align(32) };
 const ByteArray512 = struct { x: [64]u8 align(64) };
+const UnalignedByteArray256 = struct { x: [32]u8 };
 
 fn concatByteArrays(a: ByteArray256, b: ByteArray256) ByteArray512 {
     return .{ .x = a.x ++ b.x };
 }
 
 test "async/concurrent context and result alignment" {
-    var buffer: [2048]u8 align(@alignOf(ByteArray512)) = undefined;
-    var fba: std.heap.FixedBufferAllocator = .init(&buffer);
-
-    var threaded: std.Io.Threaded = .init(fba.allocator(), .{
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{
         .argv0 = .empty,
         .environ = .empty,
     });
@@ -105,15 +104,47 @@ test "async/concurrent context and result alignment" {
     }
 }
 
+fn concatUnalignedByteArrays(a: UnalignedByteArray256, b: UnalignedByteArray256) ByteArray512 {
+    return .{ .x = a.x ++ b.x };
+}
+
+test "async/concurrent only result alignment" {
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const a: UnalignedByteArray256 = .{ .x = @splat(2) };
+    const b: UnalignedByteArray256 = .{ .x = @splat(3) };
+    const expected: ByteArray512 = .{ .x = @as([32]u8, @splat(2)) ++ @as([32]u8, @splat(3)) };
+
+    {
+        var future = io.async(concatUnalignedByteArrays, .{ a, b });
+        const result = future.await(io);
+        try std.testing.expectEqualSlices(u8, &expected.x, &result.x);
+    }
+    {
+        var future = io.concurrent(concatUnalignedByteArrays, .{ a, b }) catch |err| switch (err) {
+            error.ConcurrencyUnavailable => {
+                try testing.expect(builtin.single_threaded);
+                return;
+            },
+        };
+        const result = future.await(io);
+        try std.testing.expectEqualSlices(u8, &expected.x, &result.x);
+    }
+}
+
 fn concatByteArraysResultPtr(a: ByteArray256, b: ByteArray256, result: *ByteArray512) void {
     result.* = .{ .x = a.x ++ b.x };
 }
 
 test "Group.async context alignment" {
-    var buffer: [2048]u8 align(@alignOf(ByteArray512)) = undefined;
-    var fba: std.heap.FixedBufferAllocator = .init(&buffer);
-
-    var threaded: std.Io.Threaded = .init(fba.allocator(), .{
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{
         .argv0 = .empty,
         .environ = .empty,
     });

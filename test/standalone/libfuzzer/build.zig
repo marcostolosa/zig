@@ -5,8 +5,8 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    if (builtin.os.tag == .windows) return; // TODO: libfuzzer support for windows
-    if (builtin.os.tag == .openbsd) return; // https://codeberg.org/ziglang/zig/issues/30728
+    if (builtin.target.os.tag == .windows) return; // TODO: libfuzzer support for windows
+    if (builtin.target.os.tag == .openbsd) return; // https://codeberg.org/ziglang/zig/issues/30728
 
     const run_step = b.step("run", "Run executables");
     const exe = b.addExecutable(.{

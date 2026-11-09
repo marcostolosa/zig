@@ -2902,9 +2902,9 @@ fn addPathForDynLibs(
 ) !void {
     const conf = &maker.scanned_config.configuration;
     const graph = maker.graph;
-    const use_wine = graph.enable_wine and builtin.os.tag != .windows and std.ascii.endsWithIgnoreCase(argv0, ".exe");
+    const use_wine = graph.enable_wine and builtin.target.os.tag != .windows and std.ascii.endsWithIgnoreCase(argv0, ".exe");
     const path_key = if (use_wine) "WINEPATH" else "PATH";
-    const path_delimiter: u8 = if (builtin.os.tag == .windows or use_wine)
+    const path_delimiter: u8 = if (builtin.target.os.tag == .windows or use_wine)
         Dir.path.delimiter_windows
     else
         Dir.path.delimiter;

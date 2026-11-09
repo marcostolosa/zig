@@ -8,12 +8,12 @@ pub fn build(b: *std.Build) void {
     const optimize: std.builtin.Optimize = .debug;
     const target = b.graph.host;
 
-    if (builtin.os.tag == .wasi) return;
-    if (builtin.os.tag == .windows) return;
+    if (builtin.target.os.tag == .wasi) return;
+    if (builtin.target.os.tag == .windows) return;
 
     // ld and lld do not agree on the format of the .hash section
     // Tracked by https://codeberg.org/ziglang/zig/issues/35746
-    if (builtin.target.cpu.arch == .s390x and builtin.os.tag == .linux) return;
+    if (builtin.target.cpu.arch == .s390x and builtin.target.os.tag == .linux) return;
 
     const lib = b.addLibrary(.{
         .linkage = .dynamic,

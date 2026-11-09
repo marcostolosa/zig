@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
     b.default_step = test_step;
 
     // https://codeberg.org/ziglang/zig/issues/36013
-    if (builtin.os.tag == .freebsd) return;
+    if (builtin.target.os.tag == .freebsd) return;
 
     const config_header = b.addConfigHeader(
         .{ .style = .{ .autoconf_undef = b.path("autoconf_undef/config.h.in") } },

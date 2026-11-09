@@ -11,7 +11,7 @@ test "namespace depends on compile var" {
         try expect(!some_namespace.a_bool);
     }
 }
-const some_namespace = switch (builtin.os.tag) {
+const some_namespace = switch (builtin.target.os.tag) {
     .linux => @import("namespace_depends_on_compile_var/a.zig"),
     else => @import("namespace_depends_on_compile_var/b.zig"),
 };

@@ -90,7 +90,7 @@ const assert = std.debug.assert;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 
-const default_page_size: usize = switch (builtin.os.tag) {
+const default_page_size: usize = switch (builtin.target.os.tag) {
     // Makes `std.heap.PageAllocator` take the happy path.
     .windows => 64 * 1024,
     else => switch (builtin.target.cpu.arch) {
@@ -1260,7 +1260,7 @@ test "shrink large object to large object" {
 }
 
 test "shrink large object to large object with larger alignment" {
-    if (builtin.os.tag == .wasi) {
+    if (builtin.target.os.tag == .wasi) {
         // https://github.com/ziglang/zig/issues/22731
         return error.SkipZigTest;
     }
@@ -1326,7 +1326,7 @@ test "non-page-allocator backing allocator" {
 }
 
 test "realloc large object to larger alignment" {
-    if (builtin.os.tag == .wasi) {
+    if (builtin.target.os.tag == .wasi) {
         // https://github.com/ziglang/zig/issues/22731
         return error.SkipZigTest;
     }

@@ -2,12 +2,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = compiler_rt.symbol;
-const os_tag = builtin.os.tag;
+const os_tag = builtin.target.os.tag;
 const arch = builtin.target.cpu.arch;
 const abi = builtin.target.abi;
 
 comptime {
-    if (builtin.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         // Default stack-probe functions emitted by LLVM
         if (builtin.target.isMinGW()) {
             symbol(&_chkstk, "_alloca");

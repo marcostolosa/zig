@@ -7,7 +7,7 @@ pub const supports_skip_non_native = true;
 // run-time glibc version needs to be new enough.  Check the host's glibc
 // version.  Note that this does not allow for translation/vm/emulation
 // services to run these tests.
-const running_glibc_ver = builtin.os.versionRange().gnuLibCVersion();
+const running_glibc_ver = builtin.target.os.versionRange().gnuLibCVersion();
 
 pub fn build(b: *std.Build) void {
     const skip_non_native = b.option(bool, "skip_non_native", "Skip non-native targets") orelse false;

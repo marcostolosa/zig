@@ -36,7 +36,7 @@ test isSignalNan {
             builtin.target.cpu.arch != .hexagon and
             !builtin.target.cpu.arch.isMips32() and
             !builtin.target.cpu.arch.isPowerpc() and
-            !(builtin.target.cpu.arch.isX86() and builtin.os.tag == .windows and builtin.target.abi == .msvc) and // https://codeberg.org/ziglang/zig/issues/35519
+            !(builtin.target.cpu.arch.isX86() and builtin.target.os.tag == .windows and builtin.target.abi == .msvc) and // https://codeberg.org/ziglang/zig/issues/35519
             builtin.zig_backend != .stage2_c)
         {
             try expect(isSignalNan(math.snan(T)));

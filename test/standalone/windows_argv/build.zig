@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Test it");
     b.default_step = test_step;
 
-    if (builtin.os.tag != .windows) return;
+    if (builtin.target.os.tag != .windows) return;
 
     const optimize: std.builtin.Optimize = .debug;
 

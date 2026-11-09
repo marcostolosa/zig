@@ -153,7 +153,7 @@ pub fn upcaseW(c: u16) u16 {
 }
 
 test "upcaseW matches RtlUpcaseUnicodeChar" {
-    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag != .windows) return error.SkipZigTest;
 
     var c: u16 = 0;
     while (true) : (c += 1) {

@@ -8,7 +8,7 @@
 //! is linked. Most operating systems other than Linux and WASI
 //! require always linking libc because they use it as the stable syscall ABI.
 const builtin = @import("builtin");
-const native_os = builtin.os.tag;
+const native_os = builtin.target.os.tag;
 
 const std = @import("std.zig");
 const Io = std.Io;
@@ -1107,7 +1107,7 @@ pub fn memfd_createZ(name: [*:0]const u8, flags: u32) MemFdCreateError!fd_t {
             }
         },
         .freebsd => {
-            if (comptime builtin.os.version_range.semver.max.order(.{ .major = 13, .minor = 0, .patch = 0 }) == .lt)
+            if (comptime builtin.target.os.version_range.semver.max.order(.{ .major = 13, .minor = 0, .patch = 0 }) == .lt)
                 @compileError("memfd_create is unavailable on FreeBSD < 13.0");
             const rc = system.memfd_create(name, flags);
             switch (errno(rc)) {

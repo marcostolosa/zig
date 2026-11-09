@@ -22,9 +22,9 @@ extern fn memcpy(noalias dest: ?[*]u8, noalias src: ?[*]const u8, n: usize) call
 extern fn memmove(dest: ?[*]u8, src: ?[*]const u8, n: usize) callconv(.c) ?[*]u8;
 
 comptime {
-    symbol(&__stack_chk_fail, if (builtin.os.tag == .openbsd) "__stack_smash_handler" else "__stack_chk_fail");
+    symbol(&__stack_chk_fail, if (builtin.target.os.tag == .openbsd) "__stack_smash_handler" else "__stack_chk_fail");
     symbol(&__chk_fail, "__chk_fail");
-    symbol(&__stack_chk_guard, if (builtin.os.tag == .openbsd) "__guard_local" else "__stack_chk_guard");
+    symbol(&__stack_chk_guard, if (builtin.target.os.tag == .openbsd) "__guard_local" else "__stack_chk_guard");
     symbol(&__strcpy_chk, "__strcpy_chk");
     symbol(&__strncpy_chk, "__strncpy_chk");
     symbol(&__strcat_chk, "__strcat_chk");

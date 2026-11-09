@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const native_abi = builtin.target.abi;
 const native_arch = builtin.target.cpu.arch;
-const native_os = builtin.os.tag;
+const native_os = builtin.target.os.tag;
 const native_endian = builtin.target.cpu.arch.endian();
 
 const std = @import("std");
@@ -57,13 +57,13 @@ pub inline fn versionCheck(comptime version: std.SemanticVersion) bool {
         if (!builtin.link_libc) break :blk false;
         if (native_abi.isMusl()) break :blk true;
         if (builtin.target.isGnuLibC()) {
-            const ver = builtin.os.versionRange().gnuLibCVersion().?;
+            const ver = builtin.target.os.versionRange().gnuLibCVersion().?;
             break :blk switch (ver.order(version)) {
                 .gt, .eq => true,
                 .lt => false,
             };
         } else if (builtin.target.abi.isAndroid()) {
-            break :blk builtin.os.version_range.linux.android >= version.major;
+            break :blk builtin.target.os.version_range.linux.android >= version.major;
         } else {
             break :blk false;
         }

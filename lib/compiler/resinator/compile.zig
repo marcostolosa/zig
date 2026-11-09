@@ -153,7 +153,7 @@ pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io
 
         // The only precedence here is llvm-rc which also uses the platform-specific
         // delimiter. There's no precedence set by `rc.exe` since it's Windows-only.
-        const delimiter = switch (builtin.os.tag) {
+        const delimiter = switch (builtin.target.os.tag) {
             .windows => ';',
             else => ':',
         };
@@ -2910,7 +2910,7 @@ fn openSearchPathDir(dir: std.Io.Dir, io: Io, path: []const u8) OpenSearchPathEr
 /// https://github.com/ziglang/zig/issues/15607
 /// is accepted/implemented.
 fn validateSearchPath(path: []const u8) error{BadPathName}!void {
-    switch (builtin.os.tag) {
+    switch (builtin.target.os.tag) {
         .windows => {
             // This will return error.BadPathName on non-Win32 namespaced paths
             // (e.g. the NT \??\ prefix, the device \\.\ prefix, etc).

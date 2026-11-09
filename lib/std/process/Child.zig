@@ -1,7 +1,7 @@
 const Child = @This();
 
 const builtin = @import("builtin");
-const native_os = builtin.os.tag;
+const native_os = builtin.target.os.tag;
 
 const std = @import("../std.zig");
 const Io = std.Io;

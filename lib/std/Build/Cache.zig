@@ -254,7 +254,7 @@ pub const Lock = struct {
     manifest_file: Io.File,
 
     pub fn release(lock: *Lock, io: Io) void {
-        if (builtin.os.tag == .windows) {
+        if (builtin.target.os.tag == .windows) {
             // Windows does not guarantee that locks are immediately unlocked when
             // the file handle is closed. See LockFileEx documentation.
             lock.manifest_file.unlock(io);
@@ -951,7 +951,7 @@ pub const Manifest = struct {
                     // disambiguates by returning EEXIST, indicating original
                     // failure was a race, or ENOENT, indicating deletion of
                     // the directory of our open handle.
-                    if (!builtin.os.tag.isDarwin()) return fail(diag, .{ .manifest_create = error.FileNotFound });
+                    if (!builtin.target.os.tag.isDarwin()) return fail(diag, .{ .manifest_create = error.FileNotFound });
 
                     if (man.cache.manifest_dir.createFile(io, manifest_file_path, .{
                         .read = true,
@@ -2164,7 +2164,7 @@ pub const Manifest = struct {
         const gpa = m.cache.gpa;
 
         if (m.manifest_file) |file| {
-            if (builtin.os.tag == .windows) {
+            if (builtin.target.os.tag == .windows) {
                 // See Lock.release for why this is required on Windows
                 file.unlock(io);
             }

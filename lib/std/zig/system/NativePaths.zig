@@ -130,7 +130,7 @@ pub fn detect(
         return self;
     }
 
-    if (builtin.os.tag == .illumos) {
+    if (builtin.target.os.tag == .illumos) {
         try self.addLibDir("/usr/lib/64");
         try self.addLibDir("/usr/local/lib/64");
         try self.addLibDir("/lib/64");
@@ -141,14 +141,14 @@ pub fn detect(
         return self;
     }
 
-    if (builtin.os.tag == .haiku) {
+    if (builtin.target.os.tag == .haiku) {
         try self.addLibDir("/system/non-packaged/lib");
         try self.addLibDir("/system/develop/lib");
         try self.addLibDir("/system/lib");
         return self;
     }
 
-    if (builtin.os.tag != .windows and builtin.os.tag != .wasi) {
+    if (builtin.target.os.tag != .windows and builtin.target.os.tag != .wasi) {
         const triple = try std.zig.target.linuxTriple(arena, native_target);
 
         const qual = native_target.ptrBitWidth();

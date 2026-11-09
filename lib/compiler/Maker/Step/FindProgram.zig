@@ -87,7 +87,7 @@ fn checkCandidate(
         else => |e| return step.fail(maker, "failed accessing {s}: {t}", .{ full_path, e }),
     }
 
-    if (builtin.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         if (graph.environ_map.get("PATHEXT")) |PATHEXT| {
             var it = std.mem.tokenizeScalar(u8, PATHEXT, Io.Dir.path.delimiter);
             while (it.next()) |ext| {

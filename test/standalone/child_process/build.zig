@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
     const optimize: std.builtin.Optimize = .debug;
     const target = b.graph.host;
 
-    if (builtin.os.tag == .wasi) return;
+    if (builtin.target.os.tag == .wasi) return;
 
     const child = b.addExecutable(.{
         .name = "child",

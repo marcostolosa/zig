@@ -15,7 +15,7 @@ const iovec = posix.iovec;
 const iovec_const = posix.iovec_const;
 
 comptime {
-    assert(builtin.os.tag == .linux);
+    assert(builtin.target.os.tag == .linux);
 }
 
 test "structs/offsets/entries" {

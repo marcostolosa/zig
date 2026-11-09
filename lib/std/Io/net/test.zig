@@ -88,7 +88,7 @@ test "IPv6 address parse failures" {
 }
 
 test "invalid but parseable IPv6 scope ids" {
-    if (builtin.os.tag != .linux and builtin.os.tag != .windows and comptime !builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    if (builtin.target.os.tag != .linux and builtin.target.os.tag != .windows and comptime !builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
 
     const io = testing.io;
 
@@ -264,7 +264,7 @@ test "listen on an in use port" {
 }
 
 test "listen on a unix socket, send bytes, receive bytes" {
-    if (builtin.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         // https://codeberg.org/ziglang/zig/issues/31499
         return error.SkipZigTest;
     }
@@ -315,7 +315,7 @@ test "listen on a unix socket, send bytes, receive bytes" {
 }
 
 test "listen on a unix socket, pass file descriptor" {
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {
+    if (builtin.target.os.tag == .windows or builtin.target.os.tag == .wasi) {
         // Windows and WASI don't have the concept of control/ancillary data.
         return error.SkipZigTest;
     }

@@ -164,7 +164,7 @@ test "strtol" {
     try testStrToLLikeFunction(c.strtol, @ptrCast("0"), 8, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtol, @ptrCast("09"), 0, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtol, @ptrCast("09"), 10, 9, 2, .SUCCESS);
-    if (builtin.os.tag != .windows)
+    if (builtin.target.os.tag != .windows)
         try testStrToLLikeFunction(c.strtol, @ptrCast("0x"), 0, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtol, @ptrCast("1"), 37, 0, null, .INVAL);
     try testStrToLLikeFunction(c.strtol, @ptrCast("1"), 1, 0, null, .INVAL);
@@ -204,7 +204,7 @@ test "strtoll" {
     try testStrToLLikeFunction(c.strtoll, @ptrCast("0"), 8, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtoll, @ptrCast("09"), 0, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtoll, @ptrCast("09"), 10, 9, 2, .SUCCESS);
-    if (builtin.os.tag != .windows)
+    if (builtin.target.os.tag != .windows)
         try testStrToLLikeFunction(c.strtoll, @ptrCast("0x"), 0, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtoll, @ptrCast("1"), 37, 0, null, .INVAL);
     try testStrToLLikeFunction(c.strtoll, @ptrCast("1"), 1, 0, null, .INVAL);
@@ -242,7 +242,7 @@ test "strtoul" {
     try testStrToLLikeFunction(c.strtoul, @ptrCast("0"), 8, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtoul, @ptrCast("09"), 0, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtoul, @ptrCast("09"), 10, 9, 2, .SUCCESS);
-    if (builtin.os.tag != .windows)
+    if (builtin.target.os.tag != .windows)
         try testStrToLLikeFunction(c.strtoul, @ptrCast("0x"), 0, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtoul, @ptrCast("1"), 37, 0, null, .INVAL);
     try testStrToLLikeFunction(c.strtoul, @ptrCast("1"), 1, 0, null, .INVAL);
@@ -280,7 +280,7 @@ test "strtoull" {
     try testStrToLLikeFunction(c.strtoull, @ptrCast("0"), 8, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtoull, @ptrCast("09"), 0, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtoull, @ptrCast("09"), 10, 9, 2, .SUCCESS);
-    if (builtin.os.tag != .windows)
+    if (builtin.target.os.tag != .windows)
         try testStrToLLikeFunction(c.strtoull, @ptrCast("0x"), 0, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtoull, @ptrCast("1"), 37, 0, null, .INVAL);
     try testStrToLLikeFunction(c.strtoull, @ptrCast("1"), 1, 0, null, .INVAL);
@@ -320,7 +320,7 @@ test "strtoimax" {
     try testStrToLLikeFunction(c.strtoimax, @ptrCast("0"), 8, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtoimax, @ptrCast("09"), 0, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtoimax, @ptrCast("09"), 10, 9, 2, .SUCCESS);
-    if (builtin.os.tag != .windows)
+    if (builtin.target.os.tag != .windows)
         try testStrToLLikeFunction(c.strtoimax, @ptrCast("0x"), 0, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtoimax, @ptrCast("1"), 37, 0, null, .INVAL);
     try testStrToLLikeFunction(c.strtoimax, @ptrCast("1"), 1, 0, null, .INVAL);
@@ -358,7 +358,7 @@ test "strtoumax" {
     try testStrToLLikeFunction(c.strtoumax, @ptrCast("0"), 8, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtoumax, @ptrCast("09"), 0, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtoumax, @ptrCast("09"), 10, 9, 2, .SUCCESS);
-    if (builtin.os.tag != .windows)
+    if (builtin.target.os.tag != .windows)
         try testStrToLLikeFunction(c.strtoumax, @ptrCast("0x"), 0, 0, 1, .SUCCESS);
     try testStrToLLikeFunction(c.strtoumax, @ptrCast("1"), 37, 0, null, .INVAL);
     try testStrToLLikeFunction(c.strtoumax, @ptrCast("1"), 1, 0, null, .INVAL);

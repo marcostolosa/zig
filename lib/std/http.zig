@@ -1069,7 +1069,7 @@ test {
     _ = ChunkParser;
     _ = HeadParser;
 
-    if (builtin.os.tag != .wasi) {
+    if (builtin.target.os.tag != .wasi) {
         _ = Client;
         _ = @import("http/test.zig");
     }

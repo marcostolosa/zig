@@ -1,7 +1,7 @@
 const Threaded = @This();
 
 const builtin = @import("builtin");
-const native_os = builtin.os.tag;
+const native_os = builtin.target.os.tag;
 const is_windows = native_os == .windows;
 const is_darwin = native_os.isDarwin();
 const is_debug = builtin.mode == .debug;
@@ -2030,7 +2030,7 @@ const have_fcntl = switch (native_os) {
 };
 const have_fcopyfile = is_darwin;
 const have_fchmodat2 = native_os == .linux and
-    (builtin.os.isAtLeast(.linux, .{ .major = 6, .minor = 6, .patch = 0 }) orelse true) and
+    (builtin.target.os.isAtLeast(.linux, .{ .major = 6, .minor = 6, .patch = 0 }) orelse true) and
     (builtin.target.abi.isAndroid() or !std.c.versionCheck(.{ .major = 2, .minor = 32, .patch = 0 }));
 const have_fchmodat_flags = native_os != .linux or
     (!builtin.target.abi.isAndroid() and std.c.versionCheck(.{ .major = 2, .minor = 32, .patch = 0 }));
@@ -6710,7 +6710,7 @@ pub fn GetFinalPathNameByHandle(
 }
 
 test GetFinalPathNameByHandle {
-    if (builtin.os.tag != .windows)
+    if (builtin.target.os.tag != .windows)
         return;
 
     //any file will do
@@ -6790,7 +6790,7 @@ pub fn QueryObjectName(handle: windows.HANDLE, out_buffer: []u16) QueryObjectNam
 }
 
 test QueryObjectName {
-    if (builtin.os.tag != .windows)
+    if (builtin.target.os.tag != .windows)
         return;
 
     //any file will do; canonicalization works on NTFS junctions and symlinks, hardlinks remain separate paths.
@@ -15300,7 +15300,7 @@ fn copyCanon(canonical_name_buffer: ?*[HostName.max_len]u8, name: []const u8) ?H
 ///
 /// ulock_wait() uses 32-bit micro-second timeouts where 0 = INFINITE or no-timeout
 /// ulock_wait2() uses 64-bit nano-second timeouts (with the same convention)
-const darwin_supports_ulock_wait2 = builtin.os.version_range.semver.min.major >= 11;
+const darwin_supports_ulock_wait2 = builtin.target.os.version_range.semver.min.major >= 11;
 
 fn doNothingSignalHandler(_: posix.SIG) callconv(.c) void {}
 
@@ -19019,7 +19019,7 @@ fn unpark(tids: []const UnparkTid, addr_hint: ?*const anyopaque) void {
         .windows => {
             // TODO: this condition is currently disabled because mingw-w64 does not contain this
             // symbol. Once it's added, enable this check to use the new bulk API where possible.
-            if (false and (builtin.os.version_range.windows.isAtLeast(.win11_dt) orelse false)) {
+            if (false and (builtin.target.os.version_range.windows.isAtLeast(.win11_dt) orelse false)) {
                 _ = windows.ntdll.NtAlertMultipleThreadByThreadId(tids.ptr, @intCast(tids.len), null, null);
             } else {
                 for (tids) |tid| {

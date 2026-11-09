@@ -16,7 +16,7 @@ const NI = std.c.NI;
 const EAI = std.c.EAI;
 
 comptime {
-    assert(builtin.os.tag == .openbsd); // Prevent access of std.c symbols on wrong OS.
+    assert(builtin.target.os.tag == .openbsd); // Prevent access of std.c symbols on wrong OS.
 }
 
 pub extern "c" fn ioctl(fd: fd_t, request: c_ulong, ...) c_int;

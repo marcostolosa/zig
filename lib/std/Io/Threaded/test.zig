@@ -313,7 +313,7 @@ fn testToPrefixedFileOnlyOracle(comptime path: []const u8) !void {
 }
 
 test "toPrefixedFileW" {
-    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag != .windows) return error.SkipZigTest;
 
     // Most test cases come from https://googleprojectzero.blogspot.com/2016/02/the-definitive-guide-on-win32-to-nt.html
     // Note that these tests do not actually touch the filesystem or care about whether or not
@@ -512,7 +512,7 @@ pub extern "ntdll" fn RtlDetermineDosPathNameType_U(
 ) callconv(.winapi) RTL_PATH_TYPE;
 
 test "getWin32PathType vs RtlDetermineDosPathNameType_U" {
-    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    if (builtin.target.os.tag != .windows) return error.SkipZigTest;
 
     var buf: std.ArrayList(u16) = .empty;
     defer buf.deinit(std.testing.allocator);

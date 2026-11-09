@@ -1,6 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std.zig");
-const native_os = builtin.os.tag;
+const native_os = builtin.target.os.tag;
 
 pub const linux = @import("os/linux.zig");
 pub const plan9 = @import("os/plan9.zig");

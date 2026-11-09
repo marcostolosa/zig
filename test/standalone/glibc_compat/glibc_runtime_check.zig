@@ -13,7 +13,7 @@ const c_stdlib = @import("stdlib.h"); // for atexit
 const c_string = @import("string.h"); // for strlcpy
 
 // Version of glibc this test is being built to run against
-const glibc_ver = builtin.os.versionRange().gnuLibCVersion().?;
+const glibc_ver = builtin.target.os.versionRange().gnuLibCVersion().?;
 
 extern "c" fn fstatat(dirfd: i32, path: [*:0]const u8, buf: [*]const u8, flag: u32) c_int;
 extern "c" fn stat(noalias path: [*:0]const u8, noalias buf: [*]const u8) c_int;

@@ -418,7 +418,7 @@ pub fn isNative(self: Query) bool {
 pub fn canDetectLibC(self: Query) bool {
     if (self.isNativeOs() and self.isNativeAbi()) return true;
     if (self.os_tag) |os| {
-        if (builtin.os.tag == .macos and os.isDarwin()) return true;
+        if (builtin.target.os.tag == .macos and os.isDarwin()) return true;
         if (os == .linux) {
             if (self.abi) |abi| if (abi.isAndroid()) return true;
         }
@@ -536,7 +536,7 @@ fn parseOs(result: *Query, diags: *ParseOptions.Diagnostics, text: []const u8) !
         result.os_tag = std.meta.stringToEnum(Target.Os.Tag, os_name) orelse
             return error.UnknownOperatingSystem;
     }
-    const tag = result.os_tag orelse builtin.os.tag;
+    const tag = result.os_tag orelse builtin.target.os.tag;
     diags.os_tag = tag;
 
     const version_text = it.rest();

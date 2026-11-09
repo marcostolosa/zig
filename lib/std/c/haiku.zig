@@ -7,7 +7,7 @@ const dev_t = std.c.dev_t;
 const ino_t = std.c.ino_t;
 
 comptime {
-    assert(builtin.os.tag == .haiku); // Prevent access of std.c symbols on wrong OS.
+    assert(builtin.target.os.tag == .haiku); // Prevent access of std.c symbols on wrong OS.
 }
 
 pub const B_OS_NAME_LENGTH = 32;

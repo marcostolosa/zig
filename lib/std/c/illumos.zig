@@ -16,7 +16,7 @@ const uid_t = std.c.uid_t;
 const IFNAMESIZE = std.c.IFNAMESIZE;
 
 comptime {
-    assert(builtin.os.tag == .illumos); // Prevent access of std.c symbols on wrong OS.
+    assert(builtin.target.os.tag == .illumos); // Prevent access of std.c symbols on wrong OS.
 }
 
 pub extern "c" fn sysconf(sc: c_int) i64;

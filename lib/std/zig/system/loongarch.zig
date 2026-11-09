@@ -78,7 +78,7 @@ pub fn detectNativeCpuAndFeatures(arch: std.Target.Cpu.Arch) ?std.Target.Cpu {
     const cfg2 = cpucfg(2);
     const cfg3 = cpucfg(3);
 
-    if (builtin.os.tag == .linux) {
+    if (builtin.target.os.tag == .linux) {
         const HWCAP = std.os.linux.HWCAP;
         const hwcap_bits: usize = if (builtin.link_libc)
             std.c.getauxval(std.elf.AT.HWCAP)

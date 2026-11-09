@@ -38,7 +38,7 @@ const Generation = u8;
 const Hash = std.hash.Wyhash;
 const Cache = std.Build.Cache;
 
-const Os = switch (builtin.os.tag) {
+const Os = switch (builtin.target.os.tag) {
     .linux => struct {
         const posix = std.posix;
 
@@ -112,7 +112,7 @@ const Os = switch (builtin.os.tag) {
             return .{
                 .dir_table = .empty,
                 .dir_count = 0,
-                .os = switch (builtin.os.tag) {
+                .os = switch (builtin.target.os.tag) {
                     .linux => .{
                         .handle_table = .empty,
                         .poll_fds = .empty,
@@ -490,7 +490,7 @@ const Os = switch (builtin.os.tag) {
             return .{
                 .dir_table = .empty,
                 .dir_count = 0,
-                .os = switch (builtin.os.tag) {
+                .os = switch (builtin.target.os.tag) {
                     .windows => .{
                         .handle_table = .empty,
                         .ready_dirs = .{},

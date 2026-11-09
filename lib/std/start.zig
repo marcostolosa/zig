@@ -2,7 +2,7 @@
 
 const builtin = @import("builtin");
 const native_arch = builtin.target.cpu.arch;
-const native_os = builtin.os.tag;
+const native_os = builtin.target.os.tag;
 const is_wasm = native_arch.isWasm();
 
 const std = @import("std.zig");
@@ -746,7 +746,7 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) cal
     while (c_envp[env_count] != null) : (env_count += 1) {}
     const envp = c_envp[0..env_count :null];
 
-    switch (builtin.os.tag) {
+    switch (builtin.target.os.tag) {
         .linux => {
             const at_phdr = std.c.getauxval(elf.AT.PHDR);
             const at_phnum = std.c.getauxval(elf.AT.PHNUM);
@@ -768,7 +768,7 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) cal
 
 fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
     const argv = @as([*][*:0]u8, @ptrCast(c_argv))[0..@intCast(c_argc)];
-    const environ: [:null]?[*:0]u8 = switch (builtin.os.tag) {
+    const environ: [:null]?[*:0]u8 = switch (builtin.target.os.tag) {
         .emscripten => environ: {
             const c_environ = std.c.environ;
             var env_count: usize = 0;

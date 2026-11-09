@@ -33,7 +33,7 @@ test "large alignment of local constant" {
     if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest; // flaky
     if (builtin.zig_backend == .stage2_c and builtin.target.abi == .msvc) return error.SkipZigTest;
 
-    if (builtin.zig_backend == .stage2_x86_64 and builtin.os.tag == .windows) {
+    if (builtin.zig_backend == .stage2_x86_64 and builtin.target.os.tag == .windows) {
         // https://codeberg.org/ziglang/zig/issues/35537
         return error.SkipZigTest;
     }
@@ -143,7 +143,7 @@ test "alignment and size of structs with 128-bit fields" {
             .u129_align = 8,
             .u129_size = 24,
         },
-        .x86 => switch (builtin.os.tag) {
+        .x86 => switch (builtin.target.os.tag) {
             else => .{
                 .a_align = 4,
                 .a_size = 16,
@@ -545,7 +545,7 @@ test "align(N) on functions" {
         return error.SkipZigTest;
     }
 
-    if (builtin.zig_backend == .stage2_c and builtin.os.tag == .windows) {
+    if (builtin.zig_backend == .stage2_c and builtin.target.os.tag == .windows) {
         // This is not supported on MSVC.
         return error.SkipZigTest;
     }

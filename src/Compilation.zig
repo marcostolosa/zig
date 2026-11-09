@@ -3062,7 +3062,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
             // Work around windows `AccessDenied` if any files within this
             // directory are open by closing and reopening the file handles.
             const need_writable_dance: enum { no, lf_only, lf_and_debug } = w: {
-                if (builtin.os.tag == .windows) {
+                if (builtin.target.os.tag == .windows) {
                     if (comp.bin_file) |lf| {
                         // We cannot just call `makeExecutable` as it makes a false
                         // assumption that we have a file handle open only when linking
@@ -3387,7 +3387,7 @@ fn renameTmpIntoCache(
         ) catch |err| switch (err) {
             // On Windows, rename fails with `AccessDenied` rather than `PathAlreadyExists`.
             // See https://github.com/ziglang/zig/issues/8362
-            error.AccessDenied => switch (builtin.os.tag) {
+            error.AccessDenied => switch (builtin.target.os.tag) {
                 .windows => {
                     if (seen_eaccess) return error.AccessDenied;
                     seen_eaccess = true;
@@ -5981,7 +5981,7 @@ fn updateCObject(
 
 fn updateWin32Resource(comp: *Compilation, win32_resource: *Win32Resource, win32_resource_prog_node: std.Progress.Node) !void {
     if (!std.process.can_spawn) {
-        return comp.failWin32Resource(win32_resource, "{s} does not support spawning a child process", .{@tagName(builtin.os.tag)});
+        return comp.failWin32Resource(win32_resource, "{s} does not support spawning a child process", .{@tagName(builtin.target.os.tag)});
     }
 
     const self_exe_path = comp.self_exe_path orelse

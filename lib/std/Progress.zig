@@ -3,7 +3,7 @@ const Progress = @This();
 
 const builtin = @import("builtin");
 const is_big_endian = builtin.target.cpu.arch.endian() == .big;
-const is_windows = builtin.os.tag == .windows;
+const is_windows = builtin.target.os.tag == .windows;
 
 const std = @import("std");
 const Io = std.Io;
@@ -545,12 +545,12 @@ var default_draw_buffer: [4096]u8 = undefined;
 
 var debug_start_trace = std.debug.Trace.init;
 
-pub const have_ipc = switch (builtin.os.tag) {
+pub const have_ipc = switch (builtin.target.os.tag) {
     .wasi, .freestanding => false,
     else => true,
 };
 
-const noop_impl = builtin.single_threaded or switch (builtin.os.tag) {
+const noop_impl = builtin.single_threaded or switch (builtin.target.os.tag) {
     .wasi, .freestanding => true,
     else => false,
 } or switch (builtin.zig_backend) {
@@ -1588,7 +1588,7 @@ fn handleSigWinch(sig: posix.SIG, info: *const posix.siginfo_t, ctx_ptr: ?*anyop
     global_progress.redraw_event.set(global_progress.io);
 }
 
-const have_sigwinch = switch (builtin.os.tag) {
+const have_sigwinch = switch (builtin.target.os.tag) {
     .linux,
     .plan9,
     .illumos,

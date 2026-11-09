@@ -1408,7 +1408,7 @@ fn updateNavCode(
     self.navs.getPtr(nav_index).?.allocated = true;
 
     if (elf_file.base.child_pid) |pid| {
-        switch (builtin.os.tag) {
+        switch (builtin.target.os.tag) {
             .linux => {
                 var code_vec: [1]std.posix.iovec_const = .{.{
                     .base = code.ptr,
@@ -1424,7 +1424,7 @@ fn updateNavCode(
                     else => |errno| log.warn("process_vm_writev failure: {s}", .{@tagName(errno)}),
                 }
             },
-            else => return elf_file.base.cgFail(nav_index, "ELF hot swap unavailable on host operating system '{s}'", .{@tagName(builtin.os.tag)}),
+            else => return elf_file.base.cgFail(nav_index, "ELF hot swap unavailable on host operating system '{s}'", .{@tagName(builtin.target.os.tag)}),
         }
     }
 
@@ -1978,7 +1978,7 @@ fn writeTrampoline(tr_sym: Symbol, target: Symbol, elf_file: *Elf) !void {
     try elf_file.base.file.?.writePositionalAll(io, out, fileoff);
 
     if (elf_file.base.child_pid) |pid| {
-        switch (builtin.os.tag) {
+        switch (builtin.target.os.tag) {
             .linux => {
                 var local_vec: [1]std.posix.iovec_const = .{.{
                     .base = out.ptr,

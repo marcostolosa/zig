@@ -452,7 +452,7 @@ fn openBrowserTab(io: Io, url: []const u8) !void {
 }
 
 fn openBrowserTabTask(io: Io, url: []const u8) !void {
-    const main_exe = switch (builtin.os.tag) {
+    const main_exe = switch (builtin.target.os.tag) {
         .windows => "explorer",
         .macos => "open",
         else => "xdg-open",

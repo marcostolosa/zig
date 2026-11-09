@@ -4,8 +4,8 @@ const builtin = @import("builtin");
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = compiler_rt.symbol;
 
-const have_availability_version_check = builtin.os.tag.isDarwin() and
-    builtin.os.version_range.semver.min.order(.{ .major = 10, .minor = 15, .patch = 0 }).compare(.gte);
+const have_availability_version_check = builtin.target.os.tag.isDarwin() and
+    builtin.target.os.version_range.semver.min.order(.{ .major = 10, .minor = 15, .patch = 0 }).compare(.gte);
 
 comptime {
     if (have_availability_version_check) {

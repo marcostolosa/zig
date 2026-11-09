@@ -111,7 +111,7 @@ pub fn appendAroArgs(arena: Allocator, argv: *std.ArrayList([]const u8), options
 
         // The only precedence here is llvm-rc which also uses the platform-specific
         // delimiter. There's no precedence set by `rc.exe` since it's Windows-only.
-        const delimiter = switch (builtin.os.tag) {
+        const delimiter = switch (builtin.target.os.tag) {
             .windows => ';',
             else => ':',
         };

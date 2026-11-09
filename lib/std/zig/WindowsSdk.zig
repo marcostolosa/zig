@@ -32,7 +32,7 @@ pub fn find(
     arch: std.Target.Cpu.Arch,
     environ_map: *const Environ.Map,
 ) error{ OutOfMemory, NotFound, PathTooLong }!WindowsSdk {
-    if (builtin.os.tag != .windows) return error.NotFound;
+    if (builtin.target.os.tag != .windows) return error.NotFound;
 
     var registry: Registry = .{};
     defer registry.deinit();

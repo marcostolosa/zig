@@ -1155,7 +1155,7 @@ pub const VaList = switch (builtin.target.cpu.arch) {
     .wasm64,
     .xcore,
     => *anyopaque,
-    .aarch64, .aarch64_be => switch (builtin.os.tag) {
+    .aarch64, .aarch64_be => switch (builtin.target.os.tag) {
         .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos, .windows => *u8,
         else => switch (builtin.zig_backend) {
             else => VaListAarch64,
@@ -1168,7 +1168,7 @@ pub const VaList = switch (builtin.target.cpu.arch) {
     .powerpc, .powerpcle => VaListPowerPc,
     .s390x => VaListS390x,
     .sh, .sheb => VaListSh, // This is wrong for `sh_renesas`: https://github.com/ziglang/zig/issues/24692#issuecomment-3150779829
-    .x86_64 => switch (builtin.os.tag) {
+    .x86_64 => switch (builtin.target.os.tag) {
         .uefi, .windows => switch (builtin.zig_backend) {
             else => *u8,
             .stage2_llvm => @compileError("disabled due to miscompilations"),

@@ -25,7 +25,7 @@ const winsize = std.posix.winsize;
 const ACCMODE = std.posix.ACCMODE;
 
 test {
-    if (builtin.os.tag == .linux) {
+    if (builtin.target.os.tag == .linux) {
         _ = @import("linux/test.zig");
     }
 }

@@ -6770,7 +6770,7 @@ comptime {
 
     // We could also have a file which contains declarations we only want to export depending on a comptime
     // condition. In that case, we can use an `if` statement here:
-    if (builtin.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         _ = @import("windows_api.zig");
     }
 }
@@ -6782,7 +6782,7 @@ test {
 
     // We could also have a file which contains tests we only want to run depending on a comptime condition.
     // In that case, we can use an `if` statement here:
-    if (builtin.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         _ = @import("windows_tests.zig");
     }
 }

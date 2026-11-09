@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
     const enable_ios_sdk = b.option(bool, "enable_ios_sdk", "Run tests requiring presence of iOS SDK and frameworks") orelse false;
     const enable_macos_sdk = b.option(bool, "enable_macos_sdk", "Run tests requiring presence of macOS SDK and frameworks") orelse enable_ios_sdk;
     const enable_symlinks_windows = b.option(bool, "enable_symlinks_windows", "Run tests requiring presence of symlinks on Windows") orelse false;
-    const omit_symlinks = builtin.os.tag == .windows and !enable_symlinks_windows;
+    const omit_symlinks = builtin.target.os.tag == .windows and !enable_symlinks_windows;
 
     const simple_skip_debug = b.option(bool, "simple_skip_debug", "Simple tests skip debug builds") orelse false;
     const simple_skip_release_safe = b.option(bool, "simple_skip_release_safe", "Simple tests skip release-safe builds") orelse false;

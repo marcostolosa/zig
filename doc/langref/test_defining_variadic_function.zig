@@ -14,11 +14,11 @@ fn add(count: c_int, ...) callconv(.c) c_int {
 }
 
 test "defining a variadic function" {
-    if (builtin.target.cpu.arch == .aarch64 and builtin.os.tag != .macos) {
+    if (builtin.target.cpu.arch == .aarch64 and builtin.target.os.tag != .macos) {
         // https://github.com/ziglang/zig/issues/14096
         return error.SkipZigTest;
     }
-    if (builtin.target.cpu.arch == .x86_64 and builtin.os.tag == .windows) {
+    if (builtin.target.cpu.arch == .x86_64 and builtin.target.os.tag == .windows) {
         // https://github.com/ziglang/zig/issues/16961
         return error.SkipZigTest;
     }

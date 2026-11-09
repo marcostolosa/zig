@@ -1,7 +1,7 @@
 const File = @This();
 
 const builtin = @import("builtin");
-const native_os = builtin.os.tag;
+const native_os = builtin.target.os.tag;
 const is_windows = native_os == .windows;
 
 const std = @import("../std.zig");

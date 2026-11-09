@@ -41,7 +41,7 @@ comptime {
             symbol(&__aeabi_memclr4, "__aeabi_memclr4");
             symbol(&__aeabi_memclr8, "__aeabi_memclr8");
 
-            if (builtin.os.tag == .linux or builtin.os.tag == .freebsd) {
+            if (builtin.target.os.tag == .linux or builtin.target.os.tag == .freebsd) {
                 symbol(&__aeabi_read_tp, "__aeabi_read_tp");
             }
 

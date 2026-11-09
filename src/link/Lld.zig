@@ -366,7 +366,7 @@ fn linkAsArchive(lld: *Lld, arena: Allocator) link.Error!void {
 }
 
 fn addCommonArgs(gpa: Allocator, argv: *std.ArrayList([]const u8), coff: bool) !void {
-    if (builtin.os.tag == .netbsd) {
+    if (builtin.target.os.tag == .netbsd) {
         // NetBSD 10.1's `malloc` appears to have some nasty bugs that occur
         // when doing parallel linking in LLD, manifesting as input and/or
         // output section memory randomly being unmapped. So just don't do
@@ -1151,7 +1151,7 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
             // object, we pass it on the CLI as "-l:/absolute/path/to/libfoo.so". This will treat
             // the given path not actually as an absolute path, but as relative to the library
             // search path, so the root directory must therefore be the only library search path.
-            switch (builtin.os.tag) {
+            switch (builtin.target.os.tag) {
                 .windows => try argv.appendSlice(gpa, &.{ "-L", "" }),
                 else => try argv.append(gpa, "-L/"),
             }

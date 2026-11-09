@@ -3745,14 +3745,14 @@ pub fn toSysTime(ns: Io.Timestamp) i64 {
 /// Use RtlUpcaseUnicodeChar on Windows when not in comptime to avoid including a
 /// redundant copy of the uppercase data.
 pub inline fn toUpperWtf16(c: u16) u16 {
-    return (if (builtin.os.tag != .windows or @inComptime()) nls.upcaseW else ntdll.RtlUpcaseUnicodeChar)(c);
+    return (if (builtin.target.os.tag != .windows or @inComptime()) nls.upcaseW else ntdll.RtlUpcaseUnicodeChar)(c);
 }
 
 /// Compares two WTF16 strings using the equivalent functionality of
 /// `RtlEqualUnicodeString` (with case insensitive comparison enabled).
 /// This function can be called on any target.
 pub fn eqlIgnoreCaseWtf16(a: []const u16, b: []const u16) bool {
-    if (@inComptime() or builtin.os.tag != .windows) {
+    if (@inComptime() or builtin.target.os.tag != .windows) {
         // This function compares the strings code unit by code unit (aka u16-to-u16),
         // so any length difference implies inequality. In other words, there's no possible
         // conversion that changes the number of WTF-16 code units needed for the uppercase/lowercase
@@ -5055,7 +5055,7 @@ pub const TEB = extern struct {
 
 comptime {
     // XXX: Without this check we cannot use `std.Io.Writer` on 16-bit platforms. `std.mem.print` will hit the unreachable in `PEB.GdiHandleBuffer` without this guard.
-    if (builtin.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         // Offsets taken from WinDbg info and Geoff Chappell[1] (RIP)
         // [1]: https://www.geoffchappell.com/studies/windows/km/ntoskrnl/inc/api/pebteb/teb/index.htm
         assert(@offsetOf(TEB, "NtTib") == 0x00);

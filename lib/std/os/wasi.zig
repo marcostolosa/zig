@@ -7,7 +7,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 comptime {
-    if (builtin.os.tag == .wasi) {
+    if (builtin.target.os.tag == .wasi) {
         assert(@alignOf(i8) == 1);
         assert(@alignOf(u8) == 1);
         assert(@alignOf(i16) == 2);

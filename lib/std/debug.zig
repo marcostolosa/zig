@@ -12,7 +12,7 @@ const windows = std.os.windows;
 
 const builtin = @import("builtin");
 const native_arch = builtin.target.cpu.arch;
-const native_os = builtin.os.tag;
+const native_os = builtin.target.os.tag;
 
 const root = @import("root");
 
@@ -510,7 +510,7 @@ pub fn defaultPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
 
     if (use_trap_panic) @trap();
 
-    switch (builtin.os.tag) {
+    switch (builtin.target.os.tag) {
         .freestanding,
         .other,
 

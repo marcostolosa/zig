@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) !void {
     const optimize: std.builtin.Optimize = .debug;
     const target = b.graph.host;
 
-    if (builtin.os.tag != .windows) return;
+    if (builtin.target.os.tag != .windows) return;
 
     const echo_args = b.addExecutable(.{
         .name = "echo-args",

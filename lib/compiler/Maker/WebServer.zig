@@ -269,12 +269,12 @@ pub fn finishBuild(ws: *WebServer, opts: struct {
     const all_steps = maker.step_stack.keys();
 
     if (opts.fuzz) {
-        switch (builtin.os.tag) {
+        switch (builtin.target.os.tag) {
             // Current implementation depends on two things that need to be ported to Windows:
             // * Memory-mapping to share data between the fuzzer and build runner.
             // * COFF/PE support added to `std.debug.Info` (it needs a batching API for resolving
             //   many addresses to source locations).
-            .windows => std.process.fatal("--fuzz not yet implemented for {t}", .{builtin.os.tag}),
+            .windows => std.process.fatal("--fuzz not yet implemented for {t}", .{builtin.target.os.tag}),
             else => {},
         }
         if (@bitSizeOf(usize) != 64) {

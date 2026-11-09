@@ -17,7 +17,7 @@ const expect = std.testing.expect;
 const gcc_word = usize;
 
 comptime {
-    if (builtin.link_libc and (builtin.target.abi.isAndroid() or builtin.target.abi.isOpenHarmony() or builtin.os.tag == .openbsd)) {
+    if (builtin.link_libc and (builtin.target.abi.isAndroid() or builtin.target.abi.isOpenHarmony() or builtin.target.os.tag == .openbsd)) {
         symbol(&__emutls_get_address, "__emutls_get_address");
     }
 }
@@ -306,7 +306,7 @@ const emutls_control = extern struct {
 };
 
 test "simple_allocator" {
-    if (!builtin.link_libc or builtin.os.tag != .openbsd) return error.SkipZigTest;
+    if (!builtin.link_libc or builtin.target.os.tag != .openbsd) return error.SkipZigTest;
 
     const data1: *[64]u8 = simple_allocator.alloc([64]u8);
     defer simple_allocator.free(data1);
@@ -322,7 +322,7 @@ test "simple_allocator" {
 }
 
 test "__emutls_get_address zeroed" {
-    if (!builtin.link_libc or builtin.os.tag != .openbsd) return error.SkipZigTest;
+    if (!builtin.link_libc or builtin.target.os.tag != .openbsd) return error.SkipZigTest;
 
     var ctl = emutls_control.init(usize, null);
     try expect(ctl.object.index == 0);
@@ -343,7 +343,7 @@ test "__emutls_get_address zeroed" {
 }
 
 test "__emutls_get_address with default_value" {
-    if (!builtin.link_libc or builtin.os.tag != .openbsd) return error.SkipZigTest;
+    if (!builtin.link_libc or builtin.target.os.tag != .openbsd) return error.SkipZigTest;
 
     const value: usize = 5678; // default value
     var ctl = emutls_control.init(usize, &value);
@@ -363,7 +363,7 @@ test "__emutls_get_address with default_value" {
 }
 
 test "test default_value with different sizes" {
-    if (!builtin.link_libc or builtin.os.tag != .openbsd) return error.SkipZigTest;
+    if (!builtin.link_libc or builtin.target.os.tag != .openbsd) return error.SkipZigTest;
 
     const testType = struct {
         fn _testType(comptime T: type, value: T) !void {

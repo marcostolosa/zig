@@ -45,7 +45,7 @@ pub inline fn symbol(comptime func: *const anyopaque, comptime name: []const u8)
 /// Given a low-level syscall return value, sets errno and returns `-1`, or on
 /// success returns the result.
 pub fn errno(syscall_return_value: usize) c_int {
-    return switch (builtin.os.tag) {
+    return switch (builtin.target.os.tag) {
         .linux => {
             const signed: isize = @bitCast(syscall_return_value);
             const casted: c_int = @intCast(signed);

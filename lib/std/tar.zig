@@ -932,7 +932,7 @@ test "create file and symlink" {
 
     createDirAndSymlink(io, root.dir, "a/b/c/file2", "symlink1") catch |err| switch (err) {
         // On Windows, symlinks require developer mode/admin privileges and the underlying filesystem must support symlinks
-        error.AccessDenied, error.PermissionDenied, error.FileSystem => if (builtin.os.tag == .windows) return error.SkipZigTest else return err,
+        error.AccessDenied, error.PermissionDenied, error.FileSystem => if (builtin.target.os.tag == .windows) return error.SkipZigTest else return err,
         else => return err,
     };
     try createDirAndSymlink(io, root.dir, "../../../file1", "d/e/f/symlink2");

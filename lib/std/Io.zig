@@ -28,7 +28,7 @@ vtable: *const VTable,
 pub const Threaded = @import("Io/Threaded.zig");
 
 pub const fiber = @import("Io/fiber.zig");
-pub const Evented = if (fiber.supported) switch (builtin.os.tag) {
+pub const Evented = if (fiber.supported) switch (builtin.target.os.tag) {
     .linux => Uring,
     .dragonfly, .freebsd, .netbsd, .openbsd => Kqueue,
     .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => Dispatch,
@@ -320,7 +320,7 @@ pub const Operation = union(enum) {
         pub const Result = Error!usize;
     };
 
-    pub const DeviceIoControl = switch (builtin.os.tag) {
+    pub const DeviceIoControl = switch (builtin.target.os.tag) {
         .wasi => noreturn,
         .windows => struct {
             file: File,

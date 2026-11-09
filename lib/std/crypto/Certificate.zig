@@ -2,7 +2,7 @@ buffer: []const u8,
 index: u32,
 
 pub const Bundle = @import("Certificate/Bundle.zig");
-pub const Chain = switch (builtin.os.tag) {
+pub const Chain = switch (builtin.target.os.tag) {
     else => void, // not a shim to also avoid expensive caller logic
     .windows => @import("Certificate/Chain.zig"),
 };

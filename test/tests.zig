@@ -2309,7 +2309,7 @@ pub fn addCliTests(b: *std.Build) *Step {
         // Test missing output path.
         const bad_out_arg = "-femit-bin=does" ++ s ++ "not" ++ s ++ "exist" ++ s ++ "foo.exe";
         const ok_src_arg = "src" ++ s ++ "main.zig";
-        const es = if (builtin.os.tag == .windows) "\\\\" else "/";
+        const es = if (builtin.target.os.tag == .windows) "\\\\" else "/";
         const expected = "error: unable to open output directory \"does" ++ es ++ "not" ++ es ++ "exist\": FileNotFound\n";
         const run_bad = b.addSystemCommand(&.{ b.graph.zig_exe, "build-exe", ok_src_arg, bad_out_arg });
         run_bad.setName("zig build-exe error message for bad -femit-bin arg");
@@ -2347,7 +2347,7 @@ pub fn addCliTests(b: *std.Build) *Step {
     }
 
     // Test Godbolt API
-    if (builtin.os.tag == .linux and builtin.target.cpu.arch == .x86_64) {
+    if (builtin.target.os.tag == .linux and builtin.target.cpu.arch == .x86_64) {
         const tmp_path = b.tmpPath();
 
         const example_zig = b.addWriteFiles().add("example.zig",
@@ -2640,7 +2640,7 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
             continue;
 
         // We can't provide MSVC libc when cross-compiling.
-        if (target.abi == .msvc and test_target.link_libc == true and builtin.os.tag != .windows)
+        if (target.abi == .msvc and test_target.link_libc == true and builtin.target.os.tag != .windows)
             continue;
 
         if (options.skip_single_threaded and test_target.single_threaded == true)
@@ -2876,7 +2876,7 @@ pub fn wouldUseLlvm(use_llvm: ?bool, query: std.Target.Query, optimize_mode: Opt
         else => return true,
     }
     const cpu_arch = query.cpu_arch orelse builtin.target.cpu.arch;
-    const os_tag = query.os_tag orelse builtin.os.tag;
+    const os_tag = query.os_tag orelse builtin.target.os.tag;
     const ofmt: std.Target.ObjectFormat = query.ofmt orelse .default(os_tag, cpu_arch);
     switch (cpu_arch) {
         .x86_64 => {
@@ -3052,7 +3052,7 @@ pub fn addLinkTests(b: *std.Build, options: LinkTestOptions) *Step {
             continue;
 
         // We can't provide MSVC libc when cross-compiling.
-        if (target.abi == .msvc and link_target.link_libc == true and builtin.os.tag != .windows)
+        if (target.abi == .msvc and link_target.link_libc == true and builtin.target.os.tag != .windows)
             continue;
 
         for (options.optimize_modes) |optimize_mode| {
@@ -3204,7 +3204,7 @@ pub fn addRunnerTests(
                 }
 
                 // We can't provide MSVC libc when cross-compiling.
-                if (target.abi == .msvc and test_target.link_libc == .lc and builtin.os.tag != .windows)
+                if (target.abi == .msvc and test_target.link_libc == .lc and builtin.target.os.tag != .windows)
                     break :skip true;
 
                 for (options.test_target_filters) |filter| {

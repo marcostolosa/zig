@@ -43,7 +43,7 @@ pub const memory_pool = @import("heap/memory_pool.zig");
 ///
 /// On many systems, the actual page size can only be determined at runtime
 /// with `pageSize`.
-pub const page_size_min: usize = std.options.page_size_min orelse (page_size_min_default orelse @compileError(@tagName(builtin.target.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ " has unknown page_size_min; populate std.options.page_size_min"));
+pub const page_size_min: usize = std.options.page_size_min orelse (page_size_min_default orelse @compileError(@tagName(builtin.target.cpu.arch) ++ "-" ++ @tagName(builtin.target.os.tag) ++ " has unknown page_size_min; populate std.options.page_size_min"));
 /// comptime-known maximum page size of the target.
 ///
 /// Targeting a system with a larger page size may require overriding
@@ -51,10 +51,10 @@ pub const page_size_min: usize = std.options.page_size_min orelse (page_size_min
 /// option.
 ///
 /// The actual page size can only be determined at runtime with `pageSize`.
-pub const page_size_max: usize = std.options.page_size_max orelse (page_size_max_default orelse if (builtin.os.tag == .freestanding or builtin.os.tag == .other)
+pub const page_size_max: usize = std.options.page_size_max orelse (page_size_max_default orelse if (builtin.target.os.tag == .freestanding or builtin.target.os.tag == .other)
     @compileError("freestanding/other page_size_max must provided with std.options.page_size_max")
 else
-    @compileError(@tagName(builtin.target.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ " has unknown page_size_max; populate std.options.page_size_max"));
+    @compileError(@tagName(builtin.target.cpu.arch) ++ "-" ++ @tagName(builtin.target.os.tag) ++ " has unknown page_size_max; populate std.options.page_size_max"));
 
 /// If the page size is comptime-known, return value is comptime.
 /// Otherwise, calls `std.options.queryPageSize` which by default queries the
@@ -76,7 +76,7 @@ pub fn defaultQueryPageSize() usize {
     };
     var size = global.cached_result.load(.unordered);
     if (size > 0) return size;
-    size = size: switch (builtin.os.tag) {
+    size = size: switch (builtin.target.os.tag) {
         .linux => if (builtin.link_libc)
             @max(std.c.sysconf(@backingInt(std.c._SC.PAGESIZE)), 0)
         else
@@ -110,10 +110,10 @@ pub fn defaultQueryPageSize() usize {
         },
         else => if (builtin.link_libc)
             @max(std.c.sysconf(@backingInt(std.c._SC.PAGESIZE)), 0)
-        else if (builtin.os.tag == .freestanding or builtin.os.tag == .other)
+        else if (builtin.target.os.tag == .freestanding or builtin.target.os.tag == .other)
             @compileError("unsupported target: freestanding/other")
         else
-            @compileError("pageSize on " ++ @tagName(builtin.target.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ " is not supported without linking libc, using the default implementation"),
+            @compileError("pageSize on " ++ @tagName(builtin.target.cpu.arch) ++ "-" ++ @tagName(builtin.target.os.tag) ++ " is not supported without linking libc, using the default implementation"),
     };
     if (size == 0) size = page_size_max;
 
@@ -152,7 +152,7 @@ const c_allocator_impl = struct {
         .free = free,
     };
 
-    const have_posix_memalign = switch (builtin.os.tag) {
+    const have_posix_memalign = switch (builtin.target.os.tag) {
         .dragonfly,
         .netbsd,
         .freebsd,
@@ -402,7 +402,7 @@ test PageAllocator {
         try testAllocatorAlignedShrink(allocator);
     }
 
-    if (builtin.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         const slice = try allocator.alignedAlloc(u8, .fromByteUnits(page_size_min), 128);
         slice[0] = 0x12;
         slice[127] = 0x34;
@@ -564,7 +564,7 @@ pub fn testAllocatorAlignedShrink(base_allocator: mem.Allocator) !void {
     try testing.expect(slice[60] == 0x34);
 }
 
-const page_size_min_default: ?usize = switch (builtin.os.tag) {
+const page_size_min_default: ?usize = switch (builtin.target.os.tag) {
     .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => switch (builtin.target.cpu.arch) {
         .x86_64 => 4 << 10,
         .aarch64 => 16 << 10,
@@ -728,7 +728,7 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
     else => null,
 };
 
-const page_size_max_default: ?usize = switch (builtin.os.tag) {
+const page_size_max_default: ?usize = switch (builtin.target.os.tag) {
     .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => switch (builtin.target.cpu.arch) {
         .x86_64 => 4 << 10,
         .aarch64 => 16 << 10,
@@ -897,7 +897,7 @@ test {
     _ = FixedBufferAllocator;
     _ = BufferFirstAllocator;
     if (builtin.single_threaded) {
-        if (builtin.target.cpu.arch.isWasm() or (builtin.os.tag == .linux and !builtin.link_libc)) {
+        if (builtin.target.cpu.arch.isWasm() or (builtin.target.os.tag == .linux and !builtin.link_libc)) {
             _ = brk_allocator;
         }
     } else {

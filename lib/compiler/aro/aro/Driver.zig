@@ -1202,7 +1202,7 @@ pub fn detectMode(d: *Driver, file: std.Io.File) std.Io.Cancelable!std.Io.Termin
 
     const io = d.comp.io;
     if (try file.supportsAnsiEscapeCodes(io)) return .escape_codes;
-    if (@import("builtin").os.tag == .windows and try file.isTty(io)) {
+    if (@import("builtin").target.os.tag == .windows and try file.isTty(io)) {
         var get_console_info = std.os.windows.CONSOLE.USER_IO.GET_SCREEN_BUFFER_INFO;
         switch (try get_console_info.operate(io, file)) {
             .SUCCESS => return .{ .windows_api = .{

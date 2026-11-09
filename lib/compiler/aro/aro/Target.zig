@@ -237,7 +237,7 @@ dynamic_linker: std.Target.DynamicLinker = .none,
 pub const default: Target = .{
     .cpu = builtin.target.cpu,
     .vendor = .unknown,
-    .os = builtin.os,
+    .os = builtin.target.os,
     .abi = builtin.target.abi,
     .ofmt = builtin.target.ofmt,
 };
@@ -1771,7 +1771,7 @@ pub fn parseVersion(ver: []const u8) error{ InvalidVersion, Overflow }!std.Seman
 
 /// Parse OS string with common aliases in `<os>(.?<version>(...<version>))?` format.
 ///
-/// `native` <os> results in `builtin.os.tag`.
+/// `native` <os> results in `builtin.target.os.tag`.
 ///
 /// Poplates `os_tag`, `os_version_min` and `os_version_max` fields of `result`.
 ///
@@ -1780,7 +1780,7 @@ pub fn parseOs(result: *std.Target.Query, text: []const u8, version_string: ?*[]
     const checkOs = struct {
         fn checkOs(os_text: []const u8) ?Os.Tag {
             const os_is_native = mem.eql(u8, os_text, "native");
-            if (os_is_native) return @import("builtin").os.tag;
+            if (os_is_native) return @import("builtin").target.os.tag;
             return parseOsName(os_text);
         }
     }.checkOs;
@@ -1995,7 +1995,7 @@ pub fn cpuModelForTargetQuadruple(
     vendor: Vendor,
     sub_arch: ?SubArch,
 ) ?*const Cpu.Model {
-    const os_tag = opt_os_tag orelse builtin.os.tag;
+    const os_tag = opt_os_tag orelse builtin.target.os.tag;
     const abi = opt_abi orelse builtin.target.abi;
 
     switch (arch) {

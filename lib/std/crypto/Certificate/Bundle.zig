@@ -73,7 +73,7 @@ pub const RescanError = RescanLinuxError || RescanMacError || RescanWithPathErro
 /// For operating systems that do not have standard CA installations to be
 /// found, this function clears the set of certificates.
 pub fn rescan(cb: *Bundle, gpa: Allocator, io: Io, now: Io.Timestamp) RescanError!void {
-    switch (builtin.os.tag) {
+    switch (builtin.target.os.tag) {
         .linux => return rescanLinux(cb, gpa, io, now),
         .maccatalyst, .macos => return rescanMac(cb, gpa, io, now),
         .freebsd, .openbsd => return rescanWithPath(cb, gpa, io, now, "/etc/ssl/cert.pem"),
@@ -346,7 +346,7 @@ test "addCertsFromDirPath compiles and accepts an empty directory" {
 }
 
 test "scan for OS-provided certificates" {
-    if (builtin.os.tag == .wasi) return error.SkipZigTest;
+    if (builtin.target.os.tag == .wasi) return error.SkipZigTest;
 
     const io = std.testing.io;
     const gpa = std.testing.allocator;

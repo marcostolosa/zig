@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const w = std.os.windows;
 
 pub fn main() !void {
-    if (builtin.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         const name = std.unicode.wtf8ToWtf16LeStringLiteral("FOO");
         const RT_RCDATA = MAKEINTRESOURCEW(10);
         const handle = FindResourceW(null, name, RT_RCDATA) orelse {

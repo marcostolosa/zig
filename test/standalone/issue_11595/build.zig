@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
     const optimize: std.builtin.Optimize = .debug;
     const target = b.graph.host;
 
-    if (builtin.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         // https://github.com/ziglang/zig/issues/12419
         return;
     }

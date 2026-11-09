@@ -352,7 +352,7 @@ pub fn updateFileOnDisk(file: *File, comp: *Compilation) !void {
     defer af.deinit(io);
     try af.file.writeStreamingAll(io, file.source.?);
     af.replace(io) catch |err| switch (err) {
-        error.AccessDenied => switch (builtin.os.tag) {
+        error.AccessDenied => switch (builtin.target.os.tag) {
             .windows => {
                 // Very likely happened due to another process or thread
                 // simultaneously creating the same, correct builtin.zig file.

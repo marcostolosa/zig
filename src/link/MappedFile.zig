@@ -1,8 +1,8 @@
 const MappedFile = @This();
 
 const builtin = @import("builtin");
-const is_linux = builtin.os.tag == .linux;
-const is_windows = builtin.os.tag == .windows;
+const is_linux = builtin.target.os.tag == .linux;
+const is_windows = builtin.target.os.tag == .windows;
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

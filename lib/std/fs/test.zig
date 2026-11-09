@@ -1,5 +1,5 @@
 const builtin = @import("builtin");
-const native_os = builtin.os.tag;
+const native_os = builtin.target.os.tag;
 
 const std = @import("../std.zig");
 const Io = std.Io;
@@ -36,7 +36,7 @@ pub inline fn isRealPathSupported() bool {
         .illumos,
         .freebsd,
         => true,
-        .dragonfly => builtin.os.version_range.semver.min.order(.{ .major = 6, .minor = 0, .patch = 0 }) != .lt,
+        .dragonfly => builtin.target.os.version_range.semver.min.order(.{ .major = 6, .minor = 0, .patch = 0 }) != .lt,
         else => false,
     };
 }
@@ -175,7 +175,7 @@ fn testWithAllSupportedPathTypes(test_func: anytype) !void {
 }
 
 fn testWithPathTypeIfSupported(comptime path_type: PathType, comptime path_sep: u8, test_func: anytype) !void {
-    if (!(comptime path_type.isSupported(builtin.os))) return;
+    if (!(comptime path_type.isSupported(builtin.target.os))) return;
     if (!(comptime Dir.path.isSep(path_sep))) return;
 
     var ctx = TestContext.init(path_type, path_sep, testing.allocator, path_type.getTransformFn());
@@ -887,7 +887,7 @@ test "directory operations on files" {
             try expectError(error.NotDir, ctx.dir.openDir(io, test_file_name, .{}));
             try expectError(error.NotDir, ctx.dir.deleteDir(io, test_file_name));
 
-            if (ctx.path_type == .absolute and comptime PathType.absolute.isSupported(builtin.os)) {
+            if (ctx.path_type == .absolute and comptime PathType.absolute.isSupported(builtin.target.os)) {
                 try expectError(error.PathAlreadyExists, Dir.createDirAbsolute(io, test_file_name, .default_dir));
                 try expectError(error.NotDir, Dir.deleteDirAbsolute(io, test_file_name));
             }
@@ -942,7 +942,7 @@ test "file operations on directories" {
             }
             try expectError(error.IsDir, ctx.dir.openFile(io, test_dir_name, .{ .allow_directory = false, .mode = .read_only }));
 
-            if (ctx.path_type == .absolute and comptime PathType.absolute.isSupported(builtin.os)) {
+            if (ctx.path_type == .absolute and comptime PathType.absolute.isSupported(builtin.target.os)) {
                 try expectError(error.IsDir, Dir.createFileAbsolute(io, test_dir_name, .{}));
                 try expectError(error.IsDir, Dir.deleteFileAbsolute(io, test_dir_name));
             }
@@ -1975,7 +1975,7 @@ test "read from locked file" {
                 // On POSIX locks may be ignored, however on Windows they cause
                 // LockViolation.
                 var buffer: [1]u8 = undefined;
-                if (builtin.os.tag == .windows) {
+                if (builtin.target.os.tag == .windows) {
                     try expectError(error.LockViolation, f2.readPositional(io, &.{&buffer}, 0));
                 } else {
                     try expectEqual(0, f2.readPositional(io, &.{&buffer}, 0));
@@ -2565,7 +2565,7 @@ test "fchmodat smoke test" {
     file.close(io);
 
     if ((builtin.target.cpu.arch == .riscv32 or builtin.target.cpu.arch.isLoongarch()) and
-        builtin.os.tag == .linux and !builtin.link_libc)
+        builtin.target.os.tag == .linux and !builtin.link_libc)
     {
         return error.SkipZigTest; // No `fstatat()`.
     }

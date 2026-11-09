@@ -1,7 +1,7 @@
 const IoUring = @This();
 
 const builtin = @import("builtin");
-const is_linux = builtin.os.tag == .linux;
+const is_linux = builtin.target.os.tag == .linux;
 
 const std = @import("../../std.zig");
 const Io = std.Io;

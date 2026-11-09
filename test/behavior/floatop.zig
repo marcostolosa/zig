@@ -930,9 +930,9 @@ test "@log2 with vectors" {
     // https://github.com/ziglang/zig/issues/13681
     if (builtin.zig_backend == .stage2_llvm and
         builtin.target.cpu.arch == .aarch64 and
-        builtin.os.tag == .windows) return error.SkipZigTest;
+        builtin.target.os.tag == .windows) return error.SkipZigTest;
 
-    if (builtin.os.tag == .windows and builtin.target.cpu.arch == .x86 and builtin.target.abi == .msvc) {
+    if (builtin.target.os.tag == .windows and builtin.target.cpu.arch == .x86 and builtin.target.abi == .msvc) {
         // https://codeberg.org/ziglang/zig/issues/35518
         return error.SkipZigTest;
     }

@@ -34,7 +34,7 @@ pub fn build(b: *std.Build) void {
         for (optimize_modes) |optimize| {
             if (!case.all_modes and optimize != .debug) continue;
             if (case.os_filter) |os_tag| {
-                if (os_tag != builtin.os.tag) continue;
+                if (os_tag != builtin.target.os.tag) continue;
             }
 
             const resolved_target = b.resolveTargetQuery(case.target);

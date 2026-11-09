@@ -183,7 +183,7 @@ pub const Diags = struct {
         defer context_lines.deinit(gpa);
 
         var current_err: ?*Lld = null;
-        var lines = mem.splitSequence(u8, stderr, if (builtin.os.tag == .windows) "\r\n" else "\n");
+        var lines = mem.splitSequence(u8, stderr, if (builtin.target.os.tag == .windows) "\r\n" else "\n");
         while (lines.next()) |line| {
             if (line.len > prefix.len + ":".len and
                 mem.eql(u8, line[0..prefix.len], prefix) and line[prefix.len] == ':')
@@ -630,7 +630,7 @@ pub const File = struct {
                 if (base.file != null) return;
                 const emit = base.emit;
                 if (base.child_pid) |pid| {
-                    if (builtin.os.tag == .windows) {
+                    if (builtin.target.os.tag == .windows) {
                         return error.HotSwapUnavailableOnHostOperatingSystem;
                     } else {
                         // If we try to open the output file in write mode while it is running,
@@ -648,7 +648,7 @@ pub const File = struct {
                         defer gpa.free(tmp_sub_path);
                         try emit.root_dir.handle.copyFile(emit.sub_path, emit.root_dir.handle, tmp_sub_path, io, .{});
                         try emit.root_dir.handle.rename(tmp_sub_path, emit.root_dir.handle, emit.sub_path, io);
-                        switch (builtin.os.tag) {
+                        switch (builtin.target.os.tag) {
                             .linux => std.posix.ptrace(std.os.linux.PTRACE.ATTACH, pid, 0, 0) catch |err| {
                                 log.warn("ptrace failure: {t}", .{err});
                             },
@@ -731,7 +731,7 @@ pub const File = struct {
                 base.file = null;
 
                 if (base.child_pid) |pid| {
-                    switch (builtin.os.tag) {
+                    switch (builtin.target.os.tag) {
                         .linux => std.posix.ptrace(std.os.linux.PTRACE.DETACH, pid, 0, 0) catch |err| {
                             log.warn("ptrace failure: {s}", .{@errorName(err)});
                         },
@@ -745,7 +745,7 @@ pub const File = struct {
                 base.file = null;
 
                 if (base.child_pid) |pid| {
-                    switch (builtin.os.tag) {
+                    switch (builtin.target.os.tag) {
                         .maccatalyst, .macos => {
                             const macho_file = base.cast(.macho).?;
                             macho_file.ptraceDetach(pid) catch |err| {

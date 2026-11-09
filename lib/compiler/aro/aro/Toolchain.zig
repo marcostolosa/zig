@@ -541,7 +541,7 @@ pub fn joinedExists(tc: *const Toolchain, parts: []const []const u8) bool {
 }
 
 pub fn canExecute(tc: *const Toolchain, path: []const u8) bool {
-    if (@import("builtin").os.tag == .windows) {
+    if (@import("builtin").target.os.tag == .windows) {
         // TODO
         return true;
     }
@@ -557,7 +557,7 @@ pub fn canExecute(tc: *const Toolchain, path: []const u8) bool {
 /// Otherwise retun null
 pub fn findProgramByName(tc: *const Toolchain, name: []const u8, buf: []u8) ?[]const u8 {
     std.debug.assert(name.len > 0);
-    if (@import("builtin").os.tag == .windows) {
+    if (@import("builtin").target.os.tag == .windows) {
         // TODO
         return null;
     }

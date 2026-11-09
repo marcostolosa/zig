@@ -172,7 +172,7 @@ fn allocBigPages(n: usize) usize {
         const page_index = @wasmMemoryGrow(0, pow2_pages * pages_per_bigpage);
         if (page_index == -1) return 0;
         return @as(usize, @intCast(page_index)) * page_size;
-    } else if (builtin.os.tag == .linux) {
+    } else if (builtin.target.os.tag == .linux) {
         const prev_brk = global.prev_brk;
         const start_brk = if (prev_brk == 0)
             std.mem.alignForward(usize, std.os.linux.brk(0), bigpage_size)
@@ -277,7 +277,7 @@ test "shrink" {
 }
 
 test "large object - grow" {
-    if (builtin.os.tag == .linux) return error.SkipZigTest;
+    if (builtin.target.os.tag == .linux) return error.SkipZigTest;
 
     var slice1 = try test_ally.alloc(u8, bigpage_size * 2 - 20);
     defer test_ally.free(slice1);

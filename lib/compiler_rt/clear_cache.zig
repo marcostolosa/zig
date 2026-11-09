@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const arch = builtin.target.cpu.arch;
-const os = builtin.os.tag;
+const os = builtin.target.os.tag;
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = compiler_rt.symbol;
 

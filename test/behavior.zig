@@ -119,7 +119,7 @@ test {
         _ = @import("behavior/spirv.zig");
     }
 
-    if (!builtin.target.cpu.arch.isSpirv() and builtin.os.tag != .wasi) {
+    if (!builtin.target.cpu.arch.isSpirv() and builtin.target.os.tag != .wasi) {
         _ = @import("behavior/asm.zig");
     }
 

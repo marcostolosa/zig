@@ -581,7 +581,7 @@ pub fn updateFile(
                 // disambiguates by returning EEXIST, indicating original
                 // failure was a race, or ENOENT, indicating deletion of the
                 // directory of our open handle.
-                if (!builtin.os.tag.isDarwin()) {
+                if (!builtin.target.os.tag.isDarwin()) {
                     std.process.fatal("cache directory '{f}' unexpectedly removed during compiler execution", .{
                         cache_directory,
                     });
@@ -625,7 +625,7 @@ pub fn updateFile(
         }
 
         // If we already have the exclusive lock then it is our job to update.
-        if (builtin.os.tag == .wasi or lock == .exclusive) break true;
+        if (builtin.target.os.tag == .wasi or lock == .exclusive) break true;
         // Otherwise, unlock to give someone a chance to get the exclusive lock
         // and then upgrade to an exclusive lock.
         cache_file.unlock(io);

@@ -152,7 +152,7 @@ pub const Graph = struct {
     }
 
     fn dupePathInner(arena: Allocator, bytes: []const u8) []const u8 {
-        if (builtin.os.tag != .windows) return arena.dupe(u8, bytes) catch @panic("OOM");
+        if (builtin.target.os.tag != .windows) return arena.dupe(u8, bytes) catch @panic("OOM");
         const the_copy = arena.dupe(u8, bytes) catch @panic("OOM");
         mem.replaceScalar(u8, the_copy, '/', '\\');
         return the_copy;
@@ -1672,7 +1672,7 @@ fn tryFindProgram(b: *Build, full_path: []const u8) ?[]const u8 {
         else => |e| return panic("failed accessing {s}: {t}", .{ full_path, e }),
     }
 
-    if (builtin.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         if (b.graph.environ_map.get("PATHEXT")) |PATHEXT| {
             var it = mem.tokenizeScalar(u8, PATHEXT, fs.path.delimiter);
 

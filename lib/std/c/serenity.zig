@@ -9,7 +9,7 @@ const timespec = std.c.timespec;
 const page_size = std.heap.page_size_min;
 
 comptime {
-    assert(builtin.os.tag == .serenity); // Prevent access of std.c symbols on wrong OS.
+    assert(builtin.target.os.tag == .serenity); // Prevent access of std.c symbols on wrong OS.
 }
 
 // https://github.com/SerenityOS/serenity/blob/ec492a1a0819e6239ea44156825c4ee7234ca3db/Kernel/API/POSIX/futex.h#L46-L53

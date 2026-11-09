@@ -25,7 +25,7 @@ test "basic invocations" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
-    if (builtin.zig_backend == .stage2_c and builtin.os.tag == .windows) return error.SkipZigTest; // MSVC doesn't support tail call modifiers
+    if (builtin.zig_backend == .stage2_c and builtin.target.os.tag == .windows) return error.SkipZigTest; // MSVC doesn't support tail call modifiers
 
     const foo = struct {
         fn foo(_: i32) i32 {
@@ -284,7 +284,7 @@ test "forced tail call" {
         }
     }
 
-    if (builtin.zig_backend == .stage2_c and builtin.os.tag == .windows) return error.SkipZigTest; // MSVC doesn't support always tail calls
+    if (builtin.zig_backend == .stage2_c and builtin.target.os.tag == .windows) return error.SkipZigTest; // MSVC doesn't support always tail calls
 
     const S = struct {
         fn fibonacciTailInternal(n: u16, a: u16, b: u16) u16 {
@@ -319,7 +319,7 @@ test "inline call preserves tail call" {
         }
     }
 
-    if (builtin.zig_backend == .stage2_c and builtin.os.tag == .windows) return error.SkipZigTest; // MSVC doesn't support always tail calls
+    if (builtin.zig_backend == .stage2_c and builtin.target.os.tag == .windows) return error.SkipZigTest; // MSVC doesn't support always tail calls
 
     const max_depth = 1000;
     const S = struct {
@@ -577,7 +577,7 @@ test "value returned from comptime function is comptime known" {
 
 test "registers get overwritten when ignoring return" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
-    if (builtin.target.cpu.arch != .x86_64 or builtin.os.tag != .linux) return error.SkipZigTest;
+    if (builtin.target.cpu.arch != .x86_64 or builtin.target.os.tag != .linux) return error.SkipZigTest;
 
     const S = struct {
         fn open() usize {
@@ -642,7 +642,7 @@ test "arguments pointed to on stack into tailcall" {
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest;
     if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_c and builtin.os.tag == .windows) return error.SkipZigTest; // MSVC doesn't support always tail calls
+    if (builtin.zig_backend == .stage2_c and builtin.target.os.tag == .windows) return error.SkipZigTest; // MSVC doesn't support always tail calls
 
     switch (builtin.target.cpu.arch) {
         .wasm32,
@@ -724,7 +724,7 @@ test "tail call function pointer" {
         }
     }
 
-    if (builtin.zig_backend == .stage2_c and builtin.os.tag == .windows) return error.SkipZigTest; // MSVC doesn't support always tail calls
+    if (builtin.zig_backend == .stage2_c and builtin.target.os.tag == .windows) return error.SkipZigTest; // MSVC doesn't support always tail calls
 
     const S = struct {
         fn foo(n: u8) void {
@@ -753,7 +753,7 @@ test "tail call with potentially extended types" {
         }
     }
 
-    if (builtin.zig_backend == .stage2_c and builtin.os.tag == .windows) return error.SkipZigTest; // MSVC doesn't support always tail calls
+    if (builtin.zig_backend == .stage2_c and builtin.target.os.tag == .windows) return error.SkipZigTest; // MSVC doesn't support always tail calls
 
     const S = struct {
         fn Test(comptime Return: type) type {

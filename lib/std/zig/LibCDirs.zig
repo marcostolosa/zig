@@ -72,7 +72,7 @@ pub fn detect(
     // native abi, fall back to using the system libc installation.
     // On windows, instead of the native (mingw) abi, we want to check
     // for the MSVC abi as a fallback.
-    const use_system_abi = if (builtin.os.tag == .windows)
+    const use_system_abi = if (builtin.target.os.tag == .windows)
         target.abi == .msvc
     else
         is_native_abi;

@@ -15,7 +15,7 @@ const timespec = std.c.timespec;
 const sf_hdtr = std.c.sf_hdtr;
 
 comptime {
-    assert(builtin.os.tag.isDarwin()); // Prevent access of std.c symbols on wrong OS.
+    assert(builtin.target.os.tag.isDarwin()); // Prevent access of std.c symbols on wrong OS.
 }
 
 // Grand Central Dispatch is exposed by libSystem.

@@ -214,7 +214,7 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
     // Until https://github.com/ziglang/zig/issues/4592 is implemented (support detecting the
     // native CPU architecture as being different than the current target), we use this:
     const query_cpu_arch = query.cpu_arch orelse builtin.target.cpu.arch;
-    const query_os_tag = query.os_tag orelse builtin.os.tag;
+    const query_os_tag = query.os_tag orelse builtin.target.os.tag;
     const query_abi = query.abi orelse builtin.target.abi;
     var os = query_os_tag.defaultVersionRange(query_cpu_arch, query_abi);
     if (query.os_tag == null) {
@@ -469,7 +469,7 @@ fn detectNativeCpuAndFeatures(io: Io, cpu_arch: Target.Cpu.Arch) ?Target.Cpu {
         else => {},
     }
 
-    switch (builtin.os.tag) {
+    switch (builtin.target.os.tag) {
         .freebsd => return freebsd.detectNativeCpuAndFeatures(),
         .linux => return linux.detectNativeCpuAndFeatures(io),
         .macos => return darwin.macos.detectNativeCpuAndFeatures(),
@@ -1083,7 +1083,7 @@ const LdInfo = struct {
 };
 
 fn detectAndroidApiLevel(io: Io) !u32 {
-    comptime if (builtin.os.tag != .linux) unreachable;
+    comptime if (builtin.target.os.tag != .linux) unreachable;
 
     var child = try std.process.spawn(io, .{
         .argv = &.{

@@ -149,7 +149,7 @@ comptime {
         _ = @import("compiler_rt/stack_probe.zig");
 
         // macOS has these functions inside libSystem.
-        if (builtin.target.cpu.arch.isAarch64() and !builtin.os.tag.isDarwin()) {
+        if (builtin.target.cpu.arch.isAarch64() and !builtin.target.os.tag.isDarwin()) {
             if (builtin.zig_backend != .stage2_aarch64) _ = @import("compiler_rt/aarch64_outline_atomics.zig");
         }
 
@@ -169,7 +169,7 @@ comptime {
     if (!ofmt_c) _ = @import("compiler_rt/fmv.zig");
 
     // Temporarily used for uefi until https://github.com/ziglang/zig/issues/21630 is addressed.
-    if (!builtin.link_libc and (builtin.os.tag == .windows or builtin.os.tag == .uefi) and (builtin.target.abi == .none or builtin.target.abi == .msvc)) {
+    if (!builtin.link_libc and (builtin.target.os.tag == .windows or builtin.target.os.tag == .uefi) and (builtin.target.abi == .none or builtin.target.abi == .msvc)) {
         symbol(&_fltused, "_fltused");
     }
 }
@@ -237,7 +237,7 @@ pub const want_aeabi = switch (builtin.target.abi) {
 /// Temporarily used for thumb-uefi until https://github.com/ziglang/zig/issues/21630 is addressed.
 pub const want_windows_arm_abi = e: {
     if (!builtin.target.cpu.arch.isArm()) break :e false;
-    switch (builtin.os.tag) {
+    switch (builtin.target.os.tag) {
         .windows, .uefi => {},
         else => break :e false,
     }
@@ -249,7 +249,7 @@ pub const want_windows_arm_abi = e: {
 /// but in libc-less builds they are our responsibility.
 pub const want_windows_x86_msvc_abi = e: {
     if (builtin.target.cpu.arch != .x86) break :e false;
-    if (builtin.os.tag != .windows) break :e false;
+    if (builtin.target.os.tag != .windows) break :e false;
     switch (builtin.target.abi) {
         .none, .msvc => {},
         else => break :e false,
@@ -295,7 +295,7 @@ pub const gnu_f16_abi = switch (builtin.target.cpu.arch) {
         else => true,
     },
 
-    else => !builtin.os.tag.isDarwin(),
+    else => !builtin.target.os.tag.isDarwin(),
 };
 
 pub const want_sparc64_abi = builtin.target.cpu.arch == .sparc64;
@@ -307,7 +307,7 @@ pub fn f16Conv(comptime OtherType: type) type {
         .hard => {},
         .soft => return softFloatAbi(f16),
     }
-    if (builtin.target.cpu.arch.isX86() and builtin.os.tag.isDarwin()) switch (OtherType) {
+    if (builtin.target.cpu.arch.isX86() and builtin.target.os.tag.isDarwin()) switch (OtherType) {
         else => unreachable,
         // Starting with LLVM 16, Darwin uses different abi for f16
         // depending on the type of the other return/argument..???

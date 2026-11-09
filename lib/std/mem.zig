@@ -1382,6 +1382,34 @@ test findScalarPos {
     }
 }
 
+/// Linear search for the first occurrence of a scalar value in a sentinel-terminated pointer.
+///
+/// When the value is not found or the value is `sentinel` this function returns
+/// the index of the sentinel in `haystack`.
+pub fn findScalarSentinel(comptime T: type, comptime sentinel: T, haystack: [*:sentinel]const T, value: T) usize {
+    if (value == sentinel) return findSentinel(T, sentinel, haystack);
+    var current = haystack;
+    while (current[0] != value and current[0] != sentinel) : (current += 1) {}
+    return current - haystack;
+}
+
+test findScalarSentinel {
+    const Types = [_]type{ u8, u16, u32, u64 };
+
+    inline for (Types) |T| {
+        var memory: [64 / @sizeOf(T):'$']T = undefined;
+        @memset(&memory, 0xaa);
+        memory[memory.len - 1] = 0;
+        memory[memory.len] = '$';
+
+        for (0..memory.len) |i| {
+            try testing.expectEqual((&memory).ptr[memory.len - 1 ..], findScalarSentinel(T, '$', memory[i..], 0));
+        }
+
+        try testing.expectEqual((&memory).ptr[memory.len..], findScalarSentinel(T, '$', &memory, 0x42));
+    }
+}
+
 /// Deprecated in favor of `findAny`.
 pub const indexOfAny = findAny;
 
@@ -1420,6 +1448,26 @@ pub fn findAnyPos(comptime T: type, slice: []const T, start_index: usize, values
         }
     }
     return null;
+}
+
+/// Find the index of the first item in `haystack` which is contained in `values`.
+///
+/// When no values are found this function returns the index of the sentinel of `haystack`.
+pub fn findAnySentinel(comptime T: type, comptime sentinel: T, haystack: [*:sentinel]const T, values: [*:sentinel]const T) usize {
+    var current = haystack;
+    while (current[0] != sentinel) : (current += 1) {
+        if (values[findScalarSentinel(T, sentinel, values, current[0])] != sentinel) break;
+    }
+    return current - haystack;
+}
+
+fn testFindAnySentinel(comptime T: type, comptime s: T, haystack: [*:s]const T, values: [*:s]const T, expected_index: usize) !void {
+    try testing.expectEqual(haystack[expected_index..], findAnySentinel(T, s, haystack, values));
+}
+test findAnySentinel {
+    try testFindAnySentinel(u8, 0, "abc123", "123", 3);
+    try testFindAnySentinel(u8, 0, "abc456", "123", 6);
+    try testFindAnySentinel(u8, 0, "123abc", "123", 0);
 }
 
 /// Deprecated in favor of `findNone`.
@@ -1476,6 +1524,27 @@ pub fn findNonePos(comptime T: type, slice: []const T, start_index: usize, value
         return i;
     }
     return null;
+}
+
+/// Find the index of the first item in `haystack` which is not contained in `values`.
+///
+/// When any values are found this function returns the index of the sentinel of `haystack`.
+pub fn findNoneSentinel(comptime T: type, comptime sentinel: T, haystack: [*:sentinel]const T, values: [*:sentinel]const T) usize {
+    var current = haystack;
+    while (current[0] != sentinel) : (current += 1) {
+        if (values[findScalarSentinel(T, sentinel, values, current[0])] == sentinel) break;
+    }
+    return current - haystack;
+}
+
+fn testFindNoneSentinel(comptime T: type, comptime s: T, haystack: [*:s]const T, values: [*:s]const T, expected_index: usize) !void {
+    try testing.expectEqual(haystack[expected_index..], findNoneSentinel(T, s, haystack, values));
+}
+test findNoneSentinel {
+    try testFindNoneSentinel(u8, 0, "abc123", "123", 0);
+    try testFindNoneSentinel(u8, 0, "123abc", "123", 3);
+    try testFindNoneSentinel(u8, 0, "123123", "123", 6);
+    try testFindNoneSentinel(u8, 0, "333333", "123", 6);
 }
 
 /// Deprecated in favor of `find`.

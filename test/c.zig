@@ -3,6 +3,7 @@ const std = @import("std");
 const c = std.c;
 
 test {
+    _ = @import("c/ctype.zig");
     _ = @import("c/inttypes.zig");
     _ = @import("c/math.zig");
     _ = @import("c/pthread.zig");

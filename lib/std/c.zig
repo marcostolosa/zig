@@ -11559,6 +11559,11 @@ pub extern "c" fn lldiv(a: c_longlong, b: c_longlong) lldiv_t;
 
 pub extern "c" fn wcslen(s: [*:0]const wchar_t) usize;
 
+pub const EOF = -1;
+
+pub extern "c" fn tolower(c: c_int) c_int;
+pub extern "c" fn toupper(c: c_int) c_int;
+
 pub extern "c" fn atoi(str: [*:0]const c_char) c_int;
 pub extern "c" fn atol(str: [*:0]const c_char) c_long;
 pub extern "c" fn atoll(str: [*:0]const c_char) c_longlong;

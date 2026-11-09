@@ -166,7 +166,7 @@ fn __isxdigit_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn tolower(c: c_int) callconv(.c) c_int {
-    return std.ascii.toLower(@truncate(@as(c_uint, @bitCast(c))));
+    return if (c == std.c.EOF) std.c.EOF else std.ascii.toLower(@intCast(c));
 }
 
 fn __tolower_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -175,7 +175,7 @@ fn __tolower_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn toupper(c: c_int) callconv(.c) c_int {
-    return std.ascii.toUpper(@truncate(@as(c_uint, @bitCast(c))));
+    return if (c == std.c.EOF) std.c.EOF else std.ascii.toUpper(@intCast(c));
 }
 
 fn __toupper_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {

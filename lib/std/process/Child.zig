@@ -135,7 +135,7 @@ pub const Cwd = union(enum) {
 /// Requests for the operating system to forcibly terminate the child process,
 /// then blocks until it terminates, then cleans up all resources.
 ///
-/// Idempotent and does nothing after `wait` succeeds.
+/// Idempotent, and does nothing if `wait` previously cleaned up all resources.
 ///
 /// Uncancelable. Ignores unexpected errors from the operating system.
 pub fn kill(child: *Child, io: Io) void {
@@ -153,7 +153,10 @@ pub const WaitError = error{
     AccessDenied,
 } || Io.Cancelable || Io.UnexpectedError;
 
-/// Blocks until child process terminates. On success, cleans up all resources.
+/// Blocks until child process terminates.
+/// Cleans up all resources if the child process terminates.
+/// To ensure the child process terminates and resources are cleaned
+/// up in all cases, `kill` should be called after `wait`.
 pub fn wait(child: *Child, io: Io) WaitError!Term {
     assert(child.id != null);
     return io.vtable.childWait(io.userdata, child);

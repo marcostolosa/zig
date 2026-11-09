@@ -24,6 +24,7 @@ test "strchr" {
 }
 
 test "strchrnul" {
+    if (builtin.target.os.tag == .windows or builtin.target.os.tag == .openbsd) return; // strchrnul not available
     var str: [254:0]u8 = undefined;
     for (&str, 1..) |*p, i| p.* = @intCast(i + 1);
     const str_char: [*:0]const c_char = @ptrCast(&str);
@@ -57,6 +58,39 @@ test "strpbrk" {
     try testStrpbrk("abc123", "123", 3);
     try testStrpbrk("abc456", "123", null);
     try testStrpbrk("123abc", "123", 0);
+}
+
+test "strtok_r" {
+    const sep: [:0]const c_char = @ptrCast(" |b");
+
+    var str = "zig | zag | zog ||abc|     |   |    |def".*;
+    var state: ?[*:0]c_char = null;
+
+    try std.testing.expectEqualStrings("zig", @ptrCast(std.mem.span(c.strtok_r(@ptrCast(&str), sep, &state))));
+    try std.testing.expectEqualStrings("zag", @ptrCast(std.mem.span(c.strtok_r(null, sep, &state))));
+    try std.testing.expectEqualStrings("zog", @ptrCast(std.mem.span(c.strtok_r(null, sep, &state))));
+    try std.testing.expectEqualStrings("a", @ptrCast(std.mem.span(c.strtok_r(null, sep, &state))));
+    try std.testing.expectEqualStrings("c", @ptrCast(std.mem.span(c.strtok_r(null, sep, &state))));
+    try std.testing.expectEqualStrings("def", @ptrCast(std.mem.span(c.strtok_r(null, sep, &state))));
+    try std.testing.expectEqual(null, c.strtok_r(null, sep, &state));
+}
+
+test "strsep" {
+    if (builtin.target.os.tag == .windows) return; // strsep not available
+    const sep: [:0]const c_char = @ptrCast(" |b");
+
+    var str = "zig|zag|zog||abc||def".*;
+    var state: ?[*:0]c_char = @ptrCast(&str);
+
+    try std.testing.expectEqualStrings("zig", @ptrCast(std.mem.span(c.strsep(&state, sep))));
+    try std.testing.expectEqualStrings("zag", @ptrCast(std.mem.span(c.strsep(&state, sep))));
+    try std.testing.expectEqualStrings("zog", @ptrCast(std.mem.span(c.strsep(&state, sep))));
+    try std.testing.expectEqualStrings("", @ptrCast(std.mem.span(c.strsep(&state, sep))));
+    try std.testing.expectEqualStrings("a", @ptrCast(std.mem.span(c.strsep(&state, sep))));
+    try std.testing.expectEqualStrings("c", @ptrCast(std.mem.span(c.strsep(&state, sep))));
+    try std.testing.expectEqualStrings("", @ptrCast(std.mem.span(c.strsep(&state, sep))));
+    try std.testing.expectEqualStrings("def", @ptrCast(std.mem.span(c.strsep(&state, sep))));
+    try std.testing.expectEqual(null, c.strsep(&state, sep));
 }
 
 test "strdup" {

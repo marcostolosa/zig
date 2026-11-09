@@ -5,6 +5,7 @@ const wint_t = std.c.wint_t;
 const wchar_t = std.c.wchar_t;
 
 const symbol = @import("../c.zig").symbol;
+const string = @import("string.zig");
 const c = std.c;
 
 comptime {
@@ -161,25 +162,7 @@ fn wcspbrk(haystack: [*:0]const wchar_t, needle: [*:0]const wchar_t) callconv(.c
 }
 
 fn wcstok(noalias maybe_str: ?[*:0]wchar_t, noalias values: [*:0]const wchar_t, noalias state: *?[*:0]wchar_t) callconv(.c) ?[*:0]wchar_t {
-    const str = if (maybe_str) |str|
-        str
-    else if (state.*) |state_str|
-        state_str
-    else
-        return null;
-
-    const str_chars = std.mem.span(str);
-    const values_chars = std.mem.span(values);
-    const tok_start = std.mem.findNone(wchar_t, str_chars, values_chars) orelse return null;
-
-    if (std.mem.findAnyPos(wchar_t, str_chars, tok_start, values_chars)) |tok_end| {
-        str[tok_end] = 0;
-        state.* = str[tok_end + 1 ..];
-    } else {
-        state.* = str[str_chars.len..];
-    }
-
-    return str[tok_start..];
+    return string.tokZ(wchar_t, maybe_str, values, state);
 }
 
 fn wcsstr(noalias haystack: [*:0]const wchar_t, noalias needle: [*:0]const wchar_t) callconv(.c) ?[*:0]wchar_t {

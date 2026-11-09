@@ -11453,6 +11453,9 @@ pub extern "c" fn strchrnul(str: [*:0]const c_char, value: c_int) [*:0]c_char;
 pub extern "c" fn strspn(dst: [*:0]const c_char, values: [*:0]const c_char) usize;
 pub extern "c" fn strcspn(dst: [*:0]const c_char, values: [*:0]const c_char) usize;
 pub extern "c" fn strpbrk(dst: [*:0]const c_char, values: [*:0]const c_char) ?[*:0]c_char;
+pub extern "c" fn strtok_r(noalias maybe_str: ?[*:0]c_char, noalias values: [*:0]const c_char, noalias state: *?[*:0]c_char) ?[*:0]c_char;
+pub extern "c" fn strtok(noalias maybe_str: ?[*:0]c_char, noalias values: [*:0]const c_char) ?[*:0]c_char;
+pub extern "c" fn strsep(maybe_str: *?[*:0]c_char, values: [*:0]const c_char) ?[*:0]c_char;
 pub const strdup = switch (builtin.abi) {
     .msvc => private._strdup,
     else => private.strdup,

@@ -191,7 +191,7 @@ fn strndup(str: [*:0]const c_char, n: usize) callconv(.c) ?[*:0]c_char {
 
 // strlen is in compiler_rt
 
-fn strtok_r(noalias maybe_str: ?[*:0]c_char, noalias values: [*:0]const c_char, noalias state: *?[*:0]c_char) callconv(.c) ?[*:0]c_char {
+pub fn tokZ(comptime T: type, noalias maybe_str: ?[*:0]T, noalias values: [*:0]const T, noalias state: *?[*:0]T) ?[*:0]T {
     const str = if (maybe_str) |str|
         str
     else if (state.*) |state_str|
@@ -199,18 +199,26 @@ fn strtok_r(noalias maybe_str: ?[*:0]c_char, noalias values: [*:0]const c_char, 
     else
         return null;
 
-    const str_bytes = std.mem.span(@as([*:0]u8, @ptrCast(str)));
-    const values_bytes = std.mem.span(@as([*:0]const u8, @ptrCast(values)));
-    const tok_start = std.mem.findNone(u8, str_bytes, values_bytes) orelse return null;
+    const start = std.mem.findNoneSentinel(T, 0, str, values);
+    const tok = str[start..];
 
-    if (std.mem.findAnyPos(u8, str_bytes, tok_start, values_bytes)) |tok_end| {
-        str[tok_end] = 0;
-        state.* = str[tok_end + 1 ..];
-    } else {
-        state.* = str[str_bytes.len..];
+    if (tok[0] == 0) {
+        state.* = null;
+        return null;
     }
 
-    return str[tok_start..];
+    const end = std.mem.findAnySentinel(T, 0, tok, values);
+
+    if (tok[end] != 0) {
+        tok[end] = 0;
+        state.* = @ptrCast(tok[end + 1 ..]);
+    } else state.* = null;
+
+    return @constCast(tok);
+}
+
+fn strtok_r(noalias maybe_str: ?[*:0]c_char, noalias values: [*:0]const c_char, noalias state: *?[*:0]c_char) callconv(.c) ?[*:0]c_char {
+    return @ptrCast(tokZ(u8, @ptrCast(maybe_str), @ptrCast(values), @ptrCast(state)));
 }
 
 fn stpcpy(noalias dst: [*]c_char, noalias src: [*:0]const c_char) callconv(.c) [*]c_char {
@@ -241,17 +249,19 @@ fn memmem(haystack: *const anyopaque, haystack_len: usize, needle: *const anyopa
     return @constCast(haystack_bytes[std.mem.find(u8, haystack_bytes[0..haystack_len], needle_bytes[0..needle_len]) orelse return null ..]);
 }
 
-fn strsep(maybe_str: *?[*:0]c_char, values: [*:0]const c_char) callconv(.c) ?[*]c_char {
+fn strsep(maybe_str: *?[*:0]c_char, values: [*:0]const c_char) callconv(.c) ?[*:0]c_char {
     if (maybe_str.*) |str| {
-        const values_bytes = std.mem.span(@as([*:0]const u8, @ptrCast(values)));
-        const str_bytes = std.mem.span(@as([*:0]u8, @ptrCast(str)));
-        const found = std.mem.findAny(u8, str_bytes, values_bytes) orelse {
+        const str_u8: [*:0]u8 = @ptrCast(str);
+        const values_u8: [*:0]const u8 = @ptrCast(values);
+        const first = std.mem.findAnySentinel(u8, 0, str_u8, values_u8);
+
+        if (str_u8[first] == 0) {
             maybe_str.* = null;
             return str;
-        };
+        }
 
-        str[found] = 0;
-        maybe_str.* = str[found + 1 ..];
+        str[first] = 0;
+        maybe_str.* = @ptrCast(str[first + 1 ..]);
         return str;
     }
 

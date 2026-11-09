@@ -17,7 +17,7 @@
 //   twos_complement_eval z = let x1 := z[0] + (z[1] << 64) + (z[2] << 128) + (z[3] << 192) in
 //                            if x1 & (2^256-1) < 2^255 then x1 & (2^256-1) else (x1 & (2^256-1)) - 2^256
 
-const mode = @import("builtin").mode; // Checked arithmetic is disabled in non-debug modes to avoid side channels
+const mode = @import("builtin").optimize; // Checked arithmetic is disabled in non-debug modes to avoid side channels
 
 // The type MontgomeryDomainFieldElement is a field element in the Montgomery domain.
 // Bounds: [[0x0 ~> 0xffffffffffffffff], [0x0 ~> 0xffffffffffffffff], [0x0 ~> 0xffffffffffffffff], [0x0 ~> 0xffffffffffffffff]]

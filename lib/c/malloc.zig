@@ -58,7 +58,7 @@ const Header = bitpack struct(u64) {
         assert(@sizeOf(Header) <= alignment_bytes);
     }
 
-    const safety = switch (builtin.mode) {
+    const safety = switch (builtin.optimize) {
         .debug, .safe => true,
         .fast, .small => false,
     };

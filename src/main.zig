@@ -152,7 +152,7 @@ pub fn log(
 }
 
 const use_safe_allocator = build_options.debug_gpa or
-    (native_os != .wasi and !builtin.link_libc and switch (builtin.mode) {
+    (native_os != .wasi and !builtin.link_libc and switch (builtin.optimize) {
         .debug, .safe => true,
         .fast, .small => false,
     });

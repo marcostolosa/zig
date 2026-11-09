@@ -53,7 +53,7 @@ raw_streaming_mode: if (build_mode_has_safety)
 else
     void = if (build_mode_has_safety) .none else {},
 
-const build_mode_has_safety = switch (@import("builtin").mode) {
+const build_mode_has_safety = switch (@import("builtin").optimize) {
     .debug, .safe => true,
     .fast, .small => false,
 };

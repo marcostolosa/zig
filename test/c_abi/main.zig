@@ -17584,7 +17584,7 @@ test "CFF: C passes to Zig" {
     if (builtin.target.cpu.arch.isLoongarch()) return error.SkipZigTest;
     if (builtin.target.cpu.arch.isMips64()) return error.SkipZigTest;
     if (builtin.target.cpu.arch.isPowerpc32()) return error.SkipZigTest;
-    if (builtin.target.cpu.arch.isRiscv() and builtin.mode != .debug) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isRiscv() and builtin.optimize != .debug) return error.SkipZigTest;
     if (builtin.target.cpu.arch == .x86) return error.SkipZigTest;
 
     try expectOk(c_send_CFF());
@@ -17593,7 +17593,7 @@ test "CFF: C returns to Zig" {
     if (builtin.target.cpu.arch.isLoongarch()) return error.SkipZigTest;
     if (builtin.target.cpu.arch.isMips64()) return error.SkipZigTest;
     if (builtin.target.cpu.arch.isPowerpc32()) return error.SkipZigTest;
-    if (builtin.target.cpu.arch.isRiscv() and builtin.mode != .debug) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isRiscv() and builtin.optimize != .debug) return error.SkipZigTest;
 
     try expectEqual(CFF{ .v1 = 39, .v2 = 0.875, .v3 = 1.0 }, c_ret_CFF());
 }
@@ -17741,7 +17741,7 @@ const f16_struct = extern struct {
 };
 extern fn c_f16_struct(f16_struct) f16_struct;
 test "f16 struct" {
-    if (builtin.target.cpu.arch.isArm() and builtin.mode != .debug) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isArm() and builtin.optimize != .debug) return error.SkipZigTest;
     if (builtin.target.cpu.arch.isMips64()) return error.SkipZigTest;
     if (builtin.target.cpu.arch.isPowerpc32()) return error.SkipZigTest;
     if (builtin.target.cpu.arch == .s390x) return error.SkipZigTest;

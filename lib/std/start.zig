@@ -789,7 +789,7 @@ fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
 /// General error message for a malformed return type
 const bad_main_ret = "expected return type of main to be 'void', '!void', 'noreturn', 'u8', or '!u8'";
 
-const use_safe_allocator = !is_wasm and switch (builtin.mode) {
+const use_safe_allocator = !is_wasm and switch (builtin.optimize) {
     .debug, .safe => true,
     .fast, .small => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
 };

@@ -43,7 +43,7 @@ pub const once_t = enum(isize) {
             @branchHint(.unlikely);
             once_f(predicate, context, function);
         } else asm volatile ("" ::: .{ .memory = true });
-        switch (builtin.mode) {
+        switch (builtin.optimize) {
             .debug, .safe => {},
             .fast, .small => if (predicate.* != .done) unreachable,
         }

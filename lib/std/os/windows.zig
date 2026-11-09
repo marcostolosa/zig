@@ -4002,7 +4002,7 @@ pub fn unexpectedStatus(status: NTSTATUS) UnexpectedError {
 }
 
 pub fn statusBug(status: NTSTATUS) UnexpectedError {
-    switch (builtin.mode) {
+    switch (builtin.optimize) {
         .debug => std.debug.panic("programmer bug caused syscall status: 0x{x} ({s})", .{
             @backingInt(status),
             std.enums.tagName(NTSTATUS, status) orelse "<unnamed>",
@@ -4012,7 +4012,7 @@ pub fn statusBug(status: NTSTATUS) UnexpectedError {
 }
 
 pub fn errorBug(err: Win32Error) UnexpectedError {
-    switch (builtin.mode) {
+    switch (builtin.optimize) {
         .debug => std.debug.panic("programmer bug caused syscall error: 0x{x} ({s})", .{
             @backingInt(err),
             std.enums.tagName(Win32Error, err) orelse "<unnamed>",

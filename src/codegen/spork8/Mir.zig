@@ -40,7 +40,7 @@ pub const Inst = struct {
         nothing: void,
 
         comptime {
-            switch (builtin.mode) {
+            switch (builtin.optimize) {
                 .Debug, .ReleaseSafe => {},
                 .ReleaseFast, .ReleaseSmall => assert(@sizeOf(Data) == 4),
             }

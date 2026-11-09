@@ -90,8 +90,8 @@ var debug_maker_leaks: bool = false;
 const AvoidableServer = if (builtin.single_threaded) void else Server;
 const AvoidableWebServer = if (builtin.single_threaded) void else WebServer;
 
-const is_debug_mode = builtin.mode == .debug;
-const use_safe_allocator = switch (builtin.mode) {
+const is_debug_mode = builtin.optimize == .debug;
+const use_safe_allocator = switch (builtin.optimize) {
     .debug, .safe => true,
     .fast, .small => false,
 };

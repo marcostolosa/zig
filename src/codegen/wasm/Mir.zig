@@ -660,7 +660,7 @@ pub const Inst = struct {
         intrinsic: Intrinsic,
 
         comptime {
-            switch (builtin.mode) {
+            switch (builtin.optimize) {
                 .debug, .safe => {},
                 .fast, .small => assert(@sizeOf(Data) == 4),
             }

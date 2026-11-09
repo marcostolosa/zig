@@ -502,7 +502,7 @@ test "array coercion to undefined at runtime" {
 
     @setRuntimeSafety(true);
 
-    if (builtin.mode != .debug and builtin.mode != .safe) {
+    if (builtin.optimize != .debug and builtin.optimize != .safe) {
         return error.SkipZigTest;
     }
 

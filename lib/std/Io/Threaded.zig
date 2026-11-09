@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 const native_os = builtin.target.os.tag;
 const is_windows = native_os == .windows;
 const is_darwin = native_os.isDarwin();
-const is_debug = builtin.mode == .debug;
+const is_debug = builtin.optimize == .debug;
 
 const std = @import("../std.zig");
 const Io = std.Io;
@@ -449,7 +449,7 @@ pub const UseFchmodat2 = if (have_fchmodat2 and !have_fchmodat_flags) enum {
 
 pub const apc_align = @max(default_fn_align, 2);
 
-const default_fn_align = switch (builtin.mode) {
+const default_fn_align = switch (builtin.optimize) {
     .debug, .safe, .fast => switch (builtin.target.cpu.arch) {
         else => |arch| @compileError("Unsupported architecture: " ++ @tagName(arch)),
         .arm, .thumb => 4,
@@ -19216,7 +19216,7 @@ fn fileMemoryMapCreate(
             error.Unseekable, error.Canceled, error.AccessDenied => |e| return e,
             error.OperationUnsupported => {},
             else => {
-                if (builtin.mode == .debug)
+                if (builtin.optimize == .debug)
                     std.log.warn("memory mapping failed with {t}, falling back to file operations", .{err});
             },
         }
@@ -19329,7 +19329,7 @@ fn createFileMap(
             .INVALID_VIEW_SIZE => |status| return windows.statusBug(status),
             else => |status| return windows.unexpectedStatus(status),
         }
-        if (builtin.mode == .debug) {
+        if (builtin.optimize == .debug) {
             const page_size = std.heap.pageSize();
             const alignment: Alignment = .fromByteUnits(page_size);
             assert(contents_len == alignment.forward(len));
@@ -19450,7 +19450,7 @@ fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
             switch (posix.errno(posix.system.munmap(memory.ptr, memory.len))) {
                 .SUCCESS => {},
                 else => |e| {
-                    if (builtin.mode == .debug)
+                    if (builtin.optimize == .debug)
                         std.log.err("failed to unmap {d} bytes at {*}: {t}", .{ memory.len, memory.ptr, e });
                 },
             }

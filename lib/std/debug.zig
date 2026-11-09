@@ -250,7 +250,7 @@ pub const Symbol = struct {
 /// Returns whether the standard library has safety checks enabled. Callsites
 /// likely would rather know whether their own module's optimization mode
 /// (found via `@import("builtin").optimize`) has safety checks enabled.
-pub const runtime_safety = builtin.mode.runtimeSafety();
+pub const runtime_safety = builtin.optimize.runtimeSafety();
 
 /// Whether we can unwind the stack on this target, allowing capturing and/or printing the current
 /// stack trace. It is still legal to call `captureCurrentStackTrace`, `writeCurrentStackTrace`, and
@@ -264,7 +264,7 @@ pub const sys_can_stack_trace = switch (builtin.target.cpu.arch) {
     // because Emscripten's implementation is very slow.
     .wasm32,
     .wasm64,
-    => native_os == .emscripten and builtin.mode == .debug,
+    => native_os == .emscripten and builtin.optimize == .debug,
 
     // `@returnAddress()` is unsupported in LLVM 21.
     .bpfel,
@@ -1768,7 +1768,7 @@ test "manage resources correctly" {
 /// In release mode, it is size 0 and all methods are no-ops.
 /// This is a pre-made type with default settings.
 /// For more advanced usage, see `ConfigurableTrace`.
-pub const Trace = ConfigurableTrace(2, 4, builtin.mode == .debug);
+pub const Trace = ConfigurableTrace(2, 4, builtin.optimize == .debug);
 
 pub fn ConfigurableTrace(comptime size: usize, comptime stack_frame_count: usize, comptime is_enabled: bool) type {
     return struct {

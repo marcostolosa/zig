@@ -6,7 +6,7 @@ const NonCanonicalError = crypto.errors.NonCanonicalError;
 const NotSquareError = crypto.errors.NotSquareError;
 
 // Inline conditionally, when it can result in large code generation.
-const bloaty_inline: std.builtin.CallingConvention = switch (builtin.mode) {
+const bloaty_inline: std.builtin.CallingConvention = switch (builtin.optimize) {
     .safe, .fast => .@"inline",
     .debug, .small => .auto,
 };

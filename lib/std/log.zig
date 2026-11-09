@@ -51,7 +51,7 @@ pub const Level = enum {
 };
 
 /// The default log level is based on build mode.
-pub const default_level: Level = switch (builtin.mode) {
+pub const default_level: Level = switch (builtin.optimize) {
     .debug => .debug,
     .safe, .fast, .small => .info,
 };

@@ -122,7 +122,7 @@ fn usage() void {
 }
 
 fn mode(comptime x: comptime_int) comptime_int {
-    return if (builtin.mode == .debug) x / 64 else x;
+    return if (builtin.optimize == .debug) x / 64 else x;
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -145,7 +145,7 @@ pub fn main(init: std.process.Init) !void {
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--mode")) {
-            try stdout.print("{}\n", .{builtin.mode});
+            try stdout.print("{}\n", .{builtin.optimize});
             try stdout.flush();
             return;
         } else if (std.mem.eql(u8, args[i], "--filter")) {

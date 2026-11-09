@@ -3111,7 +3111,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) codegen.Error!void 
             it.body_index -= 1;
             it.inst_index = it.body[it.body_index];
             wip_mir_log.debug("{f}", .{it.fmtAir(it.inst_index)});
-            if (@import("builtin").mode == .debug) {
+            if (@import("builtin").optimize == .debug) {
                 if (it.isel.live_values.get(it.inst_index)) |def_vi| {
                     wip_mir_log.debug("   <- {f}", .{it.isel.fmtValue(def_vi)});
                 }

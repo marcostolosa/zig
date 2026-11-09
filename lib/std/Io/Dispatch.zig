@@ -3904,7 +3904,7 @@ fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
     if (memory.len == 0) return;
     switch (c.errno(c.munmap(memory.ptr, memory.len))) {
         .SUCCESS => {},
-        else => |err| if (builtin.mode == .debug)
+        else => |err| if (builtin.optimize == .debug)
             std.log.err("failed to unmap {d} bytes at {*}: {t}", .{ memory.len, memory.ptr, err }),
     }
     mm.* = undefined;

@@ -9,7 +9,7 @@ const Element = compiler_rt.PreferredLoadStoreElement;
 
 comptime {
     if (builtin.target.ofmt != .c) {
-        symbol(if (builtin.mode == .small or builtin.zig_backend == .stage2_aarch64) &memmoveSmall else &memmoveFast, "memmove");
+        symbol(if (builtin.optimize == .small or builtin.zig_backend == .stage2_aarch64) &memmoveSmall else &memmoveFast, "memmove");
     }
 }
 

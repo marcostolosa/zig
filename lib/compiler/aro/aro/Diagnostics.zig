@@ -532,7 +532,7 @@ pub fn formatArgs(w: *std.Io.Writer, fmt: []const u8, args: anytype) std.Io.Writ
 
 pub fn templateIndex(w: *std.Io.Writer, fmt: []const u8, template: []const u8) std.Io.Writer.Error!usize {
     const i = mem.find(u8, fmt, template) orelse {
-        if (@import("builtin").mode == .debug) {
+        if (@import("builtin").optimize == .debug) {
             std.debug.panic("template `{s}` not found in format string `{s}`", .{ template, fmt });
         }
         try w.print("template `{s}` not found in format string `{s}` (this is a bug in arocc)", .{ template, fmt });

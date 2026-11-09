@@ -37,12 +37,23 @@ pub fn addCases(ctx: *LinkContext) void {
             .name = "lib",
         });
         lib.root_module.addObject(obj);
+        // The linker moves a global to the end of the symtab for each local it adds, so
+        // the order of globals follows the locals of the inputs linked after `obj`
+        // (compiler_rt, ubsan_rt, libc). Each dump holds one global.
         case.verifyObjdump(lib.getEmittedBin(), &.{
             "-s",
             "--symbols",
             "--relocs",
-            "--only-symbol=foo_",
+            "--only-symbol=foo_0",
+            "--only-symbol=foo_2",
+            "--only-symbol=foo_3",
         }, .{ .sub_name = "lib" });
+        case.verifyObjdump(lib.getEmittedBin(), &.{
+            "-s",
+            "--symbols",
+            "--relocs",
+            "--only-symbol=foo_1",
+        }, .{ .sub_name = "lib_protected" });
     }
 
     if (ctx.includeTest("copy_reloc")) |case| case: {

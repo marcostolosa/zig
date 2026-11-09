@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const arch = builtin.cpu.arch;
 const os = builtin.os.tag;
-const abi = builtin.abi;
+const abi = builtin.target.abi;
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = compiler_rt.symbol;
 

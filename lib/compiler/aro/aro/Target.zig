@@ -238,7 +238,7 @@ pub const default: Target = .{
     .cpu = builtin.cpu,
     .vendor = .unknown,
     .os = builtin.os,
-    .abi = builtin.abi,
+    .abi = builtin.target.abi,
     .ofmt = builtin.target.ofmt,
 };
 
@@ -1996,7 +1996,7 @@ pub fn cpuModelForTargetQuadruple(
     sub_arch: ?SubArch,
 ) ?*const Cpu.Model {
     const os_tag = opt_os_tag orelse builtin.os.tag;
-    const abi = opt_abi orelse builtin.abi;
+    const abi = opt_abi orelse builtin.target.abi;
 
     switch (arch) {
         .arm, .armeb, .thumb, .thumbeb => {

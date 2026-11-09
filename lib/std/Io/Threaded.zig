@@ -2031,9 +2031,9 @@ const have_fcntl = switch (native_os) {
 const have_fcopyfile = is_darwin;
 const have_fchmodat2 = native_os == .linux and
     (builtin.os.isAtLeast(.linux, .{ .major = 6, .minor = 6, .patch = 0 }) orelse true) and
-    (builtin.abi.isAndroid() or !std.c.versionCheck(.{ .major = 2, .minor = 32, .patch = 0 }));
+    (builtin.target.abi.isAndroid() or !std.c.versionCheck(.{ .major = 2, .minor = 32, .patch = 0 }));
 const have_fchmodat_flags = native_os != .linux or
-    (!builtin.abi.isAndroid() and std.c.versionCheck(.{ .major = 2, .minor = 32, .patch = 0 }));
+    (!builtin.target.abi.isAndroid() and std.c.versionCheck(.{ .major = 2, .minor = 32, .patch = 0 }));
 
 const have_fchown = switch (native_os) {
     .wasi, .windows => false,
@@ -2079,7 +2079,7 @@ const pwrite_sym = if (posix.lfs64_abi) posix.system.pwrite64 else posix.system.
 const sendfile_sym = if (posix.lfs64_abi) posix.system.sendfile64 else posix.system.sendfile;
 const mmap_sym = if (posix.lfs64_abi) posix.system.mmap64 else posix.system.mmap;
 
-const linux_copy_file_range_use_c = std.c.versionCheck(if (builtin.abi.isAndroid()) .{
+const linux_copy_file_range_use_c = std.c.versionCheck(if (builtin.target.abi.isAndroid()) .{
     .major = 34,
     .minor = 0,
     .patch = 0,
@@ -2090,12 +2090,12 @@ const linux_copy_file_range_use_c = std.c.versionCheck(if (builtin.abi.isAndroid
 });
 const linux_copy_file_range_sys = if (linux_copy_file_range_use_c) std.c else std.os.linux;
 
-const statx_use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
+const statx_use_c = std.c.versionCheck(if (builtin.target.abi.isAndroid())
     .{ .major = 30, .minor = 0, .patch = 0 }
 else
     .{ .major = 2, .minor = 28, .patch = 0 });
 
-const use_libc_getrandom = std.c.versionCheck(if (builtin.abi.isAndroid()) .{
+const use_libc_getrandom = std.c.versionCheck(if (builtin.target.abi.isAndroid()) .{
     .major = 28,
     .minor = 0,
     .patch = 0,

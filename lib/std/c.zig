@@ -1,5 +1,5 @@
 const builtin = @import("builtin");
-const native_abi = builtin.abi;
+const native_abi = builtin.target.abi;
 const native_arch = builtin.cpu.arch;
 const native_os = builtin.os.tag;
 const native_endian = builtin.cpu.arch.endian();
@@ -62,7 +62,7 @@ pub inline fn versionCheck(comptime version: std.SemanticVersion) bool {
                 .gt, .eq => true,
                 .lt => false,
             };
-        } else if (builtin.abi.isAndroid()) {
+        } else if (builtin.target.abi.isAndroid()) {
             break :blk builtin.os.version_range.linux.android >= version.major;
         } else {
             break :blk false;
@@ -2598,7 +2598,7 @@ pub const SC = switch (native_os) {
     else => void,
 };
 
-pub const _SC = if (builtin.abi.isAndroid()) enum(c_int) {
+pub const _SC = if (builtin.target.abi.isAndroid()) enum(c_int) {
     PAGESIZE = 39,
     NPROCESSORS_ONLN = 97,
 } else switch (native_os) {
@@ -3244,7 +3244,7 @@ const common_linux_Sigaction = extern struct {
 
 /// Renamed from `sigaction` to `Sigaction` to avoid conflict with function name.
 pub const Sigaction = switch (native_os) {
-    .linux => if (builtin.abi.isAndroid() and builtin.target.ptrBitWidth() == 64) extern struct {
+    .linux => if (builtin.target.abi.isAndroid() and builtin.target.ptrBitWidth() == 64) extern struct {
         pub const handler_fn = *align(1) const fn (SIG) callconv(.c) void;
         pub const sigaction_fn = *const fn (SIG, *const siginfo_t, ?*anyopaque) callconv(.c) void;
 
@@ -3286,7 +3286,7 @@ pub const Sigaction = switch (native_os) {
             restorer: ?*const fn () callconv(.c) void = null,
             __resv: [1]c_int = .{0},
         },
-        .s390x => if (builtin.abi == .gnu) extern struct {
+        .s390x => if (builtin.target.abi == .gnu) extern struct {
             pub const handler_fn = *align(1) const fn (SIG) callconv(.c) void;
             pub const sigaction_fn = *const fn (SIG, *const siginfo_t, ?*anyopaque) callconv(.c) void;
 
@@ -3299,7 +3299,7 @@ pub const Sigaction = switch (native_os) {
             restorer: ?*const fn () callconv(.c) void = null,
             mask: sigset_t,
         } else common_linux_Sigaction,
-        .sparc64 => if (builtin.abi == .gnu) extern struct {
+        .sparc64 => if (builtin.target.abi == .gnu) extern struct {
             pub const handler_fn = *align(1) const fn (SIG) callconv(.c) void;
             pub const sigaction_fn = *const fn (SIG, *const siginfo_t, ?*anyopaque) callconv(.c) void;
 
@@ -4233,7 +4233,7 @@ pub const linger = switch (native_os) {
 };
 
 pub const msghdr = switch (native_os) {
-    .linux => if (@bitSizeOf(usize) > @bitSizeOf(i32) and builtin.abi.isMusl()) posix_msghdr else linux.msghdr,
+    .linux => if (@bitSizeOf(usize) > @bitSizeOf(i32) and builtin.target.abi.isMusl()) posix_msghdr else linux.msghdr,
     .openbsd,
     .emscripten,
     .dragonfly,
@@ -4277,7 +4277,7 @@ pub const msghdr = switch (native_os) {
 ///
 /// On 32-bit and non-musl systems, these fields will be zero sized, and ignored.
 fn MuslOnlyPadding(endian: std.builtin.Endian) type {
-    return if (builtin.abi.isMusl() and @sizeOf(usize) == 8 and native_endian == endian) u32 else u0;
+    return if (builtin.target.abi.isMusl() and @sizeOf(usize) == 8 and native_endian == endian) u32 else u0;
 }
 
 /// https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/sys_socket.h.html
@@ -4296,7 +4296,7 @@ const posix_msghdr = extern struct {
 };
 
 pub const msghdr_const = switch (native_os) {
-    .linux => if (@bitSizeOf(usize) > @bitSizeOf(i32) and builtin.abi.isMusl()) posix_msghdr_const else linux.msghdr_const,
+    .linux => if (@bitSizeOf(usize) > @bitSizeOf(i32) and builtin.target.abi.isMusl()) posix_msghdr_const else linux.msghdr_const,
     .openbsd,
     .emscripten,
     .dragonfly,
@@ -4343,7 +4343,7 @@ pub const mmsghdr = switch (native_os) {
 };
 
 pub const cmsghdr = switch (native_os) {
-    .linux => if (@bitSizeOf(usize) > @bitSizeOf(i32) and builtin.abi.isMusl()) posix_cmsghdr else linux.cmsghdr,
+    .linux => if (@bitSizeOf(usize) > @bitSizeOf(i32) and builtin.target.abi.isMusl()) posix_cmsghdr else linux.cmsghdr,
     // https://github.com/emscripten-core/emscripten/blob/96371ed7888fc78c040179f4d4faa82a6a07a116/system/lib/libc/musl/include/sys/socket.h#L44
     .emscripten => linux.cmsghdr,
     // https://github.com/freebsd/freebsd-src/blob/b197d2abcb6895d78bc9df8404e374397aa44748/sys/sys/socket.h#L492
@@ -4905,7 +4905,7 @@ pub const siginfo_t = switch (native_os) {
 };
 pub const sigset_t = switch (native_os) {
     // glibc and musl present a 1024-bit sigset_t, while kernel's (and bionic's) is 128-bit or less.
-    .linux => if (builtin.abi.isAndroid()) c_ulong else [1024 / @bitSizeOf(c_ulong)]c_ulong,
+    .linux => if (builtin.target.abi.isAndroid()) c_ulong else [1024 / @bitSizeOf(c_ulong)]c_ulong,
     .emscripten => emscripten.sigset_t,
     // https://github.com/SerenityOS/serenity/blob/ec492a1a0819e6239ea44156825c4ee7234ca3db/Kernel/API/POSIX/signal.h#L19
     .openbsd, .serenity => u32,
@@ -4927,7 +4927,7 @@ pub const sigval = switch (native_os) {
     else => void,
 };
 
-pub const addrinfo = if (builtin.abi.isAndroid()) extern struct {
+pub const addrinfo = if (builtin.target.abi.isAndroid()) extern struct {
     flags: AI,
     family: i32,
     socktype: i32,
@@ -5351,7 +5351,7 @@ pub const sa_family_t = switch (native_os) {
     .illumos, .serenity => u16,
     else => void,
 };
-pub const AF = if (builtin.abi.isAndroid()) struct {
+pub const AF = if (builtin.target.abi.isAndroid()) struct {
     pub const UNSPEC = 0;
     pub const UNIX = 1;
     pub const LOCAL = 1;
@@ -5637,7 +5637,7 @@ pub const AF = if (builtin.abi.isAndroid()) struct {
     },
     else => void,
 };
-pub const PF = if (builtin.abi.isAndroid()) struct {
+pub const PF = if (builtin.target.abi.isAndroid()) struct {
     pub const UNSPEC = AF.UNSPEC;
     pub const UNIX = AF.UNIX;
     pub const LOCAL = AF.LOCAL;
@@ -7451,7 +7451,7 @@ pub const dirent64 = switch (native_os) {
     else => void,
 };
 
-pub const AI = if (builtin.abi.isAndroid()) bitpack struct(u32) {
+pub const AI = if (builtin.target.abi.isAndroid()) bitpack struct(u32) {
     PASSIVE: bool = false,
     CANONNAME: bool = false,
     NUMERICHOST: bool = false,
@@ -7602,7 +7602,7 @@ pub const NI = switch (native_os) {
     else => void,
 };
 
-pub const EAI = if (builtin.abi.isAndroid()) enum(c_int) {
+pub const EAI = if (builtin.target.abi.isAndroid()) enum(c_int) {
     /// address family for hostname not supported
     ADDRFAMILY = 1,
     /// temporary failure in name resolution
@@ -10505,23 +10505,23 @@ pub extern "c" fn sendfile64(out_fd: fd_t, in_fd: fd_t, offset: ?*i64, count: us
 pub extern "c" fn setrlimit64(resource: rlimit_resource, rlim: *const rlimit) c_int;
 
 pub const arc4random_buf = switch (native_os) {
-    .linux => if (builtin.abi.isAndroid() or
-        (builtin.abi.isGnu() and versionCheck(.{ .major = 2, .minor = 36, .patch = 0 })))
+    .linux => if (builtin.target.abi.isAndroid() or
+        (builtin.target.abi.isGnu() and versionCheck(.{ .major = 2, .minor = 36, .patch = 0 })))
         private.arc4random_buf
     else {},
     .dragonfly, .netbsd, .freebsd, .illumos, .openbsd, .serenity, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => private.arc4random_buf,
     else => {},
 };
 pub const getentropy = switch (native_os) {
-    .linux => if (builtin.abi.isAndroid() and versionCheck(.{ .major = 28, .minor = 0, .patch = 0 })) private.getentropy else {},
+    .linux => if (builtin.target.abi.isAndroid() and versionCheck(.{ .major = 28, .minor = 0, .patch = 0 })) private.getentropy else {},
     .emscripten => private.getentropy,
     else => {},
 };
 pub const getrandom = switch (native_os) {
     .freebsd => private.getrandom,
-    .linux => if (builtin.abi.isMusl() or
-        (builtin.abi.isGnu() and versionCheck(.{ .major = 2, .minor = 25, .patch = 0 })) or
-        (builtin.abi.isAndroid() and versionCheck(.{ .major = 28, .minor = 0, .patch = 0 })))
+    .linux => if (builtin.target.abi.isMusl() or
+        (builtin.target.abi.isGnu() and versionCheck(.{ .major = 2, .minor = 25, .patch = 0 })) or
+        (builtin.target.abi.isAndroid() and versionCheck(.{ .major = 28, .minor = 0, .patch = 0 })))
         private.getrandom
     else {},
     else => {},
@@ -11515,7 +11515,7 @@ pub const ioctl = switch (native_os) {
 
 pub extern "c" fn bzero(s: *anyopaque, n: usize) void;
 
-pub const swab = switch (builtin.abi) {
+pub const swab = switch (builtin.target.abi) {
     .msvc => private._swab,
     else => private.swab,
 };
@@ -11523,14 +11523,14 @@ pub const swab = switch (builtin.abi) {
 pub extern "c" fn strncmp(a: [*:0]const c_char, b: [*:0]const c_char, max: usize) c_int;
 pub extern "c" fn strcasecmp(a: [*:0]const c_char, b: [*:0]const c_char) c_int;
 pub extern "c" fn strncasecmp(a: [*:0]const c_char, b: [*:0]const c_char, max: usize) c_int;
-pub const strdup = switch (builtin.abi) {
+pub const strdup = switch (builtin.target.abi) {
     .msvc => private._strdup,
     else => private.strdup,
 };
 pub extern "c" fn strnlen(s: [*:0]const c_char, n: usize) callconv(.c) usize;
 pub extern "c" fn strndup(s: [*:0]const c_char, n: usize) ?[*:0]c_char;
 pub extern "c" fn wcsnlen(s: [*:0]const wchar_t, n: usize) callconv(.c) usize;
-pub const wcsdup = switch (builtin.abi) {
+pub const wcsdup = switch (builtin.target.abi) {
     .msvc => private._wcsdup,
     else => private.wcsdup,
 };

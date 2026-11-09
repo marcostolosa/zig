@@ -5332,7 +5332,7 @@ inline fn mod(comptime Type: type, lhs: Type, rhs: Type) Type {
 }
 test mod {
     const builtin = @import("builtin");
-    if (builtin.object_format == .coff and builtin.abi != .gnu) return error.SkipZigTest;
+    if (builtin.object_format == .coff and builtin.target.abi != .gnu) return error.SkipZigTest;
     const test_mod = binary(mod, .{});
     try test_mod.testInts();
     try test_mod.testIntVectors();

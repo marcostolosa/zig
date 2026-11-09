@@ -116,7 +116,7 @@ fn __fixsfti(a: compiler_rt.f32.Abi) callconv(.c) i128 {
     return i128_intFromFloat_f32(compiler_rt.f32.fromAbi(a));
 }
 fn __aeabi_fixsfti(_: compiler_rt.f32.Abi) callconv(.naked) i128 {
-    switch (builtin.abi.float()) {
+    switch (builtin.target.abi.float()) {
         .soft => asm volatile (
             \\ push {r0-r4, lr}
             \\ movs r1, r0
@@ -172,7 +172,7 @@ fn __fixdfti(a: compiler_rt.f64.Abi) callconv(.c) i128 {
     return i128_intFromFloat_f64(compiler_rt.f64.fromAbi(a));
 }
 fn __aeabi_fixdfti(_: compiler_rt.f64.Abi) callconv(.naked) i128 {
-    switch (builtin.abi.float()) {
+    switch (builtin.target.abi.float()) {
         .soft => asm volatile (
             \\ push {r0-r4, lr}
             \\ movs r3, r1
@@ -379,7 +379,7 @@ fn __fixunssfti(a: compiler_rt.f32.Abi) callconv(.c) u128 {
     return u128_intFromFloat_f32(compiler_rt.f32.fromAbi(a));
 }
 fn __aeabi_fixunssfti(_: compiler_rt.f32.Abi) callconv(.naked) u128 {
-    switch (builtin.abi.float()) {
+    switch (builtin.target.abi.float()) {
         .soft => asm volatile (
             \\ push {r0-r4, lr}
             \\ movs r1, r0
@@ -435,7 +435,7 @@ fn __fixunsdfti(a: compiler_rt.f64.Abi) callconv(.c) u128 {
     return u128_intFromFloat_f64(compiler_rt.f64.fromAbi(a));
 }
 fn __aeabi_fixunsdfti(_: compiler_rt.f64.Abi) callconv(.naked) u128 {
-    switch (builtin.abi.float()) {
+    switch (builtin.target.abi.float()) {
         .soft => asm volatile (
             \\ push {r0-r4, lr}
             \\ movs r3, r1

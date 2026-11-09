@@ -20,7 +20,7 @@ comptime {
     _ = root;
 
     if (builtin.output_mode == .Lib and builtin.link_mode == .dynamic) {
-        const dll_main_crt_startup = if (builtin.abi.isGnu()) "DllMainCRTStartup" else "_DllMainCRTStartup";
+        const dll_main_crt_startup = if (builtin.target.abi.isGnu()) "DllMainCRTStartup" else "_DllMainCRTStartup";
         if (native_os == .windows and !builtin.link_libc and !@hasDecl(root, dll_main_crt_startup)) {
             @export(&DllMainCRTStartup, .{ .name = dll_main_crt_startup });
         } else if (native_os == .windows and builtin.link_libc and @hasDecl(root, "DllMain")) {
@@ -425,7 +425,7 @@ fn _start() callconv(.naked) noreturn {
             \\ subu $sp, $sp, 16
             \\ jr $t9
             ,
-            .mips64, .mips64el => switch (builtin.abi) {
+            .mips64, .mips64el => switch (builtin.target.abi) {
                 .gnuabin32, .muslabin32, .abin32 =>
                 \\ move $fp, $zero
                 \\ bal 1f
@@ -542,7 +542,7 @@ fn _start() callconv(.naked) noreturn {
             \\ sub %%sp, 2047, %%sp
             \\ ba,a %[posixCallMainAndExit]
             ,
-            .xtensa, .xtensaeb => if (builtin.abi == .call0)
+            .xtensa, .xtensaeb => if (builtin.target.abi == .call0)
                 // a0 = LR, a15 = FP, a1 = SP
                 \\ movi a0, 0
                 \\ movi a15, 0
@@ -569,7 +569,7 @@ fn _start() callconv(.naked) noreturn {
 
 fn WinStartup() callconv(.withStackAlign(.c, 1)) noreturn {
     // Switch from the x87 fpu state set by windows to the state expected by the gnu abi.
-    if (builtin.cpu.arch.isX86() and builtin.abi == .gnu) asm volatile ("fninit");
+    if (builtin.cpu.arch.isX86() and builtin.target.abi == .gnu) asm volatile ("fninit");
 
     if (!builtin.single_threaded and !builtin.link_libc) {
         _ = @import("os/windows/tls.zig");
@@ -585,7 +585,7 @@ fn WinStartup() callconv(.withStackAlign(.c, 1)) noreturn {
 
 fn wWinMainCRTStartup() callconv(.withStackAlign(.c, 1)) noreturn {
     // Switch from the x87 fpu state set by windows to the state expected by the gnu abi.
-    if (builtin.cpu.arch.isX86() and builtin.abi == .gnu) asm volatile ("fninit");
+    if (builtin.cpu.arch.isX86() and builtin.target.abi == .gnu) asm volatile ("fninit");
 
     if (!builtin.single_threaded and !builtin.link_libc) {
         _ = @import("os/windows/tls.zig");

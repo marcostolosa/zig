@@ -4873,7 +4873,7 @@ pub fn alignForwardLog2(addr: usize, log2_alignment: u8) usize {
 pub fn doNotOptimizeAway(val: anytype) void {
     if (@inComptime()) return;
 
-    if (builtin.zig_backend == .stage2_c and builtin.abi == .msvc) {
+    if (builtin.zig_backend == .stage2_c and builtin.target.abi == .msvc) {
         _ = @atomicRmw(*const anyopaque, @as(*volatile *const anyopaque, &struct {
             var escape: *const anyopaque = undefined;
         }.escape), .Xchg, &val, .acq_rel); // TODO: syncscope("singlethreaded")

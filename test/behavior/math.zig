@@ -2178,7 +2178,7 @@ test "remainder division" {
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
-    if (builtin.zig_backend == .stage2_x86_64 and builtin.object_format == .coff and builtin.abi != .gnu) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_x86_64 and builtin.object_format == .coff and builtin.target.abi != .gnu) return error.SkipZigTest;
 
     try comptime remdiv(f16);
     try comptime remdiv(f32);
@@ -2253,7 +2253,7 @@ test "float modulo division using @mod" {
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
-    if (builtin.zig_backend == .stage2_x86_64 and builtin.object_format == .coff and builtin.abi != .gnu) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_x86_64 and builtin.object_format == .coff and builtin.target.abi != .gnu) return error.SkipZigTest;
 
     try comptime fmod(f16);
     try comptime fmod(f32);
@@ -2570,7 +2570,7 @@ test "float divide by zero" {
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
     if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
-    if (builtin.zig_backend == .stage2_x86_64 and builtin.object_format == .coff and builtin.abi != .gnu) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_x86_64 and builtin.object_format == .coff and builtin.target.abi != .gnu) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest(comptime F: type, zero: F, one: F) !void {

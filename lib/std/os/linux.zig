@@ -11,7 +11,7 @@ const elf = std.elf;
 const vdso = @import("linux/vdso.zig");
 const dl = @import("../dynamic_library.zig");
 const native_arch = builtin.cpu.arch;
-const native_abi = builtin.abi;
+const native_abi = builtin.target.abi;
 const native_endian = native_arch.endian();
 const is_loongarch = native_arch.isLoongarch();
 const is_mips = native_arch.isMips();
@@ -42,7 +42,7 @@ const arch_bits = switch (native_arch) {
     .m68k => @import("linux/m68k.zig"),
     .microblaze, .microblazeel => @import("linux/microblaze.zig"),
     .mips, .mipsel => @import("linux/mips.zig"),
-    .mips64, .mips64el => switch (builtin.abi) {
+    .mips64, .mips64el => switch (builtin.target.abi) {
         .gnuabin32, .muslabin32, .abin32 => @import("linux/mipsn32.zig"),
         else => @import("linux/mips64.zig"),
     },
@@ -56,7 +56,7 @@ const arch_bits = switch (native_arch) {
     .sparc => @import("linux/sparc.zig"),
     .sparc64 => @import("linux/sparc64.zig"),
     .x86 => @import("linux/x86.zig"),
-    .x86_64 => switch (builtin.abi) {
+    .x86_64 => switch (builtin.target.abi) {
         .gnux32, .muslx32, .x32 => @import("linux/x32.zig"),
         else => @import("linux/x86_64.zig"),
     },
@@ -142,7 +142,7 @@ pub const SYS = switch (native_arch) {
     .m68k => syscalls.M68k,
     .microblaze, .microblazeel => syscalls.Microblaze,
     .mips, .mipsel => syscalls.MipsO32,
-    .mips64, .mips64el => switch (builtin.abi) {
+    .mips64, .mips64el => switch (builtin.target.abi) {
         .gnuabin32, .muslabin32, .abin32 => syscalls.MipsN32,
         else => syscalls.MipsN64,
     },
@@ -156,7 +156,7 @@ pub const SYS = switch (native_arch) {
     .sparc => syscalls.Sparc,
     .sparc64 => syscalls.Sparc64,
     .x86 => syscalls.X86,
-    .x86_64 => switch (builtin.abi) {
+    .x86_64 => switch (builtin.target.abi) {
         .gnux32, .muslx32, .x32 => syscalls.X32,
         else => syscalls.X64,
     },
@@ -2090,7 +2090,7 @@ pub fn llseek(fd: fd_t, offset: off_t, result: ?*off_t, whence: u32) u32 {
 
 /// Can only be called on 64 bit systems. For 32 bit see `llseek`.
 pub fn lseek(fd: fd_t, offset: off_t, whence: u32) u64 {
-    return switch (builtin.abi) {
+    return switch (builtin.target.abi) {
         .gnuabin32,
         .muslabin32,
         .abin32,

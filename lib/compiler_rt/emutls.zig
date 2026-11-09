@@ -17,7 +17,7 @@ const expect = std.testing.expect;
 const gcc_word = usize;
 
 comptime {
-    if (builtin.link_libc and (builtin.abi.isAndroid() or builtin.abi.isOpenHarmony() or builtin.os.tag == .openbsd)) {
+    if (builtin.link_libc and (builtin.target.abi.isAndroid() or builtin.target.abi.isOpenHarmony() or builtin.os.tag == .openbsd)) {
         symbol(&__emutls_get_address, "__emutls_get_address");
     }
 }

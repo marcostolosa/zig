@@ -215,7 +215,7 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
     // native CPU architecture as being different than the current target), we use this:
     const query_cpu_arch = query.cpu_arch orelse builtin.cpu.arch;
     const query_os_tag = query.os_tag orelse builtin.os.tag;
-    const query_abi = query.abi orelse builtin.abi;
+    const query_abi = query.abi orelse builtin.target.abi;
     var os = query_os_tag.defaultVersionRange(query_cpu_arch, query_abi);
     if (query.os_tag == null) {
         switch (builtin.target.os.tag) {

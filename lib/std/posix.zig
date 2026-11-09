@@ -1093,7 +1093,7 @@ pub fn memfd_createZ(name: [*:0]const u8, flags: u32) MemFdCreateError!fd_t {
     switch (native_os) {
         .linux => {
             // memfd_create is available only in glibc versions starting with 2.27 and bionic versions starting with 30.
-            const use_c = std.c.versionCheck(if (builtin.abi.isAndroid()) .{ .major = 30, .minor = 0, .patch = 0 } else .{ .major = 2, .minor = 27, .patch = 0 });
+            const use_c = std.c.versionCheck(if (builtin.target.abi.isAndroid()) .{ .major = 30, .minor = 0, .patch = 0 } else .{ .major = 2, .minor = 27, .patch = 0 });
             const sys = if (use_c) std.c else linux;
             const rc = sys.memfd_create(name, flags);
             switch (sys.errno(rc)) {
@@ -1646,7 +1646,7 @@ pub fn name_to_handle_atZ(
     }
 }
 
-pub const lfs64_abi = native_os == .linux and builtin.link_libc and (builtin.abi.isGnu() or builtin.abi.isAndroid());
+pub const lfs64_abi = native_os == .linux and builtin.link_libc and (builtin.target.abi.isGnu() or builtin.target.abi.isAndroid());
 
 pub const UnexpectedError = std.Io.UnexpectedError;
 

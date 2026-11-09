@@ -178,7 +178,7 @@ inline fn getDynamicSymbol() [*]const elf.Dyn {
                 : [ret] "=r" (-> [*]const elf.Dyn),
                 :
                 : .{ .lr = true }),
-            .mips64, .mips64el => switch (builtin.abi) {
+            .mips64, .mips64el => switch (builtin.target.abi) {
                 .gnuabin32, .muslabin32, .abin32 => asm volatile (
                     \\ .weak _DYNAMIC
                     \\ .hidden _DYNAMIC

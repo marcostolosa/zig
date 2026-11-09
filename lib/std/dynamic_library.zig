@@ -13,7 +13,7 @@ const posix = std.posix;
 /// Platform-specific functionality is available through the `inner` field.
 pub const DynLib = struct {
     const InnerType = switch (native_os) {
-        .linux => if (!builtin.link_libc or (builtin.abi == .musl and builtin.link_mode == .static))
+        .linux => if (!builtin.link_libc or (builtin.target.abi == .musl and builtin.link_mode == .static))
             ElfDynLib
         else
             DlDynLib,

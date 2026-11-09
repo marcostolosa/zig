@@ -169,7 +169,7 @@ comptime {
     if (!ofmt_c) _ = @import("compiler_rt/fmv.zig");
 
     // Temporarily used for uefi until https://github.com/ziglang/zig/issues/21630 is addressed.
-    if (!builtin.link_libc and (builtin.os.tag == .windows or builtin.os.tag == .uefi) and (builtin.abi == .none or builtin.abi == .msvc)) {
+    if (!builtin.link_libc and (builtin.os.tag == .windows or builtin.os.tag == .uefi) and (builtin.target.abi == .none or builtin.target.abi == .msvc)) {
         symbol(&_fltused, "_fltused");
     }
 }
@@ -219,7 +219,7 @@ pub const PreferredLoadStoreElement = element: {
     break :element usize;
 };
 
-pub const want_aeabi = switch (builtin.abi) {
+pub const want_aeabi = switch (builtin.target.abi) {
     .eabi,
     .eabihf,
     .musleabi,
@@ -242,7 +242,7 @@ pub const want_windows_arm_abi = e: {
         else => break :e false,
     }
     // The ABI is needed, but it's only our reponsibility if libc won't provide it.
-    break :e builtin.abi.isGnu() or !builtin.link_libc;
+    break :e builtin.target.abi.isGnu() or !builtin.link_libc;
 };
 
 /// These functions are required by on Windows on x86 on some ABIs. They are provided by MSVC libc,
@@ -250,7 +250,7 @@ pub const want_windows_arm_abi = e: {
 pub const want_windows_x86_msvc_abi = e: {
     if (builtin.cpu.arch != .x86) break :e false;
     if (builtin.os.tag != .windows) break :e false;
-    switch (builtin.abi) {
+    switch (builtin.target.abi) {
         .none, .msvc => {},
         else => break :e false,
     }
@@ -290,7 +290,7 @@ pub const gnu_f16_abi = switch (builtin.cpu.arch) {
 
     .x86, .x86c16, .x86_64 => true,
 
-    .arm, .armeb, .thumb, .thumbeb => switch (builtin.abi) {
+    .arm, .armeb, .thumb, .thumbeb => switch (builtin.target.abi) {
         .eabi, .eabihf => false,
         else => true,
     },

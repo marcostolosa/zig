@@ -5,7 +5,7 @@ const symbol = compiler_rt.symbol;
 const builtin = @import("builtin");
 
 comptime {
-    if (builtin.object_format != .c) {
+    if (builtin.target.ofmt != .c) {
         symbol(if (builtin.mode == .small or builtin.zig_backend == .stage2_aarch64) &memcpySmall else &memcpyFast, "memcpy");
     }
 }

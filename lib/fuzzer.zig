@@ -180,7 +180,7 @@ const Executable = struct {
 
         // Linkers are expected to automatically add symbols prefixed with these for the start and
         // end of sections whose names are valid C identifiers.
-        const ofmt = builtin.object_format;
+        const ofmt = builtin.target.ofmt;
         const section_start_prefix, const section_end_prefix = switch (ofmt) {
             .elf => .{ "__start_", "__stop_" },
             .macho => .{ "\x01section$start$__DATA$", "\x01section$end$__DATA$" },

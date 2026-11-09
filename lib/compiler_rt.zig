@@ -1,6 +1,6 @@
 const builtin = @import("builtin");
 const compiler_rt = @This();
-const ofmt_c = builtin.object_format == .c;
+const ofmt_c = builtin.target.ofmt == .c;
 const native_endian = builtin.target.cpu.arch.endian();
 
 const std = @import("std");
@@ -144,7 +144,7 @@ comptime {
     _ = @import("compiler_rt/clear_cache.zig");
     _ = @import("compiler_rt/hexagon.zig");
 
-    if (builtin.object_format != .c) {
+    if (builtin.target.ofmt != .c) {
         if (builtin.zig_backend != .stage2_aarch64) _ = @import("compiler_rt/atomics.zig");
         _ = @import("compiler_rt/stack_probe.zig");
 

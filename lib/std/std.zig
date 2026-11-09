@@ -197,7 +197,7 @@ pub const Options = struct {
 
     /// TODO This is a separate decl instead of a field as a workaround around
     /// compilation errors due to zig not being lazy enough.
-    pub const elf_debug_info_search_paths: ?fn (exe_path: []const u8) switch (@import("builtin").object_format) {
+    pub const elf_debug_info_search_paths: ?fn (exe_path: []const u8) switch (@import("builtin").target.ofmt) {
         .elf => debug.ElfFile.DebugInfoSearchPaths,
         else => void,
     } = if (@hasDecl(root, "std_options_elf_debug_info_search_paths"))

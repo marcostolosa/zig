@@ -130,7 +130,7 @@ fn printOutput(
     environ_map: *const process.Environ.Map,
 ) !void {
     const host = try std.zig.system.resolveTargetQuery(io, .{});
-    const obj_ext = builtin.object_format.fileExt(builtin.target.cpu.arch);
+    const obj_ext = builtin.target.ofmt.fileExt(builtin.target.cpu.arch);
     const print = std.debug.print;
 
     var shell_buffer: Writer.Allocating = .init(arena);

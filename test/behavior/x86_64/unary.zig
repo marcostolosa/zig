@@ -60,7 +60,7 @@ fn unary(comptime op: anytype, comptime opts: struct {
                             f128 => libc_name ++ "f128",
                             else => break :libc,
                         },
-                        .library_name = switch (@import("builtin").object_format) {
+                        .library_name = switch (@import("builtin").target.ofmt) {
                             else => null,
                             .coff => "compiler_rt",
                         },

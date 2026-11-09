@@ -535,7 +535,7 @@ fn __atomic_fetch_umin_16(ptr: *u128, val: u128, model: i32) callconv(.c) u128 {
 }
 
 comptime {
-    if (supports_atomic_ops and builtin.object_format != .c) {
+    if (supports_atomic_ops and builtin.target.ofmt != .c) {
         symbol(&__atomic_load, "__atomic_load");
         symbol(&__atomic_store, "__atomic_store");
         symbol(&__atomic_exchange, "__atomic_exchange");

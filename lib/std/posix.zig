@@ -783,7 +783,7 @@ pub fn dl_iterate_phdr(
     const elf = std.elf;
     const dl = @import("dynamic_library.zig");
 
-    switch (builtin.object_format) {
+    switch (builtin.target.ofmt) {
         .c, .elf, .llvmbc, .llvmir => {},
         else => @compileError("dl_iterate_phdr is not available for this target"),
     }

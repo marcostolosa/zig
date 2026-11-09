@@ -94,7 +94,7 @@ fn iter_fn(info: *dl_phdr_info, size: usize, counter: *usize) IterFnError!void {
 }
 
 test "dl_iterate_phdr" {
-    if (builtin.object_format != .elf) return error.SkipZigTest;
+    if (builtin.target.ofmt != .elf) return error.SkipZigTest;
 
     var counter: usize = 0;
     try posix.dl_iterate_phdr(&counter, IterFnError, iter_fn);

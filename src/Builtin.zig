@@ -62,13 +62,6 @@ pub fn append(opts: @This(), gpa: Allocator, buffer: *std.ArrayList(u8)) Allocat
         \\pub const unwind_tables: std.lang.UnwindTables = .{f};
         \\pub const is_test = {};
         \\pub const single_threaded = {};
-        \\/// Deprecated; to be removed in 0.18.0. Use `target.abi` instead.
-        \\pub const abi: std.Target.Abi = .{f};
-        \\/// Deprecated; to be removed in 0.18.0. Use `target.cpu` instead.
-        \\pub const cpu: std.Target.Cpu = .{{
-        \\    .arch = .{f},
-        \\    .model = &std.Target.{f}.cpu.{f},
-        \\    .features = std.Target.{f}.featureSet(&.{{
         \\
     , .{
         build_options.version,
@@ -78,7 +71,16 @@ pub fn append(opts: @This(), gpa: Allocator, buffer: *std.ArrayList(u8)) Allocat
         std.zig.fmtIdPU(@tagName(opts.unwind_tables)),
         opts.is_test,
         opts.single_threaded,
-        std.zig.fmtIdPU(@tagName(target.abi)),
+    });
+    try buffer.print(gpa,
+        \\
+        \\pub const target: std.Target = .{{
+        \\    .cpu = .{{
+        \\        .arch = .{f},
+        \\        .model = &std.Target.{f}.cpu.{f},
+        \\        .features = std.Target.{f}.featureSet(&.{{
+        \\
+    , .{
         std.zig.fmtIdPU(@tagName(target.cpu.arch)),
         std.zig.fmtIdPU(arch_family_name),
         std.zig.fmtIdPU(target.cpu.model.name),
@@ -89,36 +91,32 @@ pub fn append(opts: @This(), gpa: Allocator, buffer: *std.ArrayList(u8)) Allocat
         const index = @as(std.Target.Cpu.Feature.Set.Index, @intCast(index_usize));
         const is_enabled = target.cpu.features.isEnabled(index);
         if (is_enabled) {
-            try buffer.print(gpa, "        .{f},\n", .{std.zig.fmtIdPU(feature.name)});
+            try buffer.print(gpa, "            .{f},\n", .{std.zig.fmtIdPU(feature.name)});
         }
     }
-    try buffer.print(
-        gpa,
-        \\    }}),
-        \\}};
-        \\/// Deprecated; to be removed in 0.18.0. Use `target.os` instead.
-        \\pub const os: std.Target.Os = .{{
-        \\    .tag = .{f},
-        \\    .version_range = .{{
-    ,
-        .{std.zig.fmtIdPU(@tagName(target.os.tag))},
-    );
+    try buffer.print(gpa,
+        \\        }}),
+        \\    }},
+        \\    .os = .{{
+        \\        .tag = .{f},
+        \\        .version_range = .{{
+    , .{std.zig.fmtIdPU(@tagName(target.os.tag))});
 
     switch (target.os.versionRange()) {
         .none => try buffer.appendSlice(gpa, " .none = {} },\n"),
         .semver => |semver| try buffer.print(gpa,
             \\ .semver = .{{
-            \\        .min = .{{
-            \\            .major = {},
-            \\            .minor = {},
-            \\            .patch = {},
-            \\        }},
-            \\        .max = .{{
-            \\            .major = {},
-            \\            .minor = {},
-            \\            .patch = {},
-            \\        }},
-            \\    }}}},
+            \\            .min = .{{
+            \\                .major = {},
+            \\                .minor = {},
+            \\                .patch = {},
+            \\            }},
+            \\            .max = .{{
+            \\                .major = {},
+            \\                .minor = {},
+            \\                .patch = {},
+            \\            }},
+            \\        }}}},
             \\
         , .{
             semver.min.major,
@@ -131,25 +129,25 @@ pub fn append(opts: @This(), gpa: Allocator, buffer: *std.ArrayList(u8)) Allocat
         }),
         .linux => |linux| try buffer.print(gpa,
             \\ .linux = .{{
-            \\        .range = .{{
-            \\            .min = .{{
+            \\            .range = .{{
+            \\                .min = .{{
+            \\                    .major = {},
+            \\                    .minor = {},
+            \\                    .patch = {},
+            \\                }},
+            \\                .max = .{{
+            \\                    .major = {},
+            \\                    .minor = {},
+            \\                    .patch = {},
+            \\                }},
+            \\            }},
+            \\            .glibc = .{{
             \\                .major = {},
             \\                .minor = {},
             \\                .patch = {},
             \\            }},
-            \\            .max = .{{
-            \\                .major = {},
-            \\                .minor = {},
-            \\                .patch = {},
-            \\            }},
-            \\        }},
-            \\        .glibc = .{{
-            \\            .major = {},
-            \\            .minor = {},
-            \\            .patch = {},
-            \\        }},
-            \\        .android = {},
-            \\    }}}},
+            \\            .android = {},
+            \\        }}}},
             \\
         , .{
             linux.range.min.major,
@@ -168,24 +166,24 @@ pub fn append(opts: @This(), gpa: Allocator, buffer: *std.ArrayList(u8)) Allocat
         }),
         .hurd => |hurd| try buffer.print(gpa,
             \\ .hurd = .{{
-            \\        .range = .{{
-            \\            .min = .{{
+            \\            .range = .{{
+            \\                .min = .{{
+            \\                    .major = {},
+            \\                    .minor = {},
+            \\                    .patch = {},
+            \\                }},
+            \\                .max = .{{
+            \\                    .major = {},
+            \\                    .minor = {},
+            \\                    .patch = {},
+            \\                }},
+            \\            }},
+            \\            .glibc = .{{
             \\                .major = {},
             \\                .minor = {},
             \\                .patch = {},
             \\            }},
-            \\            .max = .{{
-            \\                .major = {},
-            \\                .minor = {},
-            \\                .patch = {},
-            \\            }},
-            \\        }},
-            \\        .glibc = .{{
-            \\            .major = {},
-            \\            .minor = {},
-            \\            .patch = {},
-            \\        }},
-            \\    }}}},
+            \\        }}}},
             \\
         , .{
             hurd.range.min.major,
@@ -202,21 +200,22 @@ pub fn append(opts: @This(), gpa: Allocator, buffer: *std.ArrayList(u8)) Allocat
         }),
         .windows => |windows| try buffer.print(gpa,
             \\ .windows = .{{
-            \\        .min = {f},
-            \\        .max = {f},
-            \\    }}}},
+            \\            .min = {f},
+            \\            .max = {f},
+            \\        }}}},
             \\
         , .{ windows.min, windows.max }),
     }
-    try buffer.appendSlice(gpa,
-        \\};
-        \\pub const target: std.Target = .{
-        \\    .cpu = cpu,
-        \\    .os = os,
-        \\    .abi = abi,
-        \\    .ofmt = object_format,
+
+    try buffer.print(gpa,
+        \\    }},
+        \\    .abi = .{f},
+        \\    .ofmt = .{f},
         \\
-    );
+    , .{
+        std.zig.fmtIdPU(@tagName(target.abi)),
+        std.zig.fmtIdPU(@tagName(target.ofmt)),
+    });
 
     if (target.dynamic_linker.get()) |dl| {
         try buffer.print(gpa,
@@ -240,10 +239,7 @@ pub fn append(opts: @This(), gpa: Allocator, buffer: *std.ArrayList(u8)) Allocat
     const link_libc = opts.link_libc;
 
     try buffer.print(gpa,
-        \\/// Deprecated; to be removed in 0.18.0. Use `target.ofmt` instead.
-        \\pub const object_format: std.Target.ObjectFormat = .{f};
-        \\/// Deprecated, to be removed after 0.18.0
-        \\pub const mode = optimize;
+        \\
         \\pub const optimize: std.lang.Optimize = .{f};
         \\pub const link_libc = {};
         \\pub const link_libcpp = {};
@@ -258,7 +254,6 @@ pub fn append(opts: @This(), gpa: Allocator, buffer: *std.ArrayList(u8)) Allocat
         \\pub const omit_frame_pointer = {};
         \\
     , .{
-        std.zig.fmtIdPU(@tagName(target.ofmt)),
         std.zig.fmtIdPU(@tagName(opts.optimize_mode)),
         link_libc,
         opts.link_libcpp,

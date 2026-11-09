@@ -527,7 +527,7 @@ pub fn writeEhFrameHdr(elf_file: *Elf, writer: *std.Io.Writer) !void {
     }
     assert(entries.items.len == num_fdes);
     std.mem.sort(Entry, entries.items, {}, Entry.lessThan);
-    if (endian != builtin.cpu.arch.endian()) {
+    if (endian != builtin.target.cpu.arch.endian()) {
         std.mem.byteSwapAllElements(Entry, entries.items);
     }
     try writer.writeAll(@ptrCast(entries.items));

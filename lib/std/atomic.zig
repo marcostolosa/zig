@@ -383,13 +383,13 @@ pub inline fn spinLoopHint() void {
         // https://www.keil.com/support/man/docs/armasm/armasm_dom1361289926796.htm
         .arm,
         .armeb,
-        => if (comptime builtin.cpu.has(.arm, .has_v6k)) {
+        => if (comptime builtin.target.cpu.has(.arm, .has_v6k)) {
             asm volatile ("yield");
         },
 
         .thumb,
         .thumbeb,
-        => if (comptime builtin.cpu.hasAny(.arm, &.{ .has_v6m, .thumb2 })) {
+        => if (comptime builtin.target.cpu.hasAny(.arm, &.{ .has_v6m, .thumb2 })) {
             asm volatile ("yield");
         },
 
@@ -402,7 +402,7 @@ pub inline fn spinLoopHint() void {
         .mipsel,
         .mips64,
         .mips64el,
-        => if (comptime builtin.cpu.has(.mips, .mips32r2)) {
+        => if (comptime builtin.target.cpu.has(.mips, .mips32r2)) {
             asm volatile ("pause");
         },
 
@@ -410,13 +410,13 @@ pub inline fn spinLoopHint() void {
         .riscv32be,
         .riscv64,
         .riscv64be,
-        => if (comptime builtin.cpu.has(.riscv, .zihintpause)) {
+        => if (comptime builtin.target.cpu.has(.riscv, .zihintpause)) {
             asm volatile ("pause");
         },
 
         .sparc,
         .sparc64,
-        => if (comptime builtin.cpu.has(.sparc, .v9)) {
+        => if (comptime builtin.target.cpu.has(.sparc, .v9)) {
             asm volatile ("rd %%ccr, %%g0");
         },
 
@@ -519,7 +519,7 @@ pub fn cacheLineForCpu(cpu: std.Target.Cpu) u16 {
 ///
 /// https://en.wikipedia.org/wiki/False_sharing
 /// https://github.com/golang/go/search?q=CacheLinePadSize
-pub const cache_line: comptime_int = cacheLineForCpu(builtin.cpu);
+pub const cache_line: comptime_int = cacheLineForCpu(builtin.target.cpu);
 
 test "current CPU has a cache line size" {
     _ = cache_line;

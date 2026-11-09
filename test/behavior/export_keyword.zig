@@ -43,7 +43,7 @@ export fn testBitpackStuff(a: *const BitpackStruct, b: *const BitpackUnion) void
 }
 
 test "export function alias" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     _ = struct {
         fn foo_internal() callconv(.c) u32 {

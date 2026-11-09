@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const native_arch = builtin.cpu.arch;
+const native_arch = builtin.target.cpu.arch;
 const expectEqual = std.testing.expectEqual;
 
 // Functions are declared like this

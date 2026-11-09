@@ -240,7 +240,7 @@ pub fn parse(args: ParseOptions) !Query {
             return error.UnknownArchitecture;
         };
     }
-    const arch = result.cpu_arch orelse builtin.cpu.arch;
+    const arch = result.cpu_arch orelse builtin.target.cpu.arch;
     diags.arch = arch;
 
     if (it.next()) |os_text| {
@@ -343,7 +343,7 @@ pub fn parseCpuArch(args: ParseOptions) ?Target.Cpu.Arch {
     const arch_name = it.first();
     const arch_is_native = mem.eql(u8, arch_name, "native");
     if (arch_is_native) {
-        return builtin.cpu.arch;
+        return builtin.target.cpu.arch;
     } else {
         return std.meta.stringToEnum(Target.Cpu.Arch, arch_name);
     }
@@ -489,7 +489,7 @@ pub fn printCpu(query: *const Query, w: *std.Io.Writer) std.Io.Writer.Error!void
         return;
     }
 
-    const cpu_arch = query.cpu_arch orelse builtin.cpu.arch;
+    const cpu_arch = query.cpu_arch orelse builtin.target.cpu.arch;
     const all_features = cpu_arch.allFeaturesList();
 
     for (all_features, 0..) |feature, i_usize| {

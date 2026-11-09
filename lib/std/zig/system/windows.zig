@@ -259,7 +259,7 @@ fn genericCpuAndNativeFeatures(arch: Target.Cpu.Arch) Target.Cpu {
 }
 
 pub fn detectNativeCpuAndFeatures() ?Target.Cpu {
-    const current_arch = builtin.cpu.arch;
+    const current_arch = builtin.target.cpu.arch;
     const cpu: ?Target.Cpu = switch (current_arch) {
         .aarch64, .aarch64_be => blk: {
             var registers: [12]u64 = undefined;

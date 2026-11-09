@@ -1,5 +1,5 @@
 const builtin = @import("builtin");
-const native_endian = builtin.cpu.arch.endian();
+const native_endian = builtin.target.cpu.arch.endian();
 
 const std = @import("../std.zig");
 const mem = std.mem;
@@ -213,7 +213,7 @@ pub const DetectError = error{
 pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
     // Until https://github.com/ziglang/zig/issues/4592 is implemented (support detecting the
     // native CPU architecture as being different than the current target), we use this:
-    const query_cpu_arch = query.cpu_arch orelse builtin.cpu.arch;
+    const query_cpu_arch = query.cpu_arch orelse builtin.target.cpu.arch;
     const query_os_tag = query.os_tag orelse builtin.os.tag;
     const query_abi = query.abi orelse builtin.target.abi;
     var os = query_os_tag.defaultVersionRange(query_cpu_arch, query_abi);

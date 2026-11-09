@@ -581,7 +581,7 @@ inline fn intFromFloat(comptime I: type, a: anytype) I {
 }
 
 inline fn bigIntFromFloat(comptime signedness: std.lang.Signedness, result: []u32, a: anytype) void {
-    const endian = builtin.cpu.arch.endian();
+    const endian = builtin.target.cpu.arch.endian();
     switch (result.len) {
         0 => return,
         inline 1...4 => |limbs_len| {

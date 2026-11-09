@@ -1,5 +1,5 @@
 const builtin = @import("builtin");
-const endian = builtin.cpu.arch.endian();
+const endian = builtin.target.cpu.arch.endian();
 
 const std = @import("std");
 

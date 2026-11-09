@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const compiler_rt = @This();
 const ofmt_c = builtin.object_format == .c;
-const native_endian = builtin.cpu.arch.endian();
+const native_endian = builtin.target.cpu.arch.endian();
 
 const std = @import("std");
 
@@ -133,7 +133,7 @@ comptime {
     _ = @import("compiler_rt/divmodei4.zig");
     _ = @import("compiler_rt/udivmodei4.zig");
 
-    if (builtin.cpu.arch.isWasm()) _ = @import("compiler_rt/limb64.zig");
+    if (builtin.target.cpu.arch.isWasm()) _ = @import("compiler_rt/limb64.zig");
 
     // extra
     _ = @import("compiler_rt/os_version_check.zig");
@@ -149,7 +149,7 @@ comptime {
         _ = @import("compiler_rt/stack_probe.zig");
 
         // macOS has these functions inside libSystem.
-        if (builtin.cpu.arch.isAarch64() and !builtin.os.tag.isDarwin()) {
+        if (builtin.target.cpu.arch.isAarch64() and !builtin.os.tag.isDarwin()) {
             if (builtin.zig_backend != .stage2_aarch64) _ = @import("compiler_rt/aarch64_outline_atomics.zig");
         }
 
@@ -228,7 +228,7 @@ pub const want_aeabi = switch (builtin.target.abi) {
     .gnueabihf,
     .android,
     .androideabi,
-    => builtin.cpu.arch.isArm(),
+    => builtin.target.cpu.arch.isArm(),
     else => false,
 };
 
@@ -236,7 +236,7 @@ pub const want_aeabi = switch (builtin.target.abi) {
 /// builds or when linking MinGW libc they are our responsibility.
 /// Temporarily used for thumb-uefi until https://github.com/ziglang/zig/issues/21630 is addressed.
 pub const want_windows_arm_abi = e: {
-    if (!builtin.cpu.arch.isArm()) break :e false;
+    if (!builtin.target.cpu.arch.isArm()) break :e false;
     switch (builtin.os.tag) {
         .windows, .uefi => {},
         else => break :e false,
@@ -248,7 +248,7 @@ pub const want_windows_arm_abi = e: {
 /// These functions are required by on Windows on x86 on some ABIs. They are provided by MSVC libc,
 /// but in libc-less builds they are our responsibility.
 pub const want_windows_x86_msvc_abi = e: {
-    if (builtin.cpu.arch != .x86) break :e false;
+    if (builtin.target.cpu.arch != .x86) break :e false;
     if (builtin.os.tag != .windows) break :e false;
     switch (builtin.target.abi) {
         .none, .msvc => {},
@@ -258,9 +258,9 @@ pub const want_windows_x86_msvc_abi = e: {
     break :e !builtin.link_libc;
 };
 
-pub const want_ppc_abi = builtin.cpu.arch.isPowerpc();
+pub const want_ppc_abi = builtin.target.cpu.arch.isPowerpc();
 
-pub const want_float_exceptions = !builtin.cpu.arch.isWasm();
+pub const want_float_exceptions = !builtin.target.cpu.arch.isWasm();
 
 /// This governs whether to use these symbol names for f16/f32 conversions
 /// rather than the standard names:
@@ -279,7 +279,7 @@ pub const want_float_exceptions = !builtin.cpu.arch.isWasm();
 ///   x86_64-windows-gnu => true
 ///   x86_64-windows-msvc => true
 ///   any-macos-any => false
-pub const gnu_f16_abi = switch (builtin.cpu.arch) {
+pub const gnu_f16_abi = switch (builtin.target.cpu.arch) {
     .wasm32,
     .wasm64,
     .riscv64,
@@ -298,8 +298,8 @@ pub const gnu_f16_abi = switch (builtin.cpu.arch) {
     else => !builtin.os.tag.isDarwin(),
 };
 
-pub const want_sparc64_abi = builtin.cpu.arch == .sparc64;
-pub const want_sparc32_abi = builtin.cpu.arch == .sparc;
+pub const want_sparc64_abi = builtin.target.cpu.arch == .sparc64;
+pub const want_sparc32_abi = builtin.target.cpu.arch == .sparc;
 
 /// For operations converting between `f16` and another floating point type.
 pub fn f16Conv(comptime OtherType: type) type {
@@ -307,7 +307,7 @@ pub fn f16Conv(comptime OtherType: type) type {
         .hard => {},
         .soft => return softFloatAbi(f16),
     }
-    if (builtin.cpu.arch.isX86() and builtin.os.tag.isDarwin()) switch (OtherType) {
+    if (builtin.target.cpu.arch.isX86() and builtin.os.tag.isDarwin()) switch (OtherType) {
         else => unreachable,
         // Starting with LLVM 16, Darwin uses different abi for f16
         // depending on the type of the other return/argument..???
@@ -347,7 +347,7 @@ pub const @"f80" = switch (std.zig.target.compilerRtFloatAbi(&builtin.target, 80
 pub const @"f128" = switch (std.zig.target.compilerRtFloatAbi(&builtin.target, 128)) {
     .hard => hardFloatAbi(f128),
     .soft => struct {
-        pub const Abi = switch (builtin.cpu.arch.endian()) {
+        pub const Abi = switch (builtin.target.cpu.arch.endian()) {
             .big => extern struct { hi: u64, lo: u64 },
             .little => extern struct { lo: u64, hi: u64 },
         };

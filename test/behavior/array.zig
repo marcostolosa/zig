@@ -7,7 +7,7 @@ const expect = testing.expect;
 const expectEqual = testing.expectEqual;
 
 test "array to slice" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const a: u32 align(4) = 3;
     const b: u32 align(8) = 4;
@@ -21,7 +21,7 @@ test "array to slice" {
 }
 
 test "arrays" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -51,7 +51,7 @@ fn getArrayLen(a: []const u32) usize {
 test "runtime array concat with comptime slice" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     var a: [1]u8 = .{1};
     const b = (comptime @as([]const u8, &.{0})) ++ &a;
     const c = &a ++ (comptime @as([]const u8, &.{0}));
@@ -61,7 +61,7 @@ test "runtime array concat with comptime slice" {
 
 test "array concat with undefined" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest() !void {
@@ -83,7 +83,7 @@ test "array concat with undefined" {
 }
 
 test "array concat with tuple" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -99,7 +99,7 @@ test "array concat with tuple" {
 }
 
 test "array concat with undefined tuple" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     {
         const array: [2]u64 = .{ 1, 2 };
@@ -117,7 +117,7 @@ test "array concat with undefined tuple" {
 }
 
 test "array init with concat" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const a = 'a';
     var i: [4]u8 = [2]u8{ a, 'b' } ++ [2]u8{ 'c', 'd' };
@@ -152,7 +152,7 @@ const ArrayDotLenConstExpr = struct {
 const some_array = [_]u8{ 0, 1, 2, 3 };
 
 test "array literal with specified size" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -163,7 +163,7 @@ test "array literal with specified size" {
 }
 
 test "array len field" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     var arr = [4]u8{ 0, 0, 0, 0 };
@@ -176,7 +176,7 @@ test "array len field" {
 }
 
 test "array with sentinels" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     const S = struct {
@@ -213,7 +213,7 @@ test "void arrays" {
 }
 
 test "nested arrays of strings" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -228,7 +228,7 @@ test "nested arrays of strings" {
 }
 
 test "nested arrays of integers" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     const array_of_numbers = [_][2]u8{
@@ -243,7 +243,7 @@ test "nested arrays of integers" {
 }
 
 test "implicit comptime in array type size" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     var arr: [plusOne(10)]bool = undefined;
@@ -257,7 +257,7 @@ fn plusOne(x: u32) u32 {
 
 test "single-item pointer to array indexing and slicing" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     try testSingleItemPtrArrayIndexSlice();
     try comptime testSingleItemPtrArrayIndexSlice();
@@ -283,7 +283,7 @@ fn doSomeMangling(array: *[4]u8) void {
 
 test "implicit cast zero sized array ptr to slice" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     {
         var b = "".*;
@@ -298,7 +298,7 @@ test "implicit cast zero sized array ptr to slice" {
 }
 
 test "anonymous list literal syntax" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -320,7 +320,7 @@ var s_array: [8]Sub = undefined;
 const Sub = struct { b: u8 };
 const Str = struct { a: []Sub };
 test "set global var array via slice embedded in struct" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     var s = Str{ .a = s_array[0..] };
@@ -335,7 +335,7 @@ test "set global var array via slice embedded in struct" {
 }
 
 test "implicit cast single-item pointer" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     try testImplicitCastSingleItemPtr();
@@ -364,7 +364,7 @@ test "comptime evaluating function that takes array by value" {
 }
 
 test "runtime initialize array elem and then implicit cast to slice" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     var two: i32 = 2;
@@ -374,7 +374,7 @@ test "runtime initialize array elem and then implicit cast to slice" {
 }
 
 test "array literal as argument to function" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     const S = struct {
@@ -401,7 +401,7 @@ test "array literal as argument to function" {
 }
 
 test "double nested array to const slice cast in array literal" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -462,7 +462,7 @@ test "double nested array to const slice cast in array literal" {
 }
 
 test "anonymous literal in array" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -488,7 +488,7 @@ test "anonymous literal in array" {
 }
 
 test "access the null element of a null terminated array" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     const S = struct {
@@ -506,7 +506,7 @@ test "access the null element of a null terminated array" {
 }
 
 test "type deduction for array subscript expression" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -525,7 +525,7 @@ test "type deduction for array subscript expression" {
 }
 
 test "sentinel element count towards the ABI size calculation" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -550,7 +550,7 @@ test "sentinel element count towards the ABI size calculation" {
 
 test "type coercion of anon struct literal to array" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
 
@@ -590,7 +590,7 @@ test "array with comptime-only element type" {
 }
 
 test "tuple to array handles sentinel" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -620,7 +620,7 @@ test "array-like to array handles sentinel" {
 }
 
 test "array init of container level array variable" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -643,7 +643,7 @@ test "array init of container level array variable" {
 }
 
 test "runtime initialized sentinel-terminated array literal" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     var c: u16 = 300;
     _ = &c;
@@ -654,7 +654,7 @@ test "runtime initialized sentinel-terminated array literal" {
 }
 
 test "array of array agregate init" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -665,7 +665,7 @@ test "array of array agregate init" {
 }
 
 test "pointer to array has ptr field" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest(p: *const [5]u32) !void {
@@ -701,7 +701,7 @@ test "discarded array init preserves result location" {
 }
 
 test "array init with no result location has result type" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     const x = .{ .foo = [2]u16{
         @intCast(10),
         @intCast(20),
@@ -715,7 +715,7 @@ test "array init with no result location has result type" {
 test "slicing array of zero-sized values" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     var arr: [32]u0 = undefined;
     for (arr[0..]) |*zero|
@@ -725,7 +725,7 @@ test "slicing array of zero-sized values" {
 }
 
 test "array init with no result pointer sets field result types" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     const S = struct {
         // A function parameter has a result type, but no result pointer.
         fn f(arr: [1]u32) u32 {
@@ -740,7 +740,7 @@ test "array init with no result pointer sets field result types" {
 }
 
 test "runtime side-effects in comptime-known array init" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     var side_effects: u4 = 0;
     const init = [4]u4{
@@ -766,7 +766,7 @@ test "runtime side-effects in comptime-known array init" {
 }
 
 test "slice initialized through reference to anonymous array init provides result types" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     var my_u32: u32 = 123;
     var my_u64: u64 = 456;
@@ -781,7 +781,7 @@ test "slice initialized through reference to anonymous array init provides resul
 }
 
 test "sentinel-terminated slice initialized through reference to anonymous array init provides result types" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     var my_u32: u32 = 123;
     var my_u64: u64 = 456;
@@ -796,7 +796,7 @@ test "sentinel-terminated slice initialized through reference to anonymous array
 }
 
 test "many-item pointer initialized through reference to anonymous array init provides result types" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     var my_u32: u32 = 123;
@@ -815,7 +815,7 @@ test "many-item pointer initialized through reference to anonymous array init pr
 }
 
 test "many-item sentinel-terminated pointer initialized through reference to anonymous array init provides result types" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     var my_u32: u32 = 123;
@@ -835,7 +835,7 @@ test "many-item sentinel-terminated pointer initialized through reference to ano
 }
 
 test "pointer to array initialized through reference to anonymous array init provides result types" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     var my_u32: u32 = 123;
     var my_u64: u64 = 456;
@@ -850,7 +850,7 @@ test "pointer to array initialized through reference to anonymous array init pro
 }
 
 test "pointer to sentinel-terminated array initialized through reference to anonymous array init provides result types" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     var my_u32: u32 = 123;
     var my_u64: u64 = 456;
@@ -865,7 +865,7 @@ test "pointer to sentinel-terminated array initialized through reference to anon
 }
 
 test "tuple initialized through reference to anonymous array init provides result types" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     const Tuple = struct { u64, *const u32 };
     const foo: *const Tuple = &.{
         @intCast(12345),
@@ -876,7 +876,7 @@ test "tuple initialized through reference to anonymous array init provides resul
 }
 
 test "copied array element doesn't alias source" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -891,7 +891,7 @@ test "copied array element doesn't alias source" {
 
 test "array initialized with string literal" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
         a: u32,
@@ -911,7 +911,7 @@ test "array initialized with string literal" {
 }
 
 test "array initialized with array with sentinel" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     const S = struct {
@@ -932,7 +932,7 @@ test "array initialized with array with sentinel" {
 }
 
 test "store array of array of structs at comptime" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -958,7 +958,7 @@ test "store array of array of structs at comptime" {
 
 test "accessing multidimensional global array at comptime" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
         const array = [_][]const []const u8{
@@ -972,7 +972,7 @@ test "accessing multidimensional global array at comptime" {
 }
 
 test "union that needs padding bytes inside an array" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
@@ -996,7 +996,7 @@ test "union that needs padding bytes inside an array" {
 }
 
 test "runtime index of array of zero-bit values" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     var runtime: struct { array: [1]void, index: usize } = undefined;
     runtime = .{ .array = .{{}}, .index = 0 };
@@ -1050,7 +1050,7 @@ test "initialize pointer to anyopaque with reference to empty array initializer"
 }
 
 test "sentinel of runtime-known array initialization is populated" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     var rt: u32 = undefined;
     rt = 42;
@@ -1063,7 +1063,7 @@ test "sentinel of runtime-known array initialization is populated" {
 }
 
 test "resist alias of explicit copy of array passed as arg" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     const S = struct {
         const Thing = [1]u32;
 
@@ -1085,7 +1085,7 @@ test "resist alias of explicit copy of array passed as arg" {
 }
 
 test "access element through reference" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest(x: u8) !void {

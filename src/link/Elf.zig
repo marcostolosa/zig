@@ -1415,7 +1415,7 @@ pub fn initOutputSection(self: *Elf, args: struct {
 pub fn writeShdrTable(self: *Elf) !void {
     const gpa = self.base.comp.gpa;
     const target_endian = self.getTarget().cpu.arch.endian();
-    const foreign_endian = target_endian != builtin.cpu.arch.endian();
+    const foreign_endian = target_endian != builtin.target.cpu.arch.endian();
     const shsize: u64 = switch (self.ptr_width) {
         .p32 => @sizeOf(elf.Elf32_Shdr),
         .p64 => @sizeOf(elf.Elf64_Shdr),
@@ -1471,7 +1471,7 @@ pub fn writeShdrTable(self: *Elf) !void {
 fn writePhdrTable(self: *Elf) !void {
     const gpa = self.base.comp.gpa;
     const target_endian = self.getTarget().cpu.arch.endian();
-    const foreign_endian = target_endian != builtin.cpu.arch.endian();
+    const foreign_endian = target_endian != builtin.target.cpu.arch.endian();
     const phdr_table = &self.phdrs.items[self.phdr_indexes.table.int().?];
 
     log.debug("writing program headers from 0x{x} to 0x{x}", .{
@@ -3291,7 +3291,7 @@ pub fn writeSymtab(self: *Elf) !void {
         self.plt_got.writeSymtab(self);
     }
 
-    const foreign_endian = self.getTarget().cpu.arch.endian() != builtin.cpu.arch.endian();
+    const foreign_endian = self.getTarget().cpu.arch.endian() != builtin.target.cpu.arch.endian();
     switch (self.ptr_width) {
         .p32 => {
             const buf = try gpa.alloc(elf.Elf32_Sym, self.symtab.items.len);

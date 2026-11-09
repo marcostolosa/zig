@@ -235,7 +235,7 @@ ofmt: std.Target.ObjectFormat,
 dynamic_linker: std.Target.DynamicLinker = .none,
 
 pub const default: Target = .{
-    .cpu = builtin.cpu,
+    .cpu = builtin.target.cpu,
     .vendor = .unknown,
     .os = builtin.os,
     .abi = builtin.target.abi,
@@ -920,7 +920,7 @@ pub fn parseArchName(query: []const u8) ?ArchSubArch {
     }
 
     if (mem.startsWith(u8, lower, "bpf")) {
-        if (lower.len == 3) return switch (@import("builtin").cpu.arch.endian()) {
+        if (lower.len == 3) return switch (builtin.target.cpu.arch.endian()) {
             .little => return .{ .bpfel, null },
             .big => return .{ .bpfeb, null },
         };

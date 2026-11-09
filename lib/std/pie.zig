@@ -24,7 +24,7 @@ const R_SH_RELATIVE = 165;
 const R_SPARC_RELATIVE = 22;
 const R_XTENSA_RELATIVE = 5;
 
-const R_RELATIVE = switch (builtin.cpu.arch) {
+const R_RELATIVE = switch (builtin.target.cpu.arch) {
     .x86 => R_386_RELATIVE,
     .x86_64 => R_AMD64_RELATIVE,
     .arc, .arceb => R_ARC_RELATIVE,
@@ -53,7 +53,7 @@ const R_RELATIVE = switch (builtin.cpu.arch) {
 // relocation that, at this point, is not yet applied.
 inline fn getDynamicSymbol() [*]const elf.Dyn {
     return switch (builtin.zig_backend) {
-        else => switch (builtin.cpu.arch) {
+        else => switch (builtin.target.cpu.arch) {
             .x86 => asm volatile (
                 \\ .weak _DYNAMIC
                 \\ .hidden _DYNAMIC
@@ -349,7 +349,7 @@ pub fn relocate(phdrs: []const elf.ElfN.Phdr) void {
     }
 
     // Deal with the GOT relocations that MIPS uses first.
-    if (builtin.cpu.arch.isMips()) {
+    if (builtin.target.cpu.arch.isMips()) {
         const count: elf.Addr = blk: {
             // This is an architecture-specific tag, so not part of `sorted_dynv`.
             var i: usize = 0;

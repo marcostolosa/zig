@@ -2338,7 +2338,7 @@ fn __qf_fast_convert_hf_to_uh_rne() align(32) callconv(.naked) noreturn {
 }
 
 comptime {
-    if (builtin.cpu.arch == .hexagon) {
+    if (builtin.target.cpu.arch == .hexagon) {
         symbol(&__hexagon_adddf3, "__hexagon_adddf3");
         symbol(&__hexagon_adddf3, "__hexagon_fast_adddf3");
         symbol(&__hexagon_subdf3, "__hexagon_subdf3");
@@ -2363,7 +2363,7 @@ comptime {
         symbol(&__hexagon_modsi3, "__hexagon_modsi3");
         symbol(&__hexagon_memcpy_likely_aligned_min32bytes_mult8bytes, "__hexagon_memcpy_likely_aligned_min32bytes_mult8bytes");
         symbol(&__hexagon_udivsi3, "__hexagon_udivsi3");
-        if (builtin.cpu.has(.hexagon, .hvxv79)) {
+        if (builtin.target.cpu.has(.hexagon, .hvxv79)) {
             symbol(&__qf_convert_hf_to_b_rne, "__qf_convert_hf_to_b_rne");
             symbol(&__qf_fast_convert_hf_to_b_rne, "__qf_fast_convert_hf_to_b_rne");
             symbol(&__qf_convert_hf_to_h_rne, "__qf_convert_hf_to_h_rne");

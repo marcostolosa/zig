@@ -1,7 +1,7 @@
 const std = @import("../../../std.zig");
 const builtin = @import("builtin");
 
-const in_bpf_program = switch (builtin.cpu.arch) {
+const in_bpf_program = switch (builtin.target.cpu.arch) {
     .bpfel, .bpfeb => true,
     else => false,
 };

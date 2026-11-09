@@ -15,7 +15,7 @@ const minInt = std.math.minInt;
 const assert = std.debug.assert;
 const Endian = std.builtin.Endian;
 const Signedness = std.builtin.Signedness;
-const native_endian = builtin.cpu.arch.endian();
+const native_endian = builtin.target.cpu.arch.endian();
 
 // Comptime-computed constants for supported bases (2 - 36)
 // all values are set to 0 for bases 0 - 1, to make it possible to

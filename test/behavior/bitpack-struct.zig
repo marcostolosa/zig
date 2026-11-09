@@ -119,7 +119,7 @@ test "consistent size of bitpack structs" {
 }
 
 test "correct sizeOf and offsets in bitpack structs" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -184,7 +184,7 @@ test "correct sizeOf and offsets in bitpack structs" {
 }
 
 test "nested bitpack structs" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -227,7 +227,7 @@ test "nested bitpack structs" {
 }
 
 test "regular in irregular bitpack struct" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
@@ -250,7 +250,7 @@ test "nested bitpack struct unaligned" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S1 = bitpack struct {
         a: u4,
@@ -320,7 +320,7 @@ test "nested bitpack struct unaligned" {
 test "byte-aligned field pointer offsets" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
 
     const S = struct {
@@ -407,7 +407,7 @@ test "nested bitpack struct field pointers" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
     const S2 = bitpack struct {
         base: u8,
@@ -442,7 +442,7 @@ test "nested bitpack struct field pointers" {
 test "@intFromPtr on a bitpack struct field" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
         const P = bitpack struct {
@@ -463,7 +463,7 @@ test "@intFromPtr on a bitpack struct field" {
 test "@intFromPtr on a bitpack struct field unaligned and nested" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S1 = bitpack struct {
         a: u4,
@@ -559,7 +559,7 @@ test "bitpack struct fields modification" {
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     // Originally reported at https://github.com/ziglang/zig/issues/16615
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const Small = bitpack struct(u16) {
         val: u8 = 0,
@@ -584,7 +584,7 @@ test "bitpack struct fields modification" {
 test "nested bitpack struct field access test" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
 
@@ -702,7 +702,7 @@ test "nested bitpack struct field access test" {
 
 test "nested bitpack struct at non-zero offset" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
 
     const Pair = bitpack struct(u24) {
@@ -734,7 +734,7 @@ test "nested bitpack struct at non-zero offset 2" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const S = struct {
@@ -796,7 +796,7 @@ test "nested bitpack struct at non-zero offset 2" {
 }
 
 test "runtime init of unnamed bitpack struct type" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -815,7 +815,7 @@ test "bitpack struct passed to callconv(.c) function" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
         const Bitpack = bitpack struct(u64) {
@@ -840,7 +840,7 @@ test "bitpack struct passed to callconv(.c) function" {
 test "overaligned pointer to bitpack struct" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
 
     const S = bitpack struct { a: u32, b: u32 };
@@ -867,7 +867,7 @@ test "pointer to container level bitpack struct field" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
 
     const S = bitpack struct(u32) {
@@ -890,7 +890,7 @@ test "pointer to container level bitpack struct field" {
 }
 
 test "store undefined to bitpack result location" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
@@ -913,7 +913,7 @@ test "bitcast back and forth" {
 
 // Originally reported at https://github.com/ziglang/zig/issues/14200
 test "field access of bitpack struct smaller than its abi size inside struct initialized with rls" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
 
@@ -936,7 +936,7 @@ test "modify nested bitpack struct aligned field" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const Options = bitpack struct {
         foo: bool = false,
@@ -965,7 +965,7 @@ test "modify nested bitpack struct aligned field" {
 test "assigning bitpack struct inside another bitpack struct" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
         const Inner = bitpack struct {
@@ -1008,7 +1008,7 @@ test "bitpack struct acts as a namespace" {
 }
 
 test "assignment to non-byte-aligned field in bitpack struct" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
@@ -1031,7 +1031,7 @@ test "assignment to non-byte-aligned field in bitpack struct" {
 test "bitpack struct field pointer aligned properly" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest; // TODO
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest; // TODO
 
     const Foo = bitpack struct {
         a: i32,
@@ -1047,7 +1047,7 @@ test "bitpack struct field pointer aligned properly" {
 }
 
 test "load flag from bitpack struct in union" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
@@ -1125,7 +1125,7 @@ test "2-byte bitpack struct argument in C calling convention" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = bitpack struct(u16) {
         x: u15 = 0,
@@ -1171,7 +1171,7 @@ test "bitpack struct equality" {
 }
 
 test "bitpack struct equality ignores padding bits" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
 
     const S = bitpack struct { b: bool };
@@ -1182,7 +1182,7 @@ test "bitpack struct equality ignores padding bits" {
 }
 
 test "bitpack struct with signed field" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
 
     var s: bitpack struct {
@@ -1195,7 +1195,7 @@ test "bitpack struct with signed field" {
 }
 
 test "assign bitpack struct initialized with RLS to bitpack struct literal field" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
@@ -1212,7 +1212,7 @@ test "assign bitpack struct initialized with RLS to bitpack struct literal field
 }
 
 test "bitpack struct store of comparison result" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
 
@@ -1263,7 +1263,7 @@ test "convert from/to backing int" {
 }
 
 test "equality with wide backing integer" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/35982
 
     const S = bitpack struct(i200) {

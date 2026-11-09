@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const abi = std.Build.abi.fuzz;
-const native_endian = @import("builtin").cpu.arch.endian();
+const native_endian = @import("builtin").target.cpu.arch.endian();
 
 fn testOne() callconv(.c) bool {
     return false;

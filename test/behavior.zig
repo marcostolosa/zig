@@ -111,25 +111,25 @@ test {
 
     _ = @import("behavior/x86_64.zig");
 
-    if (builtin.cpu.arch == .wasm32) {
+    if (builtin.target.cpu.arch == .wasm32) {
         _ = @import("behavior/wasm.zig");
     }
 
-    if (builtin.cpu.arch.isSpirv()) {
+    if (builtin.target.cpu.arch.isSpirv()) {
         _ = @import("behavior/spirv.zig");
     }
 
-    if (!builtin.cpu.arch.isSpirv() and builtin.os.tag != .wasi) {
+    if (!builtin.target.cpu.arch.isSpirv() and builtin.os.tag != .wasi) {
         _ = @import("behavior/asm.zig");
     }
 
     if (builtin.zig_backend != .stage2_arm and
-        !builtin.cpu.arch.isSpirv())
+        !builtin.target.cpu.arch.isSpirv())
     {
         _ = @import("behavior/export_keyword.zig");
     }
 
-    if (!builtin.cpu.arch.isSpirv() and !builtin.cpu.arch.isWasm()) {
+    if (!builtin.target.cpu.arch.isSpirv() and !builtin.target.cpu.arch.isWasm()) {
         // Due to lack of import/export of global support
         // (https://github.com/ziglang/zig/issues/4866), these tests correctly
         // cause linker errors, since a data symbol cannot be exported when
@@ -143,7 +143,7 @@ test {
 // This bug only repros in the root file
 test "dereference @embedFile() of a file full of zero bytes" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const contents = @embedFile("behavior/zero.bin").*;
     try @import("std").testing.expect(contents.len == 456);

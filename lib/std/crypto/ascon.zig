@@ -14,7 +14,7 @@ const debug = std.debug;
 const mem = std.mem;
 const testing = std.testing;
 const rotr = std.math.rotr;
-const native_endian = builtin.cpu.arch.endian();
+const native_endian = builtin.target.cpu.arch.endian();
 
 /// An Ascon state.
 ///

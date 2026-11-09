@@ -67,7 +67,7 @@ pub fn getModuleSlide(si: *SelfInfo, io: Io, address: usize) Error!usize {
     return module.base_address;
 }
 
-pub const can_unwind: bool = switch (builtin.cpu.arch) {
+pub const can_unwind: bool = switch (builtin.target.cpu.arch) {
     else => true,
     // On x86, `RtlVirtualUnwind` does not exist. We could in theory use `RtlCaptureStackBackTrace`
     // instead, but on x86, it turns out that function is just... doing FP unwinding with esp! It's
@@ -101,7 +101,7 @@ pub const UnwindContext = struct {
     pub fn init(ctx: *const std.debug.cpu_context.Native) UnwindContext {
         return .{
             .pc = @returnAddress(),
-            .cur = switch (builtin.cpu.arch) {
+            .cur = switch (builtin.target.cpu.arch) {
                 .x86_64 => std.mem.zeroInit(windows.CONTEXT, .{
                     .Rax = ctx.gprs.get(.rax),
                     .Rcx = ctx.gprs.get(.rcx),

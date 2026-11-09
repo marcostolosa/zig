@@ -301,7 +301,7 @@ fn SalsaNonVecImpl(comptime rounds: comptime_int) type {
     };
 }
 
-const SalsaImpl = if (builtin.cpu.arch == .x86_64)
+const SalsaImpl = if (builtin.target.cpu.arch == .x86_64)
     SalsaVecImpl
 else
     SalsaNonVecImpl;

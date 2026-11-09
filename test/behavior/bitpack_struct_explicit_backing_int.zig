@@ -2,10 +2,10 @@ const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
 const expectEqual = std.testing.expectEqual;
-const native_endian = builtin.cpu.arch.endian();
+const native_endian = builtin.target.cpu.arch.endian();
 
 test "bitpack struct explicit backing integer" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 

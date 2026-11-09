@@ -9,7 +9,7 @@ const builtin = @import("builtin");
 const math = std.math;
 const mem = std.mem;
 const expect = std.testing.expect;
-const arch = builtin.cpu.arch;
+const arch = builtin.target.cpu.arch;
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = compiler_rt.symbol;
 

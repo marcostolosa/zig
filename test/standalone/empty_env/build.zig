@@ -14,7 +14,7 @@ pub fn build(b: *std.Build) void {
         return;
     }
 
-    if (builtin.os.tag == .windows and builtin.cpu.arch == .aarch64) {
+    if (builtin.os.tag == .windows and builtin.target.cpu.arch == .aarch64) {
         // https://github.com/ziglang/zig/issues/13685
         return;
     }

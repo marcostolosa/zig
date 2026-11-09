@@ -3,7 +3,7 @@ const expect = std.testing.expect;
 const builtin = @import("builtin");
 
 test "inline scalar prongs" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     var x: usize = 0;
@@ -43,7 +43,7 @@ test "inline switch enums" {
 
 const U = union(E) { a: void, b: u2, c: u3, d: u4 };
 test "inline switch unions" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     var x: U = .a;
@@ -69,7 +69,7 @@ test "inline switch unions" {
 }
 
 test "inline else bool" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     var a = true;
     _ = &a;
@@ -92,7 +92,7 @@ test "inline else error" {
 }
 
 test "inline else enum" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     const E2 = enum(u8) { a = 2, b = 3, c = 4, d = 5 };
@@ -138,7 +138,7 @@ test "inline else int all values" {
 }
 
 test "inline switch capture is set when switch operand is comptime known" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const U2 = union(enum) {
         a: u32,

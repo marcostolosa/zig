@@ -864,7 +864,7 @@ pub fn init(ev: *Evented, backing_allocator: Allocator, options: InitOptions) !v
     main_thread.* = .{
         .required_align = {},
         .thread = undefined,
-        .idle_context = switch (builtin.cpu.arch) {
+        .idle_context = switch (builtin.target.cpu.arch) {
             .aarch64 => .{
                 .sp = @intFromPtr(allocated_slice[idle_stack_end_offset..].ptr),
                 .fp = @intFromPtr(ev),
@@ -1104,7 +1104,7 @@ const Completion = struct {
 };
 
 fn mainIdleEntry() callconv(.naked) void {
-    switch (builtin.cpu.arch) {
+    switch (builtin.target.cpu.arch) {
         .aarch64 => asm volatile (
             \\ mov x0, fp
             \\ mov fp, #0
@@ -1388,7 +1388,7 @@ const AsyncClosure = struct {
     }
 
     fn entry() callconv(.naked) void {
-        switch (builtin.cpu.arch) {
+        switch (builtin.target.cpu.arch) {
             .aarch64 => asm volatile (
                 \\ mov x0, sp
                 \\ b %[call]
@@ -1461,7 +1461,7 @@ fn concurrent(
     const closure: *AsyncClosure = .fromFiber(fiber);
     fiber.* = .{
         .required_align = {},
-        .context = switch (builtin.cpu.arch) {
+        .context = switch (builtin.target.cpu.arch) {
             .aarch64 => .{
                 .sp = @intFromPtr(closure),
                 .fp = 0,
@@ -1551,7 +1551,7 @@ const Group = struct {
         shared2: u30,
     };
     fn mutexPtr(group: Group) *Mutex {
-        return switch (comptime builtin.cpu.arch.endian()) {
+        return switch (comptime builtin.target.cpu.arch.endian()) {
             .little => @ptrCast(&group.ptr.state),
             .big => @ptrCast(@alignCast(
                 @as([*]u8, @ptrCast(&group.ptr.state)) + @sizeOf(usize) - @sizeOf(u32),
@@ -1753,7 +1753,7 @@ const Group = struct {
         }
 
         fn entry() callconv(.naked) void {
-            switch (builtin.cpu.arch) {
+            switch (builtin.target.cpu.arch) {
                 .aarch64 => asm volatile (
                     \\ mov x0, sp
                     \\ b %[call]
@@ -1824,7 +1824,7 @@ fn groupConcurrent(
     const closure: *Group.AsyncClosure = .fromFiber(fiber);
     fiber.* = .{
         .required_align = {},
-        .context = switch (builtin.cpu.arch) {
+        .context = switch (builtin.target.cpu.arch) {
             .aarch64 => .{
                 .sp = @intFromPtr(closure),
                 .fp = 0,

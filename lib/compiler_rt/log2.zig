@@ -10,7 +10,7 @@ const math = std.math;
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const maxInt = std.math.maxInt;
-const arch = builtin.cpu.arch;
+const arch = builtin.target.cpu.arch;
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = compiler_rt.symbol;
 

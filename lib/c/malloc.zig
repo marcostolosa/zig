@@ -41,7 +41,7 @@ comptime {
 
 const no_context: *anyopaque = undefined;
 const no_ra: usize = undefined;
-const vtable = switch (builtin.cpu.arch) {
+const vtable = switch (builtin.target.cpu.arch) {
     .wasm32, .wasm64 => std.heap.WasmAllocator.vtable,
     else => if (builtin.single_threaded) std.heap.BrkAllocator.vtable else std.heap.SmpAllocator.vtable,
 };

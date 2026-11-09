@@ -9,7 +9,7 @@ test "bool literals" {
 }
 
 test "cast bool to int" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const t = true;
@@ -49,7 +49,7 @@ test "compile time bool not" {
 }
 
 test "short circuit" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     try testShortCircuit(false, true);
     try comptime testShortCircuit(false, true);
@@ -95,7 +95,7 @@ fn testShortCircuit(f: bool, t: bool) !void {
 }
 
 test "or with noreturn operand" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const S = struct {
         fn foo(a: u32, b: u32) bool {

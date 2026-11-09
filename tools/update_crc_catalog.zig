@@ -128,7 +128,7 @@ fn @"i like cheese"(arena: std.mem.Allocator, io: Io, args: []const []const u8) 
         if (mem.eql(u8, name, "CRC-32/ISCSI")) {
             try code_writer.print(
                 \\
-                \\pub const {f} = if (builtin.cpu.hasAll(.x86, &.{{ .@"64bit", .crc32 }}))
+                \\pub const {f} = if (builtin.target.cpu.hasAll(.x86, &.{{ .@"64bit", .crc32 }}))
                 \\    @import("crc/Crc32c.zig")
                 \\else
                 \\    Generic(u{s}, .{{

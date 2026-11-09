@@ -194,7 +194,7 @@ pub fn init(k: *Kqueue, gpa: Allocator, options: InitOptions) !void {
     (idle_stack_end - 1)[0..1].* = .{@intFromPtr(k)};
     main_thread.* = .{
         .thread = undefined,
-        .idle_context = switch (builtin.cpu.arch) {
+        .idle_context = switch (builtin.target.cpu.arch) {
             .aarch64 => .{
                 .sp = @intFromPtr(idle_stack_end),
                 .fp = 0,
@@ -539,7 +539,7 @@ inline fn contextSwitch(message: *const SwitchMessage) *const SwitchMessage {
 }
 
 fn mainIdleEntry() callconv(.naked) void {
-    switch (builtin.cpu.arch) {
+    switch (builtin.target.cpu.arch) {
         .x86_64 => asm volatile (
             \\ movq (%%rsp), %%rdi
             \\ jmp %[mainIdle:P]
@@ -557,7 +557,7 @@ fn mainIdleEntry() callconv(.naked) void {
 }
 
 fn fiberEntry() callconv(.naked) void {
-    switch (builtin.cpu.arch) {
+    switch (builtin.target.cpu.arch) {
         .x86_64 => asm volatile (
             \\ leaq 8(%%rsp), %%rdi
             \\ jmp %[AsyncClosure_call:P]
@@ -694,7 +694,7 @@ fn concurrent(
     const closure: *AsyncClosure = .fromFiber(fiber);
     fiber.* = .{
         .required_align = {},
-        .context = switch (builtin.cpu.arch) {
+        .context = switch (builtin.target.cpu.arch) {
             .x86_64 => .{
                 .rsp = @intFromPtr(closure) - @sizeOf(usize),
                 .rbp = 0,

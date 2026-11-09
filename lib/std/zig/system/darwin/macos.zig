@@ -409,7 +409,7 @@ pub fn detectNativeCpuAndFeatures() ?Target.Cpu {
         else => return null,
     }
 
-    const current_arch = builtin.cpu.arch;
+    const current_arch = builtin.target.cpu.arch;
     switch (current_arch) {
         .aarch64 => {
             const model = switch (cpu_family) {

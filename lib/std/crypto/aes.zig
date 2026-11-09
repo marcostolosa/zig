@@ -2,12 +2,12 @@ const std = @import("../std.zig");
 const builtin = @import("builtin");
 const testing = std.testing;
 
-const has_aesni = builtin.cpu.has(.x86, .aes);
-const has_avx = builtin.cpu.has(.x86, .avx);
-const has_armaes = builtin.cpu.has(.aarch64, .aes);
-const use_aesni = builtin.cpu.arch == .x86_64 and has_aesni and has_avx;
+const has_aesni = builtin.target.cpu.has(.x86, .aes);
+const has_avx = builtin.target.cpu.has(.x86, .avx);
+const has_armaes = builtin.target.cpu.has(.aarch64, .aes);
+const use_aesni = builtin.target.cpu.arch == .x86_64 and has_aesni and has_avx;
 // C backend doesn't currently support passing vectors to inline asm (#37125)
-const use_armaes = builtin.cpu.arch == .aarch64 and (builtin.zig_backend != .stage2_c or !builtin.os.tag.isDarwin()) and has_armaes;
+const use_armaes = builtin.target.cpu.arch == .aarch64 and (builtin.zig_backend != .stage2_c or !builtin.os.tag.isDarwin()) and has_armaes;
 const impl = if (use_aesni) impl: {
     break :impl @import("aes/aesni.zig");
 } else if (use_armaes) impl: {

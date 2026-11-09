@@ -1,4 +1,4 @@
-pub const Clobbers = switch (@import("builtin").cpu.arch) {
+pub const Clobbers = switch (@import("builtin").target.cpu.arch) {
     .x86_16, .x86, .x86c16, .x86_64 => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.

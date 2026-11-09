@@ -93,7 +93,7 @@ const Allocator = std.mem.Allocator;
 const default_page_size: usize = switch (builtin.os.tag) {
     // Makes `std.heap.PageAllocator` take the happy path.
     .windows => 64 * 1024,
-    else => switch (builtin.cpu.arch) {
+    else => switch (builtin.target.cpu.arch) {
         // Max alignment supported by `std.heap.WasmAllocator`.
         .wasm32, .wasm64 => 64 * 1024,
         // Avoids too many active mappings when `page_size_max` is low.

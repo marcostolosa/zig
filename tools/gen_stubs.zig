@@ -56,7 +56,7 @@
 //       - they definitely need to go into the correct section
 
 const builtin = @import("builtin");
-const native_endian = builtin.cpu.arch.endian();
+const native_endian = builtin.target.cpu.arch.endian();
 
 const std = @import("std");
 const Io = std.Io;

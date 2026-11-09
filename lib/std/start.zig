@@ -1,7 +1,7 @@
 // This file is included in the compilation unit when exporting an executable.
 
 const builtin = @import("builtin");
-const native_arch = builtin.cpu.arch;
+const native_arch = builtin.target.cpu.arch;
 const native_os = builtin.os.tag;
 const is_wasm = native_arch.isWasm();
 
@@ -211,7 +211,7 @@ fn _start() callconv(.naked) noreturn {
         });
 
     // Move this to the riscv prong below when this is resolved: https://github.com/ziglang/zig/issues/20918
-    if (builtin.cpu.arch.isRiscv() and builtin.zig_backend != .stage2_riscv64) asm volatile (
+    if (builtin.target.cpu.arch.isRiscv() and builtin.zig_backend != .stage2_riscv64) asm volatile (
         \\ .weak __global_pointer$
         \\ .hidden __global_pointer$
         \\ .option push
@@ -569,7 +569,7 @@ fn _start() callconv(.naked) noreturn {
 
 fn WinStartup() callconv(.withStackAlign(.c, 1)) noreturn {
     // Switch from the x87 fpu state set by windows to the state expected by the gnu abi.
-    if (builtin.cpu.arch.isX86() and builtin.target.abi == .gnu) asm volatile ("fninit");
+    if (builtin.target.cpu.arch.isX86() and builtin.target.abi == .gnu) asm volatile ("fninit");
 
     if (!builtin.single_threaded and !builtin.link_libc) {
         _ = @import("os/windows/tls.zig");
@@ -585,7 +585,7 @@ fn WinStartup() callconv(.withStackAlign(.c, 1)) noreturn {
 
 fn wWinMainCRTStartup() callconv(.withStackAlign(.c, 1)) noreturn {
     // Switch from the x87 fpu state set by windows to the state expected by the gnu abi.
-    if (builtin.cpu.arch.isX86() and builtin.target.abi == .gnu) asm volatile ("fninit");
+    if (builtin.target.cpu.arch.isX86() and builtin.target.abi == .gnu) asm volatile ("fninit");
 
     if (!builtin.single_threaded and !builtin.link_libc) {
         _ = @import("os/windows/tls.zig");

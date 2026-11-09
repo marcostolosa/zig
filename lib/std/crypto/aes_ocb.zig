@@ -101,9 +101,9 @@ fn AesOcb(comptime Aes: anytype) type {
             return offset;
         }
 
-        const has_aesni = builtin.cpu.has(.x86, .aes);
-        const has_armaes = builtin.cpu.has(.aarch64, .aes);
-        const wb: usize = if ((builtin.cpu.arch == .x86_64 and has_aesni) or (builtin.cpu.arch == .aarch64 and has_armaes))
+        const has_aesni = builtin.target.cpu.has(.x86, .aes);
+        const has_armaes = builtin.target.cpu.has(.aarch64, .aes);
+        const wb: usize = if ((builtin.target.cpu.arch == .x86_64 and has_aesni) or (builtin.target.cpu.arch == .aarch64 and has_armaes))
             4 // empirically what works best on x86_64 and aarch64 with AES-NI/ARM Crypto
         else
             Aes.block.parallel.optimal_parallel_blocks;

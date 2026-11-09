@@ -32,7 +32,7 @@ test "truncate.u0.var" {
 }
 
 test "truncate on comptime integer" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const x: u16 = @truncate(9999);
     try expect(x == 9999);
@@ -51,7 +51,7 @@ fn testTruncate(comptime S: type, a: S, comptime D: type, expected: D) !void {
 
 test "@truncate > 128 bits" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     try testTruncate(u140, 0, u128, 0);
     try testTruncate(u140, maxInt(u140), u128, maxInt(u128));
@@ -92,7 +92,7 @@ test "truncate on vectors" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
         fn doTheTest() !void {

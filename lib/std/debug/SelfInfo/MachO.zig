@@ -294,7 +294,7 @@ fn unwindFrameInner(si: *SelfInfo, io: Io, context: *UnwindContext) !usize {
     if (entry.raw_encoding == 0) return error.MissingDebugInfo;
 
     const encoding: macho.CompactUnwindEncoding = @bitCast(entry.raw_encoding);
-    const new_ip = switch (builtin.cpu.arch) {
+    const new_ip = switch (builtin.target.cpu.arch) {
         .x86_64 => switch (encoding.mode.x86_64) {
             .OLD => return error.UnsupportedDebugInfo,
             .RBP_FRAME => ip: {
@@ -592,7 +592,7 @@ const Module = struct {
     fn getFile(module: *Module, gpa: Allocator, io: Io) Error!*MachOFile {
         if (module.file == null) {
             const path = getModuleNameInner(module.text_base).?;
-            module.file = MachOFile.load(gpa, io, path, builtin.cpu.arch) catch |err| switch (err) {
+            module.file = MachOFile.load(gpa, io, path, builtin.target.cpu.arch) catch |err| switch (err) {
                 error.InvalidMachO, error.InvalidDwarf => error.InvalidDebugInfo,
                 error.MissingDebugInfo, error.OutOfMemory, error.UnsupportedDebugInfo, error.ReadFailed => |e| e,
             };

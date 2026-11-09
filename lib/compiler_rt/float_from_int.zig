@@ -55,7 +55,7 @@ comptime {
         symbol(&__floattitf, "__floattikf");
         symbol(&__floateitf, "__floateikf");
     } else {
-        if (builtin.cpu.arch.isX86_32()) {
+        if (builtin.target.cpu.arch.isX86_32()) {
             symbol(&__floattitf_x86, "__floattitf");
         } else {
             symbol(&__floattitf, "__floattitf");
@@ -285,7 +285,7 @@ comptime {
         symbol(&__floatuntitf, "__floatuntikf");
         symbol(&__floatuneitf, "__floatuneikf");
     } else {
-        if (builtin.cpu.arch.isX86_32()) {
+        if (builtin.target.cpu.arch.isX86_32()) {
             symbol(&__floatuntitf_x86, "__floatuntitf");
         } else {
             symbol(&__floatuntitf, "__floatuntitf");
@@ -512,7 +512,7 @@ inline fn floatFromInt(comptime T: type, x: anytype) T {
     return @bitCast(sign_bit | result);
 }
 
-const endian = builtin.cpu.arch.endian();
+const endian = builtin.target.cpu.arch.endian();
 inline fn limb(limbs: []const u32, index: usize) u32 {
     return switch (endian) {
         .little => limbs[index],

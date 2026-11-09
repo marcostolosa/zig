@@ -16,7 +16,7 @@ const Writer = std.Io.Writer;
 
 const max_doc_file_size = 10 * 1024 * 1024;
 
-const obj_ext = builtin.object_format.fileExt(builtin.cpu.arch);
+const obj_ext = builtin.object_format.fileExt(builtin.target.cpu.arch);
 
 const usage =
     \\Usage: docgen [options] input output

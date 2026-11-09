@@ -7,7 +7,7 @@ pub const STDIN_FILENO = 0;
 pub const STDOUT_FILENO = 1;
 pub const STDERR_FILENO = 2;
 pub const PATH_MAX = 1023;
-pub const syscall_bits = switch (builtin.cpu.arch) {
+pub const syscall_bits = switch (builtin.target.cpu.arch) {
     .x86_64 => @import("plan9/x86_64.zig"),
     else => @compileError("more plan9 syscall implementations (needs more inline asm in stage2"),
 };

@@ -1,10 +1,10 @@
-pub const supported = switch (builtin.cpu.arch) {
+pub const supported = switch (builtin.target.cpu.arch) {
     .aarch64, .riscv64, .x86_64 => true,
     else => false,
 };
 
 /// Stores the cpu state of an inactive fiber.
-pub const Context = switch (builtin.cpu.arch) {
+pub const Context = switch (builtin.target.cpu.arch) {
     .aarch64 => extern struct {
         sp: u64,
         fp: u64,
@@ -27,7 +27,7 @@ pub const Switch = extern struct { old: *Context, new: *Context };
 
 /// Fills `s.old` with the current cpu state, and restores the cpu state stored in `s.new`.
 pub inline fn contextSwitch(s: *const Switch) *const Switch {
-    return switch (builtin.cpu.arch) {
+    return switch (builtin.target.cpu.arch) {
         .aarch64 => asm volatile (
             \\ ldp x0, x2, [x1]
             \\ ldr x3, [x2, #16]

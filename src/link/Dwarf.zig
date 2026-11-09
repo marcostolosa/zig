@@ -1983,7 +1983,7 @@ pub const WipNav = struct {
             return &counter.dw.writer;
         }
         fn endian(_: ExprLocCounter) std.lang.Endian {
-            return @import("builtin").cpu.arch.endian();
+            return @import("builtin").target.cpu.arch.endian();
         }
         fn addrSym(counter: *ExprLocCounter, _: link.File.SymbolId) Writer.Error!void {
             try counter.dw.writer.splatByteAll(undefined, @backingInt(counter.address_size));

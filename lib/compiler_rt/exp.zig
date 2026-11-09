@@ -5,7 +5,7 @@
 // https://git.musl-libc.org/cgit/musl/tree/src/math/exp.c
 
 const builtin = @import("builtin");
-const arch = builtin.cpu.arch;
+const arch = builtin.target.cpu.arch;
 
 const std = @import("std");
 const math = std.math;

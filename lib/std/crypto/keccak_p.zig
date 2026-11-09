@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const assert = std.debug.assert;
 const math = std.math;
 const mem = std.mem;
-const native_endian = builtin.cpu.arch.endian();
+const native_endian = builtin.target.cpu.arch.endian();
 const mode = @import("builtin").mode;
 
 /// The Keccak-f permutation.

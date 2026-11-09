@@ -1,7 +1,7 @@
 const mem = @This();
 
 const builtin = @import("builtin");
-const native_endian = builtin.cpu.arch.endian();
+const native_endian = builtin.target.cpu.arch.endian();
 
 const std = @import("std.zig");
 const debug = std.debug;
@@ -476,7 +476,7 @@ test zeroes {
     }
     try testing.expectEqual(@as(@TypeOf(b.vector_u32), @splat(0)), b.vector_u32);
     try testing.expectEqual(@as(@TypeOf(b.vector_f32), @splat(0.0)), b.vector_f32);
-    if (!(builtin.zig_backend == .stage2_llvm and builtin.cpu.arch == .hexagon)) {
+    if (!(builtin.zig_backend == .stage2_llvm and builtin.target.cpu.arch == .hexagon)) {
         try testing.expectEqual(@as(@TypeOf(b.vector_bool), @splat(false)), b.vector_bool);
     }
     try testing.expectEqual(@as(?u8, null), b.optional_int);
@@ -1947,7 +1947,7 @@ pub fn readVarPackedInt(
 test readVarPackedInt {
     const T = bitpack struct(u16) { a: u3, b: u7, c: u6 };
     var st = T{ .a = 1, .b = 2, .c = 4 };
-    const b_field = readVarPackedInt(u64, std.mem.asBytes(&st), @bitOffsetOf(T, "b"), 7, builtin.cpu.arch.endian(), .unsigned);
+    const b_field = readVarPackedInt(u64, std.mem.asBytes(&st), @bitOffsetOf(T, "b"), 7, builtin.target.cpu.arch.endian(), .unsigned);
     try std.testing.expectEqual(st.b, b_field);
 }
 
@@ -2056,7 +2056,7 @@ pub fn readPackedInt(comptime T: type, bytes: []const u8, bit_offset: usize, end
 test readPackedInt {
     const T = bitpack struct(u16) { a: u3, b: u7, c: u6 };
     var st = T{ .a = 1, .b = 2, .c = 4 };
-    const b_field = readPackedInt(u7, std.mem.asBytes(&st), @bitOffsetOf(T, "b"), builtin.cpu.arch.endian());
+    const b_field = readPackedInt(u7, std.mem.asBytes(&st), @bitOffsetOf(T, "b"), builtin.target.cpu.arch.endian());
     try std.testing.expectEqual(st.b, b_field);
 }
 
@@ -2204,7 +2204,7 @@ pub fn writePackedInt(comptime T: type, bytes: []u8, bit_offset: usize, value: T
 test writePackedInt {
     const T = bitpack struct(u16) { a: u3, b: u7, c: u6 };
     var st = T{ .a = 1, .b = 2, .c = 4 };
-    writePackedInt(u7, std.mem.asBytes(&st), @bitOffsetOf(T, "b"), 0x7f, builtin.cpu.arch.endian());
+    writePackedInt(u7, std.mem.asBytes(&st), @bitOffsetOf(T, "b"), 0x7f, builtin.target.cpu.arch.endian());
     try std.testing.expectEqual(T{ .a = 1, .b = 0x7f, .c = 4 }, st);
 }
 
@@ -2268,7 +2268,7 @@ test writeVarPackedInt {
     const T = bitpack struct(u16) { a: u3, b: u7, c: u6 };
     var st = T{ .a = 1, .b = 2, .c = 4 };
     const value: u64 = 0x7f;
-    writeVarPackedInt(std.mem.asBytes(&st), @bitOffsetOf(T, "b"), 7, value, builtin.cpu.arch.endian());
+    writeVarPackedInt(std.mem.asBytes(&st), @bitOffsetOf(T, "b"), 7, value, builtin.target.cpu.arch.endian());
     try testing.expectEqual(T{ .a = 1, .b = value, .c = 4 }, st);
 }
 
@@ -5085,7 +5085,7 @@ pub fn alignInSlice(slice: anytype, comptime new_alignment: usize) ?AlignedSlice
 test "read/write(Var)PackedInt" {
     // This test generates too much code to execute on WASI.
     // LLVM backend fails with "too many locals: locals exceed maximum"
-    if (builtin.cpu.arch.isWasm()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isWasm()) return error.SkipZigTest;
 
     const foreign_endian: Endian = if (native_endian == .big) .little else .big;
     const expect = std.testing.expect;

@@ -13,7 +13,7 @@ pub fn build(b: *std.Build) void {
 
     // ld and lld do not agree on the format of the .hash section
     // Tracked by https://codeberg.org/ziglang/zig/issues/35746
-    if (builtin.cpu.arch == .s390x and builtin.os.tag == .linux) return;
+    if (builtin.target.cpu.arch == .s390x and builtin.os.tag == .linux) return;
 
     const lib = b.addLibrary(.{
         .linkage = .dynamic,

@@ -41,7 +41,7 @@ fn Hash(comptime endian: std.builtin.Endian, comptime shift_key: bool) type {
         // This is no longer the case -- Modern CPUs, including ARM-based ones, have a fast
         // carryless multiplication instruction; using 4 multiplications is now faster than
         // 3 multiplications with extra shifts and additions.
-        const mul_algorithm = if (builtin.cpu.arch.isX86_32()) .karatsuba else .schoolbook;
+        const mul_algorithm = if (builtin.target.cpu.arch.isX86_32()) .karatsuba else .schoolbook;
 
         hx: [pc_count]Precomp,
         acc: u128 = 0,
@@ -155,7 +155,7 @@ fn Hash(comptime endian: std.builtin.Endian, comptime shift_key: bool) type {
         }
 
         /// clmulSoft128_64 is faster on platforms with no native 128-bit registers.
-        const clmulSoft = switch (builtin.cpu.arch) {
+        const clmulSoft = switch (builtin.target.cpu.arch) {
             .wasm32, .wasm64 => clmulSoft128_64,
             else => if (std.simd.suggestVectorLength(u128) != null) clmulSoft128 else clmulSoft128_64,
         };
@@ -284,13 +284,13 @@ fn Hash(comptime endian: std.builtin.Endian, comptime shift_key: bool) type {
             return d ^ hi;
         }
 
-        const has_pclmul = builtin.cpu.has(.x86, .pclmul);
-        const has_avx = builtin.cpu.has(.x86, .avx);
-        const has_armaes = builtin.cpu.has(.aarch64, .aes);
+        const has_pclmul = builtin.target.cpu.has(.x86, .pclmul);
+        const has_avx = builtin.target.cpu.has(.x86, .avx);
+        const has_armaes = builtin.target.cpu.has(.aarch64, .aes);
         // C backend doesn't currently support passing vectors to inline asm.
-        const clmul = if (builtin.cpu.arch == .x86_64 and builtin.zig_backend != .stage2_c and has_pclmul and has_avx) impl: {
+        const clmul = if (builtin.target.cpu.arch == .x86_64 and builtin.zig_backend != .stage2_c and has_pclmul and has_avx) impl: {
             break :impl clmulPclmul;
-        } else if (builtin.cpu.arch == .aarch64 and builtin.zig_backend != .stage2_c and has_armaes) impl: {
+        } else if (builtin.target.cpu.arch == .aarch64 and builtin.zig_backend != .stage2_c and has_armaes) impl: {
             break :impl clmulPmull;
         } else impl: {
             break :impl clmulSoft;

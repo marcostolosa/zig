@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const assert = std.debug.assert;
 const testing = std.testing;
 const mem = std.mem;
-const native_endian = builtin.cpu.arch.endian();
+const native_endian = builtin.target.cpu.arch.endian();
 const Allocator = std.mem.Allocator;
 
 /// Use this to replace an unknown, unrecognized, or unrepresentable character.

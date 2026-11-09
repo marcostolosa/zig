@@ -313,7 +313,7 @@ pub fn parseObject(
 const Archive = @This();
 
 const builtin = @import("builtin");
-const native_endian = builtin.cpu.arch.endian();
+const native_endian = builtin.target.cpu.arch.endian();
 
 const std = @import("std");
 const mem = std.mem;

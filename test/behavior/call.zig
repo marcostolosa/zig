@@ -23,7 +23,7 @@ test "basic invocations" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     if (builtin.zig_backend == .stage2_c and builtin.os.tag == .windows) return error.SkipZigTest; // MSVC doesn't support tail call modifiers
 
@@ -61,7 +61,7 @@ test "basic invocations" {
 test "tuple parameters" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const add = struct {
         fn add(a: i32, b: i32) i32 {
@@ -92,7 +92,7 @@ test "tuple parameters" {
 }
 
 test "result location of function call argument through runtime condition and struct init" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -113,7 +113,7 @@ test "result location of function call argument through runtime condition and st
 }
 
 test "function call with 40 arguments" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
@@ -275,11 +275,11 @@ test "forced tail call" {
     if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     if (builtin.zig_backend == .stage2_llvm or builtin.zig_backend == .stage2_c) {
-        if (builtin.cpu.arch.isMips() or builtin.cpu.arch.isPowerpc() or builtin.cpu.arch.isWasm()) {
+        if (builtin.target.cpu.arch.isMips() or builtin.target.cpu.arch.isPowerpc() or builtin.target.cpu.arch.isWasm()) {
             return error.SkipZigTest;
         }
     }
@@ -310,11 +310,11 @@ test "inline call preserves tail call" {
     if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     if (builtin.zig_backend == .stage2_llvm or builtin.zig_backend == .stage2_c) {
-        if (builtin.cpu.arch.isMips() or builtin.cpu.arch.isPowerpc() or builtin.cpu.arch.isWasm()) {
+        if (builtin.target.cpu.arch.isMips() or builtin.target.cpu.arch.isPowerpc() or builtin.target.cpu.arch.isWasm()) {
             return error.SkipZigTest;
         }
     }
@@ -343,7 +343,7 @@ test "inline call preserves tail call" {
 
 test "inline call doesn't re-evaluate non generic struct" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
         fn foo(f: struct { a: u8, b: u8 }) !void {
@@ -357,7 +357,7 @@ test "inline call doesn't re-evaluate non generic struct" {
 }
 
 test "Enum constructed by @Enum passed as generic argument" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const S = struct {
         const E = std.meta.FieldEnum(struct {
@@ -411,7 +411,7 @@ test "recursive inline call with comptime known argument" {
 
 test "inline while with @call" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
         fn inc(a: *u32) void {
@@ -427,7 +427,7 @@ test "inline while with @call" {
 }
 
 test "method call as parameter type" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const S = struct {
         fn foo(x: anytype, y: @TypeOf(x).Inner()) @TypeOf(y) {
@@ -442,7 +442,7 @@ test "method call as parameter type" {
 }
 
 test "non-anytype generic parameters provide result type" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -471,7 +471,7 @@ test "non-anytype generic parameters provide result type" {
 }
 
 test "argument to generic function has correct result type" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
@@ -499,7 +499,7 @@ test "argument to generic function has correct result type" {
 }
 
 test "call inline fn through pointer" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
         inline fn foo(x: u8) !void {
@@ -525,7 +525,7 @@ test "call function in comptime field" {
 test "call function pointer in comptime field" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const Auto = struct {
         auto: [max_len]u8 = undefined,
@@ -546,7 +546,7 @@ test "call function pointer in comptime field" {
 }
 
 test "generic function pointer can be called" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const S = struct {
         var ok = false;
@@ -577,7 +577,7 @@ test "value returned from comptime function is comptime known" {
 
 test "registers get overwritten when ignoring return" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
-    if (builtin.cpu.arch != .x86_64 or builtin.os.tag != .linux) return error.SkipZigTest;
+    if (builtin.target.cpu.arch != .x86_64 or builtin.os.tag != .linux) return error.SkipZigTest;
 
     const S = struct {
         fn open() usize {
@@ -623,7 +623,7 @@ test "call with union with zero sized field is not memorized incorrectly" {
 test "function call with cast to anyopaque pointer" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const Foo = struct {
         y: u8,
@@ -641,10 +641,10 @@ test "arguments pointed to on stack into tailcall" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c and builtin.os.tag == .windows) return error.SkipZigTest; // MSVC doesn't support always tail calls
 
-    switch (builtin.cpu.arch) {
+    switch (builtin.target.cpu.arch) {
         .wasm32,
         .wasm64,
         .mips,
@@ -715,11 +715,11 @@ test "tail call function pointer" {
     if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     if (builtin.zig_backend == .stage2_llvm or builtin.zig_backend == .stage2_c) {
-        if (builtin.cpu.arch.isMips() or builtin.cpu.arch.isPowerpc() or builtin.cpu.arch.isWasm()) {
+        if (builtin.target.cpu.arch.isMips() or builtin.target.cpu.arch.isPowerpc() or builtin.target.cpu.arch.isWasm()) {
             return error.SkipZigTest;
         }
     }
@@ -745,10 +745,10 @@ test "tail call function pointer" {
 test "tail call with potentially extended types" {
     if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     if (builtin.zig_backend == .stage2_llvm or builtin.zig_backend == .stage2_c) {
-        if (builtin.cpu.arch.isMips() or builtin.cpu.arch.isPowerpc() or builtin.cpu.arch.isWasm()) {
+        if (builtin.target.cpu.arch.isMips() or builtin.target.cpu.arch.isPowerpc() or builtin.target.cpu.arch.isWasm()) {
             return error.SkipZigTest;
         }
     }

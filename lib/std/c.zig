@@ -1,8 +1,8 @@
 const builtin = @import("builtin");
 const native_abi = builtin.target.abi;
-const native_arch = builtin.cpu.arch;
+const native_arch = builtin.target.cpu.arch;
 const native_os = builtin.os.tag;
-const native_endian = builtin.cpu.arch.endian();
+const native_endian = builtin.target.cpu.arch.endian();
 
 const std = @import("std");
 const c = @This();
@@ -4392,12 +4392,12 @@ pub const cmsg_align = switch (native_os) {
     .freebsd => @sizeOf(*anyopaque),
     // https://github.com/DragonFlyBSD/DragonFlyBSD/blob/d1f4fb943c73e2b61ddabff6aa48ce7551db72f4/sys/sys/socket.h#L441
     // https://github.com/DragonFlyBSD/DragonFlyBSD/blob/d1f4fb943c73e2b61ddabff6aa48ce7551db72f4/sys/cpu/x86_64/include/alignbytes.h#L35
-    .dragonfly => switch (builtin.cpu.arch) {
+    .dragonfly => switch (builtin.target.cpu.arch) {
         .x86_64 => @sizeOf(c_long),
         else => {},
     },
     // https://github.com/NetBSD/src/blob/ba8e1774fd9c0c26ecca461c07bc95d9ebb69579/sys/sys/socket.h#L544
-    .netbsd => switch (builtin.cpu.arch) {
+    .netbsd => switch (builtin.target.cpu.arch) {
         // https://github.com/NetBSD/src/blob/ac016822f750dc9166c84b6d2657479992622192/sys/arch/arm/include/cdefs.h#L63
         .aarch64, .aarch64_be => @sizeOf(i128),
         .arm, .armeb => @sizeOf(c_longlong),
@@ -8214,7 +8214,7 @@ pub const pthread_key_t = switch (native_os) {
 };
 
 pub const padded_pthread_spin_t = switch (native_os) {
-    .netbsd => switch (builtin.cpu.arch) {
+    .netbsd => switch (builtin.target.cpu.arch) {
         .x86, .x86_64 => u32,
         .sparc, .sparc64 => u32,
         else => pthread_spin_t,
@@ -8223,7 +8223,7 @@ pub const padded_pthread_spin_t = switch (native_os) {
 };
 
 pub const pthread_spin_t = switch (native_os) {
-    .netbsd => switch (builtin.cpu.arch) {
+    .netbsd => switch (builtin.target.cpu.arch) {
         .aarch64, .aarch64_be => u8,
         .arm, .armeb => i32,
         .m68k => u8,
@@ -9783,7 +9783,7 @@ pub const NSIG = switch (native_os) {
 
 pub const MINSIGSTKSZ = switch (native_os) {
     .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => 32768,
-    .freebsd => switch (builtin.cpu.arch) {
+    .freebsd => switch (builtin.target.cpu.arch) {
         .powerpc64, .powerpc64le, .x86, .x86_64 => 2048,
         .arm, .aarch64, .riscv64 => 4096,
         else => @compileError("unsupported arch"),

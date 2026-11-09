@@ -10,7 +10,7 @@ const maxInt = std.math.maxInt;
 const elf = std.elf;
 const vdso = @import("linux/vdso.zig");
 const dl = @import("../dynamic_library.zig");
-const native_arch = builtin.cpu.arch;
+const native_arch = builtin.target.cpu.arch;
 const native_abi = builtin.target.abi;
 const native_endian = native_arch.endian();
 const is_loongarch = native_arch.isLoongarch();
@@ -979,12 +979,12 @@ pub const getauxval = if (builtin.link_libc) {} else struct {
 // Some architectures (and some syscalls) require 64bit parameters to be passed
 // in a even-aligned register pair.
 const require_aligned_register_pair =
-    builtin.cpu.arch.isArm() or
-    builtin.cpu.arch == .csky or
-    builtin.cpu.arch == .hexagon or
-    builtin.cpu.arch.isMips32() or
-    builtin.cpu.arch.isPowerpc32() or
-    builtin.cpu.arch.isXtensa();
+    builtin.target.cpu.arch.isArm() or
+    builtin.target.cpu.arch == .csky or
+    builtin.target.cpu.arch == .hexagon or
+    builtin.target.cpu.arch.isMips32() or
+    builtin.target.cpu.arch.isPowerpc32() or
+    builtin.target.cpu.arch.isXtensa();
 
 // Split a 64bit value into a {LSB,MSB} pair.
 // The LE/BE variants specify the endianness to assume.

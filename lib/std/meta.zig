@@ -713,7 +713,7 @@ test eql {
     try testing.expect(eql(CU{ .a = {} }, .a));
     try testing.expect(!eql(CU{ .a = {} }, .b));
 
-    if (builtin.cpu.arch == .hexagon) return error.SkipZigTest;
+    if (builtin.target.cpu.arch == .hexagon) return error.SkipZigTest;
 
     const V = @Vector(4, u32);
     const v1: V = @splat(1);

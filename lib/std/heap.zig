@@ -43,7 +43,7 @@ pub const memory_pool = @import("heap/memory_pool.zig");
 ///
 /// On many systems, the actual page size can only be determined at runtime
 /// with `pageSize`.
-pub const page_size_min: usize = std.options.page_size_min orelse (page_size_min_default orelse @compileError(@tagName(builtin.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ " has unknown page_size_min; populate std.options.page_size_min"));
+pub const page_size_min: usize = std.options.page_size_min orelse (page_size_min_default orelse @compileError(@tagName(builtin.target.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ " has unknown page_size_min; populate std.options.page_size_min"));
 /// comptime-known maximum page size of the target.
 ///
 /// Targeting a system with a larger page size may require overriding
@@ -54,7 +54,7 @@ pub const page_size_min: usize = std.options.page_size_min orelse (page_size_min
 pub const page_size_max: usize = std.options.page_size_max orelse (page_size_max_default orelse if (builtin.os.tag == .freestanding or builtin.os.tag == .other)
     @compileError("freestanding/other page_size_max must provided with std.options.page_size_max")
 else
-    @compileError(@tagName(builtin.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ " has unknown page_size_max; populate std.options.page_size_max"));
+    @compileError(@tagName(builtin.target.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ " has unknown page_size_max; populate std.options.page_size_max"));
 
 /// If the page size is comptime-known, return value is comptime.
 /// Otherwise, calls `std.options.queryPageSize` which by default queries the
@@ -113,7 +113,7 @@ pub fn defaultQueryPageSize() usize {
         else if (builtin.os.tag == .freestanding or builtin.os.tag == .other)
             @compileError("unsupported target: freestanding/other")
         else
-            @compileError("pageSize on " ++ @tagName(builtin.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ " is not supported without linking libc, using the default implementation"),
+            @compileError("pageSize on " ++ @tagName(builtin.target.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ " is not supported without linking libc, using the default implementation"),
     };
     if (size == 0) size = page_size_max;
 
@@ -125,7 +125,7 @@ pub fn defaultQueryPageSize() usize {
 }
 
 test defaultQueryPageSize {
-    if (builtin.cpu.arch.isWasm()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isWasm()) return error.SkipZigTest;
     assert(std.math.isPowerOfTwo(defaultQueryPageSize()));
 }
 
@@ -565,12 +565,12 @@ pub fn testAllocatorAlignedShrink(base_allocator: mem.Allocator) !void {
 }
 
 const page_size_min_default: ?usize = switch (builtin.os.tag) {
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => switch (builtin.cpu.arch) {
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => switch (builtin.target.cpu.arch) {
         .x86_64 => 4 << 10,
         .aarch64 => 16 << 10,
         else => null,
     },
-    .windows => switch (builtin.cpu.arch) {
+    .windows => switch (builtin.target.cpu.arch) {
         // -- <https://devblogs.microsoft.com/oldnewthing/20210510-00/?p=105200>
         .x86, .x86_64 => 4 << 10,
         // SuperH => 4 << 10,
@@ -581,13 +581,13 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
         .thumb, .thumbeb, .arm, .armeb, .aarch64, .aarch64_be => 4 << 10,
         else => null,
     },
-    .wasi => switch (builtin.cpu.arch) {
+    .wasi => switch (builtin.target.cpu.arch) {
         .wasm32, .wasm64 => 64 << 10,
         else => null,
     },
     // https://github.com/tianocore/edk2/blob/b158dad150bf02879668f72ce306445250838201/MdePkg/Include/Uefi/UefiBaseType.h#L180-L187
     .uefi => 4 << 10,
-    .freebsd => switch (builtin.cpu.arch) {
+    .freebsd => switch (builtin.target.cpu.arch) {
         // FreeBSD/sys/*
         .x86, .x86_64 => 4 << 10,
         .thumb, .thumbeb, .arm, .armeb => 4 << 10,
@@ -596,7 +596,7 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
         .riscv32, .riscv64 => 4 << 10,
         else => null,
     },
-    .netbsd => switch (builtin.cpu.arch) {
+    .netbsd => switch (builtin.target.cpu.arch) {
         // NetBSD/sys/arch/*
         .alpha => 8 << 10,
         .x86, .x86_64 => 4 << 10,
@@ -613,11 +613,11 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
         .m68k => 2 << 10,
         else => null,
     },
-    .dragonfly => switch (builtin.cpu.arch) {
+    .dragonfly => switch (builtin.target.cpu.arch) {
         .x86, .x86_64 => 4 << 10,
         else => null,
     },
-    .openbsd => switch (builtin.cpu.arch) {
+    .openbsd => switch (builtin.target.cpu.arch) {
         // OpenBSD/sys/arch/*
         .alpha => 8 << 10,
         .hppa => 4 << 10,
@@ -631,12 +631,12 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
         .sparc64 => 8 << 10,
         else => null,
     },
-    .illumos => switch (builtin.cpu.arch) {
+    .illumos => switch (builtin.target.cpu.arch) {
         // src/uts/*/sys/machparam.h
         .x86_64 => 4 << 10,
         else => null,
     },
-    .fuchsia => switch (builtin.cpu.arch) {
+    .fuchsia => switch (builtin.target.cpu.arch) {
         // fuchsia/kernel/arch/*/include/arch/defines.h
         .x86_64 => 4 << 10,
         .aarch64, .aarch64_be => 4 << 10,
@@ -645,7 +645,7 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
     },
     // https://github.com/SerenityOS/serenity/blob/62b938b798dc009605b5df8a71145942fc53808b/Kernel/API/POSIX/sys/limits.h#L11-L13
     .serenity => 4 << 10,
-    .haiku => switch (builtin.cpu.arch) {
+    .haiku => switch (builtin.target.cpu.arch) {
         // haiku/headers/posix/arch/*/limits.h
         .thumb, .thumbeb, .arm, .armeb => 4 << 10,
         .aarch64, .aarch64_be => 4 << 10,
@@ -657,13 +657,13 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
         .x86, .x86_64 => 4 << 10,
         else => null,
     },
-    .hurd => switch (builtin.cpu.arch) {
+    .hurd => switch (builtin.target.cpu.arch) {
         // gnumach/*/include/mach/*/vm_param.h
         .x86, .x86_64 => 4 << 10,
         .aarch64 => null,
         else => null,
     },
-    .plan9 => switch (builtin.cpu.arch) {
+    .plan9 => switch (builtin.target.cpu.arch) {
         // 9front/sys/src/9/*/mem.h
         .x86, .x86_64 => 4 << 10,
         .thumb, .thumbeb, .arm, .armeb => 4 << 10,
@@ -673,29 +673,29 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
         .sparc => 4 << 10,
         else => null,
     },
-    .ps3 => switch (builtin.cpu.arch) {
+    .ps3 => switch (builtin.target.cpu.arch) {
         // cell/SDK_doc/en/html/C_and_C++_standard_libraries/stdlib.html
         .powerpc64 => 1 << 20, // 1 MiB
         else => null,
     },
-    .ps4 => switch (builtin.cpu.arch) {
+    .ps4 => switch (builtin.target.cpu.arch) {
         // https://github.com/ps4dev/ps4sdk/blob/4df9d001b66ae4ec07d9a51b62d1e4c5e270eecc/include/machine/param.h#L95
         .x86, .x86_64 => 4 << 10,
         else => null,
     },
-    .ps5 => switch (builtin.cpu.arch) {
+    .ps5 => switch (builtin.target.cpu.arch) {
         // https://github.com/PS5Dev/PS5SDK/blob/a2e03a2a0231a3a3397fa6cd087a01ca6d04f273/include/machine/param.h#L95
         .x86, .x86_64 => 16 << 10,
         else => null,
     },
-    .psp => switch (builtin.cpu.arch) {
+    .psp => switch (builtin.target.cpu.arch) {
         // minimum block allocation by testing sceKernel
         .mips, .mipsel => 1 << 8, // 256
         else => null,
     },
     // system/lib/libc/musl/arch/emscripten/bits/limits.h
     .emscripten => 64 << 10,
-    .linux => switch (builtin.cpu.arch) {
+    .linux => switch (builtin.target.cpu.arch) {
         // Linux/arch/*/Kconfig
         .alpha => 8 << 10,
         .arc, .arceb => 4 << 10,
@@ -719,7 +719,7 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
         .xtensa, .xtensaeb => 4 << 10,
         else => null,
     },
-    .freestanding, .other => switch (builtin.cpu.arch) {
+    .freestanding, .other => switch (builtin.target.cpu.arch) {
         .wasm32, .wasm64 => 64 << 10,
         .x86, .x86c16, .x86_64 => 4 << 10,
         .aarch64, .aarch64_be => 4 << 10,
@@ -729,12 +729,12 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
 };
 
 const page_size_max_default: ?usize = switch (builtin.os.tag) {
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => switch (builtin.cpu.arch) {
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => switch (builtin.target.cpu.arch) {
         .x86_64 => 4 << 10,
         .aarch64 => 16 << 10,
         else => null,
     },
-    .windows => switch (builtin.cpu.arch) {
+    .windows => switch (builtin.target.cpu.arch) {
         // -- <https://devblogs.microsoft.com/oldnewthing/20210510-00/?p=105200>
         .x86, .x86_64 => 4 << 10,
         // SuperH => 4 << 10,
@@ -745,13 +745,13 @@ const page_size_max_default: ?usize = switch (builtin.os.tag) {
         .thumb, .thumbeb, .arm, .armeb, .aarch64, .aarch64_be => 4 << 10,
         else => null,
     },
-    .wasi => switch (builtin.cpu.arch) {
+    .wasi => switch (builtin.target.cpu.arch) {
         .wasm32, .wasm64 => 64 << 10,
         else => null,
     },
     // https://github.com/tianocore/edk2/blob/b158dad150bf02879668f72ce306445250838201/MdePkg/Include/Uefi/UefiBaseType.h#L180-L187
     .uefi => 4 << 10,
-    .freebsd => switch (builtin.cpu.arch) {
+    .freebsd => switch (builtin.target.cpu.arch) {
         // FreeBSD/sys/*
         .x86, .x86_64 => 4 << 10,
         .thumb, .thumbeb, .arm, .armeb => 4 << 10,
@@ -760,7 +760,7 @@ const page_size_max_default: ?usize = switch (builtin.os.tag) {
         .riscv32, .riscv64 => 4 << 10,
         else => null,
     },
-    .netbsd => switch (builtin.cpu.arch) {
+    .netbsd => switch (builtin.target.cpu.arch) {
         // NetBSD/sys/arch/*
         .alpha => 8 << 10,
         .x86, .x86_64 => 4 << 10,
@@ -776,11 +776,11 @@ const page_size_max_default: ?usize = switch (builtin.os.tag) {
         .m68k => 8 << 10,
         else => null,
     },
-    .dragonfly => switch (builtin.cpu.arch) {
+    .dragonfly => switch (builtin.target.cpu.arch) {
         .x86, .x86_64 => 4 << 10,
         else => null,
     },
-    .openbsd => switch (builtin.cpu.arch) {
+    .openbsd => switch (builtin.target.cpu.arch) {
         // OpenBSD/sys/arch/*
         .alpha => 8 << 10,
         .hppa => 4 << 10,
@@ -794,12 +794,12 @@ const page_size_max_default: ?usize = switch (builtin.os.tag) {
         .sparc64 => 8 << 10,
         else => null,
     },
-    .illumos => switch (builtin.cpu.arch) {
+    .illumos => switch (builtin.target.cpu.arch) {
         // src/uts/*/sys/machparam.h
         .x86_64 => 4 << 10,
         else => null,
     },
-    .fuchsia => switch (builtin.cpu.arch) {
+    .fuchsia => switch (builtin.target.cpu.arch) {
         // fuchsia/kernel/arch/*/include/arch/defines.h
         .x86_64 => 4 << 10,
         .aarch64, .aarch64_be => 4 << 10,
@@ -808,7 +808,7 @@ const page_size_max_default: ?usize = switch (builtin.os.tag) {
     },
     // https://github.com/SerenityOS/serenity/blob/62b938b798dc009605b5df8a71145942fc53808b/Kernel/API/POSIX/sys/limits.h#L11-L13
     .serenity => 4 << 10,
-    .haiku => switch (builtin.cpu.arch) {
+    .haiku => switch (builtin.target.cpu.arch) {
         // haiku/headers/posix/arch/*/limits.h
         .thumb, .thumbeb, .arm, .armeb => 4 << 10,
         .aarch64, .aarch64_be => 4 << 10,
@@ -820,13 +820,13 @@ const page_size_max_default: ?usize = switch (builtin.os.tag) {
         .x86, .x86_64 => 4 << 10,
         else => null,
     },
-    .hurd => switch (builtin.cpu.arch) {
+    .hurd => switch (builtin.target.cpu.arch) {
         // gnumach/*/include/mach/*/vm_param.h
         .x86, .x86_64 => 4 << 10,
         .aarch64 => null,
         else => null,
     },
-    .plan9 => switch (builtin.cpu.arch) {
+    .plan9 => switch (builtin.target.cpu.arch) {
         // 9front/sys/src/9/*/mem.h
         .x86, .x86_64 => 4 << 10,
         .thumb, .thumbeb, .arm, .armeb => 4 << 10,
@@ -836,29 +836,29 @@ const page_size_max_default: ?usize = switch (builtin.os.tag) {
         .sparc => 4 << 10,
         else => null,
     },
-    .ps3 => switch (builtin.cpu.arch) {
+    .ps3 => switch (builtin.target.cpu.arch) {
         // cell/SDK_doc/en/html/C_and_C++_standard_libraries/stdlib.html
         .powerpc64 => 1 << 20, // 1 MiB
         else => null,
     },
-    .ps4 => switch (builtin.cpu.arch) {
+    .ps4 => switch (builtin.target.cpu.arch) {
         // https://github.com/ps4dev/ps4sdk/blob/4df9d001b66ae4ec07d9a51b62d1e4c5e270eecc/include/machine/param.h#L95
         .x86, .x86_64 => 4 << 10,
         else => null,
     },
-    .ps5 => switch (builtin.cpu.arch) {
+    .ps5 => switch (builtin.target.cpu.arch) {
         // https://github.com/PS5Dev/PS5SDK/blob/a2e03a2a0231a3a3397fa6cd087a01ca6d04f273/include/machine/param.h#L95
         .x86, .x86_64 => 16 << 10,
         else => null,
     },
-    .psp => switch (builtin.cpu.arch) {
+    .psp => switch (builtin.target.cpu.arch) {
         // minimum block allocation by testing sceKernel
         .mips, .mipsel => 1 << 8, // 256
         else => null,
     },
     // system/lib/libc/musl/arch/emscripten/bits/limits.h
     .emscripten => 64 << 10,
-    .linux => switch (builtin.cpu.arch) {
+    .linux => switch (builtin.target.cpu.arch) {
         // Linux/arch/*/Kconfig
         .alpha => 8 << 10,
         .arc, .arceb => 16 << 10,
@@ -882,7 +882,7 @@ const page_size_max_default: ?usize = switch (builtin.os.tag) {
         .xtensa, .xtensaeb => 4 << 10,
         else => null,
     },
-    .freestanding => switch (builtin.cpu.arch) {
+    .freestanding => switch (builtin.target.cpu.arch) {
         .wasm32, .wasm64 => 64 << 10,
         else => null,
     },
@@ -897,7 +897,7 @@ test {
     _ = FixedBufferAllocator;
     _ = BufferFirstAllocator;
     if (builtin.single_threaded) {
-        if (builtin.cpu.arch.isWasm() or (builtin.os.tag == .linux and !builtin.link_libc)) {
+        if (builtin.target.cpu.arch.isWasm() or (builtin.os.tag == .linux and !builtin.link_libc)) {
             _ = brk_allocator;
         }
     } else {

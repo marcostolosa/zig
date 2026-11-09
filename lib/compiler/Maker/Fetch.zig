@@ -2107,7 +2107,7 @@ const FileHeader = struct {
 
     fn isMachO(self: *FileHeader) bool {
         if (self.bytes_read < 4) return false;
-        const magic_number = std.mem.readInt(u32, &self.header, builtin.cpu.arch.endian());
+        const magic_number = std.mem.readInt(u32, &self.header, builtin.target.cpu.arch.endian());
         return magic_number == std.macho.MH_MAGIC or
             magic_number == std.macho.MH_MAGIC_64 or
             magic_number == std.macho.FAT_MAGIC or

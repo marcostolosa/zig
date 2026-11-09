@@ -165,7 +165,7 @@ fn allocBigPages(n: usize) usize {
         return top_free_ptr;
     }
 
-    if (builtin.cpu.arch.isWasm()) {
+    if (builtin.target.cpu.arch.isWasm()) {
         comptime assert(std.heap.page_size_max == std.heap.page_size_min);
         const page_size = std.heap.page_size_max;
         const pages_per_bigpage = bigpage_size / page_size;

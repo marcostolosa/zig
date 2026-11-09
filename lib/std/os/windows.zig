@@ -5,7 +5,7 @@
 //!   slices as well as APIs which accept null-terminated WTF16LE byte buffers.
 
 const builtin = @import("builtin");
-const native_arch = builtin.cpu.arch;
+const native_arch = builtin.target.cpu.arch;
 
 const std = @import("../std.zig");
 const Io = std.Io;

@@ -46,7 +46,7 @@ const E5 = enum(u0) {
 };
 
 test "@backingInt with enums" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const static = struct {
         fn doTheTest(v1: E1, v2: E2, v3: E3, v4: E4, v5: E5) !void {
@@ -76,7 +76,7 @@ test "@backingInt with enums" {
 }
 
 test "@fromBackingInt with enums" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const static = struct {
         fn doTheTest(
@@ -141,7 +141,7 @@ const T5 = union(E5) {
 };
 
 test "@backingInt with tagged unions" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const static = struct {
         fn doTheTest(v1: T1, v2: T2, v4: T4, v5: T5) !void {
@@ -212,7 +212,7 @@ const S5 = bitpack struct(u0) {
 };
 
 test "@backingInt with bitpack structs" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const static = struct {
         fn doTheTest(v1: S1, v2: S2, v3: S3, v4: S4, v5: S5) !void {
@@ -242,7 +242,7 @@ test "@backingInt with bitpack structs" {
 }
 
 test "@fromBackingInt with bitpack structs" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const static = struct {
         fn doTheTest(
@@ -321,7 +321,7 @@ const U5 = bitpack union(u0) {
 };
 
 test "@backingInt with bitpack unions" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const static = struct {
         fn doTheTest(v1: U1, v2: U2, v3: U3, v4: U4, v5: U5) !void {
@@ -351,7 +351,7 @@ test "@backingInt with bitpack unions" {
 }
 
 test "@fromBackingInt with bitpack unions" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const static = struct {
         fn doTheTest(

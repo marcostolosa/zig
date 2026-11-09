@@ -130,7 +130,7 @@ fn printOutput(
     environ_map: *const process.Environ.Map,
 ) !void {
     const host = try std.zig.system.resolveTargetQuery(io, .{});
-    const obj_ext = builtin.object_format.fileExt(builtin.cpu.arch);
+    const obj_ext = builtin.object_format.fileExt(builtin.target.cpu.arch);
     const print = std.debug.print;
 
     var shell_buffer: Writer.Allocating = .init(arena);
@@ -225,7 +225,7 @@ fn printOutput(
                 if (mem.startsWith(u8, triple, "wasm32") or
                     mem.startsWith(u8, triple, "riscv64-linux") or
                     (mem.startsWith(u8, triple, "x86_64-linux") and
-                        (builtin.os.tag != .linux or builtin.cpu.arch != .x86_64)))
+                        (builtin.os.tag != .linux or builtin.target.cpu.arch != .x86_64)))
                 {
                     // skip execution
                     break :code_block;

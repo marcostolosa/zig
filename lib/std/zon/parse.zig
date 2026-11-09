@@ -3381,7 +3381,7 @@ test "std.zon negative char" {
 }
 
 test "std.zon parse float" {
-    if (builtin.cpu.arch == .x86) return error.SkipZigTest;
+    if (builtin.target.cpu.arch == .x86) return error.SkipZigTest;
 
     const gpa = std.testing.allocator;
     var arena_allocator: ArenaAllocator = .init(gpa);
@@ -3782,7 +3782,7 @@ test "std.zon free on error" {
 
 test "std.zon vector" {
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/15330
-    if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch == .s390x) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/25957
+    if (builtin.zig_backend == .stage2_llvm and builtin.target.cpu.arch == .s390x) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/25957
 
     const gpa = std.testing.allocator;
     var arena_allocator: ArenaAllocator = .init(gpa);

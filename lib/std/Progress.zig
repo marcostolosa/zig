@@ -2,7 +2,7 @@
 const Progress = @This();
 
 const builtin = @import("builtin");
-const is_big_endian = builtin.cpu.arch.endian() == .big;
+const is_big_endian = builtin.target.cpu.arch.endian() == .big;
 const is_windows = builtin.os.tag == .windows;
 
 const std = @import("std");

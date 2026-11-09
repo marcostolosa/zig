@@ -553,7 +553,7 @@ pub fn init(ev: *Evented, backing_allocator: Allocator, options: InitOptions) !v
     try ev.csprng_mutex.init(queue);
     errdefer ev.csprng_mutex.deinit();
     const thread: *Thread = .current();
-    thread.main_context = switch (builtin.cpu.arch) {
+    thread.main_context = switch (builtin.target.cpu.arch) {
         .aarch64 => .{
             .sp = @intFromPtr(main_loop_stack[main_loop_stack_size..].ptr),
             .fp = @intFromPtr(ev),
@@ -595,7 +595,7 @@ fn yield(ev: *Evented, pending_task: SwitchMessage.PendingTask) void {
 }
 
 fn mainLoopEntry() callconv(.naked) void {
-    switch (builtin.cpu.arch) {
+    switch (builtin.target.cpu.arch) {
         .aarch64 => asm volatile (
             \\ mov x0, fp
             \\ mov fp, #0
@@ -998,7 +998,7 @@ const AsyncClosure = struct {
     }
 
     fn entry() callconv(.naked) void {
-        switch (builtin.cpu.arch) {
+        switch (builtin.target.cpu.arch) {
             .aarch64 => asm volatile (
                 \\ mov x0, sp
                 \\ b %[call]
@@ -1067,7 +1067,7 @@ fn concurrent(
     fiber.* = .{
         .required_align = {},
         .evented = ev,
-        .context = switch (builtin.cpu.arch) {
+        .context = switch (builtin.target.cpu.arch) {
             .aarch64 => .{
                 .sp = @intFromPtr(closure),
                 .fp = 0,
@@ -1141,7 +1141,7 @@ const Group = struct {
         shared2: u30,
     };
     fn mutexPtr(group: Group) *Group.Mutex {
-        return switch (comptime builtin.cpu.arch.endian()) {
+        return switch (comptime builtin.target.cpu.arch.endian()) {
             .little => @ptrCast(&group.ptr.state),
             .big => @ptrCast(@alignCast(
                 @as([*]u8, @ptrCast(&group.ptr.state)) + @sizeOf(usize) - @sizeOf(u32),
@@ -1342,7 +1342,7 @@ const Group = struct {
         }
 
         fn entry() callconv(.naked) void {
-            switch (builtin.cpu.arch) {
+            switch (builtin.target.cpu.arch) {
                 .aarch64 => asm volatile (
                     \\ mov x0, sp
                     \\ b %[call]
@@ -1407,7 +1407,7 @@ fn groupConcurrent(
     fiber.* = .{
         .required_align = {},
         .evented = ev,
-        .context = switch (builtin.cpu.arch) {
+        .context = switch (builtin.target.cpu.arch) {
             .aarch64 => .{
                 .sp = @intFromPtr(closure),
                 .fp = 0,

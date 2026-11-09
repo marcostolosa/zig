@@ -6,7 +6,7 @@ const builtin = @import("builtin");
 const mem = std.mem;
 
 /// The widest batch of AES blocks the target supports
-pub const Wide = if (builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64 or @bitSizeOf(usize) >= 64) Batch(2) else Batch(1);
+pub const Wide = if (builtin.target.cpu.arch == .wasm32 or builtin.target.cpu.arch == .wasm64 or @bitSizeOf(usize) >= 64) Batch(2) else Batch(1);
 
 /// Number of AES blocks we can process together
 pub const width = Wide.nblocks;

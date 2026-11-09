@@ -3,7 +3,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const target = builtin.target;
-const arch = builtin.cpu.arch;
+const arch = builtin.target.cpu.arch;
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = compiler_rt.symbol;
 
@@ -303,7 +303,7 @@ fn __aeabi_drsub(a: f64, b: f64) callconv(.{ .arm_aapcs = .{} }) f64 {
 }
 
 test "__aeabi_frsub" {
-    if (!builtin.cpu.arch.isArm() or builtin.cpu.arch.isThumb()) return error.SkipZigTest;
+    if (!builtin.target.cpu.arch.isArm() or builtin.target.cpu.arch.isThumb()) return error.SkipZigTest;
     const inf32 = std.math.inf(f32);
     const maxf32 = std.math.floatMax(f32);
     const frsub_data = [_][3]f32{
@@ -329,8 +329,8 @@ test "__aeabi_frsub" {
 }
 
 test "__aeabi_drsub" {
-    if (!builtin.cpu.arch.isArm() or builtin.cpu.arch.isThumb()) return error.SkipZigTest;
-    if (builtin.cpu.arch == .armeb and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/22061
+    if (!builtin.target.cpu.arch.isArm() or builtin.target.cpu.arch.isThumb()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch == .armeb and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/22061
     const inf64 = std.math.inf(f64);
     const maxf64 = std.math.floatMax(f64);
     const frsub_data = [_][3]f64{

@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const arch = builtin.cpu.arch;
+const arch = builtin.target.cpu.arch;
 const math = std.math;
 const ld = math.long_double;
 const mem = std.mem;

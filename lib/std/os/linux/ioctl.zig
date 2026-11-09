@@ -1,6 +1,6 @@
 const std = @import("../../std.zig");
 
-const bits = switch (@import("builtin").cpu.arch) {
+const bits = switch (@import("builtin").target.cpu.arch) {
     .mips,
     .mipsel,
     .mips64,

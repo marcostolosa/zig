@@ -15,7 +15,7 @@ const std = @import("../std.zig");
 const math = std.math;
 const testing = std.testing;
 const builtin = @import("builtin");
-const native_endian = builtin.cpu.arch.endian();
+const native_endian = builtin.target.cpu.arch.endian();
 
 /// Returns the arc-cosine of x.
 ///
@@ -444,7 +444,7 @@ test "acosBinary128.special" {
 }
 
 test "acosBinary128" {
-    if (builtin.cpu.arch.isSparc()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSparc()) return error.SkipZigTest;
 
     try testing.expectApproxEqAbs(0x1.250e9a58f049eeafa99db4360c88p1, acosBinary128(-0x1.511bdb99a3c4373bedf834ef4f68p-1), math.floatEpsAt(f128, 0x1.250e9a58f049eeafa99db4360c88p1));
     try testing.expectApproxEqAbs(0x1.2786664b1c676c99437b68590004p1, acosBinary128(-0x1.5879cc3ad6dfd2a52e9891c69808p-1), math.floatEpsAt(f128, 0x1.2786664b1c676c99437b68590004p1));

@@ -1,5 +1,5 @@
 const builtin = @import("builtin");
-const native_arch = builtin.cpu.arch;
+const native_arch = builtin.target.cpu.arch;
 const native_endian = native_arch.endian();
 
 const std = @import("std");

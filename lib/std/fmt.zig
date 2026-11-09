@@ -930,7 +930,7 @@ test "enum" {
 
     // test very large enum to verify ct branch quota is large enough
     // TODO: https://github.com/ziglang/zig/issues/15609
-    if (!((builtin.cpu.arch == .wasm32) and builtin.mode == .debug)) {
+    if (!((builtin.target.cpu.arch == .wasm32) and builtin.mode == .debug)) {
         try expectFmt("enum: .INVALID_FUNCTION\n", "enum: {}\n", .{std.os.windows.Win32Error.INVALID_FUNCTION});
     }
 

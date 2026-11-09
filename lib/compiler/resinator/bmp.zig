@@ -21,7 +21,7 @@
 const std = @import("std");
 const BitmapHeader = @import("ico.zig").BitmapHeader;
 const builtin = @import("builtin");
-const native_endian = builtin.cpu.arch.endian();
+const native_endian = builtin.target.cpu.arch.endian();
 
 pub const windows_format_id = std.mem.readInt(u16, "BM", native_endian);
 pub const file_header_len = 14;

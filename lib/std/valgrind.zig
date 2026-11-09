@@ -9,7 +9,7 @@ pub fn doClientRequest(default: usize, request: usize, a1: usize, a2: usize, a3:
 
     const args = &[_]usize{ request, a1, a2, a3, a4, a5 };
 
-    return switch (builtin.cpu.arch) {
+    return switch (builtin.target.cpu.arch) {
         .arm, .armeb, .thumb, .thumbeb => asm volatile (
             \\ mov r12, r12, ror #3  ; mov r12, r12, ror #13
             \\ mov r12, r12, ror #29 ; mov r12, r12, ror #19

@@ -87,7 +87,7 @@ pub fn suggestVectorLengthForCpu(comptime T: type, comptime cpu: std.Target.Cpu)
 /// Suggests a target-dependant vector length for a given type, or null if scalars are recommended.
 /// Not yet implemented for every CPU architecture.
 pub fn suggestVectorLength(comptime T: type) ?comptime_int {
-    return suggestVectorLengthForCpu(T, builtin.cpu);
+    return suggestVectorLengthForCpu(T, builtin.target.cpu);
 }
 
 test "suggestVectorLengthForCpu works with signed and unsigned values" {

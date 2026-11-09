@@ -31,12 +31,12 @@ test isSignalNan {
         // TODO: Signalling NaN values get converted to quiet NaN values in
         //       some cases where they shouldn't such that this can fail.
         //       See https://github.com/ziglang/zig/issues/14366
-        if (!builtin.cpu.arch.isArm() and
-            !builtin.cpu.arch.isAarch64() and
-            builtin.cpu.arch != .hexagon and
-            !builtin.cpu.arch.isMips32() and
-            !builtin.cpu.arch.isPowerpc() and
-            !(builtin.cpu.arch.isX86() and builtin.os.tag == .windows and builtin.target.abi == .msvc) and // https://codeberg.org/ziglang/zig/issues/35519
+        if (!builtin.target.cpu.arch.isArm() and
+            !builtin.target.cpu.arch.isAarch64() and
+            builtin.target.cpu.arch != .hexagon and
+            !builtin.target.cpu.arch.isMips32() and
+            !builtin.target.cpu.arch.isPowerpc() and
+            !(builtin.target.cpu.arch.isX86() and builtin.os.tag == .windows and builtin.target.abi == .msvc) and // https://codeberg.org/ziglang/zig/issues/35519
             builtin.zig_backend != .stage2_c)
         {
             try expect(isSignalNan(math.snan(T)));

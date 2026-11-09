@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = compiler_rt.symbol;
 const os_tag = builtin.os.tag;
-const arch = builtin.cpu.arch;
+const arch = builtin.target.cpu.arch;
 const abi = builtin.target.abi;
 
 comptime {

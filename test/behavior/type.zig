@@ -5,7 +5,7 @@ const testing = std.testing;
 const assert = std.debug.assert;
 
 test "Type.Int" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     try testing.expect(u1 == @Int(.unsigned, 1));
     try testing.expect(i1 == @Int(.signed, 1));
@@ -16,7 +16,7 @@ test "Type.Int" {
 }
 
 test "Type.Pointer" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     inline for (&[_]type{
         // One Value Pointer Types
@@ -76,7 +76,7 @@ test "@Pointer create slice with null sentinel" {
 }
 
 test "@Pointer on @typeInfo round-trips sentinels" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     inline for (&[_]type{
         [*:0]u8,                             [*:0]const u8,
@@ -111,7 +111,7 @@ test "Type.Opaque" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const Opaque = opaque {};
     try testing.expect(Opaque != opaque {});
@@ -130,7 +130,7 @@ test "Type.Struct" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const A = @Struct(.auto, null, &.{ "x", "y" }, &.{ u8, u32 }, &@splat(.{}));
     const infoA = @typeInfo(A).@"struct";
@@ -199,7 +199,7 @@ test "Type.Struct" {
 
 test "Type.Enum" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const Foo = @Enum(u8, .exhaustive, &.{ "a", "b" }, &.{ 1, 5 });
     try testing.expectEqual(std.builtin.Type.Enum.Mode.exhaustive, @typeInfo(Foo).@"enum".mode);
@@ -235,7 +235,7 @@ test "Type.Enum" {
 
 test "Type.Union" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const Untagged = @Union(.@"extern", null, &.{ "int", "float" }, &.{ i32, f32 }, &.{ .{}, .{} });
     var untagged = Untagged{ .int = 1 };
@@ -270,7 +270,7 @@ test "Type.Union from regular enum" {
 }
 
 test "Type.Union from empty regular enum" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const E = enum {};
     const U = @Union(.auto, E, &.{}, &.{}, &.{});
@@ -282,7 +282,7 @@ test "Type.Union from empty regular enum" {
 }
 
 test "Type.Union from empty Type.Enum" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const E = @Enum(noreturn, .exhaustive, &.{}, &.{});
     const U = @Union(.auto, E, &.{}, &.{}, &.{});
@@ -295,7 +295,7 @@ test "Type.Union from empty Type.Enum" {
 
 test "Type.Fn" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const some_opaque = opaque {};
     const some_ptr = *some_opaque;
@@ -416,7 +416,7 @@ test "matching captures causes opaque equivalence" {
 }
 
 test "reify enum where fields refers to part of array" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const field_names: [3][]const u8 = .{ "foo", "bar", undefined };
     const field_values: [3]u8 = .{ undefined, 0, 1 };

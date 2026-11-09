@@ -282,7 +282,7 @@ test "Server.Request.respondStreaming non-chunked, unknown content-length" {
 
     const io = std.testing.io;
 
-    if (builtin.cpu.arch == .aarch64 and builtin.os.tag == .windows) {
+    if (builtin.target.cpu.arch == .aarch64 and builtin.os.tag == .windows) {
         // https://github.com/ziglang/zig/issues/21457
         return error.SkipZigTest;
     }
@@ -1344,7 +1344,7 @@ test "boot failed connections from the pool" {
 }
 
 test "send and discard or echo empty bodies" {
-    if (builtin.cpu.arch.isPowerpc64() and builtin.mode != .debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/194257
+    if (builtin.target.cpu.arch.isPowerpc64() and builtin.mode != .debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/194257
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
 
     const io = std.testing.io;

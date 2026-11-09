@@ -1448,7 +1448,7 @@ test fixed {
         b = 99,
         c = 2,
         d = 3,
-    }, builtin.cpu.arch.endian())) == .c);
+    }, builtin.target.cpu.arch.endian())) == .c);
     try testing.expectError(error.EndOfStream, r.takeByte());
 }
 

@@ -1017,7 +1017,7 @@ fn parseTarget(
             return d.fatal("unknown architecture: '{s}'", .{arch_name});
         };
     }
-    const arch = query.cpu_arch orelse @import("builtin").cpu.arch;
+    const arch = query.cpu_arch orelse @import("builtin").target.cpu.arch;
 
     const opt_os_text = blk: {
         const opt_os_or_vendor = it.next();

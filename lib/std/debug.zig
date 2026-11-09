@@ -11,7 +11,7 @@ const File = std.Io.File;
 const windows = std.os.windows;
 
 const builtin = @import("builtin");
-const native_arch = builtin.cpu.arch;
+const native_arch = builtin.target.cpu.arch;
 const native_os = builtin.os.tag;
 
 const root = @import("root");
@@ -257,7 +257,7 @@ pub const runtime_safety = builtin.mode.runtimeSafety();
 /// `dumpCurrentStackTrace` if this is `false`; it will just print an error / capture an empty
 /// trace due to missing functionality. This value is just intended as a heuristic to avoid
 /// pointless work e.g. capturing always-empty stack traces.
-pub const sys_can_stack_trace = switch (builtin.cpu.arch) {
+pub const sys_can_stack_trace = switch (builtin.target.cpu.arch) {
     // `@returnAddress()` in LLVM 10 gives
     // "Non-Emscripten WebAssembly hasn't implemented __builtin_return_address".
     // On Emscripten, Zig only supports `@returnAddress()` in debug builds
@@ -500,7 +500,7 @@ const use_trap_panic = switch (builtin.zig_backend) {
     .stage2_spirv,
     .stage2_x86,
     => true,
-    .stage2_llvm => builtin.cpu.arch.isSpirv(),
+    .stage2_llvm => builtin.target.cpu.arch.isSpirv(),
     else => false,
 };
 

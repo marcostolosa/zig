@@ -6,7 +6,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const arch = builtin.cpu.arch;
+const arch = builtin.target.cpu.arch;
 const math = std.math;
 const mem = std.mem;
 const expect = std.testing.expect;

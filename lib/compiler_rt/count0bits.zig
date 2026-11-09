@@ -137,16 +137,16 @@ fn clzsi2_generic(a: i32) callconv(.c) i32 {
     return clzXi2(i32, a);
 }
 
-pub const __clzsi2 = switch (builtin.cpu.arch) {
+pub const __clzsi2 = switch (builtin.target.cpu.arch) {
     .arm, .armeb, .thumb, .thumbeb => impl: {
         const use_thumb1 =
-            (builtin.cpu.arch.isThumb() or builtin.cpu.has(.arm, .noarm)) and !builtin.cpu.has(.arm, .thumb2);
+            (builtin.target.cpu.arch.isThumb() or builtin.target.cpu.has(.arm, .noarm)) and !builtin.target.cpu.has(.arm, .thumb2);
 
         if (use_thumb1) {
             break :impl __clzsi2_thumb1;
         }
         // From here on we're either targeting Thumb2 or ARM.
-        else if (!builtin.cpu.arch.isThumb() and builtin.target.cpu.has(.arm, .has_v4t)) {
+        else if (!builtin.target.cpu.arch.isThumb() and builtin.target.cpu.has(.arm, .has_v4t)) {
             break :impl __clzsi2_arm32;
         }
         // Use the generic implementation otherwise.

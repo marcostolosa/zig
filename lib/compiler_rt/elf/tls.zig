@@ -13,7 +13,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const elf = std.elf;
 const assert = std.debug.assert;
-const native_arch = builtin.cpu.arch;
+const native_arch = builtin.target.cpu.arch;
 const linux = std.os.linux;
 const page_size_min = std.heap.page_size_min;
 

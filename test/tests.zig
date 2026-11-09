@@ -2347,7 +2347,7 @@ pub fn addCliTests(b: *std.Build) *Step {
     }
 
     // Test Godbolt API
-    if (builtin.os.tag == .linux and builtin.cpu.arch == .x86_64) {
+    if (builtin.os.tag == .linux and builtin.target.cpu.arch == .x86_64) {
         const tmp_path = b.tmpPath();
 
         const example_zig = b.addWriteFiles().add("example.zig",
@@ -2868,14 +2868,14 @@ fn addOneModuleTest(
 }
 
 pub fn wouldUseLlvm(use_llvm: ?bool, query: std.Target.Query, optimize_mode: OptimizeMode) bool {
-    if (comptime builtin.cpu.arch.endian() == .big) return true; // https://github.com/ziglang/zig/issues/25961
+    if (comptime builtin.target.cpu.arch.endian() == .big) return true; // https://github.com/ziglang/zig/issues/25961
     if (use_llvm) |x| return x;
     if (query.ofmt == .c) return false;
     switch (optimize_mode) {
         .debug => {},
         else => return true,
     }
-    const cpu_arch = query.cpu_arch orelse builtin.cpu.arch;
+    const cpu_arch = query.cpu_arch orelse builtin.target.cpu.arch;
     const os_tag = query.os_tag orelse builtin.os.tag;
     const ofmt: std.Target.ObjectFormat = query.ofmt orelse .default(os_tag, cpu_arch);
     switch (cpu_arch) {

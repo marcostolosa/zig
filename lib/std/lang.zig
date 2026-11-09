@@ -1113,7 +1113,7 @@ pub const VaListXtensa = extern struct {
 
 /// This data structure is used by the Zig language code generation and
 /// therefore must be kept in sync with the compiler implementation.
-pub const VaList = switch (builtin.cpu.arch) {
+pub const VaList = switch (builtin.target.cpu.arch) {
     .amdgcn,
     .msp430,
     .nvptx,
@@ -1370,7 +1370,7 @@ pub const panic: type = p: {
         => std.debug.simple_panic,
         .stage2_spirv => std.debug.no_panic,
         .stage2_llvm => {
-            if (builtin.cpu.arch.isSpirv()) break :p std.debug.no_panic;
+            if (builtin.target.cpu.arch.isSpirv()) break :p std.debug.no_panic;
             break :p std.debug.FullPanic(std.debug.defaultPanic);
         },
         else => std.debug.FullPanic(std.debug.defaultPanic),

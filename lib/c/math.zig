@@ -49,7 +49,7 @@ comptime {
         symbol(&nanl, "nanl");
     }
 
-    if ((builtin.target.isMinGW() and builtin.cpu.arch == .x86) or builtin.target.isMuslLibC()) {
+    if ((builtin.target.isMinGW() and builtin.target.cpu.arch == .x86) or builtin.target.isMuslLibC()) {
         symbol(&acosf, "acosf");
         symbol(&atanf, "atanf");
         symbol(&coshf, "coshf");

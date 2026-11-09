@@ -3,8 +3,8 @@ const builtin = @import("builtin");
 const mem = std.mem;
 const debug = std.debug;
 
-const has_vaes = builtin.cpu.arch == .x86_64 and builtin.cpu.has(.x86, .vaes);
-const has_avx512f = builtin.cpu.arch == .x86_64 and builtin.zig_backend != .stage2_x86_64 and builtin.cpu.has(.x86, .avx512f);
+const has_vaes = builtin.target.cpu.arch == .x86_64 and builtin.target.cpu.has(.x86, .vaes);
+const has_avx512f = builtin.target.cpu.arch == .x86_64 and builtin.zig_backend != .stage2_x86_64 and builtin.target.cpu.has(.x86, .avx512f);
 
 /// A single AES block.
 pub const Block = struct {
@@ -112,7 +112,7 @@ pub const Block = struct {
         const cpu = std.Target.x86.cpu;
 
         /// The recommended number of AES encryption/decryption to perform in parallel for the chosen implementation.
-        pub const optimal_parallel_blocks = switch (builtin.cpu.model) {
+        pub const optimal_parallel_blocks = switch (builtin.target.cpu.model) {
             &cpu.westmere, &cpu.goldmont => 3,
             &cpu.cannonlake, &cpu.skylake, &cpu.skylake_avx512, &cpu.tremont, &cpu.goldmont_plus, &cpu.cascadelake => 4,
             &cpu.icelake_client, &cpu.icelake_server, &cpu.tigerlake, &cpu.rocketlake, &cpu.alderlake => 6,

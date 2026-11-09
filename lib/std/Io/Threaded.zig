@@ -450,7 +450,7 @@ pub const UseFchmodat2 = if (have_fchmodat2 and !have_fchmodat_flags) enum {
 pub const apc_align = @max(default_fn_align, 2);
 
 const default_fn_align = switch (builtin.mode) {
-    .debug, .safe, .fast => switch (builtin.cpu.arch) {
+    .debug, .safe, .fast => switch (builtin.target.cpu.arch) {
         else => |arch| @compileError("Unsupported architecture: " ++ @tagName(arch)),
         .arm, .thumb => 4,
         .aarch64, .x86, .x86_64 => 16,
@@ -964,8 +964,8 @@ const Thread = struct {
                     .clock = .boot,
                 } } else .none,
             );
-        } else if (builtin.cpu.arch.isWasm()) {
-            comptime assert(builtin.cpu.has(.wasm, .atomics));
+        } else if (builtin.target.cpu.arch.isWasm()) {
+            comptime assert(builtin.target.cpu.has(.wasm, .atomics));
             // TODO implement cancelation for WASM futex waits by signaling the futex
             if (!uncancelable) try Thread.checkCancel();
             const to: i64 = if (timeout_ns) |ns| std.math.cast(i64, ns) orelse std.math.maxInt(i64) else -1;
@@ -1149,8 +1149,8 @@ const Thread = struct {
 
         if (use_parking_futex) {
             return parking_futex.wake(ptr, max_waiters);
-        } else if (builtin.cpu.arch.isWasm()) {
-            comptime assert(builtin.cpu.has(.wasm, .atomics));
+        } else if (builtin.target.cpu.arch.isWasm()) {
+            comptime assert(builtin.target.cpu.has(.wasm, .atomics));
             const woken_count = asm volatile (
                 \\local.get %[ptr]
                 \\local.get %[waiters]
@@ -2009,8 +2009,8 @@ const have_flock_open_flags = @hasField(posix.O, "EXLOCK");
 const have_networking = std.options.networking and native_os != .wasi;
 const have_flock = @TypeOf(posix.system.flock) != void;
 const have_sendmmsg = native_os == .linux;
-const have_futex = switch (builtin.cpu.arch) {
-    .wasm32, .wasm64 => builtin.cpu.has(.wasm, .atomics),
+const have_futex = switch (builtin.target.cpu.arch) {
+    .wasm32, .wasm64 => builtin.target.cpu.has(.wasm, .atomics),
     else => true,
 };
 const have_preadv = switch (native_os) {

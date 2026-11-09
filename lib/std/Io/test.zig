@@ -1,5 +1,5 @@
 const builtin = @import("builtin");
-const native_endian = builtin.cpu.arch.endian();
+const native_endian = builtin.target.cpu.arch.endian();
 
 const std = @import("std");
 const Io = std.Io;
@@ -624,8 +624,8 @@ test "randomSecure" {
 }
 
 test "memory mapping" {
-    if (builtin.cpu.arch == .hexagon) return error.SkipZigTest; // mmap returned EINVAL
-    if (builtin.cpu.arch.isSparc()) return error.SkipZigTest; // mmap returned EINVAL
+    if (builtin.target.cpu.arch == .hexagon) return error.SkipZigTest; // mmap returned EINVAL
+    if (builtin.target.cpu.arch.isSparc()) return error.SkipZigTest; // mmap returned EINVAL
 
     const io = testing.io;
 

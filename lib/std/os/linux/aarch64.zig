@@ -6,7 +6,7 @@ pub const syscall_arg_t = u64;
 
 /// Declared only with SVE, since a Z clobber also clobbers the V register within it.
 const clobbers: std.lang.assembly.Clobbers = if (builtin.zig_backend != .stage2_aarch64 and
-    builtin.cpu.has(.aarch64, .sve)) .{
+    builtin.target.cpu.has(.aarch64, .sve)) .{
     .memory = true,
     .p0 = true,
     .p1 = true,

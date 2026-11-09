@@ -8,7 +8,7 @@ test "flags in bitpack union" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
 
     try testFlagsInBitpackUnion();
@@ -51,7 +51,7 @@ test "flags in bitpack union at offset" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
 
     try testFlagsInBitpackUnionAtOffset();
@@ -107,7 +107,7 @@ fn testFlagsInBitpackUnionAtOffset() !void {
 test "bitpack union in bitpack struct" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     try testBitpackUnionInBitpackStruct();
     try comptime testBitpackUnionInBitpackStruct();
@@ -144,7 +144,7 @@ test "bitpack union initialized with a runtime value" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const Fields = bitpack struct {
         timestamp: u50,
@@ -182,7 +182,7 @@ test "assigning to non-active field at comptime" {
 test "bitpack union with explicit backing integer" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const U = bitpack union(i32) {
         raw: i32,
@@ -201,7 +201,7 @@ test "bitpack union with explicit backing integer" {
 }
 
 test "bitpack union equality" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const Foo = bitpack union {
         a: u4,
@@ -229,7 +229,7 @@ test "initialize bitpack union field to undefined at comptime" {
 }
 
 test "convert from/to backing int" {
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const U = bitpack union(u10) {
         a: i10,
@@ -246,7 +246,7 @@ test "convert from/to backing int" {
 
 test "equality with wide backing integer" {
     if (builtin.zig_backend == .stage2_x86_64) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/35982
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const U = bitpack union(i200) {
         x: u200,

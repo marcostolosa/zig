@@ -51,7 +51,7 @@ test "@SpirvType" {
 }
 
 test "@ptrCast to first field type" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     const Inner = extern struct { a: u32 };
     const Outer = extern struct { a: Inner, b: u32 };
@@ -61,7 +61,7 @@ test "@ptrCast to first field type" {
 }
 
 test "@SpirvType equality" {
-    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
 
     try expect(@SpirvType(.sampler) == Sampler);
     try expect(@SpirvType(.{ .runtime_array = u32 }) == RuntimeArray);

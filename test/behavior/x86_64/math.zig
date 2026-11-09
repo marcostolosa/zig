@@ -12,12 +12,12 @@ pub const nan = math.nan;
 pub const next = math.nextAfter;
 pub const tmin = math.floatTrueMin;
 
-pub const Gpr = switch (builtin.cpu.arch) {
+pub const Gpr = switch (builtin.target.cpu.arch) {
     else => unreachable,
     .x86 => u32,
     .x86_64 => u64,
 };
-pub const Sse = if (builtin.cpu.has(.x86, .avx))
+pub const Sse = if (builtin.target.cpu.has(.x86, .avx))
     @Vector(32, u8)
 else
     @Vector(16, u8);

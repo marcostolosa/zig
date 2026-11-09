@@ -23,7 +23,7 @@ fn foo(a: A) i32 {
 
 test "incomplete struct param top level declaration" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.target.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     const a = A{
         .b = B{

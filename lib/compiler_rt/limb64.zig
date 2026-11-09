@@ -8,7 +8,7 @@ const builtin = @import("builtin");
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = compiler_rt.symbol;
 
-const endian = builtin.cpu.arch.endian();
+const endian = builtin.target.cpu.arch.endian();
 
 inline fn limbGet(limbs: []const u64, i: usize) u64 {
     return switch (endian) {

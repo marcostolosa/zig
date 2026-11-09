@@ -4,9 +4,9 @@ const std = @import("std");
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = compiler_rt.symbol;
 
-const Unordered = if (builtin.cpu.arch == .avr)
+const Unordered = if (builtin.target.cpu.arch == .avr)
     i8
-else if (builtin.cpu.arch.isAarch64())
+else if (builtin.target.cpu.arch.isAarch64())
     i32
 else if (builtin.target.cTypeBitSize(.long).? >= builtin.target.ptrBitWidth())
     c_long

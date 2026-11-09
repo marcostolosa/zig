@@ -11,6 +11,54 @@ test "strncmp" {
     try testing.expect(c.strncmp(@ptrCast("\xff"), @ptrCast("\x02"), 1) > 0);
 }
 
+test "strchr" {
+    var str: [254:0]u8 = undefined;
+    for (&str, 1..) |*p, i| p.* = @intCast(i + 1);
+    const str_char: [*:0]const c_char = @ptrCast(&str);
+
+    for (0..str.len) |i| {
+        try testing.expectEqual(str_char[i..], c.strchr(str_char, str[i]));
+    }
+
+    try testing.expectEqual(null, c.strchr(@ptrCast("123456789"), '0'));
+}
+
+test "strchrnul" {
+    var str: [254:0]u8 = undefined;
+    for (&str, 1..) |*p, i| p.* = @intCast(i + 1);
+    const str_char: [*:0]const c_char = @ptrCast(&str);
+
+    for (0..str.len) |i| {
+        try testing.expectEqual(str_char[i], c.strchrnul(str_char, str[i])[0]);
+    }
+
+    try testing.expectEqual(0, c.strchrnul(@ptrCast("123456789"), '0')[0]);
+}
+
+test "strcspn" {
+    try testing.expectEqual(3, c.strcspn(@ptrCast("abc123"), @ptrCast("123")));
+    try testing.expectEqual(6, c.strcspn(@ptrCast("abc456"), @ptrCast("123")));
+    try testing.expectEqual(0, c.strcspn(@ptrCast("123abc"), @ptrCast("123")));
+}
+
+test "strspn" {
+    try testing.expectEqual(0, c.strspn(@ptrCast("abc123"), @ptrCast("123")));
+    try testing.expectEqual(3, c.strspn(@ptrCast("123abc"), @ptrCast("123")));
+    try testing.expectEqual(6, c.strspn(@ptrCast("123123"), @ptrCast("123")));
+    try testing.expectEqual(6, c.strspn(@ptrCast("333333"), @ptrCast("123")));
+}
+
+fn testStrpbrk(dst: [*:0]const u8, values: [*:0]const u8, expected_index: ?usize) !void {
+    const first: ?[*:0]const u8 = @ptrCast(c.strpbrk(@ptrCast(dst), @ptrCast(values)));
+    try testing.expectEqual(if (expected_index) |idx| dst[idx..] else null, first);
+}
+
+test "strpbrk" {
+    try testStrpbrk("abc123", "123", 3);
+    try testStrpbrk("abc456", "123", null);
+    try testStrpbrk("123abc", "123", 0);
+}
+
 test "strdup" {
     const org: [*:0]const u8 = "a";
     const cpy_opt = c.strdup(@ptrCast(org));

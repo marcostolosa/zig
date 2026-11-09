@@ -135,11 +135,10 @@ fn __strxfrm_l(noalias dst: ?[*]c_char, noalias src: [*:0]const c_char, max: usi
 }
 
 fn strchr(str: [*:0]const c_char, value: c_int) callconv(.c) ?[*:0]c_char {
+    const v: u8 = @truncate(@as(c_uint, @bitCast(value)));
     const str_u8: [*:0]const u8 = @ptrCast(str);
-    const len = std.mem.len(str_u8);
-
-    if (value == 0) return @constCast(str + len);
-    return @constCast(str[std.mem.findScalar(u8, str_u8[0..len], @truncate(@as(c_uint, @bitCast(value)))) orelse return null ..]);
+    const first = std.mem.findScalarSentinel(u8, 0, str_u8, v);
+    return if (str_u8[first] != v) null else @constCast(str[first..]);
 }
 
 fn strrchr(str: [*:0]const c_char, value: c_int) callconv(.c) ?[*:0]c_char {
@@ -149,17 +148,16 @@ fn strrchr(str: [*:0]const c_char, value: c_int) callconv(.c) ?[*:0]c_char {
 }
 
 fn strcspn(dst: [*:0]const c_char, values: [*:0]const c_char) callconv(.c) usize {
-    const dst_slice = std.mem.span(@as([*:0]const u8, @ptrCast(dst)));
-    return std.mem.findAny(u8, dst_slice, std.mem.span(@as([*:0]const u8, @ptrCast(values)))) orelse dst_slice.len;
+    return std.mem.findAnySentinel(u8, 0, @ptrCast(dst), @ptrCast(values));
 }
 
 fn strspn(dst: [*:0]const c_char, values: [*:0]const c_char) callconv(.c) usize {
-    const dst_slice = std.mem.span(@as([*:0]const u8, @ptrCast(dst)));
-    return std.mem.findNone(u8, dst_slice, std.mem.span(@as([*:0]const u8, @ptrCast(values)))) orelse dst_slice.len;
+    return std.mem.findNoneSentinel(u8, 0, @ptrCast(dst), @ptrCast(values));
 }
 
 fn strpbrk(haystack: [*:0]const c_char, needle: [*:0]const c_char) callconv(.c) ?[*:0]c_char {
-    return @constCast(haystack[std.mem.findAny(u8, std.mem.span(@as([*:0]const u8, @ptrCast(haystack))), std.mem.span(@as([*:0]const u8, @ptrCast(needle)))) orelse return null ..]);
+    const first = std.mem.findAnySentinel(u8, 0, @ptrCast(haystack), @ptrCast(needle));
+    return if (haystack[first] == 0) null else @constCast(haystack[first..]);
 }
 
 fn strstr(haystack: [*:0]const c_char, needle: [*:0]const c_char) callconv(.c) ?[*:0]c_char {
@@ -298,11 +296,7 @@ fn explicit_bzero(ptr: *anyopaque, len: usize) callconv(.c) void {
 }
 
 fn strchrnul(str: [*:0]const c_char, value: c_int) callconv(.c) [*:0]c_char {
-    const str_u8: [*:0]const u8 = @ptrCast(str);
-    const len = std.mem.len(str_u8);
-
-    if (value == 0) return @constCast(str + len);
-    return @constCast(str[std.mem.findScalar(u8, str_u8[0..len], @truncate(@as(c_uint, @bitCast(value)))) orelse len ..]);
+    return @ptrCast(@constCast(str[std.mem.findScalarSentinel(u8, 0, @ptrCast(str), @truncate(@as(c_uint, @bitCast(value))))..]));
 }
 
 fn strcasestr(haystack: [*:0]const c_char, needle: [*:0]const c_char) callconv(.c) ?[*:0]c_char {

@@ -138,10 +138,8 @@ fn wcsncat(noalias dst: [*:0]wchar_t, noalias src: [*:0]const wchar_t, max: usiz
 }
 
 fn wcschr(str: [*:0]const wchar_t, value: wchar_t) callconv(.c) ?[*:0]wchar_t {
-    const len = std.mem.len(str);
-
-    if (value == 0) return @constCast(str + len);
-    return @constCast(str[std.mem.findScalar(wchar_t, str[0..len], value) orelse return null ..]);
+    const first = std.mem.findScalarSentinel(wchar_t, 0, str, value);
+    return if (str[first] != value) null else @constCast(str[first..]);
 }
 
 fn wcsrchr(str: [*:0]const wchar_t, value: wchar_t) callconv(.c) ?[*:0]wchar_t {
@@ -150,17 +148,16 @@ fn wcsrchr(str: [*:0]const wchar_t, value: wchar_t) callconv(.c) ?[*:0]wchar_t {
 }
 
 fn wcsspn(dst: [*:0]const wchar_t, values: [*:0]const wchar_t) callconv(.c) usize {
-    const dst_slice = std.mem.span(dst);
-    return std.mem.findNone(wchar_t, dst_slice, std.mem.span(values)) orelse dst_slice.len;
+    return std.mem.findNoneSentinel(wchar_t, 0, dst, values);
 }
 
 fn wcscspn(dst: [*:0]const wchar_t, values: [*:0]const wchar_t) callconv(.c) usize {
-    const dst_slice = std.mem.span(dst);
-    return std.mem.findAny(wchar_t, dst_slice, std.mem.span(values)) orelse dst_slice.len;
+    return std.mem.findAnySentinel(wchar_t, 0, dst, values);
 }
 
 fn wcspbrk(haystack: [*:0]const wchar_t, needle: [*:0]const wchar_t) callconv(.c) ?[*:0]wchar_t {
-    return @constCast(haystack[std.mem.findAny(wchar_t, std.mem.span(haystack), std.mem.span(needle)) orelse return null ..]);
+    const first = std.mem.findAnySentinel(wchar_t, 0, haystack, needle);
+    return if (haystack[first] == 0) null else @constCast(haystack[first..]);
 }
 
 fn wcstok(noalias maybe_str: ?[*:0]wchar_t, noalias values: [*:0]const wchar_t, noalias state: *?[*:0]wchar_t) callconv(.c) ?[*:0]wchar_t {

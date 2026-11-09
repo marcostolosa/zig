@@ -11447,6 +11447,12 @@ pub const swab = switch (builtin.abi) {
 pub extern "c" fn strncmp(a: [*:0]const c_char, b: [*:0]const c_char, max: usize) c_int;
 pub extern "c" fn strcasecmp(a: [*:0]const c_char, b: [*:0]const c_char) c_int;
 pub extern "c" fn strncasecmp(a: [*:0]const c_char, b: [*:0]const c_char, max: usize) c_int;
+pub extern "c" fn strchr(str: [*:0]const c_char, value: c_int) ?[*:0]c_char;
+pub extern "c" fn strrchr(str: [*:0]const c_char, value: c_int) ?[*:0]c_char;
+pub extern "c" fn strchrnul(str: [*:0]const c_char, value: c_int) [*:0]c_char;
+pub extern "c" fn strspn(dst: [*:0]const c_char, values: [*:0]const c_char) usize;
+pub extern "c" fn strcspn(dst: [*:0]const c_char, values: [*:0]const c_char) usize;
+pub extern "c" fn strpbrk(dst: [*:0]const c_char, values: [*:0]const c_char) ?[*:0]c_char;
 pub const strdup = switch (builtin.abi) {
     .msvc => private._strdup,
     else => private.strdup,

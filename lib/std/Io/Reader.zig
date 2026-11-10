@@ -614,7 +614,11 @@ pub fn peekArray(r: *Reader, comptime n: usize) Error!*[n]u8 {
 /// * `discardShort`
 /// * `discard`
 pub fn discardAll(r: *Reader, n: usize) Error!void {
-    if ((try r.discardShort(n)) != n) return error.EndOfStream;
+    if(n >= (r.end-r.seek)) {
+        return error.EndOfStream;
+    } else {
+        _ = try r.discardShort(n);
+    }
 }
 
 pub fn discardAll64(r: *Reader, n: u64) Error!void {

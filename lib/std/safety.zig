@@ -53,7 +53,7 @@ pub const Config = struct {
     /// When false the primitive is zero-sized and its checks compile away,
     /// so declaring the state costs nothing.
     enabled: bool = std.lang.Optimize.runtimeSafety(builtin.optimize),
-    /// Serializes the checks through the type's `CheckMutex`, so that they do
+    /// Serializes the checks through `CheckMutex`, so that they do
     /// not race when values are shared between threads.
     thread_safe: bool = false,
     /// How many frames each captured trace keeps. 0 captures nothing, which
@@ -126,38 +126,30 @@ fn fail(
     );
 }
 
-/// A mutex that makes the safety checks of `Owner` thread-safe.
-/// It guards the checks only: when `config.enabled` or `config.thread_safe`
-/// is false it compiles to nothing, so it must never protect program data.
-pub fn CheckMutex(Owner: type, config: Config) type {
-    return struct {
-        pub const present = config.enabled and config.thread_safe;
+/// Mutexes that make the safety checks thread-safe, one picked per checked
+/// value by its address. They guard the checks only, so they must never
+/// protect program data.
+pub const CheckMutex = struct {
+    var mutexes: [4 * std.atomic.cache_line / @sizeOf(std.Io.Mutex)]std.Io.Mutex align(std.atomic.cache_line) = @splat(.init);
 
-        // Referencing `Owner` makes it part of this type's identity, so each
-        // owner gets its own `inner` instead of all of them sharing one.
-        comptime {
-            _ = Owner;
-        }
+    fn of(ptr: *const anyopaque) *std.Io.Mutex {
+        return &mutexes[std.hash.int(@intFromPtr(ptr)) % mutexes.len];
+    }
 
-        var inner: std.Io.Mutex = .init;
+    pub fn For(config: Config) type {
+        return struct {
+            pub const present = config.enabled and config.thread_safe;
 
-        pub fn lock() void {
-            if (present) inner.lockUncancelable(io);
-        }
+            pub fn lock(ptr: *const anyopaque) void {
+                if (present) of(ptr).lockUncancelable(io);
+            }
 
-        pub fn unlock() void {
-            if (present) inner.unlock(io);
-        }
-    };
-}
-
-test CheckMutex {
-    // Test that each owner gets its own mutex
-    const A = struct {};
-    const B = struct {};
-    try testing.expect(&CheckMutex(A, .{}).inner != &CheckMutex(B, .{}).inner);
-    try testing.expect(&CheckMutex(A, .{}).inner == &CheckMutex(A, .{}).inner);
-}
+            pub fn unlock(ptr: *const anyopaque) void {
+                if (present) of(ptr).unlock(io);
+            }
+        };
+    }
+};
 
 /// Text used when a state assertion fails.
 pub const StateMessages = struct {
@@ -181,7 +173,7 @@ pub fn ConfigurableState(States: type, config: Config, messages: StateMessages) 
 
         const TransitionTrace = std.debug.CapturedStackTrace(config.traceFrames());
 
-        const mutex = CheckMutex(S, config);
+        const mutex = CheckMutex.For(config);
 
         state: if (config.enabled) Enum else void,
         last_transition: TransitionTrace,
@@ -222,8 +214,8 @@ pub fn ConfigurableState(States: type, config: Config, messages: StateMessages) 
 
             const trace: TransitionTrace = .captured(ret_addr);
 
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             self.transitionUnsafe(next_state, trace);
         }
@@ -258,8 +250,8 @@ pub fn ConfigurableState(States: type, config: Config, messages: StateMessages) 
         ) void {
             if (!config.enabled) return;
 
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             for (expected) |e| {
                 if (self.state == e) return;
@@ -395,7 +387,7 @@ pub fn ConfigurableObligations(config: Config, messages: ObligationsMessages) ty
 
         const ObligationsTrace = std.debug.CapturedStackTrace(config.traceFrames());
 
-        const mutex = CheckMutex(O, config);
+        const mutex = CheckMutex.For(config);
 
         counter: if (config.enabled) u32 else void,
         last_incur: ObligationsTrace,
@@ -418,8 +410,8 @@ pub fn ConfigurableObligations(config: Config, messages: ObligationsMessages) ty
 
             const trace: ObligationsTrace = .captured(ret_addr);
 
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             self.incurUnsafe(trace);
         }
@@ -442,8 +434,8 @@ pub fn ConfigurableObligations(config: Config, messages: ObligationsMessages) ty
 
             const trace: ObligationsTrace = .captured(ret_addr);
 
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             self.dischargeUnsafe(trace, ret_addr);
         }
@@ -469,8 +461,8 @@ pub fn ConfigurableObligations(config: Config, messages: ObligationsMessages) ty
         pub fn assertAt(self: *const O, op: std.math.CompareOperator, rhs: u32, ret_addr: usize) void {
             if (!config.enabled) return;
 
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             if (!std.math.compare(self.counter, op, rhs))
                 self.failUnsafe(op, rhs, ret_addr);
@@ -633,7 +625,7 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
             .last_incur = messages.last_lock_shared,
         });
 
-        const mutex = CheckMutex(L, config);
+        const mutex = CheckMutex.For(config);
 
         const Trace = std.debug.CapturedStackTrace(config.traceFrames());
 
@@ -650,8 +642,8 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
         pub fn lock(self: *L) void {
             const ret_addr = @returnAddress();
             const trace: Trace = .captured(ret_addr);
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             self.assertUnlockedUnsafe(ret_addr);
             self.state.transitionUnsafe(.held, trace);
@@ -661,8 +653,8 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
         pub fn unlock(self: *L) void {
             const ret_addr = @returnAddress();
             const trace: Trace = .captured(ret_addr);
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             self.assertLockedUnsafe(ret_addr);
             self.state.transitionUnsafe(.free, trace);
@@ -674,8 +666,8 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
         pub fn lockShared(self: *L) void {
             const ret_addr = @returnAddress();
             const trace: Trace = .captured(ret_addr);
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             self.state.assertEqlAt(.free, ret_addr);
             self.readers.incurUnsafe(trace);
@@ -686,8 +678,8 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
         pub fn unlockShared(self: *L) void {
             const ret_addr = @returnAddress();
             const trace: Trace = .captured(ret_addr);
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             self.state.assertEqlAt(.free, ret_addr);
             self.readers.dischargeUnsafe(trace, ret_addr);
@@ -696,8 +688,8 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
         /// Asserts nobody holds it, exclusively or shared.
         pub fn assertUnlocked(self: *const L) void {
             const ret_addr = @returnAddress();
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             self.assertUnlockedUnsafe(ret_addr);
         }
@@ -705,8 +697,8 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
         /// Asserts it is held exclusively, as a mutator should before writing.
         pub fn assertLocked(self: *const L) void {
             const ret_addr = @returnAddress();
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             self.assertLockedUnsafe(ret_addr);
         }
@@ -716,8 +708,8 @@ pub fn ConfigurableLock(config: Config, messages: LockMessages) type {
         /// is outstanding.
         pub fn assertLockedShared(self: *const L) void {
             const ret_addr = @returnAddress();
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             self.state.assertEqlAt(.free, ret_addr);
             self.readers.assertAt(.gte, 1, ret_addr);
@@ -871,7 +863,7 @@ pub fn ConfigurableBoundTo(
 
         const Trace = std.debug.CapturedStackTrace(config.traceFrames());
 
-        const mutex = CheckMutex(B, config);
+        const mutex = CheckMutex.For(config);
 
         identity: if (config.enabled) ?Identity else void,
         last_change: Trace,
@@ -918,8 +910,8 @@ pub fn ConfigurableBoundTo(
             const identity = self.queryIdentity();
             const trace: Trace = .captured(ret_addr);
 
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             if (self.identity) |bound_identity|
                 return self.failMismatchUnsafe(messages.already_bound, bound_identity, identity, ret_addr);
@@ -939,8 +931,8 @@ pub fn ConfigurableBoundTo(
 
             const identity = self.queryIdentity();
 
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             const bound_identity = self.identity orelse
                 return self.bindUnsafe(identity, .captured(ret_addr));
@@ -971,8 +963,8 @@ pub fn ConfigurableBoundTo(
 
             const identity = self.queryIdentity();
 
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             const bound_identity = self.identity orelse return;
 
@@ -989,8 +981,8 @@ pub fn ConfigurableBoundTo(
         pub fn assertEqlAt(self: *const B, identity: Identity, ret_addr: usize) void {
             if (!config.enabled) return;
 
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             const bound_identity = self.identity orelse
                 return self.failUnboundUnsafe(identity, ret_addr);
@@ -1011,8 +1003,8 @@ pub fn ConfigurableBoundTo(
             const identity = self.queryIdentity();
             const trace: Trace = .captured(ret_addr);
 
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             const bound_identity = self.identity orelse
                 return self.failUnboundUnsafe(identity, ret_addr);
@@ -1036,8 +1028,8 @@ pub fn ConfigurableBoundTo(
             const identity = self.queryIdentity();
             const trace: Trace = .captured(ret_addr);
 
-            mutex.lock();
-            defer mutex.unlock();
+            mutex.lock(self);
+            defer mutex.unlock(self);
 
             self.bindUnsafe(identity, trace);
         }

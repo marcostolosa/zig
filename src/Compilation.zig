@@ -7277,9 +7277,21 @@ pub fn hasSharedLibraryExt(filename: []const u8) bool {
     const n2 = it.next();
     const n3 = it.next();
 
-    _ = std.fmt.parseInt(u32, n1, 10) catch return false;
-    if (n2) |x| _ = std.fmt.parseInt(u32, x, 10) catch return false;
-    if (n3) |x| _ = std.fmt.parseInt(u32, x, 10) catch return false;
+    const version_parts = [_]?[]const u8{ n1, n2, n3 };
+
+    for (version_parts) |part_opt| {
+        const part = part_opt orelse continue;
+
+        const suffix_start = mem.indexOfScalar(u8, part, '-') orelse part.len;
+
+        if (suffix_start == 0) return false;
+
+        _ = std.fmt.parseInt(u32, part[0..suffix_start], 10) catch return false;
+
+        if (suffix_start < part.len) {
+            return suffix_start + 1 < part.len;
+        }
+    }
 
     return true;
 }
@@ -7342,6 +7354,8 @@ test "classifyFileExt" {
     try std.testing.expectEqual(FileExt.shared_library, classifyFileExt("foo.so.1.2.3.4"));
     try std.testing.expectEqual(FileExt.shared_library, classifyFileExt("foo.so.1.2.3.dev4"));
     try std.testing.expectEqual(FileExt.static_library, classifyFileExt("foo.so.1.a"));
+    try std.testing.expectEqual(FileExt.shared_library, classifyFileExt("libLLVM.so.23.1-rust-1.99.0-stable"));
+    try std.testing.expectEqual(FileExt.shared_library, classifyFileExt("libLLVM.so.20.1-rust-1.89.0-stable"));
     try std.testing.expectEqual(FileExt.zig, classifyFileExt("foo.zig"));
 }
 

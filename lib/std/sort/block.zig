@@ -629,7 +629,7 @@ pub fn block(
                                         minA = findA;
                                     }
                                 }
-                                blockSwap(T, items, blockA.start, minA, block_size);
+                                if (minA != blockA.start) blockSwap(T, items, blockA.start, minA, block_size);
 
                                 // swap the first item of the previous A block back with its original value, which is stored in buffer1
                                 mem.swap(T, &items[blockA.start], &items[indexA]);

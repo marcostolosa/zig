@@ -89,9 +89,9 @@ pub fn heapContext(a: usize, b: usize, context: anytype) void {
         siftDown(a, i, b, context);
     }
 
-    // pop maximal elements from the heap.
+    // pop maximal elements from the heap. The last one left is already in place.
     i = b;
-    while (i > a) {
+    while (i - a > 1) {
         i -= 1;
         context.swap(a, i);
         siftDown(a, a, i, context);
@@ -405,6 +405,52 @@ test "sort with context in the middle of a slice" {
             }
         }
     }
+}
+
+test "sort with context never swaps an item with itself" {
+    const Context = struct {
+        items: []i32,
+        self_swaps: *usize,
+
+        pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+            return ctx.items[a] < ctx.items[b];
+        }
+
+        pub fn swap(ctx: @This(), a: usize, b: usize) void {
+            if (a == b) {
+                ctx.self_swaps.* += 1;
+                return;
+            }
+            mem.swap(i32, &ctx.items[a], &ctx.items[b]);
+        }
+    };
+
+    var prng = std.Random.DefaultPrng.init(std.testing.random_seed);
+    const random = prng.random();
+    var buf: [1000]i32 = undefined;
+
+    inline for (context_sort_funcs) |sortFn| {
+        // all items equal, a few distinct values, and many
+        for ([_]i32{ 1, 4, 100 }) |values| {
+            for (0..10) |_| {
+                const items = buf[0..random.intRangeLessThan(usize, 0, buf.len)];
+                for (items) |*item| item.* = random.intRangeLessThan(i32, 0, values);
+                var self_swaps: usize = 0;
+                sortFn(0, items.len, Context{ .items = items, .self_swaps = &self_swaps });
+                try testing.expectEqual(@as(usize, 0), self_swaps);
+                try testing.expect(isSorted(i32, items, {}, asc_i32));
+            }
+        }
+    }
+}
+
+test "block sort with the smallest A block already first" {
+    // At this length, alternating items leave the smallest A block in place
+    // once, which must not be swapped with itself.
+    var items: [1024]u8 = undefined;
+    for (&items, 0..) |*item, i| item.* = @intCast(i % 2);
+    block(u8, &items, {}, asc_u8);
+    try testing.expect(isSorted(u8, &items, {}, asc_u8));
 }
 
 test "sort fuzz testing" {

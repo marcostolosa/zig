@@ -198,8 +198,8 @@ fn partition(a: usize, b: usize, pivot: *usize, context: anytype) bool {
 
     // check if items are already partitioned (no item to swap)
     if (i > j) {
-        // put pivot back to the middle
-        context.swap(j, a);
+        // put pivot back to the middle, unless it is the smallest item
+        if (j != a) context.swap(j, a);
         pivot.* = j;
         return true;
     }
@@ -267,7 +267,8 @@ fn partition(a: usize, b: usize, pivot: *usize, context: anytype) bool {
     if (num_l > 0) {
         while (num_l > 0) {
             num_l -= 1;
-            context.swap(offsets_l_base + offsets_l[start_l + num_l], j);
+            const l = offsets_l_base + offsets_l[start_l + num_l];
+            if (l != j) context.swap(l, j);
             j -= 1;
         }
         i = j + 1;
@@ -275,7 +276,8 @@ fn partition(a: usize, b: usize, pivot: *usize, context: anytype) bool {
     if (num_r > 0) {
         while (num_r > 0) {
             num_r -= 1;
-            context.swap(offsets_r_base - offsets_r[start_r + num_r], i);
+            const r = offsets_r_base - offsets_r[start_r + num_r];
+            if (r != i) context.swap(r, i);
             i += 1;
         }
         j = i - 1;
@@ -375,7 +377,7 @@ fn breakPatterns(a: usize, b: usize, context: anytype) void {
 
         var other = @as(usize, @intCast(rand & (modulus - 1)));
         if (other >= len) other -= len;
-        context.swap(i, a + other);
+        if (a + other != i) context.swap(i, a + other);
     }
 }
 

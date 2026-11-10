@@ -191826,7 +191826,9 @@ fn select(
             for (s_tmp_types, case.extra_temps) |*ty, spec| ty.* = spec.type;
             @memcpy(s_dst_types[0..dst_tys.len], dst_tys);
             for (s_src_types[0..src_temps.len], src_temps) |*ty, temp| ty.* = temp.typeOf(cg);
-            std.mem.swap(Type, &s_src_types[pattern.commute[0]], &s_src_types[pattern.commute[1]]);
+            // `commute` defaults to `.{ 0, 0 }`, and `swap` takes two distinct locations.
+            const commutes = pattern.commute[0] != pattern.commute[1];
+            if (commutes) std.mem.swap(Type, &s_src_types[pattern.commute[0]], &s_src_types[pattern.commute[1]]);
 
             caller_preserved: {
                 const cc = switch (case.clobbers.caller_preserved) {
@@ -191851,7 +191853,7 @@ fn select(
             }
 
             @memcpy(s_src_temps[0..src_temps.len], src_temps);
-            std.mem.swap(Temp, &s_src_temps[pattern.commute[0]], &s_src_temps[pattern.commute[1]]);
+            if (commutes) std.mem.swap(Temp, &s_src_temps[pattern.commute[0]], &s_src_temps[pattern.commute[1]]);
             var dst_locks: [s_dst_temps.len][2]?RegisterLock = @splat(@splat(null));
             for (dst_locks[0..dst_temps.len], case.dst_temps[0..dst_temps.len]) |*dst_lock, dst_kind| dst_lock.* = try dst_kind.lock(cg);
             var tmp_locks: [s_tmp_temps.len][2]?RegisterLock = @splat(@splat(null));
@@ -191873,7 +191875,7 @@ fn select(
                 }
             }
             @memcpy(s_src_temps[0..src_temps.len], src_temps);
-            std.mem.swap(Temp, &s_src_temps[pattern.commute[0]], &s_src_temps[pattern.commute[1]]);
+            if (commutes) std.mem.swap(Temp, &s_src_temps[pattern.commute[0]], &s_src_temps[pattern.commute[1]]);
 
             if (case.clobbers.eflags) try cg.spillEflagsIfOccupied();
 

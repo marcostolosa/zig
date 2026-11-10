@@ -131,6 +131,7 @@ pub fn MultiArrayList(comptime T: type) type {
             }
 
             /// Invalidates pre-existing pointers to fields of the element at indices `a` and `b`.
+            /// `a` and `b` must differ.
             pub fn swap(self: Slice, a: usize, b: usize) void {
                 self.pointer_stability.assertUnlocked();
                 inline for (@typeInfo(Field).@"enum".field_names) |field_name| {
@@ -324,7 +325,7 @@ pub fn MultiArrayList(comptime T: type) type {
         }
 
         /// Invalidates previously existing pointers to fields of the element
-        /// at indices `a` and `b`.
+        /// at indices `a` and `b`. `a` and `b` must differ.
         pub fn swap(self: Self, a: usize, b: usize) void {
             self.pointer_stability.assertUnlocked();
             return self.slice().swap(a, b);

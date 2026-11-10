@@ -676,7 +676,7 @@ test "arguments pointed to on stack into tailcall" {
                     if (data[i] < data[least_i])
                         least_i = i;
                 }
-                std.mem.swap(u64, &data[0], &data[least_i]);
+                if (least_i != 0) std.mem.swap(u64, &data[0], &data[least_i]);
 
                 // there used to be a bug where
                 // `data[1..]` is created on the stack

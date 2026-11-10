@@ -3928,6 +3928,8 @@ test findMinMax {
 }
 
 /// Exchanges contents of two memory locations.
+///
+/// `a` and `b` must not overlap.
 pub fn swap(comptime T: type, noalias a: *T, noalias b: *T) void {
     if (@inComptime()) {
         // In comptime, accessing bytes of values with no defined layout is a compile error.
@@ -3935,6 +3937,10 @@ pub fn swap(comptime T: type, noalias a: *T, noalias b: *T) void {
         a.* = b.*;
         b.* = tmp;
     } else {
+        // This is an imperfect stop-gap to catch bugs due to `noalias`.
+        // TODO: https://github.com/ziglang/zig/issues/476
+        // Zero-bit values all share one address, and swapping them touches no memory.
+        assert(@sizeOf(T) == 0 or a != b);
         // Swapping in streaming nature from start to end instead of swapping
         // everything in one step allows easier optimizations and less stack usage.
         const a_bytes: []align(@alignOf(T)) u8 = @ptrCast(a);
@@ -3956,6 +3962,14 @@ test "swap works at comptime with types with no defined layout" {
         try testing.expectEqual(T{ .val = 1 }, a);
         try testing.expectEqual(T{ .val = 0 }, b);
     }
+}
+
+test "swap zero-bit values" {
+    var voids: [2]void = .{ {}, {} };
+    swap(void, &voids[0], &voids[1]);
+    const Empty = struct {};
+    var empties: [2]Empty = .{ .{}, .{} };
+    swap(Empty, &empties[0], &empties[1]);
 }
 
 inline fn reverseVector(comptime N: usize, comptime T: type, a: []T) [N]T {

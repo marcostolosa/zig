@@ -393,7 +393,7 @@ pub fn shuffleWithIndex(r: Random, comptime T: type, buf: []T, comptime Index: t
     var i: MinInt = 0;
     while (i < max - 1) : (i += 1) {
         const j: MinInt = @intCast(r.intRangeLessThan(Index, i, max));
-        mem.swap(T, &buf[i], &buf[j]);
+        if (i != j) mem.swap(T, &buf[i], &buf[j]);
     }
 }
 

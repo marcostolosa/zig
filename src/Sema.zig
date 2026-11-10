@@ -15078,12 +15078,14 @@ fn analyzeArithmetic(
                 }
 
                 try sema.ensureLayoutResolved(lhs_elem_ty, src, .ptr_offset);
-                const elem_size = lhs_elem_ty.abiSize(zcu);
-                if (elem_size == 0) {
+
+                if (!lhs_elem_ty.hasRuntimeBits(zcu)) {
                     return sema.fail(block, src, "pointer subtraction requires element type '{f}' to have runtime bits", .{
                         lhs_elem_ty.fmt(zcu),
                     });
                 }
+                const elem_size = lhs_elem_ty.abiSize(zcu);
+                assert(elem_size != 0);
 
                 const runtime_src = runtime_src: {
                     if (sema.resolveValue(lhs)) |lhs_value| {

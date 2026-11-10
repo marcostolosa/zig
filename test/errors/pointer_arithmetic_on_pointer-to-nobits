@@ -1,0 +1,24 @@
+#zig build-obj {
+--name test -fno-emit-bin
+-Mroot=test.zig
+#}
+
+#write test.zig {
+export fn entry0() void {
+    _ = @as(*anyopaque, @ptrFromInt(2)) - @as(*anyopaque, @ptrFromInt(1));
+}
+
+export fn entry1() void {
+    _ = @as(*void, @ptrFromInt(2)) - @as(*void, @ptrFromInt(1));
+}
+
+export fn entry2() void {
+    _ = @as(*comptime_int, @ptrFromInt(2)) - @as(*comptime_int, @ptrFromInt(1));
+}
+#}
+#update
+#check errors {
+test.zig:2:41: error: pointer subtraction requires element type 'anyopaque' to have runtime bits
+test.zig:6:36: error: pointer subtraction requires element type 'void' to have runtime bits
+test.zig:10:44: error: pointer subtraction requires element type 'comptime_int' to have runtime bits
+#}

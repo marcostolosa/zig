@@ -1,0 +1,27 @@
+#zig build-obj {
+--name test -fno-emit-bin
+-Mroot=test.zig
+#}
+
+#write test.zig {
+export fn entry0(a: usize) void {
+    comptime var array: [2]u8 = .{ 1, 2 };
+    const slice = array[0..a];
+    _ = slice;
+}
+
+export fn entry1(a: usize) void {
+    const foo = comptime .{ .array = [2]u8{ 1, 2 } };
+    const slice = foo.array[0..a];
+    _ = slice;
+}
+#}
+#update
+#check errors {
+test.zig:3:19: error: runtime value contains reference to comptime var
+test.zig:3:19: note: comptime var pointers are not available at runtime
+test.zig:2:14: note: 'runtime_value' points to comptime var declared here
+test.zig:9:22: error: runtime value contains reference to comptime var
+test.zig:9:22: note: comptime var pointers are not available at runtime
+test.zig:9:22: note: 'runtime_value' points to comptime field
+#}

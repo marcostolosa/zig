@@ -15284,6 +15284,7 @@ fn analyzePtrArithmetic(
         }
     }
 
+    try sema.validateRuntimeValue(block, op_src, ptr);
     try sema.checkLogicalPtrOperation(block, op_src, ptr_ty);
 
     return block.addInst(.{
@@ -32107,6 +32108,8 @@ fn analyzeSlice(
     });
 
     try sema.requireRuntimeBlock(block, src, runtime_src.?);
+    try sema.validateRuntimeValue(block, ptr_src, ptr);
+
     if (block.wantSafety()) {
         // requirement: slicing C ptr is non-null
         if (ptr_ptr_child_ty.isCPtr(zcu)) {

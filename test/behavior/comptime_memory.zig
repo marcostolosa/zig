@@ -88,7 +88,7 @@ test "type pun endianness" {
     }
 }
 
-const Bits = packed struct {
+const Bits = bitpack struct {
     // Note: This struct has only single byte words so it
     // doesn't need to be byte swapped.
     p0: u1,
@@ -100,7 +100,7 @@ const Bits = packed struct {
     p6: u7,
     p7: u1,
 };
-const ShuffledBits = packed struct {
+const ShuffledBits = bitpack struct {
     p1: u4,
     p3: u2,
     p7: u1,
@@ -381,8 +381,8 @@ test "accessing reinterpreted memory of parent object" {
     }
 }
 
-test "bitcast packed union to integer" {
-    const U = packed union {
+test "bitcast bitpack union to integer" {
+    const U = bitpack union {
         x: i2,
         y: u2,
     };
@@ -415,6 +415,8 @@ test "dereference undefined pointer to zero-bit type" {
 }
 
 test "type pun extern struct" {
+    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+
     const S = extern struct { f: u8 };
     comptime var s = S{ .f = 123 };
     @as(*u8, @ptrCast(&s)).* = 72;
@@ -434,7 +436,7 @@ test "type pun null pointer-like optional" {
 }
 
 test "write empty array to end" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
 
     comptime var array: [5]u8 = "hello".*;
     array[5..5].* = .{};
@@ -514,7 +516,8 @@ fn fieldPtrTest() u32 {
     return a.value;
 }
 test "pointer in aggregate field can mutate comptime state" {
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+
     try comptime std.testing.expect(fieldPtrTest() == 2);
 }
 
@@ -534,17 +537,17 @@ test "comptime store of extern struct with void field into array" {
     }
 }
 
-test "comptime store of packed struct with void field" {
+test "comptime store of bitpack struct with void field" {
     comptime {
-        var x: packed struct { a: u8, b: void } = undefined;
+        var x: bitpack struct { a: u8, b: void } = undefined;
         x = .{ .a = 123, .b = {} };
         std.debug.assert(x.a == 123);
     }
 }
 
-test "comptime store of packed struct with void field into array" {
+test "comptime store of bitpack struct with void field into array" {
     comptime {
-        var x: [3]packed struct { a: u8, b: void } = undefined;
+        var x: [3]bitpack struct { a: u8, b: void } = undefined;
         x[1] = .{ .a = 123, .b = {} };
         std.debug.assert(x[1].a == 123);
     }
@@ -564,7 +567,7 @@ test "comptime store of reinterpreted zero-bit type" {
     S.doTheTest([1]u0);
     S.doTheTest([5]u0);
     S.doTheTest([5]void);
-    S.doTheTest(packed struct(u0) {});
+    S.doTheTest(bitpack struct(u0) {});
 }
 
 test "comptime store to extern struct reinterpreted as byte array" {
@@ -581,8 +584,8 @@ test "comptime store to extern struct reinterpreted as byte array" {
     comptime std.debug.assert(val.x == 0);
 }
 
-test "reinterpret sentinel-terminated array as packed struct" {
-    const S = packed struct(u16) { lo: u8, hi: u8 };
+test "reinterpret sentinel-terminated array as bitpack struct" {
+    const S = bitpack struct(u16) { lo: u8, hi: u8 };
     const data: [2:0]u8 = .{ 0x12, 0x34 };
     const ptr: *align(1) const S = @ptrCast(&data);
     switch (endian) {
@@ -598,6 +601,8 @@ test "reinterpret sentinel-terminated array as packed struct" {
 }
 
 test "reinterpret pointer as optional pointer via double-pointer coercion" {
+    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+
     const p0: *const *anyopaque = &@ptrFromInt(0x1000);
     const p1: *const ?*anyopaque = p0;
 
@@ -605,4 +610,26 @@ test "reinterpret pointer as optional pointer via double-pointer coercion" {
 
     comptime assert(@TypeOf(loaded) == ?*anyopaque);
     comptime assert(@intFromPtr(loaded) == 0x1000);
+}
+
+test "comptime store to sentinel-terminated array in an extern struct" {
+    comptime {
+        var x: extern struct {
+            a: [2:0]u8 = @splat(50),
+        } = .{};
+        x.a[0] = 100;
+        assert(x.a[0] == 100);
+        assert(x.a[1] == 50);
+        assert(x.a[2] == 0);
+    }
+}
+
+test "comptime store to repeated string bytes" {
+    comptime {
+        var x = "aa".*;
+        x[0] = 'b';
+        assert(x[0] == 'b');
+        assert(x[1] == 'a');
+        assert(x[2] == 0);
+    }
 }

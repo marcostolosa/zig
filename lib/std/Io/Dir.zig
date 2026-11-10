@@ -12,7 +12,7 @@ const Allocator = std.mem.Allocator;
 
 handle: Handle,
 
-pub const Handle = std.posix.fd_t;
+pub const Handle = File.Handle;
 
 pub const path = std.fs.path;
 
@@ -52,9 +52,7 @@ pub const max_path_bytes = switch (native_os) {
 /// On WASI, file name components are encoded as valid UTF-8.
 /// On other platforms, `[]u8` components are an opaque sequence of bytes with no particular encoding.
 pub const max_name_bytes = switch (native_os) {
-    .linux, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos, .freebsd, .openbsd, .netbsd, .dragonfly, .illumos, .serenity, .psp => std.posix.NAME_MAX,
-    // Haiku's NAME_MAX includes the null terminator, so subtract one.
-    .haiku => std.posix.NAME_MAX - 1,
+    .haiku, .linux, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos, .freebsd, .openbsd, .netbsd, .dragonfly, .illumos, .serenity, .psp => std.posix.NAME_MAX,
     // Each WTF-16LE character may be expanded to 3 WTF-8 bytes.
     // If it would require 4 WTF-8 bytes, then there would be a surrogate
     // pair in the WTF-16LE, and we (over)account 3 bytes for it that way.
@@ -117,6 +115,7 @@ pub const Reader = struct {
         .wasi => @sizeOf(std.os.wasi.dirent_t) +
             std.mem.alignForward(usize, max_name_bytes, @alignOf(std.os.wasi.dirent_t)),
         .openbsd => std.c.S.BLKSIZE,
+        .haiku => @offsetOf(std.c.DirEnt, "name") + max_name_bytes + 1,
         else => if (builtin.link_libc) @sizeOf(std.c.dirent) else std.mem.alignForward(usize, max_name_bytes, @alignOf(usize)),
     };
 
@@ -422,7 +421,7 @@ pub const AccessError = error{
     ReadOnlyFileSystem,
 } || PathNameError || Io.Cancelable || Io.UnexpectedError;
 
-pub const AccessOptions = packed struct {
+pub const AccessOptions = bitpack struct {
     follow_symlinks: bool = true,
     read: bool = false,
     write: bool = false,
@@ -905,9 +904,7 @@ pub fn statFile(dir: Dir, io: Io, sub_path: []const u8, options: StatFileOptions
 
 pub const RealPathError = File.RealPathError;
 
-/// Obtains the canonicalized absolute path name of `sub_path` relative to this
-/// `Dir`. If `sub_path` is absolute, ignores this `Dir` handle and obtains the
-/// canonicalized absolute pathname of `sub_path` argument.
+/// Obtains the canonicalized absolute path name of `dir`.
 ///
 /// This function has limited platform support, and using it can lead to
 /// unnecessary failures and race conditions. It is generally advisable to
@@ -1122,14 +1119,19 @@ pub const RenamePreserveError = error{
     /// policy of the current thread or process disallows dataless directory materialization.
     AccessDenied,
     PathAlreadyExists,
-    /// Operating system or file system does not support atomic nonreplacing
-    /// rename.
+    /// Operating system or file system does not support atomic nonreplacing rename.
     OperationUnsupported,
 } || RenameError;
 
 /// Change the name or location of a file or directory.
 ///
 /// If `new_sub_path` already exists, `error.PathAlreadyExists` will be returned.
+///
+/// If the operating system supports it, the entire operation will be done atomically. If unsupported, will
+/// fall back to hard link followed by unlink, which is atomic with respect to `new_sub_path` but leaves a
+/// window where the cleanup of `old_sub_path may fail. Although the operation is fairly portable, technically
+/// this fallback, too, may be unsupported in some environments, in which case `error.OperationUnsupported` is
+/// returned.
 ///
 /// * On Windows, both paths should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// * On WASI, both paths should be encoded as valid UTF-8.

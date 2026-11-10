@@ -5,7 +5,7 @@ const link = @import("../../link.zig");
 const log = std.log.scoped(.codegen);
 const tracking_log = std.log.scoped(.tracking);
 const verbose_tracking_log = std.log.scoped(.verbose_tracking);
-const wip_mir_log = std.log.scoped(.wip_mir);
+const wip_mir_log = std.log.scoped(.@"wip-mir");
 const Writer = std.Io.Writer;
 
 const Air = @import("../../Air.zig");
@@ -170,14 +170,14 @@ loop_switches: std.AutoHashMapUnmanaged(Air.Inst.Index, struct {
 next_temp_index: Temp.Index = @fromBackingInt(@intCast(0)),
 temp_type: [Temp.Index.max]Type = undefined,
 
-const MaskInfo = packed struct {
+const MaskInfo = bitpack struct {
     kind: enum(u2) { lsb, msb, zero_extend, sign_extend },
     inverted: bool = false,
     scalar: Memory.Size,
 };
 
 const ArgsInfo = struct {
-    info: packed struct { reg_index: u3, frame_off: i29 },
+    info: bitpack struct { reg_index: u3, frame_off: i29 },
     frame_index: FrameIndex,
 };
 
@@ -210,6 +210,8 @@ pub const MCValue = union(enum) {
     register_offset: bits.RegisterOffset,
     /// The value is a tuple { wrapped, overflow } where wrapped value is stored in the GP register.
     register_overflow: struct { reg: Register, eflags: Condition },
+    /// The value is a tuple { wrapped, overflow } where wrapped value is stored across two registers.
+    register_pair_overflow: struct { pair: [2]Register, eflags: Condition },
     /// The value is a bool vector stored in a vector register with a different scalar type.
     register_mask: Mask,
     /// The value is in memory at a hard-coded address.
@@ -265,6 +267,7 @@ pub const MCValue = union(enum) {
             .register_mask,
             .eflags,
             .register_overflow,
+            .register_pair_overflow,
             .indirect_load_frame,
             .lea_frame,
             .lea_nav,
@@ -363,6 +366,7 @@ pub const MCValue = union(enum) {
             .indirect,
             .indirect_mask,
             => |*pl| (&pl.reg)[0..1],
+            .register_pair_overflow => |*rpo| &rpo.pair,
             else => &.{},
         };
     }
@@ -371,6 +375,7 @@ pub const MCValue = union(enum) {
         return switch (mcv) {
             .eflags => |cc| cc,
             .register_overflow => |reg_ov| reg_ov.eflags,
+            .register_pair_overflow => |rpo| rpo.eflags,
             else => null,
         };
     }
@@ -396,6 +401,7 @@ pub const MCValue = union(enum) {
             .register_quadruple,
             .register_offset,
             .register_overflow,
+            .register_pair_overflow,
             .register_mask,
             .indirect_mask,
             .lea_frame,
@@ -437,6 +443,7 @@ pub const MCValue = union(enum) {
             .register_triple,
             .register_quadruple,
             .register_overflow,
+            .register_pair_overflow,
             .register_mask,
             .memory,
             .indirect,
@@ -487,6 +494,7 @@ pub const MCValue = union(enum) {
             .register_triple,
             .register_quadruple,
             .register_overflow,
+            .register_pair_overflow,
             .register_mask,
             .memory,
             .indirect,
@@ -530,6 +538,7 @@ pub const MCValue = union(enum) {
             .register_quadruple,
             .register_offset,
             .register_overflow,
+            .register_pair_overflow,
             .register_mask,
             .indirect_load_frame,
             .lea_frame,
@@ -603,6 +612,11 @@ pub const MCValue = union(enum) {
             .register_overflow => |pl| try w.print("{s}:{s}", .{
                 @tagName(pl.eflags),
                 @tagName(pl.reg),
+            }),
+            .register_pair_overflow => |pl| try w.print("{t}:({t}:{t})", .{
+                pl.eflags,
+                pl.pair[0],
+                pl.pair[1],
             }),
             .register_mask => |pl| try w.print("mask({s},{f}):{s}{s}", .{
                 @tagName(pl.info.kind),
@@ -693,6 +707,7 @@ const InstTracking = struct {
             .register_quadruple,
             .register_offset,
             .register_overflow,
+            .register_pair_overflow,
             .register_mask,
             .indirect,
             .indirect_mask,
@@ -750,6 +765,10 @@ const InstTracking = struct {
                 function.register_manager.freeReg(reg_ov.reg);
                 function.eflags_inst = null;
             },
+            .register_pair_overflow => |rpo| {
+                for (rpo.pair) |r| function.register_manager.freeReg(r);
+                function.eflags_inst = null;
+            },
             .register_mask => |reg_mask| function.register_manager.freeReg(reg_mask.reg),
             .eflags => function.eflags_inst = null,
             else => {}, // TODO process stack allocation death
@@ -793,6 +812,7 @@ const InstTracking = struct {
             .register_quadruple,
             .register_offset,
             .register_overflow,
+            .register_pair_overflow,
             .register_mask,
             .indirect,
             .indirect_mask,
@@ -1062,7 +1082,10 @@ pub fn generate(
         .x86_64_sysv => .{ .sysv = .{
             .gp_count = call_info.gp_count,
             .fp_count = call_info.fp_count,
-            .overflow_arg_area = .{ .index = .args_frame, .off = call_info.stack_byte_count },
+            .overflow_arg_area = .{
+                .index = .args_frame,
+                .off = std.mem.alignForward(u31, call_info.stack_byte_count, 8),
+            },
             .reg_save_area = undefined,
         } },
         .x86_64_win => .{ .win64 = .{} },
@@ -1214,7 +1237,7 @@ fn formatWipMir(data: FormatWipMirData, w: *Writer) Writer.Error!void {
             return;
         },
     }).insts) |lowered_inst| {
-        if (!first) try w.writeAll("\ndebug(wip_mir): ");
+        if (!first) try w.writeAll("\ndebug(wip-mir): ");
         try w.print("  | {f}", .{lowered_inst});
         first = false;
     }
@@ -3862,7 +3885,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._sd, .add, .dst0x, .src1q, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .qword, .is = .qword } },
                         .{ .scalar_float = .{ .of = .qword, .is = .qword } },
@@ -4005,7 +4028,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._nc, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
                         .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
@@ -4039,7 +4062,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -4070,7 +4093,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -4107,7 +4130,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -4139,7 +4162,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -4177,7 +4200,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -4212,7 +4235,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -14480,7 +14503,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._sd, .sub, .dst0x, .src1q, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .qword, .is = .qword } },
                         .{ .scalar_float = .{ .of = .qword, .is = .qword } },
@@ -14620,7 +14643,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._nc, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
                         .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
@@ -14653,7 +14676,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -14684,7 +14707,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -14721,7 +14744,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -14751,7 +14774,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -14787,7 +14810,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -14818,7 +14841,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -14855,7 +14878,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -14890,7 +14913,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -24251,7 +24274,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._sd, .mul, .dst0x, .src1q, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .qword, .is = .qword } },
                         .{ .scalar_float = .{ .of = .qword, .is = .qword } },
@@ -24394,7 +24417,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._nc, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
                         .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
@@ -24428,7 +24451,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -24459,7 +24482,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -24496,7 +24519,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -24528,7 +24551,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -24566,7 +24589,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -24601,7 +24624,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -32375,7 +32398,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._sd, .div, .dst0x, .src1q, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .qword, .is = .qword } },
                         .{ .scalar_float = .{ .of = .qword, .is = .qword } },
@@ -32515,7 +32538,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._nc, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
                         .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
@@ -32549,7 +32572,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -32580,7 +32603,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -32617,7 +32640,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -32647,7 +32670,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -32683,7 +32706,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -32714,7 +32737,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -32751,7 +32774,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -32786,7 +32809,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -33886,7 +33909,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -33921,7 +33944,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .win64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -33958,7 +33981,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .msvc,
                     .required_cc_abi = .win64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -34001,7 +34024,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -34041,7 +34064,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .win64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -34081,7 +34104,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .msvc,
                     .required_cc_abi = .win64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -35235,7 +35258,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     }, .{
                         .required_abi = .gnu,
                         .required_cc_abi = .sysv64,
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .src_constraints = .{
                             .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                             .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -35274,7 +35297,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     }, .{
                         .required_abi = .gnu,
                         .required_cc_abi = .win64,
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .src_constraints = .{
                             .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                             .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -35315,7 +35338,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     }, .{
                         .required_abi = .msvc,
                         .required_cc_abi = .win64,
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .src_constraints = .{
                             .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                             .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -35362,7 +35385,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     }, .{
                         .required_abi = .gnu,
                         .required_cc_abi = .sysv64,
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .src_constraints = .{
                             .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                             .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -35406,7 +35429,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     }, .{
                         .required_abi = .gnu,
                         .required_cc_abi = .win64,
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .src_constraints = .{
                             .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                             .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -35450,7 +35473,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     }, .{
                         .required_abi = .msvc,
                         .required_cc_abi = .win64,
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .src_constraints = .{
                             .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                             .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -36827,7 +36850,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -36862,7 +36885,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .win64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -36899,7 +36922,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .msvc,
                     .required_cc_abi = .win64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -36942,7 +36965,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -36982,7 +37005,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .win64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -37022,7 +37045,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .msvc,
                     .required_cc_abi = .win64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -38500,7 +38523,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .avx, .x87, null, null },
+                    .required_features = .{ .avx, .@"387", null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -38534,7 +38557,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .sse2, .x87, null, null },
+                    .required_features = .{ .sse2, .@"387", null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -38568,7 +38591,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .sse, .x87, null, null },
+                    .required_features = .{ .sse, .@"387", null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -38634,7 +38657,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .avx, .x87, null, null },
+                    .required_features = .{ .avx, .@"387", null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -38673,7 +38696,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .sse2, .x87, null, null },
+                    .required_features = .{ .sse2, .@"387", null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -38712,7 +38735,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .sse, .x87, null, null },
+                    .required_features = .{ .sse, .@"387", null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41194,7 +41217,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .@"64bit", .avx, .x87, .fast_imm16 },
+                    .required_features = .{ .@"64bit", .avx, .@"387", .fast_imm16 },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41241,7 +41264,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .@"64bit", .avx, .x87, null },
+                    .required_features = .{ .@"64bit", .avx, .@"387", null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41288,7 +41311,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .@"64bit", .sse2, .x87, .fast_imm16 },
+                    .required_features = .{ .@"64bit", .sse2, .@"387", .fast_imm16 },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41335,7 +41358,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .@"64bit", .sse2, .x87, null },
+                    .required_features = .{ .@"64bit", .sse2, .@"387", null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41382,7 +41405,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .@"64bit", .sse, .x87, .fast_imm16 },
+                    .required_features = .{ .@"64bit", .sse, .@"387", .fast_imm16 },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41429,7 +41452,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .@"64bit", .sse, .x87, null },
+                    .required_features = .{ .@"64bit", .sse, .@"387", null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41476,7 +41499,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .win64,
-                    .required_features = .{ .@"64bit", .x87, .fast_imm16, null },
+                    .required_features = .{ .@"64bit", .@"387", .fast_imm16, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41520,7 +41543,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .win64,
-                    .required_features = .{ .@"64bit", .x87, null, null },
+                    .required_features = .{ .@"64bit", .@"387", null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41564,7 +41587,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .@"64bit", .avx, .x87, .fast_imm16 },
+                    .required_features = .{ .@"64bit", .avx, .@"387", .fast_imm16 },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41614,7 +41637,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .@"64bit", .avx, .x87, null },
+                    .required_features = .{ .@"64bit", .avx, .@"387", null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41664,7 +41687,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .@"64bit", .sse2, .x87, .fast_imm16 },
+                    .required_features = .{ .@"64bit", .sse2, .@"387", .fast_imm16 },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41714,7 +41737,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .@"64bit", .sse2, .x87, null },
+                    .required_features = .{ .@"64bit", .sse2, .@"387", null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41764,7 +41787,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .@"64bit", .sse, .x87, .fast_imm16 },
+                    .required_features = .{ .@"64bit", .sse, .@"387", .fast_imm16 },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41814,7 +41837,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .@"64bit", .sse, .x87, null },
+                    .required_features = .{ .@"64bit", .sse, .@"387", null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41864,7 +41887,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .win64,
-                    .required_features = .{ .@"64bit", .sse, .x87, .fast_imm16 },
+                    .required_features = .{ .@"64bit", .sse, .@"387", .fast_imm16 },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -41911,7 +41934,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 }, .{
                     .required_abi = .gnu,
                     .required_cc_abi = .win64,
-                    .required_features = .{ .@"64bit", .sse, .x87, null },
+                    .required_features = .{ .@"64bit", .sse, .@"387", null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -46390,7 +46413,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._nc, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, .cmov, null, null },
+                    .required_features = .{ .@"387", .cmov, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -46427,7 +46450,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sahf, .x87, null, null },
+                    .required_features = .{ .sahf, .@"387", null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -46470,7 +46493,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ .@"1:", .f_p, .st, .dst0t, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -46513,7 +46536,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ .@"1:", .f_p, .st, .dst0t, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, .cmov, null, null },
+                    .required_features = .{ .@"387", .cmov, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -46553,7 +46576,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._nc, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sahf, .x87, null, null },
+                    .required_features = .{ .sahf, .@"387", null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -46599,7 +46622,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._nc, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -50632,7 +50655,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._nc, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, .cmov, null, null },
+                    .required_features = .{ .@"387", .cmov, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -50667,7 +50690,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sahf, .x87, null, null },
+                    .required_features = .{ .sahf, .@"387", null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -50708,7 +50731,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ .@"1:", .f_p, .st, .dst0t, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -50749,7 +50772,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ .@"1:", .f_p, .st, .dst0t, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, .cmov, null, null },
+                    .required_features = .{ .@"387", .cmov, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -50787,7 +50810,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._nc, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sahf, .x87, null, null },
+                    .required_features = .{ .sahf, .@"387", null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -50831,7 +50854,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._nc, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -51941,7 +51964,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     }),
                     else => |e| return e,
                 };
-                try res[0].withOverflow(&res[1], cg);
+                try res[0].withOverflow(&res[1], ty_pl.ty, cg);
                 try res[0].finish(inst, &.{ bin_op.lhs, bin_op.rhs }, &ops, cg);
             },
             .sub_with_overflow => |air_tag| {
@@ -52846,7 +52869,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     }),
                     else => |e| return e,
                 };
-                try res[0].withOverflow(&res[1], cg);
+                try res[0].withOverflow(&res[1], ty_pl.ty, cg);
                 try res[0].finish(inst, &.{ bin_op.lhs, bin_op.rhs }, &ops, cg);
             },
             .mul_with_overflow => |air_tag| {
@@ -56443,7 +56466,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     }),
                     else => |e| return e,
                 };
-                try res[0].withOverflow(&res[1], cg);
+                try res[0].withOverflow(&res[1], ty_pl.ty, cg);
                 try res[0].finish(inst, &.{ bin_op.lhs, bin_op.rhs }, &ops, cg);
             },
             .shl_with_overflow => |air_tag| {
@@ -59788,7 +59811,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     }),
                     else => |e| return e,
                 };
-                try res[0].withOverflow(&res[1], cg);
+                try res[0].withOverflow(&res[1], ty_pl.ty, cg);
                 try res[0].finish(inst, &.{ bin_op.lhs, bin_op.rhs }, &ops, cg);
             },
             .alloc => {
@@ -75216,7 +75239,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .patterns = &.{
                         .{ .src = .{ .mem, .none, .none } },
@@ -75243,7 +75266,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .patterns = &.{
                         .{ .src = .{ .mem, .none, .none } },
@@ -75276,7 +75299,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .patterns = &.{
                         .{ .src = .{ .to_mem, .none, .none } },
@@ -75306,7 +75329,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .patterns = &.{
                         .{ .src = .{ .to_mem, .none, .none } },
@@ -75888,7 +75911,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_cc_abi = .sysv64,
-                        .required_features = .{ .avx, .x87, null, null },
+                        .required_features = .{ .avx, .@"387", null, null },
                         .src_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
                             .{ .src = .{ .to_mem, .none, .none } },
@@ -75916,7 +75939,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_cc_abi = .sysv64,
-                        .required_features = .{ .sse2, .x87, null, null },
+                        .required_features = .{ .sse2, .@"387", null, null },
                         .src_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
                             .{ .src = .{ .to_mem, .none, .none } },
@@ -75944,7 +75967,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_cc_abi = .sysv64,
-                        .required_features = .{ .sse, .x87, null, null },
+                        .required_features = .{ .sse, .@"387", null, null },
                         .src_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
                             .{ .src = .{ .to_mem, .none, .none } },
@@ -75999,7 +76022,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_cc_abi = .sysv64,
-                        .required_features = .{ .avx, .x87, null, null },
+                        .required_features = .{ .avx, .@"387", null, null },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
                             .{ .src = .{ .to_mem, .none, .none } },
@@ -76032,7 +76055,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_cc_abi = .sysv64,
-                        .required_features = .{ .sse2, .x87, null, null },
+                        .required_features = .{ .sse2, .@"387", null, null },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
                             .{ .src = .{ .to_mem, .none, .none } },
@@ -76065,7 +76088,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_cc_abi = .sysv64,
-                        .required_features = .{ .sse, .x87, null, null },
+                        .required_features = .{ .sse, .@"387", null, null },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
                             .{ .src = .{ .to_mem, .none, .none } },
@@ -77473,7 +77496,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .v_pd, .@"and", .dst0y, .src0y, .lea(.tmp0y), ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .patterns = &.{
                         .{ .src = .{ .mem, .none, .none } },
@@ -78632,7 +78655,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_cc_abi = .sysv64,
-                        .required_features = .{ .avx, .x87, null, null },
+                        .required_features = .{ .avx, .@"387", null, null },
                         .src_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
                             .{ .src = .{ .to_mem, .none, .none } },
@@ -78665,7 +78688,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_cc_abi = .sysv64,
-                        .required_features = .{ .sse2, .x87, null, null },
+                        .required_features = .{ .sse2, .@"387", null, null },
                         .src_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
                             .{ .src = .{ .to_mem, .none, .none } },
@@ -78698,7 +78721,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_cc_abi = .sysv64,
-                        .required_features = .{ .sse, .x87, null, null },
+                        .required_features = .{ .sse, .@"387", null, null },
                         .src_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
                             .{ .src = .{ .to_mem, .none, .none } },
@@ -78763,7 +78786,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_cc_abi = .sysv64,
-                        .required_features = .{ .avx, .x87, null, null },
+                        .required_features = .{ .avx, .@"387", null, null },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
                             .{ .src = .{ .to_mem, .none, .none } },
@@ -78801,7 +78824,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_cc_abi = .sysv64,
-                        .required_features = .{ .sse2, .x87, null, null },
+                        .required_features = .{ .sse2, .@"387", null, null },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
                             .{ .src = .{ .to_mem, .none, .none } },
@@ -78839,7 +78862,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_cc_abi = .sysv64,
-                        .required_features = .{ .sse, .x87, null, null },
+                        .required_features = .{ .sse, .@"387", null, null },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
                             .{ .src = .{ .to_mem, .none, .none } },
@@ -79276,7 +79299,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .v_pd, .xor, .dst0y, .src0y, .lea(.tmp0y), ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .patterns = &.{
                         .{ .src = .{ .mem, .none, .none } },
@@ -79814,7 +79837,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                 .{ ._, ._sd, .ucomi, .src0x, .src1q, ._, ._ },
                             } },
                         }, .{
-                            .required_features = .{ .x87, .cmov, null, null },
+                            .required_features = .{ .@"387", .cmov, null, null },
                             .src_constraints = .{ .{ .float = .qword }, .{ .float = .qword }, .any },
                             .patterns = &.{
                                 .{ .src = .{ .to_mem, .to_mem, .none }, .commute = .{ 0, 1 } },
@@ -79844,7 +79867,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                 .{ ._, .f_p, .st, .tmp1t, ._, ._, ._ },
                             } },
                         }, .{
-                            .required_features = .{ .sahf, .x87, null, null },
+                            .required_features = .{ .sahf, .@"387", null, null },
                             .src_constraints = .{ .{ .float = .qword }, .{ .float = .qword }, .any },
                             .patterns = &.{
                                 .{ .src = .{ .to_mem, .to_mem, .none }, .commute = .{ 0, 1 } },
@@ -79875,7 +79898,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                 .{ ._, ._, .sahf, ._, ._, ._, ._ },
                             } },
                         }, .{
-                            .required_features = .{ .x87, null, null, null },
+                            .required_features = .{ .@"387", null, null, null },
                             .src_constraints = .{ .{ .float = .qword }, .{ .float = .qword }, .any },
                             .patterns = &.{
                                 .{ .src = .{ .to_mem, .to_mem, .none }, .commute = .{ 0, 1 } },
@@ -79909,7 +79932,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                 },
                             } },
                         }, .{
-                            .required_features = .{ .x87, .cmov, null, null },
+                            .required_features = .{ .@"387", .cmov, null, null },
                             .src_constraints = .{ .{ .float = .tbyte }, .{ .float = .tbyte }, .any },
                             .patterns = &.{
                                 .{ .src = .{ .to_x87, .mem, .none }, .commute = .{ 0, 1 } },
@@ -79938,7 +79961,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                 .{ ._, .f_p, .ucomi, .tmp0t, .src1t, ._, ._ },
                             } },
                         }, .{
-                            .required_features = .{ .sahf, .x87, null, null },
+                            .required_features = .{ .sahf, .@"387", null, null },
                             .src_constraints = .{ .{ .float = .tbyte }, .{ .float = .tbyte }, .any },
                             .patterns = &.{
                                 .{ .src = .{ .mem, .mem, .none }, .commute = .{ 0, 1 } },
@@ -79969,7 +79992,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                 .{ ._, ._, .sahf, ._, ._, ._, ._ },
                             } },
                         }, .{
-                            .required_features = .{ .sahf, .x87, null, null },
+                            .required_features = .{ .sahf, .@"387", null, null },
                             .src_constraints = .{ .{ .float = .tbyte }, .{ .float = .tbyte }, .any },
                             .patterns = &.{
                                 .{ .src = .{ .to_x87, .mem, .none }, .commute = .{ 0, 1 } },
@@ -80000,7 +80023,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                 .{ ._, ._, .sahf, ._, ._, ._, ._ },
                             } },
                         }, .{
-                            .required_features = .{ .x87, null, null, null },
+                            .required_features = .{ .@"387", null, null, null },
                             .src_constraints = .{ .{ .float = .tbyte }, .{ .float = .tbyte }, .any },
                             .patterns = &.{
                                 .{ .src = .{ .mem, .mem, .none }, .commute = .{ 0, 1 } },
@@ -80034,7 +80057,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                 },
                             } },
                         }, .{
-                            .required_features = .{ .x87, null, null, null },
+                            .required_features = .{ .@"387", null, null, null },
                             .src_constraints = .{ .{ .float = .tbyte }, .{ .float = .tbyte }, .any },
                             .patterns = &.{
                                 .{ .src = .{ .to_x87, .mem, .none }, .commute = .{ 0, 1 } },
@@ -80360,7 +80383,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     .{ ._, ._sd, .ucomi, .src0x, .src1q, ._, ._ },
                                 } },
                             }, .{
-                                .required_features = .{ .x87, .cmov, null, null },
+                                .required_features = .{ .@"387", .cmov, null, null },
                                 .src_constraints = .{ .{ .float = .qword }, .{ .float = .qword }, .any },
                                 .patterns = &.{
                                     .{ .src = .{ .to_mem, .to_mem, .none }, .commute = .{ 0, 1 } },
@@ -80390,7 +80413,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     .{ ._, .f_p, .st, .tmp1t, ._, ._, ._ },
                                 } },
                             }, .{
-                                .required_features = .{ .sahf, .x87, null, null },
+                                .required_features = .{ .sahf, .@"387", null, null },
                                 .src_constraints = .{ .{ .float = .qword }, .{ .float = .qword }, .any },
                                 .patterns = &.{
                                     .{ .src = .{ .to_mem, .to_mem, .none }, .commute = .{ 0, 1 } },
@@ -80421,7 +80444,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     .{ ._, ._, .sahf, ._, ._, ._, ._ },
                                 } },
                             }, .{
-                                .required_features = .{ .x87, null, null, null },
+                                .required_features = .{ .@"387", null, null, null },
                                 .src_constraints = .{ .{ .float = .qword }, .{ .float = .qword }, .any },
                                 .patterns = &.{
                                     .{ .src = .{ .to_mem, .to_mem, .none } },
@@ -80462,7 +80485,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     },
                                 } },
                             }, .{
-                                .required_features = .{ .x87, .cmov, null, null },
+                                .required_features = .{ .@"387", .cmov, null, null },
                                 .src_constraints = .{ .{ .float = .tbyte }, .{ .float = .tbyte }, .any },
                                 .patterns = &.{
                                     .{ .src = .{ .to_x87, .mem, .none }, .commute = .{ 0, 1 } },
@@ -80492,7 +80515,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     .{ ._, .f_p, .ucomi, .tmp0t, .src1t, ._, ._ },
                                 } },
                             }, .{
-                                .required_features = .{ .sahf, .x87, null, null },
+                                .required_features = .{ .sahf, .@"387", null, null },
                                 .src_constraints = .{ .{ .float = .tbyte }, .{ .float = .tbyte }, .any },
                                 .patterns = &.{
                                     .{ .src = .{ .mem, .mem, .none } },
@@ -80523,7 +80546,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     .{ ._, ._, .sahf, ._, ._, ._, ._ },
                                 } },
                             }, .{
-                                .required_features = .{ .sahf, .x87, null, null },
+                                .required_features = .{ .sahf, .@"387", null, null },
                                 .src_constraints = .{ .{ .float = .tbyte }, .{ .float = .tbyte }, .any },
                                 .patterns = &.{
                                     .{ .src = .{ .to_x87, .mem, .none }, .commute = .{ 0, 1 } },
@@ -80555,7 +80578,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     .{ ._, ._, .sahf, ._, ._, ._, ._ },
                                 } },
                             }, .{
-                                .required_features = .{ .x87, null, null, null },
+                                .required_features = .{ .@"387", null, null, null },
                                 .src_constraints = .{ .{ .float = .tbyte }, .{ .float = .tbyte }, .any },
                                 .patterns = &.{
                                     .{ .src = .{ .mem, .mem, .none } },
@@ -80596,7 +80619,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     },
                                 } },
                             }, .{
-                                .required_features = .{ .x87, null, null, null },
+                                .required_features = .{ .@"387", null, null, null },
                                 .src_constraints = .{ .{ .float = .tbyte }, .{ .float = .tbyte }, .any },
                                 .patterns = &.{
                                     .{ .src = .{ .to_x87, .mem, .none }, .commute = .{ 0, 1 } },
@@ -80711,7 +80734,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         switch (ty.zigTypeTag(zcu)) {
                             else => {},
                             .@"struct", .@"union" => {
-                                assert(ty.containerLayout(zcu) == .@"packed");
+                                assert(ty.containerLayout(zcu) == .@"bitpack");
                                 for (&ops) |*op| op.wrapInt(cg) catch |err| switch (err) {
                                     error.SelectFailed => return cg.fail("failed to select {s} wrap {f} {f}", .{
                                         @tagName(air_tag),
@@ -82355,7 +82378,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     .{ ._, ._, .mov, .memi(.dst0b, .tmp1), .tmp2b, ._, ._ },
                                 } },
                             }, .{
-                                .required_features = .{ .x87, .cmov, .slow_incdec, null },
+                                .required_features = .{ .@"387", .cmov, .slow_incdec, null },
                                 .src_constraints = .{
                                     .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
                                     .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
@@ -82410,7 +82433,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     .{ ._, ._, .mov, .memi(.dst0b, .tmp1), .tmp2b, ._, ._ },
                                 } },
                             }, .{
-                                .required_features = .{ .x87, .cmov, null, null },
+                                .required_features = .{ .@"387", .cmov, null, null },
                                 .src_constraints = .{
                                     .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
                                     .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
@@ -82465,7 +82488,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     .{ ._, ._, .mov, .memi(.dst0b, .tmp1), .tmp2b, ._, ._ },
                                 } },
                             }, .{
-                                .required_features = .{ .x87, null, null, null },
+                                .required_features = .{ .@"387", null, null, null },
                                 .src_constraints = .{
                                     .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
                                     .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
@@ -82525,7 +82548,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     .{ ._, ._, .mov, .memi(.dst0b, .tmp1), .tmp2b, ._, ._ },
                                 } },
                             }, .{
-                                .required_features = .{ .x87, .cmov, .slow_incdec, null },
+                                .required_features = .{ .@"387", .cmov, .slow_incdec, null },
                                 .src_constraints = .{
                                     .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                                     .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -82580,7 +82603,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     .{ ._, ._, .mov, .memi(.dst0b, .tmp1), .tmp2b, ._, ._ },
                                 } },
                             }, .{
-                                .required_features = .{ .x87, .cmov, null, null },
+                                .required_features = .{ .@"387", .cmov, null, null },
                                 .src_constraints = .{
                                     .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                                     .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -82635,7 +82658,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     .{ ._, ._, .mov, .memi(.dst0b, .tmp1), .tmp2b, ._, ._ },
                                 } },
                             }, .{
-                                .required_features = .{ .x87, null, null, null },
+                                .required_features = .{ .@"387", null, null, null },
                                 .src_constraints = .{
                                     .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                                     .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -86865,7 +86888,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                 .{ ._, ._, .mov, .memi(.dst0b, .tmp1), .tmp2b, ._, ._ },
                             } },
                         }, .{
-                            .required_features = .{ .x87, .cmov, .slow_incdec, null },
+                            .required_features = .{ .@"387", .cmov, .slow_incdec, null },
                             .src_constraints = .{
                                 .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
                                 .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
@@ -86927,7 +86950,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                 .{ ._, ._, .mov, .memi(.dst0b, .tmp1), .tmp2b, ._, ._ },
                             } },
                         }, .{
-                            .required_features = .{ .x87, .cmov, null, null },
+                            .required_features = .{ .@"387", .cmov, null, null },
                             .src_constraints = .{
                                 .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
                                 .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
@@ -86989,7 +87012,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                 .{ ._, ._, .mov, .memi(.dst0b, .tmp1), .tmp2b, ._, ._ },
                             } },
                         }, .{
-                            .required_features = .{ .x87, null, null, null },
+                            .required_features = .{ .@"387", null, null, null },
                             .src_constraints = .{
                                 .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
                                 .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } },
@@ -87042,7 +87065,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                 .{ ._, ._, .mov, .memi(.dst0b, .tmp1), .tmp2b, ._, ._ },
                             } },
                         }, .{
-                            .required_features = .{ .x87, .cmov, .slow_incdec, null },
+                            .required_features = .{ .@"387", .cmov, .slow_incdec, null },
                             .src_constraints = .{
                                 .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                                 .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -87104,7 +87127,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                 .{ ._, ._, .mov, .memi(.dst0b, .tmp1), .tmp2b, ._, ._ },
                             } },
                         }, .{
-                            .required_features = .{ .x87, .cmov, null, null },
+                            .required_features = .{ .@"387", .cmov, null, null },
                             .src_constraints = .{
                                 .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                                 .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -87166,7 +87189,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                 .{ ._, ._, .mov, .memi(.dst0b, .tmp1), .tmp2b, ._, ._ },
                             } },
                         }, .{
-                            .required_features = .{ .x87, null, null, null },
+                            .required_features = .{ .@"387", null, null, null },
                             .src_constraints = .{
                                 .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                                 .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -87865,22 +87888,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     .dbg_var_ptr => op_ty.childType(zcu),
                     .dbg_var_val, .dbg_arg_inline => op_ty,
                 };
-                var ops = try cg.tempsFromOperands(inst, .{pl_op.operand});
-                var mcv = ops[0].tracking(cg).short;
-                switch (mcv) {
-                    else => {},
-                    .eflags => |cc| switch (cc) {
-                        else => {},
-                        // These values would self destruct. Maybe we make them use their
-                        // turing complete dwarf expression interpreters for once?
-                        .z_and_np, .nz_or_p => {
-                            try cg.spillEflagsIfOccupied();
-                            mcv = ops[0].tracking(cg).short;
-                        },
-                    },
-                }
-
-                try cg.mir_locals.append(cg.gpa, .{
+                const local: Mir.Local = .{
                     .name = switch (air_name) {
                         .none => switch (air_tag) {
                             else => unreachable,
@@ -87889,10 +87897,39 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         else => try cg.addString(air_name.toSlice(cg.air)),
                     },
                     .type = local_ty.toIntern(),
-                });
+                };
+                if (pl_op.operand.toInterned()) |known| {
+                    try cg.mir_locals.append(cg.gpa, local);
+                    _ = try cg.addInst(.{
+                        .tag = .pseudo,
+                        .ops = switch (air_tag) {
+                            else => unreachable,
+                            .dbg_var_ptr => unreachable, // unexpected comptime-known local pointer
+                            .dbg_var_val => .pseudo_dbg_var_val,
+                            .dbg_arg_inline => .pseudo_dbg_arg_val,
+                        },
+                        .data = .{ .ip_index = known },
+                    });
+                } else {
+                    var ops = try cg.tempsFromOperands(inst, .{pl_op.operand});
+                    var mcv = ops[0].tracking(cg).short;
+                    switch (mcv) {
+                        else => {},
+                        .eflags => |cc| switch (cc) {
+                            else => {},
+                            // These values would self destruct. Maybe we make them use their
+                            // turing complete dwarf expression interpreters for once?
+                            .z_and_np, .nz_or_p => {
+                                try cg.spillEflagsIfOccupied();
+                                mcv = ops[0].tracking(cg).short;
+                            },
+                        },
+                    }
 
-                try cg.genLocalDebugInfo(air_tag, local_ty, ops[0].tracking(cg).short);
-                try ops[0].die(cg);
+                    try cg.mir_locals.append(cg.gpa, local);
+                    try cg.genLocalDebugInfo(air_tag, local_ty, ops[0].tracking(cg).short);
+                    try ops[0].die(cg);
+                }
             },
             .is_null => {
                 const un_op = air_datas[@backingInt(inst)].un_op;
@@ -88851,7 +88888,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ss, .cvtsd2, .dst0x, .src0q, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                     .dst_constraints = .{ .{ .scalar_float = .{ .of = .dword, .is = .dword } }, .any },
                     .patterns = &.{
@@ -88970,7 +89007,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .dword, .is = .dword } }, .any },
                     .patterns = &.{
@@ -89380,7 +89417,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .scalar_float = .{ .of = .dword, .is = .dword } }, .any },
                     .patterns = &.{
@@ -89406,7 +89443,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0d, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .dword, .is = .dword } }, .any },
                     .patterns = &.{
@@ -89435,7 +89472,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .scalar_float = .{ .of = .qword, .is = .qword } }, .any },
                     .patterns = &.{
@@ -89461,7 +89498,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any },
                     .patterns = &.{
@@ -90270,7 +90307,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .sse, .x87, null, null },
+                    .required_features = .{ .sse, .@"387", null, null },
                     .src_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .xword } }, .any, .any },
                     .dst_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -90882,7 +90919,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .f16c, .x87, null, null },
+                    .required_features = .{ .f16c, .@"387", null, null },
                     .src_constraints = .{ .{ .scalar_float = .{ .of = .word, .is = .word } }, .any, .any },
                     .dst_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -90910,7 +90947,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .sse, .x87, null, null },
+                    .required_features = .{ .sse, .@"387", null, null },
                     .src_constraints = .{ .{ .scalar_float = .{ .of = .word, .is = .word } }, .any, .any },
                     .dst_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -91458,7 +91495,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._sd, .cvtss2, .dst0x, .src0d, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .scalar_float = .{ .of = .dword, .is = .dword } }, .any, .any },
                     .dst_constraints = .{ .{ .scalar_float = .{ .of = .qword, .is = .qword } }, .any },
                     .patterns = &.{
@@ -91577,7 +91614,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .dword, .is = .dword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any },
                     .patterns = &.{
@@ -91606,7 +91643,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .scalar_float = .{ .of = .dword, .is = .dword } }, .any, .any },
                     .dst_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -91631,7 +91668,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .dword, .is = .dword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -91875,7 +91912,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                     .dst_constraints = .{ .{ .scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -91900,7 +91937,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -103022,7 +103059,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const field_ty = ty_pl.ty;
                 const field_off: u31 = switch (agg_ty.containerLayout(zcu)) {
                     .auto, .@"extern" => @intCast(agg_ty.structFieldOffset(struct_field.field_index, zcu)),
-                    .@"packed" => unreachable,
+                    .@"bitpack" => unreachable,
                 };
                 var ops = try cg.tempsFromOperands(inst, .{struct_field.struct_operand});
                 var res = if (!hack_around_sema_opv_bugs or field_ty.hasRuntimeBits(zcu))
@@ -103057,7 +103094,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_pl = air_datas[@backingInt(inst)].ty_pl;
                 const bin_op = cg.air.extraData(Air.Bin, ty_pl.payload).data;
                 var ops = try cg.tempsFromOperands(inst, .{ bin_op.lhs, bin_op.rhs });
-                try ops[0].toPair(&ops[1], cg);
+                try ops[0].toPair(&ops[1], ty_pl.ty, cg);
                 try ops[0].finish(inst, &.{ bin_op.lhs, bin_op.rhs }, &ops, cg);
             },
             .slice_len => {
@@ -103474,7 +103511,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 var len = try cg.tempInit(.usize, .{
                     .immediate = cg.typeOf(ty_op.operand).childType(zcu).arrayLen(zcu),
                 });
-                try ops[0].toPair(&len, cg);
+                try ops[0].toPair(&len, ty_op.ty, cg);
                 try ops[0].finish(inst, &.{ty_op.operand}, &ops, cg);
             },
             .int_from_float, .int_from_float_optimized => |air_tag| {
@@ -107505,7 +107542,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._, .cvttsd2si, .dst0d, .src0q, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .float = .qword }, .any, .any },
                     .dst_constraints = .{ .{ .signed_int = .byte }, .any },
                     .patterns = &.{
@@ -107537,7 +107574,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._, .movsx, .dst0d, .tmp2b, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .float = .qword }, .any, .any },
                     .dst_constraints = .{ .{ .unsigned_int = .byte }, .any },
                     .patterns = &.{
@@ -107569,7 +107606,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._, .movzx, .dst0d, .tmp2b, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .float = .qword }, .any, .any },
                     .dst_constraints = .{ .{ .signed_or_exclusive_int = .word }, .any },
                     .patterns = &.{
@@ -107600,7 +107637,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_cw, .ld, .tmp1w, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .float = .qword }, .any, .any },
                     .dst_constraints = .{ .{ .signed_or_exclusive_int = .dword }, .any },
                     .patterns = &.{
@@ -107655,7 +107692,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._, .cvttsd2si, .dst0q, .src0q, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .float = .qword }, .any, .any },
                     .dst_constraints = .{ .{ .signed_or_exclusive_int = .qword }, .any },
                     .patterns = &.{
@@ -107750,7 +107787,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._, .@"or", .dst0q, .tmp0q, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .@"64bit", .x87, null, null },
+                    .required_features = .{ .@"64bit", .@"387", null, null },
                     .src_constraints = .{ .{ .float = .qword }, .any, .any },
                     .dst_constraints = .{ .{ .exact_unsigned_int = 64 }, .any },
                     .patterns = &.{
@@ -108191,7 +108228,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ns, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, .slow_incdec, null, null },
+                    .required_features = .{ .@"387", .slow_incdec, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_int = .{ .of = .byte, .is = .byte } }, .any },
                     .patterns = &.{
@@ -108228,7 +108265,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_cw, .ld, .tmp1w, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_int = .{ .of = .byte, .is = .byte } }, .any },
                     .patterns = &.{
@@ -108680,7 +108717,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .word, .is = .word } }, .any },
                     .patterns = &.{
@@ -108715,7 +108752,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_cw, .ld, .tmp1w, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .word, .is = .word } }, .any },
                     .patterns = &.{
@@ -108940,7 +108977,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .dword, .is = .dword } }, .any },
                     .patterns = &.{
@@ -108975,7 +109012,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_cw, .ld, .tmp1w, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .dword, .is = .dword } }, .any },
                     .patterns = &.{
@@ -109258,7 +109295,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .qword, .is = .qword } }, .any },
                     .patterns = &.{
@@ -110081,7 +110118,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sse3, .x87, null, null },
+                    .required_features = .{ .sse3, .@"387", null, null },
                     .src_constraints = .{ .{ .float = .tbyte }, .any, .any },
                     .dst_constraints = .{ .{ .signed_int = .byte }, .any },
                     .patterns = &.{
@@ -110108,7 +110145,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._, .movsx, .dst0d, .tmp1b, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .float = .tbyte }, .any, .any },
                     .dst_constraints = .{ .{ .signed_int = .byte }, .any },
                     .patterns = &.{
@@ -110141,7 +110178,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._, .movsx, .dst0d, .tmp2b, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sse3, .x87, null, null },
+                    .required_features = .{ .sse3, .@"387", null, null },
                     .src_constraints = .{ .{ .float = .tbyte }, .any, .any },
                     .dst_constraints = .{ .{ .unsigned_int = .byte }, .any },
                     .patterns = &.{
@@ -110168,7 +110205,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._, .movzx, .dst0d, .tmp1b, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .float = .tbyte }, .any, .any },
                     .dst_constraints = .{ .{ .unsigned_int = .byte }, .any },
                     .patterns = &.{
@@ -110201,7 +110238,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._, .movzx, .dst0d, .tmp2b, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sse3, .x87, .slow_incdec, null },
+                    .required_features = .{ .sse3, .@"387", .slow_incdec, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .byte, .is = .byte } }, .any },
                     .patterns = &.{
@@ -110234,7 +110271,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sse3, .x87, null, null },
+                    .required_features = .{ .sse3, .@"387", null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .byte, .is = .byte } }, .any },
                     .patterns = &.{
@@ -110267,7 +110304,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ns, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, .slow_incdec, null, null },
+                    .required_features = .{ .@"387", .slow_incdec, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .byte, .is = .byte } }, .any },
                     .patterns = &.{
@@ -110306,7 +110343,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_cw, .ld, .tmp2w, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .byte, .is = .byte } }, .any },
                     .patterns = &.{
@@ -110345,7 +110382,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_cw, .ld, .tmp2w, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sse3, .x87, .slow_incdec, null },
+                    .required_features = .{ .sse3, .@"387", .slow_incdec, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .byte, .is = .byte } }, .any },
                     .patterns = &.{
@@ -110378,7 +110415,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sse3, .x87, null, null },
+                    .required_features = .{ .sse3, .@"387", null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .byte, .is = .byte } }, .any },
                     .patterns = &.{
@@ -110411,7 +110448,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ns, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, .slow_incdec, null, null },
+                    .required_features = .{ .@"387", .slow_incdec, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .byte, .is = .byte } }, .any },
                     .patterns = &.{
@@ -110450,7 +110487,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_cw, .ld, .tmp2w, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .byte, .is = .byte } }, .any },
                     .patterns = &.{
@@ -110489,7 +110526,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_cw, .ld, .tmp2w, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sse3, .x87, null, null },
+                    .required_features = .{ .sse3, .@"387", null, null },
                     .src_constraints = .{ .{ .float = .tbyte }, .any, .any },
                     .dst_constraints = .{ .{ .signed_or_exclusive_int = .word }, .any },
                     .patterns = &.{
@@ -110515,7 +110552,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .fi_p, .stt, .dst0w, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .float = .tbyte }, .any, .any },
                     .dst_constraints = .{ .{ .signed_or_exclusive_int = .word }, .any },
                     .patterns = &.{
@@ -110547,7 +110584,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_cw, .ld, .tmp1w, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sse3, .x87, null, null },
+                    .required_features = .{ .sse3, .@"387", null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .word, .is = .word } }, .any },
                     .patterns = &.{
@@ -110576,7 +110613,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .word, .is = .word } }, .any },
                     .patterns = &.{
@@ -110611,7 +110648,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_cw, .ld, .tmp1w, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sse3, .x87, null, null },
+                    .required_features = .{ .sse3, .@"387", null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .word, .is = .word } }, .any },
                     .patterns = &.{
@@ -110642,7 +110679,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .word, .is = .word } }, .any },
                     .patterns = &.{
@@ -110679,7 +110716,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_cw, .ld, .tmp1w, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sse3, .x87, null, null },
+                    .required_features = .{ .sse3, .@"387", null, null },
                     .src_constraints = .{ .{ .float = .tbyte }, .any, .any },
                     .dst_constraints = .{ .{ .signed_or_exclusive_int = .dword }, .any },
                     .patterns = &.{
@@ -110705,7 +110742,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .fi_p, .stt, .dst0d, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .float = .tbyte }, .any, .any },
                     .dst_constraints = .{ .{ .signed_or_exclusive_int = .dword }, .any },
                     .patterns = &.{
@@ -110737,7 +110774,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_cw, .ld, .tmp1w, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sse3, .x87, null, null },
+                    .required_features = .{ .sse3, .@"387", null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .dword, .is = .dword } }, .any },
                     .patterns = &.{
@@ -110766,7 +110803,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .dword, .is = .dword } }, .any },
                     .patterns = &.{
@@ -110801,7 +110838,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_cw, .ld, .tmp1w, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sse3, .x87, null, null },
+                    .required_features = .{ .sse3, .@"387", null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .dword, .is = .dword } }, .any },
                     .patterns = &.{
@@ -110832,7 +110869,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .dword, .is = .dword } }, .any },
                     .patterns = &.{
@@ -110869,7 +110906,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_cw, .ld, .tmp1w, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sse3, .x87, null, null },
+                    .required_features = .{ .sse3, .@"387", null, null },
                     .src_constraints = .{ .{ .float = .tbyte }, .any, .any },
                     .dst_constraints = .{ .{ .signed_or_exclusive_int = .qword }, .any },
                     .patterns = &.{
@@ -110895,7 +110932,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .fi_p, .stt, .dst0q, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .float = .tbyte }, .any, .any },
                     .dst_constraints = .{ .{ .signed_or_exclusive_int = .qword }, .any },
                     .patterns = &.{
@@ -110928,7 +110965,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .@"64bit", .sse3, .x87, null },
+                    .required_features = .{ .@"64bit", .sse3, .@"387", null },
                     .src_constraints = .{ .{ .float = .tbyte }, .any, .any },
                     .dst_constraints = .{ .{ .exact_unsigned_int = 64 }, .any },
                     .patterns = &.{
@@ -110965,7 +111002,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .@"64bit", .x87, null, null },
+                    .required_features = .{ .@"64bit", .@"387", null, null },
                     .src_constraints = .{ .{ .float = .tbyte }, .any, .any },
                     .dst_constraints = .{ .{ .exact_unsigned_int = 64 }, .any },
                     .patterns = &.{
@@ -111008,7 +111045,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .@"64bit", .x87, null, null },
+                    .required_features = .{ .@"64bit", .@"387", null, null },
                     .src_constraints = .{ .{ .float = .tbyte }, .any, .any },
                     .dst_constraints = .{ .{ .exact_unsigned_int = 64 }, .any },
                     .patterns = &.{
@@ -111050,7 +111087,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._, .@"or", .dst0q, .tmp5q, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .sse3, .x87, null, null },
+                    .required_features = .{ .sse3, .@"387", null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .qword, .is = .qword } }, .any },
                     .patterns = &.{
@@ -111079,7 +111116,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .qword, .is = .qword } }, .any },
                     .patterns = &.{
@@ -119978,7 +120015,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._sd, .cvtsi2, .dst0x, .tmp0q, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .signed_int = .byte }, .any, .any },
                     .dst_constraints = .{ .{ .float = .qword }, .any },
                     .patterns = &.{
@@ -120006,7 +120043,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .unsigned_int = .byte }, .any, .any },
                     .dst_constraints = .{ .{ .float = .qword }, .any },
                     .patterns = &.{
@@ -120034,7 +120071,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .signed_or_exclusive_int = .word }, .any, .any },
                     .dst_constraints = .{ .{ .float = .qword }, .any },
                     .patterns = &.{
@@ -120059,7 +120096,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .exact_unsigned_int = 16 }, .any, .any },
                     .dst_constraints = .{ .{ .float = .qword }, .any },
                     .patterns = &.{
@@ -120087,7 +120124,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .signed_or_exclusive_int = .dword }, .any, .any },
                     .dst_constraints = .{ .{ .float = .qword }, .any },
                     .patterns = &.{
@@ -120112,7 +120149,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .@"64bit", .x87, null, null },
+                    .required_features = .{ .@"64bit", .@"387", null, null },
                     .src_constraints = .{ .{ .exact_unsigned_int = 32 }, .any, .any },
                     .dst_constraints = .{ .{ .float = .qword }, .any },
                     .patterns = &.{
@@ -120229,7 +120266,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._sd, .add, .dst0x, .tmp0x, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .signed_or_exclusive_int = .qword }, .any, .any },
                     .dst_constraints = .{ .{ .float = .qword }, .any },
                     .patterns = &.{
@@ -120254,7 +120291,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .@"64bit", .x87, null, null },
+                    .required_features = .{ .@"64bit", .@"387", null, null },
                     .src_constraints = .{ .{ .exact_unsigned_int = 64 }, .any, .any },
                     .dst_constraints = .{ .{ .float = .qword }, .any },
                     .patterns = &.{
@@ -122693,7 +122730,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .signed_int = .byte }, .any, .any },
                     .dst_constraints = .{ .{ .float = .tbyte }, .any },
                     .patterns = &.{
@@ -122721,7 +122758,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .unsigned_int = .byte }, .any, .any },
                     .dst_constraints = .{ .{ .float = .tbyte }, .any },
                     .patterns = &.{
@@ -122749,7 +122786,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .signed_or_exclusive_int = .word }, .any, .any },
                     .dst_constraints = .{ .{ .float = .tbyte }, .any },
                     .patterns = &.{
@@ -122774,7 +122811,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .exact_unsigned_int = 16 }, .any, .any },
                     .dst_constraints = .{ .{ .float = .tbyte }, .any },
                     .patterns = &.{
@@ -122802,7 +122839,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .signed_or_exclusive_int = .dword }, .any, .any },
                     .dst_constraints = .{ .{ .float = .tbyte }, .any },
                     .patterns = &.{
@@ -122827,7 +122864,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .@"64bit", .x87, null, null },
+                    .required_features = .{ .@"64bit", .@"387", null, null },
                     .src_constraints = .{ .{ .exact_unsigned_int = 32 }, .any, .any },
                     .dst_constraints = .{ .{ .float = .tbyte }, .any },
                     .patterns = &.{
@@ -122855,7 +122892,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .signed_or_exclusive_int = .qword }, .any, .any },
                     .dst_constraints = .{ .{ .float = .tbyte }, .any },
                     .patterns = &.{
@@ -122881,7 +122918,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .gnu,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .exact_unsigned_int = 64 }, .any, .any },
                     .dst_constraints = .{ .{ .float = .tbyte }, .any },
                     .patterns = &.{
@@ -122912,7 +122949,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_abi = .msvc,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .exact_unsigned_int = 64 }, .any, .any },
                     .dst_constraints = .{ .{ .float = .tbyte }, .any },
                     .patterns = &.{
@@ -123176,7 +123213,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._, .call, .tmp3d, ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, .slow_incdec, null, null },
+                    .required_features = .{ .@"387", .slow_incdec, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .byte, .is = .byte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123209,7 +123246,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .byte, .is = .byte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123242,7 +123279,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ns, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, .slow_incdec, null, null },
+                    .required_features = .{ .@"387", .slow_incdec, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .byte, .is = .byte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123275,7 +123312,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .byte, .is = .byte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123309,7 +123346,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, .slow_incdec, null, null },
+                    .required_features = .{ .@"387", .slow_incdec, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .byte, .is = .byte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123378,7 +123415,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .byte, .is = .byte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123446,7 +123483,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, .slow_incdec, null, null },
+                    .required_features = .{ .@"387", .slow_incdec, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .byte, .is = .byte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123515,7 +123552,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .byte, .is = .byte } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123582,7 +123619,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ns, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .word, .is = .word } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123612,7 +123649,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .word, .is = .word } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123676,7 +123713,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .word, .is = .word } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123739,7 +123776,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .dword, .is = .dword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123769,7 +123806,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .dword, .is = .dword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123833,7 +123870,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .dword, .is = .dword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123896,7 +123933,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._ae, .j, .@"0b", ._, ._, ._ },
                     } },
                 }, .{
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .qword, .is = .qword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123926,7 +123963,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .qword, .is = .qword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -123990,7 +124027,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .qword, .is = .qword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -124054,7 +124091,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_signed_int = .{ .of = .xword, .is = .xword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -124119,7 +124156,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .multiple_scalar_unsigned_int = .{ .of = .xword, .is = .xword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -124184,7 +124221,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .scalar_remainder_signed_int = .{ .of = .dword, .is = .dword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -124254,7 +124291,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .x87, null, null, null },
+                    .required_features = .{ .@"387", null, null, null },
                     .src_constraints = .{ .{ .scalar_remainder_unsigned_int = .{ .of = .dword, .is = .dword } }, .any, .any },
                     .dst_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any },
                     .patterns = &.{
@@ -141968,7 +142005,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, ._pd, .@"or", .dst0x, .tmp3x, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, .cmov, null, null },
+                        .required_features = .{ .@"387", .cmov, null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -142003,7 +142040,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .sahf, .x87, null, null },
+                        .required_features = .{ .sahf, .@"387", null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -142043,7 +142080,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -142083,7 +142120,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, .cmov, null, null },
+                        .required_features = .{ .@"387", .cmov, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -142118,7 +142155,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .sahf, .x87, null, null },
+                        .required_features = .{ .sahf, .@"387", null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -142158,7 +142195,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -152124,7 +152161,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, ._pd, .@"or", .dst0x, .tmp3x, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, .cmov, null, null },
+                        .required_features = .{ .@"387", .cmov, null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -152161,7 +152198,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .sahf, .x87, null, null },
+                        .required_features = .{ .sahf, .@"387", null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -152202,7 +152239,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -152243,7 +152280,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, .cmov, null, null },
+                        .required_features = .{ .@"387", .cmov, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -152280,7 +152317,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .sahf, .x87, null, null },
+                        .required_features = .{ .sahf, .@"387", null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -152321,7 +152358,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -156319,9 +156356,9 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .dst_temps = .{ .{ .mut_rc = .{ .ref = .src0, .rc = .sse } }, .unused },
                         .each = .{ .once = &.{
                             .{ ._, .v_ps, .cvtph2, .dst0x, .src0q, ._, ._ },
-                            .{ ._, .v_ps, .shuf, .tmp0x, .dst0x, .dst0x, .ui(0b11_10) },
-                            .{ ._, .v_ss, .add, .dst0x, .dst0x, .tmp0x, ._ },
                             .{ ._, .v_ps, .shuf, .tmp0x, .dst0x, .dst0x, .ui(0b01) },
+                            .{ ._, .v_ss, .add, .dst0x, .dst0x, .tmp0x, ._ },
+                            .{ ._, .v_ps, .shuf, .tmp0x, .dst0x, .dst0x, .ui(0b11_10) },
                             .{ ._, .v_ss, .add, .dst0x, .dst0x, .tmp0x, ._ },
                             .{ ._, .v_, .cvtps2ph, .dst0q, .dst0x, .rm(.{}), ._ },
                         } },
@@ -156614,9 +156651,9 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         },
                         .dst_temps = .{ .{ .mut_rc = .{ .ref = .src0, .rc = .sse } }, .unused },
                         .each = .{ .once = &.{
-                            .{ ._, .v_ps, .movhl, .tmp0x, .src0x, .src0x, ._ },
+                            .{ ._, .v_ps, .shuf, .tmp0x, .src0x, .src0x, .ui(0b01) },
                             .{ ._, .v_ss, .add, .tmp0x, .src0x, .tmp0x, ._ },
-                            .{ ._, .v_ps, .shuf, .dst0x, .src0x, .src0x, .ui(0b01) },
+                            .{ ._, .v_ps, .movhl, .dst0x, .src0x, .src0x, ._ },
                             .{ ._, .v_ss, .add, .dst0x, .tmp0x, .dst0x, ._ },
                         } },
                     }, .{
@@ -156647,6 +156684,33 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, ._ss, .add, .dst0x, .tmp0x, ._, ._ },
                         } },
                     }, .{
+                        .required_features = .{ .sse3, null, null, null },
+                        .dst_constraints = .{ .{ .float = .dword }, .any },
+                        .src_constraints = .{ .{ .exclusive_scalar_float = .{ .of = .xword, .is = .dword } }, .any, .any },
+                        .patterns = &.{
+                            .{ .src = .{ .to_mut_sse, .none, .none } },
+                        },
+                        .extra_temps = .{
+                            .{ .type = .vector_4_f32, .kind = .{ .rc = .sse } },
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                        },
+                        .dst_temps = .{ .{ .ref = .src0 }, .unused },
+                        .each = .{ .once = &.{
+                            .{ ._, ._, .movshdup, .tmp0x, .src0x, ._, ._ },
+                            .{ ._, ._ss, .add, .dst0x, .tmp0x, ._, ._ },
+                            .{ ._, ._ps, .movhl, .tmp0x, .dst0x, ._, ._ },
+                            .{ ._, ._ss, .add, .dst0x, .tmp0x, ._, ._ },
+                        } },
+                    }, .{
                         .required_features = .{ .sse, null, null, null },
                         .dst_constraints = .{ .{ .float = .dword }, .any },
                         .src_constraints = .{ .{ .exclusive_scalar_float = .{ .of = .xword, .is = .dword } }, .any, .any },
@@ -156668,10 +156732,10 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         },
                         .dst_temps = .{ .{ .ref = .src0 }, .unused },
                         .each = .{ .once = &.{
-                            .{ ._, ._ps, .xor, .tmp0x, .tmp0x, ._, ._ },
+                            .{ ._, ._ps, .mova, .tmp0x, .src0x, ._, ._ },
+                            .{ ._, ._ps, .shuf, .tmp0x, .src0x, .ui(0b01), ._ },
+                            .{ ._, ._ss, .add, .dst0x, .tmp0x, ._, ._ },
                             .{ ._, ._ps, .movhl, .tmp0x, .src0x, ._, ._ },
-                            .{ ._, ._ss, .add, .tmp0x, .src0x, ._, ._ },
-                            .{ ._, ._ps, .shuf, .dst0x, .src0x, .ui(0b01), ._ },
                             .{ ._, ._ss, .add, .dst0x, .tmp0x, ._, ._ },
                         } },
                     }, .{
@@ -156853,9 +156917,9 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         },
                         .dst_temps = .{ .{ .mut_rc = .{ .ref = .src0, .rc = .sse } }, .unused },
                         .each = .{ .once = &.{
-                            .{ ._, .v_f128, .extract, .tmp0x, .src0y, .ui(1), ._ },
+                            .{ ._, .v_ps, .movhl, .tmp0x, .src0x, .src0x, ._ },
                             .{ ._, .v_sd, .add, .tmp0x, .src0x, .tmp0x, ._ },
-                            .{ ._, .v_ps, .movhl, .dst0x, .src0x, .src0x, ._ },
+                            .{ ._, .v_f128, .extract, .dst0x, .src0y, .ui(1), ._ },
                             .{ ._, .v_sd, .add, .dst0x, .tmp0x, .dst0x, ._ },
                         } },
                     }, .{
@@ -156917,7 +156981,45 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, ._nc, .j, .@"0b", ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, null, null, null },
+                        .required_abi = .gnu,
+                        .required_features = .{ .@"387", null, null, null },
+                        .dst_constraints = .{ .{ .float = .qword }, .any },
+                        .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
+                        .patterns = &.{
+                            .{ .src = .{ .to_mem, .none, .none } },
+                        },
+                        .extra_temps = .{
+                            .{ .type = .u16, .kind = .mem },
+                            .{ .type = .isize, .kind = .{ .rc = .general_purpose } },
+                            .{ .type = .f64, .kind = .{ .reg = .st7 } },
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                        },
+                        .dst_temps = .{ .mem, .unused },
+                        .clobbers = .{ .eflags = true },
+                        .each = .{ .once = &.{
+                            .{ ._, .fn_cw, .st, .tmp0w, ._, ._, ._ },
+                            .{ ._, ._, .movzx, .tmp1d, .memd(.tmp0b, 1), ._, ._ },
+                            .{ ._, ._, .@"and", .memd(.tmp0b, 1), .ui(0b111_1_11_10), ._, ._ },
+                            .{ ._, .f_cw, .ld, .tmp0w, ._, ._, ._ },
+                            .{ ._, ._, .mov, .memd(.tmp0b, 1), .tmp1b, ._, ._ },
+                            .{ ._, ._, .mov, .tmp1p, .sia(8, .src0, .sub_unaligned_size), ._, ._ },
+                            .{ ._, .f_, .ld, .mem(.src0q), ._, ._, ._ },
+                            .{ .@"0:", .f_, .add, .memia(.src0q, .tmp1, .add_unaligned_size), ._, ._, ._ },
+                            .{ ._, ._, .add, .tmp1p, .si(8), ._, ._ },
+                            .{ ._, ._nc, .j, .@"0b", ._, ._, ._ },
+                            .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
+                            .{ ._, .f_cw, .ld, .tmp0w, ._, ._, ._ },
+                        } },
+                    }, .{
+                        .required_abi = .msvc,
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -156948,7 +157050,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_abi = .gnu,
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -156980,7 +157082,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_abi = .msvc,
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -160086,9 +160188,9 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .dst_temps = .{ .{ .mut_rc = .{ .ref = .src0, .rc = .sse } }, .unused },
                         .each = .{ .once = &.{
                             .{ ._, .v_ps, .cvtph2, .dst0x, .src0q, ._, ._ },
-                            .{ ._, .v_ps, .shuf, .tmp0x, .dst0x, .dst0x, .ui(0b11_10) },
-                            .{ ._, .v_ss, .mul, .dst0x, .dst0x, .tmp0x, ._ },
                             .{ ._, .v_ps, .shuf, .tmp0x, .dst0x, .dst0x, .ui(0b01) },
+                            .{ ._, .v_ss, .mul, .dst0x, .dst0x, .tmp0x, ._ },
+                            .{ ._, .v_ps, .shuf, .tmp0x, .dst0x, .dst0x, .ui(0b11_10) },
                             .{ ._, .v_ss, .mul, .dst0x, .dst0x, .tmp0x, ._ },
                             .{ ._, .v_, .cvtps2ph, .dst0q, .dst0x, .rm(.{}), ._ },
                         } },
@@ -160300,10 +160402,37 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         },
                         .dst_temps = .{ .{ .mut_rc = .{ .ref = .src0, .rc = .sse } }, .unused },
                         .each = .{ .once = &.{
-                            .{ ._, .v_ps, .movhl, .tmp0x, .src0x, .src0x, ._ },
+                            .{ ._, .v_ps, .shuf, .tmp0x, .src0x, .src0x, .ui(0b01) },
                             .{ ._, .v_ss, .mul, .tmp0x, .src0x, .tmp0x, ._ },
-                            .{ ._, .v_ps, .shuf, .dst0x, .src0x, .src0x, .ui(0b01) },
+                            .{ ._, .v_ps, .movhl, .dst0x, .src0x, .src0x, ._ },
                             .{ ._, .v_ss, .mul, .dst0x, .tmp0x, .dst0x, ._ },
+                        } },
+                    }, .{
+                        .required_features = .{ .sse3, null, null, null },
+                        .dst_constraints = .{ .{ .float = .dword }, .any },
+                        .src_constraints = .{ .{ .exclusive_scalar_float = .{ .of = .xword, .is = .dword } }, .any, .any },
+                        .patterns = &.{
+                            .{ .src = .{ .to_mut_sse, .none, .none } },
+                        },
+                        .extra_temps = .{
+                            .{ .type = .vector_4_f32, .kind = .{ .rc = .sse } },
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                        },
+                        .dst_temps = .{ .{ .ref = .src0 }, .unused },
+                        .each = .{ .once = &.{
+                            .{ ._, ._, .movshdup, .tmp0x, .src0x, ._, ._ },
+                            .{ ._, ._ss, .mul, .dst0x, .tmp0x, ._, ._ },
+                            .{ ._, ._ps, .movhl, .tmp0x, .dst0x, ._, ._ },
+                            .{ ._, ._ss, .mul, .dst0x, .tmp0x, ._, ._ },
                         } },
                     }, .{
                         .required_features = .{ .sse, null, null, null },
@@ -160327,10 +160456,10 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         },
                         .dst_temps = .{ .{ .ref = .src0 }, .unused },
                         .each = .{ .once = &.{
-                            .{ ._, ._ps, .xor, .tmp0x, .tmp0x, ._, ._ },
+                            .{ ._, ._ps, .mova, .tmp0x, .src0x, ._, ._ },
+                            .{ ._, ._ps, .shuf, .tmp0x, .src0x, .ui(0b01), ._ },
+                            .{ ._, ._ss, .mul, .dst0x, .tmp0x, ._, ._ },
                             .{ ._, ._ps, .movhl, .tmp0x, .src0x, ._, ._ },
-                            .{ ._, ._ss, .mul, .tmp0x, .src0x, ._, ._ },
-                            .{ ._, ._ps, .shuf, .dst0x, .src0x, .ui(0b01), ._ },
                             .{ ._, ._ss, .mul, .dst0x, .tmp0x, ._, ._ },
                         } },
                     }, .{
@@ -160464,9 +160593,9 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         },
                         .dst_temps = .{ .{ .mut_rc = .{ .ref = .src0, .rc = .sse } }, .unused },
                         .each = .{ .once = &.{
-                            .{ ._, .v_f128, .extract, .tmp0x, .src0y, .ui(1), ._ },
+                            .{ ._, .v_ps, .movhl, .tmp0x, .src0x, .src0x, ._ },
                             .{ ._, .v_sd, .mul, .tmp0x, .src0x, .tmp0x, ._ },
-                            .{ ._, .v_ps, .movhl, .dst0x, .src0x, .src0x, ._ },
+                            .{ ._, .v_f128, .extract, .dst0x, .src0y, .ui(1), ._ },
                             .{ ._, .v_sd, .mul, .dst0x, .tmp0x, .dst0x, ._ },
                         } },
                     }, .{
@@ -160528,7 +160657,45 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, ._nc, .j, .@"0b", ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, null, null, null },
+                        .required_abi = .gnu,
+                        .required_features = .{ .@"387", null, null, null },
+                        .dst_constraints = .{ .{ .float = .qword }, .any },
+                        .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
+                        .patterns = &.{
+                            .{ .src = .{ .to_mem, .none, .none } },
+                        },
+                        .extra_temps = .{
+                            .{ .type = .u16, .kind = .mem },
+                            .{ .type = .isize, .kind = .{ .rc = .general_purpose } },
+                            .{ .type = .f64, .kind = .{ .reg = .st7 } },
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                        },
+                        .dst_temps = .{ .mem, .unused },
+                        .clobbers = .{ .eflags = true },
+                        .each = .{ .once = &.{
+                            .{ ._, .fn_cw, .st, .tmp0w, ._, ._, ._ },
+                            .{ ._, ._, .movzx, .tmp1d, .memd(.tmp0b, 1), ._, ._ },
+                            .{ ._, ._, .@"and", .memd(.tmp0b, 1), .ui(0b111_1_11_10), ._, ._ },
+                            .{ ._, .f_cw, .ld, .tmp0w, ._, ._, ._ },
+                            .{ ._, ._, .mov, .memd(.tmp0b, 1), .tmp1b, ._, ._ },
+                            .{ ._, ._, .mov, .tmp1p, .sia(8, .src0, .sub_unaligned_size), ._, ._ },
+                            .{ ._, .f_, .ld, .mem(.src0q), ._, ._, ._ },
+                            .{ .@"0:", .f_, .mul, .memia(.src0q, .tmp1, .add_unaligned_size), ._, ._, ._ },
+                            .{ ._, ._, .add, .tmp1p, .si(8), ._, ._ },
+                            .{ ._, ._nc, .j, .@"0b", ._, ._, ._ },
+                            .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
+                            .{ ._, .f_cw, .ld, .tmp0w, ._, ._, ._ },
+                        } },
+                    }, .{
+                        .required_abi = .msvc,
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -160552,17 +160719,14 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .each = .{ .once = &.{
                             .{ ._, ._, .mov, .tmp0p, .sia(8, .src0, .sub_unaligned_size), ._, ._ },
                             .{ ._, .f_, .ld, .mem(.src0q), ._, ._, ._ },
-                            .{ ._, ._mp, .j, .@"1f", ._, ._, ._ },
-                            .{ .pseudo, .f_cstp, .in, ._, ._, ._, ._ },
-                            .{ .@"0:", .f_, .ld, .dst0q, ._, ._, ._ },
-                            .{ .@"1:", .f_, .mul, .memia(.src0q, .tmp0, .add_unaligned_size), ._, ._, ._ },
+                            .{ .@"0:", .f_, .mul, .memia(.src0q, .tmp0, .add_unaligned_size), ._, ._, ._ },
                             .{ ._, ._, .add, .tmp0p, .si(8), ._, ._ },
-                            .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                             .{ ._, ._nc, .j, .@"0b", ._, ._, ._ },
+                            .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                         } },
                     }, .{
                         .required_abi = .gnu,
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -160594,7 +160758,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_abi = .msvc,
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -162179,7 +162343,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, ._sd, .min, .dst0x, .tmp3x, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, .cmov, null, null },
+                        .required_features = .{ .@"387", .cmov, null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -162212,7 +162376,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .sahf, .x87, null, null },
+                        .required_features = .{ .sahf, .@"387", null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -162248,7 +162412,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -162284,7 +162448,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, .cmov, null, null },
+                        .required_features = .{ .@"387", .cmov, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -162317,7 +162481,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .sahf, .x87, null, null },
+                        .required_features = .{ .sahf, .@"387", null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -162353,7 +162517,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -163907,7 +164071,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, ._sd, .max, .dst0x, .tmp3x, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, .cmov, null, null },
+                        .required_features = .{ .@"387", .cmov, null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -163940,7 +164104,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .sahf, .x87, null, null },
+                        .required_features = .{ .sahf, .@"387", null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -163976,7 +164140,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -164012,7 +164176,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0q, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, .cmov, null, null },
+                        .required_features = .{ .@"387", .cmov, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -164045,7 +164209,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .sahf, .x87, null, null },
+                        .required_features = .{ .sahf, .@"387", null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -164081,7 +164245,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, .f_p, .st, .dst0t, ._, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -166351,7 +166515,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, ._sd, .add, .dst0x, .tmp2x, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -166382,7 +166546,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_abi = .gnu,
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -166414,7 +166578,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_abi = .msvc,
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -167969,7 +168133,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             .{ ._, ._sd, .mul, .dst0x, .tmp3x, ._, ._ },
                         } },
                     }, .{
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .qword }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .qword, .is = .qword } }, .any, .any },
                         .patterns = &.{
@@ -168000,7 +168164,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_abi = .gnu,
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -168032,7 +168196,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         } },
                     }, .{
                         .required_abi = .msvc,
-                        .required_features = .{ .x87, null, null, null },
+                        .required_features = .{ .@"387", null, null, null },
                         .dst_constraints = .{ .{ .float = .tbyte }, .any },
                         .src_constraints = .{ .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } }, .any, .any },
                         .patterns = &.{
@@ -170109,7 +170273,113 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 };
                 for (ops) |op| try op.die(cg);
             },
-            .cmpxchg_weak, .cmpxchg_strong => try cg.airCmpxchg(inst),
+            .cmpxchg_weak, .cmpxchg_strong => |air_tag| {
+                const ty_pl = air_datas[@backingInt(inst)].ty_pl;
+                const extra = cg.air.extraData(Air.Cmpxchg, ty_pl.payload).data;
+                var ops = try cg.tempsFromOperands(inst, .{ extra.ptr, extra.expected_value, extra.new_value });
+                var res: [2]Temp = undefined;
+                (if (ty_pl.ty.optionalReprIsPayload(zcu))
+                    cg.select(res[0..1], &.{ty_pl.ty}, &ops, comptime &.{.{
+                        .required_features = .{ .@"64bit", .cmov, null, null },
+                        .src_constraints = .{ .any, .{ .size = .qword }, .{ .size = .qword } },
+                        .patterns = &.{
+                            .{ .src = .{ .to_gpr, .{ .to_reg = .rax }, .to_gpr } },
+                        },
+                        .extra_temps = .{
+                            .{ .type = .usize, .kind = .{ .rc = .general_purpose } },
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                            .unused,
+                        },
+                        .dst_temps = .{ .{ .ref = .src1 }, .unused },
+                        .clobbers = .{ .eflags = true },
+                        .each = .{ .once = &.{
+                            .{ ._, ._, .xor, .tmp0d, .tmp0d, ._, ._ },
+                            .{ ._, .@"lock _", .cmpxchg, .lea(.src0q), .src2q, ._, ._ },
+                            .{ ._, ._e, .cmov, .dst0q, .tmp0q, ._, ._ },
+                        } },
+                    }})
+                else
+                    cg.select(&res, &.{ ty_pl.ty.childType(zcu), .u1 }, &ops, comptime &.{ .{
+                        .required_features = .{ .@"64bit", null, null, null },
+                        .src_constraints = .{ .any, .{ .int = .byte }, .{ .int = .byte } },
+                        .patterns = &.{
+                            .{ .src = .{ .to_gpr, .{ .to_reg = .rax }, .to_gpr } },
+                        },
+                        .dst_temps = .{ .{ .ref = .src1 }, .{ .cc = .ne } },
+                        .clobbers = .{ .eflags = true },
+                        .each = .{ .once = &.{
+                            .{ ._, .@"lock _", .cmpxchg, .lea(.src0b), .src2b, ._, ._ },
+                        } },
+                    }, .{
+                        .required_features = .{ .@"64bit", null, null, null },
+                        .src_constraints = .{ .any, .{ .int = .word }, .{ .int = .word } },
+                        .patterns = &.{
+                            .{ .src = .{ .to_gpr, .{ .to_reg = .rax }, .to_gpr } },
+                        },
+                        .dst_temps = .{ .{ .ref = .src1 }, .{ .cc = .ne } },
+                        .clobbers = .{ .eflags = true },
+                        .each = .{ .once = &.{
+                            .{ ._, .@"lock _", .cmpxchg, .lea(.src0w), .src2w, ._, ._ },
+                        } },
+                    }, .{
+                        .required_features = .{ .@"64bit", null, null, null },
+                        .src_constraints = .{ .any, .{ .int = .dword }, .{ .int = .dword } },
+                        .patterns = &.{
+                            .{ .src = .{ .to_gpr, .{ .to_reg = .rax }, .to_gpr } },
+                        },
+                        .dst_temps = .{ .{ .ref = .src1 }, .{ .cc = .ne } },
+                        .clobbers = .{ .eflags = true },
+                        .each = .{ .once = &.{
+                            .{ ._, .@"lock _", .cmpxchg, .lea(.src0d), .src2d, ._, ._ },
+                        } },
+                    }, .{
+                        .required_features = .{ .@"64bit", null, null, null },
+                        .src_constraints = .{ .any, .{ .int = .qword }, .{ .int = .qword } },
+                        .patterns = &.{
+                            .{ .src = .{ .to_gpr, .{ .to_reg = .rax }, .to_gpr } },
+                        },
+                        .dst_temps = .{ .{ .ref = .src1 }, .{ .cc = .ne } },
+                        .clobbers = .{ .eflags = true },
+                        .each = .{ .once = &.{
+                            .{ ._, .@"lock _", .cmpxchg, .lea(.src0q), .src2q, ._, ._ },
+                        } },
+                    }, .{
+                        .required_features = .{ .@"64bit", .cx16, null, null },
+                        .src_constraints = .{ .any, .{ .int = .xword }, .{ .int = .xword } },
+                        .patterns = &.{.{
+                            .src = .{
+                                .to_gpr,
+                                .{ .to_reg_pair = .{ .rax, .rdx } },
+                                .{ .to_reg_pair = .{ .rbx, .rcx } },
+                            },
+                        }},
+                        .dst_temps = .{ .{ .ref = .src1 }, .{ .cc = .ne } },
+                        .clobbers = .{ .eflags = true },
+                        .each = .{ .once = &.{
+                            .{ ._, .@"lock _16b", .cmpxchg, .lea(.src0x), ._, ._, ._ },
+                        } },
+                    } })) catch |err| switch (err) {
+                    error.SelectFailed => return cg.fail("failed to select {s} {f} {f} {f} {f}", .{
+                        @tagName(air_tag),
+                        ty_pl.ty.fmt(zcu),
+                        ops[0].tracking(cg),
+                        ops[1].tracking(cg),
+                        ops[2].tracking(cg),
+                    }),
+                    else => |e| return e,
+                };
+                if (!ty_pl.ty.optionalReprIsPayload(zcu))
+                    try res[0].withOverflow(&res[1], ty_pl.ty, cg);
+                try res[0].finish(inst, &.{ extra.ptr, extra.expected_value, extra.new_value }, &ops, cg);
+            },
             .atomic_load => try cg.airAtomicLoad(inst),
             .atomic_store_unordered => try cg.airAtomicStore(inst, .unordered),
             .atomic_store_monotonic => try cg.airAtomicStore(inst, .monotonic),
@@ -170451,7 +170721,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     }),
                     else => |e| return e,
                 };
-                if (res[0].tracking(cg).short != .register_pair) try ops[0].toPair(&res[0], cg);
+                if (res[0].tracking(cg).short != .register_pair) try ops[0].toPair(&res[0], .slice_const_u8_sentinel_0, cg);
                 try res[0].finish(inst, &.{un_op}, &ops, cg);
             },
             .error_name => |air_tag| {
@@ -170554,7 +170824,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     else => |e| return e,
                 };
                 const orig_res = res;
-                try res[0].toPair(&res[1], cg);
+                try res[0].toPair(&res[1], .slice_const_u8_sentinel_0, cg);
                 for (&ops) |*op| for (orig_res) |orig_r| {
                     if (op.index != orig_r.index) continue;
                     op.* = res[0];
@@ -170697,7 +170967,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     }
                                 }
                             },
-                            .@"packed" => unreachable,
+                            .@"bitpack" => unreachable,
                         }
                     },
                     .tuple_type => |tuple_type| {
@@ -171747,7 +172017,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .sse, .x87, null, null },
+                    .required_features = .{ .sse, .@"387", null, null },
                     .src_constraints = .{
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -171816,7 +172086,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     } },
                 }, .{
                     .required_cc_abi = .sysv64,
-                    .required_features = .{ .sse, .x87, null, null },
+                    .required_features = .{ .sse, .@"387", null, null },
                     .src_constraints = .{
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
                         .{ .multiple_scalar_float = .{ .of = .xword, .is = .tbyte } },
@@ -172246,7 +172516,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
             .save_err_return_trace_index => {
                 const ty_pl = air_datas[@backingInt(inst)].ty_pl;
                 const agg_ty = ty_pl.ty;
-                assert(agg_ty.containerLayout(zcu) != .@"packed");
+                assert(agg_ty.containerLayout(zcu) != .@"bitpack");
                 var ert: Temp = .{ .index = err_ret_trace_index };
                 var res = try ert.load(.usize, .{ .disp = @intCast(agg_ty.structFieldOffset(ty_pl.payload, zcu)) }, cg);
                 try ert.die(cg);
@@ -172258,7 +172528,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const is_threadlocal = zcu.comp.config.any_non_single_threaded and nav.resolved.?.@"threadlocal";
 
                 if (is_threadlocal) switch (cg.target.ofmt) {
-                    .elf => if (cg.mod.pic) {
+                    .elf => if (zcu.comp.config.pic) {
                         // LD model: `__tls_get_addr` uses the standard ABI
                         try cg.spillEflagsIfOccupied();
                         try cg.spillRegisters(abi.getCallerPreservedRegs(.x86_64_sysv));
@@ -172971,7 +173241,7 @@ fn genLazy(cg: *CodeGen, lazy_sym: link.File.LazySymbol) InnerError!void {
             for (0..tag_names.len) |tag_index| {
                 var enum_temp = try cg.tempInit(enum_ty, if (enum_ty.abiSize(zcu) <= @as(u4, switch (cg.target.cpu.arch) {
                     else => unreachable,
-                    .x86 => 4,
+                    .x86, .x86c16 => 4,
                     .x86_64 => 8,
                 })) .{ .register = param_reg } else .{ .indirect = .{ .reg = param_reg } });
 
@@ -173063,7 +173333,10 @@ fn getValue(self: *CodeGen, value: MCValue, inst: ?Air.Inst.Index) !void {
     for (value.getRegs()) |reg| try self.register_manager.getReg(reg, inst);
     switch (value) {
         else => {},
-        .eflags, .register_overflow => self.eflags_inst = inst,
+        .eflags,
+        .register_overflow,
+        .register_pair_overflow,
+        => self.eflags_inst = inst,
     }
 }
 
@@ -173089,6 +173362,10 @@ fn freeValue(self: *CodeGen, value: MCValue, comptime opts: FreeOptions) !void {
         .register_offset, .indirect => |reg_off| try self.freeReg(reg_off.reg, opts),
         .register_overflow => |reg_ov| {
             try self.freeReg(reg_ov.reg, opts);
+            self.eflags_inst = null;
+        },
+        .register_pair_overflow => |rpo| {
+            for (rpo.pair) |r| try self.freeReg(r, opts);
             self.eflags_inst = null;
         },
         .register_mask => |reg_mask| try self.freeReg(reg_mask.reg, opts),
@@ -173128,7 +173405,7 @@ fn finishAir(
 ) !void {
     const tomb_bits = self.liveness.getTombBits(inst);
     for (0.., operands) |op_index, op| {
-        if (tomb_bits & @as(Air.Liveness.Bpi, 1) << @intCast(op_index) == 0) continue;
+        if (tomb_bits & (@as(Air.Liveness.Bpi, 1) << @intCast(op_index)) == 0) continue;
         if (self.reused_operands.isSet(op_index)) continue;
         try self.processDeath(op.toIndexAllowNone() orelse continue, .{});
     }
@@ -173633,7 +173910,12 @@ fn reuseOperandAdvanced(
         return false;
 
     switch (mcv) {
-        .register, .register_pair, .register_overflow, .register_mask => for (mcv.getRegs()) |reg| {
+        .register,
+        .register_pair,
+        .register_overflow,
+        .register_pair_overflow,
+        .register_mask,
+        => for (mcv.getRegs()) |reg| {
             // If it's in the registers table, need to associate the register(s) with the
             // new instruction.
             if (maybe_tracked_inst) |tracked_inst| {
@@ -173648,7 +173930,10 @@ fn reuseOperandAdvanced(
         else => return false,
     }
     switch (mcv) {
-        .eflags, .register_overflow => self.eflags_inst = maybe_tracked_inst,
+        .eflags,
+        .register_overflow,
+        .register_pair_overflow,
+        => self.eflags_inst = maybe_tracked_inst,
         else => {},
     }
 
@@ -173675,6 +173960,7 @@ fn load(self: *CodeGen, dst_mcv: MCValue, ptr_ty: Type, ptr_mcv: MCValue) InnerE
         .register_triple,
         .register_quadruple,
         .register_overflow,
+        .register_pair_overflow,
         .register_mask,
         .indirect_load_frame,
         .indirect_mask,
@@ -173734,6 +174020,7 @@ fn store(
         .register_triple,
         .register_quadruple,
         .register_overflow,
+        .register_pair_overflow,
         .register_mask,
         .indirect_load_frame,
         .indirect_mask,
@@ -173785,6 +174072,7 @@ fn genUnOpMir(self: *CodeGen, mir_tag: Mir.Inst.FixedTag, dst_ty: Type, dst_mcv:
         .register_offset,
         .eflags,
         .register_overflow,
+        .register_pair_overflow,
         .register_mask,
         .indirect_load_frame,
         .indirect_mask,
@@ -174481,6 +174769,7 @@ fn genBinOpMir(
         .immediate,
         .eflags,
         .register_overflow,
+        .register_pair_overflow,
         .register_mask,
         .lea_frame,
         .lea_nav,
@@ -174529,6 +174818,7 @@ fn genBinOpMir(
                     .dead,
                     .undef,
                     .register_overflow,
+                    .register_pair_overflow,
                     .register_mask,
                     .indirect_load_frame,
                     .indirect_mask,
@@ -174707,6 +174997,7 @@ fn genBinOpMir(
                 .dead,
                 .undef,
                 .register_overflow,
+                .register_pair_overflow,
                 .register_mask,
                 .indirect_load_frame,
                 .indirect_mask,
@@ -174817,6 +175108,7 @@ fn genBinOpMir(
                     .dead,
                     .undef,
                     .register_overflow,
+                    .register_pair_overflow,
                     .register_mask,
                     .indirect_load_frame,
                     .indirect_mask,
@@ -175411,7 +175703,7 @@ fn genCall(cg: *CodeGen, info: union(enum) {
     // We need a properly aligned and sized call frame to be able to call this function.
     {
         const needed_call_frame: FrameAlloc = .init(.{
-            .size = call_info.stack_byte_count,
+            .size = call_info.stack_align.forward(call_info.stack_byte_count),
             .alignment = call_info.stack_align,
         });
         const frame_allocs_slice = cg.frame_allocs.slice();
@@ -176194,7 +176486,7 @@ fn lowerSwitchBr(
     const unsigned_condition_ty = try cg.pt.intType(.unsigned, cg.intInfo(condition_ty).?.bits);
 
     const ExpectedContents = extern struct {
-        liveness_deaths: [1 << 8 | 1]Air.Inst.Index,
+        liveness_deaths: [(1 << 8) | 1]Air.Inst.Index,
         bigint_limbs: [std.math.big.int.calcTwosCompLimbCount(1 << 10)]std.math.big.Limb,
         relocs: [1 << 6]Mir.Inst.Index,
     };
@@ -176205,7 +176497,7 @@ fn lowerSwitchBr(
     const liveness = try cg.liveness.getSwitchBr(allocator, inst, switch_br.cases_len + 1);
     defer allocator.free(liveness.deaths);
 
-    if (!cg.mod.pic and cg.target.ofmt == .elf) table: {
+    if (!zcu.comp.config.pic and cg.target.ofmt == .elf) table: {
         var prong_items: u32 = 0;
         var min: ?Value = null;
         var max: ?Value = null;
@@ -177183,7 +177475,7 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
                 else
                     "";
                 op.* = switch (args[
-                    arg_map.get(op_str["%[".len .. colon orelse op_str.len - "]".len]) orelse
+                    arg_map.get(op_str["%[".len .. colon orelse (op_str.len - "]".len)]) orelse
                         return self.fail("no matching constraint: '{s}'", .{op_str})
                 ]) {
                     .immediate => |imm| if (std.mem.eql(u8, modifier, "") or
@@ -177327,7 +177619,7 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
                             else
                                 "";
                             break :disp switch (args[
-                                arg_map.get(op_str["%[".len .. colon orelse open - "]".len]) orelse
+                                arg_map.get(op_str["%[".len .. colon orelse (open - "]".len)]) orelse
                                     return self.fail("no matching constraint: '{s}'", .{op_str})
                             ]) {
                                 .immediate => |imm| if (std.mem.eql(u8, modifier, "") or
@@ -177557,7 +177849,11 @@ const MoveStrategy = union(enum) {
                     .lea => if (dst_reg.size().bitSize(cg.target) >= 32) dst_reg else dst_reg.to32(),
                 }, src_mem);
             },
-            .load_store_x87 => if (dst_reg != .st0 and cg.register_manager.isKnownRegFree(.st7)) {
+            .load_store_x87 => if (dst_reg == .st0) {
+                try cg.asmRegister(.{ .f_, .free }, .st0);
+                try cg.asmOpOnly(.{ .f_cstp, .in });
+                try cg.asmMemory(.{ .f_, .ld }, src_mem);
+            } else if (cg.register_manager.isKnownRegFree(.st7)) {
                 try cg.asmMemory(.{ .f_, .ld }, src_mem);
                 switch (dst_reg) {
                     .st1, .st2, .st3, .st4, .st5, .st6 => try cg.asmRegister(.{ .f_p, .st }, @fromBackingInt(@intCast(@backingInt(dst_reg) + 1))),
@@ -177567,11 +177863,7 @@ const MoveStrategy = union(enum) {
             } else {
                 try cg.asmRegister(.{ .f_p, .st }, dst_reg);
                 try cg.asmMemory(.{ .f_, .ld }, src_mem);
-                switch (dst_reg) {
-                    .st0 => {},
-                    .st1, .st2, .st3, .st4, .st5, .st6, .st7 => try cg.asmRegister(.{ .f_, .xch }, dst_reg),
-                    else => unreachable,
-                }
+                try cg.asmRegister(.{ .f_, .xch }, dst_reg);
             },
             .insert_extract, .insert_or_extract_through_gpr => |ie| {
                 try cg.asmRegisterRegister(.{ .p_, .xor }, dst_reg, dst_reg);
@@ -177926,6 +178218,7 @@ fn genCopy(self: *CodeGen, ty: Type, dst_mcv: MCValue, src_mcv: MCValue, opts: C
         .immediate,
         .eflags,
         .register_overflow,
+        .register_pair_overflow,
         .register_mask,
         .indirect_load_frame,
         .indirect_mask,
@@ -177950,6 +178243,7 @@ fn genCopy(self: *CodeGen, ty: Type, dst_mcv: MCValue, src_mcv: MCValue, opts: C
             .dead,
             .undef,
             .register_overflow,
+            .register_pair_overflow,
             .register_tee,
             .elementwise_gpr,
             .elementwise_sse,
@@ -178153,6 +178447,7 @@ fn genSetReg(
         .ywordwise_sse,
         .zwordwise_sse,
         .reserved_frame,
+        .register_pair_overflow,
         => unreachable,
         .undef => if (opts.safety) switch (dst_reg.class()) {
             .general_purpose, .gphi => switch (abi_size) {
@@ -178300,7 +178595,8 @@ fn genSetReg(
                     .st0 => try cg.asmRegister(.{ .f_, .st }, dst_reg),
                     .st1, .st2, .st3, .st4, .st5, .st6 => switch (dst_reg) {
                         .st0 => {
-                            try cg.asmRegister(.{ .f_p, .st }, .st0);
+                            try cg.asmRegister(.{ .f_, .free }, .st0);
+                            try cg.asmOpOnly(.{ .f_cstp, .in });
                             try cg.asmRegister(.{ .f_, .ld }, @fromBackingInt(@intCast(@backingInt(src_reg) - 1)));
                         },
                         .st2, .st3, .st4, .st5, .st6 => if (cg.register_manager.isKnownRegFree(.st7)) {
@@ -178956,6 +179252,23 @@ fn genSetMem(
                 @tagName(src_mcv), ty.fmt(zcu),
             }),
         },
+        .register_pair_overflow => |rpo| switch (ty.zigTypeTag(zcu)) {
+            .optional => {
+                assert(!ty.optionalReprIsPayload(zcu));
+                const child_ty = ty.optionalChild(zcu);
+                try cg.genSetMem(base, disp, child_ty, .{ .register_pair = rpo.pair }, opts);
+                try cg.genSetMem(
+                    base,
+                    disp + @as(i32, @intCast(child_ty.abiSize(zcu))),
+                    .bool,
+                    .{ .eflags = rpo.eflags },
+                    opts,
+                );
+            },
+            else => return cg.fail("TODO implement genSetMem for {s} of {f}", .{
+                @tagName(src_mcv), ty.fmt(zcu),
+            }),
+        },
         .register_offset => |reg_off| {
             const src_reg = cg.copyToTmpRegister(ty, src_mcv) catch |err| switch (err) {
                 error.OutOfRegisters => {
@@ -179227,7 +179540,7 @@ fn airBitCast(self: *CodeGen, inst: Air.Inst.Index) !void {
 
         switch (dst_ty.zigTypeTag(zcu)) {
             .float, .error_union, .error_set, .vector => break :result dst_mcv,
-            .@"struct", .@"union" => if (dst_ty.containerLayout(zcu) != .@"packed") break :result dst_mcv,
+            .@"struct", .@"union" => if (dst_ty.containerLayout(zcu) != .@"bitpack") break :result dst_mcv,
             .optional, .pointer => if (!dst_ty.isPtrAtRuntime(zcu)) break :result dst_mcv,
             else => {},
         }
@@ -179290,111 +179603,6 @@ fn airBitCast(self: *CodeGen, inst: Air.Inst.Index) !void {
     return self.finishAir(inst, result, .{ ty_op.operand, .none, .none });
 }
 
-fn airCmpxchg(self: *CodeGen, inst: Air.Inst.Index) !void {
-    const pt = self.pt;
-    const zcu = pt.zcu;
-    const ty_pl = self.air.instructions.items(.data)[@backingInt(inst)].ty_pl;
-    const extra = self.air.extraData(Air.Cmpxchg, ty_pl.payload).data;
-
-    const dst_ty = self.typeOfIndex(inst);
-    const ptr_ty = self.typeOf(extra.ptr);
-    const val_ty = self.typeOf(extra.expected_value);
-    const val_abi_size: u32 = @intCast(val_ty.abiSize(zcu));
-
-    try self.spillRegisters(&.{ .rax, .rdx, .rbx, .rcx });
-    const regs_lock = self.register_manager.lockRegsAssumeUnused(4, .{ .rax, .rdx, .rbx, .rcx });
-    defer for (regs_lock) |lock| self.register_manager.unlockReg(lock);
-
-    const exp_mcv = try self.resolveInst(extra.expected_value);
-    if (val_abi_size > 8) {
-        const exp_addr_mcv: MCValue = switch (exp_mcv) {
-            .memory, .indirect, .load_frame => exp_mcv.address(),
-            else => .{ .register = try self.copyToTmpRegister(.usize, exp_mcv.address()) },
-        };
-        const exp_addr_lock =
-            if (exp_addr_mcv.getReg()) |reg| self.register_manager.lockReg(reg) else null;
-        defer if (exp_addr_lock) |lock| self.register_manager.unlockReg(lock);
-
-        try self.genSetReg(.rax, .usize, exp_addr_mcv.deref(), .{});
-        try self.genSetReg(.rdx, .usize, exp_addr_mcv.offset(8).deref(), .{});
-    } else try self.genSetReg(.rax, val_ty, exp_mcv, .{});
-
-    const new_mcv = try self.resolveInst(extra.new_value);
-    const new_reg = if (val_abi_size > 8) new: {
-        const new_addr_mcv: MCValue = switch (new_mcv) {
-            .memory, .indirect, .load_frame => new_mcv.address(),
-            else => .{ .register = try self.copyToTmpRegister(.usize, new_mcv.address()) },
-        };
-        const new_addr_lock =
-            if (new_addr_mcv.getReg()) |reg| self.register_manager.lockReg(reg) else null;
-        defer if (new_addr_lock) |lock| self.register_manager.unlockReg(lock);
-
-        try self.genSetReg(.rbx, .usize, new_addr_mcv.deref(), .{});
-        try self.genSetReg(.rcx, .usize, new_addr_mcv.offset(8).deref(), .{});
-        break :new null;
-    } else try self.copyToTmpRegister(val_ty, new_mcv);
-    const new_lock = if (new_reg) |reg| self.register_manager.lockRegAssumeUnused(reg) else null;
-    defer if (new_lock) |lock| self.register_manager.unlockReg(lock);
-
-    const ptr_mcv = try self.resolveInst(extra.ptr);
-    const mem_size: Memory.Size = .fromSize(val_abi_size);
-    const ptr_mem: Memory = switch (ptr_mcv) {
-        .immediate, .register, .register_offset, .lea_frame => try ptr_mcv.deref().mem(self, .{ .size = mem_size }),
-        else => .{
-            .base = .{ .reg = try self.copyToTmpRegister(ptr_ty, ptr_mcv) },
-            .mod = .{ .rm = .{ .size = mem_size } },
-        },
-    };
-    switch (ptr_mem.mod) {
-        .rm => {},
-        .off => return self.fail("TODO airCmpxchg with {s}", .{@tagName(ptr_mcv)}),
-    }
-    const ptr_lock = switch (ptr_mem.base) {
-        .none, .frame, .nav, .uav => null,
-        .reg => |reg| self.register_manager.lockReg(reg),
-        .table, .rip_inst, .lazy_sym, .extern_func => unreachable,
-    };
-    defer if (ptr_lock) |lock| self.register_manager.unlockReg(lock);
-
-    try self.spillEflagsIfOccupied();
-    const null_reg = if (dst_ty.optionalReprIsPayload(zcu) and !self.liveness.isUnused(inst)) null_reg: {
-        const null_reg = try self.register_manager.allocReg(null, abi.RegisterClass.gp);
-        try self.asmRegisterRegister(.{ ._, .xor }, null_reg.to32(), null_reg.to32());
-        break :null_reg null_reg;
-    } else null;
-    const null_lock = if (null_reg) |reg| self.register_manager.lockRegAssumeUnused(reg) else null;
-    defer if (null_lock) |lock| self.register_manager.unlockReg(lock);
-
-    if (val_abi_size <= 8) try self.asmMemoryRegister(
-        .{ .@"lock _", .cmpxchg },
-        ptr_mem,
-        registerAlias(new_reg.?, val_abi_size),
-    ) else try self.asmMemory(.{ .@"lock _16b", .cmpxchg }, ptr_mem);
-
-    const result: MCValue = result: {
-        if (self.liveness.isUnused(inst)) break :result .unreach;
-
-        if (null_reg) |reg| try self.asmCmovccRegisterRegister(
-            .e,
-            registerAlias(.rax, val_abi_size),
-            registerAlias(reg, val_abi_size),
-        );
-
-        if (val_abi_size <= 8) {
-            if (null_reg) |_| break :result .{ .register = .rax };
-            self.eflags_inst = inst;
-            break :result .{ .register_overflow = .{ .reg = .rax, .eflags = .ne } };
-        }
-
-        const dst_mcv = try self.allocRegOrMem(inst, false);
-        try self.genCopy(.usize, dst_mcv, .{ .register = .rax }, .{});
-        try self.genCopy(.usize, dst_mcv.address().offset(8).deref(), .{ .register = .rdx }, .{});
-        if (null_reg == null) try self.genCopy(.bool, dst_mcv.address().offset(16).deref(), .{ .eflags = .ne }, .{});
-        break :result dst_mcv;
-    };
-    return self.finishAir(inst, result, .{ extra.ptr, extra.expected_value, extra.new_value });
-}
-
 fn atomicOp(
     self: *CodeGen,
     ptr_mcv: MCValue,
@@ -179430,7 +179638,7 @@ fn atomicOp(
     };
     switch (ptr_mem.mod) {
         .rm => {},
-        .off => return self.fail("TODO airCmpxchg with {s}", .{@tagName(ptr_mcv)}),
+        .off => return self.fail("TODO atomicOp with {s}", .{@tagName(ptr_mcv)}),
     }
     const mem_lock = switch (ptr_mem.base) {
         .none, .frame, .nav, .uav => null,
@@ -179439,7 +179647,7 @@ fn atomicOp(
     };
     defer if (mem_lock) |lock| self.register_manager.unlockReg(lock);
 
-    const use_sse = rmw_op orelse .Xchg != .Xchg and val_ty.isRuntimeFloat();
+    const use_sse = (rmw_op orelse .Xchg) != .Xchg and val_ty.isRuntimeFloat();
     const strat: enum { lock, loop, libcall } = if (use_sse) .loop else switch (rmw_op orelse .Xchg) {
         .Xchg,
         .Add,
@@ -179499,7 +179707,7 @@ fn atomicOp(
 
             try self.asmRegisterMemory(.{ ._, .mov }, registerAlias(.rax, val_abi_size), ptr_mem);
             const loop: Mir.Inst.Index = @intCast(self.mir_instructions.len);
-            if (!use_sse and rmw_op orelse .Xchg != .Xchg) {
+            if (!use_sse and (rmw_op orelse .Xchg) != .Xchg) {
                 try self.genSetReg(tmp_reg, val_ty, .{ .register = .rax }, .{});
             }
             if (rmw_op) |op| if (use_sse) {
@@ -180889,7 +181097,7 @@ fn resolveCallingConventionValues(
             result.return_value = .init(.unreach);
             result.stack_align = switch (cg.target.cpu.arch) {
                 else => unreachable,
-                .x86 => .@"4",
+                .x86, .x86c16 => .@"4",
                 .x86_64 => .@"8",
             };
         },
@@ -181285,7 +181493,7 @@ fn resolveCallingConventionValues(
                     if (abi.zigcc.return_in_regs) switch (cg.regClassForType(ret_ty)) {
                         .general_purpose, .gphi => if (ret_size <= @as(u4, switch (cg.target.cpu.arch) {
                             else => unreachable,
-                            .x86 => 4,
+                            .x86, .x86c16 => 4,
                             .x86_64 => 8,
                         }))
                             break :return_value .init(.{ .register = registerAlias(ret_gpr[0], ret_size) })
@@ -181316,7 +181524,7 @@ fn resolveCallingConventionValues(
                     if (abi.zigcc.params_in_regs) switch (cg.regClassForType(param_ty)) {
                         .general_purpose, .gphi => if (param_gpr.len >= 1 and param_size <= @as(u4, switch (cg.target.cpu.arch) {
                             else => unreachable,
-                            .x86 => 4,
+                            .x86, .x86c16 => 4,
                             .x86_64 => 8,
                         })) {
                             arg.* = .{ .register = registerAlias(param_gpr[0], param_size) };
@@ -181356,7 +181564,6 @@ fn resolveCallingConventionValues(
         else => return cg.fail("TODO implement function parameters and return values for {} on x86_64", .{cc}),
     }
 
-    result.stack_byte_count = @intCast(result.stack_align.forward(result.stack_byte_count));
     return result;
 }
 
@@ -181550,7 +181757,7 @@ fn hasFeature(cg: *CodeGen, feature: std.Target.x86.Feature) bool {
     return switch (feature) {
         .@"64bit" => switch (cg.target.cpu.arch) {
             else => unreachable,
-            .x86 => false,
+            .x86, .x86c16 => false,
             .x86_64 => true,
         },
         .false_deps_getmant,
@@ -181598,7 +181805,7 @@ fn hasFeature(cg: *CodeGen, feature: std.Target.x86.Feature) bool {
         .mmx => false,
         .sahf => switch (cg.target.cpu.arch) {
             else => unreachable,
-            .x86 => true,
+            .x86, .x86c16 => true,
             .x86_64 => null,
         },
         else => null,
@@ -181676,17 +181883,15 @@ fn intInfo(cg: *CodeGen, ty: Type) ?std.lang.Type.Int {
             .one, .many, .c => .{ .signedness = .unsigned, .bits = cg.target.ptrBitWidth() },
             .slice => null,
         },
-        .opt_type => |opt_child| return if (!Type.fromInterned(opt_child).hasRuntimeBits(zcu))
-            .{ .signedness = .unsigned, .bits = 1 }
-        else switch (ip.indexToKey(opt_child)) {
-            .ptr_type => |ptr_type| switch (ptr_type.flags.size) {
-                .one, .many => switch (ptr_type.flags.is_allowzero) {
-                    false => .{ .signedness = .unsigned, .bits = cg.target.ptrBitWidth() },
-                    true => null,
-                },
-                .slice, .c => null,
-            },
-            else => null,
+        .opt_type => |opt_child| {
+            if (!Type.fromInterned(opt_child).hasRuntimeBits(zcu)) {
+                return .{ .signedness = .unsigned, .bits = 1 };
+            }
+            if (Type.fromInterned(ty_index).optionalReprIsPayload(zcu)) {
+                ty_index = opt_child;
+                continue;
+            }
+            return null;
         },
         .error_union_type => |error_union_type| return if (!Type.fromInterned(error_union_type.payload_type)
             .hasRuntimeBits(zcu)) .{ .signedness = .unsigned, .bits = zcu.errorSetBits() } else null,
@@ -181722,14 +181927,14 @@ fn intInfo(cg: *CodeGen, ty: Type) ?std.lang.Type.Int {
             const loaded_struct = ip.loadStructType(ty_index);
             switch (loaded_struct.layout) {
                 .auto, .@"extern" => return null,
-                .@"packed" => ty_index = loaded_struct.packed_backing_int_type,
+                .@"bitpack" => ty_index = loaded_struct.bitpack_backing_int_type,
             }
         },
         .union_type => {
             const loaded_union = ip.loadUnionType(ty_index);
             switch (loaded_union.layout) {
                 .auto, .@"extern" => return null,
-                .@"packed" => ty_index = loaded_union.packed_backing_int_type,
+                .@"bitpack" => ty_index = loaded_union.bitpack_backing_int_type,
             }
         },
         .enum_type => ty_index = ip.loadEnumType(ty_index).int_tag_type,
@@ -181811,6 +182016,7 @@ const Temp = struct {
                 .register_triple,
                 .register_quadruple,
                 .register_overflow,
+                .register_pair_overflow,
                 => true,
                 .load_frame => |frame_addr| !frame_addr.index.isNamed(),
             },
@@ -182191,7 +182397,7 @@ const Temp = struct {
         return true;
     }
 
-    fn toPair(first_temp: *Temp, second_temp: *Temp, cg: *CodeGen) InnerError!void {
+    fn toPair(first_temp: *Temp, second_temp: *Temp, result_ty: Type, cg: *CodeGen) InnerError!void {
         while (true) for ([_]*Temp{ first_temp, second_temp }) |part_temp| {
             if (try part_temp.toRegClass(true, .general_purpose, cg)) break;
         } else break;
@@ -182206,13 +182412,13 @@ const Temp = struct {
         assert(cg.reuseTemp(result_temp.index, first_temp.index, first_temp_tracking));
         assert(cg.reuseTemp(result_temp.index, second_temp.index, second_temp_tracking));
         result_temp_index.tracking(cg).* = .init(result);
-        cg.temp_type[@backingInt(result_temp_index)] = .slice_const_u8;
+        cg.temp_type[@backingInt(result_temp_index)] = result_ty;
         cg.next_temp_index = @fromBackingInt(@intCast(@backingInt(result_temp_index) + 1));
         first_temp.* = result_temp;
         second_temp.* = result_temp;
     }
 
-    fn withOverflow(temp: *Temp, overflow_temp: *Temp, cg: *CodeGen) InnerError!void {
+    fn withOverflow(temp: *Temp, overflow_temp: *Temp, result_ty: Type, cg: *CodeGen) InnerError!void {
         const temp_index = temp.unwrap(cg).temp;
         const temp_tracking = temp_index.tracking(cg);
         const overflow_temp_tracking = overflow_temp.unwrap(cg).temp.tracking(cg);
@@ -182224,7 +182430,7 @@ const Temp = struct {
                     assert(cg.reuseTemp(result_temp.index, temp.index, temp_tracking));
                     assert(cg.reuseTemp(result_temp.index, overflow_temp.index, overflow_temp_tracking));
                     result_temp_index.tracking(cg).* = .init(.{ .register_overflow = .{ .reg = reg, .eflags = overflow_cc } });
-                    cg.temp_type[@backingInt(result_temp_index)] = .slice_const_u8;
+                    cg.temp_type[@backingInt(result_temp_index)] = result_ty;
                     cg.next_temp_index = @fromBackingInt(@intCast(@backingInt(result_temp_index) + 1));
                     temp.* = result_temp;
                     overflow_temp.* = result_temp;
@@ -182236,7 +182442,22 @@ const Temp = struct {
                     assert(cg.reuseTemp(result_temp.index, temp.index, temp_tracking));
                     assert(cg.reuseTemp(result_temp.index, overflow_temp.index, overflow_temp_tracking));
                     result_temp_index.tracking(cg).* = .init(.{ .register_pair = .{ reg, overflow_reg } });
-                    cg.temp_type[@backingInt(result_temp_index)] = .slice_const_u8;
+                    cg.temp_type[@backingInt(result_temp_index)] = result_ty;
+                    cg.next_temp_index = @fromBackingInt(@intCast(@backingInt(result_temp_index) + 1));
+                    temp.* = result_temp;
+                    overflow_temp.* = result_temp;
+                    return;
+                },
+                else => {},
+            },
+            .register_pair => |pair| switch (overflow_temp_tracking.short) {
+                .eflags => |overflow_cc| {
+                    const result_temp_index = cg.next_temp_index;
+                    const result_temp: Temp = .{ .index = result_temp_index.toIndex() };
+                    assert(cg.reuseTemp(result_temp.index, temp.index, temp_tracking));
+                    assert(cg.reuseTemp(result_temp.index, overflow_temp.index, overflow_temp_tracking));
+                    result_temp_index.tracking(cg).* = .init(.{ .register_pair_overflow = .{ .pair = pair, .eflags = overflow_cc } });
+                    cg.temp_type[@backingInt(result_temp_index)] = result_ty;
                     cg.next_temp_index = @fromBackingInt(@intCast(@backingInt(result_temp_index) + 1));
                     temp.* = result_temp;
                     overflow_temp.* = result_temp;
@@ -182276,6 +182497,7 @@ const Temp = struct {
             .register_triple,
             .register_quadruple,
             .register_overflow,
+            .register_pair_overflow,
             .register_mask,
             .indirect_load_frame,
             .indirect_mask,
@@ -188727,7 +188949,7 @@ const Temp = struct {
         for (0.., op_refs, op_temps) |op_index, op_ref, op_temp| {
             if (op_temp.index == temp.index) continue;
             if (op_temp.tracking(cg).short != .dead) try op_temp.die(cg);
-            if (tomb_bits & @as(Air.Liveness.Bpi, 1) << @intCast(op_index) == 0) continue;
+            if (tomb_bits & (@as(Air.Liveness.Bpi, 1) << @intCast(op_index)) == 0) continue;
             if (cg.reused_operands.isSet(op_index)) continue;
             try cg.processDeath(op_ref.toIndexAllowNone() orelse continue, .{});
         }
@@ -188758,6 +188980,7 @@ const Temp = struct {
                         .register_quadruple,
                         .register_offset,
                         .register_overflow,
+                        .register_pair_overflow,
                         .register_mask,
                         .memory,
                         .indirect,
@@ -188789,7 +189012,7 @@ const Temp = struct {
         }
         for (0.., op_refs, op_temps) |op_index, op_ref, op_temp| {
             if (op_temp.index != temp.index) continue;
-            if (tomb_bits & @as(Air.Liveness.Bpi, 1) << @intCast(op_index) == 0) continue;
+            if (tomb_bits & (@as(Air.Liveness.Bpi, 1) << @intCast(op_index)) == 0) continue;
             if (cg.reused_operands.isSet(op_index)) continue;
             try cg.processDeath(op_ref.toIndexAllowNone() orelse continue, .{});
         }
@@ -188876,6 +189099,7 @@ fn reuseTemp(
         .register_pair,
         .register_offset,
         .register_overflow,
+        .register_pair_overflow,
         .register_mask,
         .indirect,
         => for (tracking.short.getRegs()) |tracked_reg| {
@@ -188887,7 +189111,10 @@ fn reuseTemp(
         else => {},
     }
     switch (tracking.short) {
-        .eflags, .register_overflow => cg.eflags_inst = new_inst,
+        .eflags,
+        .register_overflow,
+        .register_pair_overflow,
+        => cg.eflags_inst = new_inst,
         else => {},
     }
     tracking.reuse(cg, new_inst, old_inst);
@@ -189185,10 +189412,10 @@ const Select = struct {
         src_constraints: [@backingInt(Select.Operand.Ref.none) - @backingInt(Select.Operand.Ref.src0)]Constraint = @splat(.any),
         dst_constraints: [@backingInt(Select.Operand.Ref.src0) - @backingInt(Select.Operand.Ref.dst0)]Constraint = @splat(.any),
         patterns: []const Select.Pattern,
-        call_frame: packed struct(u16) { size: u10 = 0, alignment: InternPool.Alignment } = .{ .size = 0, .alignment = .none },
+        call_frame: bitpack struct(u16) { size: u10 = 0, alignment: InternPool.Alignment } = .{ .size = 0, .alignment = .none },
         extra_temps: [@backingInt(Select.Operand.Ref.dst0) - @backingInt(Select.Operand.Ref.tmp0)]TempSpec = @splat(.unused),
         dst_temps: [@backingInt(Select.Operand.Ref.src0) - @backingInt(Select.Operand.Ref.dst0)]TempSpec.Kind = @splat(.unused),
-        clobbers: packed struct {
+        clobbers: bitpack struct {
             eflags: bool = false,
             caller_preserved: CallConv = .none,
         } = .{},
@@ -189990,9 +190217,9 @@ const Select = struct {
                                         (@as(u64, std.math.maxInt(u64)) >> @intCast(res_scalar_info.bits - scalar_info.bits))),
                                     .@"0x1p63_mem" => switch (res_scalar_info.bits) {
                                         else => unreachable,
-                                        16 => @as(i64, @as(i16, @bitCast(@as(f16, 0x1p63)))) << 64 - 16,
-                                        32 => @as(i64, @as(i32, @bitCast(@as(f32, 0x1p63)))) << 64 - 32,
-                                        64 => @as(i64, @as(i64, @bitCast(@as(f64, 0x1p63)))) << 64 - 64,
+                                        16 => @as(i64, @as(i16, @bitCast(@as(f16, 0x1p63)))) << (64 - 16),
+                                        32 => @as(i64, @as(i32, @bitCast(@as(f32, 0x1p63)))) << (64 - 32),
+                                        64 => @as(i64, @as(i64, @bitCast(@as(f64, 0x1p63)))) << (64 - 64),
                                     },
                                 };
                                 const shift: u6 = @intCast(64 - res_scalar_info.bits);
@@ -190321,11 +190548,11 @@ const Select = struct {
     };
     const Label = enum { @"0:", @"1:", @"2:", @"3:", @"4:", @"_", pseudo };
     const Operand = struct {
-        flags: packed struct(u32) {
+        flags: bitpack struct(u32) {
             tag: Tag,
             adjust: Adjust = .none,
             base: Ref.Sized = .none,
-            index: packed struct(u7) {
+            index: bitpack struct(u7) {
                 ref: Ref,
                 scale: Memory.Scale = .@"1",
             } = .{ .ref = .none },
@@ -190342,7 +190569,7 @@ const Select = struct {
             lea,
             mem,
         };
-        const Adjust = packed struct(u12) {
+        const Adjust = bitpack struct(u12) {
             sign: enum(u1) { neg, pos },
             lhs: enum(u6) {
                 none,
@@ -190489,7 +190716,7 @@ const Select = struct {
             src2,
             none,
 
-            const Sized = packed struct(u9) {
+            const Sized = bitpack struct(u9) {
                 ref: Ref,
                 size: Memory.Size,
 
@@ -191391,8 +191618,8 @@ const Select = struct {
                     @as(SignedImm, @intCast(s.cg.nonBoolScalarBitSize(op.flags.base.ref.typeOf(s)))),
                 .log2_src0_elem_size => @intCast(std.math.log2(Select.Operand.Ref.src0.typeOf(s).indexableElem(s.cg.pt.zcu).abiSize(s.cg.pt.zcu))),
                 .elem_mask => @as(u8, std.math.maxInt(u8)) >> @intCast(
-                    8 - ((s.cg.unalignedSize(op.flags.base.ref.typeOf(s)) - 1) %
-                        @divExact(op.flags.base.size.bitSize(s.cg.target), 8) + 1 >>
+                    8 - (((s.cg.unalignedSize(op.flags.base.ref.typeOf(s)) - 1) %
+                        @divExact(op.flags.base.size.bitSize(s.cg.target), 8) + 1) >>
                         op.flags.index.scale.toLog2()),
                 ),
                 inline .smin, .smax, .umax, .smin_shr_src1, .smax_shr_src1, .umax_shr_src1 => |adjust| switch (op.flags.base.size) {
@@ -191421,7 +191648,7 @@ const Select = struct {
                 },
                 .repeat => switch (SignedImm) {
                     else => unreachable,
-                    i64 => return @as(i64, op.imm) << 32 | @as(u32, @bitCast(op.imm)),
+                    i64 => return (@as(i64, op.imm) << 32) | @as(u32, @bitCast(op.imm)),
                 },
             };
             const rhs = op.flags.adjust.rhs.toLog2();
@@ -191432,10 +191659,10 @@ const Select = struct {
                     break :op_res op_res[0];
                 },
                 .div => @shrExact(lhs, rhs),
-                .div_8_down => lhs >> 3 & @as(SignedImm, -1) << rhs,
+                .div_8_down => (lhs >> 3) & (@as(SignedImm, -1) << rhs),
                 .rem_8_mul => lhs & ((@as(SignedImm, 8) << rhs) - 1),
-                .up_2_mul => ((lhs - 1) & @as(SignedImm, -2) << rhs) + (@as(SignedImm, 2) << rhs),
-                .up_32_mul => ((lhs - 1) & @as(SignedImm, -32) << rhs) + (@as(SignedImm, 32) << rhs),
+                .up_2_mul => ((lhs - 1) & (@as(SignedImm, -2) << rhs)) + (@as(SignedImm, 2) << rhs),
+                .up_32_mul => ((lhs - 1) & (@as(SignedImm, -32) << rhs)) + (@as(SignedImm, 32) << rhs),
             };
             const disp: SignedImm = @bitCast(@as(UnsignedImm, @as(u32, @bitCast(op.imm))));
             return switch (op.flags.adjust.sign) {
@@ -191467,7 +191694,13 @@ const Select = struct {
                         } },
                         .eflags => unreachable,
                         .register => |reg| .{ .reg = s.lowerReg(reg.toSize(op.flags.base.size, s.cg.target)) },
-                        .register_pair, .register_triple, .register_quadruple, .register_offset, .register_overflow => unreachable,
+                        .register_pair,
+                        .register_triple,
+                        .register_quadruple,
+                        .register_offset,
+                        .register_overflow,
+                        .register_pair_overflow,
+                        => unreachable,
                         .register_mask => |reg_mask| .{ .reg = s.lowerReg(reg_mask.reg.toSize(op.flags.base.size, s.cg.target)) },
                         .lea_nav => |nav| .{ .imm = .{ .nav = .{ .index = nav } } },
                         .lea_uav => |uav| .{ .imm = .{ .uav = uav } },
@@ -191537,11 +191770,11 @@ fn select(
         switch (case.required_abi) {
             .any => {},
             .gnu => if (switch (cg.target.abi) {
-                .none, .msvc, .itanium => cg.target.os.tag == .windows,
+                .none, .msvc => cg.target.os.tag == .windows,
                 else => false,
             }) continue :cases,
             .msvc => if (switch (cg.target.abi) {
-                .none, .msvc, .itanium => cg.target.os.tag != .windows,
+                .none, .msvc => cg.target.os.tag != .windows,
                 else => true,
             }) continue :cases,
         }

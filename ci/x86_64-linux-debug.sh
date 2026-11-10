@@ -11,7 +11,7 @@ CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.18.0-dev.92+1e1964473"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
-export PATH="$HOME/deps/wasmtime-v46.0.1-x86_64-linux:$HOME/deps/qemu-linux-x86_64-11.1.1.1/bin:$HOME/local/bin:$PATH"
+export PATH="$HOME/deps/wasmtime-v50.0.0-x86_64-linux:$HOME/deps/qemu-linux-x86_64-11.1.1.1/bin:$HOME/local/bin:$PATH"
 
 # Override the cache directories because they won't actually help other CI runs
 # which will be testing alternate versions of zig, and ultimately would just
@@ -61,7 +61,7 @@ stage3-debug/bin/zig build install test docs \
   -Denable-llvm \
   -Dno-lib \
   -Denable-superhtml \
-  -Dlldb="$HOME/deps/lldb-zig/Debug-86a744cac9/bin/lldb" \
+  -Dlldb="$HOME/deps/lldb-zig/Debug-c003e86788/bin/lldb" \
   -Dskip-freebsd \
   -Dskip-netbsd \
   -Dskip-openbsd \

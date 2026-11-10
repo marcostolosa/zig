@@ -1,8 +1,9 @@
-#exe {
--Mroot=main.zig
+#zig build-exe {
+--name test
+-Mroot=test.zig
 #}
 
-#write main.zig {
+#write test.zig {
 pub fn main() void {
     _ = @as(S, undefined);
 }
@@ -14,10 +15,9 @@ const S = struct {
 };
 #}
 #update
-#check stdout {
-#}
+#check stdout
 
-#write main.zig {
+#write test.zig {
 pub fn main() void {
     _ = @as(S, undefined);
 }
@@ -29,7 +29,5 @@ const S = struct {
     bar: u32,
 };
 #}
-#update {
-add field to outer struct, change decl used by inner struct#}
-#check stdout {
-#}
+#update "add field to outer struct, change decl used by inner struct"
+#check stdout

@@ -30,9 +30,9 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
 
     switch (in_crt_file) {
         .crt1_o => {
-            var args = std.array_list.Managed([]const u8).init(arena);
+            var args: std.ArrayList([]const u8) = .empty;
             try addCcArgs(comp, arena, &args, false);
-            try args.append("-DCRT");
+            try args.append(arena, "-DCRT");
             var files = [_]Compilation.CSourceFile{
                 .{
                     .src_path = try comp.dirs.zig_lib.join(arena, &.{
@@ -47,9 +47,9 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
             });
         },
         .rcrt1_o => {
-            var args = std.array_list.Managed([]const u8).init(arena);
+            var args: std.ArrayList([]const u8) = .empty;
             try addCcArgs(comp, arena, &args, false);
-            try args.append("-DCRT");
+            try args.append(arena, "-DCRT");
             var files = [_]Compilation.CSourceFile{
                 .{
                     .src_path = try comp.dirs.zig_lib.join(arena, &.{
@@ -65,9 +65,9 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
             });
         },
         .scrt1_o => {
-            var args = std.array_list.Managed([]const u8).init(arena);
+            var args: std.ArrayList([]const u8) = .empty;
             try addCcArgs(comp, arena, &args, false);
-            try args.append("-DCRT");
+            try args.append(arena, "-DCRT");
             var files = [_]Compilation.CSourceFile{
                 .{
                     .src_path = try comp.dirs.zig_lib.join(arena, &.{
@@ -104,11 +104,11 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 }
             }
 
-            var c_source_files = std.array_list.Managed(Compilation.CSourceFile).init(gpa);
-            defer c_source_files.deinit();
+            var c_source_files: std.ArrayList(Compilation.CSourceFile) = .empty;
+            defer c_source_files.deinit(gpa);
 
-            var override_path = std.array_list.Managed(u8).init(gpa);
-            defer override_path.deinit();
+            var override_path: std.ArrayList(u8) = .empty;
+            defer override_path.deinit(gpa);
 
             const s = path.sep_str;
 
@@ -132,30 +132,30 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 if (!is_arch_specific) {
                     // Look for an arch specific override.
                     override_path.shrinkRetainingCapacity(0);
-                    try override_path.print("{s}" ++ s ++ "{s}" ++ s ++ "{s}.s", .{
+                    try override_path.print(gpa, "{s}" ++ s ++ "{s}" ++ s ++ "{s}.s", .{
                         dirname, arch_name, noextbasename,
                     });
                     if (source_table.contains(override_path.items))
                         continue;
 
                     override_path.shrinkRetainingCapacity(0);
-                    try override_path.print("{s}" ++ s ++ "{s}" ++ s ++ "{s}.S", .{
+                    try override_path.print(gpa, "{s}" ++ s ++ "{s}" ++ s ++ "{s}.S", .{
                         dirname, arch_name, noextbasename,
                     });
                     if (source_table.contains(override_path.items))
                         continue;
 
                     override_path.shrinkRetainingCapacity(0);
-                    try override_path.print("{s}" ++ s ++ "{s}" ++ s ++ "{s}.c", .{
+                    try override_path.print(gpa, "{s}" ++ s ++ "{s}" ++ s ++ "{s}.c", .{
                         dirname, arch_name, noextbasename,
                     });
                     if (source_table.contains(override_path.items))
                         continue;
                 }
 
-                var args = std.array_list.Managed([]const u8).init(arena);
+                var args: std.ArrayList([]const u8) = .empty;
                 try addCcArgs(comp, arena, &args, ext == .o3);
-                const c_source_file = try c_source_files.addOne();
+                const c_source_file = try c_source_files.addOne(gpa);
                 c_source_file.* = .{
                     .src_path = try comp.dirs.zig_lib.join(arena, &.{ "libc", src_file }),
                     .extra_flags = args.items,
@@ -187,7 +187,7 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
             const time32 = for (time32_compat_arch_list) |time32_compat_arch| {
                 if (mem.eql(u8, arch_name, time32_compat_arch)) break true;
             } else false;
-            const arch_define = try std.fmt.allocPrint(arena, "-DARCH_{s}", .{arch_name});
+            const arch_define = try arena.print("-DARCH_{s}", .{arch_name});
             const family_define = switch (target.cpu.arch) {
                 .arm, .armeb, .thumb, .thumbeb => "-DFAMILY_arm",
                 .aarch64, .aarch64_be => "-DFAMILY_aarch64",
@@ -246,9 +246,6 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 .emit_bin = .yes_cache,
                 .verbose_cc = comp.verbose_cc,
                 .verbose_link = comp.verbose_link,
-                .verbose_air = comp.verbose_air,
-                .verbose_llvm_ir = comp.verbose_llvm_ir,
-                .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
                 .clang_passthrough_mode = comp.clang_passthrough_mode,
                 .c_source_files = &.{
                     .{
@@ -377,20 +374,21 @@ fn addSrcFile(arena: Allocator, source_table: *std.array_hash_map.String(Ext), f
 fn addCcArgs(
     comp: *Compilation,
     arena: Allocator,
-    args: *std.array_list.Managed([]const u8),
+    /// uses `arena` as its allocator
+    args: *std.ArrayList([]const u8),
     want_O3: bool,
 ) error{OutOfMemory}!void {
     const target = comp.getTarget();
     const arch_name = std.zig.target.muslArchName(target.cpu.arch, target.abi);
     const os_name = @tagName(target.os.tag);
-    const triple = try std.fmt.allocPrint(arena, "{s}-{s}-{s}", .{
+    const triple = try arena.print("{s}-{s}-{s}", .{
         std.zig.target.muslArchNameHeaders(target.cpu.arch),
         os_name,
         std.zig.target.muslAbiNameHeaders(target.abi),
     });
     const o_arg = if (want_O3) "-O3" else "-Os";
 
-    try args.appendSlice(&[_][]const u8{
+    try args.appendSlice(arena, &[_][]const u8{
         "-std=c99",
         "-ffreestanding",
         "-fexcess-precision=standard",
@@ -428,7 +426,7 @@ fn addCcArgs(
     });
 
     if (target.cpu.arch.isThumb()) {
-        try args.append("-mimplicit-it=always");
+        try args.append(arena, "-mimplicit-it=always");
     }
 }
 

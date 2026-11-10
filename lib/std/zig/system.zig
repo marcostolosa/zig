@@ -266,8 +266,8 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
                         // Minor * 1(0),000 summed has been convention since FreeBSD 2.2 (1997)
                         // e.g. 492101 = 4.11-STABLE = 4.(9+2)
                         const major = value / 100_000;
-                        const minor1 = value % 100_000 / 10_000; // usually 0 since 5.1
-                        const minor2 = value % 10_000 / 1_000; // 0 before 5.1, minor version since
+                        const minor1 = (value % 100_000) / 10_000; // usually 0 since 5.1
+                        const minor2 = (value % 10_000) / 1_000; // 0 before 5.1, minor version since
                         const patch = value % 1_000;
                         os.version_range.semver.min = .{ .major = major, .minor = minor1 + minor2, .patch = patch };
                         os.version_range.semver.max = os.version_range.semver.min;
@@ -280,8 +280,8 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
                         // r = 0 (*)
                         // p = patchlevel
                         const major = value / 100_000_000;
-                        const minor = value % 100_000_000 / 1_000_000;
-                        const patch = value % 10_000 / 100;
+                        const minor = (value % 100_000_000) / 1_000_000;
+                        const patch = (value % 10_000) / 100;
                         os.version_range.semver.min = .{ .major = major, .minor = minor, .patch = patch };
                         os.version_range.semver.max = os.version_range.semver.min;
                     },
@@ -292,7 +292,7 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
                         //   m = minor; odd-numbers indicate current dev branch
                         //   p = patch
                         const major = value / 100_000;
-                        const minor = value % 100_000 / 100;
+                        const minor = (value % 100_000) / 100;
                         const patch = value % 100;
                         os.version_range.semver.min = .{ .major = major, .minor = minor, .patch = patch };
                         os.version_range.semver.max = os.version_range.semver.min;
@@ -371,32 +371,6 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
         .explicit => |model| model.toCpu(query_cpu_arch),
     } orelse Target.Cpu.baseline(query_cpu_arch, os);
 
-    // For x86, we need to populate some CPU feature flags depending on architecture
-    // and mode:
-    //  * 16bit_mode => if the arch is x86_16
-    //  * 32bit_mode => if the arch is x86
-    // However, the "mode" flags can be used as overrides, so if the user explicitly
-    // sets one of them, that takes precedence.
-    switch (query_cpu_arch) {
-        .x86_16 => {
-            cpu.features.addFeature(@backingInt(Target.x86.Feature.@"16bit_mode"));
-        },
-        .x86 => {
-            if (!Target.x86.featureSetHasAny(query.cpu_features_add, .{
-                .@"16bit_mode", .@"32bit_mode",
-            })) {
-                cpu.features.addFeature(@backingInt(Target.x86.Feature.@"32bit_mode"));
-            }
-        },
-        .arm, .armeb => {
-            // XXX What do we do if the target has the noarm feature?
-            //     What do we do if the user specifies +thumb_mode?
-        },
-        .thumb, .thumbeb => {
-            cpu.features.addFeature(@backingInt(Target.arm.Feature.thumb_mode));
-        },
-        else => {},
-    }
     updateCpuFeatures(
         &cpu.features,
         cpu.arch.allFeaturesList(),
@@ -434,24 +408,9 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
 
     // These CPU feature hacks have to come after ABI detection.
     {
-        if (result.cpu.arch == .hexagon) {
-            // Both LLVM and LLD have broken support for the small data area. Yet LLVM has the
-            // feature on by default for all Hexagon CPUs. Clang sort of solves this by defaulting
-            // the `-gpsize` command line parameter for the Hexagon backend to 0, so that no
-            // constants get placed in the SDA. (This of course breaks down if the user passes
-            // `-G <n>` to Clang...) We can't do the `-gpsize` hack because we can have multiple
-            // concurrent LLVM emit jobs, and command line options in LLVM are shared globally. So
-            // just force this feature off. Lovely stuff.
-            result.cpu.features.removeFeature(@backingInt(Target.hexagon.Feature.small_data));
-        }
-
         // https://github.com/llvm/llvm-project/issues/105978
         if (result.cpu.arch.isArm() and result.abi.float() == .soft) {
             result.cpu.features.removeFeature(@backingInt(Target.arm.Feature.vfp2));
-        }
-
-        if (result.cpu.arch.isXtensa() and result.abi == .call0) {
-            result.cpu.features.removeFeature(@backingInt(Target.xtensa.Feature.windowed));
         }
     }
 

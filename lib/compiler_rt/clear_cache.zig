@@ -18,7 +18,7 @@ comptime {
 
 fn clear_cache(start: usize, end: usize) callconv(.c) void {
     const x86 = switch (arch) {
-        .x86, .x86_64 => true,
+        .x86, .x86c16, .x86_64 => true,
         else => false,
     };
     const arm32 = switch (arch) {
@@ -39,7 +39,7 @@ fn clear_cache(start: usize, end: usize) callconv(.c) void {
         .mips, .mipsel, .mips64, .mips64el => true,
         else => false,
     };
-    const riscv = arch.isRISCV();
+    const riscv = arch.isRiscv();
     const powerpc64 = switch (arch) {
         .powerpc64, .powerpc64le => true,
         else => false,

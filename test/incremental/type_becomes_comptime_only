@@ -1,8 +1,9 @@
-#exe {
--Mroot=main.zig
+#zig build-exe {
+--name test
+-Mroot=test.zig
 #}
 
-#write main.zig {
+#write test.zig {
 const SomeType = u32;
 const S = struct {
     x: SomeType,
@@ -14,10 +15,9 @@ pub fn main() void {
 }
 #}
 #update
-#check stdout {
-#}
+#check stdout
 
-#write main.zig {
+#write test.zig {
 const SomeType = comptime_int;
 const S = struct {
     x: SomeType,
@@ -28,12 +28,10 @@ pub fn main() void {
     s.foo();
 }
 #}
-#update {
-make S comptime-only#}
-#check stdout {
-#}
+#update "make S comptime-only"
+#check stdout
 
-#write main.zig {
+#write test.zig {
 const SomeType = u16;
 const S = struct {
     x: SomeType,
@@ -44,7 +42,5 @@ pub fn main() void {
     s.foo();
 }
 #}
-#update {
-make S runtime again#}
-#check stdout {
-#}
+#update "make S runtime again"
+#check stdout

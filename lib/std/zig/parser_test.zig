@@ -1120,7 +1120,7 @@ test "zig fmt: empty enum decls" {
         \\const A = enum {};
         \\const B = enum(u32) {};
         \\const C = extern enum(c_int) {};
-        \\const D = packed enum(noreturn) {};
+        \\const D = bitpack enum(noreturn) {};
         \\
     );
 }
@@ -1131,7 +1131,7 @@ test "zig fmt: empty union decls" {
         \\const B = union(enum) {};
         \\const C = union(Foo) {};
         \\const D = extern union {};
-        \\const E = packed union {};
+        \\const E = bitpack union {};
         \\
     );
 }
@@ -3046,25 +3046,61 @@ test "zig fmt: precedence" {
         \\    !(a{});
         \\    a + b{};
         \\    (a + b){};
-        \\    a << b + c;
         \\    (a << b) + c;
-        \\    a & b << c;
         \\    (a & b) << c;
-        \\    a ^ b & c;
         \\    (a ^ b) & c;
-        \\    a | b ^ c;
         \\    (a | b) ^ c;
         \\    a == b | c;
         \\    (a == b) | c;
         \\    a and b == c;
         \\    (a and b) == c;
-        \\    a or b and c;
         \\    (a or b) and c;
         \\    (a or b) and c;
         \\    a == b and c == d;
         \\}
         \\
     );
+}
+
+test "zig fmt: ambiguous precedence" {
+    try testError(
+        \\test "ambiguous precedence" {
+        \\    a & b << c;
+        \\    a << b + c;
+        \\    a << b | c;
+        \\    a ^ b & c;
+        \\    a | b ^ c;
+        \\    a or b and c;
+        \\    a orelse b catch c;
+        \\    a % b % c;
+        \\}
+        \\
+    , &[_]Error{
+        .ambiguous_operator_precedence,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_right,
+        .ambiguous_operator_precedence,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_right,
+        .ambiguous_operator_precedence,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_left,
+        .ambiguous_operator_precedence,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_left,
+        .ambiguous_operator_precedence,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_left,
+        .ambiguous_operator_precedence,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_right,
+        .ambiguous_operator_precedence,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_left,
+        .illegal_chained_operators,
+        .previous_ambiguous_operator,
+        .hint_operator_precedence_left,
+    });
 }
 
 test "zig fmt: prefix operators" {
@@ -3206,14 +3242,14 @@ test "zig fmt: struct declaration" {
         \\    }
         \\};
         \\
-        \\const Ps = packed struct {
+        \\const Ps = bitpack struct {
         \\    a: u8,
         \\    b: u8,
         \\
         \\    c: u8,
         \\};
         \\
-        \\const Ps = packed struct(u32) {
+        \\const Ps = bitpack struct(u32) {
         \\    a: u1,
         \\    b: u2,
         \\
@@ -3249,7 +3285,7 @@ test "zig fmt: enum declaration" {
         \\    SomethingThird,
         \\};
         \\
-        \\const Ep = packed enum {
+        \\const Ep = bitpack enum {
         \\    Ok,
         \\    SomethingElse,
         \\    SomethingThird,
@@ -7205,7 +7241,7 @@ test "recovery: missing comma" {
         \\        2 => {}
         \\        3 => {}
         \\        else => {
-        \\            foo & bar +;
+        \\            foo & bar &;
         \\        }
         \\    }
         \\}

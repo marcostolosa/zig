@@ -1,12 +1,4 @@
-#todo {
-passes, but prints errors
-#}
-#skip x86_64-linux-none-whole-selfhosted-new-nopic
-#skip x86_64-linux-none-whole-selfhosted-new-pic
-#skip x86_64-linux-none-incremental-selfhosted-new-nopic
-#skip x86_64-linux-none-incremental-selfhosted-new-pic
-
-#exe {
+#zig build-exe {
 --name enums
 -Mroot=enums.zig
 #}
@@ -32,6 +24,7 @@ pub fn main() void {
 #}
 #update
 #check lldb {
+#...
 (lldb) breakpoint set --file enums.zig --source-pattern-regexp '_ = enums;'
 Breakpoint 1: where = enums`enums.testEnums + #... at enums.zig:14:1, address = 0x#...
 (lldb) process launch
@@ -64,4 +57,5 @@ Process #... stopped
 }
 (lldb) breakpoint delete --force 1
 1 breakpoints deleted; 0 breakpoint locations disabled.
+#...
 #}

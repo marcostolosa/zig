@@ -1,8 +1,9 @@
-#exe {
--Mroot=main.zig
+#zig build-exe {
+--name test
+-Mroot=test.zig
 #}
 
-#write main.zig {
+#write test.zig {
 pub fn main() !void {
     try foo(false);
 }
@@ -19,7 +20,7 @@ const io = std.Io.Threaded.global_single_threaded.io();
 non-recursive path
 #}
 
-#write main.zig {
+#write test.zig {
 pub fn main() !void {
     try foo(true);
 }
@@ -31,8 +32,7 @@ fn foo(recurse: bool) !void {
 const std = @import("std");
 const io = std.Io.Threaded.global_single_threaded.io();
 #}
-#update {
-eliminate recursion and change argument#}
+#update "eliminate recursion and change argument"
 #check stdout {
 x==1
 #}

@@ -3,7 +3,7 @@
 //! a sequence of values in *packed* memory, and then unflatten through a combination of special
 //! cases (particularly for pointers and `undefined` values) and in-memory buffer reinterprets.
 //!
-//! This is a little awkward on big-endian targets, as non-packed datastructures (e.g. `extern struct`)
+//! This is a little awkward on big-endian targets, as non-bitpack datastructures (e.g. `extern struct`)
 //! have their fields reversed when represented as packed memory on such targets.
 
 /// If `host_bits` is `0`, attempts to convert the memory at offset
@@ -40,7 +40,7 @@ pub fn castMemory(
         .arena = sema.arena,
         .skip_bytes = byte_offset,
         .remaining_bytes = dest_ty.abiSize(zcu),
-        .unpacked = .init(sema.arena),
+        .unpacked = .empty,
     };
     unpack.add(val) catch |err| switch (err) {
         error.ReinterpretDeclRef => return null,
@@ -79,7 +79,7 @@ pub fn spliceMemory(
         .arena = sema.arena,
         .skip_bytes = 0,
         .remaining_bytes = byte_offset,
-        .unpacked = .init(sema.arena),
+        .unpacked = .empty,
     };
     unpack.add(val) catch |err| switch (err) {
         error.ReinterpretDeclRef => return null,
@@ -121,7 +121,8 @@ const UnpackValueBytes = struct {
     arena: Allocator,
     skip_bytes: u64,
     remaining_bytes: u64,
-    unpacked: std.array_list.Managed(InternPool.Index),
+    /// Uses `arena` as its allocator
+    unpacked: std.ArrayList(InternPool.Index),
 
     fn add(unpack: *UnpackValueBytes, val: Value) (error{ReinterpretDeclRef} || Allocator.Error)!void {
         const pt = unpack.pt;
@@ -176,7 +177,7 @@ const UnpackValueBytes = struct {
             .opt,
             => try unpack.primitive(val),
 
-            .bitpack => |bitpack| try unpack.primitive(.fromInterned(bitpack.backing_int_val)),
+            .@"bitpack" => |@"bitpack"| try unpack.primitive(.fromInterned(@"bitpack".backing_int_val)),
 
             .aggregate => switch (ty.zigTypeTag(zcu)) {
                 .vector => unreachable, // ill-defined layout
@@ -191,7 +192,7 @@ const UnpackValueBytes = struct {
                 },
                 .@"struct" => switch (ty.containerLayout(zcu)) {
                     .auto => unreachable, // ill-defined layout
-                    .@"packed" => unreachable, // uses `.bitpack`, not `.aggregate`
+                    .@"bitpack" => unreachable, // uses `.bitpack`, not `.aggregate`
                     .@"extern" => {
                         var it = ip.loadStructType(ty.toIntern()).iterateRuntimeOrder(ip);
                         var offset: u64 = 0;
@@ -255,7 +256,7 @@ const UnpackValueBytes = struct {
         }
 
         unpack.remaining_bytes -= size;
-        try unpack.unpacked.append(val.toIntern());
+        try unpack.unpacked.append(unpack.arena, val.toIntern());
     }
 
     fn splitPrimitive(unpack: *UnpackValueBytes, val: Value, offset: u64, len: u64) (error{ReinterpretDeclRef} || Allocator.Error)!void {
@@ -265,7 +266,7 @@ const UnpackValueBytes = struct {
 
         assert(offset + len <= ty.abiSize(zcu));
 
-        try unpack.unpacked.ensureUnusedCapacity(@intCast(len));
+        try unpack.unpacked.ensureUnusedCapacity(unpack.arena, @intCast(len));
         unpack.remaining_bytes -= len;
 
         switch (pt.zcu.intern_pool.indexToKey(val.toIntern())) {
@@ -352,7 +353,7 @@ const PackValueBytes = struct {
                     }
                     return pt.aggregateValue(ty, elems);
                 },
-                .@"packed" => {
+                .@"bitpack" => {
                     const backing_int_val = try pack.primitive(ty.backingIntType(zcu));
                     if (backing_int_val.isUndef(zcu)) return pt.undefValue(ty);
                     return pt.bitpackValue(ty, backing_int_val);
@@ -423,7 +424,7 @@ const PackValueBytes = struct {
                         .reinterpret_decl_ref => return error.ReinterpretDeclRef,
                     }
                 },
-                .@"packed" => {
+                .@"bitpack" => {
                     const backing_int_val = try pack.primitive(ty.backingIntType(zcu));
                     if (backing_int_val.isUndef(zcu)) return pt.undefValue(ty);
                     return pt.bitpackValue(ty, backing_int_val);

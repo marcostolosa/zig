@@ -555,6 +555,33 @@ pub fn renderError(tree: Ast, parse_error: Error, w: *Writer) Writer.Error!void 
         .var_const_decl => {
             return w.writeAll("use 'var' or 'const' to declare variable");
         },
+        .ambiguous_operator_precedence => {
+            return w.print("ambiguous operator precedence with operators ... {s} ... {s} ...; use parentheses to disambiguate", .{
+                tree.tokenTag(parse_error.token - @as(u32, @intCast(parse_error.extra.offset))).lexeme().?,
+                tree.tokenTag(parse_error.token).lexeme().?,
+            });
+        },
+        .previous_ambiguous_operator => {
+            return w.writeAll("previous ambiguous operator here");
+        },
+        .illegal_chained_operators => {
+            return w.print("repetition of non-chainable operators ... {s} ... {s} ...; use parentheses to disambiguate", .{
+                tree.tokenTag(parse_error.token - @as(u32, @intCast(parse_error.extra.offset))).lexeme().?,
+                tree.tokenTag(parse_error.token).lexeme().?,
+            });
+        },
+        .hint_operator_precedence_left => {
+            return w.print("in zig 0.17.x, this was evaluated as (... {s} ...) {s} ...", .{
+                tree.tokenTag(parse_error.token - @as(u32, @intCast(parse_error.extra.offset))).lexeme().?,
+                tree.tokenTag(parse_error.token).lexeme().?,
+            });
+        },
+        .hint_operator_precedence_right => {
+            return w.print("in zig 0.17.x, this was evaluated as ... {s} (... {s} ...)", .{
+                tree.tokenTag(parse_error.token - @as(u32, @intCast(parse_error.extra.offset))).lexeme().?,
+                tree.tokenTag(parse_error.token).lexeme().?,
+            });
+        },
 
         .invalid_byte => {
             const tok_slice = tree.source[tree.tokens.items(.start)[parse_error.token]..];
@@ -808,7 +835,7 @@ pub fn firstToken(tree: Ast, node: Node.Index) TokenIndex {
         => {
             const main_token = tree.nodeMainToken(n);
             switch (tree.tokenTag(main_token -| 1)) {
-                .keyword_packed, .keyword_extern => end_offset += 1,
+                .keyword_bitpack, .keyword_packed, .keyword_extern => end_offset += 1,
                 else => {},
             }
             return main_token - end_offset;
@@ -2165,7 +2192,7 @@ fn fullContainerDeclComponents(tree: Ast, info: full.ContainerDecl.Components) f
     const previous_token = info.main_token - 1;
 
     switch (tree.tokenTag(previous_token)) {
-        .keyword_extern, .keyword_packed => result.layout_token = previous_token,
+        .keyword_bitpack, .keyword_extern, .keyword_packed => result.layout_token = previous_token,
         else => {},
     }
     return result;
@@ -2893,6 +2920,11 @@ pub const Error = struct {
         expected_var_const,
         wrong_equal_var_decl,
         var_const_decl,
+        ambiguous_operator_precedence,
+        previous_ambiguous_operator,
+        hint_operator_precedence_left,
+        hint_operator_precedence_right,
+        illegal_chained_operators,
 
         zig_style_container,
         previous_field,
@@ -3937,7 +3969,7 @@ pub const Node = struct {
         then_expr: Index,
     };
 
-    pub const For = packed struct(u32) {
+    pub const For = bitpack struct(u32) {
         inputs: u31,
         has_else: bool,
     };

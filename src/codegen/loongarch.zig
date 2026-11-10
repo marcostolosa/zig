@@ -26,6 +26,7 @@ pub fn legalizeFeatures(_: *const std.Target) ?*const Air.Legalize.Features {
         .soft_f32,
         .soft_f64,
         .soft_f80,
+        .soft_f128,
     });
 }
 
@@ -54,6 +55,7 @@ pub fn generate(
         .opt_mode = mod.optimize_mode,
         .air = air.*,
         .nav_index = zcu.funcInfo(func_index).owner_nav,
+        .no_builtin = mod.no_builtin,
     };
     defer isel.deinit();
     assert(try isel.active_blocks.fetchPut(gpa, Select.Block.main, .{ .target_label = 0 }) == null);

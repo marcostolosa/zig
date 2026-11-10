@@ -134,9 +134,8 @@ fn finalize(self: *Trie, allocator: Allocator) !void {
     const tracy = trace(@src());
     defer tracy.end();
 
-    var ordered_nodes = std.array_list.Managed(Node.Index).init(allocator);
-    defer ordered_nodes.deinit();
-    try ordered_nodes.ensureTotalCapacityPrecise(self.nodes.items(.is_terminal).len);
+    var ordered_nodes: std.ArrayList(Node.Index) = try .initCapacity(allocator, self.nodes.items(.is_terminal).len);
+    defer ordered_nodes.deinit(allocator);
 
     {
         var fifo: std.ArrayList(Node.Index) = .empty;
@@ -347,9 +346,9 @@ const Edge = struct {
 fn expectEqualHexStrings(expected: []const u8, given: []const u8) !void {
     assert(expected.len > 0);
     if (mem.eql(u8, expected, given)) return;
-    const expected_fmt = try std.fmt.allocPrint(testing.allocator, "{x}", .{expected});
+    const expected_fmt = try testing.allocator.print("{x}", .{expected});
     defer testing.allocator.free(expected_fmt);
-    const given_fmt = try std.fmt.allocPrint(testing.allocator, "{x}", .{given});
+    const given_fmt = try testing.allocator.print("{x}", .{given});
     defer testing.allocator.free(given_fmt);
     const idx = mem.findDiff(u8, expected_fmt, given_fmt).?;
     const padding = try testing.allocator.alloc(u8, idx + 5);

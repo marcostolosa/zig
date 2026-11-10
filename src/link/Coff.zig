@@ -438,7 +438,7 @@ pub const InputArchive = struct {
                 name_type: std.coff.ImportNameType,
             },
         },
-        flags: packed struct {
+        flags: bitpack struct {
             // Set if an attempt was made to load this member
             is_loaded: bool,
         },
@@ -893,7 +893,7 @@ pub const Symbol = struct {
     rva: u32,
     value: std.meta.BareUnion(Symbol.Value),
     extra: std.meta.BareUnion(Symbol.Extra),
-    flags: packed struct(u16) {
+    flags: bitpack struct(u16) {
         value_tag: ValueTag,
         extra_tag: ExtraTag,
         type: Symbol.Type,
@@ -1170,7 +1170,7 @@ pub const Reloc = extern struct {
     next: Reloc.Index,
     loc: Symbol.Index,
     target: Symbol.Index,
-    flags: packed struct(u8) {
+    flags: bitpack struct(u8) {
         /// Indicates the addend is not known and should be recovered from the location itself.
         /// COFF relocation tables don't encode the addend, only the location.
         recover_addend: bool,
@@ -3454,7 +3454,7 @@ fn addSection(coff: *Coff, name: String, flags: std.coff.SectionHeader.Flags) !S
     return si;
 }
 
-const ObjectSectionAttributes = packed struct {
+const ObjectSectionAttributes = bitpack struct {
     read: bool = false,
     write: bool = false,
     execute: bool = false,
@@ -5326,7 +5326,7 @@ fn loadArchive(coff: *Coff, path: std.Build.Cache.Path, fr: *Io.File.Reader) Loa
                 });
 
             const ext = ".dll";
-            if (!std.mem.endsWith(u8, lib_name, ext))
+            if (!std.ascii.endsWithIgnoreCase(lib_name, ext))
                 return diags.failParse(
                     path,
                     "unexpected extension for import '{s} ('{s}'): '{s}'",
@@ -5419,9 +5419,9 @@ pub fn prelink(coff: *Coff, prog_node: std.Progress.Node) link.Error!void {
             libc_installation.msvc_lib_dir,
             libc_installation.kernel32_lib_dir,
         };
-        const search_paths = all_paths[0..if (target.abi == .msvc or target.abi == .itanium) 3 else 1];
+        const search_paths = all_paths[0..if (target.abi == .msvc) 3 else 1];
         lib: for (coff.pending_default_libs.items) |lib| {
-            if (!std.mem.eql(u8, std.fs.path.extension(lib.path), ".lib"))
+            if (!std.ascii.endsWithIgnoreCase(std.fs.path.extension(lib.path), ".lib"))
                 return comp.link_diags.failParse(
                     lib.ioi.path(coff),
                     "/DEFAULTLIB library '{s}' had unexpected extension",
@@ -6100,7 +6100,7 @@ pub fn idle(coff: *Coff) !bool {
             break :task;
         }
         while (coff.mf.updates.pop()) |ni| : (coff.mf.update_prog_node.completeOne()) {
-            if (ni.pendingDelete(&coff.mf)) continue;
+            ni.cleanUpdated(&coff.mf);
             const clean_moved = ni.cleanMoved(&coff.mf);
             const clean_resized = ni.cleanResized(&coff.mf);
             const clean_next_moved = ni.cleanNextMoved(&coff.mf);

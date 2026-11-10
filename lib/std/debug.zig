@@ -76,7 +76,7 @@ pub fn TargetInfo(os: std.Target.Os.Tag, arch: std.Target.Cpu.Arch) type {
         },
         .macho => @import("debug/SelfInfo/MachO.zig"),
         .plan9, .spirv, .wasm, .raw, .hex => void,
-        .c => unreachable,
+        .c, .llvmbc, .llvmir => unreachable,
     };
 }
 
@@ -405,7 +405,7 @@ test dumpHexFallible {
     defer aw.deinit();
 
     try dumpHexFallible(.{ .writer = &aw.writer, .mode = .no_color }, bytes);
-    const expected = try std.fmt.allocPrint(gpa,
+    const expected = try gpa.print(
         \\{x:0>[2]}  00 11 22 33 44 55 66 77  88 99 AA BB CC DD EE FF  .."3DUfw........
         \\{x:0>[2]}  01 12 13                                          ...
         \\
@@ -478,6 +478,7 @@ const use_trap_panic = switch (builtin.zig_backend) {
     .stage2_spirv,
     .stage2_x86,
     => true,
+    .stage2_llvm => builtin.cpu.arch.isSpirv(),
     else => false,
 };
 
@@ -669,7 +670,7 @@ pub noinline fn captureCurrentStackTrace(options: StackUnwindOptions, addr_buf: 
 
     var total_frames: usize = 0;
     var index: usize = 0;
-    var wait_for = options.first_address;
+    var wait_for: ?usize = options.first_address orelse @returnAddress();
     // Ideally, we would iterate the whole stack so that the `index - min(buf.len, index)` would be
     // indicative of how many frames were skipped. However, this has a significant runtime cost
     // in some cases, so at least for now, we don't do that.
@@ -987,6 +988,58 @@ pub fn dumpErrorReturnTrace(et: *const std.builtin.StackTrace) void {
     };
 }
 
+pub const FpUsability = enum {
+    /// FP unwinding is impractical on this target. For example, due to its very silly ABI
+    /// design decisions, it's not possible to do generic FP unwinding on MIPS without a
+    /// complicated code scanning algorithm.
+    useless,
+    /// FP unwinding is unsafe on this target; we may crash when doing so. We will only perform
+    /// FP unwinding in the case of crashes/panics, or if the user opts in.
+    unsafe,
+    /// FP unwinding is guaranteed to be safe on this target. We will do so if unwinding with
+    /// debug info does not work, and if this compilation has frame pointers enabled.
+    safe,
+    /// FP unwinding is the best option on this target. This is usually because the ABI requires
+    /// a backchain pointer, thus making it always available, safe, and fast.
+    ideal,
+
+    pub fn of(target: *const std.Target) FpUsability {
+        return switch (target.cpu.arch) {
+            .alpha,
+            .avr,
+            .csky,
+            .microblaze,
+            .microblazeel,
+            .mips,
+            .mipsel,
+            .mips64,
+            .mips64el,
+            .msp430,
+            .sh,
+            .sheb,
+            .xcore,
+            .xtensa,
+            .xtensaeb,
+            => .useless,
+            .hexagon,
+            // The PowerPC ABIs don't actually strictly require a backchain pointer; they allow omitting
+            // it when full unwind info is present. Despite this, both GCC and Clang always enforce the
+            // presence of the backchain pointer no matter what options they are given. This seems to be
+            // a case of "the spec is only a polite suggestion", except it works in our favor this time!
+            .powerpc,
+            .powerpcle,
+            .powerpc64,
+            .powerpc64le,
+            .sparc,
+            .sparc64,
+            => .ideal,
+            // https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms#Respect-the-purpose-of-specific-CPU-registers
+            .aarch64 => if (target.os.tag.isDarwin()) .safe else .unsafe,
+            else => .unsafe,
+        };
+    }
+};
+
 const StackIterator = union(enum) {
     /// We will first report the current PC of this `CpuContextPtr`, then we will switch to a
     /// different strategy to actually unwind.
@@ -1031,7 +1084,7 @@ const StackIterator = union(enum) {
             // Instead, start at the stack pointer so we get the return address from the
             // current frame's save area. The addition of the stack bias cannot fail here
             // since we know we have a valid stack pointer.
-            .fp = if (native_arch.isSPARC()) sp: {
+            .fp = if (native_arch.isSparc()) sp: {
                 flushSparcWindows();
                 break :sp asm (""
                     : [_] "={o6}" (-> usize),
@@ -1056,55 +1109,7 @@ const StackIterator = union(enum) {
             asm volatile ("ta 3" ::: .{ .memory = true }); // ST_FLUSH_WINDOWS
     }
 
-    const FpUsability = enum {
-        /// FP unwinding is impractical on this target. For example, due to its very silly ABI
-        /// design decisions, it's not possible to do generic FP unwinding on MIPS without a
-        /// complicated code scanning algorithm.
-        useless,
-        /// FP unwinding is unsafe on this target; we may crash when doing so. We will only perform
-        /// FP unwinding in the case of crashes/panics, or if the user opts in.
-        unsafe,
-        /// FP unwinding is guaranteed to be safe on this target. We will do so if unwinding with
-        /// debug info does not work, and if this compilation has frame pointers enabled.
-        safe,
-        /// FP unwinding is the best option on this target. This is usually because the ABI requires
-        /// a backchain pointer, thus making it always available, safe, and fast.
-        ideal,
-    };
-
-    const fp_usability: FpUsability = switch (builtin.target.cpu.arch) {
-        .alpha,
-        .avr,
-        .csky,
-        .microblaze,
-        .microblazeel,
-        .mips,
-        .mipsel,
-        .mips64,
-        .mips64el,
-        .msp430,
-        .sh,
-        .sheb,
-        .xcore,
-        .xtensa,
-        .xtensaeb,
-        => .useless,
-        .hexagon,
-        // The PowerPC ABIs don't actually strictly require a backchain pointer; they allow omitting
-        // it when full unwind info is present. Despite this, both GCC and Clang always enforce the
-        // presence of the backchain pointer no matter what options they are given. This seems to be
-        // a case of "the spec is only a polite suggestion", except it works in our favor this time!
-        .powerpc,
-        .powerpcle,
-        .powerpc64,
-        .powerpc64le,
-        .sparc,
-        .sparc64,
-        => .ideal,
-        // https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms#Respect-the-purpose-of-specific-CPU-registers
-        .aarch64 => if (builtin.target.os.tag.isDarwin()) .safe else .unsafe,
-        else => .unsafe,
-    };
+    const fp_usability: FpUsability = .of(&builtin.target);
 
     /// Whether the current unwind strategy is allowed given `allow_unsafe`.
     fn stratOk(it: *const StackIterator, allow_unsafe: bool) bool {
@@ -1193,7 +1198,7 @@ const StackIterator = union(enum) {
                 }) return .end;
 
                 it.fp = bp;
-                const ra = stripInstructionPtrAuthCode(ra_ptr.*);
+                const ra = stripInstructionPtrMarkerBits(ra_ptr.*);
                 if (ra <= 1) return .end;
                 return .{ .frame = ra };
             },
@@ -1209,12 +1214,12 @@ const StackIterator = union(enum) {
         if (native_arch == .hppa64) break :off -1 * @sizeOf(usize);
         // On LoongArch and RISC-V, the frame pointer points to the top of the saved register area,
         // in which the base pointer is the first word.
-        if (native_arch.isLoongArch() or native_arch.isRISCV()) break :off -2 * @sizeOf(usize);
+        if (native_arch.isLoongarch() or native_arch.isRiscv()) break :off -2 * @sizeOf(usize);
         // On OpenRISC, the frame pointer is stored below the return address.
         if (native_arch == .or1k) break :off -2 * @sizeOf(usize);
         // On SPARC, the frame pointer points to the save area which holds 16 slots for the local
         // and incoming registers. The base pointer (i6) is stored in its customary save slot.
-        if (native_arch.isSPARC()) break :off 14 * @sizeOf(usize);
+        if (native_arch.isSparc()) break :off 14 * @sizeOf(usize);
         // Everywhere else, the frame pointer points directly to the location of the base pointer.
         break :off 0;
     };
@@ -1228,16 +1233,16 @@ const StackIterator = union(enum) {
         if (native_arch == .hppa64) break :off -2 * @sizeOf(usize);
         // On LoongArch and RISC-V, the frame pointer points to the top of the saved register area,
         // in which the return address is the second word.
-        if (native_arch.isLoongArch() or native_arch.isRISCV()) break :off -1 * @sizeOf(usize);
+        if (native_arch.isLoongarch() or native_arch.isRiscv()) break :off -1 * @sizeOf(usize);
         // On OpenRISC, the return address is stored below the stack parameter area.
         if (native_arch == .or1k) break :off -1 * @sizeOf(usize);
-        if (native_arch.isPowerPC64()) break :off 2 * @sizeOf(usize);
+        if (native_arch.isPowerpc64()) break :off 2 * @sizeOf(usize);
         // On s390x, r14 is the link register and we need to grab it from its customary slot in the
         // register save area (ELF ABI s390x Supplement §1.2.2.2).
         if (native_arch == .s390x) break :off 14 * @sizeOf(usize);
         // On SPARC, the frame pointer points to the save area which holds 16 slots for the local
         // and incoming registers. The return address (i7) is stored in its customary save slot.
-        if (native_arch.isSPARC()) break :off 15 * @sizeOf(usize);
+        if (native_arch.isSparc()) break :off 15 * @sizeOf(usize);
         break :off @sizeOf(usize);
     };
 
@@ -1251,7 +1256,7 @@ const StackIterator = union(enum) {
     /// On some oddball architectures, a return address points to the call instruction rather than
     /// the instruction following it.
     const ra_call_offset = off: {
-        if (native_arch.isSPARC()) break :off 0;
+        if (native_arch.isSparc()) break :off 0;
         break :off 1;
     };
 
@@ -1261,10 +1266,17 @@ const StackIterator = union(enum) {
     }
 };
 
+/// Removes any bits that do not represent part of the logical address of an instruction.
+///
 /// Some platforms use pointer authentication: the upper bits of instruction pointers contain a
 /// signature. This function clears those signature bits to make the pointer directly usable.
-pub inline fn stripInstructionPtrAuthCode(ptr: usize) usize {
-    if (native_arch.isAARCH64()) {
+///
+/// For Arm/thumb architectures, when executing in thumb mode, the LSB of branches and return
+/// addresses will be set, however this bit is not actually part of the instruction address;
+/// all instructions must be align(2). So we want to ensure it's cleared when unwinding to ensure
+/// we can convert a return address to an address within the calling instruction by subtracting 1.
+pub inline fn stripInstructionPtrMarkerBits(ptr: usize) usize {
+    if (native_arch.isAarch64()) {
         // `hint 0x07` maps to `xpaclri` (or `nop` if the hardware doesn't support it)
         // The save / restore is because `xpaclri` operates on x30 (LR)
         return asm (
@@ -1276,6 +1288,9 @@ pub inline fn stripInstructionPtrAuthCode(ptr: usize) usize {
             : [ret] "={x15}" (-> usize),
             : [ptr] "{x15}" (ptr),
             : .{ .x16 = true });
+    } else if (native_arch.isArm()) {
+        const thumb_bit: usize = 1;
+        return ptr & ~thumb_bit;
     }
 
     return ptr;
@@ -1363,7 +1378,7 @@ fn printLineInfo(
     try writer.print("0x{x} in {s} ({s})", .{
         address,
         symbol.name orelse "???",
-        symbol.compile_unit_name orelse debug_info.getModuleName(io, address) catch "???",
+        symbol.compile_unit_name orelse (debug_info.getModuleName(io, address) catch "???"),
     });
     t.setColor(.reset) catch {};
     try writer.writeAll("\n");

@@ -32,7 +32,7 @@ pub const Event = *opaque {};
 
 pub const EventRegistration = *const opaque {};
 
-pub const EventType = packed struct(u32) {
+pub const EventType = bitpack struct(u32) {
     lo_context: u8 = 0,
     /// If an event of this type is not already in the signaled state, then
     /// the event’s NotificationFunction will be queued at the event’s NotifyTpl
@@ -158,7 +158,7 @@ pub const Time = extern struct {
     /// The time's offset in minutes from UTC.
     /// Allowed values are -1440 to 1440 or unspecified_timezone
     timezone: i16,
-    daylight: packed struct(u8) {
+    daylight: bitpack struct(u8) {
         /// If true, the time has been adjusted for daylight savings time.
         in_daylight: bool,
 
@@ -221,7 +221,7 @@ test "GUID formatting" {
     const bytes: [16]u8 = .{ 137, 60, 203, 50, 128, 128, 124, 66, 186, 19, 80, 73, 135, 59, 194, 135 };
     const guid: Guid = @bitCast(bytes);
 
-    const str = try std.fmt.allocPrint(std.testing.allocator, "{f}", .{guid});
+    const str = try std.testing.allocator.print("{f}", .{guid});
     defer std.testing.allocator.free(str);
 
     try std.testing.expectEqualStrings(str, "32cb3c89-8080-427c-ba13-5049873bc287");

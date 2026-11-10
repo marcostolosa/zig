@@ -6,7 +6,10 @@ const CpuModel = std.Target.Cpu.Model;
 
 pub const Feature = enum {
     abs2008,
+    allegrex,
     cnmips,
+    cnmips2,
+    cnmips3,
     cnmipsp,
     crc,
     dsp,
@@ -14,16 +17,18 @@ pub const Feature = enum {
     dspr3,
     eva,
     fix_r5900,
-    fp64,
-    fpxx,
+    fpu_d,
+    fpu_s,
     ginv,
-    gp64,
-    i6400,
-    i6500,
-    long_calls,
-    micromips,
+    interaptiv_mr2,
+    loongson_2e,
+    loongson_2f,
+    loongson_cam,
+    loongson_ext,
+    loongson_ext2,
+    loongson_mmi,
+    mcu,
     mips1,
-    mips16,
     mips2,
     mips3,
     mips32,
@@ -46,24 +51,27 @@ pub const Feature = enum {
     mips64r6,
     msa,
     mt,
+    mxa,
+    mxu1,
+    mxu1_1,
+    mxu2,
     nan2008,
-    noabicalls,
+    no_llsc,
+    no_unaligned_access,
     nomadd4,
-    nooddspreg,
-    notraps,
-    p5600,
-    ptr64,
+    r3900,
+    r4650,
     r5900,
-    single_float,
-    soft_float,
-    strict_align,
-    sym32,
-    use_compact_branches,
-    use_indirect_jump_hazard,
-    use_tcc_in_div,
+    sb1,
+    smartmips,
     vfpu,
     virt,
-    xgot,
+    vr4100,
+    vr4120,
+    vr5400,
+    vr5500,
+    xlr,
+    xpa,
 };
 
 pub const featureSet = CpuFeature.FeatureSetFns(Feature).featureSet;
@@ -80,11 +88,32 @@ pub const all_features = blk: {
         .description = "Disable IEEE 754-2008 abs.fmt mode",
         .dependencies = featureSet(&[_]Feature{}),
     };
+    result[@backingInt(Feature.allegrex)] = .{
+        .llvm_name = null,
+        .description = "Sony Allegrex extensions",
+        .dependencies = featureSet(&[_]Feature{
+            .mips2,
+        }),
+    };
     result[@backingInt(Feature.cnmips)] = .{
         .llvm_name = "cnmips",
         .description = "Octeon cnMIPS Support",
         .dependencies = featureSet(&[_]Feature{
             .mips64r2,
+        }),
+    };
+    result[@backingInt(Feature.cnmips2)] = .{
+        .llvm_name = null,
+        .description = "Octeon II cnMIPS support",
+        .dependencies = featureSet(&[_]Feature{
+            .cnmipsp,
+        }),
+    };
+    result[@backingInt(Feature.cnmips3)] = .{
+        .llvm_name = null,
+        .description = "Octeon III cnMIPS support",
+        .dependencies = featureSet(&[_]Feature{
+            .cnmips2,
         }),
     };
     result[@backingInt(Feature.cnmipsp)] = .{
@@ -128,14 +157,16 @@ pub const all_features = blk: {
         .description = "Enable R5900 short loop erratum fix",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.fp64)] = .{
-        .llvm_name = "fp64",
-        .description = "Support 64-bit FP registers",
-        .dependencies = featureSet(&[_]Feature{}),
+    result[@backingInt(Feature.fpu_d)] = .{
+        .llvm_name = null,
+        .description = "Double-precision floating point (D format)",
+        .dependencies = featureSet(&[_]Feature{
+            .fpu_s,
+        }),
     };
-    result[@backingInt(Feature.fpxx)] = .{
-        .llvm_name = "fpxx",
-        .description = "Support for FPXX",
+    result[@backingInt(Feature.fpu_s)] = .{
+        .llvm_name = null,
+        .description = "Single-precision floating point (S and W formats)",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.ginv)] = .{
@@ -143,60 +174,80 @@ pub const all_features = blk: {
         .description = "Mips Global Invalidate ASE",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.gp64)] = .{
-        .llvm_name = "gp64",
-        .description = "General Purpose Registers are 64-bit wide",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.i6400)] = .{
-        .llvm_name = "i6400",
-        .description = "MIPS I6400 Processor",
+    result[@backingInt(Feature.interaptiv_mr2)] = .{
+        .llvm_name = null,
+        .description = "interAptiv MR2 extensions (32-bit save/restore)",
         .dependencies = featureSet(&[_]Feature{
-            .mips64r6,
-            .msa,
+            .mips32r3,
         }),
     };
-    result[@backingInt(Feature.i6500)] = .{
-        .llvm_name = "i6500",
-        .description = "MIPS I6500 Processor",
+    result[@backingInt(Feature.loongson_2e)] = .{
+        .llvm_name = null,
+        .description = "Loongson 2E extensions",
         .dependencies = featureSet(&[_]Feature{
-            .mips64r6,
-            .msa,
+            .fpu_d,
+            .mips3,
         }),
     };
-    result[@backingInt(Feature.long_calls)] = .{
-        .llvm_name = "long-calls",
-        .description = "Disable use of the jal instruction",
+    result[@backingInt(Feature.loongson_2f)] = .{
+        .llvm_name = null,
+        .description = "Loongson 2F extensions",
+        .dependencies = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips3,
+        }),
+    };
+    result[@backingInt(Feature.loongson_cam)] = .{
+        .llvm_name = null,
+        .description = "Loongson Content Address Memory instructions",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.micromips)] = .{
-        .llvm_name = "micromips",
-        .description = "microMips mode",
-        .dependencies = featureSet(&[_]Feature{}),
+    result[@backingInt(Feature.loongson_ext)] = .{
+        .llvm_name = null,
+        .description = "Loongson EXTensions instructions",
+        .dependencies = featureSet(&[_]Feature{
+            .fpu_s,
+            .mips3,
+        }),
+    };
+    result[@backingInt(Feature.loongson_ext2)] = .{
+        .llvm_name = null,
+        .description = "Loongson EXTensions R2 instructions",
+        .dependencies = featureSet(&[_]Feature{
+            .mips3,
+        }),
+    };
+    result[@backingInt(Feature.loongson_mmi)] = .{
+        .llvm_name = null,
+        .description = "Loongson MultiMedia extensions Instructions",
+        .dependencies = featureSet(&[_]Feature{
+            .fpu_s,
+            .mips3,
+        }),
+    };
+    result[@backingInt(Feature.mcu)] = .{
+        .llvm_name = null,
+        .description = "MCU ASE",
+        .dependencies = featureSet(&[_]Feature{
+            .mips32,
+        }),
     };
     result[@backingInt(Feature.mips1)] = .{
         .llvm_name = "mips1",
-        .description = "Mips I ISA Support [highly experimental]",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.mips16)] = .{
-        .llvm_name = "mips16",
-        .description = "Mips16 mode",
+        .description = "Mips I ISA Support",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.mips2)] = .{
         .llvm_name = "mips2",
-        .description = "Mips II ISA Support [highly experimental]",
+        .description = "Mips II ISA Support",
         .dependencies = featureSet(&[_]Feature{
             .mips1,
         }),
     };
     result[@backingInt(Feature.mips3)] = .{
         .llvm_name = "mips3",
-        .description = "MIPS III ISA Support [highly experimental]",
+        .description = "MIPS III ISA Support",
         .dependencies = featureSet(&[_]Feature{
-            .fp64,
-            .gp64,
             .mips2,
             .mips3_32,
             .mips3_32r2,
@@ -240,7 +291,6 @@ pub const all_features = blk: {
         .description = "Mips32r6 ISA Support [experimental]",
         .dependencies = featureSet(&[_]Feature{
             .abs2008,
-            .fp64,
             .mips32r5,
             .nan2008,
         }),
@@ -258,7 +308,9 @@ pub const all_features = blk: {
     result[@backingInt(Feature.mips3d)] = .{
         .llvm_name = "mips3d",
         .description = "Mips 3D ASE",
-        .dependencies = featureSet(&[_]Feature{}),
+        .dependencies = featureSet(&[_]Feature{
+            .fpu_d,
+        }),
     };
     result[@backingInt(Feature.mips4)] = .{
         .llvm_name = "mips4",
@@ -342,14 +394,47 @@ pub const all_features = blk: {
         .description = "Mips MT ASE",
         .dependencies = featureSet(&[_]Feature{}),
     };
+    result[@backingInt(Feature.mxa)] = .{
+        .llvm_name = null,
+        .description = "Ingenic MXA SIMD extension",
+        .dependencies = featureSet(&[_]Feature{
+            .msa,
+        }),
+    };
+    result[@backingInt(Feature.mxu1)] = .{
+        .llvm_name = null,
+        .description = "Ingenic MXU1 SIMD extension",
+        .dependencies = featureSet(&[_]Feature{
+            .mips32,
+        }),
+    };
+    result[@backingInt(Feature.mxu1_1)] = .{
+        .llvm_name = null,
+        .description = "Ingenic MXU1.1 SIMD extension",
+        .dependencies = featureSet(&[_]Feature{
+            .mxu1,
+        }),
+    };
+    result[@backingInt(Feature.mxu2)] = .{
+        .llvm_name = null,
+        .description = "Ingenic MXU2 SIMD extension",
+        .dependencies = featureSet(&[_]Feature{
+            .mips32,
+        }),
+    };
     result[@backingInt(Feature.nan2008)] = .{
         .llvm_name = "nan2008",
         .description = "IEEE 754-2008 NaN encoding",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.noabicalls)] = .{
-        .llvm_name = "noabicalls",
-        .description = "Disable SVR4-style position-independent code",
+    result[@backingInt(Feature.no_llsc)] = .{
+        .llvm_name = null,
+        .description = "Disable load-linked/store-conditional instructions",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
+    result[@backingInt(Feature.no_unaligned_access)] = .{
+        .llvm_name = "strict-align",
+        .description = "Disable unaligned load store for r6",
         .dependencies = featureSet(&[_]Feature{}),
     };
     result[@backingInt(Feature.nomadd4)] = .{
@@ -357,27 +442,19 @@ pub const all_features = blk: {
         .description = "Disable 4-operand madd.fmt and related instructions",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.nooddspreg)] = .{
-        .llvm_name = "nooddspreg",
-        .description = "Disable odd numbered single-precision registers",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.notraps)] = .{
+    result[@backingInt(Feature.r3900)] = .{
         .llvm_name = null,
-        .description = "Disable trap instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.p5600)] = .{
-        .llvm_name = "p5600",
-        .description = "The P5600 Processor",
+        .description = "Toshiba R3900 extensions",
         .dependencies = featureSet(&[_]Feature{
-            .mips32r5,
+            .mips1,
         }),
     };
-    result[@backingInt(Feature.ptr64)] = .{
-        .llvm_name = "ptr64",
-        .description = "Pointers are 64-bit wide",
-        .dependencies = featureSet(&[_]Feature{}),
+    result[@backingInt(Feature.r4650)] = .{
+        .llvm_name = null,
+        .description = "R4650 multiply instructions",
+        .dependencies = featureSet(&[_]Feature{
+            .mips3,
+        }),
     };
     result[@backingInt(Feature.r5900)] = .{
         .llvm_name = "r5900",
@@ -385,43 +462,22 @@ pub const all_features = blk: {
         .dependencies = featureSet(&[_]Feature{
             .fix_r5900,
             .mips3,
-            .single_float,
         }),
     };
-    result[@backingInt(Feature.single_float)] = .{
-        .llvm_name = "single-float",
-        .description = "Only supports single precision float",
-        .dependencies = featureSet(&[_]Feature{}),
+    result[@backingInt(Feature.sb1)] = .{
+        .llvm_name = null,
+        .description = "Broadcom SB-1 extensions",
+        .dependencies = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips64,
+        }),
     };
-    result[@backingInt(Feature.soft_float)] = .{
-        .llvm_name = "soft-float",
-        .description = "Does not support floating point instructions",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.strict_align)] = .{
-        .llvm_name = "strict-align",
-        .description = "Disable unaligned load store for r6",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.sym32)] = .{
-        .llvm_name = "sym32",
-        .description = "Symbols are 32 bit on Mips64",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.use_compact_branches)] = .{
-        .llvm_name = "use-compact-branches",
-        .description = "Use compact branch instructions for MIPS32R6/MIPS64R6",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.use_indirect_jump_hazard)] = .{
-        .llvm_name = "use-indirect-jump-hazard",
-        .description = "Use indirect jump guards to prevent certain speculation based attacks",
-        .dependencies = featureSet(&[_]Feature{}),
-    };
-    result[@backingInt(Feature.use_tcc_in_div)] = .{
-        .llvm_name = "use-tcc-in-div",
-        .description = "Force the assembler to use trapping",
-        .dependencies = featureSet(&[_]Feature{}),
+    result[@backingInt(Feature.smartmips)] = .{
+        .llvm_name = null,
+        .description = "SmartMIPS ASE",
+        .dependencies = featureSet(&[_]Feature{
+            .mips32,
+        }),
     };
     result[@backingInt(Feature.vfpu)] = .{
         .llvm_name = "vfpu",
@@ -433,10 +489,49 @@ pub const all_features = blk: {
         .description = "Mips Virtualization ASE",
         .dependencies = featureSet(&[_]Feature{}),
     };
-    result[@backingInt(Feature.xgot)] = .{
-        .llvm_name = "xgot",
-        .description = "Assume 32-bit GOT",
-        .dependencies = featureSet(&[_]Feature{}),
+    result[@backingInt(Feature.vr4100)] = .{
+        .llvm_name = null,
+        .description = "NEC VR4100 multiply-add instructions",
+        .dependencies = featureSet(&[_]Feature{
+            .mips3,
+        }),
+    };
+    result[@backingInt(Feature.vr4120)] = .{
+        .llvm_name = null,
+        .description = "NEC VR4120 multiply-accumulate instructions",
+        .dependencies = featureSet(&[_]Feature{
+            .vr4100,
+        }),
+    };
+    result[@backingInt(Feature.vr5400)] = .{
+        .llvm_name = null,
+        .description = "NEC VR5400 extensions",
+        .dependencies = featureSet(&[_]Feature{
+            .fpu_s,
+            .mips4,
+        }),
+    };
+    result[@backingInt(Feature.vr5500)] = .{
+        .llvm_name = null,
+        .description = "NEC VR5500 extensions",
+        .dependencies = featureSet(&[_]Feature{
+            .fpu_s,
+            .mips4,
+        }),
+    };
+    result[@backingInt(Feature.xlr)] = .{
+        .llvm_name = null,
+        .description = "RMI XLR extensions",
+        .dependencies = featureSet(&[_]Feature{
+            .mips64,
+        }),
+    };
+    result[@backingInt(Feature.xpa)] = .{
+        .llvm_name = null,
+        .description = "Extended Physical Address ASE",
+        .dependencies = featureSet(&[_]Feature{
+            .mips32r5,
+        }),
     };
     const ti = @typeInfo(Feature);
     for (&result, 0..) |*elem, i| {
@@ -447,40 +542,370 @@ pub const all_features = blk: {
 };
 
 pub const cpu = struct {
-    pub const allegrex: CpuModel = .{
-        .name = "allegrex",
-        .llvm_name = null,
+    pub const @"1004kc": CpuModel = .{
+        .name = "1004kc",
+        .llvm_name = "mips32r2",
         .features = featureSet(&[_]Feature{
-            .mips2,
-            .notraps,
-            .single_float,
+            .mips32r2,
+            .mt,
         }),
     };
-    pub const generic: CpuModel = .{
-        .name = "generic",
-        .llvm_name = "generic",
+    pub const @"1004kf": CpuModel = .{
+        .name = "1004kf",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips32r2,
+            .mt,
+        }),
+    };
+    pub const @"1074kc": CpuModel = .{
+        .name = "1074kc",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .dspr2,
+            .mips32r2,
+        }),
+    };
+    pub const @"1074kf": CpuModel = .{
+        .name = "1074kf",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .dspr2,
+            .fpu_d,
+            .mips32r2,
+        }),
+    };
+    pub const @"20kc": CpuModel = .{
+        .name = "20kc",
+        .llvm_name = "mips64",
+        .features = featureSet(&[_]Feature{
+            .mips3d,
+            .mips64,
+        }),
+    };
+    pub const @"24kc": CpuModel = .{
+        .name = "24kc",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .mips32r2,
+        }),
+    };
+    pub const @"24kec": CpuModel = .{
+        .name = "24kec",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .dsp,
+            .mips32r2,
+        }),
+    };
+    pub const @"24kef": CpuModel = .{
+        .name = "24kef",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .dsp,
+            .fpu_d,
+            .mips32r2,
+        }),
+    };
+    pub const @"24kf": CpuModel = .{
+        .name = "24kf",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips32r2,
+        }),
+    };
+    pub const @"34kc": CpuModel = .{
+        .name = "34kc",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .mips32r2,
+            .mt,
+        }),
+    };
+    pub const @"34kf": CpuModel = .{
+        .name = "34kf",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips32r2,
+            .mt,
+        }),
+    };
+    pub const @"4k": CpuModel = .{
+        .name = "4k",
+        .llvm_name = "mips32",
         .features = featureSet(&[_]Feature{
             .mips32,
+        }),
+    };
+    pub const @"4ke": CpuModel = .{
+        .name = "4ke",
+        .llvm_name = "mips32",
+        .features = featureSet(&[_]Feature{
+            .mips32,
+        }),
+    };
+    pub const @"4ksc": CpuModel = .{
+        .name = "4ksc",
+        .llvm_name = "mips32",
+        .features = featureSet(&[_]Feature{
+            .smartmips,
+        }),
+    };
+    pub const @"4ksd": CpuModel = .{
+        .name = "4ksd",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .mips32r2,
+            .smartmips,
+        }),
+    };
+    pub const @"5kc": CpuModel = .{
+        .name = "5kc",
+        .llvm_name = "mips64",
+        .features = featureSet(&[_]Feature{
+            .mips64,
+        }),
+    };
+    pub const @"5kf": CpuModel = .{
+        .name = "5kf",
+        .llvm_name = "mips64",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips64,
+        }),
+    };
+    pub const @"74kc": CpuModel = .{
+        .name = "74kc",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .dspr2,
+            .mips32r2,
+        }),
+    };
+    pub const @"74kf": CpuModel = .{
+        .name = "74kf",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .dspr2,
+            .fpu_d,
+            .mips32r2,
+        }),
+    };
+    pub const allegrex: CpuModel = .{
+        .name = "allegrex",
+        .llvm_name = "mips2",
+        .features = featureSet(&[_]Feature{
+            .allegrex,
+            .fpu_s,
+            .vfpu,
+        }),
+    };
+    pub const gs232: CpuModel = .{
+        .name = "gs232",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .mips32r2,
+        }),
+    };
+    pub const gs264e: CpuModel = .{
+        .name = "gs264e",
+        .llvm_name = "mips64r2",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .loongson_ext,
+            .loongson_ext2,
+            .loongson_mmi,
+            .mips64r2,
+            .msa,
+        }),
+    };
+    pub const gs464: CpuModel = .{
+        .name = "gs464",
+        .llvm_name = "mips64r2",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .loongson_mmi,
+            .mips64r2,
+        }),
+    };
+    pub const gs464e: CpuModel = .{
+        .name = "gs464e",
+        .llvm_name = "mips64r2",
+        .features = featureSet(&[_]Feature{
+            .dspr2,
+            .fpu_d,
+            .loongson_cam,
+            .loongson_ext,
+            .loongson_ext2,
+            .loongson_mmi,
+            .mips64r2,
+        }),
+    };
+    pub const gs464v: CpuModel = .{
+        .name = "gs464v",
+        .llvm_name = "mips64r2",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .loongson_cam,
+            .loongson_ext,
+            .loongson_ext2,
+            .loongson_mmi,
+            .mips64r2,
+            .msa,
+            .virt,
         }),
     };
     pub const @"i6400": CpuModel = .{
         .name = "i6400",
         .llvm_name = "i6400",
         .features = featureSet(&[_]Feature{
-            .i6400,
+            .ginv,
+            .mips64r6,
+            .virt,
         }),
     };
     pub const @"i6500": CpuModel = .{
         .name = "i6500",
         .llvm_name = "i6500",
         .features = featureSet(&[_]Feature{
-            .i6500,
+            .crc,
+            .ginv,
+            .mips64r6,
+            .virt,
+        }),
+    };
+    pub const interaptiv: CpuModel = .{
+        .name = "interaptiv",
+        .llvm_name = "mips32r3",
+        .features = featureSet(&[_]Feature{
+            .eva,
+            .mips32r3,
+            .mt,
+        }),
+    };
+    pub const interaptiv_mr2: CpuModel = .{
+        .name = "interaptiv_mr2",
+        .llvm_name = "mips32r3",
+        .features = featureSet(&[_]Feature{
+            .interaptiv_mr2,
+            .mt,
+        }),
+    };
+    pub const jz4740: CpuModel = .{
+        .name = "jz4740",
+        .llvm_name = "mips32",
+        .features = featureSet(&[_]Feature{
+            .mxu1,
+        }),
+    };
+    pub const jz4760: CpuModel = .{
+        .name = "jz4760",
+        .llvm_name = "mips32",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mxu1_1,
+        }),
+    };
+    pub const jz4770: CpuModel = .{
+        .name = "jz4770",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips32r2,
+            .mxu1_1,
+        }),
+    };
+    pub const loongson_2e: CpuModel = .{
+        .name = "loongson_2e",
+        .llvm_name = "mips3",
+        .features = featureSet(&[_]Feature{
+            .loongson_2e,
+        }),
+    };
+    pub const loongson_2f: CpuModel = .{
+        .name = "loongson_2f",
+        .llvm_name = "mips3",
+        .features = featureSet(&[_]Feature{
+            .loongson_2f,
+            .loongson_mmi,
+        }),
+    };
+    pub const loongson_3a: CpuModel = .{
+        .name = "loongson_3a",
+        .llvm_name = "mips64r2",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .loongson_cam,
+            .loongson_ext,
+            .loongson_mmi,
+            .mips64r2,
+        }),
+    };
+    pub const m14k: CpuModel = .{
+        .name = "m14k",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .mcu,
+            .mips32r2,
+        }),
+    };
+    pub const m4k: CpuModel = .{
+        .name = "m4k",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .mips32r2,
+        }),
+    };
+    pub const m5100: CpuModel = .{
+        .name = "m5100",
+        .llvm_name = "mips32r5",
+        .features = featureSet(&[_]Feature{
+            .mcu,
+            .mips32r5,
+            .virt,
+        }),
+    };
+    pub const m5150: CpuModel = .{
+        .name = "m5150",
+        .llvm_name = "mips32r5",
+        .features = featureSet(&[_]Feature{
+            .mcu,
+            .mips32r5,
+            .virt,
+        }),
+    };
+    pub const m6200: CpuModel = .{
+        .name = "m6200",
+        .llvm_name = "mips32r6",
+        .features = featureSet(&[_]Feature{
+            .mcu,
+            .mips32r6,
+        }),
+    };
+    pub const m6250: CpuModel = .{
+        .name = "m6250",
+        .llvm_name = "mips32r6",
+        .features = featureSet(&[_]Feature{
+            .mcu,
+            .mips32r6,
+        }),
+    };
+    pub const microaptiv: CpuModel = .{
+        .name = "microaptiv",
+        .llvm_name = "mips32r3",
+        .features = featureSet(&[_]Feature{
+            .mcu,
+            .mips32r3,
         }),
     };
     pub const mips1: CpuModel = .{
         .name = "mips1",
         .llvm_name = "mips1",
         .features = featureSet(&[_]Feature{
+            .fpu_d,
             .mips1,
         }),
     };
@@ -488,6 +913,7 @@ pub const cpu = struct {
         .name = "mips2",
         .llvm_name = "mips2",
         .features = featureSet(&[_]Feature{
+            .fpu_d,
             .mips2,
         }),
     };
@@ -495,6 +921,7 @@ pub const cpu = struct {
         .name = "mips3",
         .llvm_name = "mips3",
         .features = featureSet(&[_]Feature{
+            .fpu_d,
             .mips3,
         }),
     };
@@ -502,6 +929,7 @@ pub const cpu = struct {
         .name = "mips32",
         .llvm_name = "mips32",
         .features = featureSet(&[_]Feature{
+            .fpu_d,
             .mips32,
         }),
     };
@@ -509,6 +937,7 @@ pub const cpu = struct {
         .name = "mips32r2",
         .llvm_name = "mips32r2",
         .features = featureSet(&[_]Feature{
+            .fpu_d,
             .mips32r2,
         }),
     };
@@ -516,6 +945,7 @@ pub const cpu = struct {
         .name = "mips32r3",
         .llvm_name = "mips32r3",
         .features = featureSet(&[_]Feature{
+            .fpu_d,
             .mips32r3,
         }),
     };
@@ -523,6 +953,7 @@ pub const cpu = struct {
         .name = "mips32r5",
         .llvm_name = "mips32r5",
         .features = featureSet(&[_]Feature{
+            .fpu_d,
             .mips32r5,
         }),
     };
@@ -530,6 +961,7 @@ pub const cpu = struct {
         .name = "mips32r6",
         .llvm_name = "mips32r6",
         .features = featureSet(&[_]Feature{
+            .fpu_d,
             .mips32r6,
         }),
     };
@@ -537,20 +969,15 @@ pub const cpu = struct {
         .name = "mips4",
         .llvm_name = "mips4",
         .features = featureSet(&[_]Feature{
+            .fpu_d,
             .mips4,
-        }),
-    };
-    pub const mips5: CpuModel = .{
-        .name = "mips5",
-        .llvm_name = "mips5",
-        .features = featureSet(&[_]Feature{
-            .mips5,
         }),
     };
     pub const mips64: CpuModel = .{
         .name = "mips64",
         .llvm_name = "mips64",
         .features = featureSet(&[_]Feature{
+            .fpu_d,
             .mips64,
         }),
     };
@@ -558,6 +985,7 @@ pub const cpu = struct {
         .name = "mips64r2",
         .llvm_name = "mips64r2",
         .features = featureSet(&[_]Feature{
+            .fpu_d,
             .mips64r2,
         }),
     };
@@ -565,6 +993,7 @@ pub const cpu = struct {
         .name = "mips64r3",
         .llvm_name = "mips64r3",
         .features = featureSet(&[_]Feature{
+            .fpu_d,
             .mips64r3,
         }),
     };
@@ -572,6 +1001,7 @@ pub const cpu = struct {
         .name = "mips64r5",
         .llvm_name = "mips64r5",
         .features = featureSet(&[_]Feature{
+            .fpu_d,
             .mips64r5,
         }),
     };
@@ -579,6 +1009,7 @@ pub const cpu = struct {
         .name = "mips64r6",
         .llvm_name = "mips64r6",
         .features = featureSet(&[_]Feature{
+            .fpu_d,
             .mips64r6,
         }),
     };
@@ -596,27 +1027,336 @@ pub const cpu = struct {
             .cnmipsp,
         }),
     };
+    pub const octeon2: CpuModel = .{
+        .name = "octeon2",
+        .llvm_name = "octeon+",
+        .features = featureSet(&[_]Feature{
+            .cnmips2,
+        }),
+    };
+    pub const octeon3: CpuModel = .{
+        .name = "octeon3",
+        .llvm_name = "octeon+",
+        .features = featureSet(&[_]Feature{
+            .cnmips3,
+            .fpu_d,
+            .mips64r5,
+            .virt,
+        }),
+    };
     pub const p5600: CpuModel = .{
         .name = "p5600",
         .llvm_name = "p5600",
         .features = featureSet(&[_]Feature{
-            .p5600,
+            .eva,
+            .mips32r5,
+            .virt,
+        }),
+    };
+    pub const p6600: CpuModel = .{
+        .name = "p6600",
+        .llvm_name = "mips64r6",
+        .features = featureSet(&[_]Feature{
+            .eva,
+            .mips64r6,
+            .virt,
+        }),
+    };
+    pub const proaptiv: CpuModel = .{
+        .name = "proaptiv",
+        .llvm_name = "mips32r3",
+        .features = featureSet(&[_]Feature{
+            .dspr2,
+            .eva,
+            .mips32r3,
+        }),
+    };
+    pub const r10000: CpuModel = .{
+        .name = "r10000",
+        .llvm_name = "mips4",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips4,
+        }),
+    };
+    pub const r12000: CpuModel = .{
+        .name = "r12000",
+        .llvm_name = "mips4",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips4,
+        }),
+    };
+    pub const r14000: CpuModel = .{
+        .name = "r14000",
+        .llvm_name = "mips4",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips4,
+        }),
+    };
+    pub const r16000: CpuModel = .{
+        .name = "r16000",
+        .llvm_name = "mips4",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips4,
+        }),
+    };
+    pub const r2000: CpuModel = .{
+        .name = "r2000",
+        .llvm_name = "mips1",
+        .features = featureSet(&[_]Feature{
+            .mips1,
+        }),
+    };
+    pub const r3000: CpuModel = .{
+        .name = "r3000",
+        .llvm_name = "mips1",
+        .features = featureSet(&[_]Feature{
+            .mips1,
         }),
     };
     pub const r3000a: CpuModel = .{
         .name = "r3000a",
-        .llvm_name = null,
+        .llvm_name = "mips1",
         .features = featureSet(&[_]Feature{
             .mips1,
-            .notraps,
-            .soft_float,
+        }),
+    };
+    pub const r3900: CpuModel = .{
+        .name = "r3900",
+        .llvm_name = "mips1",
+        .features = featureSet(&[_]Feature{
+            .r3900,
+        }),
+    };
+    pub const r4000: CpuModel = .{
+        .name = "r4000",
+        .llvm_name = "mips3",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips3,
+        }),
+    };
+    pub const r4400: CpuModel = .{
+        .name = "r4400",
+        .llvm_name = "mips3",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips3,
+        }),
+    };
+    pub const r4600: CpuModel = .{
+        .name = "r4600",
+        .llvm_name = "mips3",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips3,
+        }),
+    };
+    pub const r4650: CpuModel = .{
+        .name = "r4650",
+        .llvm_name = "mips3",
+        .features = featureSet(&[_]Feature{
+            .fpu_s,
+            .r4650,
+        }),
+    };
+    pub const r4700: CpuModel = .{
+        .name = "r4700",
+        .llvm_name = "mips3",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips3,
+        }),
+    };
+    pub const r5000: CpuModel = .{
+        .name = "r5000",
+        .llvm_name = "mips4",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips4,
         }),
     };
     pub const r5900: CpuModel = .{
         .name = "r5900",
         .llvm_name = "r5900",
         .features = featureSet(&[_]Feature{
+            .fpu_s,
+            .no_llsc,
             .r5900,
+        }),
+    };
+    pub const r6000: CpuModel = .{
+        .name = "r6000",
+        .llvm_name = "mips2",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips2,
+        }),
+    };
+    pub const r8000: CpuModel = .{
+        .name = "r8000",
+        .llvm_name = "mips4",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips4,
+        }),
+    };
+    pub const rm5200: CpuModel = .{
+        .name = "rm5200",
+        .llvm_name = "mips4",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips4,
+        }),
+    };
+    pub const rm7000: CpuModel = .{
+        .name = "rm7000",
+        .llvm_name = "mips4",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips4,
+            .r4650,
+        }),
+    };
+    pub const rm9000: CpuModel = .{
+        .name = "rm9000",
+        .llvm_name = "mips4",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips4,
+            .r4650,
+        }),
+    };
+    pub const sb1: CpuModel = .{
+        .name = "sb1",
+        .llvm_name = "mips64",
+        .features = featureSet(&[_]Feature{
+            .mips3d,
+            .sb1,
+        }),
+    };
+    pub const sb1a: CpuModel = .{
+        .name = "sb1a",
+        .llvm_name = "mips64",
+        .features = featureSet(&[_]Feature{
+            .mips3d,
+            .sb1,
+        }),
+    };
+    pub const sr71000: CpuModel = .{
+        .name = "sr71000",
+        .llvm_name = "mips64",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips64,
+        }),
+    };
+    pub const vr4100: CpuModel = .{
+        .name = "vr4100",
+        .llvm_name = "mips3",
+        .features = featureSet(&[_]Feature{
+            .no_llsc,
+            .vr4100,
+        }),
+    };
+    pub const vr4111: CpuModel = .{
+        .name = "vr4111",
+        .llvm_name = "mips3",
+        .features = featureSet(&[_]Feature{
+            .no_llsc,
+            .vr4100,
+        }),
+    };
+    pub const vr4120: CpuModel = .{
+        .name = "vr4120",
+        .llvm_name = "mips3",
+        .features = featureSet(&[_]Feature{
+            .no_llsc,
+            .vr4120,
+        }),
+    };
+    pub const vr4130: CpuModel = .{
+        .name = "vr4130",
+        .llvm_name = "mips3",
+        .features = featureSet(&[_]Feature{
+            .no_llsc,
+            .vr4120,
+        }),
+    };
+    pub const vr4181: CpuModel = .{
+        .name = "vr4181",
+        .llvm_name = "mips3",
+        .features = featureSet(&[_]Feature{
+            .no_llsc,
+            .vr4100,
+        }),
+    };
+    pub const vr4300: CpuModel = .{
+        .name = "vr4300",
+        .llvm_name = "mips3",
+        .features = featureSet(&[_]Feature{
+            .mips3,
+        }),
+    };
+    pub const vr5000: CpuModel = .{
+        .name = "vr5000",
+        .llvm_name = "mips4",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips4,
+        }),
+    };
+    pub const vr5400: CpuModel = .{
+        .name = "vr5400",
+        .llvm_name = "mips4",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .vr5400,
+        }),
+    };
+    pub const vr5500: CpuModel = .{
+        .name = "vr5500",
+        .llvm_name = "mips4",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .vr5500,
+        }),
+    };
+    pub const x1830: CpuModel = .{
+        .name = "x1830",
+        .llvm_name = "mips32r2",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips32r2,
+            .mxu2,
+        }),
+    };
+    pub const x2000: CpuModel = .{
+        .name = "x2000",
+        .llvm_name = "mips32r5",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips32r5,
+            .mxa,
+        }),
+    };
+    pub const xlp: CpuModel = .{
+        .name = "xlp",
+        .llvm_name = "mips64r2",
+        .features = featureSet(&[_]Feature{
+            .fpu_d,
+            .mips64r2,
+            .xlr,
+        }),
+    };
+    pub const xlr: CpuModel = .{
+        .name = "xlr",
+        .llvm_name = "mips64",
+        .features = featureSet(&[_]Feature{
+            .xlr,
         }),
     };
 };

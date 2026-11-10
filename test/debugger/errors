@@ -1,12 +1,4 @@
-#todo {
-passes, but prints errors
-#}
-#skip x86_64-linux-none-whole-selfhosted-new-nopic
-#skip x86_64-linux-none-whole-selfhosted-new-pic
-#skip x86_64-linux-none-incremental-selfhosted-new-nopic
-#skip x86_64-linux-none-incremental-selfhosted-new-pic
-
-#exe {
+#zig build-exe {
 --name errors
 -Mroot=errors.zig
 #}
@@ -34,6 +26,7 @@ pub fn main() void {
 #}
 #update
 #check lldb {
+#...
 (lldb) breakpoint set --file errors.zig --source-pattern-regexp '_ = errors;'
 Breakpoint 1: where = errors`errors.testErrors + #... at errors.zig:16:1, address = 0x#...
 (lldb) process launch
@@ -72,4 +65,5 @@ Process #... stopped
 }
 (lldb) breakpoint delete --force 1
 1 breakpoints deleted; 0 breakpoint locations disabled.
+#...
 #}

@@ -27,7 +27,7 @@ const Target = std.Target;
 const log = std.log.scoped(.riscv_codegen);
 const tracking_log = std.log.scoped(.tracking);
 const verbose_tracking_log = std.log.scoped(.verbose_tracking);
-const wip_mir_log = std.log.scoped(.wip_mir);
+const wip_mir_log = std.log.scoped(.@"wip-mir");
 const Alignment = InternPool.Alignment;
 
 const bits = @import("bits.zig");
@@ -102,7 +102,8 @@ reused_operands: std.bit_set.Static(Air.Liveness.bpi - 1) = undefined,
 /// within different branches. Special consideration is needed when a branch
 /// joins with its parent, to make sure all instructions have the same MCValue
 /// across each runtime branch upon joining.
-branch_stack: *std.array_list.Managed(Branch),
+/// Uses `gpa` as its allocator
+branch_stack: *std.ArrayList(Branch),
 
 // Currently set vector properties, null means they haven't been set yet in the function.
 avl: ?u64,
@@ -676,13 +677,13 @@ fn restoreState(func: *Func, state: State, deaths: []const Air.Inst.Index, compt
     var bfa_buf: [stack_buf_len]ExpectedContents = undefined;
     var bfa = if (opts.update_tracking) {} else std.heap.BufferFirstAllocator.init(@ptrCast(&bfa_buf), func.gpa);
 
-    var reg_locks = if (opts.update_tracking) {} else try std.array_list.Managed(RegisterLock).initCapacity(
+    var reg_locks = if (opts.update_tracking) {} else try std.ArrayList(RegisterLock).initCapacity(
         bfa.allocator(),
         @typeInfo(ExpectedContents).array.len,
     );
     defer if (!opts.update_tracking) {
         for (reg_locks.items) |lock| func.register_manager.unlockReg(lock);
-        reg_locks.deinit();
+        reg_locks.deinit(bfa.allocator());
     };
 
     for (0..state.registers.len) |index| {
@@ -722,7 +723,7 @@ fn restoreState(func: *Func, state: State, deaths: []const Air.Inst.Index, compt
                 );
             }
         } else if (target_maybe_inst) |_|
-            try reg_locks.append(func.register_manager.lockRegIndexAssumeUnused(@intCast(index)));
+            try reg_locks.append(bfa.allocator(), func.register_manager.lockRegIndexAssumeUnused(@intCast(index)));
     }
 
     if (opts.update_tracking and std.debug.runtime_safety) {
@@ -754,13 +755,13 @@ pub fn generate(
     const fn_type = Type.fromInterned(func.ty);
     const mod = zcu.navFileScope(func.owner_nav).mod.?;
 
-    var branch_stack = std.array_list.Managed(Branch).init(gpa);
+    var branch_stack: std.ArrayList(Branch) = .empty;
     defer {
         assert(branch_stack.items.len == 1);
         branch_stack.items[0].deinit(gpa);
-        branch_stack.deinit();
+        branch_stack.deinit(gpa);
     }
-    try branch_stack.append(.{});
+    try branch_stack.append(gpa, .{});
 
     var function: Func = .{
         .gpa = gpa,
@@ -903,9 +904,6 @@ pub fn generateLazy(
             .mir = mir,
             .cc = .auto,
             .src_loc = Type.fromInterned(lazy_sym.ty).srcLocOrNull(pt.zcu) orelse .unneeded,
-            .output_mode = comp.config.output_mode,
-            .link_mode = comp.config.link_mode,
-            .pic = mod.pic,
         },
         .bin_file = bin_file,
         .debug_output = debug_output,
@@ -929,7 +927,6 @@ const FormatWipMirData = struct {
 };
 fn formatWipMir(data: FormatWipMirData, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     const pt = data.func.pt;
-    const comp = pt.zcu.comp;
     var lower: Lower = .{
         .pt = pt,
         .allocator = data.func.gpa,
@@ -942,9 +939,6 @@ fn formatWipMir(data: FormatWipMirData, writer: *std.Io.Writer) std.Io.Writer.Er
             .nav_index => |nav| pt.zcu.navSrcLoc(nav),
             .lazy_sym => |lazy_sym| Type.fromInterned(lazy_sym.ty).srcLocOrNull(pt.zcu) orelse .unneeded,
         },
-        .output_mode = comp.config.output_mode,
-        .link_mode = comp.config.link_mode,
-        .pic = comp.root_mod.pic,
     };
     var first = true;
     for ((lower.lowerMir(data.inst, .{ .allow_frame_locs = false }) catch |err| switch (err) {
@@ -1764,7 +1758,7 @@ fn finishAir(
 ) !void {
     const tomb_bits = func.liveness.getTombBits(inst);
     for (0.., operands) |op_index, op| {
-        if (tomb_bits & @as(Air.Liveness.Bpi, 1) << @intCast(op_index) == 0) continue;
+        if (tomb_bits & (@as(Air.Liveness.Bpi, 1) << @intCast(op_index)) == 0) continue;
         if (func.reused_operands.isSet(op_index)) continue;
         try func.processDeath(op.toIndexAllowNone() orelse continue);
     }
@@ -4595,7 +4589,7 @@ fn structFieldPtr(func: *Func, inst: Air.Inst.Index, operand: Air.Inst.Ref, inde
 
     const field_offset: i32 = switch (container_ty.containerLayout(zcu)) {
         .auto, .@"extern" => @intCast(container_ty.structFieldOffset(index, zcu)),
-        .@"packed" => @divExact(@as(i32, ptr_container_ty.ptrInfo(zcu).packed_offset.bit_offset) +
+        .@"bitpack" => @divExact(@as(i32, ptr_container_ty.ptrInfo(zcu).packed_offset.bit_offset) +
             (if (zcu.typeToStruct(container_ty)) |struct_obj| zcu.structPackedFieldBitOffset(struct_obj, index) else 0) -
             ptr_field_ty.ptrInfo(zcu).packed_offset.bit_offset, 8),
     };
@@ -4626,7 +4620,7 @@ fn airAggFieldVal(func: *Func, inst: Air.Inst.Index) !void {
 
         const field_off: u32 = switch (struct_ty.containerLayout(zcu)) {
             .auto, .@"extern" => @intCast(struct_ty.structFieldOffset(index, zcu) * 8),
-            .@"packed" => if (zcu.typeToStruct(struct_ty)) |struct_type|
+            .@"bitpack" => if (zcu.typeToStruct(struct_ty)) |struct_type|
                 zcu.structPackedFieldBitOffset(struct_type, index)
             else
                 0,
@@ -4893,9 +4887,9 @@ fn genCall(
         stack_frame_align.* = stack_frame_align.max(needed_call_frame.abi_align);
     }
 
-    var reg_locks = std.array_list.Managed(?RegisterLock).init(allocator);
-    defer reg_locks.deinit();
-    try reg_locks.ensureTotalCapacity(8);
+    var reg_locks: std.ArrayList(?RegisterLock) = .empty;
+    defer reg_locks.deinit(allocator);
+    try reg_locks.ensureTotalCapacity(allocator, 8);
     defer for (reg_locks.items) |reg_lock| if (reg_lock) |lock| func.register_manager.unlockReg(lock);
 
     const frame_indices = try allocator.alloc(FrameIndex, args.len);
@@ -4911,17 +4905,17 @@ fn genCall(
             .none => {},
             .register => |reg| {
                 try func.register_manager.getReg(reg, null);
-                try reg_locks.append(func.register_manager.lockReg(reg));
+                try reg_locks.append(allocator, func.register_manager.lockReg(reg));
             },
             .register_pair => |regs| {
                 for (regs) |reg| try func.register_manager.getReg(reg, null);
-                try reg_locks.appendSlice(&func.register_manager.lockRegs(2, regs));
+                try reg_locks.appendSlice(allocator, &func.register_manager.lockRegs(2, regs));
             },
             .indirect => |reg_off| {
                 frame_index.* = try func.allocFrameIndex(FrameAlloc.initType(arg_ty, zcu));
                 try func.genSetMem(.{ .frame = frame_index.* }, 0, arg_ty, src_arg);
                 try func.register_manager.getReg(reg_off.reg, null);
-                try reg_locks.append(func.register_manager.lockReg(reg_off.reg));
+                try reg_locks.append(allocator, func.register_manager.lockReg(reg_off.reg));
             },
             else => return func.fail("TODO: genCall set arg {s}", .{@tagName(dst_arg)}),
         }
@@ -4936,7 +4930,7 @@ fn genCall(
                 .lea_frame = .{ .index = frame_index, .off = -reg_off.off },
             });
             call_info.return_value.short = .{ .load_frame = .{ .index = frame_index } };
-            try reg_locks.append(func.register_manager.lockReg(reg_off.reg));
+            try reg_locks.append(allocator, func.register_manager.lockReg(reg_off.reg));
         },
         else => unreachable,
     }
@@ -4975,7 +4969,7 @@ fn genCall(
                             const zo = elf_file.zigObjectPtr().?;
                             const sym_index: link.File.SymbolId = @fromBackingInt(@intCast(try zo.getOrCreateMetadataForNav(zcu, func_val.owner_nav)));
 
-                            if (func.mod.pic) {
+                            if (pt.zcu.comp.config.pic) {
                                 return func.fail("TODO: genCall pic", .{});
                             } else {
                                 try func.genSetReg(Type.u64, .ra, .{ .lea_symbol = .{ .sym = sym_index } });
@@ -6046,13 +6040,13 @@ fn airAsm(func: *Func, inst: Air.Inst.Index) !void {
     const inputs = unwrapped_asm.inputs;
 
     var result: MCValue = .none;
-    var args = std.array_list.Managed(MCValue).init(func.gpa);
-    try args.ensureTotalCapacity(outputs.len + inputs.len);
+    var args: std.ArrayList(MCValue) = .empty;
+    try args.ensureTotalCapacity(func.gpa, outputs.len + inputs.len);
     defer {
         for (args.items) |arg| if (arg.getReg()) |reg| func.register_manager.unlockReg(.{
             .tracked_index = RegisterManager.indexOfRegIntoTracked(reg) orelse continue,
         });
-        args.deinit();
+        args.deinit(func.gpa);
     }
     var arg_map = std.StringHashMap(u8).init(func.gpa);
     try arg_map.ensureTotalCapacity(@intCast(outputs.len + inputs.len));
@@ -6272,7 +6266,7 @@ fn airAsm(func: *Func, inst: Air.Inst.Index) !void {
                     "";
 
                 op.* = switch (args.items[
-                    arg_map.get(op_str["%[".len .. mod_index orelse op_str.len - "]".len]) orelse
+                    arg_map.get(op_str["%[".len .. mod_index orelse (op_str.len - "]".len)]) orelse
                         return func.fail("no matching constraint: '{s}'", .{op_str})
                 ]) {
                     .lea_symbol => |sym_off| if (mem.eql(u8, modifier, "plt")) blk: {
@@ -8009,7 +8003,7 @@ fn airAggregateInit(func: *Func, inst: Air.Inst.Index) !void {
         switch (result_ty.zigTypeTag(zcu)) {
             .@"struct" => {
                 const frame_index = try func.allocFrameIndex(FrameAlloc.initSpill(result_ty, zcu));
-                if (result_ty.containerLayout(zcu) == .@"packed") {
+                if (result_ty.containerLayout(zcu) == .@"bitpack") {
                     const struct_obj = zcu.typeToStruct(result_ty).?;
                     try func.genInlineMemset(
                         .{ .lea_frame = .{ .index = frame_index } },
@@ -8025,7 +8019,7 @@ fn airAggregateInit(func: *Func, inst: Air.Inst.Index) !void {
                         const elem_bit_size: u32 = @intCast(elem_ty.bitSize(zcu));
                         if (elem_bit_size > 64) {
                             return func.fail(
-                                "TODO airAggregateInit implement packed structs with large fields",
+                                "TODO airAggregateInit implement bitpack structs with large fields",
                                 .{},
                             );
                         }
@@ -8050,7 +8044,7 @@ fn airAggregateInit(func: *Func, inst: Air.Inst.Index) !void {
                         };
                         defer if (elem_lock) |lock| func.register_manager.unlockReg(lock);
 
-                        return func.fail("TODO: airAggregateInit packed structs", .{});
+                        return func.fail("TODO: airAggregateInit bitpack structs", .{});
                     }
                 } else for (elements, 0..) |elem, elem_i| {
                     if ((try result_ty.structFieldValueComptime(pt, elem_i)) != null) continue;

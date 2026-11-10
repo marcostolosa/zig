@@ -24,7 +24,7 @@ comptime {
     symbol(&floor, "floor");
     symbol(&__floorx, "__floorx");
     symbol(&floorq, "floorf128");
-    symbol(&floorl, "floorl");
+    if (compiler_rt.have_c_longdouble) symbol(&floorl, "floorl");
 
     // ceil
     symbol(&__ceilh, "__ceilh");
@@ -32,7 +32,7 @@ comptime {
     symbol(&ceil, "ceil");
     symbol(&__ceilx, "__ceilx");
     symbol(&ceilq, "ceilf128");
-    symbol(&ceill, "ceill");
+    if (compiler_rt.have_c_longdouble) symbol(&ceill, "ceill");
 }
 
 fn __floorh(x: compiler_rt.f16.Abi) callconv(.c) compiler_rt.f16.Abi {
@@ -141,13 +141,13 @@ inline fn impl(comptime T: type, comptime op: enum { floor, ceil }, x: T) T {
                 const m = (@as(U, 1) << @intCast(mantissa - e)) - 1;
                 if (u & m == 0) return x;
                 if (compiler_rt.want_float_exceptions) mem.doNotOptimizeAway(x + 0x1.0p120);
-                if (u >> bits - 1 == @intFromBool(op == .floor)) u += m;
+                if (u >> (bits - 1) == @intFromBool(op == .floor)) u += m;
                 return @bitCast(u & ~m);
             } else {
                 if (compiler_rt.want_float_exceptions) mem.doNotOptimizeAway(x + 0x1.0p120);
                 return switch (op) {
-                    .floor => if (u >> bits - 1 == 0) 0.0 else if (u << 1 != 0) -1.0 else x,
-                    .ceil => if (u >> bits - 1 != 0) -0.0 else if (u << 1 != 0) 1.0 else x,
+                    .floor => if (u >> (bits - 1) == 0) 0.0 else if (u << 1 != 0) -1.0 else x,
+                    .ceil => if (u >> (bits - 1) != 0) -0.0 else if (u << 1 != 0) 1.0 else x,
                 };
             }
         },
@@ -155,7 +155,7 @@ inline fn impl(comptime T: type, comptime op: enum { floor, ceil }, x: T) T {
             const e = (u >> mantissa) & mask;
             if (e >= bias + math.floatFractionalBits(T) or x == 0) return x;
 
-            const positive = u >> @bitSizeOf(T) - 1 == 0;
+            const positive = u >> (@bitSizeOf(T) - 1) == 0;
             const y: T = if (positive)
                 x + C - C - x
             else

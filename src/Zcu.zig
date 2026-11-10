@@ -40,6 +40,7 @@ const AnalUnit = InternPool.AnalUnit;
 const BuiltinFn = std.zig.BuiltinFn;
 const codegen = @import("codegen.zig");
 const LlvmObject = @import("codegen/llvm.zig").Object;
+const debugLogScopeEnabled = @import("main.zig").debugLogScopeEnabled;
 const dev = @import("dev.zig");
 const Zoir = std.zig.Zoir;
 const ZonGen = std.zig.ZonGen;
@@ -62,6 +63,12 @@ comp: *Compilation,
 /// If the ZCU is emitting an LLVM object (i.e. we are using the LLVM backend), then this is the
 /// `LlvmObject` we are emitting to.
 llvm_object: ?LlvmObject.Ptr,
+/// The basename of the object file which will be emitted by LLVM for the ZCU. Once it is emitted,
+/// this object file is passed to the active linker implementation as an ordinary link input.
+/// Not part of `llvm_object` because that may have been destroyed by the time the linker runs.
+///
+/// For the full path, use `Compilation.resolveEmitPath` with `kind == .temp`.
+llvm_object_basename: ?[]const u8,
 
 /// Pointer to externally managed resource.
 root_mod: *Module,
@@ -69,18 +76,18 @@ root_mod: *Module,
 /// `root_mod` is the test runner, and `main_mod` is the user's source file which has the tests.
 main_mod: *Module,
 std_mod: *Module,
-sema_prog_node: std.Progress.Node = .none,
-codegen_prog_node: std.Progress.Node = .none,
+sema_prog_node: std.Progress.Node,
+codegen_prog_node: std.Progress.Node,
 /// The number of codegen jobs which are pending or in-progress. Whichever thread drops this value
 /// to 0 is responsible for ending `codegen_prog_node`. While semantic analysis is happening, this
 /// value bottoms out at 1 instead of 0, to ensure that it can only drop to 0 after analysis is
 /// completed (since semantic analysis could trigger more codegen work).
-pending_codegen_jobs: std.atomic.Value(u32) = .init(0),
+pending_codegen_jobs: std.atomic.Value(u32),
 
 /// This is the progress node *under* `sema_prog_node` which is currently running.
 /// When we have to pause to analyze something else, we just temporarily rename this node.
 /// Eventually, when we thread semantic analysis, we will want one of these per thread.
-cur_sema_prog_node: std.Progress.Node = .none,
+cur_sema_prog_node: std.Progress.Node,
 
 /// Used by AstGen worker to load and store ZIR cache.
 global_zir_cache: Cache.Directory,
@@ -89,27 +96,26 @@ local_zir_cache: Cache.Directory,
 
 /// This is where all `Export` values are stored. Not all values here are necessarily valid exports;
 /// to enumerate all exports, `single_exports` and `multi_exports` must be consulted.
-all_exports: std.ArrayList(Export) = .empty,
+all_exports: std.ArrayList(Export),
 /// This is a list of free indices in `all_exports`. These indices may be reused by exports from
 /// future semantic analysis.
-free_exports: std.ArrayList(Export.Index) = .empty,
+free_exports: std.ArrayList(Export.Index),
 /// Maps from an `AnalUnit` which performs a single export, to the index into `all_exports` of
 /// the export it performs. Note that the key is not the `Decl` being exported, but the `AnalUnit`
 /// whose analysis triggered the export.
-single_exports: std.array_hash_map.Auto(AnalUnit, Export.Index) = .empty,
+single_exports: std.array_hash_map.Auto(AnalUnit, Export.Index),
 /// Like `single_exports`, but for `AnalUnit`s which perform multiple exports.
 /// The exports are `all_exports.items[index..][0..len]`.
 multi_exports: std.array_hash_map.Auto(AnalUnit, extern struct {
     index: u32,
     len: u32,
-}) = .empty,
-
-/// Key is the digest returned by `Builtin.hash`; value is the corresponding module.
-builtin_modules: std.array_hash_map.Auto(Cache.BinDigest, *Module) = .empty,
+}),
 
 /// Populated as soon as the `Compilation` is created. Guaranteed to contain all modules, even builtin ones.
 /// Modules whose root file is not a Zig or ZON file have the value `.none`.
-module_roots: std.array_hash_map.Auto(*Module, File.Index.Optional) = .empty,
+module_roots: std.array_hash_map.Auto(*Module, File.Index.Optional),
+/// Key is the digest returned by `Builtin.hash`; value is the corresponding module.
+builtin_modules: std.array_hash_map.Auto(Cache.BinDigest, *Module),
 
 /// The set of all the Zig source files in the Zig Compilation Unit. Tracked in
 /// order to iterate over it and check which source files have been modified on
@@ -132,26 +138,14 @@ import_table: std.array_hash_map.Custom(
         pub const eql = @compileError("all accesses should be through ImportTableAdapter");
     },
     true, // This is necessary! Without it, the map tries to use its Context to rehash. #21918
-) = .empty,
-
+),
 /// The set of all files in `import_table` which are "alive" this update, meaning
 /// they are reachable by traversing imports starting from an analysis root. This
 /// is usually all files in `import_table`, but some could be omitted if an incremental
 /// update removes an import, or if a module specified on the CLI is never imported.
 /// Reconstructed on every update, after AstGen and before Sema.
 /// Value is why the file is alive.
-alive_files: std.array_hash_map.Auto(File.Index, File.Reference) = .empty,
-
-/// If this is populated, a "file exists in multiple modules" error should be emitted.
-/// This causes file errors to not be shown, because we don't really know which files
-/// should be alive (because the user has messed up their imports somewhere!).
-/// Cleared and recomputed every update, after AstGen and before Sema.
-multi_module_err: ?struct {
-    file: File.Index,
-    modules: [2]*Module,
-    refs: [2]File.Reference,
-} = null,
-
+alive_files: std.array_hash_map.Auto(File.Index, File.Reference),
 /// The set of all the files which have been loaded with `@embedFile` in the Module.
 /// We keep track of this in order to iterate over it and check which files have been
 /// modified on the file system when an update is requested, as well as to cache
@@ -162,49 +156,19 @@ multi_module_err: ?struct {
 ///
 /// This table owns all of the `*EmbedFile` memory, which is allocated into gpa.
 embed_table: std.array_hash_map.Custom(
-    *EmbedFile,
+    EmbedFile,
     void,
     struct {
         pub const hash = @compileError("all accesses should be through EmbedTableAdapter");
         pub const eql = @compileError("all accesses should be through EmbedTableAdapter");
     },
     true, // This is necessary! Without it, the map tries to use its Context to rehash. #21918
-) = .empty,
+),
 
 /// Stores all Type and Value objects.
 /// The idea is that this will be periodically garbage-collected, but such logic
 /// is not yet implemented.
-intern_pool: InternPool = .empty,
-
-/// Value explains why this `AnalUnit` is being analyzed. It is `null` for the topmost analysis
-/// (index 0), and non-`null` for all others.
-analysis_in_progress: std.array_hash_map.Auto(AnalUnit, ?*const DependencyReason) = .empty,
-/// The ErrorMsg memory is owned by the `AnalUnit`, using Module's general purpose allocator.
-failed_analysis: std.array_hash_map.Auto(AnalUnit, *ErrorMsg) = .empty,
-/// This `AnalUnit` failed semantic analysis because it required analysis of another `AnalUnit` which itself failed.
-transitive_failed_analysis: std.array_hash_map.Auto(
-    AnalUnit,
-    if (build_options.enable_debug_extensions) TransitiveFailureReason else void,
-) = .empty,
-/// This `Nav` succeeded analysis, but failed codegen.
-/// This may be a simple "value" `Nav`, or it may be a function.
-/// The ErrorMsg memory is owned by the `AnalUnit`, using Module's general purpose allocator.
-/// While multiple threads are active (most of the time!), this is guarded by `zcu.comp.mutex`, as
-/// codegen and linking run on a separate thread.
-failed_codegen: std.array_hash_map.Auto(InternPool.Nav.Index, *ErrorMsg) = .empty,
-failed_types: std.array_hash_map.Auto(InternPool.Index, *ErrorMsg) = .empty,
-
-/// Key is an `AnalUnit` which is in `dependency_loop_nodes`. For each dependency loop, exactly one
-/// unit in the loop is in this map, though the choice is arbitrary and not necessarily reproducible
-/// between compilations. So, instead of (for instance) defining where the dependency loop "starts",
-/// this map simply exists to allow easily iterating all dependency loops exactly once.
-dependency_loops: std.array_hash_map.Auto(AnalUnit, void) = .empty,
-/// Key is an `AnalUnit`, value is the `AnalUnit` which the key references and why it does so.
-/// All units in here form loops. To iterate loops, see `dependency_loops`.
-dependency_loop_nodes: std.array_hash_map.Auto(AnalUnit, struct {
-    unit: AnalUnit,
-    reason: DependencyReason,
-}) = .empty,
+intern_pool: InternPool,
 
 /// Keep track of `@compileLog`s per `AnalUnit`.
 /// We track the source location of the first `@compileLog` call, and all logged lines as a linked list.
@@ -220,17 +184,20 @@ compile_logs: std.array_hash_map.Auto(AnalUnit, struct {
             .offset = LazySrcLoc.Offset.nodeOffset(self.node_offset),
         };
     }
-}) = .empty,
-compile_log_lines: std.ArrayList(CompileLogLine) = .empty,
-free_compile_log_lines: std.ArrayList(CompileLogLine.Index) = .empty,
-/// This tracks files which triggered errors when generating AST/ZIR/ZOIR.
-/// If not `null`, the value is a retryable error (the file status is guaranteed
-/// to be `.retryable_failure`). Otherwise, the file status is `.astgen_failure`
-/// or `.success`, and there are ZIR/ZOIR errors which should be printed.
-/// We just store a `[]u8` instead of a full `*ErrorMsg`, because the source
-/// location is always the entire file. The `[]u8` memory is owned by the map
-/// and allocated into `gpa`.
-failed_files: std.array_hash_map.Auto(File.Index, ?[]u8) = .empty,
+}),
+compile_log_lines: std.ArrayList(CompileLogLine),
+free_compile_log_lines: std.ArrayList(CompileLogLine.Index),
+
+illegal_module_root: ?*Module,
+/// If this is populated, a "file exists in multiple modules" error should be emitted.
+/// This causes file errors to not be shown, because we don't really know which files
+/// should be alive (because the user has messed up their imports somewhere!).
+/// Cleared and recomputed every update, after AstGen and before Sema.
+multi_module_err: ?struct {
+    file: File.Index,
+    modules: [2]*Module,
+    refs: [2]File.Reference,
+},
 /// AstGen is not aware of modules, and so cannot determine whether an import
 /// string makes sense. That is the job of a traversal after AstGen.
 ///
@@ -257,11 +224,48 @@ failed_imports: std.ArrayList(struct {
     import_string: Zir.NullTerminatedString,
     import_token: Ast.TokenIndex,
     kind: enum { file_outside_module_root, illegal_zig_import },
-}) = .empty,
-failed_exports: std.array_hash_map.Auto(Export.Index, *ErrorMsg) = .empty,
-/// If analysis failed due to a cimport error, the corresponding Clang errors
-/// are stored here.
-cimport_errors: std.array_hash_map.Auto(AnalUnit, std.zig.ErrorBundle) = .empty,
+}),
+/// This tracks files which triggered errors when generating AST/ZIR/ZOIR.
+/// If not `null`, the value is a retryable error (the file status is guaranteed
+/// to be `.retryable_failure`). Otherwise, the file status is `.astgen_failure`
+/// or `.success`, and there are ZIR/ZOIR errors which should be printed.
+/// We just store a `[]u8` instead of a full `*ErrorMsg`, because the source
+/// location is always the entire file. The `[]u8` memory is owned by the map
+/// and allocated into `gpa`.
+failed_files: std.array_hash_map.Auto(File.Index, ?[]u8),
+/// If `true`, then semantic analysis must not occur on this update due to AstGen errors.
+/// Essentially the entire pipeline after AstGen, including Sema, codegen, and link, is skipped.
+/// Reset to `false` at the start of each update in `Compilation.update`.
+skip_analysis_this_update: bool,
+/// Value explains why this `AnalUnit` is being analyzed. It is `null` for the topmost analysis
+/// (index 0), and non-`null` for all others.
+analysis_in_progress: std.array_hash_map.Auto(AnalUnit, ?*const DependencyReason),
+/// The ErrorMsg memory is owned by the `AnalUnit`, using Module's general purpose allocator.
+failed_analysis: std.array_hash_map.Auto(AnalUnit, *ErrorMsg),
+/// This `AnalUnit` failed semantic analysis because it required analysis of another `AnalUnit` which itself failed.
+transitive_failed_analysis: std.array_hash_map.Auto(
+    AnalUnit,
+    if (build_options.enable_debug_extensions) TransitiveFailureReason else void,
+),
+/// Key is an `AnalUnit` which is in `dependency_loop_nodes`. For each dependency loop, exactly one
+/// unit in the loop is in this map, though the choice is arbitrary and not necessarily reproducible
+/// between compilations. So, instead of (for instance) defining where the dependency loop "starts",
+/// this map simply exists to allow easily iterating all dependency loops exactly once.
+dependency_loops: std.array_hash_map.Auto(AnalUnit, void),
+/// Key is an `AnalUnit`, value is the `AnalUnit` which the key references and why it does so.
+/// All units in here form loops. To iterate loops, see `dependency_loops`.
+dependency_loop_nodes: std.array_hash_map.Auto(AnalUnit, struct {
+    unit: AnalUnit,
+    reason: DependencyReason,
+}),
+/// This `Nav` succeeded analysis, but failed codegen.
+/// This may be a simple "value" `Nav`, or it may be a function.
+/// The ErrorMsg memory is owned by the `AnalUnit`, using Module's general purpose allocator.
+/// While multiple threads are active (most of the time!), this is guarded by `zcu.comp.mutex`, as
+/// codegen and linking run on a separate thread.
+failed_codegen: std.array_hash_map.Auto(InternPool.Nav.Index, *ErrorMsg),
+failed_types: std.array_hash_map.Auto(InternPool.Index, *ErrorMsg),
+failed_exports: std.array_hash_map.Auto(Export.Index, *ErrorMsg),
 
 /// Maximum amount of distinct error values, set by --error-limit
 error_limit: ErrorInt,
@@ -269,14 +273,14 @@ error_limit: ErrorInt,
 /// In safe builds, `Type.assertHasLayout` may be called cross-thread, so this lock
 /// guards accesses to `outdated` and `potentially_outdated`. In unsafe builds, the
 /// lock is not needed and is compiled out.
-outdated_lock: if (std.debug.runtime_safety) std.Io.RwLock else void = if (std.debug.runtime_safety) .init,
+outdated_lock: if (std.debug.runtime_safety) std.Io.RwLock else void,
 /// Value is the number of PO dependencies of this AnalUnit.
 /// This value will decrease as we perform semantic analysis to learn what is outdated.
 /// If any of these PO deps is outdated, this value will be moved to `outdated`.
-potentially_outdated: std.array_hash_map.Auto(AnalUnit, u32) = .empty,
+potentially_outdated: std.array_hash_map.Auto(AnalUnit, u32),
 /// Value is the number of PO dependencies of this AnalUnit.
 /// Once this value drops to 0, the AnalUnit is a candidate for re-analysis.
-outdated: std.array_hash_map.Auto(AnalUnit, u32) = .empty,
+outdated: std.array_hash_map.Auto(AnalUnit, u32),
 /// This is the set of all `AnalUnit`s in `outdated` whose PO dependency count is 0.
 /// Such `AnalUnit`s are ready for immediate re-analysis.
 /// See `findOutdatedToAnalyze` for details.
@@ -286,69 +290,64 @@ outdated_ready: struct {
     funcs: std.array_hash_map.Auto(InternPool.Index, void),
     /// Does not contain `.func` units.
     other: std.array_hash_map.Auto(AnalUnit, void),
-} = .{ .funcs = .empty, .other = .empty },
+},
 /// This contains a list of AnalUnit whose analysis or codegen failed, but the
 /// failure was something like running out of disk space, and trying again may
 /// succeed. On the next update, we will flush this list, marking all members of
 /// it as outdated.
-retryable_failures: std.ArrayList(AnalUnit) = .empty,
+retryable_failures: std.ArrayList(AnalUnit),
 
 /// These are the modules which we initially queue for analysis in `Compilation.update`.
 /// `resolveReferences` will use these as the root of its reachability traversal.
 analysis_roots_buffer: [5]*Module,
-analysis_roots_len: usize = 0,
+analysis_roots_len: usize,
 /// This is the cached result of `Zcu.resolveReferences`. It is computed on-demand, and
 /// reset to `null` when any semantic analysis occurs (since this invalidates the data).
 /// Allocated into `gpa`.
-resolved_references: ?std.array_hash_map.Auto(AnalUnit, ?ResolvedReference) = null,
+resolved_references: ?std.array_hash_map.Auto(AnalUnit, ?ResolvedReference),
 
-/// If `true`, then semantic analysis must not occur on this update due to AstGen errors.
-/// Essentially the entire pipeline after AstGen, including Sema, codegen, and link, is skipped.
-/// Reset to `false` at the start of each update in `Compilation.update`.
-skip_analysis_this_update: bool = false,
+test_filters: []const []const u8,
+test_functions: std.array_hash_map.Auto(InternPool.Nav.Index, void),
 
-test_functions: std.array_hash_map.Auto(InternPool.Nav.Index, void) = .empty,
-
-global_assembly: std.array_hash_map.Auto(AnalUnit, []u8) = .empty,
+global_assembly: std.array_hash_map.Auto(AnalUnit, []u8),
 
 /// Key is the `AnalUnit` *performing* the reference. This representation allows
 /// incremental updates to quickly delete references caused by a specific `AnalUnit`.
 /// Value is index into `all_references` of the first reference triggered by the unit.
 /// The `next` field on the `Reference` forms a linked list of all references
 /// triggered by the key `AnalUnit`.
-reference_table: std.array_hash_map.Auto(AnalUnit, u32) = .empty,
-all_references: std.ArrayList(Reference) = .empty,
+reference_table: std.array_hash_map.Auto(AnalUnit, u32),
+all_references: std.ArrayList(Reference),
 /// Freelist of indices in `all_references`.
-free_references: std.ArrayList(u32) = .empty,
+free_references: std.ArrayList(u32),
 
-inline_reference_frames: std.ArrayList(InlineReferenceFrame) = .empty,
-free_inline_reference_frames: std.ArrayList(InlineReferenceFrame.Index) = .empty,
+inline_reference_frames: std.ArrayList(InlineReferenceFrame),
+free_inline_reference_frames: std.ArrayList(InlineReferenceFrame.Index),
 
 /// Key is the `AnalUnit` *performing* the reference. This representation allows
 /// incremental updates to quickly delete references caused by a specific `AnalUnit`.
 /// Value is index into `all_type_reference` of the first reference triggered by the unit.
 /// The `next` field on the `TypeReference` forms a linked list of all type references
 /// triggered by the key `AnalUnit`.
-type_reference_table: std.array_hash_map.Auto(AnalUnit, u32) = .empty,
-all_type_references: std.ArrayList(TypeReference) = .empty,
+type_reference_table: std.array_hash_map.Auto(AnalUnit, u32),
+all_type_references: std.ArrayList(TypeReference),
 /// Freelist of indices in `all_type_references`.
-free_type_references: std.ArrayList(u32) = .empty,
+free_type_references: std.ArrayList(u32),
 
 /// Populated by analysis of `AnalUnit.wrap(.{ .memoized_state = s })`, where `s` depends on the element.
-std_lang_decl_values: StdLangDecl.Memoized = .initFill(.none),
+std_lang_decl_values: StdLangDecl.Memoized,
 
-incremental_debug_state: if (build_options.enable_debug_extensions) IncrementalDebugState else void =
-    if (build_options.enable_debug_extensions) .init else {},
+incremental_debug_state: if (build_options.enable_debug_extensions) IncrementalDebugState else void,
 
 /// Times semantic analysis of the current `AnalUnit`. When we pause to analyze a different unit,
 /// this timer must be temporarily paused and resumed later.
-cur_analysis_timer: ?Compilation.Timer = null,
+cur_analysis_timer: ?Compilation.Timer,
 
 codegen_task_pool: CodegenTaskPool,
 
-generation: u32 = 0,
+generation: u32,
 
-/// Only access from the Sema thread.
+/// Only accessed from the Sema thread.
 anon_name_counter: u32,
 
 pub const DependencyReason = struct {
@@ -434,7 +433,7 @@ pub const EmbedTableAdapter = struct {
         _ = ctx;
         return @truncate(std.hash.Wyhash.hash(@backingInt(path.root), path.sub_path));
     }
-    pub fn eql(ctx: EmbedTableAdapter, a_path: Compilation.Path, b_file: *EmbedFile, b_index: usize) bool {
+    pub fn eql(ctx: EmbedTableAdapter, a_path: Compilation.Path, b_file: EmbedFile, b_index: usize) bool {
         _ = ctx;
         _ = b_index;
         const b_path = b_file.path;
@@ -1250,10 +1249,15 @@ pub const EmbedFile = struct {
 
     pub const Index = enum(u32) {
         _,
-        pub fn get(idx: Index, zcu: *const Zcu) *EmbedFile {
-            return zcu.embed_table.keys()[@backingInt(idx)];
+        pub fn get(idx: Index, zcu: *const Zcu) *const EmbedFile {
+            return &zcu.embed_table.keys()[@backingInt(idx)];
         }
     };
+
+    pub fn deinit(ef: *EmbedFile, gpa: Allocator) void {
+        ef.path.deinit(gpa);
+        ef.* = undefined;
+    }
 };
 
 /// This struct holds data necessary to construct API-facing `AllErrors.Message`.
@@ -1297,7 +1301,7 @@ pub const ErrorMsg = struct {
     pub fn init(gpa: Allocator, src_loc: LazySrcLoc, comptime format: []const u8, args: anytype) !ErrorMsg {
         return .{
             .src_loc = src_loc,
-            .msg = try std.fmt.allocPrint(gpa, format, args),
+            .msg = try gpa.print(format, args),
         };
     }
 
@@ -2778,7 +2782,7 @@ pub const LazySrcLoc = struct {
             /// The index of the item to point to within this case.
             item_idx: SwitchItem.Index,
 
-            pub const Index = packed struct(u32) {
+            pub const Index = bitpack struct(u32) {
                 kind: enum(u1) { single, range },
                 value: u31,
             };
@@ -2821,7 +2825,7 @@ pub const LazySrcLoc = struct {
         /// where in semantic analysis the value got set.
         pub const TracedOffset = struct {
             x: Ast.Node.Offset,
-            trace: std.debug.Trace = std.debug.Trace.init,
+            trace: if (want_tracing) std.debug.Trace else void = if (want_tracing) .init,
 
             const want_tracing = false;
         };
@@ -2894,14 +2898,142 @@ pub const CompileError = error{
     ComptimeBreak,
 };
 
-pub fn init(zcu: *Zcu, gpa: Allocator, io: Io, thread_count: usize) !void {
-    try zcu.intern_pool.init(gpa, io, thread_count);
-}
-
 /// It is valid to not call this function before `deinit` in error paths.
 /// Requires the fields on `zcu.comp` to already be initialized.
-pub fn initAfterCompilation(zcu: *Zcu) void {
+pub fn init(zcu: *Zcu) void {
     zcu.initTracyPlots();
+}
+
+pub fn reset(zcu: *Zcu, arena: Allocator) Allocator.Error!void {
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
+
+    zcu.all_exports.clearRetainingCapacity();
+    zcu.free_exports.clearRetainingCapacity();
+    zcu.single_exports.clearRetainingCapacity();
+    zcu.multi_exports.clearRetainingCapacity();
+
+    zcu.module_roots.clearRetainingCapacity();
+    // builtin modules can still be reused from a previous non-incremental update
+
+    for (zcu.import_table.keys()) |file| zcu.destroyFile(file);
+    zcu.import_table.clearRetainingCapacity();
+    zcu.alive_files.clearRetainingCapacity();
+    for (zcu.embed_table.keys()) |*ef| ef.deinit(gpa);
+    zcu.embed_table.clearRetainingCapacity();
+
+    zcu.compile_logs.clearRetainingCapacity();
+    zcu.compile_log_lines.clearRetainingCapacity();
+    zcu.free_compile_log_lines.clearRetainingCapacity();
+
+    zcu.illegal_module_root = null;
+    zcu.multi_module_err = null;
+    zcu.failed_imports.clearRetainingCapacity();
+    for (zcu.failed_files.values()) |maybe_msg| if (maybe_msg) |msg| gpa.free(msg);
+    zcu.failed_files.clearRetainingCapacity();
+    zcu.analysis_in_progress.clearRetainingCapacity();
+    for (zcu.failed_analysis.values()) |msg| msg.destroy(gpa);
+    zcu.failed_analysis.clearRetainingCapacity();
+    zcu.transitive_failed_analysis.clearRetainingCapacity();
+    zcu.dependency_loops.clearRetainingCapacity();
+    zcu.dependency_loop_nodes.clearRetainingCapacity();
+    for (zcu.failed_codegen.values()) |msg| msg.destroy(gpa);
+    zcu.failed_codegen.clearRetainingCapacity();
+    for (zcu.failed_types.values()) |msg| msg.destroy(gpa);
+    zcu.failed_types.clearRetainingCapacity();
+    for (zcu.failed_exports.values()) |msg| msg.destroy(gpa);
+    zcu.failed_exports.clearRetainingCapacity();
+
+    assert(zcu.potentially_outdated.count() == 0);
+    assert(zcu.outdated.count() == 0);
+    assert(zcu.outdated_ready.funcs.count() == 0);
+    assert(zcu.outdated_ready.other.count() == 0);
+    zcu.retryable_failures.clearRetainingCapacity();
+
+    zcu.analysis_roots_len = 0;
+    zcu.analysis_roots_buffer[zcu.analysis_roots_len] = zcu.std_mod;
+    zcu.analysis_roots_len += 1;
+    // Normally we rely on importing std to in turn import the root source file in the start code.
+    // However, the main module is distinct from the root module in tests, so that won't happen there.
+    if (comp.config.is_test and zcu.main_mod != zcu.std_mod) {
+        zcu.analysis_roots_buffer[zcu.analysis_roots_len] = zcu.main_mod;
+        zcu.analysis_roots_len += 1;
+    }
+    if (zcu.root_mod.deps.get("compiler_rt")) |compiler_rt_mod| {
+        zcu.analysis_roots_buffer[zcu.analysis_roots_len] = compiler_rt_mod;
+        zcu.analysis_roots_len += 1;
+    }
+    if (zcu.root_mod.deps.get("ubsan_rt")) |ubsan_rt_mod| {
+        zcu.analysis_roots_buffer[zcu.analysis_roots_len] = ubsan_rt_mod;
+        zcu.analysis_roots_len += 1;
+    }
+    if (zcu.root_mod.deps.get("zigc")) |zigc_mod| {
+        zcu.analysis_roots_buffer[zcu.analysis_roots_len] = zigc_mod;
+        zcu.analysis_roots_len += 1;
+    }
+    zcu.clearCachedResolvedReferences();
+
+    zcu.test_functions.clearRetainingCapacity();
+
+    zcu.global_assembly.clearRetainingCapacity();
+
+    zcu.reference_table.clearRetainingCapacity();
+    zcu.all_references.clearRetainingCapacity();
+    zcu.free_references.clearRetainingCapacity();
+
+    zcu.inline_reference_frames.clearRetainingCapacity();
+    zcu.free_inline_reference_frames.clearRetainingCapacity();
+
+    zcu.type_reference_table.clearRetainingCapacity();
+    zcu.all_type_references.clearRetainingCapacity();
+    zcu.free_type_references.clearRetainingCapacity();
+
+    zcu.std_lang_decl_values = .initFill(.none);
+
+    for (zcu.codegen_task_pool.task_funcs) |task_func| assert(task_func == .none);
+
+    assert(zcu.generation == 0);
+
+    zcu.anon_name_counter = 0;
+
+    zcu.intern_pool.deinit(gpa, io);
+    zcu.intern_pool = .empty;
+    try zcu.intern_pool.init(gpa, io, comp.thread_limit);
+
+    {
+        const active = zcu.acquire();
+        defer active.release();
+        try active.pt.populateModuleRootTable();
+    }
+
+    assert(zcu.llvm_object == null);
+    if (comp.config.use_llvm and
+        (comp.emit_bin != null or
+            comp.emit_asm != null or
+            comp.emit_llvm_ir != null or
+            comp.emit_llvm_bc != null or
+            log_llvm_ir: {
+                break :log_llvm_ir debugLogScopeEnabled("llvm-ir") or debugLogScopeEnabled("opt-llvm-ir");
+            }))
+    {
+        dev.check(.llvm_backend);
+        const llvm_arena = if (comp.config.incremental) comp.arena else arena;
+        zcu.llvm_object = try .create(llvm_arena, zcu);
+
+        const target = zcu.getTarget();
+        if (comp.emit_bin != null) switch (target.ofmt) {
+            .llvmbc, .llvmir => {},
+            else => zcu.llvm_object_basename = try std.zig.binNameAlloc(llvm_arena, .{
+                .root_name = try std.fmt.allocPrint(llvm_arena, "{s}_zcu", .{comp.root_name}),
+                .cpu_arch = target.cpu.arch,
+                .os_tag = target.os.tag,
+                .ofmt = target.ofmt,
+                .abi = target.abi,
+                .output_mode = .Obj,
+            }),
+        };
+    }
 }
 
 pub fn deinit(zcu: *Zcu) void {
@@ -2911,58 +3043,42 @@ pub fn deinit(zcu: *Zcu) void {
     {
         if (zcu.llvm_object) |llvm_object| llvm_object.deinit();
 
-        zcu.builtin_modules.deinit(gpa);
-        zcu.module_roots.deinit(gpa);
-        for (zcu.import_table.keys()) |file_index| {
-            zcu.destroyFile(file_index);
-        }
-        zcu.import_table.deinit(gpa);
-        zcu.alive_files.deinit(gpa);
-
-        for (zcu.embed_table.keys()) |embed_file| {
-            embed_file.path.deinit(gpa);
-            gpa.destroy(embed_file);
-        }
-        zcu.embed_table.deinit(gpa);
-
-        zcu.local_zir_cache.handle.close(io);
         zcu.global_zir_cache.handle.close(io);
-
-        for (zcu.failed_analysis.values()) |value| value.destroy(gpa);
-        for (zcu.failed_codegen.values()) |value| value.destroy(gpa);
-        for (zcu.failed_types.values()) |value| value.destroy(gpa);
-        zcu.analysis_in_progress.deinit(gpa);
-        zcu.failed_analysis.deinit(gpa);
-        zcu.transitive_failed_analysis.deinit(gpa);
-        zcu.dependency_loops.deinit(gpa);
-        zcu.dependency_loop_nodes.deinit(gpa);
-        zcu.failed_codegen.deinit(gpa);
-        zcu.failed_types.deinit(gpa);
-
-        for (zcu.failed_files.values()) |value| {
-            if (value) |msg| gpa.free(msg);
-        }
-        zcu.failed_files.deinit(gpa);
-        zcu.failed_imports.deinit(gpa);
-
-        for (zcu.failed_exports.values()) |value| {
-            value.destroy(gpa);
-        }
-        zcu.failed_exports.deinit(gpa);
-
-        for (zcu.cimport_errors.values()) |*errs| {
-            errs.deinit(gpa);
-        }
-        zcu.cimport_errors.deinit(gpa);
-
-        zcu.compile_logs.deinit(gpa);
-        zcu.compile_log_lines.deinit(gpa);
-        zcu.free_compile_log_lines.deinit(gpa);
+        zcu.local_zir_cache.handle.close(io);
 
         zcu.all_exports.deinit(gpa);
         zcu.free_exports.deinit(gpa);
         zcu.single_exports.deinit(gpa);
         zcu.multi_exports.deinit(gpa);
+
+        zcu.module_roots.deinit(gpa);
+        zcu.builtin_modules.deinit(gpa);
+
+        for (zcu.import_table.keys()) |file| zcu.destroyFile(file);
+        zcu.import_table.deinit(gpa);
+        zcu.alive_files.deinit(gpa);
+        for (zcu.embed_table.keys()) |*ef| ef.deinit(gpa);
+        zcu.embed_table.deinit(gpa);
+
+        zcu.compile_logs.deinit(gpa);
+        zcu.compile_log_lines.deinit(gpa);
+        zcu.free_compile_log_lines.deinit(gpa);
+
+        zcu.failed_imports.deinit(gpa);
+        for (zcu.failed_files.values()) |maybe_msg| if (maybe_msg) |msg| gpa.free(msg);
+        zcu.failed_files.deinit(gpa);
+        zcu.analysis_in_progress.deinit(gpa);
+        for (zcu.failed_analysis.values()) |msg| msg.destroy(gpa);
+        zcu.failed_analysis.deinit(gpa);
+        zcu.transitive_failed_analysis.deinit(gpa);
+        zcu.dependency_loops.deinit(gpa);
+        zcu.dependency_loop_nodes.deinit(gpa);
+        for (zcu.failed_codegen.values()) |msg| msg.destroy(gpa);
+        zcu.failed_codegen.deinit(gpa);
+        for (zcu.failed_types.values()) |msg| msg.destroy(gpa);
+        zcu.failed_types.deinit(gpa);
+        for (zcu.failed_exports.values()) |msg| msg.destroy(gpa);
+        zcu.failed_exports.deinit(gpa);
 
         zcu.potentially_outdated.deinit(gpa);
         zcu.outdated.deinit(gpa);
@@ -2970,11 +3086,11 @@ pub fn deinit(zcu: *Zcu) void {
         zcu.outdated_ready.other.deinit(gpa);
         zcu.retryable_failures.deinit(gpa);
 
+        if (zcu.resolved_references) |*r| r.deinit(gpa);
+
         zcu.test_functions.deinit(gpa);
 
-        for (zcu.global_assembly.values()) |s| {
-            gpa.free(s);
-        }
+        for (zcu.global_assembly.values()) |s| gpa.free(s);
         zcu.global_assembly.deinit(gpa);
 
         zcu.reference_table.deinit(gpa);
@@ -2987,8 +3103,6 @@ pub fn deinit(zcu: *Zcu) void {
         zcu.type_reference_table.deinit(gpa);
         zcu.all_type_references.deinit(gpa);
         zcu.free_type_references.deinit(gpa);
-
-        if (zcu.resolved_references) |*r| r.deinit(gpa);
 
         if (comp.debugIncremental()) {
             zcu.incremental_debug_state.deinit(gpa);
@@ -4007,7 +4121,7 @@ pub fn errorSetBits(zcu: *const Zcu) u16 {
     const target = zcu.getTarget();
 
     if (zcu.error_limit == 0) return 0;
-    if (target.cpu.arch.isSpirV()) {
+    if (target.cpu.arch.isSpirv()) {
         // As expected by https://github.com/Snektron/zig-spirv-test-executor
         if (zcu.comp.config.is_test) return 32;
     }
@@ -4022,7 +4136,7 @@ pub fn errNote(
     comptime format: []const u8,
     args: anytype,
 ) error{OutOfMemory}!void {
-    const msg = try std.fmt.allocPrint(zcu.gpa, format, args);
+    const msg = try zcu.gpa.print(format, args);
     errdefer zcu.gpa.free(msg);
 
     parent.notes = try zcu.gpa.realloc(parent.notes, parent.notes.len + 1);
@@ -4043,7 +4157,7 @@ pub fn addGlobalAssembly(zcu: *Zcu, unit: AnalUnit, source: []const u8) !void {
     const gpa = zcu.gpa;
     const gop = try zcu.global_assembly.getOrPut(gpa, unit);
     if (gop.found_existing) {
-        const new_value = try std.fmt.allocPrint(gpa, "{s}\n{s}", .{ gop.value_ptr.*, source });
+        const new_value = try gpa.print("{s}\n{s}", .{ gop.value_ptr.*, source });
         gpa.free(gop.value_ptr.*);
         gop.value_ptr.* = new_value;
     } else {
@@ -4099,7 +4213,7 @@ pub const Feature = enum {
 };
 
 pub fn backendSupportsFeature(zcu: *const Zcu, comptime feature: Feature) bool {
-    const backend = target_util.zigBackend(&zcu.root_mod.resolved_target.result, zcu.comp.config.use_llvm);
+    const backend = std.zig.compilerBackend(&zcu.root_mod.resolved_target.result, zcu.comp.config.use_llvm);
     return target_util.backendSupportsFeature(backend, feature);
 }
 
@@ -4129,6 +4243,7 @@ pub fn atomicPtrAlignment(
     const max_atomic_bits: u16 = switch (target.cpu.arch) {
         .ez80,
         .spork8,
+        .z80,
         => 8,
 
         .aarch64,
@@ -4158,7 +4273,7 @@ pub fn atomicPtrAlignment(
     }
     if (switch (ty.zigTypeTag(zcu)) {
         .int, .@"enum" => true,
-        .@"struct" => ty.containerLayout(zcu) == .@"packed",
+        .@"struct" => ty.containerLayout(zcu) == .@"bitpack",
         else => false,
     }) {
         assert(ty.isAbiInt(zcu));
@@ -4186,14 +4301,14 @@ pub fn typeToStruct(zcu: *const Zcu, ty: Type) ?InternPool.LoadedStructType {
     };
 }
 
-pub fn typeToPackedStruct(zcu: *const Zcu, ty: Type) ?InternPool.LoadedStructType {
+pub fn typeToBitpackStruct(zcu: *const Zcu, ty: Type) ?InternPool.LoadedStructType {
     const s = zcu.typeToStruct(ty) orelse return null;
-    if (s.layout != .@"packed") return null;
+    if (s.layout != .@"bitpack") return null;
     return s;
 }
 
 /// https://github.com/ziglang/zig/issues/17178 explored storing these bit offsets
-/// into the packed struct InternPool data rather than computing this on the
+/// into the bitpack struct InternPool data rather than computing this on the
 /// fly, however it was found to perform worse when measured on real world
 /// projects.
 pub fn structPackedFieldBitOffset(
@@ -4202,7 +4317,7 @@ pub fn structPackedFieldBitOffset(
     field_index: u32,
 ) u16 {
     const ip = &zcu.intern_pool;
-    assert(struct_type.layout == .@"packed");
+    assert(struct_type.layout == .@"bitpack");
     var bit_sum: u64 = 0;
     for (0..struct_type.field_types.len) |i| {
         if (i == field_index) {
@@ -4352,8 +4467,8 @@ fn resolveReferencesInner(zcu: *Zcu) Allocator.Error!std.array_hash_map.Auto(Ana
                     .unnamed_test => true,
                     .@"test", .decltest => a: {
                         const fqn_slice = nav.fqn.toSlice(ip);
-                        if (comp.test_filters.len > 0) {
-                            for (comp.test_filters) |test_filter| {
+                        if (zcu.test_filters.len > 0) {
+                            for (zcu.test_filters) |test_filter| {
                                 if (std.mem.find(u8, fqn_slice, test_filter) != null) break;
                             } else break :a false;
                         }
@@ -4646,7 +4761,7 @@ pub fn callconvSupported(zcu: *Zcu, cc: std.lang.CallingConvention) union(enum) 
     bad_backend: std.lang.CompilerBackend, // value is current backend
 } {
     const target = zcu.getTarget();
-    const backend = target_util.zigBackend(target, zcu.comp.config.use_llvm);
+    const backend = std.zig.compilerBackend(target, zcu.comp.config.use_llvm);
     switch (cc) {
         .auto, .@"inline" => return .ok,
         .async => return .{ .bad_backend = backend }, // nothing supports async currently
@@ -4713,6 +4828,7 @@ pub fn callconvSupported(zcu: *Zcu, cc: std.lang.CallingConvention) union(enum) 
                 .avr_interrupt,
                 .avr_signal,
                 .ez80_tiflags,
+                .z80_tiflags,
                 .loongarch32_preserve_none,
                 .loongarch64_preserve_none,
                 .riscv32_preserve_most,

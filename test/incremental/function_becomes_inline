@@ -1,8 +1,9 @@
-#exe {
--Mroot=main.zig
+#zig build-exe {
+--name test
+-Mroot=test.zig
 #}
 
-#write main.zig {
+#write test.zig {
 pub fn main() !void {
     try foo();
 }
@@ -12,13 +13,12 @@ fn foo() !void {
 const std = @import("std");
 const io = std.Io.Threaded.global_single_threaded.io();
 #}
-#update {
-non-inline version#}
+#update "non-inline version"
 #check stdout {
 Hello, World!
 #}
 
-#write main.zig {
+#write test.zig {
 pub fn main() !void {
     try foo();
 }
@@ -28,13 +28,12 @@ inline fn foo() !void {
 const std = @import("std");
 const io = std.Io.Threaded.global_single_threaded.io();
 #}
-#update {
-make function inline#}
+#update "make function inline"
 #check stdout {
 Hello, World!
 #}
 
-#write main.zig {
+#write test.zig {
 pub fn main() !void {
     try foo();
 }
@@ -44,8 +43,7 @@ inline fn foo() !void {
 const std = @import("std");
 const io = std.Io.Threaded.global_single_threaded.io();
 #}
-#update {
-change string#}
+#update "change string"
 #check stdout {
 Hello, `inline` World!
 #}

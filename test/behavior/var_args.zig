@@ -14,6 +14,8 @@ fn add(args: anytype) i32 {
 }
 
 test "add arbitrary args" {
+    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
+
     try expect(add(.{ @as(i32, 1), @as(i32, 2), @as(i32, 3), @as(i32, 4) }) == 10);
     try expect(add(.{@as(i32, 1234)}) == 1234);
     try expect(add(.{}) == 0);
@@ -28,6 +30,7 @@ test "send void arg to var args" {
 }
 
 test "pass args directly" {
+    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     try expect(addSomeStuff(.{ @as(i32, 1), @as(i32, 2), @as(i32, 3), @as(i32, 4) }) == 10);
@@ -40,6 +43,7 @@ fn addSomeStuff(args: anytype) i32 {
 }
 
 test "runtime parameter before var args" {
+    if (builtin.cpu.arch.isSpirv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     try expect((try extraFn(10, .{})) == 0);
@@ -94,16 +98,16 @@ fn doNothingWithFirstArg(args: anytype) void {
 test "simple variadic function" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_llvm and !builtin.os.tag.isDarwin() and builtin.cpu.arch.isAARCH64()) {
+    if (builtin.zig_backend == .stage2_llvm and !builtin.os.tag.isDarwin() and builtin.cpu.arch.isAarch64()) {
         // https://github.com/ziglang/zig/issues/14096
         return error.SkipZigTest;
     }
     if (builtin.cpu.arch == .x86_64 and builtin.os.tag == .windows and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // TODO
     if (builtin.cpu.arch == .s390x and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/21350
-    if (builtin.cpu.arch.isSPARC() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/23718
-    if (builtin.cpu.arch.isRISCV() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/25064
+    if (builtin.cpu.arch.isSparc() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/23718
+    if (builtin.cpu.arch.isRiscv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/25064
 
     const S = struct {
         fn simple(...) callconv(.c) c_int {
@@ -155,9 +159,9 @@ test "simple variadic function" {
 test "coerce reference to var arg" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_llvm and !builtin.os.tag.isDarwin() and builtin.cpu.arch.isAARCH64()) {
+    if (builtin.zig_backend == .stage2_llvm and !builtin.os.tag.isDarwin() and builtin.cpu.arch.isAarch64()) {
         // https://github.com/ziglang/zig/issues/14096
         return error.SkipZigTest;
     }
@@ -187,15 +191,15 @@ test "variadic functions" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_llvm and !builtin.os.tag.isDarwin() and builtin.cpu.arch.isAARCH64()) {
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_llvm and !builtin.os.tag.isDarwin() and builtin.cpu.arch.isAarch64()) {
         // https://github.com/ziglang/zig/issues/14096
         return error.SkipZigTest;
     }
     if (builtin.cpu.arch == .x86_64 and builtin.os.tag == .windows and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // TODO
     if (builtin.cpu.arch == .s390x and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/21350
-    if (builtin.cpu.arch.isSPARC() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/23718
-    if (builtin.cpu.arch.isRISCV() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/25064
+    if (builtin.cpu.arch.isSparc() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/23718
+    if (builtin.cpu.arch.isRiscv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/25064
 
     const S = struct {
         fn printf(buffer: [*]u8, format: [*:0]const u8, ...) callconv(.c) void {
@@ -238,16 +242,16 @@ test "variadic functions" {
 
 test "copy VaList" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_llvm and !builtin.os.tag.isDarwin() and builtin.cpu.arch.isAARCH64()) {
+    if (builtin.zig_backend == .stage2_llvm and !builtin.os.tag.isDarwin() and builtin.cpu.arch.isAarch64()) {
         // https://github.com/ziglang/zig/issues/14096
         return error.SkipZigTest;
     }
     if (builtin.cpu.arch == .x86_64 and builtin.os.tag == .windows and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // TODO
     if (builtin.cpu.arch == .s390x and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/21350
-    if (builtin.cpu.arch.isSPARC() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/23718
-    if (builtin.cpu.arch.isRISCV() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/25064
+    if (builtin.cpu.arch.isSparc() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/23718
+    if (builtin.cpu.arch.isRiscv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/25064
 
     const S = struct {
         fn add(count: c_int, ...) callconv(.c) c_int {
@@ -272,9 +276,9 @@ test "copy VaList" {
 
 test "unused VaList arg" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_llvm and !builtin.os.tag.isDarwin() and builtin.cpu.arch.isAARCH64()) {
+    if (builtin.zig_backend == .stage2_llvm and !builtin.os.tag.isDarwin() and builtin.cpu.arch.isAarch64()) {
         // https://github.com/ziglang/zig/issues/14096
         return error.SkipZigTest;
     }
@@ -283,8 +287,8 @@ test "unused VaList arg" {
         return error.SkipZigTest; // TODO
     }
     if (builtin.cpu.arch == .s390x and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/21350
-    if (builtin.cpu.arch.isSPARC() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/23718
-    if (builtin.cpu.arch.isRISCV() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/25064
+    if (builtin.cpu.arch.isSparc() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/23718
+    if (builtin.cpu.arch.isRiscv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/25064
 
     const S = struct {
         fn thirdArg(dummy: c_int, ...) callconv(.c) c_int {
@@ -303,7 +307,7 @@ test "unused VaList arg" {
 
 test "floating point VaList args" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.cpu.arch.isSpirv()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/16961
 
@@ -346,4 +350,33 @@ test "floating point VaList args" {
 
     try std.testing.expectEqualSlices(f32, expected_f32, &actual_f32);
     try std.testing.expectEqualSlices(f64, expected_f64, &actual_f64);
+}
+
+test "overflowed frame varargs" {
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_llvm and !builtin.os.tag.isDarwin() and builtin.cpu.arch.isAarch64()) {
+        // https://github.com/ziglang/zig/issues/14096
+        return error.SkipZigTest;
+    }
+    if (builtin.cpu.arch == .x86_64 and builtin.os.tag == .windows and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // TODO
+    if (builtin.cpu.arch == .x86 and builtin.os.tag == .windows and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/37448
+    if (builtin.cpu.arch == .s390x and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/21350
+    if (builtin.cpu.arch.isSparc() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/23718
+    if (builtin.cpu.arch.isRiscv() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/25064
+    if (builtin.cpu.arch.isPowerpc() and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/37431
+
+    const S = struct {
+        fn foo(out: *[3]u64, _: u64, _: u64, _: u64, _: u64, _: u64, _: u64, ...) callconv(.c) void {
+            var va = @cVaStart();
+            defer @cVaEnd(&va);
+            for (out) |*value| value.* = @cVaArg(&va, u64);
+        }
+    };
+
+    var actual: [3]u64 = undefined;
+    S.foo(&actual, 2, 3, 4, 5, 6, 7, @as(u64, 100), @as(u64, 200), @as(u64, 300));
+    try std.testing.expectEqualSlices(u64, &.{ 100, 200, 300 }, &actual);
 }

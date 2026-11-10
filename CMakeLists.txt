@@ -330,7 +330,7 @@ set(ZIG_STAGE2_SOURCES
     src/Air/Legalize.zig
     src/Air/Liveness.zig
     src/Air/Liveness/Verify.zig
-    src/Air/print.zig
+    src/Air/Print.zig
     src/Builtin.zig
     src/Compilation.zig
     src/Compilation/Config.zig
@@ -357,7 +357,8 @@ set(ZIG_STAGE2_SOURCES
     src/codegen/c/type.zig
     src/codegen/c/type/render_defs.zig
     src/codegen/llvm.zig
-    src/codegen/llvm/bindings.zig
+    src/codegen/llvm/lib.zig
+    src/codegen/llvm/lib/bindings.zig
     src/codegen/loongarch/abi.zig
     src/codegen/loongarch/encoding.zig
     src/codegen/loongarch/decode_tree.zon
@@ -601,6 +602,17 @@ elseif(ZIG_HOST_TARGET_IS_ANDROID)
   else()
     set(ZIG_HOST_TARGET_ABI "-android")
   endif()
+else()
+  check_symbol_exists(__GLIBC__ "features.h" ZIG_HOST_TARGET_IS_GLIBC)
+  if(ZIG_HOST_TARGET_IS_GLIBC)
+    if(ZIG_HOST_TARGET_ARCH MATCHES "^arm(eb)?$" OR ZIG_HOST_TARGET_ARCH MATCHES "^thumb(eb)?$" OR ZIG_HOST_TARGET_ARCH MATCHES "^powerpc(le)?$")
+      set(ZIG_HOST_TARGET_ABI "-gnueabihf")
+    elseif(ZIG_HOST_TARGET_ARCH MATCHES "^mips(el)?$")
+      set(ZIG_HOST_TARGET_ABI "-gnueabi")
+    else()
+      set(ZIG_HOST_TARGET_ABI "-gnu")
+    endif()
+  endif()
 endif()
 
 set(ZIG_HOST_TARGET_TRIPLE "${ZIG_HOST_TARGET_ARCH}-${ZIG_HOST_TARGET_OS}${ZIG_HOST_TARGET_ABI}" CACHE STRING "Host zig target triple.")
@@ -616,8 +628,8 @@ else()
   set(ZIG2_COMPILE_FLAGS "-std=c99 -Oz -fno-sanitize=undefined -fno-stack-protector -fno-strict-aliasing")
   # Must match the condition in build.zig.
   if(ZIG_HOST_TARGET_ARCH MATCHES "^(arm|thumb)(eb)?$" OR ZIG_HOST_TARGET_ARCH EQUAL "hexagon" OR ZIG_HOST_TARGET_ARCH MATCHES "^powerpc(64)?(le)?$")
-    set(ZIG1_COMPILE_FLAGS "${ZIG1_COMPILE_FLAGS} -ffunction-sections -fdata-sections")
-    set(ZIG2_COMPILE_FLAGS "${ZIG2_COMPILE_FLAGS} -ffunction-sections -fdata-sections")
+    set(ZIG1_COMPILE_FLAGS "${ZIG1_COMPILE_FLAGS} -ffunction-sections")
+    set(ZIG2_COMPILE_FLAGS "${ZIG2_COMPILE_FLAGS} -ffunction-sections")
   endif()
   if (CMAKE_C_COMPILER_ID STREQUAL "GNU")
     # Prevent GCC from miscompiling 'zig2.c'. See also 'GCC_BUG_119085_PRESENT' workaround details in 'bootstrap.c'.

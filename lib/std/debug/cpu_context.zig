@@ -23,7 +23,7 @@ else switch (native_arch) {
     .ve => Ve,
     .s390x => S390x,
     .x86_16 => X86_16,
-    .x86 => X86,
+    .x86, .x86c16 => X86,
     .x86_64 => X86_64,
     else => noreturn,
 };
@@ -70,7 +70,7 @@ pub fn fromPosixSignalContext(ctx_ptr: ?*const anyopaque) ?Native {
             .r = uc.mcontext.r,
             .xip = uc.mcontext.xip & ~@as(u32, 0b11),
         };
-    } else if (native_arch.isMIPS32() and native_os == .linux) {
+    } else if (native_arch.isMips32() and native_os == .linux) {
         // The O32 kABI uses 64-bit fields for some reason.
         return .{
             .r = s: {
@@ -80,7 +80,7 @@ pub fn fromPosixSignalContext(ctx_ptr: ?*const anyopaque) ?Native {
             },
             .pc = @truncate(uc.mcontext.pc),
         };
-    } else if (native_arch.isSPARC() and native_os == .linux) {
+    } else if (native_arch.isSparc() and native_os == .linux) {
         const SparcStackFrame = extern struct {
             l: [8]usize,
             i: [8]usize,
@@ -170,7 +170,7 @@ pub fn fromPosixSignalContext(ctx_ptr: ?*const anyopaque) ?Native {
                 .addr = uc.mcontext.psw.addr,
             },
         },
-        .x86 => .{ .gprs = .init(.{
+        .x86, .x86c16 => .{ .gprs = .init(.{
             .eax = uc.mcontext.eax,
             .ecx = uc.mcontext.ecx,
             .edx = uc.mcontext.edx,
@@ -473,21 +473,49 @@ const Arm = struct {
 
     pub inline fn current() Arm {
         var ctx: Arm = undefined;
+        // thumb1 only supports STM with writeback enabled, and in that case r0 shouldn't be
+        // included in the register list, as that creates an ambiguity between whether r0 is
+        // modified before or after r0 is written to memory.  So to avoid this we store it
+        // separately.
+        //
+        // Additionally R8-R15 cannot be stored directly by STM nor STR on thumb1, so we copy
+        // them to R1-R2 and STM those.  We could save a couple extra bytes/cycles by doing two
+        // groups of 4xMOV+STM instead of four groups of 2xMOV+STM, but that would require
+        // clobbering five registers instead of three, and that probably negates the advantage.
+        //
+        // r0 is both an input register and a clobber. musl and glibc achieve this with
+        // a "+" constraint, which isn't supported in Zig, so instead we separately list
+        // r0 as both an input and an output. Listing it as an input and a clobber would
+        // cause the C backend to emit invalid code that results in:
+        // "error: asm-specifier for input or output variable conflicts with asm clobber list"
+        var r0_out: usize = undefined;
         asm volatile (
-            \\ // For compatibility with Thumb, we can't write r13 (sp) or r15 (pc) with stm.
-            \\ stm r0, {r0-r12}
-            \\ str r13, [r0, #0x34]
-            \\ str r14, [r0, #0x38]
-            \\ mov r1, pc
-            \\ str r1, [r0, #0x3c]
-            :
-            : [r] "{r0}" (&ctx.r),
-            : .{ .r1 = true, .memory = true });
+            \\ str r0, [r0, #-4]
+            \\ stm r0!, {r1-r7}
+            \\ // r0 is now &ctx.r[8]
+            \\ mov r1, r8
+            \\ mov r2, r9
+            \\ stm r0!, {r1-r2}
+            \\ // r0 is now &ctx.r[10]
+            \\ mov r1, r10
+            \\ mov r2, r11
+            \\ stm r0!, {r1-r2}
+            \\ // r0 is now &ctx.r[12]
+            \\ mov r1, r12
+            \\ mov r2, r13
+            \\ stm r0!, {r1-r2}
+            \\ // r0 is now &ctx.r[14]
+            \\ mov r1, r14
+            \\ mov r2, r15
+            \\ stm r0!, {r1-r2}
+            : [r0_out] "={r0}" (r0_out),
+            : [r] "{r0}" (&ctx.r[1]),
+            : .{ .r1 = true, .r2 = true, .memory = true });
         return ctx;
     }
 
     pub fn getFp(ctx: *const Arm) usize {
-        return ctx.r[11];
+        return ctx.r[if (native_arch.isThumb()) 7 else 11];
     }
     pub fn getPc(ctx: *const Arm) usize {
         return ctx.r[15];
@@ -1013,7 +1041,7 @@ const Mips = extern struct {
     r: [32]Gpr,
     pc: Gpr,
 
-    pub const Gpr = if (native_arch.isMIPS64()) u64 else u32;
+    pub const Gpr = if (native_arch.isMips64()) u64 else u32;
 
     pub inline fn current() Mips {
         var ctx: Mips = undefined;
@@ -1215,7 +1243,7 @@ const Powerpc = extern struct {
     pc: Gpr,
     lr: Gpr,
 
-    pub const Gpr = if (native_arch.isPowerPC64()) u64 else u32;
+    pub const Gpr = if (native_arch.isPowerpc64()) u64 else u32;
 
     pub inline fn current() Powerpc {
         var ctx: Powerpc = undefined;
@@ -2427,24 +2455,6 @@ const signal_ucontext_t = switch (native_os) {
         _stack: std.c.stack_t,
         mcontext: switch (native_arch) {
             // https://github.com/illumos/illumos-gate/blob/d4ce137bba3bd16823db6374d9e9a643264ce245/usr/src/uts/intel/sys/mcontext.h
-            .x86 => extern struct {
-                _gs: u32,
-                _fs: u32,
-                _es: u32,
-                _ds: u32,
-                edi: u32,
-                esi: u32,
-                ebp: u32,
-                esp: u32,
-                ebx: u32,
-                edx: u32,
-                ecx: u32,
-                eax: u32,
-                _trapno: i32,
-                _err: i32,
-                eip: u32,
-            },
-            // https://github.com/illumos/illumos-gate/blob/d4ce137bba3bd16823db6374d9e9a643264ce245/usr/src/uts/intel/sys/mcontext.h
             .x86_64 => extern struct {
                 r15: u64 align(16),
                 r14: u64,
@@ -2534,7 +2544,7 @@ const signal_ucontext_t = switch (native_os) {
             },
         },
         // https://github.com/openbsd/src/blob/42468faed8369d07ae49ae02dd71ec34f59b66cd/sys/arch/mips64/include/signal.h
-        .mips64, .mips64el => extern struct {
+        .mips64 => extern struct {
             _cookie: i64,
             _mask: i64,
             mcontext: extern struct {

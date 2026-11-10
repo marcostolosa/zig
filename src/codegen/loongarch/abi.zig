@@ -49,12 +49,11 @@ const Classifier = struct {
                 .loongarch32 => 32,
                 .loongarch64 => 64,
             },
-            .frlen = if (target.cpu.has(.loongarch, .d))
-                64
-            else if (target.cpu.has(.loongarch, .f))
-                32
-            else
-                0,
+            .frlen = switch (target.abi) {
+                .gnusf, .muslsf => 0,
+                .gnuf32, .muslf32 => 32,
+                else => 64,
+            },
         };
     }
 
@@ -116,12 +115,12 @@ const Classifier = struct {
                     }
                     if (class != .address) return class;
                 },
-                .@"packed" => return c.classifyType(ty.backingIntType(c.zcu)),
+                .@"bitpack" => return c.classifyType(ty.backingIntType(c.zcu)),
             },
             .@"union" => switch (ty.containerLayout(c.zcu)) {
                 .auto => unreachable,
                 .@"extern" => {},
-                .@"packed" => return c.classifyType(ty.backingIntType(c.zcu)),
+                .@"bitpack" => return c.classifyType(ty.backingIntType(c.zcu)),
             },
             .vector => {},
         }

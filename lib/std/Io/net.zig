@@ -376,7 +376,7 @@ pub const Ip4Address = struct {
 
     /// Given an `IpAddress`, converts it to an `Ip4Address` directly, or from
     /// an IPv4-mapped IPv6 address, or returns `null`.
-    pub fn fromAny(addr: IpAddress) ?Ip6Address {
+    pub fn fromAny(addr: IpAddress) ?Ip4Address {
         return switch (addr) {
             .ip4 => |ip4| ip4,
             .ip6 => |ip6| fromIp6(ip6),
@@ -934,7 +934,7 @@ pub const UnixAddress = struct {
     }
 };
 
-pub const ReceiveFlags = packed struct(u8) {
+pub const ReceiveFlags = bitpack struct(u8) {
     oob: bool = false,
     peek: bool = false,
     trunc: bool = false,
@@ -960,7 +960,7 @@ pub const IncomingMessage = struct {
         .flags = undefined,
     };
 
-    pub const Flags = packed struct(u8) {
+    pub const Flags = bitpack struct(u8) {
         /// indicates end-of-record; the data returned completed a record
         /// (generally used with sockets of type SOCK_SEQPACKET).
         eor: bool,
@@ -988,7 +988,7 @@ pub const OutgoingMessage = struct {
     control: []const u8 = &.{},
 };
 
-pub const SendFlags = packed struct(u8) {
+pub const SendFlags = bitpack struct(u8) {
     confirm: bool = false,
     dont_route: bool = false,
     eor: bool = false,
@@ -1016,7 +1016,12 @@ pub const Interface = struct {
     pub const Name = struct {
         bytes: [max_len:0]u8,
 
-        pub const max_len = if (@TypeOf(std.posix.IFNAMESIZE) == void) 0 else std.posix.IFNAMESIZE - 1;
+        pub const max_len = if (native_os == .windows)
+            std.os.windows.IF.MAX_STRING_SIZE
+        else if (@TypeOf(std.posix.IFNAMESIZE) == void)
+            0
+        else
+            std.posix.IFNAMESIZE - 1;
 
         pub fn toSlice(n: *const Name) []const u8 {
             return std.mem.sliceTo(&n.bytes, 0);
@@ -1094,7 +1099,7 @@ pub const Socket = struct {
 
     /// Underlying platform-defined type which may or may not be
     /// interchangeable with a file system file descriptor.
-    pub const Handle = std.posix.fd_t;
+    pub const Handle = if (native_os == .windows) std.os.windows.HANDLE else std.posix.fd_t;
 
     /// Leaves `address` in a valid state.
     pub fn close(s: *const Socket, io: Io) void {
@@ -1517,7 +1522,7 @@ pub const Stream = struct {
     }
 };
 
-pub const cmsg_align = if (@TypeOf(std.posix.cmsg_align) == void) 1 else std.posix.cmsg_align;
+pub const cmsg_align = if (native_os == .windows or @TypeOf(std.posix.cmsg_align) == void) 1 else std.posix.cmsg_align;
 /// Utility Functions for interacting with POSIX socket control messages.
 /// See also https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/sys_socket.h.html
 pub const cmsg = struct {

@@ -499,7 +499,7 @@ fn loadComptimePtrInner(
             },
             .@"struct" => switch (cur_ty.containerLayout(zcu)) {
                 .auto => unreachable, // ill-defined layout
-                .@"packed" => break, // let the memory reinterpret logic handle this
+                .@"bitpack" => break, // let the memory reinterpret logic handle this
                 .@"extern" => for (0..cur_ty.structFieldCount(zcu)) |field_idx| {
                     const start_off = cur_ty.structFieldOffset(field_idx, zcu);
                     const end_off = start_off + cur_ty.fieldType(field_idx, zcu).abiSize(zcu);
@@ -512,7 +512,7 @@ fn loadComptimePtrInner(
             },
             .@"union" => switch (cur_ty.containerLayout(zcu)) {
                 .auto => unreachable, // ill-defined layout
-                .@"packed" => break, // let the memory reinterpret logic handle this
+                .@"bitpack" => break, // let the memory reinterpret logic handle this
                 .@"extern" => {
                     // TODO: we have to let the memory reinterpret logic handle this for now.
                     // Otherwise, we might traverse into a union field which doesn't allow pointers.
@@ -918,7 +918,7 @@ fn prepareComptimePtrStore(
             },
             .@"struct" => switch (cur_ty.containerLayout(zcu)) {
                 .auto => unreachable, // ill-defined layout
-                .@"packed" => break, // let the memory reinterp logic handle this
+                .@"bitpack" => break, // let the memory reinterp logic handle this
                 .@"extern" => for (0..cur_ty.structFieldCount(zcu)) |field_idx| {
                     const start_off = cur_ty.structFieldOffset(field_idx, zcu);
                     const end_off = start_off + cur_ty.fieldType(field_idx, zcu).abiSize(zcu);
@@ -931,7 +931,7 @@ fn prepareComptimePtrStore(
             },
             .@"union" => switch (cur_ty.containerLayout(zcu)) {
                 .auto => unreachable, // ill-defined layout
-                .@"packed" => break, // let the memory reinterp logic handle this
+                .@"bitpack" => break, // let the memory reinterp logic handle this
                 .@"extern" => {
                     // TODO: we have to let the memory reinterp logic handle this for now.
                     // Otherwise, we might traverse into a union field which doesn't allow pointers.
@@ -1031,13 +1031,12 @@ fn unflattenArray(
     }
 
     const elem_ty = ty.childType(zcu);
-    const buf = try arena.alloc(InternPool.Index, @intCast(ty.arrayLen(zcu)));
+    const buf = try arena.alloc(InternPool.Index, @intCast(ty.arrayLenIncludingSentinel(zcu)));
     for (buf) |*elem| {
         elem.* = (try unflattenArray(sema, elem_ty, elems, next_idx)).toIntern();
     }
-    if (ty.sentinel(zcu) != null) {
-        // TODO: validate sentinel
-        _ = try unflattenArray(sema, elem_ty, elems, next_idx);
+    if (ty.sentinel(zcu)) |sent| {
+        assert(sent.toIntern() == buf[buf.len - 1]);
     }
     return pt.aggregateValue(ty, buf);
 }

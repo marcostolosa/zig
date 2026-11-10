@@ -44,7 +44,7 @@ static void panic(const char *reason) {
 
     // GCC doesn't take into account alignment annotations when --Waddress-of-packed-member is
     // evaluated, which causes false positive warnings when the C backend generates code that takes
-    // the address of a field in a packed struct.
+    // the address of a field in a bitpack struct.
     //
     // There is no fix for this as now, so the only way to get rid of the false positive warnings
     // is to disable the flag altogether.
@@ -179,7 +179,7 @@ int main(int argc, char **argv) {
             "pub const version: [:0]const u8 = \"%s\";\n"
             "pub const semver = @import(\"std\").SemanticVersion.parse(version) catch unreachable;\n"
             "pub const enable_debug_extensions = false;\n"
-            "pub const enable_logging = false;\n"
+            "pub const log_level: @import(\"std\").log.Level = .err;\n"
             "pub const enable_link_snapshots = false;\n"
             "pub const enable_tracy = false;\n"
             "pub const value_tracing = false;\n"

@@ -65,9 +65,6 @@ stderr_writer: File.Writer = .{
 },
 stderr_mode: Io.Terminal.Mode = .no_color,
 stderr_writer_initialized: bool = false,
-stderr_mutex: Io.Mutex = .init,
-stderr_mutex_locker: std.Thread.Id = Thread.invalid_id,
-stderr_mutex_lock_count: usize = 0,
 
 argv0: Argv0,
 /// Protected by `mutex`. Determines whether `environ` has been
@@ -91,6 +88,17 @@ const SystemBasicInformation = if (!is_windows) struct {} else struct {
     buffer: windows.SYSTEM.BASIC_INFORMATION = undefined,
     initialized: std.atomic.Value(bool) = .{ .raw = false },
 };
+
+// These are global to allow the shared stderr file to be coordinated across multiple `Io.Threaded`
+// instances. This is a workaround for the fact that it is currently normal for there to be multiple
+// instances of `Io.Threaded`---one in the application proper, and one used by `std.debug`---which
+// means that if the lock is per-instance, then e.g. `std.Progress` output would clobber panic stack
+// traces because they could both hold a lock simultaneously. Ultimately that problem should instead
+// be solved either by somehow making the stderr lock truly global across all `Io` instances, or by
+// removing the separate "debug" `Io` instance in favour of using the application's instance.
+var stderr_mutex: Io.Mutex = .init;
+var stderr_mutex_locker: std.Thread.Id = Thread.invalid_id;
+var stderr_mutex_lock_count: usize = 0;
 
 const Dl = switch (native_os) {
     .windows => struct {
@@ -478,7 +486,7 @@ const Group = struct {
         return @ptrCast(&g.ptr.state);
     }
 
-    const Status = packed struct(usize) {
+    const Status = bitpack struct(usize) {
         num_running: @Int(.unsigned, @bitSizeOf(usize) - 2),
         have_awaiter: bool,
         canceled: bool,
@@ -642,7 +650,7 @@ const Future = struct {
     result_offset: usize,
     alloc_len: usize,
 
-    const Status = packed struct(usize) {
+    const Status = bitpack struct(usize) {
         /// The values of this enum are chosen so that await/cancel can just OR with 0b01 and 0b11
         /// respectively. That *does* clobber `.done`, but that's actually fine, because if the tag
         /// is `.done` then only the awaiter is referencing this `Future` anyway.
@@ -808,7 +816,7 @@ const AwaitableId = enum(@Int(.unsigned, @bitSizeOf(usize) - 3)) {
     null = 0,
     all_ones = std.math.maxInt(@Int(.unsigned, @bitSizeOf(usize) - 3)),
     _,
-    const Split = packed struct(usize) { low: u3, high: AwaitableId };
+    const Split = bitpack struct(usize) { low: u3, high: AwaitableId };
     fn fromGroup(g: *Io.Group) AwaitableId {
         const split: Split = @bitCast(@intFromPtr(g));
         return split.high;
@@ -841,7 +849,7 @@ const Thread = struct {
         break :Handle void;
     };
 
-    const Status = packed struct(usize) {
+    const Status = bitpack struct(usize) {
         /// The specific values of these enum fields are chosen to simplify the implementation of
         /// the transformations we need to apply to this state.
         cancelation: enum(u3) {
@@ -1367,13 +1375,13 @@ const Thread = struct {
     }
 
     /// Like a `*Thread`, but 2 bits smaller than a pointer (because the LSBs are always 0 due to
-    /// alignment) so that those two bits can be used in a `packed struct`.
+    /// alignment) so that those two bits can be used in a `bitpack struct`.
     const PackedPtr = enum(@Int(.unsigned, @bitSizeOf(usize) - 2)) {
         null = 0,
         all_ones = std.math.maxInt(@Int(.unsigned, @bitSizeOf(usize) - 2)),
         _,
 
-        const Split = packed struct(usize) { low: u2, high: PackedPtr };
+        const Split = bitpack struct(usize) { low: u2, high: PackedPtr };
         fn pack(ptr: *Thread) PackedPtr {
             const split: Split = @bitCast(@intFromPtr(ptr));
             assert(split.low == 0);
@@ -1614,7 +1622,7 @@ pub const default_PATH = "/usr/local/bin:/bin:/usr/bin";
 const max_windows_kernel_bug_retries = 13;
 
 comptime {
-    if (@TypeOf(posix.IOV_MAX) != void) assert(max_iovecs_len <= posix.IOV_MAX);
+    if (!is_windows and @TypeOf(posix.IOV_MAX) != void) assert(max_iovecs_len <= posix.IOV_MAX);
 }
 
 pub const InitOptions = struct {
@@ -1696,7 +1704,7 @@ pub fn init(
         .disable_memory_mapping = options.disable_memory_mapping,
     };
 
-    if (posix.Sigaction != void) {
+    if (!is_windows and posix.Sigaction != void) {
         // This causes sending `posix.SIG.IO` to thread to interrupt blocking
         // syscalls, returning `posix.E.INTR`.
         const act: posix.Sigaction = .{
@@ -1758,7 +1766,7 @@ pub fn setAsyncLimit(t: *Threaded, new_limit: Io.Limit) void {
 
 pub fn deinit(t: *Threaded) void {
     t.join();
-    if (posix.Sigaction != void and t.have_signal_handler) {
+    if (!is_windows and posix.Sigaction != void and t.have_signal_handler) {
         if (have_sig_io) posix.sigaction(.IO, &t.old_sig_io, null);
         if (have_sig_pipe) posix.sigaction(.PIPE, &t.old_sig_pipe, null);
     }
@@ -2009,8 +2017,8 @@ const have_preadv = switch (native_os) {
     .windows, .haiku => false,
     else => true,
 };
-const have_sig_io = posix.SIG != void and @hasField(posix.SIG, "IO");
-const have_sig_pipe = posix.SIG != void and @hasField(posix.SIG, "PIPE");
+const have_sig_io = !is_windows and posix.SIG != void and @hasField(posix.SIG, "IO");
+const have_sig_pipe = !is_windows and posix.SIG != void and @hasField(posix.SIG, "PIPE");
 const have_sendfile = if (builtin.link_libc) @TypeOf(std.c.sendfile) != void else native_os == .linux;
 const have_copy_file_range = switch (native_os) {
     .linux, .freebsd => true,
@@ -2869,69 +2877,83 @@ fn batchAwaitConcurrent(userdata: ?*anyopaque, b: *Io.Batch, timeout: Io.Timeout
     } = .{ .gpa = t.allocator, .batch = b, .slice = &poll_buffer, .len = 0 };
     {
         var index = b.submitted.head;
+        var prev_index: Io.Operation.OptionalIndex = .none;
         while (index != .none) {
             const storage = &b.storage[index.toIndex()];
             const submission = storage.submission;
-            switch (submission.operation) {
-                .file_read_streaming => |o| try poll_storage.add(o.file.handle, posix.POLL.IN | posix.POLL.ERR),
-                .file_write_streaming => |o| try poll_storage.add(o.file.handle, posix.POLL.OUT | posix.POLL.ERR),
-                .device_io_control => |o| try poll_storage.add(o.file.handle, posix.POLL.IN | posix.POLL.OUT | posix.POLL.ERR),
-                .net_receive => |*o| nb: {
-                    var data_i: usize = 0;
-                    const result: Io.Operation.Result = .{ .net_receive = for (o.message_buffer, 0..) |*msg, msg_i| {
-                        const remaining_data_buffer = o.data_buffer[data_i..];
-                        netReceivePosix(o.socket_handle, msg, remaining_data_buffer, o.flags, true) catch |err| switch (err) {
-                            error.Canceled => |e| return e,
-                            error.WouldBlock => {
-                                if (msg_i != 0) break .{ null, msg_i };
-                                try poll_storage.add(o.socket_handle, posix.POLL.IN | posix.POLL.ERR);
-                                break :nb;
-                            },
-                            else => |e| break .{ e, msg_i },
-                        };
-                        data_i += msg.data.len;
-                    } else .{ null, o.message_buffer.len } };
-                    switch (b.completed.tail) {
-                        .none => b.completed.head = index,
-                        else => |tail_index| b.storage[tail_index.toIndex()].completion.node.next = index,
-                    }
-                    storage.* = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
-                    b.completed.tail = index;
-                },
-                .net_send => |*o| nb: {
-                    const result: Io.Operation.Result = .{
-                        .net_send = o: {
-                            const send_err, const sent = netSendPosix(t, o.socket_handle, o.messages, o.flags, true);
-                            if (send_err) |err| switch (err) {
-                                error.Canceled => |e| if (sent == 0) {
-                                    return e;
-                                } else {
-                                    // Leave the `error.Canceled` for later, but don't try to send any more messages.
-                                    recancelInner();
-                                    break :o .{ null, sent };
-                                },
+            const next_index = submission.node.next;
+            const result: Io.Operation.Result = eager: {
+                // If control flow makes it to the end of this switch, it is handled as a
+                // non-blocking operation and stays in the submission queue. The other possibility
+                // is breaking from the eager block, making the operation handled immediately.
+                switch (submission.operation) {
+                    .file_read_streaming => |o| try poll_storage.add(o.file.handle, posix.POLL.IN | posix.POLL.ERR),
+                    .file_write_streaming => |o| try poll_storage.add(o.file.handle, posix.POLL.OUT | posix.POLL.ERR),
+                    .device_io_control => |o| try poll_storage.add(o.file.handle, posix.POLL.IN | posix.POLL.OUT | posix.POLL.ERR),
+                    .net_receive => |*o| nb: {
+                        var data_i: usize = 0;
+                        break :eager .{ .net_receive = for (o.message_buffer, 0..) |*msg, msg_i| {
+                            const remaining_data_buffer = o.data_buffer[data_i..];
+                            netReceivePosix(o.socket_handle, msg, remaining_data_buffer, o.flags, true) catch |err| switch (err) {
+                                error.Canceled => |e| return e,
                                 error.WouldBlock => {
-                                    if (sent != 0) break :o .{ null, sent };
-                                    try poll_storage.add(o.socket_handle, posix.POLL.OUT | posix.POLL.ERR);
+                                    if (msg_i != 0) break .{ null, msg_i };
+                                    try poll_storage.add(o.socket_handle, posix.POLL.IN | posix.POLL.ERR);
                                     break :nb;
                                 },
-                                else => |e| break :o .{ e, sent },
+                                else => |e| break .{ e, msg_i },
                             };
-                            break :o .{ null, sent };
-                        },
-                    };
-                    switch (b.completed.tail) {
-                        .none => b.completed.head = index,
-                        else => |tail_index| b.storage[tail_index.toIndex()].completion.node.next = index,
-                    }
-                    storage.* = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
-                    b.completed.tail = index;
-                },
-                .net_accept => |o| try poll_storage.add(o.socket_handle, posix.POLL.IN | posix.POLL.ERR),
-                .net_read => |o| try poll_storage.add(o.socket_handle, posix.POLL.IN | posix.POLL.ERR),
-                .net_write => |o| try poll_storage.add(o.socket_handle, posix.POLL.OUT | posix.POLL.ERR),
+                            data_i += msg.data.len;
+                        } else .{ null, o.message_buffer.len } };
+                    },
+                    .net_send => |*o| nb: {
+                        break :eager .{
+                            .net_send = o: {
+                                const send_err, const sent = netSendPosix(t, o.socket_handle, o.messages, o.flags, true);
+                                if (send_err) |err| switch (err) {
+                                    error.Canceled => |e| if (sent == 0) {
+                                        return e;
+                                    } else {
+                                        // Leave the `error.Canceled` for later, but don't try to send any more messages.
+                                        recancelInner();
+                                        break :o .{ null, sent };
+                                    },
+                                    error.WouldBlock => {
+                                        if (sent != 0) break :o .{ null, sent };
+                                        try poll_storage.add(o.socket_handle, posix.POLL.OUT | posix.POLL.ERR);
+                                        break :nb;
+                                    },
+                                    else => |e| break :o .{ e, sent },
+                                };
+                                break :o .{ null, sent };
+                            },
+                        };
+                    },
+                    .net_accept => |o| try poll_storage.add(o.socket_handle, posix.POLL.IN | posix.POLL.ERR),
+                    .net_read => |o| try poll_storage.add(o.socket_handle, posix.POLL.IN | posix.POLL.ERR),
+                    .net_write => |o| try poll_storage.add(o.socket_handle, posix.POLL.OUT | posix.POLL.ERR),
+                }
+                // Non-blocking case. Submission entry stays alive.
+                prev_index = index;
+                index = next_index;
+                continue;
+            };
+            // The operation completed without blocking so we must evict it from the submission list
+            // and add it to the completion list.
+            switch (prev_index) {
+                .none => b.submitted.head = next_index,
+                else => b.storage[prev_index.toIndex()].submission.node.next = next_index,
             }
-            index = submission.node.next;
+            if (next_index == .none) b.submitted.tail = prev_index;
+
+            switch (b.completed.tail) {
+                .none => b.completed.head = index,
+                else => |tail_index| b.storage[tail_index.toIndex()].completion.node.next = index,
+            }
+            storage.* = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
+            b.completed.tail = index;
+
+            index = next_index;
         }
     }
     switch (poll_storage.len) {
@@ -7191,9 +7213,9 @@ fn realPathPosix(fd: posix.fd_t, out_buffer: []u8) File.RealPathError!usize {
             return n;
         },
         .linux, .serenity, .illumos => {
-            var procfs_buf: ["/proc/self/path/-2147483648\x00".len]u8 = undefined;
+            var proc_buf: [std.fmt.count("/proc/self/path/{d}\x00", .{std.math.minInt(posix.fd_t)})]u8 = undefined;
             const template = if (native_os == .illumos) "/proc/self/path/{d}" else "/proc/self/fd/{d}";
-            const proc_path = std.mem.printSentinel(&procfs_buf, template, .{fd}, 0) catch unreachable;
+            const proc_path = std.mem.printSentinel(&proc_buf, template, .{fd}, 0) catch unreachable;
             const syscall: Syscall = try .start();
             while (true) {
                 const rc = posix.system.readlink(proc_path, out_buffer.ptr, out_buffer.len);
@@ -7266,27 +7288,34 @@ fn fileHardLink(
     new_sub_path: []const u8,
     options: File.HardLinkOptions,
 ) File.HardLinkError!void {
-    _ = userdata;
-    if (native_os != .linux) return error.OperationUnsupported;
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
+
+    if (is_windows) return error.OperationUnsupported;
 
     var new_path_buffer: [posix.PATH_MAX]u8 = undefined;
     const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
 
-    const flags: u32 = if (options.follow_symlinks)
-        posix.AT.SYMLINK_FOLLOW | posix.AT.EMPTY_PATH
-    else
-        posix.AT.EMPTY_PATH;
+    switch (native_os) {
+        else => return error.OperationUnsupported,
+        .freebsd, .linux => {
+            const flags: u32 = if (options.follow_symlinks)
+                posix.AT.SYMLINK_FOLLOW | posix.AT.EMPTY_PATH
+            else
+                posix.AT.EMPTY_PATH;
 
-    return linkat(file.handle, "", new_dir.handle, new_sub_path_posix, flags) catch |err| switch (err) {
-        error.FileNotFound => {
-            if (options.follow_symlinks) return error.FileNotFound;
-            var proc_buf: ["/proc/self/fd/-2147483648\x00".len]u8 = undefined;
-            const proc_path = std.mem.printSentinel(&proc_buf, "/proc/self/fd/{d}", .{file.handle}, 0) catch
-                unreachable;
-            return linkat(posix.AT.FDCWD, proc_path, new_dir.handle, new_sub_path_posix, posix.AT.SYMLINK_FOLLOW);
+            return linkat(file.handle, "", new_dir.handle, new_sub_path_posix, flags) catch |err| switch (err) {
+                error.FileNotFound => {},
+                else => |e| return e,
+            };
         },
-        else => |e| return e,
-    };
+        .netbsd, .openbsd => {},
+    }
+
+    if (options.follow_symlinks) return error.FileNotFound;
+    var dev_buf: [std.fmt.count("/dev/fd/{d}\x00", .{std.math.minInt(posix.fd_t)})]u8 = undefined;
+    const dev_path = std.mem.printSentinel(&dev_buf, "/dev/fd/{d}", .{file.handle}, 0) catch unreachable;
+    return linkat(posix.AT.FDCWD, dev_path, new_dir.handle, new_sub_path_posix, posix.AT.SYMLINK_FOLLOW);
 }
 
 fn linkat(
@@ -7756,7 +7785,14 @@ fn dirRenamePreserve(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     if (is_windows) return dirRenameWindowsInner(old_dir, old_sub_path, new_dir, new_sub_path, false);
     if (is_darwin) return dirRenamePreserveDarwin(old_dir, old_sub_path, new_dir, new_sub_path);
-    if (native_os == .linux) return dirRenamePreserveLinux(old_dir, old_sub_path, new_dir, new_sub_path);
+    if (native_os == .linux) {
+        if (dirRenamePreserveLinux(old_dir, old_sub_path, new_dir, new_sub_path)) |_| {
+            return;
+        } else |err| switch (err) {
+            else => |e| return e,
+            error.OperationUnsupported => {}, // Fall back to link/unlink below.
+        }
+    }
     // Make a hard link then delete the original.
     try dirHardLink(t, old_dir, old_sub_path, new_dir, new_sub_path, .{ .follow_symlinks = false });
     const prev = swapCancelProtection(t, .blocked);
@@ -8084,8 +8120,10 @@ fn dirRenamePreserveLinux(
         .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
         .XDEV => return syscall.fail(error.CrossDevice),
         .ILSEQ => return syscall.fail(error.BadPathName),
+        // EINVAL when passing NOREPLACE=true observed on ext4, 7.0.0-38-generic #38~24.04.4-Ubuntu.
+        // OPNOTSUPP handled defensively.
+        .INVAL, .OPNOTSUPP => return syscall.fail(error.OperationUnsupported),
         .FAULT => |err| return syscall.errnoBug(err),
-        .INVAL => |err| return syscall.errnoBug(err),
         else => |err| return syscall.unexpectedErrno(err),
     };
 }
@@ -8723,12 +8761,12 @@ fn fchmodatFallback(
 ) Dir.SetFilePermissionsError!void {
     comptime assert(native_os == .linux);
 
-    // Fallback to changing permissions using procfs:
+    // Fallback to changing permissions using devfs:
     //
     // 1. Open `path` as a `PATH` descriptor.
     // 2. Stat the fd and check if it isn't a symbolic link.
-    // 3. Generate the procfs reference to the fd via `/proc/self/fd/{fd}`.
-    // 4. Pass the procfs path to `chmod` with the `mode`.
+    // 3. Generate the devfs reference to the fd via `/dev/fd/{fd}`.
+    // 4. Pass the devfs path to `chmod` with the `mode`.
     const path_fd: posix.fd_t = fd: {
         const syscall: Syscall = try .start();
         while (true) {
@@ -8799,11 +8837,11 @@ fn fchmodatFallback(
     if ((path_mode & posix.S.IFMT) == posix.S.IFLNK)
         return error.OperationUnsupported;
 
-    var procfs_buf: ["/proc/self/fd/-2147483648\x00".len]u8 = undefined;
-    const proc_path = std.mem.printSentinel(&procfs_buf, "/proc/self/fd/{d}", .{path_fd}, 0) catch unreachable;
+    var dev_buf: [std.fmt.count("/dev/fd/{d}\x00", .{std.math.minInt(posix.fd_t)})]u8 = undefined;
+    const dev_path = std.mem.printSentinel(&dev_buf, "/dev/fd/{d}", .{path_fd}, 0) catch unreachable;
     const syscall: Syscall = try .start();
     while (true) {
-        switch (posix.errno(posix.system.chmod(proc_path, mode))) {
+        switch (posix.errno(posix.system.chmod(dev_path, mode))) {
             .SUCCESS => return syscall.finish(),
             .INTR => {
                 try syscall.checkCancel();
@@ -8812,7 +8850,7 @@ fn fchmodatFallback(
             else => |e| {
                 syscall.finish();
                 switch (e) {
-                    .NOENT => return error.OperationUnsupported, // procfs not mounted.
+                    .NOENT => return error.OperationUnsupported, // devfs not mounted.
                     .BADF => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => |err| return errnoBug(err),
@@ -12201,7 +12239,7 @@ fn netListenUnixPosix(
     if (!net.has_unix_sockets) return error.AddressFamilyUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
-    const socket_fd = openSocketPosix(posix.AF.UNIX, .{ .mode = .stream }) catch |err| switch (err) {
+    const socket_fd = openSocketPosix(AF.UNIX, .{ .mode = .stream }) catch |err| switch (err) {
         error.ProtocolUnsupportedBySystem => return error.AddressFamilyUnsupported,
         error.ProtocolUnsupportedByAddressFamily => return error.AddressFamilyUnsupported,
         error.SocketModeUnsupported => return error.AddressFamilyUnsupported,
@@ -12280,8 +12318,8 @@ fn netListenUnixWindows(
 
 fn posixBindUnix(
     fd: posix.socket_t,
-    addr: *const posix.sockaddr,
-    addr_len: posix.socklen_t,
+    addr: *const sockaddr,
+    addr_len: socklen_t,
 ) !void {
     const syscall: Syscall = try .start();
     while (true) {
@@ -12323,8 +12361,8 @@ fn posixBindUnix(
 
 fn posixBind(
     socket_fd: posix.socket_t,
-    addr: *const posix.sockaddr,
-    addr_len: posix.socklen_t,
+    addr: *const sockaddr,
+    addr_len: socklen_t,
 ) !void {
     const syscall: Syscall = try .start();
     while (true) {
@@ -12358,8 +12396,8 @@ fn posixBind(
 
 fn posixConnect(
     socket_fd: posix.socket_t,
-    addr: *const posix.sockaddr,
-    addr_len: posix.socklen_t,
+    addr: *const sockaddr,
+    addr_len: socklen_t,
 ) !void {
     const syscall: Syscall = try .start();
     while (true) switch (posix.errno(posix.system.connect(socket_fd, addr, addr_len))) {
@@ -12396,8 +12434,8 @@ fn posixConnect(
 
 fn posixConnectUnix(
     fd: posix.socket_t,
-    addr: *const posix.sockaddr,
-    addr_len: posix.socklen_t,
+    addr: *const sockaddr,
+    addr_len: socklen_t,
 ) !void {
     const syscall: Syscall = try .start();
     while (true) {
@@ -12440,8 +12478,8 @@ fn posixConnectUnix(
 
 fn posixGetSockName(
     socket_fd: posix.fd_t,
-    addr: *posix.sockaddr,
-    addr_len: *posix.socklen_t,
+    addr: *sockaddr,
+    addr_len: *socklen_t,
 ) !void {
     const syscall: Syscall = try .start();
     while (true) {
@@ -12582,7 +12620,7 @@ fn netConnectUnixPosix(
     if (!net.has_unix_sockets) return error.AddressFamilyUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
-    const socket_fd = openSocketPosix(posix.AF.UNIX, .{ .mode = .stream }) catch |err| switch (err) {
+    const socket_fd = openSocketPosix(AF.UNIX, .{ .mode = .stream }) catch |err| switch (err) {
         error.ProtocolUnsupportedByAddressFamily => return error.AddressFamilyUnsupported,
         error.OptionUnsupported => return error.Unexpected,
         else => |e| return e,
@@ -12677,7 +12715,7 @@ fn netBindIpWindows(
 }
 
 fn openSocketPosix(
-    family: posix.sa_family_t,
+    family: sa_family_t,
     options: IpAddress.BindOptions,
 ) error{
     AddressFamilyUnsupported,
@@ -12692,7 +12730,7 @@ fn openSocketPosix(
     Canceled,
 }!posix.socket_t {
     const mode, const protocol = try posixSocketModeProtocol(family, options.mode, options.protocol);
-    const flags: u32 = mode | if (socket_flags_unsupported) 0 else posix.SOCK.CLOEXEC;
+    const flags: u32 = mode | if (socket_flags_unsupported) 0 else SOCK.CLOEXEC;
     const syscall: Syscall = try .start();
     const socket_fd = while (true) {
         const rc = posix.system.socket(family, flags, protocol);
@@ -12723,7 +12761,7 @@ fn openSocketPosix(
 
     if (options.ip6_only) |ip6_only| {
         if (posix.IPV6 == void) return error.OptionUnsupported;
-        try setSocketOptionPosix(socket_fd, posix.IPPROTO.IPV6, posix.IPV6.V6ONLY, @intFromBool(ip6_only));
+        try setSocketOptionPosix(socket_fd, IPPROTO.IPV6, posix.IPV6.V6ONLY, @intFromBool(ip6_only));
     }
 
     return socket_fd;
@@ -12748,15 +12786,15 @@ fn netSocketCreatePair(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     if (!have_networking) return error.OperationUnsupported;
-    if (@TypeOf(posix.system.socketpair) == void) return error.OperationUnsupported;
+    if (is_windows or @TypeOf(posix.system.socketpair) == void) return error.OperationUnsupported;
     if (native_os == .haiku) @panic("TODO");
 
-    const family: posix.sa_family_t = switch (options.family) {
-        .ip4 => posix.AF.INET,
-        .ip6 => posix.AF.INET6,
+    const family: sa_family_t = switch (options.family) {
+        .ip4 => AF.INET,
+        .ip6 => AF.INET6,
     };
     const mode, const protocol = try posixSocketModeProtocol(family, options.mode, options.protocol);
-    const flags: u32 = mode | if (socket_flags_unsupported) 0 else posix.SOCK.CLOEXEC;
+    const flags: u32 = mode | if (socket_flags_unsupported) 0 else SOCK.CLOEXEC;
 
     var sockets: [2]posix.socket_t = undefined;
     const syscall: Syscall = try .start();
@@ -12772,7 +12810,7 @@ fn netSocketCreatePair(
                 try setCloexec(sockets[1]);
             }
             var storages: [2]PosixAddress = undefined;
-            var addr_lens: [2]posix.socklen_t = .{ @sizeOf(PosixAddress), @sizeOf(PosixAddress) };
+            var addr_lens: [2]socklen_t = .{ @sizeOf(PosixAddress), @sizeOf(PosixAddress) };
             try posixGetSockName(sockets[0], &storages[0].any, &addr_lens[0]);
             try posixGetSockName(sockets[1], &storages[1].any, &addr_lens[1]);
             return .{
@@ -12898,11 +12936,11 @@ fn netAccept(t: *Threaded, listen_fd: net.Socket.Handle, options: net.Server.Acc
 
 fn netAcceptPosix(listen_fd: net.Socket.Handle) net.Server.AcceptError!net.Socket {
     var storage: PosixAddress = undefined;
-    var addr_len: posix.socklen_t = @sizeOf(PosixAddress);
+    var addr_len: socklen_t = @sizeOf(PosixAddress);
     const syscall: Syscall = try .start();
     const fd = while (true) {
         const rc = if (have_accept4)
-            posix.system.accept4(listen_fd, &storage.any, &addr_len, posix.SOCK.CLOEXEC)
+            posix.system.accept4(listen_fd, &storage.any, &addr_len, SOCK.CLOEXEC)
         else
             posix.system.accept(listen_fd, &storage.any, &addr_len);
         switch (posix.errno(rc)) {
@@ -13760,7 +13798,7 @@ fn netInterfaceNameResolve(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
     if (native_os == .linux) {
-        const sock_fd = openSocketPosix(posix.AF.UNIX, .{ .mode = .dgram }) catch |err| switch (err) {
+        const sock_fd = openSocketPosix(AF.UNIX, .{ .mode = .dgram }) catch |err| switch (err) {
             error.ProcessFdQuotaExceeded => return error.SystemResources,
             error.SystemFdQuotaExceeded => return error.SystemResources,
             error.AddressFamilyUnsupported => return error.Unexpected,
@@ -13922,7 +13960,7 @@ fn netInterfaceName(userdata: ?*anyopaque, interface: net.Interface) net.Interfa
             else => |err| return windows.unexpectedError(err),
         }
         var name_w: [net.Interface.Name.max_len:0]windows.WCHAR = undefined;
-        switch (ConvertInterfaceLuidToNameW.?(&luid, &name_w, name_w.len)) {
+        switch (ConvertInterfaceLuidToNameW.?(&luid, &name_w, name_w.len + 1)) {
             .SUCCESS => {},
             .INVALID_PARAMETER => unreachable,
             .NOT_ENOUGH_MEMORY => return error.NameTooLong,
@@ -14199,15 +14237,15 @@ fn netLookupFallible(
         const port_c = std.mem.printSentinel(&port_buffer, "{d}", .{options.port}, 0) catch unreachable;
 
         const family: i32 = if (options.family) |f| switch (f) {
-            .ip4 => posix.AF.INET,
-            .ip6 => posix.AF.INET6,
-        } else posix.AF.UNSPEC;
+            .ip4 => AF.INET,
+            .ip6 => AF.INET6,
+        } else AF.UNSPEC;
 
         const hints: posix.addrinfo = .{
             .flags = .{ .CANONNAME = options.canonical_name_buffer != null, .NUMERICSERV = true },
             .family = family,
-            .socktype = posix.SOCK.STREAM,
-            .protocol = posix.IPPROTO.TCP,
+            .socktype = SOCK.STREAM,
+            .protocol = IPPROTO.TCP,
             .canonname = null,
             .addr = null,
             .addrlen = 0,
@@ -14275,12 +14313,12 @@ fn lockStderr(userdata: ?*anyopaque, terminal_mode: ?Io.Terminal.Mode) Io.Cancel
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread_id = Thread.currentId();
 
-    if (@atomicLoad(std.Thread.Id, &t.stderr_mutex_locker, .unordered) != current_thread_id) {
-        try mutexLock(&t.stderr_mutex);
-        assert(t.stderr_mutex_lock_count == 0);
-        @atomicStore(std.Thread.Id, &t.stderr_mutex_locker, current_thread_id, .unordered);
+    if (@atomicLoad(std.Thread.Id, &stderr_mutex_locker, .unordered) != current_thread_id) {
+        try mutexLock(&stderr_mutex);
+        assert(stderr_mutex_lock_count == 0);
+        @atomicStore(std.Thread.Id, &stderr_mutex_locker, current_thread_id, .unordered);
     }
-    t.stderr_mutex_lock_count += 1;
+    stderr_mutex_lock_count += 1;
 
     return initLockedStderr(t, terminal_mode);
 }
@@ -14289,12 +14327,12 @@ fn tryLockStderr(userdata: ?*anyopaque, terminal_mode: ?Io.Terminal.Mode) Io.Can
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const current_thread_id = Thread.currentId();
 
-    if (@atomicLoad(std.Thread.Id, &t.stderr_mutex_locker, .unordered) != current_thread_id) {
-        if (!t.stderr_mutex.tryLock()) return null;
-        assert(t.stderr_mutex_lock_count == 0);
-        @atomicStore(std.Thread.Id, &t.stderr_mutex_locker, current_thread_id, .unordered);
+    if (@atomicLoad(std.Thread.Id, &stderr_mutex_locker, .unordered) != current_thread_id) {
+        if (!stderr_mutex.tryLock()) return null;
+        assert(stderr_mutex_lock_count == 0);
+        @atomicStore(std.Thread.Id, &stderr_mutex_locker, current_thread_id, .unordered);
     }
-    t.stderr_mutex_lock_count += 1;
+    stderr_mutex_lock_count += 1;
 
     return try initLockedStderr(t, terminal_mode);
 }
@@ -14329,10 +14367,10 @@ fn unlockStderr(userdata: ?*anyopaque) void {
     t.stderr_writer.interface.end = 0;
     t.stderr_writer.interface.buffer = &.{};
 
-    t.stderr_mutex_lock_count -= 1;
-    if (t.stderr_mutex_lock_count == 0) {
-        @atomicStore(std.Thread.Id, &t.stderr_mutex_locker, Thread.invalid_id, .unordered);
-        mutexUnlock(&t.stderr_mutex);
+    stderr_mutex_lock_count -= 1;
+    if (stderr_mutex_lock_count == 0) {
+        @atomicStore(std.Thread.Id, &stderr_mutex_locker, Thread.invalid_id, .unordered);
+        mutexUnlock(&stderr_mutex);
     }
 }
 
@@ -14461,47 +14499,54 @@ fn processSetCurrentPath(userdata: ?*anyopaque, path: []const u8) process.SetCur
     return chdir(path);
 }
 
+const sockaddr = if (is_windows) ws2_32.sockaddr else posix.sockaddr;
+const sa_family_t = if (is_windows) ws2_32.ADDRESS_FAMILY else posix.sa_family_t;
+const socklen_t = if (is_windows) ws2_32.socklen_t else posix.socklen_t;
+const AF = if (is_windows) ws2_32.AF else posix.AF;
+const SOCK = if (is_windows) ws2_32.SOCK else posix.SOCK;
+const IPPROTO = if (is_windows) ws2_32.IPPROTO else posix.IPPROTO;
+
 pub const PosixAddress = extern union {
-    any: posix.sockaddr,
-    in: posix.sockaddr.in,
-    in6: posix.sockaddr.in6,
+    any: sockaddr,
+    in: sockaddr.in,
+    in6: sockaddr.in6,
 };
 
 const UnixAddress = extern union {
-    any: posix.sockaddr,
-    un: posix.sockaddr.un,
+    any: sockaddr,
+    un: sockaddr.un,
 };
 
-pub fn posixAddressFamily(a: *const IpAddress) posix.sa_family_t {
+pub fn posixAddressFamily(a: *const IpAddress) sa_family_t {
     return switch (a.*) {
-        .ip4 => posix.AF.INET,
-        .ip6 => posix.AF.INET6,
+        .ip4 => AF.INET,
+        .ip6 => AF.INET6,
     };
 }
 
 pub fn addressFromPosix(posix_address: *const PosixAddress) IpAddress {
     return switch (posix_address.any.family) {
-        posix.AF.INET => .{ .ip4 = address4FromPosix(&posix_address.in) },
-        posix.AF.INET6 => .{ .ip6 = address6FromPosix(&posix_address.in6) },
+        AF.INET => .{ .ip4 = address4FromPosix(&posix_address.in) },
+        AF.INET6 => .{ .ip6 = address6FromPosix(&posix_address.in6) },
         else => .{ .ip4 = .loopback(0) },
     };
 }
 
-pub fn addressToPosix(a: *const IpAddress, storage: *PosixAddress) posix.socklen_t {
+pub fn addressToPosix(a: *const IpAddress, storage: *PosixAddress) socklen_t {
     return switch (a.*) {
         .ip4 => |ip4| {
             storage.in = address4ToPosix(ip4);
-            return @sizeOf(posix.sockaddr.in);
+            return @sizeOf(sockaddr.in);
         },
         .ip6 => |*ip6| {
             storage.in6 = address6ToPosix(ip6);
-            return @sizeOf(posix.sockaddr.in6);
+            return @sizeOf(sockaddr.in6);
         },
     };
 }
 
-fn addressUnixToPosix(a: *const net.UnixAddress, storage: *UnixAddress) posix.socklen_t {
-    storage.un.family = posix.AF.UNIX;
+fn addressUnixToPosix(a: *const net.UnixAddress, storage: *UnixAddress) socklen_t {
+    storage.un.family = AF.UNIX;
     var path_len = switch (native_os) {
         .windows => @min(a.path.len, storage.un.path.len),
         else => a.path.len,
@@ -14517,13 +14562,13 @@ fn addressUnixToPosix(a: *const net.UnixAddress, storage: *UnixAddress) posix.so
     switch (native_os) {
         .windows => {
             if (storage.un.path[0] == 0) @memset(storage.un.path[path_len..], 0);
-            return @sizeOf(posix.sockaddr.un);
+            return @sizeOf(sockaddr.un);
         },
-        else => return @intCast(@offsetOf(posix.sockaddr.un, "path") + path_len),
+        else => return @intCast(@offsetOf(sockaddr.un, "path") + path_len),
     }
 }
 
-fn address4FromPosix(in: *const posix.sockaddr.in) net.Ip4Address {
+fn address4FromPosix(in: *const sockaddr.in) net.Ip4Address {
     // The network byte order address in `in.addr` is already the byte order we want.
     const addr_bytes: *const [4]u8 = @ptrCast(&in.addr);
     return .{
@@ -14532,7 +14577,7 @@ fn address4FromPosix(in: *const posix.sockaddr.in) net.Ip4Address {
     };
 }
 
-fn address6FromPosix(in6: *const posix.sockaddr.in6) net.Ip6Address {
+fn address6FromPosix(in6: *const sockaddr.in6) net.Ip6Address {
     return .{
         .port = std.mem.bigToNative(u16, in6.port),
         .bytes = in6.addr,
@@ -14541,7 +14586,7 @@ fn address6FromPosix(in6: *const posix.sockaddr.in6) net.Ip6Address {
     };
 }
 
-fn address4ToPosix(a: net.Ip4Address) posix.sockaddr.in {
+fn address4ToPosix(a: net.Ip4Address) sockaddr.in {
     // The byte order of `a.bytes` is already equivalent to a network byte order address.
     const addr_raw: *align(1) const u32 = @ptrCast(&a.bytes);
     return .{
@@ -14550,7 +14595,7 @@ fn address4ToPosix(a: net.Ip4Address) posix.sockaddr.in {
     };
 }
 
-fn address6ToPosix(a: *const net.Ip6Address) posix.sockaddr.in6 {
+fn address6ToPosix(a: *const net.Ip6Address) sockaddr.in6 {
     return .{
         .port = std.mem.nativeToBig(u16, a.port),
         .flowinfo = a.flow,
@@ -14564,21 +14609,21 @@ pub fn errnoBug(err: posix.E) Io.UnexpectedError {
     return error.Unexpected;
 }
 
-pub fn posixSocketModeProtocol(family: posix.sa_family_t, mode: net.Socket.Mode, protocol: ?net.Protocol) !struct { u32, u32 } {
+pub fn posixSocketModeProtocol(family: sa_family_t, mode: net.Socket.Mode, protocol: ?net.Protocol) !struct { u32, u32 } {
     return .{
         switch (mode) {
-            .stream => posix.SOCK.STREAM,
-            .dgram => posix.SOCK.DGRAM,
-            .seqpacket => posix.SOCK.SEQPACKET,
-            .raw => posix.SOCK.RAW,
-            .rdm => if (@hasDecl(posix.SOCK, "RDM")) posix.SOCK.RDM else return error.OptionUnsupported,
+            .stream => SOCK.STREAM,
+            .dgram => SOCK.DGRAM,
+            .seqpacket => SOCK.SEQPACKET,
+            .raw => SOCK.RAW,
+            .rdm => if (@hasDecl(SOCK, "RDM")) SOCK.RDM else return error.OptionUnsupported,
         },
         if (protocol) |p| @backingInt(p) else if (is_windows) switch (family) {
-            posix.AF.UNIX => switch (mode) {
+            AF.UNIX => switch (mode) {
                 .stream => 0,
                 else => return error.ProtocolUnsupportedByAddressFamily,
             },
-            posix.AF.INET, posix.AF.INET6 => @backingInt(@as(net.Protocol, switch (mode) {
+            AF.INET, AF.INET6 => @backingInt(@as(net.Protocol, switch (mode) {
                 .stream => .tcp,
                 .dgram => .udp,
                 else => return error.ProtocolUnsupportedByAddressFamily,
@@ -17106,8 +17151,8 @@ fn argvToScriptCommandLineWindows(
     /// Arguments, not including the script name itself. Expected to be encoded as WTF-8.
     script_args: []const []const u8,
 ) ArgvToScriptCommandLineError![:0]u16 {
-    var buf = try std.array_list.Managed(u8).initCapacity(allocator, 64);
-    defer buf.deinit();
+    var buf: std.ArrayList(u8) = try .initCapacity(allocator, 64);
+    defer buf.deinit(allocator);
 
     // `/d` disables execution of AutoRun commands.
     // `/e:ON` and `/v:OFF` are needed for BatBadBut mitigation:
@@ -17130,12 +17175,12 @@ fn argvToScriptCommandLineWindows(
     if (std.mem.findAny(u16, script_path, &[_]u16{
         std.mem.nativeToLittle(u16, '\\'), std.mem.nativeToLittle(u16, '/'),
     }) == null) {
-        try buf.appendSlice(".\\");
+        try buf.appendSlice(allocator, ".\\");
     }
     // Note that we don't do any escaping/mitigations for this argument, since the relevant
     // characters (", %, etc) are illegal in file paths and this function should only be called
     // with script paths that have been verified to exist.
-    try std.unicode.wtf16LeToWtf8ArrayList(&buf, script_path);
+    try std.unicode.wtf16LeToWtf8ArrayList(allocator, &buf, script_path);
     buf.appendAssumeCapacity('"');
 
     for (script_args) |arg| {
@@ -17149,7 +17194,7 @@ fn argvToScriptCommandLineWindows(
         }
 
         // Separate args with a space.
-        try buf.append(' ');
+        try buf.append(allocator, ' ');
 
         // Need to quote if the argument is empty (otherwise the arg would just be lost)
         // or if the last character is a `\`, since then something like "%~2" in a .bat
@@ -17169,7 +17214,7 @@ fn argvToScriptCommandLineWindows(
             }
         }
         if (needs_quotes) {
-            try buf.append('"');
+            try buf.append(allocator, '"');
         }
         var backslashes: usize = 0;
         for (arg) |c| {
@@ -17178,8 +17223,8 @@ fn argvToScriptCommandLineWindows(
                     backslashes += 1;
                 },
                 '"' => {
-                    try buf.appendNTimes('\\', backslashes);
-                    try buf.append('"');
+                    try buf.appendNTimes(allocator, '\\', backslashes);
+                    try buf.append(allocator, '"');
                     backslashes = 0;
                 },
                 // Replace `%` with `%%cd:~,%`.
@@ -17196,22 +17241,22 @@ fn argvToScriptCommandLineWindows(
                 // we'll still be left with `%foo%` (the literal string).
                 '%' => {
                     // the trailing `%` is appended outside the switch
-                    try buf.appendSlice("%%cd:~,");
+                    try buf.appendSlice(allocator, "%%cd:~,");
                     backslashes = 0;
                 },
                 else => {
                     backslashes = 0;
                 },
             }
-            try buf.append(c);
+            try buf.append(allocator, c);
         }
         if (needs_quotes) {
-            try buf.appendNTimes('\\', backslashes);
-            try buf.append('"');
+            try buf.appendNTimes(allocator, '\\', backslashes);
+            try buf.append(allocator, '"');
         }
     }
 
-    try buf.append('"');
+    try buf.append(allocator, '"');
 
     return try std.unicode.wtf8ToWtf16LeAllocZ(allocator, buf.items);
 }
@@ -17229,8 +17274,8 @@ fn argvToCommandLineWindows(
     allocator: Allocator,
     argv: []const []const u8,
 ) ArgvToCommandLineError![:0]u16 {
-    var buf = std.array_list.Managed(u8).init(allocator);
-    defer buf.deinit();
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(allocator);
 
     if (argv.len != 0) {
         const arg0 = argv[0];
@@ -17256,15 +17301,15 @@ fn argvToCommandLineWindows(
             }
         }
         if (needs_quotes) {
-            try buf.append('"');
-            try buf.appendSlice(arg0);
-            try buf.append('"');
+            try buf.append(allocator, '"');
+            try buf.appendSlice(allocator, arg0);
+            try buf.append(allocator, '"');
         } else {
-            try buf.appendSlice(arg0);
+            try buf.appendSlice(allocator, arg0);
         }
 
         for (argv[1..]) |arg| {
-            try buf.append(' ');
+            try buf.append(allocator, ' ');
 
             // Subsequent arguments must be quoted if they contain spaces, tabs or double quotes,
             // or if they are empty. For simplicity and for maximum compatibility with different
@@ -17276,11 +17321,11 @@ fn argvToCommandLineWindows(
                 }
             } else arg.len == 0;
             if (!needs_quotes) {
-                try buf.appendSlice(arg);
+                try buf.appendSlice(allocator, arg);
                 continue;
             }
 
-            try buf.append('"');
+            try buf.append(allocator, '"');
             var backslash_count: usize = 0;
             for (arg) |byte| {
                 switch (byte) {
@@ -17288,19 +17333,19 @@ fn argvToCommandLineWindows(
                         backslash_count += 1;
                     },
                     '"' => {
-                        try buf.appendNTimes('\\', backslash_count * 2 + 1);
-                        try buf.append('"');
+                        try buf.appendNTimes(allocator, '\\', backslash_count * 2 + 1);
+                        try buf.append(allocator, '"');
                         backslash_count = 0;
                     },
                     else => {
-                        try buf.appendNTimes('\\', backslash_count);
-                        try buf.append(byte);
+                        try buf.appendNTimes(allocator, '\\', backslash_count);
+                        try buf.append(allocator, byte);
                         backslash_count = 0;
                     },
                 }
             }
-            try buf.appendNTimes('\\', backslash_count * 2);
-            try buf.append('"');
+            try buf.appendNTimes(allocator, '\\', backslash_count * 2);
+            try buf.append(allocator, '"');
         }
     }
 
@@ -17437,9 +17482,6 @@ pub fn posixExecveat(
 ) process.ReplaceError {
     try Thread.checkCancel();
     switch (err: {
-        if (path) |p| if (dir == posix.AT.FDCWD or Dir.path.isAbsoluteZ(p)) {
-            break :err posix.errno(posix.system.execve(p, argv, env_block.slice.ptr));
-        };
         if (comptime native_os == .linux and (!builtin.link_libc or
             (builtin.target.isGnuLibC() and builtin.target.os.version_range.linux.glibc.order(
                 .{ .major = 2, .minor = 34, .patch = 0 },
@@ -17453,34 +17495,57 @@ pub fn posixExecveat(
                 .NOSYS => {},
             }
         }
-        var path_buffer: [posix.PATH_MAX]u8 = undefined;
-        var path_len = realPathPosix(dir, &path_buffer) catch |err| switch (err) {
-            else => |e| return e,
-            error.InputOutput,
-            error.FileTooBig,
-            error.NoSpaceLeft,
-            error.PathAlreadyExists,
-            error.SymLinkLoop,
-            error.NetworkNotFound,
-            error.PipeBusy,
-            error.AntivirusInterference,
-            => return error.FileNotFound,
-            error.DeviceBusy,
-            error.NoDevice,
-            error.UnrecognizedVolume,
-            => return error.FileSystem,
+        if (path) |p| if (dir == posix.AT.FDCWD or Dir.path.isAbsoluteZ(p)) {
+            break :err posix.errno(posix.system.execve(p, argv, env_block.slice.ptr));
         };
-        if (path) |p| {
-            const path_slice = std.mem.span(p);
-            path_buffer[path_len] = Dir.path.sep;
-            path_len += 1;
-            @memcpy(path_buffer[path_len..][0..path_slice.len], path_slice);
-            path_len += path_slice.len;
+        const exe: posix.fd_t = if (path) |p| exe: {
+            var flags: posix.O = .{};
+            if (@hasField(posix.O, "CLOEXEC")) flags.CLOEXEC = true;
+            if (@hasField(posix.O, "LARGEFILE")) flags.LARGEFILE = true;
+            if (@hasField(posix.O, "NOCTTY")) flags.NOCTTY = true;
+            if (@hasField(posix.O, "PATH")) flags.PATH = true;
+            if (@hasField(posix.O, "EXEC")) flags.EXEC = true;
+            const rc = openat_sym(dir, p, flags, @as(posix.mode_t, 0));
+            while (true) switch (posix.errno(rc)) {
+                .SUCCESS => break :exe @intCast(rc),
+                .INTR, .AGAIN => {},
+                .FAULT => |err| return errnoBug(err),
+                .INVAL => return error.BadPathName,
+                .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+                .ACCES => return error.AccessDenied,
+                .FBIG => return error.InvalidExe,
+                .OVERFLOW => return error.InvalidExe,
+                .ISDIR => return error.IsDir,
+                .LOOP => return error.InvalidExe,
+                .MFILE => return error.ProcessFdQuotaExceeded,
+                .NAMETOOLONG => return error.NameTooLong,
+                .NFILE => return error.SystemFdQuotaExceeded,
+                .NODEV => return error.FileSystem,
+                .NOENT => return error.FileNotFound,
+                .SRCH => return error.FileNotFound, // Linux when opening procfs files.
+                .NOMEM => return error.SystemResources,
+                .NOTDIR => return error.NotDir,
+                .PERM => return error.PermissionDenied,
+                .BUSY => return error.FileSystem,
+                .TXTBSY => return error.FileBusy,
+                .NXIO => return error.FileSystem,
+                .ILSEQ => return error.BadPathName,
+                else => |err| return posix.unexpectedErrno(err),
+            };
+        } else dir;
+        defer closeFd(exe);
+        if (builtin.link_libc and @TypeOf(posix.system.fexecve) != void) {
+            break :err posix.errno(posix.system.fexecve(exe, argv, env_block.slice.ptr));
         }
-        path_buffer[path_len] = 0;
-        break :err posix.errno(
-            posix.system.execve(path_buffer[0..path_len :0], argv, env_block.slice.ptr),
-        );
+        switch (native_os) {
+            else => return error.OperationUnsupported,
+            .linux, .serenity, .illumos => {
+                var proc_buf: [std.fmt.count("/proc/self/path/{d}\x00", .{std.math.minInt(posix.fd_t)})]u8 = undefined;
+                const template = if (native_os == .illumos) "/proc/self/path/{d}" else "/proc/self/fd/{d}";
+                const proc_path = std.mem.printSentinel(&proc_buf, template, .{exe}, 0) catch unreachable;
+                break :err posix.errno(posix.system.execve(proc_path, argv, env_block.slice.ptr));
+            },
+        }
     }) {
         .FAULT => |err| return errnoBug(err), // Bad pointer parameter.
         .@"2BIG" => return error.SystemResources,
@@ -17944,7 +18009,7 @@ fn progressParentFile(userdata: ?*anyopaque) std.Progress.ParentFileError!File {
     return t.environ.zig_progress_file;
 }
 
-fn inheritParentHandle(handle: posix.fd_t) Io.InheritParentHandleError!void {
+fn inheritParentHandle(handle: File.Handle) Io.InheritParentHandleError!void {
     switch (native_os) {
         .linux,
         .dragonfly,

@@ -697,7 +697,7 @@ const Unit = struct {
             fw.writeByte(DW.LNS.extended_op) catch unreachable;
             const extended_op_bytes = fw.end;
             var op_len_bytes: u5 = 1;
-            while (true) switch (std.math.order(len - extended_op_bytes - op_len_bytes, @as(u32, 1) << 7 * op_len_bytes)) {
+            while (true) switch (std.math.order(len - extended_op_bytes - op_len_bytes, @as(u32, 1) << (7 * op_len_bytes))) {
                 .lt => break fw.writeUleb128(len - extended_op_bytes - op_len_bytes) catch unreachable,
                 .eq => {
                     // no length will ever work, so undercount and futz with the leb encoding to make up the missing byte
@@ -893,7 +893,7 @@ const Entry = struct {
                 fw.writeUleb128(try dwarf.refAbbrevCode(.pad_n)) catch unreachable;
                 const abbrev_code_bytes = fw.end;
                 var block_len_bytes: u5 = 1;
-                while (true) switch (std.math.order(len - abbrev_code_bytes - block_len_bytes, @as(u32, 1) << 7 * block_len_bytes)) {
+                while (true) switch (std.math.order(len - abbrev_code_bytes - block_len_bytes, @as(u32, 1) << (7 * block_len_bytes))) {
                     .lt => break fw.writeUleb128(len - abbrev_code_bytes - block_len_bytes) catch unreachable,
                     .eq => {
                         // no length will ever work, so undercount and futz with the leb encoding to make up the missing byte
@@ -915,7 +915,7 @@ const Entry = struct {
                 fw.writeByte(DW.LNS.extended_op) catch unreachable;
                 const extended_op_bytes = fw.end;
                 var op_len_bytes: u5 = 1;
-                while (true) switch (std.math.order(len - extended_op_bytes - op_len_bytes, @as(u32, 1) << 7 * op_len_bytes)) {
+                while (true) switch (std.math.order(len - extended_op_bytes - op_len_bytes, @as(u32, 1) << (7 * op_len_bytes))) {
                     .lt => break fw.writeUleb128(len - extended_op_bytes - op_len_bytes) catch unreachable,
                     .eq => {
                         // no length will ever work, so undercount and futz with the leb encoding to make up the missing byte
@@ -1526,9 +1526,9 @@ pub const WipNav = struct {
     }
 
     pub fn genDebugFrame(wip_nav: *WipNav, loc: u32, cfa: Cfa) UpdateError!void {
-        return wip_nav.genDebugFrameWriterError(loc, cfa) catch |err| switch (err) {
-            error.WriteFailed => error.OutOfMemory,
-            else => |e| e,
+        wip_nav.genDebugFrameWriterError(loc, cfa) catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
+            else => |e| return e,
         };
     }
     fn genDebugFrameWriterError(wip_nav: *WipNav, loc: u32, cfa: Cfa) (UpdateError || Writer.Error)!void {
@@ -1547,9 +1547,9 @@ pub const WipNav = struct {
         ty: Type,
         loc: Loc,
     ) UpdateError!void {
-        return wip_nav.genLocalVarDebugInfoWriterError(tag, opt_name, ty, loc) catch |err| switch (err) {
-            error.WriteFailed => error.OutOfMemory,
-            else => |e| e,
+        wip_nav.genLocalVarDebugInfoWriterError(tag, opt_name, ty, loc) catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
+            else => |e| return e,
         };
     }
     fn genLocalVarDebugInfoWriterError(
@@ -1577,9 +1577,9 @@ pub const WipNav = struct {
         opt_name: ?[]const u8,
         val: Value,
     ) UpdateError!void {
-        return wip_nav.genLocalConstDebugInfoWriterError(tag, opt_name, val) catch |err| switch (err) {
-            error.WriteFailed => error.OutOfMemory,
-            else => |e| e,
+        wip_nav.genLocalConstDebugInfoWriterError(tag, opt_name, val) catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
+            else => |e| return e,
         };
     }
     fn genLocalConstDebugInfoWriterError(
@@ -1615,9 +1615,9 @@ pub const WipNav = struct {
     }
 
     pub fn genVarArgsDebugInfo(wip_nav: *WipNav) UpdateError!void {
-        return wip_nav.genVarArgsDebugInfoWriterError() catch |err| switch (err) {
-            error.WriteFailed => error.OutOfMemory,
-            else => |e| e,
+        wip_nav.genVarArgsDebugInfoWriterError() catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
+            else => |e| return e,
         };
     }
     fn genVarArgsDebugInfoWriterError(wip_nav: *WipNav) (UpdateError || Writer.Error)!void {
@@ -1632,12 +1632,8 @@ pub const WipNav = struct {
         delta_pc: u64,
         end: bool,
     ) Allocator.Error!void {
-        return wip_nav.advanceLineAndPcWriterError(
-            delta_line,
-            delta_pc,
-            end,
-        ) catch |err| switch (err) {
-            error.WriteFailed => error.OutOfMemory,
+        wip_nav.advanceLineAndPcWriterError(delta_line, delta_pc, end) catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
         };
     }
     fn advanceLineAndPcWriterError(
@@ -1691,8 +1687,8 @@ pub const WipNav = struct {
     }
 
     pub fn setColumn(wip_nav: *WipNav, column: u32) Allocator.Error!void {
-        return wip_nav.setColumnWriterError(column) catch |err| switch (err) {
-            error.WriteFailed => error.OutOfMemory,
+        wip_nav.setColumnWriterError(column) catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
         };
     }
     fn setColumnWriterError(wip_nav: *WipNav, column: u32) Writer.Error!void {
@@ -1702,8 +1698,8 @@ pub const WipNav = struct {
     }
 
     pub fn negateStmt(wip_nav: *WipNav) Allocator.Error!void {
-        return wip_nav.negateStmtWriterError() catch |err| switch (err) {
-            error.WriteFailed => error.OutOfMemory,
+        wip_nav.negateStmtWriterError() catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
         };
     }
     fn negateStmtWriterError(wip_nav: *WipNav) Writer.Error!void {
@@ -1711,8 +1707,8 @@ pub const WipNav = struct {
     }
 
     pub fn setPrologueEnd(wip_nav: *WipNav) Allocator.Error!void {
-        return wip_nav.setPrologueEndWriterError() catch |err| switch (err) {
-            error.WriteFailed => error.OutOfMemory,
+        wip_nav.setPrologueEndWriterError() catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
         };
     }
     fn setPrologueEndWriterError(wip_nav: *WipNav) Writer.Error!void {
@@ -1720,8 +1716,8 @@ pub const WipNav = struct {
     }
 
     pub fn setEpilogueBegin(wip_nav: *WipNav) Allocator.Error!void {
-        return wip_nav.setEpilogueBeginWriterError() catch |err| switch (err) {
-            error.WriteFailed => error.OutOfMemory,
+        wip_nav.setEpilogueBeginWriterError() catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
         };
     }
     fn setEpilogueBeginWriterError(wip_nav: *WipNav) Writer.Error!void {
@@ -1729,9 +1725,9 @@ pub const WipNav = struct {
     }
 
     pub fn enterBlock(wip_nav: *WipNav, code_off: u64) UpdateError!void {
-        return wip_nav.enterBlockWriterError(code_off) catch |err| switch (err) {
-            error.WriteFailed => error.OutOfMemory,
-            else => |e| e,
+        wip_nav.enterBlockWriterError(code_off) catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
+            else => |e| return e,
         };
     }
     fn enterBlockWriterError(wip_nav: *WipNav, code_off: u64) (UpdateError || Writer.Error)!void {
@@ -1749,9 +1745,9 @@ pub const WipNav = struct {
     }
 
     pub fn leaveBlock(wip_nav: *WipNav, code_off: u64) UpdateError!void {
-        return wip_nav.leaveBlockWriterError(code_off) catch |err| switch (err) {
-            error.WriteFailed => error.OutOfMemory,
-            else => |e| e,
+        wip_nav.leaveBlockWriterError(code_off) catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
+            else => |e| return e,
         };
     }
     fn leaveBlockWriterError(wip_nav: *WipNav, code_off: u64) (UpdateError || Writer.Error)!void {
@@ -1765,7 +1761,12 @@ pub const WipNav = struct {
                 wip_nav.debug_info.written()[block.abbrev_code..][0..block_bytes],
                 @intCast(try wip_nav.dwarf.refAbbrevCode(.empty_block)),
             );
-        std.mem.writeInt(u32, wip_nav.debug_info.written()[block.high_pc..][0..4], @intCast(code_off - block.low_pc_off), wip_nav.dwarf.endian);
+        std.mem.writeInt(
+            u32,
+            wip_nav.debug_info.written()[block.high_pc..][0..4],
+            @intCast(code_off - block.low_pc_off),
+            wip_nav.dwarf.endian,
+        );
         wip_nav.any_children = true;
     }
 
@@ -1775,10 +1776,10 @@ pub const WipNav = struct {
         code_off: u64,
         line: u32,
         column: u32,
-    ) UpdateError!void {
+    ) UpdateError!bool {
         return wip_nav.enterInlineFuncWriterError(func, code_off, line, column) catch |err| switch (err) {
-            error.WriteFailed => error.OutOfMemory,
-            else => |e| e,
+            error.WriteFailed => return error.OutOfMemory,
+            else => |e| return e,
         };
     }
     fn enterInlineFuncWriterError(
@@ -1787,7 +1788,7 @@ pub const WipNav = struct {
         code_off: u64,
         line: u32,
         column: u32,
-    ) (UpdateError || Writer.Error)!void {
+    ) (UpdateError || Writer.Error)!bool {
         const dwarf = wip_nav.dwarf;
         const zcu = wip_nav.pt.zcu;
         const diw = &wip_nav.debug_info.writer;
@@ -1802,21 +1803,21 @@ pub const WipNav = struct {
         try wip_nav.infoAddrSym(wip_nav.func_sym_index, code_off);
         block.high_pc = @intCast(diw.end);
         try diw.writeInt(u32, 0, dwarf.endian);
-        try wip_nav.setInlineFunc(func);
         wip_nav.any_children = false;
+        return wip_nav.setInlineFunc(func);
     }
 
-    pub fn leaveInlineFunc(wip_nav: *WipNav, func: InternPool.Index, code_off: u64) UpdateError!void {
+    pub fn leaveInlineFunc(wip_nav: *WipNav, func: InternPool.Index, code_off: u64) UpdateError!bool {
         return wip_nav.leaveInlineFuncWriterError(func, code_off) catch |err| switch (err) {
-            error.WriteFailed => error.OutOfMemory,
-            else => |e| e,
+            error.WriteFailed => return error.OutOfMemory,
+            else => |e| return e,
         };
     }
     fn leaveInlineFuncWriterError(
         wip_nav: *WipNav,
         func: InternPool.Index,
         code_off: u64,
-    ) (UpdateError || Writer.Error)!void {
+    ) (UpdateError || Writer.Error)!bool {
         const inlined_func_bytes = comptime uleb128Bytes(@backingInt(AbbrevCode.inlined_func));
         const block = wip_nav.blocks.pop().?;
         if (wip_nav.any_children)
@@ -1827,21 +1828,28 @@ pub const WipNav = struct {
                 wip_nav.debug_info.written()[block.abbrev_code..][0..inlined_func_bytes],
                 @intCast(try wip_nav.dwarf.refAbbrevCode(.empty_inlined_func)),
             );
-        std.mem.writeInt(u32, wip_nav.debug_info.written()[block.high_pc..][0..4], @intCast(code_off - block.low_pc_off), wip_nav.dwarf.endian);
-        try wip_nav.setInlineFunc(func);
+        std.mem.writeInt(
+            u32,
+            wip_nav.debug_info.written()[block.high_pc..][0..4],
+            @intCast(code_off - block.low_pc_off),
+            wip_nav.dwarf.endian,
+        );
         wip_nav.any_children = true;
+        return wip_nav.setInlineFunc(func);
     }
 
-    pub fn setInlineFunc(wip_nav: *WipNav, func: InternPool.Index) UpdateError!void {
+    pub fn setInlineFunc(wip_nav: *WipNav, func: InternPool.Index) UpdateError!bool {
         return wip_nav.setInlineFuncWriterError(func) catch |err| switch (err) {
-            error.WriteFailed => error.OutOfMemory,
-            else => |e| e,
+            error.WriteFailed => return error.OutOfMemory,
+            else => |e| return e,
         };
     }
-    fn setInlineFuncWriterError(wip_nav: *WipNav, func: InternPool.Index) (UpdateError || Writer.Error)!void {
+    fn setInlineFuncWriterError(wip_nav: *WipNav, func: InternPool.Index) (UpdateError || Writer.Error)!bool {
         const zcu = wip_nav.pt.zcu;
         const dwarf = wip_nav.dwarf;
-        if (wip_nav.func == func) return;
+        const old_func = wip_nav.func;
+        if (old_func == func) return false;
+        wip_nav.func = func;
 
         const new_func_info = zcu.funcInfo(func);
         const new_file = zcu.navFileScopeIndex(new_func_info.owner_nav);
@@ -1855,7 +1863,7 @@ pub const WipNav = struct {
 
             try dlw.writeByte(DW.LNS.extended_op);
             try dlw.writeUleb128(1 + dwarf.sectionOffsetBytes());
-            try dlw.writeByte(DW.LNE.ZIG_set_decl);
+            try dlw.writeByte(DW.LNE.ZIG_set_source_decl);
             try dwarf.debug_line.section.getUnit(wip_nav.unit).getEntry(wip_nav.entry).cross_section_relocs.append(dwarf.gpa, .{
                 .source_off = @intCast(dlw.end),
                 .target_sec = .debug_info,
@@ -1863,10 +1871,10 @@ pub const WipNav = struct {
                 .target_entry = new_nav_gop.value_ptr.toOptional(),
             });
             try dlw.splatByteAll(0, dwarf.sectionOffsetBytes());
-            return;
+            return true;
         }
 
-        const old_func_info = zcu.funcInfo(wip_nav.func);
+        const old_func_info = zcu.funcInfo(old_func);
         const old_file = zcu.navFileScopeIndex(old_func_info.owner_nav);
         if (old_file != new_file) {
             const mod_info = dwarf.getModInfo(wip_nav.unit);
@@ -1883,8 +1891,7 @@ pub const WipNav = struct {
             try dlw.writeByte(DW.LNS.advance_line);
             try dlw.writeSleb128(new_src_line - old_src_line);
         }
-
-        wip_nav.func = func;
+        return false;
     }
 
     fn externalReloc(wip_nav: *WipNav, sec: *Section, reloc: ExternalReloc) Allocator.Error!void {
@@ -1956,7 +1963,7 @@ pub const WipNav = struct {
     }
 
     fn strpFmt(wip_nav: *WipNav, comptime fmt: []const u8, args: anytype) (UpdateError || Writer.Error)!void {
-        const str = try std.fmt.allocPrint(wip_nav.dwarf.gpa, fmt, args);
+        const str = try wip_nav.dwarf.gpa.print(fmt, args);
         defer wip_nav.dwarf.gpa.free(str);
         return wip_nav.strp(str);
     }
@@ -2229,7 +2236,7 @@ pub const WipNav = struct {
                     .decl_enum,
                     .decl_namespace_struct,
                     .decl_struct,
-                    .decl_packed_struct,
+                    .decl_bitpack_struct,
                     .decl_union,
                     .decl_var,
                     .decl_const,
@@ -2662,7 +2669,6 @@ fn initWipNavInner(
                 try wip_nav.strp(@"extern".name.toSlice(ip));
                 try wip_nav.refType(.fromInterned(if (maybe_func_type) |func_type| func_type.return_type else @"extern".ty));
                 if (maybe_func_type) |func_type| {
-                    try wip_nav.infoAddrSym(sym_index, 0);
                     try diw.writeByte(@intFromBool(Type.fromInterned(func_type.return_type).isNoReturn(zcu)));
                     if (func_type.param_types.len > 0 or func_type.is_var_args) {
                         for (func_type.param_types.get(ip)) |param_type| {
@@ -2672,7 +2678,7 @@ fn initWipNavInner(
                         if (func_type.is_var_args) try wip_nav.abbrevCode(.is_var_args);
                         try diw.writeUleb128(@backingInt(AbbrevCode.null));
                     }
-                } else try wip_nav.infoExprLoc(.{ .addr_reloc = sym_index });
+                }
             },
             .syntax => switch (ip.isFunctionType(@"extern".ty)) {
                 false => continue :nav_val .{ .undef = @"extern".ty },
@@ -2690,7 +2696,6 @@ fn initWipNavInner(
                     }, &nav, inst_info.file, &decl);
                     try wip_nav.strp(@"extern".name.toSlice(ip));
                     try wip_nav.refType(.fromInterned(func_type.return_type));
-                    try wip_nav.infoAddrSym(sym_index, 0);
                     try diw.writeByte(@intFromBool(Type.fromInterned(func_type.return_type).isNoReturn(zcu)));
                     if (func_type.param_types.len > 0 or func_type.is_var_args) {
                         for (func_type.param_types.get(ip)) |param_type| {
@@ -2817,13 +2822,19 @@ fn initWipNavInner(
         else => {
             const diw = &wip_nav.debug_info.writer;
             try wip_nav.declCommon(.{
-                .decl = .decl_var,
+                .decl = switch (decl.linkage) {
+                    .@"extern" => .decl_extern_var,
+                    else => .decl_var,
+                },
                 .decl_specification = switch (decl.kind) {
                     .unnamed_test, .@"test", .decltest, .@"comptime" => unreachable,
                     .@"const" => .decl_specification_const,
                     .@"var" => .decl_specification_var,
                 },
-                .decl_instance = .decl_instance_var,
+                .decl_instance = switch (decl.linkage) {
+                    .@"extern" => .decl_instance_extern_var,
+                    else => .decl_instance_var,
+                },
             }, &nav, inst_info.file, &decl);
             try wip_nav.strp(switch (decl.linkage) {
                 .normal => nav.fqn,
@@ -2842,20 +2853,24 @@ fn initWipNavInner(
                 .unnamed_test, .@"test", .decltest, .@"comptime" => unreachable,
                 .@"const" => {
                     const const_ty_reloc_index = try wip_nav.refForward();
-                    try wip_nav.infoExprLoc(loc);
+                    if (decl.linkage != .@"extern") try wip_nav.infoExprLoc(loc);
                     try diw.writeUleb128(nav.resolved.?.@"align".toByteUnits() orelse
                         ty.abiAlignment(zcu).toByteUnits().?);
-                    try diw.writeByte(@intFromBool(decl.linkage != .normal));
+                    if (decl.linkage != .@"extern") {
+                        try diw.writeByte(@intFromBool(decl.linkage != .normal));
+                    }
                     wip_nav.finishForward(const_ty_reloc_index);
                     try wip_nav.abbrevCode(.is_const);
                     try wip_nav.refType(ty);
                 },
                 .@"var" => {
                     try wip_nav.refType(ty);
-                    try wip_nav.infoExprLoc(loc);
+                    if (decl.linkage != .@"extern") try wip_nav.infoExprLoc(loc);
                     try diw.writeUleb128(nav.resolved.?.@"align".toByteUnits() orelse
                         ty.abiAlignment(zcu).toByteUnits().?);
-                    try diw.writeByte(@intFromBool(decl.linkage != .normal));
+                    if (decl.linkage != .@"extern") {
+                        try diw.writeByte(@intFromBool(decl.linkage != .normal));
+                    }
                 },
             }
         },
@@ -2870,9 +2885,9 @@ pub fn finishWipNavFunc(
     code_size: u64,
     wip_nav: *WipNav,
 ) UpdateError!void {
-    return dwarf.finishWipNavFuncWriterError(pt, nav_index, code_size, wip_nav) catch |err| switch (err) {
-        error.WriteFailed => error.OutOfMemory,
-        else => |e| e,
+    dwarf.finishWipNavFuncWriterError(pt, nav_index, code_size, wip_nav) catch |err| switch (err) {
+        error.WriteFailed => return error.OutOfMemory,
+        else => |e| return e,
     };
 }
 fn finishWipNavFuncWriterError(
@@ -2986,9 +3001,9 @@ pub fn finishWipNav(
     nav_index: InternPool.Nav.Index,
     wip_nav: *WipNav,
 ) UpdateError!void {
-    return dwarf.finishWipNavWriterError(pt, nav_index, wip_nav) catch |err| switch (err) {
-        error.WriteFailed => error.OutOfMemory,
-        else => |e| e,
+    dwarf.finishWipNavWriterError(pt, nav_index, wip_nav) catch |err| switch (err) {
+        error.WriteFailed => return error.OutOfMemory,
+        else => |e| return e,
     };
 }
 fn finishWipNavWriterError(
@@ -3118,7 +3133,7 @@ fn updateComptimeNavInner(dwarf: *Dwarf, pt: Zcu.PerThread, nav_index: InternPoo
         .opt,
         .aggregate,
         .un,
-        .bitpack,
+        .@"bitpack",
         => if (nav.resolved.?.@"const") .@"const" else .@"var",
 
         .@"extern" => unreachable,
@@ -3954,28 +3969,28 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
                         try diw.writeUleb128(@backingInt(AbbrevCode.null));
                     }
                 },
-                .@"packed" => {
+                .@"bitpack" => {
                     const need_terminator: bool = if (loaded_struct.name_nav.unwrap()) |nav_index| t: {
                         const nav = ip.getNav(nav_index);
                         const decl_inst = nav.srcInst(ip).resolve(ip).?;
                         const decl = zcu.fileByIndex(file).zir.?.getDeclaration(decl_inst);
                         try wip_nav.declCommon(.{
-                            .decl = .decl_packed_struct,
+                            .decl = .decl_bitpack_struct,
                             .decl_specification = .decl_specification_const,
-                            .decl_instance = .decl_instance_packed_struct,
+                            .decl_instance = .decl_instance_bitpack_struct,
                         }, &nav, file, &decl);
                         break :t true;
                     } else t: {
                         const file_gop = try dwarf.getModInfo(unit).files.getOrPut(dwarf.gpa, file);
-                        try wip_nav.abbrevCode(if (loaded_struct.field_types.len > 0) .packed_struct_type else .empty_packed_struct_type);
+                        try wip_nav.abbrevCode(if (loaded_struct.field_types.len > 0) .bitpack_struct_type else .empty_bitpack_struct_type);
                         try diw.writeUleb128(file_gop.index);
                         try wip_nav.strp(loaded_struct.fqn.toSlice(ip));
                         break :t loaded_struct.field_types.len > 0;
                     };
-                    try wip_nav.refType(.fromInterned(loaded_struct.packed_backing_int_type));
+                    try wip_nav.refType(.fromInterned(loaded_struct.bitpack_backing_int_type));
                     var field_bit_offset: u16 = 0;
                     for (0..loaded_struct.field_types.len) |field_index| {
-                        try wip_nav.abbrevCode(.packed_field);
+                        try wip_nav.abbrevCode(.bitpack_field);
                         try wip_nav.strp(loaded_struct.field_names.get(ip)[field_index].toSlice(ip));
                         const field_type: Type = .fromInterned(loaded_struct.field_types.get(ip)[field_index]);
                         try wip_nav.refType(field_type);
@@ -4053,27 +4068,27 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
                     }
                     if (need_terminator) try diw.writeUleb128(@backingInt(AbbrevCode.null));
                 },
-                .@"packed" => {
+                .@"bitpack" => {
                     const need_terminator: bool = if (loaded_union.name_nav.unwrap()) |nav_index| t: {
                         const nav = ip.getNav(nav_index);
                         const decl_inst = nav.srcInst(ip).resolve(ip).?;
                         const decl = zcu.fileByIndex(file).zir.?.getDeclaration(decl_inst);
                         try wip_nav.declCommon(.{
-                            .decl = .decl_packed_union,
+                            .decl = .decl_bitpack_union,
                             .decl_specification = .decl_specification_const,
-                            .decl_instance = .decl_instance_packed_union,
+                            .decl_instance = .decl_instance_bitpack_union,
                         }, &nav, file, &decl);
                         break :t true;
                     } else t: {
                         const file_gop = try dwarf.getModInfo(unit).files.getOrPut(dwarf.gpa, file);
-                        try wip_nav.abbrevCode(if (loaded_union.field_types.len > 0) .packed_union_type else .empty_packed_union_type);
+                        try wip_nav.abbrevCode(if (loaded_union.field_types.len > 0) .bitpack_union_type else .empty_bitpack_union_type);
                         try diw.writeUleb128(file_gop.index);
                         try wip_nav.strp(loaded_union.fqn.toSlice(ip));
                         break :t loaded_union.field_types.len > 0;
                     };
-                    try wip_nav.refType(.fromInterned(loaded_union.packed_backing_int_type));
+                    try wip_nav.refType(.fromInterned(loaded_union.bitpack_backing_int_type));
                     for (0..loaded_union.field_types.len) |field_index| {
-                        try wip_nav.abbrevCode(.packed_field);
+                        try wip_nav.abbrevCode(.bitpack_field);
                         try wip_nav.strp(loaded_tag.field_names.get(ip)[field_index].toSlice(ip));
                         try wip_nav.refType(.fromInterned(loaded_union.field_types.get(ip)[field_index]));
                         try diw.writeUleb128(0);
@@ -4284,10 +4299,10 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
             try wip_nav.refType(.fromInterned(int.ty));
             try wip_nav.bigIntConstValue(.fromInterned(int.ty), Value.fromInterned(value_index).toBigInt(&big_int_space, zcu));
         },
-        .bitpack => |bitpack| {
-            const backing_int_val: Value = .fromInterned(bitpack.backing_int_val);
+        .@"bitpack" => |@"bitpack"| {
+            const backing_int_val: Value = .fromInterned(@"bitpack".backing_int_val);
             try wip_nav.abbrevCode(.comptime_value);
-            try wip_nav.refType(.fromInterned(bitpack.ty));
+            try wip_nav.refType(.fromInterned(@"bitpack".ty));
             try wip_nav.bigIntConstValue(backing_int_val.typeOf(zcu), backing_int_val.toBigInt(&big_int_space, zcu));
         },
         .err => |err| {
@@ -4700,9 +4715,9 @@ fn refAbbrevCode(
 }
 
 pub fn flush(dwarf: *Dwarf, pt: Zcu.PerThread) UpdateError!void {
-    return dwarf.flushWriterError(pt) catch |err| switch (err) {
-        error.WriteFailed => error.OutOfMemory,
-        else => |e| e,
+    dwarf.flushWriterError(pt) catch |err| switch (err) {
+        error.WriteFailed => return error.OutOfMemory,
+        else => |e| return e,
     };
 }
 fn flushWriterError(dwarf: *Dwarf, pt: Zcu.PerThread) (UpdateError || Writer.Error)!void {
@@ -5134,10 +5149,11 @@ const AbbrevCode = enum {
     decl_enum,
     decl_namespace_struct,
     decl_struct,
-    decl_packed_struct,
+    decl_bitpack_struct,
     decl_union,
-    decl_packed_union,
+    decl_bitpack_union,
     decl_var,
+    decl_extern_var,
     decl_const,
     decl_const_runtime_bits,
     decl_const_comptime_state,
@@ -5156,10 +5172,11 @@ const AbbrevCode = enum {
     decl_instance_enum,
     decl_instance_namespace_struct,
     decl_instance_struct,
-    decl_instance_packed_struct,
+    decl_instance_bitpack_struct,
     decl_instance_union,
-    decl_instance_packed_union,
+    decl_instance_bitpack_union,
     decl_instance_var,
+    decl_instance_extern_var,
     decl_instance_const,
     decl_instance_const_runtime_bits,
     decl_instance_const_comptime_state,
@@ -5185,7 +5202,7 @@ const AbbrevCode = enum {
     field_comptime,
     field_comptime_runtime_bits,
     field_comptime_comptime_state,
-    packed_field,
+    bitpack_field,
     tagged_union,
     tagged_union_field,
     tagged_union_default_field,
@@ -5216,12 +5233,12 @@ const AbbrevCode = enum {
     enum_type,
     empty_struct_type,
     struct_type,
-    empty_packed_struct_type,
-    packed_struct_type,
+    empty_bitpack_struct_type,
+    bitpack_struct_type,
     empty_union_type,
     union_type,
-    empty_packed_union_type,
-    packed_union_type,
+    empty_bitpack_union_type,
+    bitpack_union_type,
     builtin_extern_nullary_func,
     builtin_extern_func,
     builtin_extern_var,
@@ -5328,7 +5345,7 @@ const AbbrevCode = enum {
                 .{ .alignment, .udata },
             },
         },
-        .decl_packed_struct = .{
+        .decl_bitpack_struct = .{
             .tag = .structure_type,
             .children = true,
             .attrs = decl_abbrev_common_attrs ++ .{
@@ -5343,7 +5360,7 @@ const AbbrevCode = enum {
                 .{ .alignment, .udata },
             },
         },
-        .decl_packed_union = .{
+        .decl_bitpack_union = .{
             .tag = .union_type,
             .children = true,
             .attrs = decl_abbrev_common_attrs ++ .{
@@ -5358,6 +5375,15 @@ const AbbrevCode = enum {
                 .{ .location, .exprloc },
                 .{ .alignment, .udata },
                 .{ .external, .flag },
+            },
+        },
+        .decl_extern_var = .{
+            .tag = .variable,
+            .attrs = decl_abbrev_common_attrs ++ .{
+                .{ .linkage_name, .strp },
+                .{ .type, .ref_addr },
+                .{ .alignment, .udata },
+                .{ .external, .flag_present },
             },
         },
         .decl_const = .{
@@ -5443,7 +5469,6 @@ const AbbrevCode = enum {
             .attrs = decl_abbrev_common_attrs ++ .{
                 .{ .linkage_name, .strp },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
             },
@@ -5454,7 +5479,6 @@ const AbbrevCode = enum {
             .attrs = decl_abbrev_common_attrs ++ .{
                 .{ .linkage_name, .strp },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
             },
@@ -5504,7 +5528,7 @@ const AbbrevCode = enum {
                 .{ .alignment, .udata },
             },
         },
-        .decl_instance_packed_struct = .{
+        .decl_instance_bitpack_struct = .{
             .tag = .structure_type,
             .children = true,
             .attrs = decl_instance_abbrev_common_attrs ++ .{
@@ -5519,7 +5543,7 @@ const AbbrevCode = enum {
                 .{ .alignment, .udata },
             },
         },
-        .decl_instance_packed_union = .{
+        .decl_instance_bitpack_union = .{
             .tag = .union_type,
             .children = true,
             .attrs = decl_instance_abbrev_common_attrs ++ .{
@@ -5534,6 +5558,15 @@ const AbbrevCode = enum {
                 .{ .location, .exprloc },
                 .{ .alignment, .udata },
                 .{ .external, .flag },
+            },
+        },
+        .decl_instance_extern_var = .{
+            .tag = .variable,
+            .attrs = decl_instance_abbrev_common_attrs ++ .{
+                .{ .linkage_name, .strp },
+                .{ .location, .exprloc },
+                .{ .alignment, .udata },
+                .{ .external, .flag_present },
             },
         },
         .decl_instance_const = .{
@@ -5619,7 +5652,6 @@ const AbbrevCode = enum {
             .attrs = decl_instance_abbrev_common_attrs ++ .{
                 .{ .linkage_name, .strp },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
             },
@@ -5630,7 +5662,6 @@ const AbbrevCode = enum {
             .attrs = decl_instance_abbrev_common_attrs ++ .{
                 .{ .linkage_name, .strp },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
             },
@@ -5751,7 +5782,7 @@ const AbbrevCode = enum {
                 .{ .ZIG_comptime_value, .ref_addr },
             },
         },
-        .packed_field = .{
+        .bitpack_field = .{
             .tag = .member,
             .attrs = &.{
                 .{ .name, .strp },
@@ -5989,7 +6020,7 @@ const AbbrevCode = enum {
                 .{ .alignment, .udata },
             },
         },
-        .empty_packed_struct_type = .{
+        .empty_bitpack_struct_type = .{
             .tag = .structure_type,
             .attrs = &.{
                 .{ .decl_file, .udata },
@@ -5997,7 +6028,7 @@ const AbbrevCode = enum {
                 .{ .type, .ref_addr },
             },
         },
-        .packed_struct_type = .{
+        .bitpack_struct_type = .{
             .tag = .structure_type,
             .children = true,
             .attrs = &.{
@@ -6025,7 +6056,7 @@ const AbbrevCode = enum {
                 .{ .alignment, .udata },
             },
         },
-        .empty_packed_union_type = .{
+        .empty_bitpack_union_type = .{
             .tag = .union_type,
             .attrs = &.{
                 .{ .decl_file, .udata },
@@ -6033,7 +6064,7 @@ const AbbrevCode = enum {
                 .{ .type, .ref_addr },
             },
         },
-        .packed_union_type = .{
+        .bitpack_union_type = .{
             .tag = .union_type,
             .children = true,
             .attrs = &.{
@@ -6048,7 +6079,6 @@ const AbbrevCode = enum {
                 .{ .ZIG_parent, .ref_addr },
                 .{ .linkage_name, .strp },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
             },
@@ -6060,7 +6090,6 @@ const AbbrevCode = enum {
                 .{ .ZIG_parent, .ref_addr },
                 .{ .linkage_name, .strp },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
             },
@@ -6071,7 +6100,6 @@ const AbbrevCode = enum {
                 .{ .ZIG_parent, .ref_addr },
                 .{ .linkage_name, .strp },
                 .{ .type, .ref_addr },
-                .{ .location, .exprloc },
                 .{ .external, .flag_present },
             },
         },

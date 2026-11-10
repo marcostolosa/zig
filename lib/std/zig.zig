@@ -183,7 +183,7 @@ pub fn binNameAlloc(allocator: Allocator, options: BinNameOptions) error{OutOfMe
     const root_name = options.root_name;
     switch (options.ofmt) {
         .coff => switch (options.output_mode) {
-            .Exe => return std.fmt.allocPrint(allocator, "{s}{s}", .{
+            .Exe => return allocator.print("{s}{s}", .{
                 root_name,
                 options.os_tag.exeFileExt(options.cpu_arch),
             }),
@@ -192,79 +192,81 @@ pub fn binNameAlloc(allocator: Allocator, options: BinNameOptions) error{OutOfMe
                     .static => ".lib",
                     .dynamic => ".dll",
                 };
-                return std.fmt.allocPrint(allocator, "{s}{s}", .{ root_name, suffix });
+                return allocator.print("{s}{s}", .{ root_name, suffix });
             },
-            .Obj => return std.fmt.allocPrint(allocator, "{s}.obj", .{root_name}),
+            .Obj => return allocator.print("{s}.obj", .{root_name}),
         },
         .elf => switch (options.output_mode) {
             .Exe => return allocator.dupe(u8, root_name),
             .Lib => {
                 switch (options.link_mode orelse .static) {
-                    .static => return std.fmt.allocPrint(allocator, "{s}{s}.a", .{
+                    .static => return allocator.print("{s}{s}.a", .{
                         options.os_tag.libPrefix(options.abi), root_name,
                     }),
                     .dynamic => {
                         if (options.version) |ver| {
-                            return std.fmt.allocPrint(allocator, "{s}{s}.so.{d}.{d}.{d}", .{
+                            return allocator.print("{s}{s}.so.{d}.{d}.{d}", .{
                                 options.os_tag.libPrefix(options.abi), root_name, ver.major, ver.minor, ver.patch,
                             });
                         } else {
-                            return std.fmt.allocPrint(allocator, "{s}{s}.so", .{
+                            return allocator.print("{s}{s}.so", .{
                                 options.os_tag.libPrefix(options.abi), root_name,
                             });
                         }
                     },
                 }
             },
-            .Obj => return std.fmt.allocPrint(allocator, "{s}.o", .{root_name}),
+            .Obj => return allocator.print("{s}.o", .{root_name}),
         },
+        .llvmbc => return allocator.print("{s}.bc", .{root_name}),
+        .llvmir => return allocator.print("{s}.ll", .{root_name}),
         .macho => switch (options.output_mode) {
             .Exe => return allocator.dupe(u8, root_name),
             .Lib => {
                 switch (options.link_mode orelse .static) {
-                    .static => return std.fmt.allocPrint(allocator, "{s}{s}.a", .{
+                    .static => return allocator.print("{s}{s}.a", .{
                         options.os_tag.libPrefix(options.abi), root_name,
                     }),
                     .dynamic => {
                         if (options.version) |ver| {
-                            return std.fmt.allocPrint(allocator, "{s}{s}.{d}.{d}.{d}.dylib", .{
+                            return allocator.print("{s}{s}.{d}.{d}.{d}.dylib", .{
                                 options.os_tag.libPrefix(options.abi), root_name, ver.major, ver.minor, ver.patch,
                             });
                         } else {
-                            return std.fmt.allocPrint(allocator, "{s}{s}.dylib", .{
+                            return allocator.print("{s}{s}.dylib", .{
                                 options.os_tag.libPrefix(options.abi), root_name,
                             });
                         }
                     },
                 }
             },
-            .Obj => return std.fmt.allocPrint(allocator, "{s}.o", .{root_name}),
+            .Obj => return allocator.print("{s}.o", .{root_name}),
         },
         .wasm => switch (options.output_mode) {
-            .Exe => return std.fmt.allocPrint(allocator, "{s}{s}", .{
+            .Exe => return allocator.print("{s}{s}", .{
                 root_name,
                 options.os_tag.exeFileExt(options.cpu_arch),
             }),
             .Lib => {
                 switch (options.link_mode orelse .static) {
-                    .static => return std.fmt.allocPrint(allocator, "{s}{s}.a", .{
+                    .static => return allocator.print("{s}{s}.a", .{
                         options.os_tag.libPrefix(options.abi), root_name,
                     }),
-                    .dynamic => return std.fmt.allocPrint(allocator, "{s}.wasm", .{root_name}),
+                    .dynamic => return allocator.print("{s}.wasm", .{root_name}),
                 }
             },
-            .Obj => return std.fmt.allocPrint(allocator, "{s}.o", .{root_name}),
+            .Obj => return allocator.print("{s}.o", .{root_name}),
         },
-        .c => return std.fmt.allocPrint(allocator, "{s}.c", .{root_name}),
-        .spirv => return std.fmt.allocPrint(allocator, "{s}.spv", .{root_name}),
-        .hex => return std.fmt.allocPrint(allocator, "{s}.ihex", .{root_name}),
-        .raw => return std.fmt.allocPrint(allocator, "{s}.bin", .{root_name}),
+        .c => return allocator.print("{s}.c", .{root_name}),
+        .spirv => return allocator.print("{s}.spv", .{root_name}),
+        .hex => return allocator.print("{s}.ihex", .{root_name}),
+        .raw => return allocator.print("{s}.bin", .{root_name}),
         .plan9 => switch (options.output_mode) {
             .Exe => return allocator.dupe(u8, root_name),
-            .Obj => return std.fmt.allocPrint(allocator, "{s}{s}", .{
+            .Obj => return allocator.print("{s}{s}", .{
                 root_name, options.ofmt.fileExt(options.cpu_arch),
             }),
-            .Lib => return std.fmt.allocPrint(allocator, "{s}{s}.a", .{
+            .Lib => return allocator.print("{s}{s}.a", .{
                 options.os_tag.libPrefix(options.abi), root_name,
             }),
         },
@@ -404,12 +406,12 @@ pub const RcIncludes = enum(u2) {
 /// Renders a `std.Target.Cpu` value into a textual representation that can be parsed
 /// via the `-mcpu` flag passed to the Zig compiler.
 /// Appends the result to `buffer`.
-pub fn serializeCpu(buffer: *std.array_list.Managed(u8), cpu: std.Target.Cpu) Allocator.Error!void {
+pub fn serializeCpu(gpa: Allocator, buffer: *std.ArrayList(u8), cpu: std.Target.Cpu) Allocator.Error!void {
     const all_features = cpu.arch.allFeaturesList();
     var populated_cpu_features = cpu.model.features;
     populated_cpu_features.populateDependencies(all_features);
 
-    try buffer.appendSlice(cpu.model.name);
+    try buffer.appendSlice(gpa, cpu.model.name);
 
     if (populated_cpu_features.eql(cpu.features)) {
         // The CPU name alone is sufficient.
@@ -420,7 +422,7 @@ pub fn serializeCpu(buffer: *std.array_list.Managed(u8), cpu: std.Target.Cpu) Al
         const i: std.Target.Cpu.Feature.Set.Index = @intCast(i_usize);
         const in_cpu_set = populated_cpu_features.isEnabled(i);
         const in_actual_set = cpu.features.isEnabled(i);
-        try buffer.ensureUnusedCapacity(feature.name.len + 1);
+        try buffer.ensureUnusedCapacity(gpa, feature.name.len + 1);
         if (in_cpu_set and !in_actual_set) {
             buffer.appendAssumeCapacity('-');
             buffer.appendSliceAssumeCapacity(feature.name);
@@ -431,10 +433,10 @@ pub fn serializeCpu(buffer: *std.array_list.Managed(u8), cpu: std.Target.Cpu) Al
     }
 }
 
-pub fn serializeCpuAlloc(ally: Allocator, cpu: std.Target.Cpu) Allocator.Error![]u8 {
-    var buffer = std.array_list.Managed(u8).init(ally);
-    try serializeCpu(&buffer, cpu);
-    return buffer.toOwnedSlice();
+pub fn serializeCpuAlloc(gpa: Allocator, cpu: std.Target.Cpu) Allocator.Error![]u8 {
+    var buffer: std.ArrayList(u8) = .empty;
+    try serializeCpu(gpa, &buffer, cpu);
+    return buffer.toOwnedSlice(gpa);
 }
 
 /// Return a Formatter for a Zig identifier, escaping it with `@""` syntax if needed.
@@ -898,10 +900,10 @@ pub fn parseTargetQueryOrReportFatalError(
     return std.Target.Query.parse(opts_with_diags) catch |err| switch (err) {
         error.UnknownCpuModel => {
             help: {
-                var help_text = std.array_list.Managed(u8).init(allocator);
-                defer help_text.deinit();
+                var help_text: std.ArrayList(u8) = .empty;
+                defer help_text.deinit(allocator);
                 for (diags.arch.?.allCpuModels()) |cpu| {
-                    help_text.print(" {s}\n", .{cpu.name}) catch break :help;
+                    help_text.print(allocator, " {s}\n", .{cpu.name}) catch break :help;
                 }
                 log.info("available CPUs for architecture '{s}':\n{s}", .{
                     @tagName(diags.arch.?), help_text.items,
@@ -911,10 +913,10 @@ pub fn parseTargetQueryOrReportFatalError(
         },
         error.UnknownCpuFeature => {
             help: {
-                var help_text = std.array_list.Managed(u8).init(allocator);
-                defer help_text.deinit();
+                var help_text: std.ArrayList(u8) = .empty;
+                defer help_text.deinit(allocator);
                 for (diags.arch.?.allFeaturesList()) |feature| {
-                    help_text.print(" {s}: {s}\n", .{ feature.name, feature.description }) catch break :help;
+                    help_text.print(allocator, " {s}: {s}\n", .{ feature.name, feature.description }) catch break :help;
                 }
                 log.info("available CPU features for architecture '{s}':\n{s}", .{
                     @tagName(diags.arch.?), help_text.items,
@@ -924,10 +926,10 @@ pub fn parseTargetQueryOrReportFatalError(
         },
         error.UnknownObjectFormat => {
             help: {
-                var help_text = std.array_list.Managed(u8).init(allocator);
-                defer help_text.deinit();
+                var help_text: std.ArrayList(u8) = .empty;
+                defer help_text.deinit(allocator);
                 inline for (@typeInfo(std.Target.ObjectFormat).@"enum".field_names) |field_name| {
-                    help_text.print(" {s}\n", .{field_name}) catch break :help;
+                    help_text.print(allocator, " {s}\n", .{field_name}) catch break :help;
                 }
                 log.info("available object formats:\n{s}", .{help_text.items});
             }
@@ -935,10 +937,10 @@ pub fn parseTargetQueryOrReportFatalError(
         },
         error.UnknownArchitecture => {
             help: {
-                var help_text = std.array_list.Managed(u8).init(allocator);
-                defer help_text.deinit();
+                var help_text: std.ArrayList(u8) = .empty;
+                defer help_text.deinit(allocator);
                 inline for (@typeInfo(std.Target.Cpu.Arch).@"enum".field_names) |field_name| {
-                    help_text.print(" {s}\n", .{field_name}) catch break :help;
+                    help_text.print(allocator, " {s}\n", .{field_name}) catch break :help;
                 }
                 log.info("available architectures:\n{s} native\n", .{help_text.items});
             }
@@ -1043,6 +1045,7 @@ pub const SimpleComptimeReason = enum(u32) {
     pointer_sentinel,
     slice_sentinel,
     vector_length,
+    vector_index,
     fn_ret_ty,
     fn_param_types,
     fn_param_attrs,
@@ -1060,8 +1063,8 @@ pub const SimpleComptimeReason = enum(u32) {
     enum_field_values,
     union_enum_tag_type,
     enum_int_tag_type,
-    packed_struct_backing_int_type,
-    packed_union_backing_int_type,
+    bitpack_struct_backing_int_type,
+    bitpack_union_backing_int_type,
 
     // Evaluating at comptime because decl/field name must be comptime-known.
     decl_name,
@@ -1127,6 +1130,7 @@ pub const SimpleComptimeReason = enum(u32) {
             .pointer_sentinel    => "pointer sentinel value must be comptime-known",
             .slice_sentinel      => "slice sentinel value must be comptime-known",
             .vector_length       => "vector length must be comptime-known",
+            .vector_index        => "vector index must be comptime-known",
             .fn_ret_ty           => "function return type must be comptime-known",
             .fn_param_types      => "function parameter types must be comptime-known",
             .fn_param_attrs      => "function parameter attributes must be comptime-known",
@@ -1145,8 +1149,8 @@ pub const SimpleComptimeReason = enum(u32) {
 
             .union_enum_tag_type            => "enum tag type of union must be comptime-known",
             .enum_int_tag_type              => "integer tag type of enum must be comptime-known",
-            .packed_struct_backing_int_type => "packed struct backing integer type must be comptime-known",
-            .packed_union_backing_int_type  => "packed struct backing integer type must be comptime-known",
+            .bitpack_struct_backing_int_type => "bitpack struct backing integer type must be comptime-known",
+            .bitpack_union_backing_int_type  => "bitpack struct backing integer type must be comptime-known",
 
             .decl_name         => "declaration name must be comptime-known",
             .field_name        => "field name must be comptime-known",
@@ -1201,7 +1205,7 @@ pub const EmitArtifact = enum {
             .pdb => ".pdb",
             .h => ".h",
         };
-        return std.fmt.allocPrint(gpa, "{s}{s}", .{ opts.root_name, suffix });
+        return gpa.print("{s}{s}", .{ opts.root_name, suffix });
     }
 };
 
@@ -2004,7 +2008,7 @@ pub fn buildExeSubprocess(
         },
     };
 
-    if (!term.success()) {
+    if (!term.eql(.success)) {
         log.err("command {f}: {f}", .{ term, cmd });
         if (received_fs_inputs) return error.FailedButCacheIntact;
         return error.AlreadyReported;
@@ -2052,6 +2056,46 @@ pub fn buildExeSubprocess(
         .cache_hit = cache_hit,
         .path = try base_path.join(gpa, bin_name),
     };
+}
+
+pub fn compilerBackend(t: *const std.Target, use_llvm: bool) std.lang.CompilerBackend {
+    if (use_llvm) return .stage2_llvm;
+    if (t.ofmt == .c) return .stage2_c;
+    return switch (t.cpu.arch) {
+        .aarch64, .aarch64_be => .stage2_aarch64,
+        .arm, .armeb, .thumb, .thumbeb => .stage2_arm,
+        .loongarch32, .loongarch64 => .stage2_loongarch,
+        .powerpc, .powerpcle, .powerpc64, .powerpc64le => .stage2_powerpc,
+        .riscv64 => .stage2_riscv64,
+        .sparc64 => .stage2_sparc64,
+        .spirv32, .spirv64 => .stage2_spirv,
+        .wasm32, .wasm64 => .stage2_wasm,
+        .x86, .x86c16 => .stage2_x86,
+        .x86_64 => .stage2_x86_64,
+        .spork8 => .zsf_spork8,
+        else => .other,
+    };
+}
+
+pub fn defaultOmitFramePointer(t: *const std.Target, optimize: std.lang.Optimize) bool {
+    if (optimize == .small) {
+        // On x86, in most cases, keeping the frame pointer usually results in smaller binary size.
+        // This has to do with how instructions for memory access via the stack base pointer register
+        // (when keeping the frame pointer) are smaller than instructions for memory access via the
+        // stack pointer register (when omitting the frame pointer).
+        return !t.cpu.arch.isX86();
+    }
+    return false;
+}
+
+pub fn defaultUnwindTables(t: *const std.Target) std.lang.UnwindTables {
+    switch (t.cpu.arch) {
+        else => {},
+        // The old 32-bit x86 variant of SEH doesn't support tables.
+        .x86 => if (t.os.tag == .windows) return .none,
+        .nvptx, .nvptx64, .spirv32, .spirv64 => return .none,
+    }
+    return .async;
 }
 
 test {

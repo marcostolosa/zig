@@ -36,6 +36,7 @@ pub const backend_can_print = switch (builtin.zig_backend) {
     .stage2_riscv64,
     .stage2_spirv,
     => false,
+    .stage2_llvm => !builtin.cpu.arch.isSpirv(),
     else => true,
 };
 
@@ -132,7 +133,7 @@ fn expectEqualInner(comptime T: type, expected: T, actual: T) !void {
         .@"union" => |@"union"| if (@"union".backing_integer) |Int| {
             try expectEqual(@as(Int, @bitCast(expected)), @as(Int, @bitCast(actual)));
         } else switch (@"union".layout) {
-            .@"packed" => {
+            .@"bitpack" => {
                 const Int = @Int(.unsigned, @bitSizeOf(T));
                 try expectEqual(@as(Int, @bitCast(expected)), @as(Int, @bitCast(actual)));
             },
@@ -152,7 +153,7 @@ fn expectEqualInner(comptime T: type, expected: T, actual: T) !void {
                 );
             },
             .auto => {
-                const Tag = @"union".tag_type orelse @compileError("byteSwapAllFields expects packed, extern, or tagged union");
+                const Tag = @"union".tag_type orelse @compileError("byteSwapAllFields expects bitpack, extern, or tagged union");
 
                 try expectEqual(@as(Tag, expected), @as(Tag, actual));
                 switch (expected) {
@@ -661,7 +662,7 @@ pub fn expectFmt(expected: []const u8, comptime template: []const u8, args: anyt
         var buffer: [std.fmt.count(template, args)]u8 = undefined;
         return expectEqualStrings(expected, try std.mem.print(&buffer, template, args));
     }
-    const actual = try std.fmt.allocPrint(allocator, template, args);
+    const actual = try allocator.print(template, args);
     defer allocator.free(actual);
     return expectEqualStrings(expected, actual);
 }
@@ -681,10 +682,7 @@ pub fn expectEqualStrings(expected: []const u8, actual: []const u8) !void {
         failPrintWithVisibleNewlines(actual);
         failPrint("\n======================================\n", .{});
 
-        var diff_line_number: usize = 1;
-        for (expected[0..diff_index]) |value| {
-            if (value == '\n') diff_line_number += 1;
-        }
+        const diff_line_number = 1 + std.mem.countScalar(u8, expected[0..diff_index], '\n');
         failPrint("First difference occurs on line {d}:\n", .{diff_line_number});
 
         failPrint("expected:\n", .{});

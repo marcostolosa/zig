@@ -19,7 +19,7 @@ comptime {
     symbol(&log, "log");
     symbol(&__logx, "__logx");
     symbol(&logq, "logf128");
-    symbol(&logl, "logl");
+    if (compiler_rt.have_c_longdouble) symbol(&logl, "logl");
 }
 
 fn __logh(a: compiler_rt.f16.Abi) callconv(.c) compiler_rt.f16.Abi {
@@ -416,7 +416,7 @@ pub fn log_f64(x: f64) f64 {
         ix = @as(i64, @bitCast(x * 0x1p52)) - (52 << 52);
     }
 
-    const tmp: packed struct(i64) { unused: u45, i: u7, k: i12 } = @bitCast(ix - 0x3fe6000000000000);
+    const tmp: bitpack struct(i64) { unused: u45, i: u7, k: i12 } = @bitCast(ix - 0x3fe6000000000000);
     const i = tmp.i;
     const k = tmp.k;
     const iz = ix - (@as(i64, tmp.k) << 52);

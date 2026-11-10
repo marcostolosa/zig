@@ -107,16 +107,13 @@ pub const SubArch = enum {
     spirv_v16,
 
     pub fn toFeature(sub: SubArch, arch: Cpu.Arch) ?std.Target.Cpu.Feature.Set.Index {
-        if (arch.isPowerPC()) {
-            if (sub == .powerpc_spe) return @backingInt(std.Target.powerpc.Feature.spe);
-        } else if (arch.isMIPS32()) {
+        if (arch.isMips32()) {
             return @backingInt(std.Target.mips.Feature.mips32r6);
-        } else if (arch.isMIPS64()) {
+        } else if (arch.isMips64()) {
             return @backingInt(std.Target.mips.Feature.mips64r6);
-        } else if (arch.isSpirV()) {
+        } else if (arch.isSpirv()) {
             const spirv = std.Target.spirv.Feature;
             return @backingInt(switch (sub) {
-                .spirv_v10 => spirv.v1_0,
                 .spirv_v11 => spirv.v1_1,
                 .spirv_v12 => spirv.v1_2,
                 .spirv_v13 => spirv.v1_3,
@@ -125,7 +122,7 @@ pub const SubArch = enum {
                 .spirv_v16 => spirv.v1_6,
                 else => return null,
             });
-        } else if (arch.isAARCH64()) {
+        } else if (arch.isAarch64()) {
             const aarch64 = std.Target.aarch64.Feature;
             return @backingInt(switch (sub) {
                 .arm_v8_1a => aarch64.v8_1a,
@@ -213,12 +210,12 @@ pub const SubArch = enum {
                 .arm_v7em => &cpu.cortex_m4,
                 else => null,
             };
-        } else if (arch.isMIPS32()) {
+        } else if (arch.isMips32()) {
             return switch (sub) {
                 .mips_r6 => &std.Target.mips.cpu.mips32r6,
                 else => null,
             };
-        } else if (arch.isMIPS64()) {
+        } else if (arch.isMips64()) {
             return switch (sub) {
                 .mips_r6 => &std.Target.mips.cpu.mips64r6,
                 else => null,
@@ -603,7 +600,11 @@ pub fn systemCompiler(target: *const Target) LangOpts.Compiler {
     // the rest for documentation as fn returns .clang
     if (target.os.tag.isDarwin() or
         target.abi.isAndroid() or
-        target.os.tag.isBSD() or
+        target.os.tag.isDarwin() or
+        target.os.tag == .freebsd or
+        target.os.tag == .openbsd or
+        target.os.tag == .netbsd or
+        target.os.tag == .dragonfly or
         target.os.tag == .fuchsia or
         target.os.tag == .illumos or
         target.os.tag == .haiku or
@@ -646,7 +647,7 @@ pub fn hasHalfPrecisionFloatABI(target: *const Target) bool {
 }
 
 pub fn hasAArch64ACLETypes(target: *const Target) bool {
-    return target.cpu.arch.isAARCH64();
+    return target.cpu.arch.isAarch64();
 }
 
 pub fn hasProtectedVisibility(target: *const Target) bool {
@@ -1085,6 +1086,7 @@ pub fn get32BitArchVariant(target: *const Target) ?Target {
         .s390x,
         .spork8,
         .ve,
+        .z80,
         => return null,
 
         .arc,
@@ -1094,7 +1096,6 @@ pub fn get32BitArchVariant(target: *const Target) ?Target {
         .csky,
         .hexagon,
         .hppa,
-        .kalimba,
         .lanai,
         .loongarch32,
         .m68k,
@@ -1118,6 +1119,7 @@ pub fn get32BitArchVariant(target: *const Target) ?Target {
         .thumbeb,
         .wasm32,
         .x86,
+        .x86c16,
         .xcore,
         .xtensa,
         .xtensaeb,
@@ -1152,7 +1154,6 @@ pub fn get64BitArchVariant(target: *const Target) ?Target {
         .csky,
         .ez80,
         .hexagon,
-        .kalimba,
         .lanai,
         .m68k,
         .m88k,
@@ -1167,6 +1168,7 @@ pub fn get64BitArchVariant(target: *const Target) ?Target {
         .xcore,
         .xtensa,
         .xtensaeb,
+        .z80,
         => return null,
 
         .aarch64_be,
@@ -1209,7 +1211,7 @@ pub fn get64BitArchVariant(target: *const Target) ?Target {
         .thumb => copy.cpu.arch = .aarch64,
         .thumbeb => copy.cpu.arch = .aarch64_be,
         .wasm32 => copy.cpu.arch = .wasm64,
-        .x86 => copy.cpu.arch = .x86_64,
+        .x86, .x86c16 => copy.cpu.arch = .x86_64,
         .x86_16 => copy.cpu.arch = .x86_64,
     }
     return copy;
@@ -1263,7 +1265,7 @@ pub fn toLLVMTriple(target: *const Target, buf: []u8) []const u8 {
         .ve => "ve",
         .wasm32 => "wasm32",
         .wasm64 => "wasm64",
-        .x86 => "i386",
+        .x86, .x86c16 => "i386",
         .x86_64 => "x86_64",
         .xcore => "xcore",
         .xtensa => "xtensa",
@@ -1274,7 +1276,6 @@ pub fn toLLVMTriple(target: *const Target, buf: []u8) []const u8 {
         .ez80 => "ez80",
         .hppa => "hppa",
         .hppa64 => "hppa64",
-        .kalimba => "kalimba",
         .kvx => "kvx",
         .microblaze => "microblaze",
         .microblazeel => "microblazeel",
@@ -1286,14 +1287,13 @@ pub fn toLLVMTriple(target: *const Target, buf: []u8) []const u8 {
         .spork8 => "spork8",
         .x86_16 => "i86",
         .xtensaeb => "xtensaeb",
+        .z80 => "z80",
     };
     writer.writeAll(llvm_arch) catch unreachable;
     writer.writeByte('-') catch unreachable;
 
     const llvm_os = switch (target.os.tag) {
         .amdhsa => "amdhsa",
-        .amdpal => "amdpal",
-        .contiki => "contiki",
         .cuda => "cuda",
         .dragonfly => "dragonfly",
         .driverkit => "driverkit",
@@ -1302,14 +1302,12 @@ pub fn toLLVMTriple(target: *const Target, buf: []u8) []const u8 {
         .freestanding => "unknown",
         .fuchsia => "fuchsia",
         .haiku => "haiku",
-        .hermit => "hermit",
         .hurd => "hurd",
         .illumos => "illumos",
         .ios, .maccatalyst => "ios",
         .linux => "linux",
         .macos => "macosx",
         .managarm => "managarm",
-        .mesa3d => "mesa3d",
         .netbsd => "netbsd",
         .nvcl => "nvcl",
         .openbsd => "openbsd",
@@ -1373,7 +1371,6 @@ pub fn toLLVMTriple(target: *const Target, buf: []u8) []const u8 {
         .gnuf32 => "gnuf32",
         .gnusf => "gnusf",
         .gnux32 => "gnux32",
-        .itanium => "itanium",
         .msvc => "msvc",
         .musl => "musl",
         .muslabi64 => "muslabi64",
@@ -1412,8 +1409,6 @@ pub fn isPIEDefault(target: *const Target) DefaultPIStatus {
 
         .cuda,
         .amdhsa,
-        .amdpal,
-        .mesa3d,
 
         .ps4,
         .ps5,
@@ -1439,9 +1434,6 @@ pub fn isPIEDefault(target: *const Target) DefaultPIStatus {
             if (target.isMinGW())
                 return .no;
 
-            if (target.abi == .itanium)
-                return if (target.cpu.arch == .x86_64) .yes else .no;
-
             if (target.abi == .msvc or target.abi == .none)
                 return .depends_on_linker;
 
@@ -1462,7 +1454,7 @@ pub fn isPIEDefault(target: *const Target) DefaultPIStatus {
 }
 
 pub fn ppcElfVersion(target: *const Target) u32 {
-    std.debug.assert(target.cpu.arch.isPowerPC());
+    std.debug.assert(target.cpu.arch.isPowerpc());
     return switch (target.cpu.arch) {
         .powerpc64le => 2,
         .powerpc64 => if ((target.os.isAtLeast(.freebsd, .{ .major = 13, .minor = 0, .patch = 0 }) orelse false) or target.os.tag == .openbsd or target.abi.isMusl())
@@ -1486,8 +1478,6 @@ pub fn isPICdefault(target: *const Target) DefaultPIStatus {
         .driverkit,
 
         .amdhsa,
-        .amdpal,
-        .mesa3d,
 
         .ps4,
         .ps5,
@@ -1524,9 +1514,6 @@ pub fn isPICdefault(target: *const Target) DefaultPIStatus {
             if (target.isMinGW())
                 return if (target.cpu.arch == .x86_64 or target.cpu.arch == .aarch64) .yes else .no;
 
-            if (target.abi == .itanium)
-                return if (target.cpu.arch == .x86_64) .yes else .no;
-
             if (target.abi == .msvc or target.abi == .none)
                 return .depends_on_linker;
 
@@ -1553,7 +1540,7 @@ pub fn isPICdefault(target: *const Target) DefaultPIStatus {
 
 pub fn isPICDefaultForced(target: *const Target) DefaultPIStatus {
     return switch (target.os.tag) {
-        .amdhsa, .amdpal, .mesa3d => .yes,
+        .amdhsa => .yes,
 
         .haiku,
         .dragonfly,
@@ -1572,9 +1559,6 @@ pub fn isPICDefaultForced(target: *const Target) DefaultPIStatus {
         .windows => {
             if (target.isMinGW())
                 return .yes;
-
-            if (target.abi == .itanium)
-                return if (target.cpu.arch == .x86_64) .yes else .no;
 
             // if (bfd) return target.cpu.arch == .x86_64 else target.cpu.arch == .x86_64 or target.cpu.arch == .aarch64;
             if (target.abi == .msvc or target.abi == .none)
@@ -2071,7 +2055,7 @@ pub fn cpuModelForTargetQuadruple(
         },
         .mips, .mipsel, .mips64, .mips64el => {
             const cpu = std.Target.mips.cpu;
-            const is_64 = arch.isMIPS64();
+            const is_64 = arch.isMips64();
 
             // see clang: `mips::getMipsCPUAndABI`,
             var model: *const Cpu.Model = if (is_64) &cpu.mips64r2 else &cpu.mips32r2;

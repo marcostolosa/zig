@@ -68,8 +68,11 @@ fn importBackend(comptime backend: std.lang.CompilerBackend) type {
 
 pub fn legalizeFeatures(pt: Zcu.PerThread, nav_index: InternPool.Nav.Index) ?*const Air.Legalize.Features {
     const zcu = pt.zcu;
+    if (zcu.comp.config.legalize_all) {
+        return &Air.Legalize.all_features;
+    }
     const target = &zcu.navFileScope(nav_index).mod.?.resolved_target.result;
-    switch (target_util.zigBackend(target, zcu.comp.config.use_llvm)) {
+    switch (std.zig.compilerBackend(target, zcu.comp.config.use_llvm)) {
         else => unreachable,
         inline .stage2_llvm,
         .stage2_c,
@@ -92,7 +95,7 @@ pub fn legalizeFeatures(pt: Zcu.PerThread, nav_index: InternPool.Nav.Index) ?*co
 pub fn wantsLiveness(pt: Zcu.PerThread, nav_index: InternPool.Nav.Index) bool {
     const zcu = pt.zcu;
     const target = &zcu.navFileScope(nav_index).mod.?.resolved_target.result;
-    return switch (target_util.zigBackend(target, zcu.comp.config.use_llvm)) {
+    return switch (std.zig.compilerBackend(target, zcu.comp.config.use_llvm)) {
         else => true,
         .stage2_aarch64, .stage2_loongarch => false,
     };
@@ -129,7 +132,7 @@ pub const AnyMir = union {
 
     pub fn deinit(mir: *AnyMir, zcu: *const Zcu) void {
         const gpa = zcu.gpa;
-        const backend = target_util.zigBackend(&zcu.root_mod.resolved_target.result, zcu.comp.config.use_llvm);
+        const backend = std.zig.compilerBackend(&zcu.root_mod.resolved_target.result, zcu.comp.config.use_llvm);
         switch (backend) {
             else => unreachable,
             inline .stage2_aarch64,
@@ -161,7 +164,7 @@ pub fn generateFunction(
     const zcu = pt.zcu;
     const func = zcu.funcInfo(func_index);
     const target = &zcu.navFileScope(func.owner_nav).mod.?.resolved_target.result;
-    switch (target_util.zigBackend(target, false)) {
+    switch (std.zig.compilerBackend(target, false)) {
         else => unreachable,
         inline .stage2_aarch64,
         .stage2_loongarch,
@@ -206,7 +209,7 @@ pub fn emitFunction(
     tracy_trace.addText(zcu.intern_pool.getNav(func.owner_nav).fqn.toSlice(&zcu.intern_pool));
     tracy_trace.addTextFmt("func_ip_index={d}", .{func_index});
 
-    switch (target_util.zigBackend(target, zcu.comp.config.use_llvm)) {
+    switch (std.zig.compilerBackend(target, zcu.comp.config.use_llvm)) {
         else => unreachable,
         inline .stage2_aarch64,
         .stage2_loongarch,
@@ -234,7 +237,7 @@ pub fn generateLazyFunction(
         &zcu.fileByIndex(inst_index.resolveFile(&zcu.intern_pool)).mod.?.resolved_target.result
     else
         zcu.getTarget();
-    switch (target_util.zigBackend(target, zcu.comp.config.use_llvm)) {
+    switch (std.zig.compilerBackend(target, zcu.comp.config.use_llvm)) {
         else => unreachable,
         inline .stage2_riscv64, .stage2_x86_64 => |backend| {
             dev.check(devFeatureForBackend(backend));
@@ -581,7 +584,7 @@ pub fn generateSymbol(
             .struct_type => {
                 const struct_type = ip.loadStructType(ty.toIntern());
                 switch (struct_type.layout) {
-                    .@"packed" => unreachable,
+                    .@"bitpack" => unreachable,
                     .auto, .@"extern" => {
                         const struct_begin = w.end;
                         const field_types = struct_type.field_types.get(ip);
@@ -617,6 +620,7 @@ pub fn generateSymbol(
             else => unreachable,
         },
         .un => |un| {
+            const union_begin = w.end;
             const layout = ty.unionGetLayout(zcu);
 
             if (layout.payload_size == 0) {
@@ -648,13 +652,12 @@ pub fn generateSymbol(
 
             if (layout.tag_size > 0 and layout.tag_align.compare(.lt, layout.payload_align)) {
                 try generateSymbol(bin_file, pt, Value.fromInterned(un.tag), w, reloc_parent);
-
-                if (layout.padding > 0) {
-                    try w.splatByteAll(0, layout.padding);
-                }
             }
+
+            const padding: usize = @intCast(union_begin + layout.abi_size - w.end);
+            if (padding > 0) try w.splatByteAll(0, padding);
         },
-        .bitpack => |bitpack| try generateSymbol(bin_file, pt, .fromInterned(bitpack.backing_int_val), w, reloc_parent),
+        .@"bitpack" => |@"bitpack"| try generateSymbol(bin_file, pt, .fromInterned(@"bitpack".backing_int_val), w, reloc_parent),
         .memoized_call => unreachable,
     }
 }
@@ -700,7 +703,7 @@ fn lowerPtr(
                 },
                 .@"struct", .@"union" => switch (base_ty.containerLayout(zcu)) {
                     .auto => base_ty.structFieldOffset(@intCast(field.index), zcu),
-                    .@"extern", .@"packed" => unreachable,
+                    .@"extern", .@"bitpack" => unreachable,
                 },
                 else => unreachable,
             };
@@ -949,9 +952,9 @@ pub fn lowerValue(pt: Zcu.PerThread, val: Value, target: *const std.Target) Allo
                 target,
             );
         },
-        .@"struct", .@"union" => if (ty.containerLayout(zcu) == .@"packed") {
-            const bitpack = ip.indexToKey(val.toIntern()).bitpack;
-            return lowerValue(pt, .fromInterned(bitpack.backing_int_val), target);
+        .@"struct", .@"union" => if (ty.containerLayout(zcu) == .@"bitpack") {
+            const @"bitpack" = ip.indexToKey(val.toIntern()).@"bitpack";
+            return lowerValue(pt, .fromInterned(@"bitpack".backing_int_val), target);
         },
         .error_set => {
             const err_name = ip.indexToKey(val.toIntern()).err.name;
@@ -1026,8 +1029,8 @@ pub fn fieldOffset(ptr_agg_ty: Type, ptr_field_ty: Type, field_index: u32, zcu: 
     const agg_ty = ptr_agg_ty.childType(zcu);
     return switch (agg_ty.containerLayout(zcu)) {
         .auto, .@"extern" => agg_ty.structFieldOffset(field_index, zcu),
-        .@"packed" => @divExact(@as(u64, ptr_agg_ty.ptrInfo(zcu).packed_offset.bit_offset) +
-            (if (zcu.typeToPackedStruct(agg_ty)) |loaded_struct| zcu.structPackedFieldBitOffset(loaded_struct, field_index) else 0) -
+        .@"bitpack" => @divExact(@as(u64, ptr_agg_ty.ptrInfo(zcu).packed_offset.bit_offset) +
+            (if (zcu.typeToBitpackStruct(agg_ty)) |loaded_struct| zcu.structPackedFieldBitOffset(loaded_struct, field_index) else 0) -
             ptr_field_ty.ptrInfo(zcu).packed_offset.bit_offset, 8),
     };
 }
@@ -1139,8 +1142,8 @@ pub fn flattenType(items_buf: []FlattenedItem, ty: Type, zcu: *Zcu, opts: struct
             const loaded_struct = ip.loadStructType(ty.toIntern());
             switch (loaded_struct.layout) {
                 .auto, .@"extern" => {},
-                .@"packed" => return flattenType(items_buf, .fromInterned(
-                    loaded_struct.packed_backing_int_type,
+                .@"bitpack" => return flattenType(items_buf, .fromInterned(
+                    loaded_struct.bitpack_backing_int_type,
                 ), zcu, opts),
             }
             var items_len: usize = 0;
@@ -1188,8 +1191,8 @@ pub fn flattenType(items_buf: []FlattenedItem, ty: Type, zcu: *Zcu, opts: struct
             const loaded_union = ip.loadUnionType(ty.toIntern());
             return switch (loaded_union.layout) {
                 .auto, .@"extern" => return null,
-                .@"packed" => return flattenType(items_buf, .fromInterned(
-                    loaded_union.packed_backing_int_type,
+                .@"bitpack" => return flattenType(items_buf, .fromInterned(
+                    loaded_union.bitpack_backing_int_type,
                 ), zcu, opts),
             };
         },
@@ -1220,7 +1223,7 @@ pub fn flattenType(items_buf: []FlattenedItem, ty: Type, zcu: *Zcu, opts: struct
         .opt,
         .aggregate,
         .un,
-        .bitpack,
+        .@"bitpack",
         // memoization, not types
         .memoized_call,
         => unreachable,

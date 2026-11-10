@@ -1,6 +1,7 @@
 pt: Zcu.PerThread,
 air_instructions: std.MultiArrayList(Air.Inst),
 air_extra: std.ArrayList(u32),
+air_loop_switch_brs: std.hash_map.AutoHashMapUnmanaged(Air.Inst.Index, LoopBrData),
 features: if (switch (dev.env) {
     .bootstrap => @import("../codegen/c.zig").legalizeFeatures(undefined),
     else => null,
@@ -196,18 +197,26 @@ pub const Feature = enum {
     /// Currently assumes little endian and a specific integer layout where the lsb of every integer is the lsb of the
     /// first byte of memory until bit pointers know their backing type.
     expand_packed_store,
-    /// Replace `agg_field_val` of a packed field with a `bit_cast` to integer, `shr`, `trunc`, and `bit_cast` to field type.
+    /// Replace `agg_field_val` of a bitpack field with a `bit_cast` to integer, `shr`, `trunc`, and `bit_cast` to field type.
     expand_packed_agg_field_val,
-    /// Replace `aggregate_init` of a packed struct with a sequence of `shl_exact`, `bit_cast`, `int_cast`, and `bit_or`.
+    /// Replace `aggregate_init` of a bitpack struct with a sequence of `shl_exact`, `bit_cast`, `int_cast`, and `bit_or`.
     expand_packed_aggregate_init,
+
     /// Replace `splat` of an array with an `aggregate_init`.
     expand_array_splat,
-    /// Replace `array_to_vector` with an `array_elem_val` per element followed by an `aggregate_init`.
-    expand_array_to_vector,
-    /// Replace `ptr_elem_val` with an `ptr_elem_ptr` followed by a `load`.
-    expand_ptr_elem_val,
+
     /// Replace `array_to_slice` with a `ptr_cast` followed by a `slice`.
     expand_array_to_slice,
+    /// Replace `array_to_vector` with an `array_elem_val` per element followed by an `aggregate_init`.
+    expand_array_to_vector,
+
+    /// Replace `slice_elem_ptr` with a `slice_ptr` followed by a `ptr_elem_ptr`.
+    expand_slice_elem_ptr,
+    /// Replace `ptr_elem_val` with an `ptr_elem_ptr` followed by a `load`.
+    expand_ptr_elem_val,
+
+    /// Converts `loop_switch_br` and `switch_dispatch` to a `loop` and a `switch_br`.
+    expand_loop_switch_br,
 
     /// Replace all arithmetic operations on 16-bit floating-point types with calls to soft-float
     /// routines in compiler_rt, including `fptrunc`/`fpext`/`float_from_int`/`int_from_float`
@@ -325,6 +334,23 @@ pub const Feature = enum {
 
 pub const Features = std.enums.EnumSet(Feature);
 
+/// The maximal set of `Features` which may be simultaneously enabled.
+pub const all_features: Features = .complement(.initMany(&.{
+    // There are a few features that conflict with others, so we need to enable the more useful one.
+    .scalarize_add_safe, // conflicts with `.expand_add_safe`
+    .scalarize_sub_safe, // conflicts with `.expand_sub_safe`
+    .scalarize_mul_safe, // conflicts with `.expand_mul_safe`
+    .scalarize_int_cast_safe, // conflicts with `.expand_int_cast_safe`
+    .scalarize_div_ceil, // conflicts with `.expand_div_ceil`
+    .scalarize_div_ceil_optimized, // conflicts with `.expand_div_ceil_optimized`
+    .scalarize_int_from_float_safe, // conflicts with `.expand_int_from_float_safe`
+    .scalarize_int_from_float_optimized_safe, // conflicts with `.expand_int_from_float_optimized_safe`
+
+    // This feature introduces a new AIR form, and acts solely as an optimization (I'm not actually
+    // sure if it should be here at all), so is excluded from `-flegalize-all`.
+    .unsplat_shift_rhs,
+}));
+
 pub const Error = std.mem.Allocator.Error;
 
 pub fn legalize(air: *Air, pt: Zcu.PerThread, features: *const Features) Error!void {
@@ -333,8 +359,10 @@ pub fn legalize(air: *Air, pt: Zcu.PerThread, features: *const Features) Error!v
         .pt = pt,
         .air_instructions = air.instructions.toMultiArrayList(),
         .air_extra = air.extra,
+        .air_loop_switch_brs = .empty,
         .features = .init(features),
     };
+    defer l.air_loop_switch_brs.deinit(pt.zcu.gpa);
     defer air.* = l.getTmpAir();
     const main_extra = l.extraData(Air.Block, l.air_extra.items[@backingInt(Air.ExtraIndex.main_block)]);
     try l.legalizeBody(main_extra.end, main_extra.data.body_len);
@@ -774,7 +802,10 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
                 try l.legalizeBody(extra.end, extra.data.then_body_len);
                 try l.legalizeBody(extra.end + extra.data.then_body_len, extra.data.else_body_len);
             },
-            .switch_br, .loop_switch_br => {
+            .switch_br, .loop_switch_br => |air_tag| {
+                if (l.features.has(.expand_loop_switch_br) and air_tag == .loop_switch_br) {
+                    continue :inst l.replaceInst(inst, .block, try l.loopSwitchBrBlockPayload(inst));
+                }
                 const pl_op = l.air_instructions.items(.data)[@backingInt(inst)].pl_op;
                 const extra = l.extraData(Air.SwitchBr, pl_op.payload);
                 const hint_bag_count = @divCeil(extra.data.cases_len + 1, 10);
@@ -787,7 +818,11 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
                 }
                 try l.legalizeBody(extra_index, extra.data.else_body_len);
             },
-            .switch_dispatch => {},
+            .switch_dispatch => {
+                if (l.features.has(.expand_loop_switch_br)) {
+                    continue :inst l.replaceInst(inst, .block, try l.switchDispatchBlockPayload(inst));
+                }
+            },
             .@"try", .try_cold => {
                 const pl_op = l.air_instructions.items(.data)[@backingInt(inst)].pl_op;
                 const extra = l.extraData(Air.Try, pl_op.payload);
@@ -854,7 +889,7 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
                 const extra = l.extraData(Air.StructField, ty_pl.payload).data;
                 switch (l.typeOf(extra.struct_operand).containerLayout(zcu)) {
                     .auto, .@"extern" => {},
-                    .@"packed" => continue :inst l.replaceInst(inst, .block, try l.packedStructFieldValBlockPayload(inst)),
+                    .@"bitpack" => continue :inst l.replaceInst(inst, .block, try l.packedStructFieldValBlockPayload(inst)),
                 }
             },
             .set_union_tag,
@@ -866,7 +901,6 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             .ptr_slice_ptr_ptr,
             .array_elem_val,
             .slice_elem_val,
-            .slice_elem_ptr,
             .ptr_elem_ptr,
             => {},
             .ptr_elem_val => if (l.features.has(.expand_ptr_elem_val)) {
@@ -877,6 +911,9 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
             },
             .array_to_slice => if (l.features.has(.expand_array_to_slice)) {
                 continue :inst l.replaceInst(inst, .block, try l.arrayToSliceBlockPayload(inst));
+            },
+            .slice_elem_ptr => if (l.features.has(.expand_slice_elem_ptr)) {
+                continue :inst l.replaceInst(inst, .block, try l.sliceElemPtrBlockPayload(inst));
             },
             inline .reduce, .reduce_optimized => |air_tag| {
                 const reduce = l.air_instructions.items(.data)[@backingInt(inst)].reduce;
@@ -974,7 +1011,7 @@ fn legalizeBody(l: *Legalize, body_start: usize, body_len: usize) Error!void {
                     .@"union" => unreachable,
                     .@"struct" => switch (agg_ty.containerLayout(zcu)) {
                         .auto, .@"extern" => {},
-                        .@"packed" => {
+                        .@"bitpack" => {
                             // If any field accounts for the full bit size of the struct, this init
                             // is just equivalent to a bitcast of that field. This usually means the
                             // field count is 1, but not always, as there could be zero-bit fields.
@@ -2049,9 +2086,12 @@ fn scalarizeReduceBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index, optimize
             .bool => .false,
             else => unreachable,
         },
-        // identity for multiplication is 1
+        // identity for multiplication is 1, or -1 for an i1
         .Mul => switch (scalar_ty.zigTypeTag(zcu)) {
-            .int => try pt.intValue(scalar_ty, 1),
+            .int => if (scalar_ty.isSignedInt(zcu) and scalar_ty.intInfo(zcu).bits == 1)
+                try pt.intValue(scalar_ty, -1)
+            else
+                try pt.intValue(scalar_ty, 1),
             .float => try pt.floatValue(scalar_ty, 1.0),
             else => unreachable,
         },
@@ -2738,6 +2778,83 @@ fn divCeilBlockPayload(
     }
 }
 
+const LoopBrData = struct {
+    loop_inst: Air.Inst.Index,
+    loop_operand_ref: Air.Inst.Ref,
+};
+
+fn loopSwitchBrBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Inst.Data {
+    const pt = l.pt;
+    const zcu = pt.zcu;
+    const gpa = zcu.gpa;
+
+    const orig_pl_op = l.air_instructions.items(.data)[@backingInt(orig_inst)].pl_op;
+    const orig_op = orig_pl_op.operand;
+    const orig_op_ty = l.typeOf(orig_op);
+
+    var inst_buf: [5]Air.Inst.Index = undefined;
+    var main_block: Block = .init(&inst_buf);
+    try l.air_instructions.ensureUnusedCapacity(gpa, inst_buf.len);
+
+    const alloc_op_ref = main_block.addTy(l, .alloc, try pt.singleMutPtrType(orig_op_ty)).toRef();
+
+    _ = main_block.addBinOp(l, .store, alloc_op_ref, orig_op).toRef();
+
+    var main_loop: Loop = .init(l, &main_block);
+    main_loop.block = .init(main_block.stealCapacity(2));
+
+    const new_op_ref = main_loop.block.addTyOp(l, .load, orig_op_ty, alloc_op_ref).toRef();
+
+    _ = main_loop.block.add(l, .{
+        .tag = .switch_br,
+        .data = .{ .pl_op = .{
+            .operand = new_op_ref,
+            .payload = orig_pl_op.payload,
+        } },
+    }).toRef();
+
+    try main_loop.finish(l);
+
+    try l.air_loop_switch_brs.put(gpa, orig_inst, .{
+        .loop_operand_ref = alloc_op_ref,
+        .loop_inst = main_loop.inst,
+    });
+
+    return .{ .ty_pl = .{
+        .ty = .noreturn,
+        .payload = try l.addBlockBody(main_block.body()),
+    } };
+}
+
+fn switchDispatchBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Inst.Data {
+    const pt = l.pt;
+    const zcu = pt.zcu;
+    const gpa = zcu.gpa;
+
+    const orig_br = l.air_instructions.items(.data)[@backingInt(orig_inst)].br;
+    const switch_inst = l.air_loop_switch_brs.get(orig_br.block_inst).?;
+
+    var inst_buf: [2]Air.Inst.Index = undefined;
+    var main_block: Block = .init(&inst_buf);
+    try l.air_instructions.ensureUnusedCapacity(gpa, inst_buf.len);
+
+    _ = main_block.addBinOp(l, .store, switch_inst.loop_operand_ref, orig_br.operand).toRef();
+
+    _ = main_block.add(l, .{
+        .tag = .repeat,
+        .data = .{
+            .repeat = .{
+                .loop_inst = switch_inst.loop_inst,
+            },
+        },
+    }).toRef();
+
+    return .{ .ty_pl = .{
+        .ty = .noreturn,
+        .payload = try l.addBlockBody(main_block.body()),
+    } };
+}
+
 fn packedLoadBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Inst.Data {
     const pt = l.pt;
     const zcu = pt.zcu;
@@ -3095,6 +3212,42 @@ fn arrayToSliceBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.I
     main_block.addBr(l, orig_inst, result);
     return .{ .ty_pl = .{
         .ty = slice_ty,
+        .payload = try l.addBlockBody(main_block.body()),
+    } };
+}
+
+fn sliceElemPtrBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.Inst.Data {
+    const pt = l.pt;
+    const zcu = pt.zcu;
+    const gpa = zcu.gpa;
+
+    const orig_ty_pl = l.air_instructions.items(.data)[@backingInt(orig_inst)].ty_pl;
+
+    const elem_ptr_ty = orig_ty_pl.ty;
+
+    const payload = l.extraData(Air.Bin, orig_ty_pl.payload).data;
+    const slice = payload.lhs;
+    const elem_idx = payload.rhs;
+
+    var inst_buf: [3]Air.Inst.Index = undefined;
+    var main_block: Block = .init(&inst_buf);
+    try l.air_instructions.ensureUnusedCapacity(gpa, inst_buf.len);
+
+    const slice_ptr = main_block.addTyOp(l, .slice_ptr, l.typeOf(slice).slicePtrFieldType(zcu), slice).toRef();
+    const result = main_block.add(l, .{
+        .tag = .ptr_elem_ptr,
+        .data = .{ .ty_pl = .{
+            .ty = elem_ptr_ty,
+            .payload = try l.addExtra(Air.Bin, .{
+                .lhs = slice_ptr,
+                .rhs = elem_idx,
+            }),
+        } },
+    }).toRef();
+
+    main_block.addBr(l, orig_inst, result);
+    return .{ .ty_pl = .{
+        .ty = elem_ptr_ty,
         .payload = try l.addBlockBody(main_block.body()),
     } };
 }

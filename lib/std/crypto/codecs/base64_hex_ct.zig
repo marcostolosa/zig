@@ -29,7 +29,7 @@ pub const hex = struct {
             const c: u16 = v & 0xf;
             const off = if (case == .upper) 32 else 0;
             const x =
-                ((87 - off + c + (((c -% 10) >> 8) & ~@as(u16, 38 - off))) & 0xff) << 8 |
+                (((87 - off + c + (((c -% 10) >> 8) & ~@as(u16, 38 - off))) & 0xff) << 8) |
                 ((87 - off + b + (((b -% 10) >> 8) & ~@as(u16, 38 - off))) & 0xff);
             encoded[i * 2] = @truncate(x);
             encoded[i * 2 + 1] = @truncate(x >> 8);
@@ -146,7 +146,7 @@ pub const hex = struct {
 /// (best-effort) constant time base64 encoding and decoding.
 pub const base64 = struct {
     /// The base64 variant to use.
-    pub const Variant = packed struct {
+    pub const Variant = bitpack struct {
         /// Use the URL-safe alphabet instead of the standard alphabet.
         urlsafe_alphabet: bool = false,
         /// Enable padding with '=' characters.

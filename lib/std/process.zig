@@ -415,12 +415,12 @@ pub const SpawnOptions = struct {
     /// On Linux and Darwin, this obtains rusage statistics from wait4().
     request_resource_usage_statistics: bool = false,
 
-    /// Set to change the user id when spawning the child process.
-    uid: ?posix.uid_t = null,
-    /// Set to change the group id when spawning the child process.
-    gid: ?posix.gid_t = null,
-    /// Set to change the process group id when spawning the child process.
-    pgid: ?posix.pid_t = null,
+    /// Set to change the user id when spawning the child process. Unsupported on Windows.
+    uid: ?File.Uid = null,
+    /// Set to change the group id when spawning the child process. Unsupported on Windows.
+    gid: ?File.Gid = null,
+    /// Set to change the process group id when spawning the child process. Unsupported on Windows.
+    pgid: ?Child.Id = null,
 
     /// Start child process in suspended state.
     /// For Posix systems it's started as if SIGSTOP was sent.
@@ -491,6 +491,10 @@ pub const RunOptions = struct {
     /// The child's progress tree will be grafted into the parent's progress tree,
     /// by substituting this node with the child's root node.
     progress_node: std.Progress.Node = std.Progress.Node.none,
+
+    inherit_dirs: []const Dir = &.{},
+    inherit_files: []const File = &.{},
+
     /// Windows-only. Sets the CREATE_NO_WINDOW flag in CreateProcess.
     create_no_window: bool = true,
     timeout: Io.Timeout = .none,
@@ -508,15 +512,19 @@ pub fn run(gpa: Allocator, io: Io, options: RunOptions) RunError!RunResult {
     var child = try spawn(io, .{
         .exe = options.exe,
         .argv = options.argv,
+
         .cwd = options.cwd,
         .environ_map = options.environ_map,
         .expand_arg0 = options.expand_arg0,
         .progress_node = options.progress_node,
-        .create_no_window = options.create_no_window,
 
         .stdin = .ignore,
         .stdout = .pipe,
         .stderr = .pipe,
+        .inherit_dirs = options.inherit_dirs,
+        .inherit_files = options.inherit_files,
+
+        .create_no_window = options.create_no_window,
     });
     defer child.kill(io);
 
@@ -656,7 +664,7 @@ pub fn cleanExit(io: Io) void {
 /// On some systems, this raises the limit before seeing ProcessFdQuotaExceeded
 /// errors. On other systems, this does nothing.
 pub fn raiseFileDescriptorLimit() void {
-    const have_rlimit = posix.rlimit_resource != void;
+    const have_rlimit = native_os != .windows and posix.rlimit_resource != void;
     if (!have_rlimit) return;
 
     var lim = posix.getrlimit(.NOFILE) catch return; // Oh well; we tried.
@@ -964,6 +972,7 @@ pub const LockMemoryOptions = struct {
 pub fn lockMemory(memory: []align(std.heap.page_size_min) const u8, options: LockMemoryOptions) LockMemoryError!void {
     if (native_os == .windows) {
         // TODO call VirtualLock
+        return;
     }
     if (!options.on_fault and @TypeOf(posix.system.mlock) != void) {
         switch (posix.errno(posix.system.mlock(memory.ptr, memory.len))) {
@@ -1002,6 +1011,10 @@ pub const UnlockMemoryError = error{
 /// See also:
 /// * `lockMemory`
 pub fn unlockMemory(memory: []align(std.heap.page_size_min) const u8) UnlockMemoryError!void {
+    if (native_os == .windows) {
+        // TODO call VirtualUnlock
+        return;
+    }
     if (@TypeOf(posix.system.munlock) == void) return;
     switch (posix.errno(posix.system.munlock(memory.ptr, memory.len))) {
         .SUCCESS => return,
@@ -1021,6 +1034,7 @@ pub const LockMemoryAllOptions = struct {
 };
 
 pub fn lockMemoryAll(options: LockMemoryAllOptions) LockMemoryError!void {
+    if (native_os == .windows) return;
     if (@TypeOf(posix.system.mlockall) == void) return error.UnsupportedOperation;
     var flags: posix.MCL = .{
         .CURRENT = options.current,
@@ -1045,6 +1059,7 @@ pub fn lockMemoryAll(options: LockMemoryAllOptions) LockMemoryError!void {
 }
 
 pub fn unlockMemoryAll() UnlockMemoryError!void {
+    if (native_os == .windows) return;
     if (@TypeOf(posix.system.munlockall) == void) return;
     switch (posix.errno(posix.system.munlockall())) {
         .SUCCESS => return,
@@ -1071,7 +1086,7 @@ pub const ProtectMemoryError = error{
     OutOfMemory,
 } || Io.UnexpectedError;
 
-pub const MemoryProtection = packed struct(u3) {
+pub const MemoryProtection = bitpack struct(u3) {
     read: bool = false,
     write: bool = false,
     execute: bool = false,

@@ -332,7 +332,7 @@ const known_options = [_]KnownOpt{
     },
     .{
         .name = "mtune",
-        .ident = "mcpu",
+        .ident = "ignore",
     },
     .{
         .name = "mred-zone",
@@ -679,9 +679,9 @@ pub fn main(init: std.process.Init) !void {
     const child_args = [_][]const u8{
         llvm_tblgen_exe,
         "--dump-json",
-        try std.fmt.allocPrint(arena, "{s}/clang/include/clang/Options/Options.td", .{llvm_src_root}),
-        try std.fmt.allocPrint(arena, "-I={s}/llvm/include", .{llvm_src_root}),
-        try std.fmt.allocPrint(arena, "-I={s}/clang/include/clang/Options", .{llvm_src_root}),
+        try arena.print("{s}/clang/include/clang/Options/Options.td", .{llvm_src_root}),
+        try arena.print("-I={s}/llvm/include", .{llvm_src_root}),
+        try arena.print("-I={s}/clang/include/clang/Options", .{llvm_src_root}),
     };
 
     const child_result = try std.process.run(arena, io, .{
@@ -709,7 +709,7 @@ pub fn main(init: std.process.Init) !void {
     defer parsed.deinit();
     const root_map = &parsed.value.object;
 
-    var all_objects = std.array_list.Managed(*json.ObjectMap).init(arena);
+    var all_objects: std.ArrayList(*json.ObjectMap) = .empty;
     {
         var it = root_map.iterator();
         it_map: while (it.next()) |kv| {
@@ -722,7 +722,7 @@ pub fn main(init: std.process.Init) !void {
                 if (std.mem.eql(u8, blacklisted_key, kv.key_ptr.*)) continue :it_map;
             }
             if (kv.value_ptr.object.get("Name").?.string.len == 0) continue;
-            try all_objects.append(&kv.value_ptr.object);
+            try all_objects.append(arena, &kv.value_ptr.object);
         }
     }
     // Some options have multiple matches. As an example, "-Wl,foo" matches both

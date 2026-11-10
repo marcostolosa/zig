@@ -77,7 +77,6 @@ pub const available_libcs = [_]ArchOsAbi{
     .{ .arch = .mips64el, .os = .linux, .abi = .gnuabin32, .os_ver = .{ .major = 2, .minor = 6, .patch = 0 }, .glibc_triple = "mips64el-linux-gnu-n32" },
     .{ .arch = .mips64el, .os = .linux, .abi = .muslabi64, .os_ver = .{ .major = 2, .minor = 3, .patch = 48 } },
     .{ .arch = .mips64el, .os = .linux, .abi = .muslabin32, .os_ver = .{ .major = 2, .minor = 6, .patch = 0 } },
-    .{ .arch = .mips64el, .os = .openbsd, .abi = .none, .os_ver = .{ .major = 4, .minor = 7, .patch = 0 } },
     .{ .arch = .powerpc, .os = .linux, .abi = .musleabi, .os_ver = .{ .major = 1, .minor = 3, .patch = 45 } },
     .{ .arch = .powerpc, .os = .linux, .abi = .musleabihf, .os_ver = .{ .major = 1, .minor = 3, .patch = 45 } },
     .{ .arch = .powerpc, .os = .netbsd, .abi = .eabihf, .os_ver = .{ .major = 1, .minor = 4, .patch = 0 } },
@@ -147,7 +146,7 @@ pub fn hurdTupleSimple(
     arch: std.Target.Cpu.Arch,
     abi: std.Target.Abi,
 ) ![]u8 {
-    return std.fmt.allocPrint(allocator, "{s}-{s}", .{ @tagName(arch), @tagName(abi) });
+    return allocator.print("{s}-{s}", .{ @tagName(arch), @tagName(abi) });
 }
 
 pub fn hurdTuple(allocator: Allocator, target: *const std.Target) ![]u8 {
@@ -160,7 +159,7 @@ pub fn linuxTripleSimple(
     os_tag: std.Target.Os.Tag,
     abi: std.Target.Abi,
 ) ![]u8 {
-    return std.fmt.allocPrint(allocator, "{s}-{s}-{s}", .{ @tagName(arch), @tagName(os_tag), @tagName(abi) });
+    return allocator.print("{s}-{s}-{s}", .{ @tagName(arch), @tagName(os_tag), @tagName(abi) });
 }
 
 pub fn linuxTriple(allocator: Allocator, target: *const std.Target) ![]u8 {
@@ -521,12 +520,12 @@ pub fn intAlignment(target: *const std.Target, bits: u16) u16 {
 }
 
 pub fn compilerRtFloatAbi(target: *const std.Target, bits: u16) std.Target.Abi.Float {
-    if (target.cpu.has(.x86, .soft_float)) return .soft;
+    if (target.cpu.arch.isX86() and target.abi.float() == .soft) return .soft;
     // Marks targets where clang does not even provide a usable C type.
     const no_c_type_available = .soft;
     switch (bits) {
         else => unreachable,
-        16 => if (target.cpu.arch.isMIPS() or target.cpu.arch.isPowerPC()) return no_c_type_available,
+        16 => if (target.cpu.arch.isMips() or target.cpu.arch.isPowerpc()) return no_c_type_available,
         32, 64 => {},
         80 => if (target.cTypeBitSize(.longdouble) != 80) return no_c_type_available,
         128 => {
@@ -548,10 +547,6 @@ fn supportedCompatArch(host: *const std.Target, arch: std.Target.Cpu.Arch) bool 
     // very recent kernel and for the kernel feature to be enabled. Additionally, contemporary
     // RISC-V hardware is just too slow to justify building the 32-bit binaries.
     return switch (host.os.tag) {
-        .illumos => switch (host.cpu.arch) {
-            .x86_64 => arch == .x86,
-            else => false,
-        },
         .linux => switch (host.cpu.arch) {
             .mips64 => arch == .mips,
             .mips64el => arch == .mipsel,
@@ -598,8 +593,6 @@ pub fn isNative(query: *const std.Target.Query, target: *const std.Target, host:
     // Remove features that don't actually affect compatibility.
     const irrelevant: std.Target.Cpu.Feature.Set = switch (host.cpu.arch) {
         .x86_64 => std.Target.x86.featureSet(&.{
-            .@"16bit_mode",
-            .@"32bit_mode",
             .@"64bit",
             .false_deps_bls,
             .false_deps_compress,
@@ -660,9 +653,7 @@ pub fn isNative(query: *const std.Target.Query, target: *const std.Target, host:
             .alu_lsl_fast,
             .avoid_ldapur,
             .disable_fast_inc_vl,
-            .exynos_cheap_as_move,
             .fast_ld1_single,
-            .fixed_load_latency_4,
             .fuse_address,
             .fuse_addsub_2reg_const1,
             .fuse_adrp_add,
@@ -678,10 +669,6 @@ pub fn isNative(query: *const std.Target.Query, target: *const std.Target, host:
             .slow_misaligned_128store,
             .slow_paired_128,
             .slow_strqro_store,
-            .use_experimental_zeroing_pseudos,
-            .use_fixed_over_scalable_if_equal_cost,
-            .use_postra_scheduler,
-            .use_reciprocal_square_root,
             .use_wzr_to_vec_move,
         }),
         else => .empty,

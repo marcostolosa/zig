@@ -127,21 +127,34 @@ AssignExpr <- Expr (AssignOp Expr / (COMMA Expr)+ EQUAL Expr / !AssignOp !COMMA)
 
 SingleAssignExpr <- Expr (AssignOp Expr / !AssignOp)
 
-Expr <- BoolOrExpr
+Expr <- PrefixExpr (OrElseExpr / CatchExpr / BoolExpr)
 
-BoolOrExpr <- BoolAndExpr (OrOp BoolAndExpr)* !OrOp
+OrElseExpr <- (OrElseOp PrefixExpr)+ !RecoveryNonmixingOp
+CatchExpr <- (CatchOp PrefixExpr)+ !RecoveryNonmixingOp
+RecoveryNonmixingOp <- ControlOp / CompareOp / BitwiseNonmixingOp
+ControlOp <- OrElseOp / CatchOp / AndOp / OrOp
 
-BoolAndExpr <- CompareExpr (AndOp CompareExpr)* !AndOp
+BoolExpr <- CompareExpr (BoolAndExpr / BoolOrExpr / !ControlOp)
+BoolAndExpr <- (AndOp PrefixExpr CompareExpr)+ !ControlOp
+BoolOrExpr <- (OrOp PrefixExpr CompareExpr)+ !ControlOp
 
-CompareExpr <- BitwiseExpr (CompareOp BitwiseExpr)? !CompareOp
+CompareExpr <- CompareOperand (CompareOp PrefixExpr CompareOperand)? !(CompareOp / OrElseOp / CatchOp)
+CompareOperand
+    <- (BitwiseOrOp PrefixExpr)+ !BitwiseNonmixingOp
+     / (BitwiseAndOp PrefixExpr)+ !BitwiseNonmixingOp
+     / (BitwiseXorOp PrefixExpr)+ !BitwiseNonmixingOp
+     / BitShiftOp PrefixExpr !BitwiseNonmixingOp
+     / !BitOp AdditionExpr
 
-BitwiseExpr <- BitShiftExpr (BitwiseOp BitShiftExpr)* !BitwiseOp
+BitOp <- BitwiseOrOp / BitwiseAndOp / BitwiseXorOp / BitShiftOp
+BitwiseNonmixingOp <- MultiplyNonmixingOp / AdditionOp
 
-BitShiftExpr <- AdditionExpr (BitShiftOp AdditionExpr)* !BitShiftOp
+AdditionExpr <- MulOrModExpr (AdditionOp PrefixExpr MulOrModExpr)* !(AdditionOp / BitOp / OrElseOp / CatchOp)
 
-AdditionExpr <- MultiplyExpr (AdditionOp MultiplyExpr)* !AdditionOp
-
-MultiplyExpr <- PrefixExpr (MultiplyOp PrefixExpr)* !MultiplyOp
+MulOrModExpr <- ModExpr / !ModOp MultiplyExpr
+ModExpr <- ModOp PrefixExpr !MultiplyNonmixingOp
+MultiplyExpr <- (MultiplyOp PrefixExpr)* !MultiplyNonmixingOp
+MultiplyNonmixingOp <- MultiplyOp / ModOp / BitOp / OrElseOp / CatchOp
 
 PrefixExpr <- PrefixOp* !PrefixOp PrimaryExpr
 
@@ -200,7 +213,7 @@ PrimaryTypeExpr
      / NUMBERLITERAL
      / STRINGLITERAL
 
-ContainerType <- (KEYWORD_extern / KEYWORD_packed)? ContainerTypeAuto
+ContainerType <- (KEYWORD_extern / KEYWORD_bitpack)? ContainerTypeAuto
 
 ErrorSetDecl <- KEYWORD_error LBRACE IdentifierList RBRACE
 
@@ -323,15 +336,26 @@ CompareOpTok
      / LARROWEQUAL
      / RARROWEQUAL
 
-BitwiseOp <- pre_op_white BitwiseOpTok post_op_white
-           / !pre_op_white BitwiseOpTok !post_op_white
-           / pre_op_white KEYWORD_catch post_op_white Payload?
-           / !pre_op_white KEYWORD_catch !post_op_white Payload?
-BitwiseOpTok
+BitwiseAndOp <- pre_op_white BitwiseAndOpTok post_op_white
+           / !pre_op_white BitwiseAndOpTok !post_op_white
+BitwiseAndOpTok
     <- AMPERSAND ![&]
-     / CARET
-     / PIPE
-     / KEYWORD_orelse
+
+BitwiseOrOp <- pre_op_white BitwiseOrOpTok post_op_white
+           / !pre_op_white BitwiseOrOpTok !post_op_white
+BitwiseOrOpTok
+    <- PIPE
+
+BitwiseXorOp <- pre_op_white BitwiseXorOpTok post_op_white
+           / !pre_op_white BitwiseXorOpTok !post_op_white
+BitwiseXorOpTok
+    <- CARET
+
+CatchOp <- pre_op_white KEYWORD_catch post_op_white Payload?
+        / !pre_op_white KEYWORD_catch !post_op_white Payload?
+
+OrElseOp <- pre_op_white KEYWORD_orelse post_op_white
+         / !pre_op_white KEYWORD_orelse !post_op_white
 
 BitShiftOp <- pre_op_white BitShiftOpTok post_op_white
            / !pre_op_white BitShiftOpTok !post_op_white
@@ -357,9 +381,11 @@ MultiplyOpTok
     <- PIPE2
      / ASTERISK
      / SLASH
-     / PERCENT
      / ASTERISKPERCENT
      / ASTERISKPIPE
+
+ModOp <- pre_op_white PERCENT post_op_white
+      / !pre_op_white PERCENT !post_op_white
 
 PrefixOp
     <- EXCLAMATIONMARK
@@ -647,6 +673,7 @@ KEYWORD_and         <- skip 'and'         end_of_word
 KEYWORD_anyframe    <- skip 'anyframe'    end_of_word
 KEYWORD_anytype     <- skip 'anytype'     end_of_word
 KEYWORD_asm         <- skip 'asm'         end_of_word
+KEYWORD_bitpack     <- skip 'bitpack'     end_of_word
 KEYWORD_break       <- skip 'break'       end_of_word
 KEYWORD_callconv    <- skip 'callconv'    end_of_word
 KEYWORD_catch       <- skip 'catch'       end_of_word
@@ -670,7 +697,6 @@ KEYWORD_noinline    <- skip 'noinline'    end_of_word
 KEYWORD_opaque      <- skip 'opaque'      end_of_word
 KEYWORD_or          <- skip 'or'          end_of_word
 KEYWORD_orelse      <- skip 'orelse'      end_of_word
-KEYWORD_packed      <- skip 'packed'      end_of_word
 KEYWORD_pub         <- skip 'pub'         end_of_word
 KEYWORD_resume      <- skip 'resume'      end_of_word
 KEYWORD_return      <- skip 'return'      end_of_word
@@ -689,12 +715,12 @@ KEYWORD_while       <- skip 'while'       end_of_word
 
 keyword <- KEYWORD_addrspace / KEYWORD_align / KEYWORD_allowzero / KEYWORD_and
          / KEYWORD_anyframe / KEYWORD_anytype / KEYWORD_asm
-         / KEYWORD_break / KEYWORD_callconv / KEYWORD_catch
+         / KEYWORD_bitpack / KEYWORD_break / KEYWORD_callconv / KEYWORD_catch
          / KEYWORD_comptime / KEYWORD_const / KEYWORD_continue / KEYWORD_defer
          / KEYWORD_else / KEYWORD_enum / KEYWORD_errdefer / KEYWORD_error / KEYWORD_export
          / KEYWORD_extern / KEYWORD_fn / KEYWORD_for / KEYWORD_if
          / KEYWORD_inline / KEYWORD_noalias / KEYWORD_nosuspend / KEYWORD_noinline
-         / KEYWORD_opaque / KEYWORD_or / KEYWORD_orelse / KEYWORD_packed
+         / KEYWORD_opaque / KEYWORD_or / KEYWORD_orelse
          / KEYWORD_pub / KEYWORD_resume / KEYWORD_return / KEYWORD_linksection
          / KEYWORD_struct / KEYWORD_suspend / KEYWORD_switch / KEYWORD_test
          / KEYWORD_threadlocal / KEYWORD_try / KEYWORD_union / KEYWORD_unreachable

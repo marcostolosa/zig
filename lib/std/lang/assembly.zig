@@ -1,5 +1,5 @@
 pub const Clobbers = switch (@import("builtin").cpu.arch) {
-    .x86_16, .x86, .x86_64 => packed struct {
+    .x86_16, .x86, .x86c16, .x86_64 => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -30,6 +30,22 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         r13: bool = false,
         r14: bool = false,
         r15: bool = false,
+        r16: bool = false,
+        r17: bool = false,
+        r18: bool = false,
+        r19: bool = false,
+        r20: bool = false,
+        r21: bool = false,
+        r22: bool = false,
+        r23: bool = false,
+        r24: bool = false,
+        r25: bool = false,
+        r26: bool = false,
+        r27: bool = false,
+        r28: bool = false,
+        r29: bool = false,
+        r30: bool = false,
+        r31: bool = false,
         eax: bool = false,
         ecx: bool = false,
         edx: bool = false,
@@ -46,6 +62,22 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         r13d: bool = false,
         r14d: bool = false,
         r15d: bool = false,
+        r16d: bool = false,
+        r17d: bool = false,
+        r18d: bool = false,
+        r19d: bool = false,
+        r20d: bool = false,
+        r21d: bool = false,
+        r22d: bool = false,
+        r23d: bool = false,
+        r24d: bool = false,
+        r25d: bool = false,
+        r26d: bool = false,
+        r27d: bool = false,
+        r28d: bool = false,
+        r29d: bool = false,
+        r30d: bool = false,
+        r31d: bool = false,
         ax: bool = false,
         cx: bool = false,
         dx: bool = false,
@@ -62,6 +94,22 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         r13w: bool = false,
         r14w: bool = false,
         r15w: bool = false,
+        r16w: bool = false,
+        r17w: bool = false,
+        r18w: bool = false,
+        r19w: bool = false,
+        r20w: bool = false,
+        r21w: bool = false,
+        r22w: bool = false,
+        r23w: bool = false,
+        r24w: bool = false,
+        r25w: bool = false,
+        r26w: bool = false,
+        r27w: bool = false,
+        r28w: bool = false,
+        r29w: bool = false,
+        r30w: bool = false,
+        r31w: bool = false,
         al: bool = false,
         cl: bool = false,
         dl: bool = false,
@@ -78,6 +126,22 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         r13b: bool = false,
         r14b: bool = false,
         r15b: bool = false,
+        r16b: bool = false,
+        r17b: bool = false,
+        r18b: bool = false,
+        r19b: bool = false,
+        r20b: bool = false,
+        r21b: bool = false,
+        r22b: bool = false,
+        r23b: bool = false,
+        r24b: bool = false,
+        r25b: bool = false,
+        r26b: bool = false,
+        r27b: bool = false,
+        r28b: bool = false,
+        r29b: bool = false,
+        r30b: bool = false,
+        r31b: bool = false,
         ah: bool = false,
         ch: bool = false,
         dh: bool = false,
@@ -178,6 +242,22 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         xmm29: bool = false,
         xmm30: bool = false,
         xmm31: bool = false,
+        k0: bool = false,
+        k1: bool = false,
+        k2: bool = false,
+        k3: bool = false,
+        k4: bool = false,
+        k5: bool = false,
+        k6: bool = false,
+        k7: bool = false,
+        tmm0: bool = false,
+        tmm1: bool = false,
+        tmm2: bool = false,
+        tmm3: bool = false,
+        tmm4: bool = false,
+        tmm5: bool = false,
+        tmm6: bool = false,
+        tmm7: bool = false,
         mm0: bool = false,
         mm1: bool = false,
         mm2: bool = false,
@@ -201,7 +281,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         fs: bool = false,
         gs: bool = false,
     },
-    .aarch64, .aarch64_be => packed struct {
+    .aarch64, .aarch64_be => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -531,7 +611,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
 
         zt0: bool = false,
     },
-    .arm, .armeb, .thumb, .thumbeb => packed struct {
+    .arm, .armeb, .thumb, .thumbeb => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -643,7 +723,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         q14: bool = false,
         q15: bool = false,
     },
-    .riscv32, .riscv32be, .riscv64, .riscv64be => packed struct {
+    .riscv32, .riscv32be, .riscv64, .riscv64be => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -825,7 +905,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         v30: bool = false,
         v31: bool = false,
     },
-    .xcore => packed struct {
+    .xcore => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -849,7 +929,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         lr: bool = false,
         sr: bool = false,
     },
-    .xtensa, .xtensaeb => packed struct {
+    .xtensa, .xtensaeb => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -927,7 +1007,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         f14: bool = false,
         f15: bool = false,
     },
-    .kvx => packed struct {
+    .kvx => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -1456,7 +1536,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         a63_z: bool = false,
         a63_t: bool = false,
     },
-    .lanai => packed struct {
+    .lanai => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -1493,7 +1573,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         r30: bool = false,
         r31: bool = false,
     },
-    .avr => packed struct {
+    .avr => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -1531,7 +1611,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         r30: bool = false,
         r31: bool = false,
     },
-    .msp430 => packed struct {
+    .msp430 => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -1553,7 +1633,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         r14: bool = false,
         r15: bool = false,
     },
-    .m88k => packed struct {
+    .m88k => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -1624,7 +1704,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         x30: bool = false,
         x31: bool = false,
     },
-    .m68k => packed struct {
+    .m68k => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -1669,7 +1749,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         fp6: bool = false,
         fp7: bool = false,
     },
-    .sparc, .sparc64 => packed struct {
+    .sparc, .sparc64 => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -1740,7 +1820,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         q14: bool = false,
         q15: bool = false,
     },
-    .bpfel, .bpfeb => packed struct {
+    .bpfel, .bpfeb => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -1767,7 +1847,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         w8: bool = false,
         w9: bool = false,
     },
-    .hexagon => packed struct {
+    .hexagon => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -1862,7 +1942,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         v30: bool = false,
         v31: bool = false,
     },
-    .s390x => packed struct {
+    .s390x => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -1937,7 +2017,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         f14: bool = false,
         f15: bool = false,
     },
-    .ve => packed struct {
+    .ve => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -2094,53 +2174,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         v62: bool = false,
         v63: bool = false,
     },
-    .kalimba => packed struct {
-        /// Whether the inline assembly code may perform stores to memory
-        /// addresses other than those derived from input pointer provenance.
-        memory: bool = false,
-
-        i0: bool = false,
-        i1: bool = false,
-        i2: bool = false,
-        i3: bool = false,
-        i4: bool = false,
-        i5: bool = false,
-        i6: bool = false,
-        i7: bool = false,
-
-        m0: bool = false,
-        m1: bool = false,
-        m2: bool = false,
-        m3: bool = false,
-        l0: bool = false,
-        l1: bool = false,
-        l2: bool = false,
-        l3: bool = false,
-        l4: bool = false,
-        l5: bool = false,
-        doloopstart: bool = false,
-        doloopend: bool = false,
-        divresult: bool = false,
-        divremainder: bool = false,
-        rmac: bool = false,
-        rmac0: bool = false,
-        rmac1: bool = false,
-        rmac2: bool = false,
-        rlink: bool = false,
-        rflags: bool = false,
-        r0: bool = false,
-        r1: bool = false,
-        r2: bool = false,
-        r3: bool = false,
-        r4: bool = false,
-        r5: bool = false,
-        r6: bool = false,
-        r7: bool = false,
-        r8: bool = false,
-        r9: bool = false,
-        r10: bool = false,
-    },
-    .or1k => packed struct {
+    .or1k => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -2186,7 +2220,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         r30: bool = false,
         r31: bool = false,
     },
-    .csky => packed struct {
+    .csky => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -2261,7 +2295,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         vr30: bool = false,
         vr31: bool = false,
     },
-    .arc, .arceb => packed struct {
+    .arc, .arceb => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -2380,7 +2414,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         f30: bool = false,
         f31: bool = false,
     },
-    .loongarch32, .loongarch64 => packed struct {
+    .loongarch32, .loongarch64 => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -2530,7 +2564,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         f30: bool = false,
         f31: bool = false,
     },
-    .powerpc, .powerpcle, .powerpc64, .powerpc64le => packed struct {
+    .powerpc, .powerpcle, .powerpc64, .powerpc64le => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -2727,7 +2761,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         acc: bool = false,
         spefsc: bool = false,
     },
-    .mips, .mipsel, .mips64, .mips64el => packed struct {
+    .mips, .mipsel, .mips64, .mips64el => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -2867,7 +2901,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         msa_map: bool = false,
         msa_unmap: bool = false,
     },
-    .alpha => packed struct {
+    .alpha => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -2936,7 +2970,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         f29: bool = false,
         f30: bool = false,
     },
-    .hppa, .hppa64 => packed struct {
+    .hppa, .hppa64 => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -3033,7 +3067,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         fr30r: bool = false,
         fr31r: bool = false,
     },
-    .microblaze, .microblazeel => packed struct {
+    .microblaze, .microblazeel => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -3072,7 +3106,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
         r30: bool = false,
         r31: bool = false,
     },
-    .sh, .sheb => packed struct {
+    .sh, .sheb => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,
@@ -3182,7 +3216,7 @@ pub const Clobbers = switch (@import("builtin").cpu.arch) {
 
         dsr: bool = false,
     },
-    else => packed struct {
+    else => bitpack struct {
         /// Whether the inline assembly code may perform stores to memory
         /// addresses other than those derived from input pointer provenance.
         memory: bool = false,

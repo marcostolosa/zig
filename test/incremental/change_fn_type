@@ -1,8 +1,9 @@
-#exe {
--Mroot=main.zig
+#zig build-exe {
+--name test
+-Mroot=test.zig
 #}
 
-#write main.zig {
+#write test.zig {
 pub fn main() !void {
     try foo(123);
 }
@@ -18,7 +19,7 @@ const io = std.Io.Threaded.global_single_threaded.io();
 123
 #}
 
-#write main.zig {
+#write test.zig {
 pub fn main() !void {
     try foo(123);
 }
@@ -29,13 +30,12 @@ fn foo(x: i64) !void {
 const std = @import("std");
 const io = std.Io.Threaded.global_single_threaded.io();
 #}
-#update {
-change function type#}
+#update "change function type"
 #check stdout {
 123
 #}
 
-#write main.zig {
+#write test.zig {
 pub fn main() !void {
     try foo(-42);
 }
@@ -46,8 +46,7 @@ fn foo(x: i64) !void {
 const std = @import("std");
 const io = std.Io.Threaded.global_single_threaded.io();
 #}
-#update {
-change function argument#}
+#update "change function argument"
 #check stdout {
 -42
 #}

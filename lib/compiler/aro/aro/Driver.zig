@@ -80,7 +80,7 @@ mabicalls: ?bool = null,
 dynamic_nopic: ?bool = null,
 ropi: bool = false,
 rwpi: bool = false,
-debug_dump_letters: packed struct(u3) {
+debug_dump_letters: bitpack struct(u3) {
     d: bool = false,
     m: bool = false,
     n: bool = false,
@@ -927,7 +927,7 @@ pub fn parseArgs(
         break :debug switch (d.comp.target.ofmt) {
             .elf, .macho, .wasm => .{ .dwarf = .@"32" },
             .coff => .code_view,
-            .c => switch (d.comp.target.os.tag) {
+            .c, .llvmbc, .llvmir => switch (d.comp.target.os.tag) {
                 .windows, .uefi => .code_view,
                 else => .{ .dwarf = .@"32" },
             },
@@ -1373,7 +1373,7 @@ fn getOutFileName(d: *Driver, source: Source, buf: *[std.fs.max_name_bytes]u8) !
             if (d.only_preprocess_and_compile) ".s" else d.comp.target.ofmt.fileExt(d.comp.target.cpu.arch),
         };
         return d.output_name orelse
-            mem.print(buf, fmt_template, fmt_args) catch return d.fatal("Filename too long for filesystem: " ++ fmt_template, fmt_args);
+            (mem.print(buf, fmt_template, fmt_args) catch return d.fatal("Filename too long for filesystem: " ++ fmt_template, fmt_args));
     }
 
     return d.getRandomFilename(buf, d.comp.target.ofmt.fileExt(d.comp.target.cpu.arch));
@@ -1819,12 +1819,12 @@ pub fn getPICMode(d: *Driver, lastpic: []const u8) Compilation.Error!struct { ba
         try d.err("embedded and GOT-based position independence are incompatible", .{});
     }
 
-    if (target.cpu.arch.isMIPS()) {
+    if (target.cpu.arch.isMips()) {
         // When targeting the N64 ABI, PIC is the default, except in the case
         // when the -mno-abicalls option is used. In that case we exit
         // at next check regardless of PIC being set below.
         // TODO: implement incomplete!!
-        if (target.cpu.arch.isMIPS64())
+        if (target.cpu.arch.isMips64())
             pic = true;
 
         // When targettng MIPS with -mno-abicalls, it's always static.

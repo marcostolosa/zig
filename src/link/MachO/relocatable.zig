@@ -61,9 +61,7 @@ pub fn flushObject(macho_file: *MachO, comp: *Compilation) link.Error!void {
     };
     allocateSegment(macho_file);
 
-    if (build_options.enable_logging) {
-        state_log.debug("{f}", .{macho_file.dumpState()});
-    }
+    state_log.debug("{f}", .{macho_file.dumpState()});
 
     try writeSections(macho_file);
     sortRelocs(macho_file);
@@ -107,9 +105,7 @@ pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation) link.Error!void {
             return diags.fail("failed to allocate sections: {s}", .{@errorName(err)});
         allocateSegment(macho_file);
 
-        if (build_options.enable_logging) {
-            state_log.debug("{f}", .{macho_file.dumpState()});
-        }
+        state_log.debug("{f}", .{macho_file.dumpState()});
 
         try writeSections(macho_file);
         sortRelocs(macho_file);
@@ -125,9 +121,8 @@ pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation) link.Error!void {
         try zo.readFileContents(macho_file);
     }
 
-    var files = std.array_list.Managed(File.Index).init(gpa);
-    defer files.deinit();
-    try files.ensureTotalCapacityPrecise(macho_file.objects.items.len + 1);
+    var files: std.ArrayList(File.Index) = try .initCapacity(gpa, macho_file.objects.items.len + 1);
+    defer files.deinit(gpa);
     if (macho_file.getZigObject()) |zo| files.appendAssumeCapacity(zo.index);
     for (macho_file.objects.items) |index| files.appendAssumeCapacity(index);
 
@@ -152,8 +147,8 @@ pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation) link.Error!void {
     // Update file offsets of contributing objects
     const total_size: usize = blk: {
         var pos: usize = macho.ARMAG.len;
-        pos += @sizeOf(Archive.ar_hdr);
-        pos += Archive.SYMDEF.len + 1;
+        pos += @sizeOf(macho.ar_hdr);
+        pos += macho.SYMDEF.len + 1;
         pos = mem.alignForward(usize, pos, 8);
         pos += ar_symtab.size(format);
 
@@ -164,7 +159,7 @@ pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation) link.Error!void {
                     const state = &zo.output_ar_state;
                     pos = mem.alignForward(usize, pos, 2);
                     state.file_off = pos;
-                    pos += @sizeOf(Archive.ar_hdr);
+                    pos += @sizeOf(macho.ar_hdr);
                     pos += zo.basename.len + 1;
                     pos = mem.alignForward(usize, pos, 8);
                     pos += try macho_file.cast(usize, state.size);
@@ -173,7 +168,7 @@ pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation) link.Error!void {
                     const state = &o.output_ar_state;
                     pos = mem.alignForward(usize, pos, 2);
                     state.file_off = pos;
-                    pos += @sizeOf(Archive.ar_hdr);
+                    pos += @sizeOf(macho.ar_hdr);
                     pos += std.fs.path.basename(o.path).len + 1;
                     pos = mem.alignForward(usize, pos, 8);
                     pos += try macho_file.cast(usize, state.size);
@@ -185,9 +180,7 @@ pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation) link.Error!void {
         break :blk pos;
     };
 
-    if (build_options.enable_logging) {
-        state_log.debug("ar_symtab\n{f}\n", .{ar_symtab.fmt(macho_file)});
-    }
+    state_log.debug("ar_symtab\n{f}\n", .{ar_symtab.fmt(macho_file)});
 
     const buffer = try gpa.alloc(u8, total_size);
     defer gpa.free(buffer);
@@ -400,8 +393,8 @@ fn calcSymtabSize(macho_file: *MachO) error{OutOfMemory}!void {
     var nimports: u32 = 0;
     var strsize: u32 = 1;
 
-    var objects = try std.array_list.Managed(File.Index).initCapacity(gpa, macho_file.objects.items.len + 1);
-    defer objects.deinit();
+    var objects: std.ArrayList(File.Index) = try .initCapacity(gpa, macho_file.objects.items.len + 1);
+    defer objects.deinit(gpa);
     if (macho_file.getZigObject()) |zo| objects.appendAssumeCapacity(zo.index);
     objects.appendSliceAssumeCapacity(macho_file.objects.items);
 
@@ -731,10 +724,11 @@ fn writeHeader(macho_file: *MachO, ncmds: usize, sizeofcmds: usize) !void {
     var header: macho.mach_header_64 = .{};
     header.filetype = macho.MH_OBJECT;
 
+    // Only mark the output as having subsections if *every* input object does.
     const subsections_via_symbols = for (macho_file.objects.items) |index| {
         const object = macho_file.getFile(index).?.object;
-        if (object.hasSubsections()) break true;
-    } else false;
+        if (!object.hasSubsections()) break false;
+    } else true;
     if (subsections_via_symbols) {
         header.flags |= macho.MH_SUBSECTIONS_VIA_SYMBOLS;
     }

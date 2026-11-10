@@ -217,7 +217,7 @@ fn parseTrieNode(
     for (0..nedges) |_| {
         const label = try it.readString();
         const off = try it.readUleb128();
-        const prefix_label = try std.fmt.allocPrint(arena, "{s}{s}", .{ prefix, label });
+        const prefix_label = try arena.print("{s}{s}", .{ prefix, label });
         const curr = it.stream.seek;
         it.stream.seek = math.cast(usize, off) orelse return error.Overflow;
         try self.parseTrieNode(it, allocator, arena, prefix_label);
@@ -471,7 +471,7 @@ fn addObjCExport(
     comptime prefix: []const u8,
     name: []const u8,
 ) !void {
-    const full_name = try std.fmt.allocPrint(allocator, prefix ++ "$_{s}", .{name});
+    const full_name = try allocator.print(prefix ++ "$_{s}", .{name});
     defer allocator.free(full_name);
     try self.addExport(allocator, full_name, .{});
 }
@@ -719,8 +719,7 @@ pub const TargetMatcher = struct {
     }
 
     fn addTargetStrings(self: *TargetMatcher, arch: []const u8) !void {
-        try self.target_strings.append(self.allocator, try std.fmt.allocPrint(
-            self.allocator,
+        try self.target_strings.append(self.allocator, try self.allocator.print(
             "{s}-{s}",
             .{ arch, platformToAppleString(self.platform) },
         ));
@@ -729,11 +728,11 @@ pub const TargetMatcher = struct {
             .MACCATALYST => {
                 // Mac Catalyst is allowed to link macOS libraries in a TBD because Apple were apparently too lazy
                 // to add the proper target strings despite doing so in other places in the format???
-                try self.target_strings.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{s}-macos", .{arch}));
+                try self.target_strings.append(self.allocator, try self.allocator.print("{s}-macos", .{arch}));
             },
             .IOSSIMULATOR, .TVOSSIMULATOR, .WATCHOSSIMULATOR, .VISIONOSSIMULATOR => {
                 // For Apple simulator targets, we need to link against the simulator host's libraries too.
-                try self.target_strings.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{s}-macos", .{arch}));
+                try self.target_strings.append(self.allocator, try self.allocator.print("{s}-macos", .{arch}));
             },
             else => {},
         }
@@ -796,15 +795,16 @@ pub const TargetMatcher = struct {
 
         const targets = switch (tbd) {
             .v3 => |v3| blk: {
-                var targets = std.array_list.Managed([]const u8).init(arena.allocator());
+                var targets: std.ArrayList([]const u8) = .empty;
+                const allocator = arena.allocator();
                 for (v3.archs) |arch| {
                     if (mem.eql(u8, v3.platform, "zippered")) {
                         // From Xcode 10.3 → 11.3.1, macos SDK .tbd files specify platform as 'zippered'
                         // which should map to [ '<arch>-macos', '<arch>-maccatalyst' ]
-                        try targets.append(try std.fmt.allocPrint(arena.allocator(), "{s}-macos", .{arch}));
-                        try targets.append(try std.fmt.allocPrint(arena.allocator(), "{s}-maccatalyst", .{arch}));
+                        try targets.append(allocator, try allocator.print("{s}-macos", .{arch}));
+                        try targets.append(allocator, try allocator.print("{s}-maccatalyst", .{arch}));
                     } else {
-                        try targets.append(try std.fmt.allocPrint(arena.allocator(), "{s}-{s}", .{ arch, v3.platform }));
+                        try targets.append(allocator, try allocator.print("{s}-{s}", .{ arch, v3.platform }));
                     }
                 }
                 break :blk targets.items;
@@ -903,7 +903,7 @@ const Export = struct {
     name: MachO.String,
     flags: Flags,
 
-    const Flags = packed struct {
+    const Flags = bitpack struct {
         abs: bool = false,
         weak: bool = false,
         tlv: bool = false,

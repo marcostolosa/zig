@@ -44,7 +44,7 @@ const msg_schedule: [7][16]u8 = .{
     .{ 11, 15, 5, 0, 1, 9, 8, 6, 14, 10, 2, 12, 3, 4, 7, 13 },
 };
 
-const Flags = packed struct(u8) {
+const Flags = bitpack struct(u8) {
     chunk_start: bool = false,
     chunk_end: bool = false,
     parent: bool = false,
@@ -1515,6 +1515,8 @@ test "BLAKE3 reference test cases" {
 }
 
 test "BLAKE3 parallel vs sequential" {
+    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1560,6 +1562,8 @@ test "BLAKE3 parallel vs sequential" {
 }
 
 test "BLAKE3 parallel with partial trailing chunk" {
+    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -1591,6 +1595,8 @@ test "BLAKE3 parallel with partial trailing chunk" {
 }
 
 test "BLAKE3 incremental parallel update" {
+    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
+
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 

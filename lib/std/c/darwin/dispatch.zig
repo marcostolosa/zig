@@ -71,7 +71,7 @@ pub inline fn get_main_queue() queue_main_t {
 pub const queue_priority_t = enum(c_long) {
     HIGH = 2,
     DEFAULT = 0,
-    LOW = -1,
+    LOW = -2,
     BACKGROUND = std.math.minInt(i16),
     _,
 };
@@ -91,7 +91,7 @@ pub inline fn QUEUE_CONCURRENT_INACTIVE() queue_attr_t {
 }
 pub const queue_attr_make_initially_inactive = dispatch_queue_attr_make_initially_inactive;
 pub const TARGET_QUEUE_DEFAULT: ?queue_t = null;
-pub const queue_create_with_target = dispatch_queue_create_with_target;
+pub const queue_create_with_target = @"dispatch_queue_create_with_target$V2";
 pub const queue_create = dispatch_queue_create;
 pub const CURRENT_QUEUE_LABEL: ?[*:0]const u8 = null;
 pub const queue_get_label = dispatch_queue_get_label;
@@ -132,7 +132,7 @@ const queue_attr_s = opaque {
 };
 extern "c" var _dispatch_queue_attr_concurrent: queue_attr_s;
 extern "c" fn dispatch_queue_attr_make_initially_inactive(attr: queue_attr_t) queue_attr_t;
-extern "c" fn dispatch_queue_create_with_target(label: ?[*:0]const u8, attr: queue_attr_t, target: ?queue_t) ?queue_t;
+extern "c" fn @"dispatch_queue_create_with_target$V2"(label: ?[*:0]const u8, attr: queue_attr_t, target: ?queue_t) ?queue_t;
 extern "c" fn dispatch_queue_create(label: ?[*:0]const u8, attr: queue_attr_t) ?queue_t;
 extern "c" fn dispatch_queue_get_label(queue: ?queue_t) [*:0]const u8;
 extern "c" fn dispatch_set_target_queue(object: object_t, queue: ?queue_t) void;
@@ -172,20 +172,20 @@ pub const SOURCE_TYPE_SIGNAL = &_dispatch_source_type_signal;
 pub const SOURCE_TYPE_TIMER = &_dispatch_source_type_timer;
 pub const SOURCE_TYPE_VNODE = &_dispatch_source_type_vnode;
 pub const SOURCE_TYPE_WRITE = &_dispatch_source_type_write;
-pub const source_mach_send_flags_t = packed struct(usize) {
+pub const source_mach_send_flags_t = bitpack struct(usize) {
     DEAD: bool = false,
     unused1: @Int(.unsigned, @bitSizeOf(usize) - 1) = 0,
 };
-pub const source_mach_recv_flags_t = packed struct(usize) {
+pub const source_mach_recv_flags_t = bitpack struct(usize) {
     unused0: @Int(.unsigned, @bitSizeOf(usize) - 0) = 0,
 };
-pub const source_memorypressure_flags_t = packed struct(usize) {
+pub const source_memorypressure_flags_t = bitpack struct(usize) {
     NORMAL: bool = false,
     WARN: bool = false,
     CRITICAL: bool = false,
     unused3: @Int(.unsigned, @bitSizeOf(usize) - 3) = 0,
 };
-pub const source_proc_flags_t = packed struct(usize) {
+pub const source_proc_flags_t = bitpack struct(usize) {
     unused0: u27 = 0,
     SIGNAL: bool = false,
     unused28: u1 = 0,
@@ -194,7 +194,7 @@ pub const source_proc_flags_t = packed struct(usize) {
     EXIT: bool = false,
     unused32: @Int(.unsigned, @bitSizeOf(usize) - 32) = 0,
 };
-pub const source_vnode_flags_t = packed struct(usize) {
+pub const source_vnode_flags_t = bitpack struct(usize) {
     DELETE: bool = false,
     WRITE: bool = false,
     EXTEND: bool = false,
@@ -206,11 +206,11 @@ pub const source_vnode_flags_t = packed struct(usize) {
     FUNLOCK: bool = false,
     unused9: @Int(.unsigned, @bitSizeOf(usize) - 9) = 0,
 };
-pub const source_timer_flags_t = packed struct(usize) {
+pub const source_timer_flags_t = bitpack struct(usize) {
     STRICT: bool = false,
     unused1: @Int(.unsigned, @bitSizeOf(usize) - 1) = 0,
 };
-pub const source_flags_t = packed union(usize) {
+pub const source_flags_t = bitpack union(usize) {
     raw: usize,
     MACH_SEND: source_mach_send_flags_t,
     MACH_RECV: source_mach_recv_flags_t,

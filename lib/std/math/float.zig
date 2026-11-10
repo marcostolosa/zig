@@ -12,10 +12,11 @@ pub const long_double = struct {
 
     inline fn bitWidth(x: anytype) u16 {
         const T = @TypeOf(x);
-        return switch (T) {
-            f80, f128, c_longdouble => @typeInfo(T).float.bits,
-            else => @compileError("Unsupported type: " ++ @typeName(T) ++ "\nPass a `f80`, `f128`, or `c_longdouble`."),
-        };
+        switch (@typeInfo(T)) {
+            .float => |float| if (float.bits >= 80) return float.bits,
+            else => {},
+        }
+        @compileError("Unsupported type: " ++ @typeName(T) ++ "\nPass a `f80`, `f128`, or `c_longdouble`.");
     }
 
     /// Returns the sign + exponent bits of a `long double`.
@@ -69,7 +70,7 @@ pub const long_double = struct {
 pub fn FloatRepr(comptime Float: type) type {
     const fractional_bits = floatFractionalBits(Float);
     const exponent_bits = floatExponentBits(Float);
-    return packed struct {
+    return bitpack struct {
         const Repr = @This();
 
         mantissa: StoredMantissa,
@@ -280,7 +281,7 @@ pub inline fn nan(comptime Type: type) Type {
     return reconstructFloat(
         RuntimeType,
         floatExponentMax(RuntimeType) + 1,
-        mantissaOne(RuntimeType) | 1 << (floatFractionalBits(RuntimeType) - 1),
+        mantissaOne(RuntimeType) | (1 << (floatFractionalBits(RuntimeType) - 1)),
     );
 }
 
@@ -296,7 +297,7 @@ pub inline fn snan(comptime Type: type) Type {
     return reconstructFloat(
         RuntimeType,
         floatExponentMax(RuntimeType) + 1,
-        mantissaOne(RuntimeType) | 1 << (floatFractionalBits(RuntimeType) - 2),
+        mantissaOne(RuntimeType) | (1 << (floatFractionalBits(RuntimeType) - 2)),
     );
 }
 

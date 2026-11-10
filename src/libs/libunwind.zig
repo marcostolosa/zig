@@ -41,7 +41,10 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
         .root_strip = comp.compilerRtStrip(),
         .link_libc = true,
         .any_unwind_tables = unwind_tables != .none,
+        .pic = if (target_util.supports_fpic(target)) true else null,
         .lto = comp.config.lto,
+        .function_sections = true,
+        .data_sections = true,
     }) catch |err| {
         comp.lockAndSetMiscFailure(
             .libunwind,
@@ -69,7 +72,6 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
             // necessary so that libunwind can unwind through its own stack frames
             // The old 32-bit x86 variant of SEH doesn't use tables.
             .unwind_tables = unwind_tables,
-            .pic = if (target_util.supports_fpic(target)) true else null,
             .optimize_mode = comp.compilerRtOptMode(),
             .code_model = comp.root_mod.code_model,
         },
@@ -88,47 +90,49 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
     const root_name = "unwind";
     var c_source_files: [unwind_src_list.len]Compilation.CSourceFile = undefined;
     for (unwind_src_list, 0..) |unwind_src, i| {
-        var cflags = std.array_list.Managed([]const u8).init(arena);
+        var cflags: std.ArrayList([]const u8) = .empty;
 
         switch (Compilation.classifyFileExt(unwind_src)) {
             .c => {
-                try cflags.appendSlice(&.{
+                try cflags.appendSlice(arena, &.{
                     "-std=c99",
                     "-fexceptions",
                 });
             },
             .cpp => {
-                try cflags.append("-fno-exceptions");
-                try cflags.append("-fno-rtti");
+                try cflags.append(arena, "-fno-exceptions");
+                try cflags.append(arena, "-fno-rtti");
             },
             .assembly_with_cpp => {},
             else => unreachable, // See `unwind_src_list`.
         }
-        try cflags.append("-w"); // Disable all warnings.
-        try cflags.append("-I");
-        try cflags.append(try comp.dirs.zig_lib.join(arena, &.{ "libunwind", "include" }));
-        try cflags.append("-D_LIBUNWIND_HIDE_SYMBOLS");
-        try cflags.append("-Wa,--noexecstack");
-        try cflags.append("-fvisibility=hidden");
-        try cflags.append("-fvisibility-inlines-hidden");
-        try cflags.append("-fvisibility-global-new-delete=force-hidden");
+        try cflags.appendSlice(arena, &.{
+            "-w", // Disable all warnings.
+            "-I",
+            try comp.dirs.zig_lib.join(arena, &.{ "libunwind", "include" }),
+            "-D_LIBUNWIND_HIDE_SYMBOLS",
+            "-Wa,--noexecstack",
+            "-fvisibility=hidden",
+            "-fvisibility-inlines-hidden",
+            "-fvisibility-global-new-delete=force-hidden",
+        });
 
         // This is intentionally always defined because the macro definition means, should it only
         // build for the target specified by compiler defines. Since we pass -target the compiler
         // defines will be correct.
-        try cflags.append("-D_LIBUNWIND_IS_NATIVE_ONLY");
+        try cflags.append(arena, "-D_LIBUNWIND_IS_NATIVE_ONLY");
 
         if (comp.root_mod.optimize_mode == .debug) {
-            try cflags.append("-D_DEBUG");
+            try cflags.append(arena, "-D_DEBUG");
         }
         if (!comp.config.any_non_single_threaded) {
-            try cflags.append("-D_LIBUNWIND_HAS_NO_THREADS");
+            try cflags.append(arena, "-D_LIBUNWIND_HAS_NO_THREADS");
         }
         if (target.os.tag == .haiku) {
-            try cflags.append("-D_LIBUNWIND_USE_HAIKU_BSD_LIB");
+            try cflags.append(arena, "-D_LIBUNWIND_USE_HAIKU_BSD_LIB");
         }
         if (target.cpu.arch.isArm() and target.abi.float() == .hard) {
-            try cflags.append("-DCOMPILER_RT_ARMHF_TARGET");
+            try cflags.append(arena, "-DCOMPILER_RT_ARMHF_TARGET");
         }
 
         c_source_files[i] = .{
@@ -152,15 +156,9 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
         .main_mod = null,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
-        .function_sections = true,
-        .data_sections = true,
         .c_source_files = &c_source_files,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
-        .verbose_air = comp.verbose_air,
-        .verbose_llvm_ir = comp.verbose_llvm_ir,
-        .verbose_llvm_bc = comp.verbose_llvm_bc,
-        .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .skip_linker_dependencies = true,
         .environ_map = comp.environ_map,

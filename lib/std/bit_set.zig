@@ -57,7 +57,7 @@ pub const IntegerBitSet = Integer;
 /// This set is good for sets with a small size, but may generate
 /// inefficient code for larger sets, especially in debug mode.
 pub fn Integer(comptime size: u16) type {
-    return packed struct(MaskInt) {
+    return bitpack struct(MaskInt) {
         const Self = @This();
 
         // TODO: Make this a comptime field once those are fixed
@@ -468,11 +468,11 @@ pub fn Array(comptime MaskIntType: type, comptime size: usize) type {
 
             if (start_mask_index == end_mask_index) {
                 var mask1 = std.math.boolMask(MaskInt, true) << start_bit;
-                var mask2 = std.math.boolMask(MaskInt, true) >> (mask_len - 1) - (end_bit - 1);
+                var mask2 = std.math.boolMask(MaskInt, true) >> ((mask_len - 1) - (end_bit - 1));
                 self.masks[start_mask_index] &= ~(mask1 & mask2);
 
                 mask1 = std.math.boolMask(MaskInt, value) << start_bit;
-                mask2 = std.math.boolMask(MaskInt, value) >> (mask_len - 1) - (end_bit - 1);
+                mask2 = std.math.boolMask(MaskInt, value) >> ((mask_len - 1) - (end_bit - 1));
                 self.masks[start_mask_index] |= mask1 & mask2;
             } else {
                 var bulk_mask_index: usize = undefined;
@@ -875,11 +875,11 @@ pub const Dynamic = struct {
 
         if (start_mask_index == end_mask_index) {
             var mask1 = std.math.boolMask(MaskInt, true) << start_bit;
-            var mask2 = std.math.boolMask(MaskInt, true) >> (@bitSizeOf(MaskInt) - 1) - (end_bit - 1);
+            var mask2 = std.math.boolMask(MaskInt, true) >> ((@bitSizeOf(MaskInt) - 1) - (end_bit - 1));
             self.masks[start_mask_index] &= ~(mask1 & mask2);
 
             mask1 = std.math.boolMask(MaskInt, value) << start_bit;
-            mask2 = std.math.boolMask(MaskInt, value) >> (@bitSizeOf(MaskInt) - 1) - (end_bit - 1);
+            mask2 = std.math.boolMask(MaskInt, value) >> ((@bitSizeOf(MaskInt) - 1) - (end_bit - 1));
             self.masks[start_mask_index] |= mask1 & mask2;
         } else {
             var bulk_mask_index: usize = undefined;

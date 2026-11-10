@@ -25,6 +25,7 @@ const InternPool = @import("../InternPool.zig");
 const AnalUnit = InternPool.AnalUnit;
 const Module = @import("../Module.zig");
 const Sema = @import("../Sema.zig");
+const debugLogScopeEnabled = @import("../main.zig").debugLogScopeEnabled;
 const target_util = @import("../target.zig");
 const tracy = @import("../tracy.zig");
 const trace = tracy.trace;
@@ -147,6 +148,12 @@ pub fn update(
         comp.link_queue.finishZcuQueue(comp);
     }
 
+    if (zcu.illegal_module_root) |_| {
+        // We cannot run AstGen because we failed to set up the module roots. We can return early
+        // because this is a guaranteed compile error.
+        return;
+    }
+
     {
         const tracy_trace = traceNamed(@src(), "astgen");
         defer tracy_trace.end();
@@ -202,11 +209,9 @@ pub fn update(
         // On the other hand, it's fine to directly iterate `zcu.embed_table.keys()` here
         // because `workerUpdateEmbedFile` can't invalidate it. The different here is that one
         // `@embedFile` can't trigger analysis of a new `@embedFile`!
-        for (0.., zcu.embed_table.keys()) |ef_index_usize, ef| {
+        for (0.., zcu.embed_table.keys()) |ef_index_usize, *ef| {
             const ef_index: Zcu.EmbedFile.Index = @fromBackingInt(@intCast(ef_index_usize));
-            astgen_group.async(io, workerUpdateEmbedFile, .{
-                comp, ef_index, ef,
-            });
+            astgen_group.async(io, workerUpdateEmbedFile, .{ comp, ef_index, ef });
         }
 
         try astgen_group.await(io);
@@ -218,8 +223,8 @@ pub fn update(
     // they belong to.
     const any_fatal_files = try pt.computeAliveFiles();
 
-    // If the cache mode is `whole`, add every alive source file to the manifest.
     switch (comp.cache_use) {
+        .none => {},
         .whole => |whole| if (whole.cache_manifest) |man| {
             for (zcu.alive_files.keys()) |file_index| {
                 const file = zcu.fileByIndex(file_index);
@@ -249,7 +254,11 @@ pub fn update(
                 };
             }
         },
-        .none, .incremental => {},
+        .incremental => {
+            // Do not include file contents in the cache manifest because we
+            // want the hash to be the same regardless of the contents of the
+            // source files so that incremental can do its thing.
+        },
     }
 
     if (comp.time_report) |*tr| {
@@ -1056,7 +1065,7 @@ pub fn ensureFilePopulated(pt: Zcu.PerThread, file_index: Zcu.File.Index) (Alloc
         .any_comptime_fields = struct_decl.field_comptime_bits != null,
         .any_field_defaults = struct_decl.field_default_body_lens != null,
         .any_field_aligns = struct_decl.field_align_body_lens != null,
-        .packed_backing_mode = if (struct_decl.backing_int_type_body != null) .explicit else .auto,
+        .bitpack_backing_mode = if (struct_decl.backing_int_type_body != null) .explicit else .auto,
     })) {
         .existing => unreachable, // it would have been set as `zcu.fileRootType` already
         .wip => |wip| wip,
@@ -1173,8 +1182,8 @@ fn analyzeMemoizedState(
     var analysis_arena: std.heap.ArenaAllocator = .init(gpa);
     defer analysis_arena.deinit();
 
-    var comptime_err_ret_trace: std.array_list.Managed(Zcu.LazySrcLoc) = .init(gpa);
-    defer comptime_err_ret_trace.deinit();
+    var comptime_err_ret_trace: std.ArrayList(Zcu.LazySrcLoc) = .empty;
+    defer comptime_err_ret_trace.deinit(gpa);
 
     var sema: Sema = .{
         .pt = pt,
@@ -1289,8 +1298,8 @@ fn analyzeComptimeUnit(pt: Zcu.PerThread, cu_id: InternPool.ComptimeUnit.Id) Zcu
     var analysis_arena: std.heap.ArenaAllocator = .init(gpa);
     defer analysis_arena.deinit();
 
-    var comptime_err_ret_trace: std.array_list.Managed(Zcu.LazySrcLoc) = .init(gpa);
-    defer comptime_err_ret_trace.deinit();
+    var comptime_err_ret_trace: std.ArrayList(Zcu.LazySrcLoc) = .empty;
+    defer comptime_err_ret_trace.deinit(gpa);
 
     var sema: Sema = .{
         .pt = pt,
@@ -1416,8 +1425,8 @@ pub fn ensureTypeLayoutUpToDate(
     var analysis_arena: std.heap.ArenaAllocator = .init(gpa);
     defer analysis_arena.deinit();
 
-    var comptime_err_ret_trace: std.array_list.Managed(Zcu.LazySrcLoc) = .init(gpa);
-    defer comptime_err_ret_trace.deinit();
+    var comptime_err_ret_trace: std.ArrayList(Zcu.LazySrcLoc) = .empty;
+    defer comptime_err_ret_trace.deinit(gpa);
 
     const file = zcu.namespacePtr(ty.getNamespaceIndex(zcu)).fileScope(zcu);
 
@@ -1528,8 +1537,8 @@ pub fn ensureStructDefaultsUpToDate(
     var analysis_arena: std.heap.ArenaAllocator = .init(gpa);
     defer analysis_arena.deinit();
 
-    var comptime_err_ret_trace: std.array_list.Managed(Zcu.LazySrcLoc) = .init(gpa);
-    defer comptime_err_ret_trace.deinit();
+    var comptime_err_ret_trace: std.ArrayList(Zcu.LazySrcLoc) = .empty;
+    defer comptime_err_ret_trace.deinit(gpa);
 
     const file = zcu.namespacePtr(ty.getNamespaceIndex(zcu)).fileScope(zcu);
 
@@ -1696,8 +1705,8 @@ fn analyzeNavVal(
     var analysis_arena: std.heap.ArenaAllocator = .init(gpa);
     defer analysis_arena.deinit();
 
-    var comptime_err_ret_trace: std.array_list.Managed(Zcu.LazySrcLoc) = .init(gpa);
-    defer comptime_err_ret_trace.deinit();
+    var comptime_err_ret_trace: std.ArrayList(Zcu.LazySrcLoc) = .empty;
+    defer comptime_err_ret_trace.deinit(gpa);
 
     var sema: Sema = .{
         .pt = pt,
@@ -1857,9 +1866,13 @@ fn analyzeNavVal(
     };
 
     if (is_owned_fn) {
-        // linksection etc are legal, except some targets do not support function alignment.
-        if (zir_decl.align_body != null and !target_util.supportsFunctionAlignment(zcu.getTarget())) {
-            return sema.fail(&block, align_src, "target does not support function alignment", .{});
+        // linksection etc are legal, except some targets do not support function alignment
+        // greater than 1. `align(1)` is a no-op, so it is allowed even on those targets.
+        if (zir_decl.align_body != null and
+            modifiers.@"align" != .@"1" and
+            !target_util.supportsFunctionAlignment(zcu.getTarget()))
+        {
+            return sema.fail(&block, align_src, "target does not support function alignment greater than 1", .{});
         }
     } else if (nav_ty.comptimeOnly(zcu)) {
         // alignment, linksection, addrspace annotations are not allowed for comptime-only types.
@@ -2069,8 +2082,8 @@ fn analyzeNavType(
     var analysis_arena: std.heap.ArenaAllocator = .init(gpa);
     defer analysis_arena.deinit();
 
-    var comptime_err_ret_trace: std.array_list.Managed(Zcu.LazySrcLoc) = .init(gpa);
-    defer comptime_err_ret_trace.deinit();
+    var comptime_err_ret_trace: std.ArrayList(Zcu.LazySrcLoc) = .empty;
+    defer comptime_err_ret_trace.deinit(gpa);
 
     var sema: Sema = .{
         .pt = pt,
@@ -2303,10 +2316,9 @@ fn analyzeFuncBody(
 
     const comp = zcu.comp;
 
-    const dump_air = build_options.enable_debug_extensions and comp.verbose_air;
-    const dump_llvm_ir = build_options.enable_debug_extensions and (comp.verbose_llvm_ir != null or comp.verbose_llvm_bc != null);
-
-    if (comp.bin_file != null or zcu.llvm_object != null or dump_air or dump_llvm_ir) {
+    if (comp.bin_file != null or zcu.llvm_object != null or log_air: {
+        break :log_air debugLogScopeEnabled("illegal-air") or debugLogScopeEnabled("legal-air") or debugLogScopeEnabled("air");
+    }) {
         zcu.codegen_prog_node.increaseEstimatedTotalItems(1);
         comp.link_prog_node.increaseEstimatedTotalItems(1);
 
@@ -2494,11 +2506,7 @@ pub fn doImport(
 }
 /// This is called once during `Compilation.create` and never again. "builtin" modules don't yet
 /// exist, so are not added to `module_roots` here. They must be added when they are created.
-pub fn populateModuleRootTable(pt: Zcu.PerThread) error{
-    OutOfMemory,
-    /// One of the specified modules had its root source file at an illegal path.
-    IllegalZigImport,
-}!void {
+pub fn populateModuleRootTable(pt: Zcu.PerThread) Allocator.Error!void {
     const zcu = pt.zcu;
     const comp = zcu.comp;
     const gpa = comp.gpa;
@@ -2507,7 +2515,7 @@ pub fn populateModuleRootTable(pt: Zcu.PerThread) error{
     // We'll initially add [mod, undefined] pairs, and when we reach the pair while
     // iterating, rewrite the undefined value.
     const roots = &zcu.module_roots;
-    roots.clearRetainingCapacity();
+    assert(roots.count() == 0);
 
     // Start with:
     // * `std_mod`, which is the main root of analysis
@@ -2542,7 +2550,9 @@ pub fn populateModuleRootTable(pt: Zcu.PerThread) error{
         errdefer path.deinit(gpa);
 
         if (try path.isIllegalZigImport(gpa, zcu.comp.dirs)) {
-            return error.IllegalZigImport;
+            // One of the specified modules had its root source file at an illegal path.
+            zcu.illegal_module_root = mod;
+            return;
         }
 
         const gop = try zcu.import_table.getOrPutAdapted(gpa, path, Zcu.ImportTableAdapter{ .zcu = zcu });
@@ -2781,15 +2791,21 @@ fn updateBuiltinModule(pt: Zcu.PerThread, opts: Builtin) Allocator.Error!struct 
     const gpa = comp.gpa;
     const io = comp.io;
 
-    const gop = try zcu.builtin_modules.getOrPut(gpa, opts.hash());
-    if (gop.found_existing) return .{ // the `File` is up-to-date
-        .file = zcu.module_roots.get(gop.value_ptr.*).?.unwrap().?,
-        .module_root = gop.value_ptr.*,
+    const mod: *Module = mod: {
+        const gop = try zcu.builtin_modules.getOrPut(gpa, opts.hash());
+        if (!gop.found_existing) {
+            errdefer _ = zcu.builtin_modules.pop();
+            gop.value_ptr.* = try .createBuiltin(comp.arena, opts, comp.dirs);
+        }
+        const mod = gop.value_ptr.*;
+        assert(std.mem.eql(u8, &mod.getBuiltinOptions(comp.config).hash(), gop.key_ptr)); // builtin is its own builtin
+        break :mod mod;
     };
-    errdefer _ = zcu.builtin_modules.pop();
 
-    const mod: *Module = try .createBuiltin(comp.arena, opts, comp.dirs);
-    assert(std.mem.eql(u8, &mod.getBuiltinOptions(comp.config).hash(), gop.key_ptr)); // builtin is its own builtin
+    if (zcu.module_roots.get(mod)) |file| {
+        // We have already loaded this builtin.zig before!
+        return .{ .file = file.unwrap().?, .module_root = mod };
+    }
 
     const path = try mod.root.join(gpa, comp.dirs, "builtin.zig");
     errdefer path.deinit(gpa);
@@ -2827,7 +2843,6 @@ fn updateBuiltinModule(pt: Zcu.PerThread, opts: Builtin) Allocator.Error!struct 
         .root_type = .none,
     });
 
-    gop.value_ptr.* = mod;
     file_gop.key_ptr.* = file_index;
     zcu.module_roots.putAssumeCapacityNoClobber(mod, file_index.toOptional());
     try opts.populateFile(gpa, file);
@@ -2883,22 +2898,19 @@ pub fn embedFile(
             return @fromBackingInt(@intCast(gop.index));
         }
         errdefer _ = zcu.embed_table.pop();
-        gop.key_ptr.* = try pt.newEmbedFile(path);
+        try pt.initEmbedFile(gop.key_ptr, path);
         return @fromBackingInt(@intCast(gop.index));
     }
 
-    const embed_file: *Zcu.EmbedFile, const embed_file_idx: Zcu.EmbedFile.Index = ef: {
+    const embed_file, const embed_file_idx: Zcu.EmbedFile.Index = ef: {
         const path = try cur_file.path.upJoin(gpa, zcu.comp.dirs, import_string);
         errdefer path.deinit(gpa);
         const gop = try zcu.embed_table.getOrPutAdapted(gpa, path, Zcu.EmbedTableAdapter{});
-        if (gop.found_existing) {
-            path.deinit(gpa); // we're not using this key
-            break :ef .{ gop.key_ptr.*, @fromBackingInt(@intCast(gop.index)) };
-        } else {
+        if (!gop.found_existing) {
             errdefer _ = zcu.embed_table.pop();
-            gop.key_ptr.* = try pt.newEmbedFile(path);
-            break :ef .{ gop.key_ptr.*, @fromBackingInt(@intCast(gop.index)) };
-        }
+            try pt.initEmbedFile(gop.key_ptr, path);
+        } else path.deinit(gpa); // we're not using this key
+        break :ef .{ gop.key_ptr, @fromBackingInt(@intCast(gop.index)) };
     };
 
     switch (embed_file.path.isNested(cur_file.mod.?.root)) {
@@ -2913,7 +2925,7 @@ pub fn updateEmbedFile(
     pt: Zcu.PerThread,
     ef: *Zcu.EmbedFile,
     /// If not `null`, the interned file data is stored here, if it was loaded.
-    /// `newEmbedFile` uses this to add the file to the `whole` cache manifest.
+    /// `initEmbedFile` uses this to add the file to the `whole` cache manifest.
     ip_str_out: ?*?InternPool.String,
 ) Allocator.Error!void {
     pt.updateEmbedFileInner(ef, ip_str_out) catch |err| switch (err) {
@@ -3000,17 +3012,13 @@ fn updateEmbedFileInner(
 }
 
 /// Assumes that `path` is allocated into `gpa`. Takes ownership of `path` on success.
-fn newEmbedFile(pt: Zcu.PerThread, path: Compilation.Path) EmbedFileError!*Zcu.EmbedFile {
+fn initEmbedFile(pt: Zcu.PerThread, ef: *Zcu.EmbedFile, path: Compilation.Path) EmbedFileError!void {
     const zcu = pt.zcu;
     const comp = zcu.comp;
     const io = comp.io;
-    const gpa = comp.gpa;
     const ip = &zcu.intern_pool;
 
-    const new_file = try gpa.create(Zcu.EmbedFile);
-    errdefer gpa.destroy(new_file);
-
-    new_file.* = .{
+    ef.* = .{
         .path = path,
         .val = .none,
         .err = null,
@@ -3018,7 +3026,7 @@ fn newEmbedFile(pt: Zcu.PerThread, path: Compilation.Path) EmbedFileError!*Zcu.E
     };
 
     var opt_ip_str: ?InternPool.String = null;
-    try pt.updateEmbedFile(new_file, &opt_ip_str);
+    try pt.updateEmbedFile(ef, &opt_ip_str);
 
     try comp.appendFileSystemInput(path);
 
@@ -3031,19 +3039,17 @@ fn newEmbedFile(pt: Zcu.PerThread, path: Compilation.Path) EmbedFileError!*Zcu.E
         const man = whole.cache_manifest orelse break :cache;
         const ip_str = opt_ip_str orelse break :cache; // this will be a compile error
 
-        const array_len = Value.fromInterned(new_file.val).typeOf(zcu).childType(zcu).arrayLen(zcu);
+        const array_len = Value.fromInterned(ef.val).typeOf(zcu).childType(zcu).arrayLen(zcu);
         const contents = ip_str.toSlice(array_len, ip);
 
         try whole.cache_manifest_mutex.lock(io);
         defer whole.cache_manifest_mutex.unlock(io);
 
-        path.addToCacheManifestAsDiscovered(man, &comp.dirs, contents, new_file.stat) catch |err| switch (err) {
+        path.addToCacheManifestAsDiscovered(man, &comp.dirs, contents, ef.stat) catch |err| switch (err) {
             error.FileSystemFailure => unreachable, // contents and stat are both provided
             else => |e| return e,
         };
     }
-
-    return new_file;
 }
 
 pub fn scanNamespace(
@@ -3242,9 +3248,9 @@ const ScanDeclIter = struct {
                 // Perhaps we should add all test indiscriminately and filter at the end of the update.
                 if (!comp.config.is_test) break :a false;
                 if (file.mod != zcu.main_mod) break :a false;
-                if (is_named and comp.test_filters.len > 0) {
+                if (is_named and zcu.test_filters.len > 0) {
                     const fqn_slice = fqn.toSlice(ip);
-                    for (comp.test_filters) |test_filter| {
+                    for (zcu.test_filters) |test_filter| {
                         if (std.mem.find(u8, fqn_slice, test_filter) != null) break;
                     } else break :a false;
                 }
@@ -3304,8 +3310,8 @@ fn analyzeFuncBodyInner(
     var analysis_arena = std.heap.ArenaAllocator.init(gpa);
     defer analysis_arena.deinit();
 
-    var comptime_err_ret_trace = std.array_list.Managed(Zcu.LazySrcLoc).init(gpa);
-    defer comptime_err_ret_trace.deinit();
+    var comptime_err_ret_trace: std.ArrayList(Zcu.LazySrcLoc) = .empty;
+    defer comptime_err_ret_trace.deinit(gpa);
 
     // In the case of a generic function instance, this is the type of the
     // instance, which has comptime parameters elided. In other words, it is
@@ -3569,25 +3575,6 @@ pub fn getErrorValueFromSlice(pt: Zcu.PerThread, name: []const u8) Allocator.Err
     const gpa = comp.gpa;
     const io = comp.io;
     return pt.getErrorValue(try pt.zcu.intern_pool.getOrPutString(gpa, io, name));
-}
-
-/// Asserts that `slice.len` is *not* undef.
-pub fn sliceToArrayPtr(pt: Zcu.PerThread, slice: InternPool.Key.Slice) Allocator.Error!Value {
-    const zcu = pt.zcu;
-    const slice_info = Type.fromInterned(slice.ty).ptrInfo(zcu);
-    const array_ty = try pt.arrayType(.{
-        .len = Value.fromInterned(slice.len).toUnsignedInt(zcu),
-        .child = slice_info.child,
-        .sentinel = slice_info.sentinel,
-    });
-    const ptr_ty = try pt.ptrType(ptr_info: {
-        var ptr_info = slice_info;
-        ptr_info.flags.size = .one;
-        ptr_info.child = array_ty.toIntern();
-        ptr_info.sentinel = .none;
-        break :ptr_info ptr_info;
-    });
-    return pt.getCoerced(.fromInterned(slice.ptr), ptr_ty);
 }
 
 /// Removes any entry from `Zcu.failed_files` associated with `file`. Acquires `Compilation.mutex` as needed.
@@ -3865,7 +3852,7 @@ pub fn reportRetryableFileError(
 
     file.status = .retryable_failure;
 
-    const msg = try std.fmt.allocPrint(gpa, format, args);
+    const msg = try gpa.print(format, args);
     errdefer gpa.free(msg);
 
     const old_msg: ?[]u8 = old_msg: {
@@ -4234,10 +4221,10 @@ pub fn floatValue(pt: Zcu.PerThread, ty: Type, x: anytype) Allocator.Error!Value
     } }));
 }
 
-/// Create a value whose type is a `packed struct` or `packed union`, from the backing integer value.
+/// Create a value whose type is a `bitpack struct` or `bitpack union`, from the backing integer value.
 pub fn bitpackValue(pt: Zcu.PerThread, ty: Type, backing_int_val: Value) Allocator.Error!Value {
     assert(backing_int_val.typeOf(pt.zcu).toIntern() == ty.backingIntType(pt.zcu).toIntern());
-    return .fromInterned(try pt.intern(.{ .bitpack = .{
+    return .fromInterned(try pt.intern(.{ .@"bitpack" = .{
         .ty = ty.toIntern(),
         .backing_int_val = backing_int_val.toIntern(),
     } }));
@@ -4487,7 +4474,7 @@ pub fn runCodegen(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) Ru
             error.OutOfMemory => comp.setAllocFailure(),
             error.AlreadyReported => {},
             error.NoLinkFile => assert(comp.bin_file == null),
-            error.BackendDoesNotProduceMir => switch (target_util.zigBackend(
+            error.BackendDoesNotProduceMir => switch (std.zig.compilerBackend(
                 &zcu.root_mod.resolved_target.result,
                 comp.config.use_llvm,
             )) {
@@ -4522,32 +4509,33 @@ fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) e
     tracy_trace.addText(fqn.toSlice(ip));
     tracy_trace.addTextFmt("func_ip_index={d}", .{func_index});
 
-    Air.Verify.run(pt, func_index, air);
-
-    if (codegen.legalizeFeatures(pt, nav)) |features| {
-        try air.legalize(pt, features);
-        // Verify the AIR again post-legalization.
-        Air.Verify.run(pt, func_index, air);
-    }
-
-    var liveness: ?Air.Liveness = if (codegen.wantsLiveness(pt, nav))
-        try .analyze(zcu, air.*, ip)
-    else
-        null;
+    var liveness: ?Air.Liveness = null;
     defer if (liveness) |*l| l.deinit(gpa);
 
-    if (build_options.enable_debug_extensions and comp.verbose_air) p: {
-        const io = comp.io;
-        const stderr = try io.lockStderr(&.{}, null);
-        defer io.unlockStderr();
-        printVerboseAir(pt, liveness, fqn, air, &stderr.file_writer.interface) catch |err| switch (err) {
-            error.WriteFailed => switch (stderr.file_writer.err.?) {
-                error.Canceled => |e| return e,
-                else => break :p,
-            },
-        };
-    }
+    const ap: Air.Print = .{
+        .zcu = zcu,
+        .fqn = fqn,
+        .air = air,
+        .liveness = &liveness,
+    };
+    std.log.scoped(.@"illegal-air").debug("{f}", .{&ap});
 
+    const skip_verify: bool = if (codegen.legalizeFeatures(pt, nav)) |features| skip_verify: {
+        // Verify the AIR pre-legalization, and we will do it again post-legalization.
+        const verify_ok: bool = switch (Air.Verify.run(pt, func_index, air)) {
+            .success => true,
+            .fail => false,
+        };
+        try air.legalize(pt, features);
+        // If the first verify failed, don't run it again; it'll probably just fail again.
+        break :skip_verify !verify_ok;
+    } else false;
+
+    std.log.scoped(.@"legal-air").debug("{f}", .{&ap});
+    if (!skip_verify) _ = Air.Verify.run(pt, func_index, air);
+
+    if (codegen.wantsLiveness(pt, nav)) liveness = try .analyze(zcu, air.*, ip);
+    std.log.scoped(.air).debug("{f}", .{&ap});
     if (std.debug.runtime_safety) verify_liveness: {
         var verify: Air.Liveness.Verify = .{
             .gpa = gpa,
@@ -4576,18 +4564,4 @@ fn runCodegenInner(pt: Zcu.PerThread, func_index: InternPool.Index, air: *Air) e
     const lf = comp.bin_file orelse return error.NoLinkFile;
 
     return codegen.generateFunction(lf, pt, func_index, air, &liveness);
-}
-
-fn printVerboseAir(
-    pt: Zcu.PerThread,
-    liveness: ?Air.Liveness,
-    fqn: InternPool.NullTerminatedString,
-    air: *const Air,
-    w: *Io.Writer,
-) Io.Writer.Error!void {
-    const zcu = pt.zcu;
-    const ip = &zcu.intern_pool;
-    try w.print("# Begin Function AIR: {f}:\n", .{fqn.fmt(ip)});
-    try air.write(w, zcu, liveness);
-    try w.print("# End Function AIR: {f}\n\n", .{fqn.fmt(ip)});
 }

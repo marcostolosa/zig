@@ -56,6 +56,10 @@ pub fn make(
     defer man.deinit();
 
     var tmp_dir_path: ["tmp".len + Dir.path.sep_str.len + std.fmt.hex(@as(u64, 0)).len]u8 = undefined;
+    var delete_tmp_dir = false;
+    const tmp_path: Path = .{ .root_dir = cache_root, .sub_path = &tmp_dir_path };
+    defer if (delete_tmp_dir) tmp_path.root_dir.handle.deleteTree(io, tmp_path.sub_path) catch |err|
+        std.log.warn("failed to remove tree {qf}: {t}", .{ tmp_path, err });
 
     const has_side_effects = has_side_effects: {
         if (conf_run.environ_map.value) |environ_map_index| {
@@ -573,16 +577,16 @@ pub fn make(
             const digest = man.hitDigestHex();
             try populateGeneratedStdIo(maker, &conf_run, &digest);
             try populateGeneratedPaths(maker, output_placeholders.items, &digest);
-            step.result_cached = true;
+            step.result_cache_status = .hit;
             return;
         }
 
         if (!any_discovered_inputs) {
             // We already know the final output paths; use them directly.
-            const digest = if (has_side_effects) man.hash.final() else man.missDigestHex();
+            const digest = missDigest(&man, has_side_effects);
             const output_dir_path = "o" ++ Dir.path.sep_str ++ &digest;
             try populateGeneratedStdIo(maker, &conf_run, &digest);
-            try populateGeneratedPathsCreateDirs(arena, run_index, maker, output_dir_path, output_placeholders.items, switch (conf_run.flags.stdio) {
+            try populateGeneratedPathsCreateDirs(arena, run_index, maker, output_dir_path, null, output_placeholders.items, switch (conf_run.flags.stdio) {
                 .infer_from_args, .inherit, .check, .zig_test => .{ .argv = argv_list.items },
                 .protocol => .{ .protocol = .{
                     .owned_dirs = &owned_dirs,
@@ -612,7 +616,7 @@ pub fn make(
         io.random(@ptrCast(&rand_int));
         tmp_dir_path = ("tmp" ++ Dir.path.sep_str ++ std.fmt.hex(rand_int)).*;
 
-        try populateGeneratedPathsCreateDirs(arena, run_index, maker, &tmp_dir_path, output_placeholders.items, switch (conf_run.flags.stdio) {
+        try populateGeneratedPathsCreateDirs(arena, run_index, maker, &tmp_dir_path, &delete_tmp_dir, output_placeholders.items, switch (conf_run.flags.stdio) {
             .infer_from_args, .inherit, .check, .zig_test => .{ .argv = argv_list.items },
             .protocol => .{ .protocol = .{
                 .owned_dirs = &owned_dirs,
@@ -685,14 +689,13 @@ pub fn make(
         }
     }
 
-    const digest = if (has_side_effects) man.hash.final() else man.missDigestHex();
+    const digest = missDigest(&man, has_side_effects);
 
     const any_output = output_placeholders.items.len > 0 or
         conf_run.captured_stdout.value != null or conf_run.captured_stderr.value != null;
 
     if (any_output) {
         // Rename into place.
-        const tmp_path: Path = .{ .root_dir = cache_root, .sub_path = &tmp_dir_path };
         const dst_path: Path = .{ .root_dir = cache_root, .sub_path = "o" ++ Dir.path.sep_str ++ &digest };
         Dir.rename(
             tmp_path.root_dir.handle,
@@ -719,6 +722,11 @@ pub fn make(
                 tmp_path, dst_path, err,
             }),
         };
+        delete_tmp_dir = false;
+    } else {
+        delete_tmp_dir = false;
+        tmp_path.root_dir.handle.deleteTree(io, tmp_path.sub_path) catch |err|
+            return step.fail(maker, "failed to remove tree {qf}: {t}", .{ tmp_path, err });
     }
 
     if (has_side_effects) {
@@ -795,6 +803,7 @@ fn waitZigTest(
     multi_reader: *Io.File.MultiReader,
     opt_metadata: *?TestMetadata,
     results: *Step.TestResults,
+    eb_wip: *std.zig.ErrorBundle.Wip,
 ) !union(enum) {
     write_failed: anyerror,
     no_poll: struct {
@@ -810,6 +819,9 @@ fn waitZigTest(
     const gpa = maker.gpa;
     const io = graph.io;
     const step = maker.stepByIndex(run_index);
+    const conf = &maker.scanned_config.configuration;
+    const conf_step = run_index.ptr(conf);
+    const conf_run = conf_step.extended.get(conf.extra).run;
 
     const stdout = multi_reader.reader(0);
     const stderr = multi_reader.reader(1);
@@ -842,15 +854,19 @@ fn waitZigTest(
 
     var last_update: Io.Clock.Timestamp = .now(io, .awake);
 
+    const test_timeout_ns = if (maker.unit_test_timeout_ns) |global_test_timeout_ns|
+        global_test_timeout_ns * (conf_run.protocol_test_timeout_scale.value orelse 1)
+    else
+        null;
     // This timeout is used when we're waiting on the test runner itself rather than a user-specified
     // test. For instance, if the test runner leaves this much time between us requesting a test to
     // start and it acknowledging the test starting, we terminate the child and raise an error. This
     // *should* never happen, but could in theory be caused by some very unlucky IB in a test.
-    const response_timeout: Io.Clock.Duration = t: {
-        const ns = @max(maker.unit_test_timeout_ns orelse 0, 60 * std.time.ns_per_s);
-        break :t .{ .clock = .awake, .raw = .fromNanoseconds(ns) };
+    const response_timeout: Io.Clock.Duration = .{
+        .clock = .awake,
+        .raw = .fromNanoseconds(@max(test_timeout_ns orelse 0, 60 * std.time.ns_per_s)),
     };
-    const test_timeout: ?Io.Clock.Duration = if (maker.unit_test_timeout_ns) |ns| .{
+    const test_timeout: ?Io.Clock.Duration = if (test_timeout_ns) |ns| .{
         .clock = .awake,
         .raw = .fromNanoseconds(ns),
     } else null;
@@ -885,7 +901,7 @@ fn waitZigTest(
                     .{ builtin.zig_version_string, body },
                 );
             },
-            .error_bundle => step.result_error_bundle = try std.zig.Server.allocErrorBundle(gpa, body),
+            .error_bundle => try eb_wip.addBundleAsRoots(try std.zig.Server.allocErrorBundle(arena, body)),
             .test_metadata => {
                 // `metadata` would only be populated if we'd already seen a `test_metadata`, but we
                 // only request it once (and importantly, we don't re-request it if we kill and
@@ -1150,7 +1166,7 @@ const FuzzTestRunner = struct {
                 return step.fail(
                     maker,
                     "unable to write stdin ({t}); test process unexpectedly {f}",
-                    .{ write_err, fmtTerm(term) },
+                    .{ write_err, term },
                 );
             };
 
@@ -1358,10 +1374,10 @@ const FuzzTestRunner = struct {
         instance.child.stdin.?.close(io);
         instance.child.stdin = null;
         const term = try instance.child.wait(io);
-        if (!termMatches(.{ .exited = 0 }, term)) {
+        if (!term.eql(.{ .exited = 0 })) {
             step.takeResultStderr(gpa, try f.mergedStderr(gpa));
             try f.saveCrash(id, term);
-            return step.fail(maker, "test process unexpectedly {f}", .{fmtTerm(term)});
+            return step.fail(maker, "test process unexpectedly {f}", .{term});
         }
     }
 
@@ -1445,10 +1461,15 @@ const FuzzTestRunner = struct {
                 cache_root, crash_name, out_w.err.?,
             }),
         };
+        out_w.interface.flush() catch |err| switch (err) {
+            error.WriteFailed => return step.fail(maker, "failed to write file '{f}{s}': {t}", .{
+                cache_root, crash_name, out_w.err.?,
+            }),
+        };
 
         return step.fail(maker, "test '{s}' {f}; input saved to '{f}{s}'", .{
             run.fuzz_tests.items[header.test_i],
-            fmtTerm(term),
+            term,
             cache_root,
             crash_name,
         });
@@ -1573,6 +1594,9 @@ fn evalZigTest(
     };
     var test_metadata: ?TestMetadata = null;
 
+    var eb_wip: std.zig.ErrorBundle.Wip = try .init(gpa);
+    defer eb_wip.deinit();
+
     while (true) {
         var child = try process.spawn(io, spawn_options);
         var multi_reader_buffer: Io.File.MultiReader.Buffer(2) = undefined;
@@ -1602,6 +1626,7 @@ fn evalZigTest(
             &multi_reader,
             &test_metadata,
             &test_results,
+            &eb_wip,
         )) {
             .write_failed => |err| {
                 // The runner unexpectedly closed a stdio pipe, which means a crash. Make sure we've captured
@@ -1627,7 +1652,7 @@ fn evalZigTest(
                 // The individual unit test results are irrelevant: the test runner itself broke!
                 // Fail immediately without populating `s.test_results`.
                 return step.fail(maker, "unable to write stdin ({t}); test process unexpectedly {f}", .{
-                    err, fmtTerm(term),
+                    err, term,
                 });
             },
             .no_poll => |no_poll| {
@@ -1655,7 +1680,7 @@ fn evalZigTest(
                     test_results.crash_count += 1;
                     try step.addError(maker, "'{s}' {f}{s}{s}", .{
                         test_metadata.?.testName(test_index),
-                        fmtTerm(term),
+                        term,
                         if (stderr_owned.len != 0) " with stderr:\n" else "",
                         std.mem.trim(u8, stderr_owned, "\n"),
                     });
@@ -1667,10 +1692,10 @@ fn evalZigTest(
                 keep_stderr_owned = true;
 
                 const tests_done = test_metadata != null and test_metadata.?.next_index == std.math.maxInt(u32);
-                if (!tests_done or !termMatches(.{ .exited = 0 }, term)) {
+                if (!tests_done or !term.eql(.{ .exited = 0 })) {
                     // The individual unit test results are irrelevant: the test runner itself broke!
                     // Fail immediately without populating `s.test_results`.
-                    return step.fail(maker, "test process unexpectedly {f}", .{fmtTerm(term)});
+                    return step.fail(maker, "test process unexpectedly {f}", .{term});
                 }
 
                 // We're done with all of the tests! Commit the test results and return.
@@ -1687,6 +1712,7 @@ fn evalZigTest(
                         }
                     }
                 }
+                step.result_error_bundle = try eb_wip.toOwnedBundle("");
                 return;
             },
             .timeout => |timeout| {
@@ -2041,6 +2067,7 @@ fn populateGeneratedPathsCreateDirs(
     run_index: Configuration.Step.Index,
     maker: *Maker,
     output_dir_path: []const u8,
+    output_dir_created: ?*bool,
     output_placeholders: []const IndexedOutput,
     populate: union(enum) {
         argv: [][]const u8,
@@ -2078,6 +2105,7 @@ fn populateGeneratedPathsCreateDirs(
         };
         create_path.root_dir.handle.createDirPath(io, create_path.sub_path) catch |err|
             return step.fail(maker, "unable to make path {qf}: {t}", .{ create_path, err });
+        if (output_dir_created) |dir_created| dir_created.* = true;
 
         switch (populate) {
             .argv => |argv| {
@@ -2138,20 +2166,6 @@ fn populateGeneratedStdIo(
             "o", digest, captured.basename.slice(conf),
         });
     }
-}
-
-fn formatTerm(term: ?process.Child.Term, w: *std.Io.Writer) std.Io.Writer.Error!void {
-    if (term) |t| switch (t) {
-        .exited => |code| try w.print("exited with code {d}", .{code}),
-        .signal => |sig| try w.print("terminated with signal {t}", .{sig}),
-        .stopped => |sig| try w.print("stopped with signal {t}", .{sig}),
-        .unknown => |code| try w.print("terminated for unknown reason with code {d}", .{code}),
-    } else {
-        try w.writeAll("exited with any code");
-    }
-}
-fn fmtTerm(term: ?process.Child.Term) std.fmt.Alt(?process.Child.Term, formatTerm) {
-    return .{ .data = term };
 }
 
 const FuzzContext = struct {
@@ -2526,10 +2540,9 @@ fn runCommand(
                     .stopped => .{ .stopped = @fromBackingInt(@intCast(expected_term_value)) },
                     .unknown => .{ .unknown = expected_term_value },
                 };
-                if (!termMatches(expected_term, generic_result.term)) {
-                    return step.fail(maker, "process {f} (expected {f})", .{
-                        fmtTerm(generic_result.term),
-                        fmtTerm(expected_term),
+                if (!generic_result.term.eql(expected_term)) {
+                    return step.fail(maker, "process {f}, expected to have {f}", .{
+                        generic_result.term, expected_term,
                     });
                 }
             }
@@ -2597,7 +2610,7 @@ fn runCommand(
         },
         else => {
             // On failure, report captured stderr like normal standard error output.
-            if (!generic_result.term.success()) {
+            if (!generic_result.term.eql(.success)) {
                 if (generic_result.stderr) |bytes| {
                     try step.setResultStderr(gpa, bytes);
                 }
@@ -2790,30 +2803,6 @@ fn spawnChildAndCollect(
     }
 }
 
-fn termMatches(expected: ?process.Child.Term, actual: process.Child.Term) bool {
-    return if (expected) |e| switch (e) {
-        .exited => |expected_code| switch (actual) {
-            .exited => |actual_code| expected_code == actual_code,
-            else => false,
-        },
-        .signal => |expected_sig| switch (actual) {
-            .signal => |actual_sig| expected_sig == actual_sig,
-            else => false,
-        },
-        .stopped => |expected_sig| switch (actual) {
-            .stopped => |actual_sig| expected_sig == actual_sig,
-            else => false,
-        },
-        .unknown => |expected_code| switch (actual) {
-            .unknown => |actual_code| expected_code == actual_code,
-            else => false,
-        },
-    } else switch (actual) {
-        .exited => true,
-        else => false,
-    };
-}
-
 fn setColorEnvironmentVariables(
     conf_run: *const Configuration.Step.Run,
     environ_map: *EnvMap,
@@ -2968,4 +2957,26 @@ fn failForeign(
             return step.fail(maker, "unable to spawn foreign binary '{s}'", .{argv0});
         },
     }
+}
+
+fn missDigest(man: *Cache.Manifest, has_side_effects: bool) Cache.HexDigest {
+    if (!has_side_effects) {
+        return man.missDigestHex();
+    }
+
+    // If there are side effects, then we have populated the manifest as usual, but we only need the
+    // input digest (we may use it to create a unique name for a directory of output files). We have
+    // not called `man.check`, because there is no point actually checking the cache; however, that
+    // means that the input paths have not been added to `man.hash.hasher` yet, because that is
+    // usually handled by `check`. Therefore we need to manually add those paths to the hasher. If
+    // we didn't do this, our digest would not depend on the input paths, which would result in hash
+    // collisions, which in turn could cause different `Run` steps to clobber one another's work.
+    assert(man.state == .input);
+    assert(man.manifest_file == null);
+    var hasher = man.hash.hasher;
+    for (man.files.keys()[0..man.input_paths.items.len]) |file_off| {
+        const flags_and_path = file_off.flagsAndPath(man.contents.items);
+        hasher.update(mem.absorbSentinel(flags_and_path));
+    }
+    return Cache.binToHex(hasher.finalResult());
 }

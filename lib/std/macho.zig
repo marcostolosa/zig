@@ -9,7 +9,7 @@ const Allocator = mem.Allocator;
 
 pub const cpu_type_t = c_int;
 pub const cpu_subtype_t = c_int;
-pub const vm_prot_t = packed struct(u32) {
+pub const vm_prot_t = bitpack struct(u32) {
     READ: bool = false,
     WRITE: bool = false,
     EXEC: bool = false,
@@ -870,8 +870,8 @@ pub const nlist = extern struct {
 
 pub const nlist_64 = extern struct {
     n_strx: u32,
-    n_type: packed union(u8) {
-        bits: packed struct(u8) {
+    n_type: bitpack union(u8) {
+        bits: bitpack struct(u8) {
             ext: bool,
             type: enum(u3) {
                 undf = 0,
@@ -920,7 +920,7 @@ pub const nlist_64 = extern struct {
         },
     },
     n_sect: u8,
-    n_desc: packed struct(u16) {
+    n_desc: bitpack struct(u16) {
         _pad0: u3 = 0,
         arm_thumb_def: bool,
         referenced_dynamically: bool,
@@ -948,7 +948,7 @@ pub const nlist_64 = extern struct {
 /// This modification is required to support symbols in an arbitrary number of
 /// sections not just the three sections (text, data and bss) in a 4.3BSD file.
 /// Also the last 4 bits have had the r_type tag added to them.
-pub const relocation_info = packed struct {
+pub const relocation_info = bitpack struct(u64) {
     /// offset in the section to what is being relocated
     r_address: i32,
 
@@ -2092,7 +2092,7 @@ pub const unwind_info_compressed_second_level_page_header = extern struct {
     // encodings array
 };
 
-pub const UnwindInfoCompressedEntry = packed struct(u32) {
+pub const UnwindInfoCompressedEntry = bitpack struct(u32) {
     funcOffset: u24,
     encodingIndex: u8,
 };
@@ -2137,6 +2137,7 @@ pub const UNWIND_ARM64_MODE = enum(u4) {
     FRAMELESS = 2,
     DWARF = 3,
     FRAME = 4,
+    FRAME_PAUTH_LR = 5,
 };
 
 pub const UNWIND_ARM64_FRAME_X19_X20_PAIR: u32 = 0x00000001;
@@ -2152,10 +2153,10 @@ pub const UNWIND_ARM64_FRAME_D14_D15_PAIR: u32 = 0x00000800;
 pub const UNWIND_ARM64_FRAMELESS_STACK_SIZE_MASK: u32 = 0x00FFF000;
 pub const UNWIND_ARM64_DWARF_SECTION_OFFSET: u32 = 0x00FFFFFF;
 
-pub const CompactUnwindEncoding = packed struct(u32) {
-    value: packed union {
-        x86_64: packed union {
-            frame: packed struct(u24) {
+pub const CompactUnwindEncoding = bitpack struct(u32) {
+    value: bitpack union {
+        x86_64: bitpack union {
+            frame: bitpack struct(u24) {
                 reg4: u3,
                 reg3: u3,
                 reg2: u3,
@@ -2164,15 +2165,15 @@ pub const CompactUnwindEncoding = packed struct(u32) {
                 unused: u1 = 0,
                 frame_offset: u8,
             },
-            frameless: packed struct(u24) {
+            frameless: bitpack struct(u24) {
                 stack_reg_permutation: u10,
                 stack_reg_count: u3,
-                stack: packed union {
-                    direct: packed struct(u11) {
+                stack: bitpack union {
+                    direct: bitpack struct(u11) {
                         _: u3,
                         stack_size: u8,
                     },
-                    indirect: packed struct(u11) {
+                    indirect: bitpack struct(u11) {
                         stack_adjust: u3,
                         sub_offset: u8,
                     },
@@ -2180,31 +2181,32 @@ pub const CompactUnwindEncoding = packed struct(u32) {
             },
             dwarf: u24,
         },
-        arm64: packed union {
-            frame: packed struct(u24) {
-                x_reg_pairs: packed struct(u5) {
+        arm64: bitpack union {
+            frame: bitpack struct(u24) {
+                x_reg_pairs: bitpack struct(u5) {
                     x19_x20: u1,
                     x21_x22: u1,
                     x23_x24: u1,
                     x25_x26: u1,
                     x27_x28: u1,
                 },
-                d_reg_pairs: packed struct(u4) {
+                unused: u3 = 0,
+                d_reg_pairs: bitpack struct(u4) {
                     d8_d9: u1,
                     d10_d11: u1,
                     d12_d13: u1,
                     d14_d15: u1,
                 },
-                _: u15,
+                _: u12,
             },
-            frameless: packed struct(u24) {
+            frameless: bitpack struct(u24) {
                 _: u12 = 0,
                 stack_size: u12,
             },
             dwarf: u24,
         },
     },
-    mode: packed union {
+    mode: bitpack union {
         x86_64: UNWIND_X86_64_MODE,
         arm64: UNWIND_ARM64_MODE,
     },
@@ -2220,3 +2222,133 @@ pub const CompactUnwindEncoding = packed struct(u32) {
 pub const ARMAG = "!<arch>\n";
 /// String in ar_fmag at the end of each header.
 pub const ARFMAG = "`\n";
+
+pub const SYMDEF = "__.SYMDEF";
+pub const SYMDEF64 = "__.SYMDEF_64";
+pub const SYMDEF_SORTED = "__.SYMDEF SORTED";
+pub const SYMDEF64_SORTED = "__.SYMDEF_64 SORTED";
+
+pub const ar_hdr = extern struct {
+    /// Member file name, sometimes / terminated.
+    ar_name: [16]u8,
+    /// File date, decimal seconds since Epoch.
+    ar_date: [12]u8,
+    /// User ID, in ASCII format.
+    ar_uid: [6]u8,
+    /// Group ID, in ASCII format.
+    ar_gid: [6]u8,
+    /// File mode, in ASCII octal.
+    ar_mode: [8]u8,
+    /// File size, in ASCII decimal.
+    ar_size: [10]u8,
+    /// Always contains ARFMAG.
+    ar_fmag: [2]u8,
+
+    pub fn date(hdr: *const ar_hdr) std.fmt.ParseIntError!u64 {
+        const value = mem.trimEnd(u8, &hdr.ar_date, " ");
+        return std.fmt.parseInt(u64, value, 10);
+    }
+
+    pub fn size(hdr: *const ar_hdr) std.fmt.ParseIntError!u32 {
+        const value = mem.trimEnd(u8, &hdr.ar_size, " ");
+        return std.fmt.parseInt(u32, value, 10);
+    }
+
+    /// Asserts that `nameLength(hdr)` is `null` and returns the short name of the archive member.
+    pub fn name(hdr: *const ar_hdr) []const u8 {
+        assert(hdr.nameLength() == null);
+        return mem.sliceTo(&hdr.ar_name, '/');
+    }
+
+    pub fn nameLength(hdr: *const ar_hdr) ?u32 {
+        if (!mem.startsWith(u8, &hdr.ar_name, "#1/")) return null;
+        const trimmed = mem.trimEnd(u8, hdr.ar_name["#1/".len..], " ");
+        return std.fmt.parseInt(u32, trimmed, 10) catch return null;
+    }
+};
+
+pub const dyld_chained_fixups_header = extern struct {
+    fixups_version: u32,
+    starts_offset: u32,
+    imports_offset: u32,
+    symbols_offset: u32,
+    imports_count: u32,
+    imports_format: enum(u32) {
+        no_addend = 1,
+        addend_32 = 2,
+        addend_64 = 3,
+        _,
+    },
+    symbols_format: enum(u32) {
+        uncompressed = 0,
+        zlib = 1,
+        _,
+    },
+};
+/// This struct has two bytes of trailing padding containing the first `page_starts` entry.
+pub const dyld_chained_starts_in_segment = extern struct {
+    size: u32,
+    page_size: u16,
+    pointer_format: enum(u16) {
+        arm64e = 1,
+        @"64" = 2,
+        @"32" = 3,
+        @"32_cache" = 4,
+        @"32_firmware" = 5,
+        @"64_offset" = 6,
+        arm64e_offset = 7,
+        @"64_kernel_cache" = 8,
+        arm64e_userland = 9,
+        arm64e_firmware = 10,
+        x86_64_kernel_cache = 11,
+        arm64e_userland24 = 12,
+        arm64e_shared_cache = 13,
+        arm64e_segmented = 14,
+        _,
+        pub const arm64e_kernel: @This() = .arm64e_offset;
+    },
+    segment_offset: u64,
+    max_valid_pointer: u32,
+    page_count: u16,
+    // trailing: `page_starts` and `chain_starts`
+};
+pub const dyld_chained_ptr_64 = bitpack struct(u64) {
+    per_kind: bitpack union {
+        rebase: bitpack struct {
+            target: u36,
+            high8: u8,
+            reserved: u7 = 0,
+        },
+        bind: bitpack struct {
+            ordinal: u24,
+            addend: u8,
+            reserved: u19 = 0,
+        },
+    },
+    next: u12, // in 4-byte units
+    kind: enum(u1) { rebase = 0, bind = 1 },
+};
+pub const dyld_chained_import = extern struct {
+    bits: bitpack struct(u32) {
+        lib_ordinal: u8,
+        weak_import: bool,
+        name_offset: u23,
+    },
+};
+pub const dyld_chained_import_addend = extern struct {
+    bits: bitpack struct(u32) {
+        lib_ordinal: u8,
+        weak_import: bool,
+        name_offset: u23,
+    },
+    addend: i32,
+};
+pub const dyld_chained_import_addend64 = extern struct {
+    bits: bitpack struct(u64) {
+        lib_ordinal: u16,
+        weak_import: bool,
+        reserved: u15 = 0,
+        name_offset: u32,
+    },
+    addend: u64,
+};

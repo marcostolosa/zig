@@ -1807,7 +1807,7 @@ pub const RegisterList = struct {
     pub fn size(self: Self, target: *const std.Target) i32 {
         return @intCast(self.bitset.count() * @as(u4, switch (target.cpu.arch) {
             else => unreachable,
-            .x86 => 4,
+            .x86, .x86c16 => 4,
             .x86_64 => 8,
         }));
     }
@@ -1858,7 +1858,7 @@ pub const Memory = struct {
     off: u32,
     extra: u32,
 
-    pub const Info = packed struct(u32) {
+    pub const Info = bitpack struct(u32) {
         base: @typeInfo(bits.Memory.Base).@"union".tag_type.?,
         mod: @typeInfo(bits.Memory.Mod).@"union".tag_type.?,
         size: bits.Memory.Size,
@@ -1949,7 +1949,7 @@ pub const Memory = struct {
                 assert(mem.info.base == .reg);
                 return encoder.Instruction.Memory.initMoffs(
                     @fromBackingInt(@intCast(mem.base)),
-                    @as(u64, mem.extra) << 32 | mem.off,
+                    (@as(u64, mem.extra) << 32) | mem.off,
                 );
             },
         }
@@ -1993,7 +1993,6 @@ pub fn emit(
         },
         .bin_file = lf,
         .pt = pt,
-        .pic = mod.pic,
         .atom_id = atom_id,
         .debug_output = debug_output,
         .w = w,
@@ -2045,7 +2044,6 @@ pub fn emitLazy(
         },
         .bin_file = lf,
         .pt = pt,
-        .pic = mod.pic,
         .atom_id = atom_id,
         .debug_output = debug_output,
         .w = w,

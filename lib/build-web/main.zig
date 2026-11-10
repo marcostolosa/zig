@@ -68,7 +68,7 @@ export fn alloc(n: usize) [*]u8 {
     return slice.ptr;
 }
 
-var message_buffer: std.ArrayListAlignedUnmanaged(u8, .of(u64)) = .empty;
+var message_buffer: std.array_list.Aligned(u8, .of(u64)) = .empty;
 
 /// Resizes the message buffer to be the correct length; returns the pointer to
 /// the query string.
@@ -101,7 +101,7 @@ export fn message_end() void {
 const String = Slice(u8);
 
 pub fn Slice(T: type) type {
-    return packed struct(u64) {
+    return bitpack struct(u64) {
         ptr: u32,
         len: u32,
 

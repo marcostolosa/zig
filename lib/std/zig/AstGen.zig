@@ -1802,13 +1802,13 @@ fn structInitExpr(
             while (it.next()) |entry| {
                 const record = entry.value_ptr.*;
                 if (record.items.len > 1) {
-                    var error_notes = std.array_list.Managed(u32).init(astgen.arena);
+                    var error_notes: std.ArrayList(u32) = .empty;
 
                     for (record.items[1..]) |duplicate| {
-                        try error_notes.append(try astgen.errNoteTok(duplicate, "duplicate name here", .{}));
+                        try error_notes.append(astgen.arena, try astgen.errNoteTok(duplicate, "duplicate name here", .{}));
                     }
 
-                    try error_notes.append(try astgen.errNoteNode(node, "struct declared here", .{}));
+                    try error_notes.append(astgen.arena, try astgen.errNoteNode(node, "struct declared here", .{}));
 
                     try astgen.appendErrorTokNotes(
                         record.items[0],
@@ -4891,7 +4891,7 @@ fn structDeclInner(
         .node = node,
         .inst = decl_inst,
         .declaring_gz = gz,
-        .maybe_generic = astgen.within_fn,
+        .maybe_generic = astgen.within_fn or scope.isPotentiallyGeneric(),
     };
     defer namespace.deinit(gpa);
 
@@ -4934,9 +4934,9 @@ fn structDeclInner(
     const backing_int_type_body_len: ?u32 = if (maybe_backing_int_node.unwrap()) |backing_int_node| len: {
         block_scope.src_baseline = backing_int_node;
         defer block_scope.src_baseline = node;
-        if (layout != .@"packed") return astgen.failNode(
+        if (layout != .@"bitpack") return astgen.failNode(
             backing_int_node,
-            "non-packed struct does not support backing integer type",
+            "non-bitpack struct does not support backing integer type",
             .{},
         );
         astgen.src_hasher.update(astgen.tree.getNodeSource(backing_int_node));
@@ -4987,8 +4987,8 @@ fn structDeclInner(
         }
 
         if (member.ast.align_expr.unwrap()) |align_node| {
-            if (layout == .@"packed") {
-                return astgen.failNode(align_node, "unable to override alignment of packed struct fields", .{});
+            if (layout == .@"bitpack") {
+                return astgen.failNode(align_node, "unable to override alignment of bitpack struct fields", .{});
             }
             const align_ref = try expr(&block_scope, &namespace.base, coerced_align_ri, align_node);
             if (!block_scope.endsWithNoReturn()) {
@@ -5016,7 +5016,7 @@ fn structDeclInner(
 
         if (member.comptime_token) |comptime_token| {
             switch (layout) {
-                .@"packed", .@"extern" => return astgen.failTok(comptime_token, "{s} struct fields cannot be marked comptime", .{@tagName(layout)}),
+                .@"bitpack", .@"extern" => return astgen.failTok(comptime_token, "{s} struct fields cannot be marked comptime", .{@tagName(layout)}),
                 .auto => {},
             }
             if (member.ast.value_expr == .none) {
@@ -5070,7 +5070,7 @@ fn tupleDecl(
 
     switch (layout) {
         .auto => {},
-        .@"extern", .@"packed" => return astgen.failNode(node, "{s} tuples are not supported", .{@tagName(layout)}),
+        .@"extern", .@"bitpack" => return astgen.failNode(node, "{s} tuples are not supported", .{@tagName(layout)}),
     }
 
     if (backing_int_node.unwrap()) |arg| {
@@ -5171,7 +5171,7 @@ fn unionDeclInner(
         .@"extern" => if (opt_arg_node.unwrap()) |arg_node| {
             return astgen.failNode(arg_node, "{s} union does not support enum tag type", .{@tagName(layout)});
         } else false,
-        .@"packed" => false,
+        .@"bitpack" => false,
     };
 
     if (auto_enum_tok) |t| {
@@ -5193,7 +5193,7 @@ fn unionDeclInner(
         .node = node,
         .inst = decl_inst,
         .declaring_gz = gz,
-        .maybe_generic = astgen.within_fn,
+        .maybe_generic = astgen.within_fn or scope.isPotentiallyGeneric(),
     };
     defer namespace.deinit(gpa);
 
@@ -5284,8 +5284,8 @@ fn unionDeclInner(
         }
 
         if (member.ast.align_expr.unwrap()) |align_node| {
-            if (layout == .@"packed") {
-                return astgen.failNode(align_node, "unable to override alignment of packed union fields", .{});
+            if (layout == .@"bitpack") {
+                return astgen.failNode(align_node, "unable to override alignment of bitpack union fields", .{});
             }
             const align_ref = try expr(&block_scope, &namespace.base, coerced_align_ri, align_node);
             if (!block_scope.endsWithNoReturn()) {
@@ -5343,7 +5343,7 @@ fn unionDeclInner(
                 break :l if (opt_arg_node == .none) .tagged_enum else .tagged_enum_explicit;
             },
             .@"extern" => .@"extern",
-            .@"packed" => if (opt_arg_node != .none) .packed_explicit else .@"packed",
+            .@"bitpack" => if (opt_arg_node != .none) .bitpack_explicit else .@"bitpack",
         },
         .arg_type_body_len = arg_type_body_len,
         .decls_len = scan_result.decls_len,
@@ -5382,7 +5382,8 @@ fn containerDecl(
     switch (tree.tokenTag(container_decl.ast.main_token)) {
         .keyword_struct => {
             const layout: std.lang.Type.ContainerLayout = if (container_decl.layout_token) |t| switch (tree.tokenTag(t)) {
-                .keyword_packed => .@"packed",
+                .keyword_bitpack => .@"bitpack",
+                .keyword_packed => .@"bitpack",
                 .keyword_extern => .@"extern",
                 else => unreachable,
             } else .auto;
@@ -5392,7 +5393,8 @@ fn containerDecl(
         },
         .keyword_union => {
             const layout: std.lang.Type.ContainerLayout = if (container_decl.layout_token) |t| switch (tree.tokenTag(t)) {
-                .keyword_packed => .@"packed",
+                .keyword_bitpack => .@"bitpack",
+                .keyword_packed => .@"bitpack",
                 .keyword_extern => .@"extern",
                 else => unreachable,
             } else .auto;
@@ -5402,7 +5404,7 @@ fn containerDecl(
         },
         .keyword_enum => {
             if (container_decl.layout_token) |t| {
-                return astgen.failTok(t, "enums do not support 'packed' or 'extern'; instead provide an explicit integer tag type", .{});
+                return astgen.failTok(t, "enums do not support 'bitpack' or 'extern'; instead provide an explicit integer tag type", .{});
             }
 
             astgen.advanceSourceCursorToNode(node);
@@ -5416,7 +5418,7 @@ fn containerDecl(
                 .node = node,
                 .inst = decl_inst,
                 .declaring_gz = gz,
-                .maybe_generic = astgen.within_fn,
+                .maybe_generic = astgen.within_fn or scope.isPotentiallyGeneric(),
             };
             defer namespace.deinit(gpa);
 
@@ -5578,7 +5580,7 @@ fn containerDecl(
                 .node = node,
                 .inst = decl_inst,
                 .declaring_gz = gz,
-                .maybe_generic = astgen.within_fn,
+                .maybe_generic = astgen.within_fn or scope.isPotentiallyGeneric(),
             };
             defer namespace.deinit(gpa);
 
@@ -5600,7 +5602,7 @@ fn containerDecl(
             var wip_decls: WipDecls = try .init(&scratch, scan_result.decls_len);
 
             if (container_decl.layout_token) |layout_token| {
-                return astgen.failTok(layout_token, "opaque types do not support 'packed' or 'extern'", .{});
+                return astgen.failTok(layout_token, "opaque types do not support 'bitpack' or 'extern'", .{});
             }
 
             for (container_decl.ast.members) |member_node| {
@@ -7731,6 +7733,12 @@ fn switchExpr(
             const tag_name = try astgen.identAsString(tag_token);
             try astgen.detectLocalShadowing(payload_sub_scope, tag_name, tag_token, tag_slice, .@"switch tag capture");
 
+            if (case_node.toOptional() == else_case_node and case.inline_token == null) {
+                return astgen.failTokNotes(tag_token, "cannot capture tag of 'else' prong", .{}, &.{
+                    try astgen.errNoteTok(ident, "first capture in 'else' prong always captures 'switch' operand", .{}),
+                });
+            }
+
             assert(any_has_tag_capture);
             has_tag_capture = true;
 
@@ -8140,6 +8148,22 @@ fn identifier(
     // if not @"" syntax, just use raw token slice
     if (ident_name_raw[0] != '@') {
         if (primitive_instrs.get(ident_name_raw)) |zir_const_ref| {
+            const maybe_c_type: ?std.Target.CType = switch (zir_const_ref) {
+                else => null,
+                .c_char_type => .char,
+                .c_short_type => .short,
+                .c_ushort_type => .ushort,
+                .c_int_type => .int,
+                .c_uint_type => .uint,
+                .c_long_type => .long,
+                .c_ulong_type => .ulong,
+                .c_longlong_type => .longlong,
+                .c_ulonglong_type => .ulonglong,
+                .c_longdouble_type => .longdouble,
+            };
+            if (maybe_c_type) |c_type| {
+                _ = try gz.addExtendedNodeSmall(.validate_c_type, ident, @backingInt(c_type));
+            }
             return rvalue(gz, ri, zir_const_ref, ident);
         }
 
@@ -11148,6 +11172,21 @@ const Scope = struct {
             .defer_normal, .defer_error => base.cast(Defer).?.parent,
             .namespace => base.cast(Namespace).?.parent,
             .top => null,
+        };
+    }
+
+    /// Whether a container declared in this scope may depend on a local value.
+    fn isPotentiallyGeneric(base: *Scope) bool {
+        var scope = base;
+        while (true) switch (scope.unwrap()) {
+            .local_val, .local_ptr => return true,
+            .gen_zir => |gz| scope = gz.parent,
+            .defer_normal, .defer_error => |defer_scope| scope = defer_scope.parent,
+            .namespace => |namespace| {
+                if (namespace.maybe_generic) return true;
+                scope = namespace.parent;
+            },
+            .top => return false,
         };
     }
 

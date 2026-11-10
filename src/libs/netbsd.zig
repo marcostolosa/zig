@@ -69,16 +69,16 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
 
     switch (crt_file) {
         .scrt0_o => {
-            var cflags = std.array_list.Managed([]const u8).init(arena);
-            try cflags.appendSlice(&.{
+            var cflags: std.ArrayList([]const u8) = .empty;
+            try cflags.appendSlice(arena, &.{
                 "-DHAVE_INITFINI_ARRAY",
                 "-w", // Disable all warnings.
             });
 
-            var acflags = std.array_list.Managed([]const u8).init(arena);
-            try acflags.appendSlice(&.{
+            var acflags: std.ArrayList([]const u8) = .empty;
+            try acflags.appendSlice(arena, &.{
                 // See `Compilation.addCCArgs`.
-                try std.fmt.allocPrint(arena, "-D__NetBSD_Version__={d}", .{(target_version.major * 100_000_000) + (target_version.minor * 1_000_000)}),
+                try arena.print("-D__NetBSD_Version__={d}", .{(target_version.major * 100_000_000) + (target_version.minor * 1_000_000)}),
             });
 
             const csu_march: ?[]const u8 = switch (target.cpu.arch) {
@@ -89,15 +89,15 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
 
             inline for (.{ &cflags, &acflags }) |flags| {
                 if (csu_march) |march| {
-                    try flags.appendSlice(&.{
-                        try std.fmt.allocPrint(arena, "-DELF_NOTE_MARCH_DESC=\"{s}\"", .{march}),
-                        try std.fmt.allocPrint(arena, "-DELF_NOTE_MARCH_DESCSZ={d}", .{march.len + 1}),
+                    try flags.appendSlice(arena, &.{
+                        try arena.print("-DELF_NOTE_MARCH_DESC=\"{s}\"", .{march}),
+                        try arena.print("-DELF_NOTE_MARCH_DESCSZ={d}", .{march.len + 1}),
                     });
                 }
 
-                try flags.appendSlice(&.{
+                try flags.appendSlice(arena, &.{
                     "-I",
-                    try includePath(comp, arena, try std.fmt.allocPrint(arena, "{s}-{s}-{s}", .{
+                    try includePath(comp, arena, try arena.print("{s}-{s}-{s}", .{
                         std.zig.target.netbsdArchNameHeaders(target.cpu.arch),
                         @tagName(target.os.tag),
                         std.zig.target.netbsdAbiNameHeaders(target.abi),
@@ -137,7 +137,7 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
                 .{
                     .path = "arch" ++ path.sep_str ++ "aarch64" ++ path.sep_str ++ "crt0.S",
                     .flags = acflags.items,
-                    .condition = target.cpu.arch.isAARCH64(),
+                    .condition = target.cpu.arch.isAarch64(),
                 },
 
                 .{
@@ -149,7 +149,7 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
                 .{
                     .path = "arch" ++ path.sep_str ++ "mips" ++ path.sep_str ++ "crt0.S",
                     .flags = acflags.items,
-                    .condition = target.cpu.arch.isMIPS(),
+                    .condition = target.cpu.arch.isMips(),
                 },
 
                 .{
@@ -161,7 +161,7 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
                 .{
                     .path = "arch" ++ path.sep_str ++ "riscv" ++ path.sep_str ++ "crt0.S",
                     .flags = acflags.items,
-                    .condition = target.cpu.arch.isRISCV(),
+                    .condition = target.cpu.arch.isRiscv(),
                 },
 
                 .{
@@ -479,13 +479,13 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         break :blk latest_index;
     };
 
-    var stubs_asm = std.array_list.Managed(u8).init(gpa);
-    defer stubs_asm.deinit();
+    var stubs_asm: std.ArrayList(u8) = .empty;
+    defer stubs_asm.deinit(gpa);
 
     for (libs, 0..) |lib, lib_i| {
         stubs_asm.shrinkRetainingCapacity(0);
 
-        try stubs_asm.appendSlice(".text\n");
+        try stubs_asm.appendSlice(gpa, ".text\n");
 
         var sym_i: usize = 0;
         var sym_name_buf: std.Io.Writer.Allocating = .init(arena);
@@ -549,7 +549,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
                 // .globl _Exit
                 // .type _Exit, %function
                 // _Exit: .long 0
-                try stubs_asm.print(
+                try stubs_asm.print(gpa,
                     \\.balign {d}
                     \\.{s} {s}
                     \\.type {s}, %function
@@ -566,7 +566,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
             }
         }
 
-        try stubs_asm.appendSlice(".data\n");
+        try stubs_asm.appendSlice(gpa, ".data\n");
 
         const obj_inclusions_len = try inc_reader.takeInt(u16, .little);
 
@@ -629,7 +629,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
                 // .type malloc_conf, %object
                 // .size malloc_conf, 4
                 // malloc_conf: .fill 4, 1, 0
-                try stubs_asm.print(
+                try stubs_asm.print(gpa,
                     \\.balign {d}
                     \\.{s} {s}
                     \\.type {s}, %object
@@ -681,7 +681,7 @@ fn queueSharedObjects(comp: *Compilation, so_files: BuiltSharedObjects) std.Io.C
         for (libs) |lib| {
             const so_path: Path = .{
                 .root_dir = so_files.dir_path.root_dir,
-                .sub_path = std.fmt.allocPrint(comp.arena, "{s}{c}lib{s}.so.{d}", .{
+                .sub_path = comp.arena.print("{s}{c}lib{s}.so.{d}", .{
                     so_files.dir_path.sub_path, path.sep, lib.name, lib.sover,
                 }) catch return comp.setAllocFailure(),
             };
@@ -705,7 +705,7 @@ fn buildSharedLib(
     defer tracy.end();
 
     const io = comp.io;
-    const basename = try std.fmt.allocPrint(arena, "lib{s}.so.{d}", .{ lib.name, lib.sover });
+    const basename = try arena.print("lib{s}.so.{d}", .{ lib.name, lib.sover });
     const version: Version = .{ .major = lib.sover, .minor = 0, .patch = 0 };
     const ld_basename = path.basename(comp.getTarget().standardDynamicLinkerPath().get().?);
     const soname = if (mem.eql(u8, lib.name, "ld")) ld_basename else basename;
@@ -771,10 +771,6 @@ fn buildSharedLib(
         .emit_bin = .{ .yes_path = try bin_directory.join(arena, &.{basename}) },
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
-        .verbose_air = comp.verbose_air,
-        .verbose_llvm_ir = comp.verbose_llvm_ir,
-        .verbose_llvm_bc = comp.verbose_llvm_bc,
-        .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .version = version,
         .soname = soname,

@@ -46,7 +46,7 @@ var coverage = Coverage.init;
 /// Index of type `SourceLocationIndex`.
 var coverage_source_locations: std.ArrayList(Coverage.SourceLocation) = .empty;
 /// Contains the most recent coverage update message, unmodified.
-var recent_coverage_update: std.ArrayListAlignedUnmanaged(u8, .of(u64)) = .empty;
+var recent_coverage_update: std.array_list.Aligned(u8, .of(u64)) = .empty;
 
 fn updateCoverageSources(
     directories: []const Coverage.String,
@@ -277,7 +277,7 @@ fn updateStats() error{OutOfMemory}!void {
         break :speed n_runs / (ns_elapsed / std.time.ns_per_s);
     };
 
-    const html = try std.fmt.allocPrint(gpa,
+    const html = try gpa.print(
         \\<span slot="stat-total-runs">{d}</span>
         \\<span slot="stat-unique-runs">{d} ({d:.1}%)</span>
         \\<span slot="stat-coverage">{d} / {d} ({d:.1}%)</span>

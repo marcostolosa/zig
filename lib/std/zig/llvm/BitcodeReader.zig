@@ -60,40 +60,40 @@ pub const Record = struct {
     blob: []const u8,
 
     fn toOwnedAbbrev(record: Record, allocator: std.mem.Allocator) !Abbrev {
-        var operands = std.array_list.Managed(Abbrev.Operand).init(allocator);
-        defer operands.deinit();
+        var operands: std.ArrayList(Abbrev.Operand) = .empty;
+        defer operands.deinit(allocator);
 
         assert(record.id == Abbrev.Builtin.define_abbrev.toRecordId());
         var i: usize = 0;
         while (i < record.operands.len) switch (record.operands[i]) {
             Abbrev.Operand.literal_id => {
-                try operands.append(.{ .literal = record.operands[i + 1] });
+                try operands.append(allocator, .{ .literal = record.operands[i + 1] });
                 i += 2;
             },
             @backingInt(Abbrev.Operand.Encoding.fixed) => {
-                try operands.append(.{ .encoding = .{ .fixed = @intCast(record.operands[i + 1]) } });
+                try operands.append(allocator, .{ .encoding = .{ .fixed = @intCast(record.operands[i + 1]) } });
                 i += 2;
             },
             @backingInt(Abbrev.Operand.Encoding.vbr) => {
-                try operands.append(.{ .encoding = .{ .vbr = @intCast(record.operands[i + 1]) } });
+                try operands.append(allocator, .{ .encoding = .{ .vbr = @intCast(record.operands[i + 1]) } });
                 i += 2;
             },
             @backingInt(Abbrev.Operand.Encoding.array) => {
-                try operands.append(.{ .encoding = .{ .array = 6 } });
+                try operands.append(allocator, .{ .encoding = .{ .array = 6 } });
                 i += 1;
             },
             @backingInt(Abbrev.Operand.Encoding.char6) => {
-                try operands.append(.{ .encoding = .char6 });
+                try operands.append(allocator, .{ .encoding = .char6 });
                 i += 1;
             },
             @backingInt(Abbrev.Operand.Encoding.blob) => {
-                try operands.append(.{ .encoding = .{ .blob = 6 } });
+                try operands.append(allocator, .{ .encoding = .{ .blob = 6 } });
                 i += 1;
             },
             else => unreachable,
         };
 
-        return .{ .operands = try operands.toOwnedSlice() };
+        return .{ .operands = try operands.toOwnedSlice(allocator) };
     }
 };
 
@@ -198,8 +198,8 @@ fn nextRecord(bc: *BitcodeReader) !?Record {
     defer bc.record_arena = record_arena.state;
     _ = record_arena.reset(.retain_capacity);
 
-    var operands = try std.array_list.Managed(u64).initCapacity(record_arena.allocator(), abbrev.operands.len);
-    var blob = std.array_list.Managed(u8).init(record_arena.allocator());
+    var operands: std.ArrayList(u64) = try .initCapacity(record_arena.allocator(), abbrev.operands.len);
+    var blob: std.ArrayList(u8) = .empty;
     for (abbrev.operands, 0..) |abbrev_operand, abbrev_operand_i| switch (abbrev_operand) {
         .literal => |value| operands.appendAssumeCapacity(value),
         .encoding => |abbrev_encoding| switch (abbrev_encoding) {
@@ -208,7 +208,7 @@ fn nextRecord(bc: *BitcodeReader) !?Record {
             .array => |len_width| {
                 assert(abbrev_operand_i + 2 == abbrev.operands.len);
                 const len: usize = @intCast(try bc.readVbr(u32, len_width));
-                try operands.ensureUnusedCapacity(len);
+                try operands.ensureUnusedCapacity(record_arena.allocator(), len);
                 for (0..len) |_| switch (abbrev.operands[abbrev.operands.len - 1]) {
                     .literal => |elem_value| operands.appendAssumeCapacity(elem_value),
                     .encoding => |elem_encoding| switch (elem_encoding) {
@@ -219,16 +219,16 @@ fn nextRecord(bc: *BitcodeReader) !?Record {
                     },
                     .align_32_bits, .block_len => return error.UnsupportedArrayElement,
                     .abbrev_op => switch (try bc.readFixed(u1, 1)) {
-                        1 => try operands.appendSlice(&.{
+                        1 => try operands.appendSlice(record_arena.allocator(), &.{
                             Abbrev.Operand.literal_id,
                             try bc.readVbr(u64, 8),
                         }),
                         0 => {
                             const encoding: Abbrev.Operand.Encoding =
                                 @fromBackingInt(@intCast(try bc.readFixed(u3, 3)));
-                            try operands.append(@backingInt(encoding));
+                            try operands.append(record_arena.allocator(), @backingInt(encoding));
                             switch (encoding) {
-                                .fixed, .vbr => try operands.append(try bc.readVbr(u7, 5)),
+                                .fixed, .vbr => try operands.append(record_arena.allocator(), try bc.readVbr(u7, 5)),
                                 .array, .char6, .blob => {},
                                 _ => return error.UnsuportedAbbrevEncoding,
                             }
@@ -243,7 +243,7 @@ fn nextRecord(bc: *BitcodeReader) !?Record {
                 const len = std.math.cast(usize, try bc.readVbr(u32, len_width)) orelse
                     return error.Overflow;
                 bc.align32Bits();
-                try bc.readBytes(try blob.addManyAsSlice(len));
+                try bc.readBytes(try blob.addManyAsSlice(record_arena.allocator(), len));
                 bc.align32Bits();
             },
         },
@@ -404,7 +404,7 @@ fn readFixed(bc: *BitcodeReader, comptime T: type, bits: u7) !T {
         if (bc.bit_offset == 0) bc.bit_buffer = try bc.read32Bits();
         const chunk_len = @min(@as(u6, 32) - bc.bit_offset, remaining);
         const chunk_mask = @as(u32, std.math.maxInt(u32)) >> @intCast(32 - chunk_len);
-        result |= @as(T, @intCast(bc.bit_buffer >> bc.bit_offset & chunk_mask)) << @intCast(shift);
+        result |= @as(T, @intCast((bc.bit_buffer >> bc.bit_offset) & chunk_mask)) << @intCast(shift);
         shift += @intCast(chunk_len);
         remaining -= chunk_len;
         bc.bit_offset = @truncate(bc.bit_offset + chunk_len);

@@ -1,8 +1,9 @@
-#exe {
--Mroot=main.zig
+#zig build-exe {
+--name test
+-Mroot=test.zig
 #}
 
-#write main.zig {
+#write test.zig {
 pub fn main() !void {
     try @import("foo.zig").hello();
 }
@@ -12,8 +13,7 @@ pub fn hello() !void {
     try std.Io.File.stdout().writeStreamingAll(io, "Hello, World!\n");
 }
 #}
-#update {
-error#}
+#update "error"
 #check errors {
 foo.zig:2:9: error: use of undeclared identifier 'std'
 #}
@@ -25,8 +25,7 @@ pub fn hello() !void {
 }
 const io = std.Io.Threaded.global_single_threaded.io();
 #}
-#update {
-fix the error#}
+#update "fix the error"
 #check stdout {
 Hello, World!
 #}
@@ -38,8 +37,7 @@ pub fn hello() !void {
 }
 const io = std.Io.Threaded.global_single_threaded.io();
 #}
-#update {
-add new error#}
+#update "add new error"
 #check errors {
 foo.zig:3:52: error: use of undeclared identifier 'hello_str'
 #}
@@ -52,8 +50,7 @@ pub fn hello() !void {
 }
 const io = std.Io.Threaded.global_single_threaded.io();
 #}
-#update {
-fix the new error#}
+#update "fix the new error"
 #check stdout {
 Hello, World! Again!
 #}

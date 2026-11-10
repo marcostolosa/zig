@@ -215,7 +215,7 @@ pub const TrackedInst = extern struct {
         };
         pub fn unwrap(tracked_inst_index: TrackedInst.Index, ip: *const InternPool) Unwrapped {
             return .{
-                .tid = @fromBackingInt(@intCast(@backingInt(tracked_inst_index) >> ip.tid_shift_32 & ip.getTidMask())),
+                .tid = @fromBackingInt(@intCast((@backingInt(tracked_inst_index) >> ip.tid_shift_32) & ip.getTidMask())),
                 .index = @backingInt(tracked_inst_index) & ip.getIndexMask(u32),
             };
         }
@@ -419,7 +419,7 @@ pub fn rehashTrackedInsts(
 
 /// Analysis Unit. Represents a single entity which undergoes semantic analysis.
 /// This is the "source" of an incremental dependency edge.
-pub const AnalUnit = packed struct(u64) {
+pub const AnalUnit = bitpack struct(u64) {
     kind: Kind,
     id: u32,
 
@@ -517,7 +517,7 @@ pub const ComptimeUnit = extern struct {
         };
         fn unwrap(id: Id, ip: *const InternPool) Unwrapped {
             return .{
-                .tid = @fromBackingInt(@intCast(@backingInt(id) >> ip.tid_shift_32 & ip.getTidMask())),
+                .tid = @fromBackingInt(@intCast((@backingInt(id) >> ip.tid_shift_32) & ip.getTidMask())),
                 .index = @backingInt(id) & ip.getIndexMask(u31),
             };
         }
@@ -655,7 +655,7 @@ pub const Nav = struct {
         };
         fn unwrap(nav_index: Nav.Index, ip: *const InternPool) Unwrapped {
             return .{
-                .tid = @fromBackingInt(@intCast(@backingInt(nav_index) >> ip.tid_shift_30 & ip.getTidMask())),
+                .tid = @fromBackingInt(@intCast((@backingInt(nav_index) >> ip.tid_shift_30) & ip.getTidMask())),
                 .index = @backingInt(nav_index) & ip.getIndexMask(u30),
             };
         }
@@ -676,7 +676,7 @@ pub const Nav = struct {
         @"linksection": OptionalNullTerminatedString,
         bits: Bits,
 
-        const Bits = packed struct(u16) {
+        const Bits = bitpack struct(u16) {
             @"align": Alignment,
             @"addrspace": std.lang.AddressSpace,
             @"const": bool,
@@ -1483,7 +1483,7 @@ const Shard = struct {
                     comptime assert(tid == .main);
                     return .main;
                 }
-            } else packed struct(u8) {
+            } else bitpack struct(u8) {
                 non_null: bool,
                 value: Zcu.PerThread.Id,
                 const @"null": OptionalTid = .{ .non_null = false, .value = .main };
@@ -1627,7 +1627,7 @@ pub const MapIndex = enum(u32) {
     };
     fn unwrap(map_index: MapIndex, ip: *const InternPool) Unwrapped {
         return .{
-            .tid = @fromBackingInt(@intCast(@backingInt(map_index) >> ip.tid_shift_32 & ip.getTidMask())),
+            .tid = @fromBackingInt(@intCast((@backingInt(map_index) >> ip.tid_shift_32) & ip.getTidMask())),
             .index = @backingInt(map_index) & ip.getIndexMask(u32),
         };
     }
@@ -1648,14 +1648,14 @@ pub const NamespaceIndex = enum(u32) {
             assert(unwrapped.bucket_index <= ip.getIndexMask(u32) >> Local.namespaces_bucket_width);
             assert(unwrapped.index <= Local.namespaces_bucket_mask);
             return @fromBackingInt(@intCast(@shlExact(@as(u32, @backingInt(unwrapped.tid)), ip.tid_shift_32) |
-                unwrapped.bucket_index << Local.namespaces_bucket_width |
+                (unwrapped.bucket_index << Local.namespaces_bucket_width) |
                 unwrapped.index));
         }
     };
     fn unwrap(namespace_index: NamespaceIndex, ip: *const InternPool) Unwrapped {
         const index = @backingInt(namespace_index) & ip.getIndexMask(u32);
         return .{
-            .tid = @fromBackingInt(@intCast(@backingInt(namespace_index) >> ip.tid_shift_32 & ip.getTidMask())),
+            .tid = @fromBackingInt(@intCast((@backingInt(namespace_index) >> ip.tid_shift_32) & ip.getTidMask())),
             .bucket_index = index >> Local.namespaces_bucket_width,
             .index = index & Local.namespaces_bucket_mask,
         };
@@ -1696,7 +1696,7 @@ pub const FileIndex = enum(u32) {
     };
     pub fn unwrap(file_index: FileIndex, ip: *const InternPool) Unwrapped {
         return .{
-            .tid = @fromBackingInt(@intCast(@backingInt(file_index) >> ip.tid_shift_32 & ip.getTidMask())),
+            .tid = @fromBackingInt(@intCast((@backingInt(file_index) >> ip.tid_shift_32) & ip.getTidMask())),
             .index = @backingInt(file_index) & ip.getIndexMask(u32),
         };
     }
@@ -1755,7 +1755,7 @@ pub const String = enum(u32) {
     };
     fn unwrap(string: String, ip: *const InternPool) Unwrapped {
         return .{
-            .tid = @fromBackingInt(@intCast(@backingInt(string) >> ip.tid_shift_32 & ip.getTidMask())),
+            .tid = @fromBackingInt(@intCast((@backingInt(string) >> ip.tid_shift_32) & ip.getTidMask())),
             .index = @backingInt(string) & ip.getIndexMask(u32),
         };
     }
@@ -1917,7 +1917,7 @@ pub const OptionalNullTerminatedString = enum(u32) {
 /// * comptime-known value (where we store the value)
 /// * `Nav` val (so that we can analyze the value lazily)
 /// * `Nav` ref (so that we can analyze the reference lazily)
-pub const CaptureValue = packed struct(u32) {
+pub const CaptureValue = bitpack struct(u32) {
     tag: enum(u2) { @"comptime", runtime, nav_val, nav_ref },
     idx: u30,
 
@@ -2014,8 +2014,8 @@ pub const Key = union(enum) {
     aggregate: Aggregate,
     /// An instance of a union.
     un: Union,
-    /// An instance of a `packed struct` or `packed union`.
-    bitpack: Bitpack,
+    /// An instance of a `bitpack struct` or `bitpack union`.
+    @"bitpack": Bitpack,
 
     /// A comptime function call with a memoized result.
     memoized_call: Key.MemoizedCall,
@@ -2060,7 +2060,7 @@ pub const Key = union(enum) {
             _,
         };
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             size: Size = .one,
             /// `none` indicates the ABI alignment of the pointee_type. In this
             /// case, this field *must* be set to `none`, otherwise the
@@ -2076,7 +2076,7 @@ pub const Key = union(enum) {
             vector_index: VectorIndex = .none,
         };
 
-        pub const PackedOffset = packed struct(u32) {
+        pub const PackedOffset = bitpack struct(u32) {
             /// If this is non-zero it means the pointer points to a sub-byte
             /// range of data, which is backed by a "host integer" with this
             /// number of bytes.
@@ -2155,7 +2155,7 @@ pub const Key = union(enum) {
         ty: Index,
         flags: Flags,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: @typeInfo(std.lang.Type.Spirv).@"union".tag_type.?,
             // Image type flags
             usage: @typeInfo(std.lang.Type.Spirv.Image.Usage).@"union".tag_type.?,
@@ -2554,10 +2554,10 @@ pub const Key = union(enum) {
     pub const Union = extern struct {
         /// This is the union type; not the field type.
         ty: Index,
-        /// Indicates the active field. This could be `none`, which indicates the tag is not known. `none` is only a valid value for extern and packed unions.
+        /// Indicates the active field. This could be `none`, which indicates the tag is not known. `none` is only a valid value for extern and bitpack unions.
         /// In those cases, the type of `val` is:
         ///   extern: a u8 array of the same byte length as the union
-        ///   packed: an unsigned integer with the same bit size as the union
+        ///   bitpack: an unsigned integer with the same bit size as the union
         tag: Index,
         /// The value of the active field.
         val: Index,
@@ -2584,7 +2584,7 @@ pub const Key = union(enum) {
 
     /// As well as a key, this type doubles as the payload in `extra` for `Tag.bitpack`.
     pub const Bitpack = struct {
-        /// The `packed struct` or `packed union` type.
+        /// The `bitpack struct` or `bitpack union` type.
         ty: Index,
         /// The contents of the bitpack, represented as the backing integer value. The type of this
         /// value is the same as the backing integer type of `ty`.
@@ -2832,7 +2832,7 @@ pub const Key = union(enum) {
                 asBytes(&e.is_const) ++ asBytes(&e.alignment) ++ asBytes(&e.@"addrspace") ++
                 asBytes(&e.zir_index) ++ &[1]u8{@backingInt(e.source)}),
 
-            .bitpack => |bitpack| Hash.hash(seed, asBytes(&bitpack.ty) ++ asBytes(&bitpack.backing_int_val)),
+            .@"bitpack" => |@"bitpack"| Hash.hash(seed, asBytes(&@"bitpack".ty) ++ asBytes(&@"bitpack".backing_int_val)),
         };
     }
 
@@ -2910,8 +2910,8 @@ pub const Key = union(enum) {
                 const b_info = b.enum_tag;
                 return std.meta.eql(a_info, b_info);
             },
-            .bitpack => |a_info| {
-                const b_info = b.bitpack;
+            .@"bitpack" => |a_info| {
+                const b_info = b.@"bitpack";
                 return a_info.ty == b_info.ty and a_info.backing_int_val == b_info.backing_int_val;
             },
 
@@ -3182,7 +3182,7 @@ pub const Key = union(enum) {
             .enum_tag,
             .aggregate,
             .un,
-            .bitpack,
+            .@"bitpack",
             => |x| x.ty,
 
             .enum_literal => .enum_literal_type,
@@ -3217,8 +3217,8 @@ pub const LoadedStructType = struct {
     namespace: NamespaceIndex,
 
     layout: std.lang.Type.ContainerLayout,
-    /// May be `undefined` if `layout != .@"packed"`.
-    packed_backing_mode: BackingTypeMode,
+    /// May be `undefined` if `layout != .@"bitpack"`.
+    bitpack_backing_mode: BackingTypeMode,
 
     /// Initially `false`, and set to `true` once any dependency on or reference to the struct's
     /// layout is encountered, after which it is never reset to `false`, even across incremental
@@ -3237,17 +3237,17 @@ pub const LoadedStructType = struct {
     field_defaults: Index.Slice,
     field_aligns: Alignment.Slice,
     field_is_comptime_bits: ComptimeBits,
-    /// If `layout` is `.@"packed"`, this is `.empty`.
+    /// If `layout` is `.@"bitpack"`, this is `.empty`.
     field_runtime_order: RuntimeOrder.Slice,
-    /// If `layout` is `.@"packed"`, this is `.empty`.
+    /// If `layout` is `.@"bitpack"`, this is `.empty`.
     field_offsets: Offsets,
-    /// Only valid if `layout` is `.@"packed"`.
-    packed_backing_int_type: Index,
-    /// Only valid if `layout` is *not* `.@"packed"`.
+    /// Only valid if `layout` is `.@"bitpack"`.
+    bitpack_backing_int_type: Index,
+    /// Only valid if `layout` is *not* `.@"bitpack"`.
     class: TypeClass,
-    /// Only valid if `layout` is *not* `.@"packed"`.
+    /// Only valid if `layout` is *not* `.@"bitpack"`.
     size: u32,
-    /// Only valid if `layout` is *not* `.@"packed"`.
+    /// Only valid if `layout` is *not* `.@"bitpack"`.
     alignment: Alignment,
 
     pub const ComptimeBits = struct {
@@ -3321,7 +3321,7 @@ pub const LoadedStructType = struct {
 
     /// Iterates over non-comptime fields in the order they are laid out in memory at runtime.
     /// May or may not include zero-bit fields.
-    /// Asserts the struct is not packed.
+    /// Asserts the struct is not bitpack.
     pub fn iterateRuntimeOrder(s: *const LoadedStructType, ip: *const InternPool) RuntimeOrderIterator {
         switch (s.layout) {
             .auto => {
@@ -3337,7 +3337,7 @@ pub const LoadedStructType = struct {
                 .fields_len = s.field_names.len,
                 .next_index = 0,
             },
-            .@"packed" => unreachable,
+            .@"bitpack" => unreachable,
         }
     }
     pub const RuntimeOrderIterator = struct {
@@ -3366,7 +3366,7 @@ pub const LoadedStructType = struct {
                 .runtime_order = null,
                 .last_index = s.field_names.len,
             },
-            .@"packed" => unreachable,
+            .@"bitpack" => unreachable,
         }
     }
     pub const ReverseRuntimeOrderIterator = struct {
@@ -3402,8 +3402,8 @@ pub const LoadedUnionType = struct {
 
     layout: std.lang.Type.ContainerLayout,
     enum_tag_mode: BackingTypeMode,
-    /// May be `undefined` if `layout != .@"packed"`.
-    packed_backing_mode: BackingTypeMode,
+    /// May be `undefined` if `layout != .@"bitpack"`.
+    bitpack_backing_mode: BackingTypeMode,
 
     /// Only reified unions store field names; typically they should be loaded from `enum_tag_type`
     /// instead. Reified unions store them because type resolution needs them in order to validate
@@ -3432,15 +3432,15 @@ pub const LoadedUnionType = struct {
     /// Even if `tag_usage == .none` and `has_runtime_tag == false`, this is still populated with
     /// the union's "hypothetical" tag type.
     enum_tag_type: Index,
-    /// Only valid if `layout` is `.@"packed"`.
-    packed_backing_int_type: Index,
-    /// Not valid if `layout` is `.@"packed"`.
+    /// Only valid if `layout` is `.@"bitpack"`.
+    bitpack_backing_int_type: Index,
+    /// Not valid if `layout` is `.@"bitpack"`.
     class: TypeClass,
-    /// Not valid if `layout` is `.@"packed"`.
+    /// Not valid if `layout` is `.@"bitpack"`.
     size: u32,
-    /// Not valid if `layout` is `.@"packed"`.
+    /// Not valid if `layout` is `.@"bitpack"`.
     padding: u32,
-    /// Not valid if `layout` is `.@"packed"`.
+    /// Not valid if `layout` is `.@"bitpack"`.
     alignment: Alignment,
 
     pub const TagUsage = enum(u2) {
@@ -3537,12 +3537,12 @@ pub fn loadStructType(ip: *const InternPool, index: Index) LoadedStructType {
     const extra_list = unwrapped_index.getExtra(ip);
     const extra_items = extra_list.view().items(.@"0");
     const item = unwrapped_index.getItem(ip);
-    // Exiting this `switch` means this is a `packed struct`.
+    // Exiting this `switch` means this is a `bitpack struct`.
     const backing_mode: BackingTypeMode, const any_defaults: bool = switch (item.tag) {
-        .type_struct_packed_auto => .{ .auto, false },
-        .type_struct_packed_explicit => .{ .explicit, false },
-        .type_struct_packed_auto_defaults => .{ .auto, true },
-        .type_struct_packed_explicit_defaults => .{ .explicit, true },
+        .type_struct_bitpack_auto => .{ .auto, false },
+        .type_struct_bitpack_explicit => .{ .explicit, false },
+        .type_struct_bitpack_auto_defaults => .{ .auto, true },
+        .type_struct_bitpack_explicit_defaults => .{ .explicit, true },
         .type_struct => {
             const extra = extraDataTrail(extra_list, Tag.TypeStruct, item.data);
             var extra_index = extra.end;
@@ -3618,7 +3618,7 @@ pub fn loadStructType(ip: *const InternPool, index: Index) LoadedStructType {
                     .auto => .auto,
                     .@"extern" => .@"extern",
                 },
-                .packed_backing_mode = undefined,
+                .bitpack_backing_mode = undefined,
 
                 .want_layout = extra.data.flags.want_layout,
 
@@ -3630,7 +3630,7 @@ pub fn loadStructType(ip: *const InternPool, index: Index) LoadedStructType {
                 .field_is_comptime_bits = field_is_comptime_bits,
                 .field_runtime_order = field_runtime_order,
                 .field_offsets = field_offsets,
-                .packed_backing_int_type = .none,
+                .bitpack_backing_int_type = .none,
                 .class = extra.data.flags.class,
                 .size = extra.data.size,
                 .alignment = extra.data.flags.alignment,
@@ -3678,8 +3678,8 @@ pub fn loadStructType(ip: *const InternPool, index: Index) LoadedStructType {
         .fqn = extra.data.fqn,
         .name_nav = extra.data.name_nav,
         .namespace = extra.data.namespace,
-        .layout = .@"packed",
-        .packed_backing_mode = backing_mode,
+        .layout = .@"bitpack",
+        .bitpack_backing_mode = backing_mode,
 
         .want_layout = extra.data.bits.want_layout,
 
@@ -3691,7 +3691,7 @@ pub fn loadStructType(ip: *const InternPool, index: Index) LoadedStructType {
         .field_is_comptime_bits = .empty,
         .field_runtime_order = .empty,
         .field_offsets = .empty,
-        .packed_backing_int_type = extra.data.backing_int_type,
+        .bitpack_backing_int_type = extra.data.backing_int_type,
         .class = undefined,
         .size = undefined,
         .alignment = undefined,
@@ -3703,10 +3703,10 @@ pub fn loadUnionType(ip: *const InternPool, index: Index) LoadedUnionType {
     const extra_list = unwrapped_index.getExtra(ip);
     const extra_items = extra_list.view().items(.@"0");
     const item = unwrapped_index.getItem(ip);
-    // Exiting this `switch` means this is a `packed union`.
+    // Exiting this `switch` means this is a `bitpack union`.
     const backing_mode: BackingTypeMode = switch (item.tag) {
-        .type_union_packed_auto => .auto,
-        .type_union_packed_explicit => .explicit,
+        .type_union_bitpack_auto => .auto,
+        .type_union_bitpack_explicit => .explicit,
         .type_union => {
             const extra = extraDataTrail(extra_list, Tag.TypeUnion, item.data);
             var extra_index = extra.end;
@@ -3761,8 +3761,8 @@ pub fn loadUnionType(ip: *const InternPool, index: Index) LoadedUnionType {
                 .tag_usage = extra.data.flags.tag_usage,
                 .enum_tag_mode = extra.data.flags.enum_tag_mode,
                 .enum_tag_type = extra.data.enum_tag_type,
-                .packed_backing_mode = undefined,
-                .packed_backing_int_type = undefined,
+                .bitpack_backing_mode = undefined,
+                .bitpack_backing_int_type = undefined,
                 .reified_field_names = reified_field_names,
                 .want_layout = extra.data.flags.want_layout,
                 .field_types = field_types,
@@ -3810,12 +3810,12 @@ pub fn loadUnionType(ip: *const InternPool, index: Index) LoadedUnionType {
         .fqn = extra.data.fqn,
         .name_nav = extra.data.name_nav,
         .namespace = extra.data.namespace,
-        .layout = .@"packed",
+        .layout = .@"bitpack",
         .tag_usage = .none,
         .enum_tag_mode = .auto,
         .enum_tag_type = extra.data.enum_tag_type,
-        .packed_backing_mode = backing_mode,
-        .packed_backing_int_type = extra.data.backing_int_type,
+        .bitpack_backing_mode = backing_mode,
+        .bitpack_backing_int_type = extra.data.backing_int_type,
         .reified_field_names = reified_field_names,
         .want_layout = extra.data.bits.want_layout,
         .field_types = field_types,
@@ -4199,7 +4199,7 @@ pub const Index = enum(u32) {
     };
     pub fn unwrap(index: Index, ip: *const InternPool) Unwrapped {
         return .{
-            .tid = @fromBackingInt(@intCast(@backingInt(index) >> ip.tid_shift_30 & ip.getTidMask())),
+            .tid = @fromBackingInt(@intCast((@backingInt(index) >> ip.tid_shift_30) & ip.getTidMask())),
             .index = @backingInt(index) & ip.getIndexMask(u30),
         };
     }
@@ -4244,13 +4244,13 @@ pub const Index = enum(u32) {
         },
 
         type_struct: struct { data: *Tag.TypeStruct },
-        type_struct_packed_auto: struct { data: *Tag.TypeStructPacked },
-        type_struct_packed_explicit: struct { data: *Tag.TypeStructPacked },
-        type_struct_packed_auto_defaults: struct { data: *Tag.TypeStructPacked },
-        type_struct_packed_explicit_defaults: struct { data: *Tag.TypeStructPacked },
+        type_struct_bitpack_auto: struct { data: *Tag.TypeStructPacked },
+        type_struct_bitpack_explicit: struct { data: *Tag.TypeStructPacked },
+        type_struct_bitpack_auto_defaults: struct { data: *Tag.TypeStructPacked },
+        type_struct_bitpack_explicit_defaults: struct { data: *Tag.TypeStructPacked },
         type_union: struct { data: *Tag.TypeUnion },
-        type_union_packed_auto: struct { data: *Tag.TypeUnionPacked },
-        type_union_packed_explicit: struct { data: *Tag.TypeUnionPacked },
+        type_union_bitpack_auto: struct { data: *Tag.TypeUnionPacked },
+        type_union_bitpack_explicit: struct { data: *Tag.TypeUnionPacked },
         type_enum_auto: struct { data: *Tag.TypeEnum },
         type_enum_explicit: struct { data: *Tag.TypeEnum },
         type_enum_nonexhaustive: struct { data: *Tag.TypeEnum },
@@ -4324,7 +4324,7 @@ pub const Index = enum(u32) {
             trailing: struct { element_values: []Index },
         },
         repeated: struct { data: *Repeated },
-        bitpack: struct { data: *Key.Bitpack },
+        @"bitpack": struct { data: *Key.Bitpack },
 
         memoized_call: struct {
             const @"data.args_len" = opaque {};
@@ -4368,7 +4368,7 @@ pub const Index = enum(u32) {
                                             for (info.field_names, info.field_types) |field_name, field_type| checkField(name ++ "." ++ field_name, field_type);
                                             return;
                                         },
-                                        .@"packed" => return,
+                                        .@"bitpack" => return,
                                     },
                                     .optional => |info| {
                                         checkConfig(name ++ ".?");
@@ -4841,31 +4841,31 @@ pub const Tag = enum(u8) {
     /// data is extra index of `TypeTuple`.
     type_tuple,
 
-    /// A non-packed struct type.
+    /// A non-bitpack struct type.
     /// data is extra index of `TypeStruct`.
     type_struct,
-    /// `packed struct { ... }` with no default field values.
+    /// `bitpack struct { ... }` with no default field values.
     /// data is extra index of `TypeStructPacked`.
-    type_struct_packed_auto,
-    /// `packed struct(T) { ... }` with no default field values.
+    type_struct_bitpack_auto,
+    /// `bitpack struct(T) { ... }` with no default field values.
     /// data is extra index of `TypeStructPacked`.
-    type_struct_packed_explicit,
-    /// `packed struct { ... }` with one or more default field values.
+    type_struct_bitpack_explicit,
+    /// `bitpack struct { ... }` with one or more default field values.
     /// data is extra index of `TypeStructPacked`.
-    type_struct_packed_auto_defaults,
-    /// `packed struct(T) { ... }` with one or more default field values.
+    type_struct_bitpack_auto_defaults,
+    /// `bitpack struct(T) { ... }` with one or more default field values.
     /// data is extra index of `TypeStructPacked`.
-    type_struct_packed_explicit_defaults,
+    type_struct_bitpack_explicit_defaults,
 
-    /// A non-packed union type.
+    /// A non-bitpack union type.
     /// data is extra index of `TypeUnion`.
     type_union,
-    /// `packed union { ... }`.
+    /// `bitpack union { ... }`.
     /// data is extra index of `TypeUnionPacked`.
-    type_union_packed_auto,
-    /// `packed union(T) { ... }`.
+    type_union_bitpack_auto,
+    /// `bitpack union(T) { ... }`.
     /// data is extra index of `TypeUnionPacked`.
-    type_union_packed_explicit,
+    type_union_bitpack_explicit,
 
     /// An exhaustive enum type *without* an explicit integer tag type. The tag type is inferred.
     ///
@@ -5063,9 +5063,9 @@ pub const Tag = enum(u8) {
     /// An instance of an array or vector with every element being the same value.
     /// data is extra index to `Repeated`.
     repeated,
-    /// An instance of a `packed struct` or `packed union`.
+    /// An instance of a `bitpack struct` or `bitpack union`.
     /// data is extra index to `Key.Bitpack`.
-    bitpack,
+    @"bitpack",
 
     /// A memoized comptime function call result.
     /// data is extra index to `MemoizedCall`
@@ -5244,10 +5244,10 @@ pub const Tag = enum(u8) {
                 .@"trailing.field_offsets.len" = .@"payload.fields_len",
             },
         },
-        .type_struct_packed_auto = struct_packed_encoding,
-        .type_struct_packed_explicit = struct_packed_encoding,
-        .type_struct_packed_auto_defaults = struct_packed_defaults_encoding,
-        .type_struct_packed_explicit_defaults = struct_packed_defaults_encoding,
+        .type_struct_bitpack_auto = struct_packed_encoding,
+        .type_struct_bitpack_explicit = struct_packed_encoding,
+        .type_struct_bitpack_auto_defaults = struct_packed_defaults_encoding,
+        .type_struct_bitpack_explicit_defaults = struct_packed_defaults_encoding,
         .type_union = .{
             .summary = .@"{.payload.fqn%summary#\"}",
             .payload = TypeUnion,
@@ -5255,6 +5255,7 @@ pub const Tag = enum(u8) {
                 type_hash: ?u64,
                 captures_len: ?u32,
                 captures: ?[]CaptureValue,
+                reified_field_name: ?[]NullTerminatedString,
                 field_types: []Index,
                 field_aligns: ?[]Alignment,
             },
@@ -5263,13 +5264,15 @@ pub const Tag = enum(u8) {
                 .@"trailing.captures_len.?" = .@"payload.flags.any_captures == .true",
                 .@"trailing.captures.?" = .@"payload.flags.any_captures == .true",
                 .@"trailing.captures.?.len" = .@"trailing.captures_len.?",
+                .@"trailing.reified_field_name.?" = .@"payload.flags.any_captures == .reified",
+                .@"trailing.reified_field_name.?.len" = .@"payload.fields_len",
                 .@"trailing.field_types.len" = .@"payload.fields_len",
                 .@"trailing.field_aligns.?" = .@"payload.flags.any_field_aligns",
                 .@"trailing.field_aligns.?.len" = .@"(payload.fields_len + 3) & ~@as(u32, 3)",
             },
         },
-        .type_union_packed_auto = union_packed_encoding,
-        .type_union_packed_explicit = union_packed_encoding,
+        .type_union_bitpack_auto = union_packed_encoding,
+        .type_union_bitpack_explicit = union_packed_encoding,
         .type_enum_auto = .{
             .summary = .@"{.payload.fqn%summary#\"}",
             .payload = TypeEnum,
@@ -5403,7 +5406,7 @@ pub const Tag = enum(u8) {
             .config = .{ .@"trailing.elements.len" = .@"@syntheticField(@syntheticField(payload.ty, \"unwrapped\"), \"payload\").fields_len" },
         },
         .repeated = .{ .summary = .@"@as({.payload.ty%summary}, @splat({.payload.elem_val%summary}))", .payload = Repeated },
-        .bitpack = .{ .summary = .@"@as({.payload.ty%summary}, {})", .payload = Key.Bitpack },
+        .@"bitpack" = .{ .summary = .@"@as({.payload.ty%summary}, {})", .payload = Key.Bitpack },
 
         .memoized_call = .{
             .summary = .@"@memoize({.payload.func%summary})",
@@ -5426,7 +5429,7 @@ pub const Tag = enum(u8) {
         location_or_descriptor_set: u32,
         descriptor_binding: u32,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             linkage: std.lang.GlobalLinkage,
             visibility: std.lang.SymbolVisibility,
             is_dll_import: bool,
@@ -5509,7 +5512,7 @@ pub const Tag = enum(u8) {
         return_type: Index,
         flags: Flags,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             cc: PackedCallingConvention,
             is_var_args: bool,
             has_comptime_bits: bool,
@@ -5560,10 +5563,10 @@ pub const Tag = enum(u8) {
 
         flags: Flags,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             any_captures: enum(u2) { true, false, reified },
 
-            /// `packed` layout is represented separately by `TypeStructPacked`.
+            /// `bitpack` layout is represented separately by `TypeStructPacked`.
             layout: enum(u1) { auto, @"extern" },
 
             any_comptime_fields: bool,
@@ -5601,7 +5604,7 @@ pub const Tag = enum(u8) {
         fields_len: u32,
         field_name_map: MapIndex,
 
-        const Bits = packed struct(u32) {
+        const Bits = bitpack struct(u32) {
             captures_len: enum(u31) {
                 reified = std.math.maxInt(u31),
                 _,
@@ -5644,7 +5647,7 @@ pub const Tag = enum(u8) {
 
         flags: Flags,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             any_captures: enum(u2) { true, false, reified },
 
             /// Whether `enum_tag_type` was explicitly specified with `union(E)` syntax.
@@ -5653,7 +5656,7 @@ pub const Tag = enum(u8) {
             /// considered to have an explicitly specified integer tag type.
             enum_tag_mode: BackingTypeMode,
 
-            /// `packed` layout is represented separately by `TypeStructPacked`.
+            /// `bitpack` layout is represented separately by `TypeStructPacked`.
             layout: enum(u1) { auto, @"extern" },
 
             any_field_aligns: bool,
@@ -5692,7 +5695,7 @@ pub const Tag = enum(u8) {
 
         /// The corresponding `BackingTypeMode` depends on the item's `Tag`.
         backing_int_type: Index,
-        /// Although packed unions do not semantically have a tag type, the compiler still assigns
+        /// Although bitpack unions do not semantically have a tag type, the compiler still assigns
         /// them a "hypothetical" tag type.
         enum_tag_type: Index,
 
@@ -5701,7 +5704,7 @@ pub const Tag = enum(u8) {
         /// work on unresolved types.
         fields_len: u32,
 
-        const Bits = packed struct(u32) {
+        const Bits = bitpack struct(u32) {
             captures_len: enum(u31) {
                 reified = std.math.maxInt(u31),
                 _,
@@ -5733,7 +5736,7 @@ pub const Tag = enum(u8) {
         fields_len: u32,
         field_name_map: MapIndex,
 
-        const Bits = packed struct(u32) {
+        const Bits = bitpack struct(u32) {
             captures_len: enum(u31) {
                 reified = std.math.maxInt(u31),
                 generated_union_tag = std.math.maxInt(u31) - 1,
@@ -5756,13 +5759,13 @@ pub const Tag = enum(u8) {
     };
 };
 
-/// Differentiates between user-provided and compiler-generated backing types for packed and tagged types.
+/// Differentiates between user-provided and compiler-generated backing types for bitpack and tagged types.
 pub const BackingTypeMode = enum(u1) {
     /// The backing type was explicitly provided by the user. For instance:
     ///   union(T)
     ///   enum(T)
-    ///   packed struct(T)
-    ///   packed union(T)
+    ///   bitpack struct(T)
+    ///   bitpack union(T)
     /// Type layout resolution will evaluate the user-provided expression and validate that type.
     explicit,
     /// No backing type was explicitly provided by the user. Type layout resolution will populate
@@ -5773,7 +5776,7 @@ pub const BackingTypeMode = enum(u1) {
 /// State that is mutable during semantic analysis. This data is not used for
 /// equality or hashing, except for `inferred_error_set` which is considered
 /// to be part of the type of the function.
-pub const FuncAnalysis = packed struct(u32) {
+pub const FuncAnalysis = bitpack struct(u32) {
     want_runtime_analysis: bool,
     branch_hint: std.lang.BranchHint,
     is_noinline: bool,
@@ -6032,7 +6035,7 @@ pub const Array = struct {
     }
 };
 
-pub const PackedU64 = packed struct(u64) {
+pub const PackedU64 = bitpack struct(u64) {
     a: u32,
     b: u32,
 
@@ -6059,7 +6062,7 @@ pub const PtrNav = struct {
         };
     }
     fn byteOffset(data: @This()) u64 {
-        return @as(u64, data.byte_offset_a) << 32 | data.byte_offset_b;
+        return (@as(u64, data.byte_offset_a) << 32) | data.byte_offset_b;
     }
 };
 
@@ -6077,7 +6080,7 @@ pub const PtrUav = struct {
         };
     }
     fn byteOffset(data: @This()) u64 {
-        return @as(u64, data.byte_offset_a) << 32 | data.byte_offset_b;
+        return (@as(u64, data.byte_offset_a) << 32) | data.byte_offset_b;
     }
 };
 
@@ -6098,7 +6101,7 @@ pub const PtrUavAligned = struct {
         };
     }
     fn byteOffset(data: @This()) u64 {
-        return @as(u64, data.byte_offset_a) << 32 | data.byte_offset_b;
+        return (@as(u64, data.byte_offset_a) << 32) | data.byte_offset_b;
     }
 };
 
@@ -6116,7 +6119,7 @@ pub const PtrComptimeAlloc = struct {
         };
     }
     fn byteOffset(data: @This()) u64 {
-        return @as(u64, data.byte_offset_a) << 32 | data.byte_offset_b;
+        return (@as(u64, data.byte_offset_a) << 32) | data.byte_offset_b;
     }
 };
 
@@ -6134,7 +6137,7 @@ pub const PtrComptimeField = struct {
         };
     }
     fn byteOffset(data: @This()) u64 {
-        return @as(u64, data.byte_offset_a) << 32 | data.byte_offset_b;
+        return (@as(u64, data.byte_offset_a) << 32) | data.byte_offset_b;
     }
 };
 
@@ -6152,7 +6155,7 @@ pub const PtrBase = struct {
         };
     }
     fn byteOffset(data: @This()) u64 {
-        return @as(u64, data.byte_offset_a) << 32 | data.byte_offset_b;
+        return (@as(u64, data.byte_offset_a) << 32) | data.byte_offset_b;
     }
 };
 
@@ -6172,7 +6175,7 @@ pub const PtrBaseIndex = struct {
         };
     }
     fn byteOffset(data: @This()) u64 {
-        return @as(u64, data.byte_offset_a) << 32 | data.byte_offset_b;
+        return (@as(u64, data.byte_offset_a) << 32) | data.byte_offset_b;
     }
 };
 
@@ -6188,7 +6191,7 @@ pub const PtrInt = struct {
         };
     }
     fn byteOffset(data: @This()) u64 {
-        return @as(u64, data.byte_offset_a) << 32 | data.byte_offset_b;
+        return (@as(u64, data.byte_offset_a) << 32) | data.byte_offset_b;
     }
 };
 
@@ -6202,7 +6205,7 @@ pub const PtrSlice = struct {
 };
 
 /// Trailing: Limb for every limbs_len
-pub const Int = packed struct {
+pub const Int = bitpack struct {
     ty: Index,
     limbs_len: u32,
 
@@ -6543,10 +6546,10 @@ pub fn indexToKey(ip: *const InternPool, index: Index) Key {
                 } },
             };
         } },
-        .type_struct_packed_auto,
-        .type_struct_packed_explicit,
-        .type_struct_packed_auto_defaults,
-        .type_struct_packed_explicit_defaults,
+        .type_struct_bitpack_auto,
+        .type_struct_bitpack_explicit,
+        .type_struct_bitpack_auto_defaults,
+        .type_struct_bitpack_explicit_defaults,
         => .{ .struct_type = ns: {
             const extra_list = unwrapped_index.getExtra(ip);
             const extra = extraDataTrail(extra_list, Tag.TypeStructPacked, data);
@@ -6587,7 +6590,7 @@ pub fn indexToKey(ip: *const InternPool, index: Index) Key {
                 } },
             };
         } },
-        .type_union_packed_auto, .type_union_packed_explicit => .{ .union_type = ns: {
+        .type_union_bitpack_auto, .type_union_bitpack_explicit => .{ .union_type = ns: {
             const extra_list = unwrapped_index.getExtra(ip);
             const extra = extraDataTrail(extra_list, Tag.TypeUnionPacked, data);
             break :ns switch (extra.data.bits.captures_len) {
@@ -6844,8 +6847,8 @@ pub fn indexToKey(ip: *const InternPool, index: Index) Key {
                 },
                 .type_array_small,
                 .type_vector,
-                .type_struct_packed_auto,
-                .type_struct_packed_explicit,
+                .type_struct_bitpack_auto,
+                .type_struct_bitpack_explicit,
                 => .{ .aggregate = .{
                     .ty = ty,
                     .storage = .{ .elems = &.{} },
@@ -6854,8 +6857,8 @@ pub fn indexToKey(ip: *const InternPool, index: Index) Key {
                 // There is only one possible value precisely due to the
                 // fact that this values slice is fully populated!
                 .type_struct,
-                .type_struct_packed_auto_defaults,
-                .type_struct_packed_explicit_defaults,
+                .type_struct_bitpack_auto_defaults,
+                .type_struct_bitpack_explicit_defaults,
                 => {
                     const info = loadStructType(ip, ty);
                     return .{ .aggregate = .{
@@ -6921,7 +6924,7 @@ pub fn indexToKey(ip: *const InternPool, index: Index) Key {
         },
         .enum_literal => .{ .enum_literal = @fromBackingInt(@intCast(data)) },
         .enum_tag => .{ .enum_tag = extraData(unwrapped_index.getExtra(ip), Tag.EnumTag, data) },
-        .bitpack => .{ .bitpack = extraData(unwrapped_index.getExtra(ip), Key.Bitpack, data) },
+        .@"bitpack" => .{ .@"bitpack" = extraData(unwrapped_index.getExtra(ip), Key.Bitpack, data) },
 
         .memoized_call => {
             const extra_list = unwrapped_index.getExtra(ip);
@@ -7803,7 +7806,7 @@ pub fn get(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.PerThread.Id, key: 
                 .vector_type => |vector_type| .{ vector_type.child, .none },
                 .tuple_type => .{ .none, .none },
                 .struct_type => child: {
-                    assert(ip.loadStructType(aggregate.ty).layout != .@"packed");
+                    assert(ip.loadStructType(aggregate.ty).layout != .@"bitpack");
                     break :child .{ .none, .none };
                 },
                 else => unreachable,
@@ -7899,9 +7902,9 @@ pub fn get(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.PerThread.Id, key: 
 
             repeated: {
                 switch (aggregate.storage) {
-                    .bytes => |bytes| for (bytes.toSlice(len, ip)[1..]) |byte|
+                    .bytes => |bytes| for (bytes.toSlice(len_including_sentinel, ip)[1..]) |byte|
                         if (byte != bytes.at(0, ip)) break :repeated,
-                    .elems => |elems| for (elems[1..@intCast(len)]) |elem|
+                    .elems => |elems| for (elems[1..@intCast(len_including_sentinel)]) |elem|
                         if (elem != elems[0]) break :repeated,
                     .repeated_elem => {},
                 }
@@ -7987,16 +7990,16 @@ pub fn get(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.PerThread.Id, key: 
             extra.appendSliceAssumeCapacity(.{@ptrCast(aggregate.storage.elems)});
             if (sentinel != .none) extra.appendAssumeCapacity(.{@backingInt(sentinel)});
         },
-        .bitpack => |bitpack| {
-            switch (ip.zigTypeTag(bitpack.ty)) {
-                .@"struct" => assert(ip.typeOf(bitpack.backing_int_val) == ip.loadStructType(bitpack.ty).packed_backing_int_type),
-                .@"union" => assert(ip.typeOf(bitpack.backing_int_val) == ip.loadUnionType(bitpack.ty).packed_backing_int_type),
+        .@"bitpack" => |@"bitpack"| {
+            switch (ip.zigTypeTag(@"bitpack".ty)) {
+                .@"struct" => assert(ip.typeOf(@"bitpack".backing_int_val) == ip.loadStructType(@"bitpack".ty).bitpack_backing_int_type),
+                .@"union" => assert(ip.typeOf(@"bitpack".backing_int_val) == ip.loadUnionType(@"bitpack".ty).bitpack_backing_int_type),
                 else => unreachable,
             }
-            assert(!ip.isUndef(bitpack.backing_int_val));
+            assert(!ip.isUndef(@"bitpack".backing_int_val));
             items.appendAssumeCapacity(.{
-                .tag = .bitpack,
-                .data = try addExtra(extra, bitpack),
+                .tag = .@"bitpack",
+                .data = try addExtra(extra, @"bitpack"),
             });
         },
 
@@ -8044,7 +8047,7 @@ pub fn getDeclaredStructType(
         any_comptime_fields: bool,
         any_field_defaults: bool,
         any_field_aligns: bool,
-        packed_backing_mode: BackingTypeMode,
+        bitpack_backing_mode: BackingTypeMode,
     },
 ) Allocator.Error!WipContainerType.Result {
     var gop = try ip.getOrPutKey(gpa, io, tid, .{ .struct_type = .{ .declared = .{
@@ -8065,7 +8068,7 @@ pub fn getDeclaredStructType(
     const is_extern = switch (ini.layout) {
         .auto => false,
         .@"extern" => true,
-        .@"packed" => {
+        .@"bitpack" => {
             try extra.ensureUnusedCapacity(@typeInfo(Tag.TypeStructPacked).@"struct".field_names.len +
                 ini.captures.len + // capture
                 ini.fields_len + // field_name
@@ -8093,9 +8096,9 @@ pub fn getDeclaredStructType(
                 extra.appendNTimesAssumeCapacity(.{@backingInt(Index.none)}, ini.fields_len); // field_default
             }
             items.appendAssumeCapacity(.{
-                .tag = switch (ini.packed_backing_mode) {
-                    .auto => if (ini.any_field_defaults) .type_struct_packed_auto_defaults else .type_struct_packed_auto,
-                    .explicit => if (ini.any_field_defaults) .type_struct_packed_explicit_defaults else .type_struct_packed_explicit,
+                .tag = switch (ini.bitpack_backing_mode) {
+                    .auto => if (ini.any_field_defaults) .type_struct_bitpack_auto_defaults else .type_struct_bitpack_auto,
+                    .explicit => if (ini.any_field_defaults) .type_struct_bitpack_explicit_defaults else .type_struct_bitpack_explicit,
                 },
                 .data = extra_index,
             });
@@ -8192,8 +8195,8 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
     any_comptime_fields: bool,
     any_field_defaults: bool,
     any_field_aligns: bool,
-    /// Explicitly specified backing int type. `.none` if not packed or if backing type is inferred.
-    packed_backing_int_type: Index,
+    /// Explicitly specified backing int type. `.none` if not bit-packed or if backing type is inferred.
+    bitpack_backing_int_type: Index,
 }) Allocator.Error!WipContainerType.Result {
     var gop = try ip.getOrPutKey(gpa, io, tid, .{ .struct_type = .{ .reified = .{
         .zir_index = ini.zir_index,
@@ -8213,7 +8216,7 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
     const is_extern = switch (ini.layout) {
         .auto => false,
         .@"extern" => true,
-        .@"packed" => {
+        .@"bitpack" => {
             try extra.ensureUnusedCapacity(@typeInfo(Tag.TypeStructPacked).@"struct".field_names.len +
                 2 + // type_hash
                 ini.fields_len + // field_name
@@ -8230,7 +8233,7 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
                 .fqn = undefined, // set by `finish`
                 .name_nav = undefined, // set by `finish`
                 .namespace = undefined, // set by `finish`
-                .backing_int_type = ini.packed_backing_int_type,
+                .backing_int_type = ini.bitpack_backing_int_type,
                 .fields_len = ini.fields_len,
                 .field_name_map = field_name_map,
             });
@@ -8244,9 +8247,9 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
                 extra.appendNTimesAssumeCapacity(.{@backingInt(Index.none)}, ini.fields_len); // field_default
             }
             items.appendAssumeCapacity(.{
-                .tag = switch (ini.packed_backing_int_type) {
-                    .none => if (ini.any_field_defaults) .type_struct_packed_auto_defaults else .type_struct_packed_auto,
-                    else => if (ini.any_field_defaults) .type_struct_packed_explicit_defaults else .type_struct_packed_explicit,
+                .tag = switch (ini.bitpack_backing_int_type) {
+                    .none => if (ini.any_field_defaults) .type_struct_bitpack_auto_defaults else .type_struct_bitpack_auto,
+                    else => if (ini.any_field_defaults) .type_struct_bitpack_explicit_defaults else .type_struct_bitpack_explicit,
                 },
                 .data = extra_index,
             });
@@ -8372,7 +8375,7 @@ pub fn getDeclaredUnionType(
         any_field_aligns: bool,
         tag_usage: LoadedUnionType.TagUsage,
         enum_tag_mode: BackingTypeMode,
-        packed_backing_mode: BackingTypeMode,
+        bitpack_backing_mode: BackingTypeMode,
     },
 ) Allocator.Error!WipContainerType.Result {
     var gop = try ip.getOrPutKey(gpa, io, tid, .{ .union_type = .{ .declared = .{
@@ -8390,7 +8393,7 @@ pub fn getDeclaredUnionType(
     const is_extern = switch (ini.layout) {
         .auto => false,
         .@"extern" => true,
-        .@"packed" => {
+        .@"bitpack" => {
             try extra.ensureUnusedCapacity(@typeInfo(Tag.TypeUnionPacked).@"struct".field_names.len +
                 ini.captures.len + // capture
                 ini.fields_len); // field_type
@@ -8412,9 +8415,9 @@ pub fn getDeclaredUnionType(
             extra.appendSliceAssumeCapacity(.{@ptrCast(ini.captures)}); // capture
             extra.appendNTimesAssumeCapacity(.{@backingInt(Index.none)}, ini.fields_len); // field_type
             items.appendAssumeCapacity(.{
-                .tag = switch (ini.packed_backing_mode) {
-                    .auto => .type_union_packed_auto,
-                    .explicit => .type_union_packed_explicit,
+                .tag = switch (ini.bitpack_backing_mode) {
+                    .auto => .type_union_bitpack_auto,
+                    .explicit => .type_union_bitpack_explicit,
                 },
                 .data = extra_index,
             });
@@ -8498,8 +8501,8 @@ pub fn getReifiedUnionType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Per
     tag_usage: LoadedUnionType.TagUsage,
     /// Explicitly specified enum tag type. `.none` if `tag_usage != .tagged`.
     enum_tag_type: Index,
-    /// Explicitly specified backing int type. `.none` if not packed or if backing type is inferred.
-    packed_backing_int_type: Index,
+    /// Explicitly specified backing int type. `.none` if not bit-packed or if backing type is inferred.
+    bitpack_backing_int_type: Index,
 }) Allocator.Error!WipContainerType.Result {
     var gop = try ip.getOrPutKey(gpa, io, tid, .{ .union_type = .{ .reified = .{
         .zir_index = ini.zir_index,
@@ -8516,7 +8519,7 @@ pub fn getReifiedUnionType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Per
     const is_extern = switch (ini.layout) {
         .auto => false,
         .@"extern" => true,
-        .@"packed" => {
+        .@"bitpack" => {
             try extra.ensureUnusedCapacity(@typeInfo(Tag.TypeUnionPacked).@"struct".field_names.len +
                 2 + // type_hash
                 ini.fields_len + // reified_field_name
@@ -8532,7 +8535,7 @@ pub fn getReifiedUnionType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Per
                 .fqn = undefined, // set by `finish`
                 .name_nav = undefined, // set by `finish`
                 .namespace = undefined, // set by `finish`
-                .backing_int_type = ini.packed_backing_int_type,
+                .backing_int_type = ini.bitpack_backing_int_type,
                 .enum_tag_type = .none,
                 .fields_len = ini.fields_len,
             });
@@ -8542,9 +8545,9 @@ pub fn getReifiedUnionType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Per
             const field_types_start = extra.mutate.len;
             extra.appendNTimesAssumeCapacity(.{@backingInt(Index.none)}, ini.fields_len); // field_type
             items.appendAssumeCapacity(.{
-                .tag = switch (ini.packed_backing_int_type) {
-                    .none => .type_union_packed_auto,
-                    else => .type_union_packed_explicit,
+                .tag = switch (ini.bitpack_backing_int_type) {
+                    .none => .type_union_bitpack_auto,
+                    else => .type_union_bitpack_explicit,
                 },
                 .data = extra_index,
             });
@@ -9008,7 +9011,7 @@ pub fn getUnion(
 ) Allocator.Error!Index {
     assert(un.ty != .none);
     assert(un.val != .none);
-    assert(ip.loadUnionType(un.ty).layout != .@"packed");
+    assert(ip.loadUnionType(un.ty).layout != .@"bitpack");
 
     var gop = try ip.getOrPutKey(gpa, io, tid, .{ .un = un });
     defer gop.deinit();
@@ -10588,17 +10591,36 @@ pub fn errorUnionPayload(ip: *const InternPool, ty: Index) Index {
     return ip.indexToKey(ty).error_union_type.payload_type;
 }
 
-pub fn dump(ip: *const InternPool) void {
-    var buffer: [4096]u8 = undefined;
-    const stderr = std.debug.lockStderr(&buffer);
-    defer std.debug.unlockStderr();
-    const w = &stderr.file_writer.interface;
-    dumpDependencyStatsFallible(ip, w) catch return;
-    dumpStatsFallible(ip, w, std.heap.page_allocator) catch return;
-    dumpAllFallible(ip, w) catch return;
-}
+pub const Dump = struct {
+    name: []const u8,
+    arena: std.mem.Allocator,
+    ip: *const InternPool,
+    err: ?Allocator.Error,
 
-fn dumpDependencyStatsFallible(ip: *const InternPool, w: *Io.Writer) !void {
+    pub fn format(d: *Dump, w: *Io.Writer) Io.Writer.Error!void {
+        try w.print("{q}:\n", .{d.name});
+        try d.ip.dumpDependencyStatsFallible(w);
+        d.ip.dumpStatsFallible(d.arena, w) catch |err| switch (err) {
+            error.WriteFailed => |e| return e,
+            error.OutOfMemory => |e| {
+                d.err = e;
+                return error.WriteFailed;
+            },
+        };
+    }
+
+    pub fn formatAll(d: *Dump, w: *Io.Writer) Io.Writer.Error!void {
+        try w.print("{q}:\n", .{d.name});
+        try d.ip.dumpAllFallible(w);
+    }
+
+    pub fn formatGenericInstances(d: *Dump, w: *Io.Writer) Io.Writer.Error!void {
+        try w.print("{q}:\n", .{d.name});
+        d.ip.dumpGenericInstancesFallible(d.arena, w) catch return;
+    }
+};
+
+fn dumpDependencyStatsFallible(ip: *const InternPool, w: *Io.Writer) Io.Writer.Error!void {
     const dep_entries_len = ip.dep_entries.items.len - ip.free_dep_entries.items.len;
     const src_hash_deps_len = ip.src_hash_deps.count();
     const nav_val_deps_len = ip.nav_val_deps.count();
@@ -10665,7 +10687,7 @@ fn dumpDependencyStatsFallible(ip: *const InternPool, w: *Io.Writer) !void {
     });
 }
 
-fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !void {
+fn dumpStatsFallible(ip: *const InternPool, arena: Allocator, w: *Io.Writer) (Allocator.Error || Io.Writer.Error)!void {
     var items_len: usize = 0;
     var extra_len: usize = 0;
     var limbs_len: usize = 0;
@@ -10778,7 +10800,7 @@ fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !vo
                     n += extra.data.fields_len; // field_offset: u32
                     break :b n * @sizeOf(u32);
                 },
-                .type_struct_packed_auto, .type_struct_packed_explicit => b: {
+                .type_struct_bitpack_auto, .type_struct_bitpack_explicit => b: {
                     var n: usize = @typeInfo(Tag.TypeStructPacked).@"struct".field_names.len;
                     const extra = extraDataTrail(extra_list, Tag.TypeStructPacked, data);
                     switch (extra.data.bits.captures_len) {
@@ -10789,7 +10811,7 @@ fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !vo
                     n += extra.data.fields_len; // field_type: Index
                     break :b n * @sizeOf(u32);
                 },
-                .type_struct_packed_auto_defaults, .type_struct_packed_explicit_defaults => b: {
+                .type_struct_bitpack_auto_defaults, .type_struct_bitpack_explicit_defaults => b: {
                     var n: usize = @typeInfo(Tag.TypeStructPacked).@"struct".field_names.len;
                     const extra = extraDataTrail(extra_list, Tag.TypeStructPacked, data);
                     switch (extra.data.bits.captures_len) {
@@ -10818,7 +10840,7 @@ fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !vo
                     }
                     break :b n * @sizeOf(u32);
                 },
-                .type_union_packed_auto, .type_union_packed_explicit => b: {
+                .type_union_bitpack_auto, .type_union_bitpack_explicit => b: {
                     var n: usize = @typeInfo(Tag.TypeUnionPacked).@"struct".field_names.len;
                     const extra = extraDataTrail(extra_list, Tag.TypeUnionPacked, data);
                     switch (extra.data.bits.captures_len) {
@@ -10940,7 +10962,7 @@ fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !vo
                 .func_coerced => @sizeOf(Tag.FuncCoerced),
                 .only_possible_value => 0,
                 .union_value => @sizeOf(Key.Union),
-                .bitpack => 2 * @sizeOf(u32),
+                .@"bitpack" => 2 * @sizeOf(u32),
 
                 .memoized_call => b: {
                     const info = extraData(extra_list, MemoizedCall, data);
@@ -10965,7 +10987,7 @@ fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !vo
     }
 }
 
-fn dumpAllFallible(ip: *const InternPool, w: *Io.Writer) anyerror!void {
+fn dumpAllFallible(ip: *const InternPool, w: *Io.Writer) Io.Writer.Error!void {
     for (ip.locals, 0..) |*local, tid| {
         // Early check for length 0, because `view()` is invalid if capacity is 0
         if (local.mutate.items.len == 0) continue;
@@ -10998,13 +11020,13 @@ fn dumpAllFallible(ip: *const InternPool, w: *Io.Writer) anyerror!void {
                 .type_tuple,
                 .type_function,
                 .type_struct,
-                .type_struct_packed_auto,
-                .type_struct_packed_explicit,
-                .type_struct_packed_auto_defaults,
-                .type_struct_packed_explicit_defaults,
+                .type_struct_bitpack_auto,
+                .type_struct_bitpack_explicit,
+                .type_struct_bitpack_auto_defaults,
+                .type_struct_bitpack_explicit_defaults,
                 .type_union,
-                .type_union_packed_auto,
-                .type_union_packed_explicit,
+                .type_union_bitpack_auto,
+                .type_union_bitpack_explicit,
                 .type_enum_auto,
                 .type_enum_explicit,
                 .type_enum_nonexhaustive,
@@ -11054,7 +11076,7 @@ fn dumpAllFallible(ip: *const InternPool, w: *Io.Writer) anyerror!void {
                 .func_instance,
                 .func_coerced,
                 .union_value,
-                .bitpack,
+                .@"bitpack",
                 .memoized_call,
                 => try w.print("{d}", .{data}),
 
@@ -11068,21 +11090,10 @@ fn dumpAllFallible(ip: *const InternPool, w: *Io.Writer) anyerror!void {
     }
 }
 
-pub fn dumpGenericInstances(ip: *const InternPool, allocator: Allocator) void {
-    var buffer: [4096]u8 = undefined;
-    const stderr = std.debug.lockStderr(&buffer);
-    defer std.debug.unlockStderr();
-    const w = &stderr.file_writer.interface;
-    ip.dumpGenericInstancesFallible(allocator, w) catch return;
-}
-
-pub fn dumpGenericInstancesFallible(ip: *const InternPool, allocator: Allocator, w: *Io.Writer) !void {
-    var arena_allocator = std.heap.ArenaAllocator.init(allocator);
-    defer arena_allocator.deinit();
-    const arena = arena_allocator.allocator();
-
+pub fn dumpGenericInstancesFallible(ip: *const InternPool, arena: Allocator, w: *Io.Writer) !void {
     var instances: std.array_hash_map.Auto(Index, std.ArrayList(Index)) = .empty;
     for (ip.locals, 0..) |*local, tid| {
+        if (local.mutate.items.len == 0) continue;
         const items = local.shared.items.view().slice();
         const extra_list = local.shared.extra;
         for (
@@ -11737,13 +11748,13 @@ pub fn typeOf(ip: *const InternPool, index: Index) Index {
                 .type_tuple,
                 .type_function,
                 .type_struct,
-                .type_struct_packed_auto,
-                .type_struct_packed_explicit,
-                .type_struct_packed_auto_defaults,
-                .type_struct_packed_explicit_defaults,
+                .type_struct_bitpack_auto,
+                .type_struct_bitpack_explicit,
+                .type_struct_bitpack_auto_defaults,
+                .type_struct_bitpack_explicit_defaults,
                 .type_union,
-                .type_union_packed_auto,
-                .type_union_packed_explicit,
+                .type_union_bitpack_auto,
+                .type_union_bitpack_explicit,
                 .type_enum_auto,
                 .type_enum_explicit,
                 .type_enum_nonexhaustive,
@@ -11783,7 +11794,7 @@ pub fn typeOf(ip: *const InternPool, index: Index) Index {
                 .bytes,
                 .aggregate,
                 .repeated,
-                .bitpack,
+                .@"bitpack",
                 => |t| {
                     const extra_list = unwrapped_index.getExtra(ip);
                     return @fromBackingInt(@intCast(extra_list.view().items(.@"0")[item.data + std.meta.fieldIndex(t.Payload(), "ty").?]));
@@ -12090,14 +12101,14 @@ pub fn zigTypeTag(ip: *const InternPool, index: Index) std.lang.TypeId {
             .type_tuple => .@"struct",
 
             .type_struct,
-            .type_struct_packed_auto,
-            .type_struct_packed_explicit,
-            .type_struct_packed_auto_defaults,
-            .type_struct_packed_explicit_defaults,
+            .type_struct_bitpack_auto,
+            .type_struct_bitpack_explicit,
+            .type_struct_bitpack_auto_defaults,
+            .type_struct_bitpack_explicit_defaults,
             => .@"struct",
             .type_union,
-            .type_union_packed_auto,
-            .type_union_packed_explicit,
+            .type_union_bitpack_auto,
+            .type_union_bitpack_explicit,
             => .@"union",
             .type_enum_auto,
             .type_enum_explicit,
@@ -12158,7 +12169,7 @@ pub fn zigTypeTag(ip: *const InternPool, index: Index) std.lang.TypeId {
             .bytes,
             .aggregate,
             .repeated,
-            .bitpack,
+            .@"bitpack",
             // memoization, not types
             .memoized_call,
             => unreachable,
@@ -12560,7 +12571,7 @@ pub fn getErrorValueIfExists(ip: *const InternPool, name: NullTerminatedString) 
     return @backingInt(ip.global_error_set.getErrorValueIfExists(name) orelse return null);
 }
 
-const PackedCallingConvention = packed struct(u18) {
+const PackedCallingConvention = bitpack struct(u18) {
     tag: std.lang.CallingConvention.Tag,
     /// May be ignored depending on `tag`.
     incoming_stack_alignment: Alignment,
@@ -12623,7 +12634,7 @@ const PackedCallingConvention = packed struct(u18) {
                 std.lang.CallingConvention.SpirvFragmentOptions => .{
                     .tag = tag,
                     .incoming_stack_alignment = .none,
-                    .extra = @as(u4, @backingInt(pl.depth_assumption)) << 1 | @intFromBool(pl.pixel_centered_integer),
+                    .extra = (@as(u4, @backingInt(pl.depth_assumption)) << 1) | @intFromBool(pl.pixel_centered_integer),
                 },
                 std.lang.CallingConvention.SpirvMeshOptions => .{
                     .tag = tag,
@@ -12705,7 +12716,7 @@ const PackedCallingConvention = packed struct(u18) {
     }
 };
 
-/// Asserts that `struct_type` is a non-packed struct type.
+/// Asserts that `struct_type` is a non-bitpack struct type.
 /// As well as calling this function, the caller must also populate these arrays:
 /// * `field_types`
 /// * `field_aligns`
@@ -12735,7 +12746,7 @@ pub fn resolveStructLayout(
     flags.alignment = alignment;
 }
 
-/// Asserts that `union_type` is a non-packed union type.
+/// Asserts that `union_type` is a non-bitpack union type.
 /// As well as calling this function, the caller must also populate these arrays:
 /// * `field_types`
 /// * `field_aligns`
@@ -12769,8 +12780,8 @@ pub fn resolveUnionLayout(
     flags.alignment = alignment;
 }
 
-/// Asserts that `struct_type` is a packed struct type.
-pub fn resolvePackedStructLayout(
+/// Asserts that `struct_type` is a bitpack struct type.
+pub fn resolveBitpackStructLayout(
     ip: *InternPool,
     io: Io,
     struct_type: Index,
@@ -12785,10 +12796,10 @@ pub fn resolvePackedStructLayout(
     const extra_items = local.shared.extra.view().items(.@"0");
     const item = unwrapped_index.getItem(ip);
     switch (item.tag) {
-        .type_struct_packed_auto,
-        .type_struct_packed_explicit,
-        .type_struct_packed_auto_defaults,
-        .type_struct_packed_explicit_defaults,
+        .type_struct_bitpack_auto,
+        .type_struct_bitpack_explicit,
+        .type_struct_bitpack_auto_defaults,
+        .type_struct_bitpack_explicit_defaults,
         => {},
         else => unreachable,
     }
@@ -12796,8 +12807,8 @@ pub fn resolvePackedStructLayout(
     extra_items[item.data + std.meta.fieldIndex(Tag.TypeStructPacked, "backing_int_type").?] = @backingInt(backing_int_type);
 }
 
-/// Asserts that `union_type` is a packed union type.
-pub fn resolvePackedUnionLayout(
+/// Asserts that `union_type` is a bitpack union type.
+pub fn resolveBitpackUnionLayout(
     ip: *InternPool,
     io: Io,
     union_type: Index,
@@ -12813,8 +12824,8 @@ pub fn resolvePackedUnionLayout(
     const extra_items = local.shared.extra.view().items(.@"0");
     const item = unwrapped_index.getItem(ip);
     switch (item.tag) {
-        .type_union_packed_auto,
-        .type_union_packed_explicit,
+        .type_union_bitpack_auto,
+        .type_union_bitpack_explicit,
         => {},
         else => unreachable,
     }
@@ -12863,10 +12874,10 @@ pub fn setWantTypeLayout(ip: *InternPool, io: Io, container_type: Index) bool {
     const extra_items = local.shared.extra.view().items(.@"0");
     const item = unwrapped_index.getItem(ip);
     switch (item.tag) {
-        .type_struct_packed_auto,
-        .type_struct_packed_explicit,
-        .type_struct_packed_auto_defaults,
-        .type_struct_packed_explicit_defaults,
+        .type_struct_bitpack_auto,
+        .type_struct_bitpack_explicit,
+        .type_struct_bitpack_auto_defaults,
+        .type_struct_bitpack_explicit_defaults,
         => {
             const bits: *Tag.TypeStructPacked.Bits = @ptrCast(&extra_items[
                 item.data + std.meta.fieldIndex(Tag.TypeStructPacked, "bits").?
@@ -12891,8 +12902,8 @@ pub fn setWantTypeLayout(ip: *InternPool, io: Io, container_type: Index) bool {
             }
         },
 
-        .type_union_packed_auto,
-        .type_union_packed_explicit,
+        .type_union_bitpack_auto,
+        .type_union_bitpack_explicit,
         => {
             const bits: *Tag.TypeUnionPacked.Bits = @ptrCast(&extra_items[
                 item.data + std.meta.fieldIndex(Tag.TypeUnionPacked, "bits").?

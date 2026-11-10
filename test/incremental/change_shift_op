@@ -1,8 +1,9 @@
-#exe {
--Mroot=main.zig
+#zig build-exe {
+--name test
+-Mroot=test.zig
 #}
 
-#write main.zig {
+#write test.zig {
 pub fn main() !void {
     try foo(0x1300);
 }
@@ -18,7 +19,7 @@ const io = std.Io.Threaded.global_single_threaded.io();
 0x3000
 #}
 
-#write main.zig {
+#write test.zig {
 pub fn main() !void {
     try foo(0x1300);
 }
@@ -29,8 +30,7 @@ fn foo(x: u16) !void {
 const std = @import("std");
 const io = std.Io.Threaded.global_single_threaded.io();
 #}
-#update {
-change to right shift#}
+#update "change to right shift"
 #check stdout {
 0x130
 #}

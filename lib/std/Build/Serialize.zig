@@ -132,8 +132,6 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                             .shared_memory = c.shared_memory,
                             .link_eh_frame_hdr = c.link_eh_frame_hdr,
                             .link_emit_relocs = c.link_emit_relocs,
-                            .link_function_sections = c.link_function_sections,
-                            .link_data_sections = c.link_data_sections,
                             .linker_dynamicbase = c.linker_dynamicbase,
                             .link_z_notext = c.link_z_notext,
                             .link_z_relro = c.link_z_relro,
@@ -189,6 +187,7 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                             },
                             .lto = .init(c.lto),
                             .subsystem = .init(c.subsystem),
+                            .legalize_all = c.legalize_all,
                         },
                         .flags4 = .{
                             .libc_file = c.libc_file != null,
@@ -218,6 +217,8 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                             .generated_llvm_ir = c.generated_llvm_ir != .none,
                             .generated_h = c.generated_h != .none,
                             .incremental = .init(c.incremental),
+                            .function_sections = .init(c.function_sections),
+                            .data_sections = .init(c.data_sections),
                         },
                         .root_module = try s.addModule(c.root_module),
                         .root_name = try wc.addString(c.name),
@@ -477,6 +478,7 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                             },
                             .stdout_trim_whitespace = if (run.captured_stdout) |cs| cs.trim_whitespace else .none,
                             .stderr_trim_whitespace = if (run.captured_stderr) |cs| cs.trim_whitespace else .none,
+                            .protocol_test_timeout_scale = run.protocol_test_timeout_scale > 1,
                             .stdio_limit = run.stdio_limit != .unlimited,
                             .producer = run.producer != null,
                             .cwd = run.cwd != null,
@@ -509,6 +511,10 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                         } else null },
                         .environ_map = .{ .value = try s.addEnvironMap(run.environ_map) },
                         .expect_term_value = .{ .value = if (expect_term) |t| t.value else null },
+                        .protocol_test_timeout_scale = .{ .value = switch (run.protocol_test_timeout_scale) {
+                            0...1 => null,
+                            else => |protocol_test_timeout_scale| protocol_test_timeout_scale,
+                        } },
                         .stdio_limit = .{ .value = run.stdio_limit.toInt64() },
                         .producer = .{ .value = if (run.producer) |cs| s.stepIndex(&cs.step) else null },
                         .expect_stderr_exact = .{ .value = if (expect_stderr_exact) |bytes| bytes else null },
@@ -683,12 +689,21 @@ pub fn write(b: *std.Build, wc: *Configuration.Wip, writer: *std.Io.Writer) !voi
                 .max_rss = .fromBytes(step.max_rss),
                 .extended = @fromBackingInt(extended),
             });
+
+            if (step.unlazy_deps.count() != 0) {
+                try wc.unlazy_deps.append(gpa, .{
+                    .step = @fromBackingInt(@intCast(wc.steps.items.len - 1)),
+                    .list = try wc.addStringListInterned(step.unlazy_deps.keys()),
+                });
+            }
         }
     }
 
-    try wc.unlazy_deps.ensureUnusedCapacity(gpa, graph.needed_lazy_dependencies.keys().len);
-    for (graph.needed_lazy_dependencies.keys()) |k| {
-        wc.unlazy_deps.appendAssumeCapacity(try wc.addString(k));
+    if (graph.unlazy_deps.count() != 0) {
+        try wc.unlazy_deps.append(gpa, .{
+            .step = .none,
+            .list = try wc.addStringListInterned(graph.unlazy_deps.keys()),
+        });
     }
 
     try wc.write(writer, .{

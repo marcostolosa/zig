@@ -21,7 +21,7 @@ owner_nav: InternPool.Nav.Index,
 func_index: InternPool.Index,
 mir_instructions: std.MultiArrayList(Mir.Inst),
 /// Contains extra data for MIR
-mir_extra: std.ArrayListUnmanaged(u32),
+mir_extra: std.ArrayList(u32),
 
 pub fn legalizeFeatures(_: *const std.Target) *const Air.Legalize.Features {
     return comptime &.initMany(&.{
@@ -38,6 +38,9 @@ pub fn legalizeFeatures(_: *const std.Target) *const Air.Legalize.Features {
         .expand_packed_agg_field_val,
         .expand_packed_aggregate_init,
         .expand_array_to_vector,
+        .expand_ptr_elem_val,
+        .expand_array_to_slice,
+        .expand_loop_switch_br,
 
         .scalarize_add,
         .scalarize_add_optimized,

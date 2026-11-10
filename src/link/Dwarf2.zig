@@ -744,7 +744,7 @@ pub const WipFunc = struct {
         }
 
         pub fn genDebugFrame(debug: *Debug, loc: u32, cfa: Cfa) link.Error!void {
-            return debug.wip_func.genDebugFrame(loc, cfa);
+            try debug.wip_func.genDebugFrame(loc, cfa);
         }
 
         pub fn startDebugInfo(debug: *Debug) link.Error!void {
@@ -886,8 +886,8 @@ pub const WipFunc = struct {
             ty: Type,
             loc: Loc,
         ) link.Error!void {
-            return debug.genLocalVarDebugInfoInner(tag, opt_name, ty, loc) catch |err| switch (err) {
-                else => |e| e,
+            debug.genLocalVarDebugInfoInner(tag, opt_name, ty, loc) catch |err| switch (err) {
+                else => |e| return e,
                 error.WriteFailed => return debug.wip_func.dwarf.reportWriteError(&debug.info_writer),
             };
         }
@@ -917,8 +917,8 @@ pub const WipFunc = struct {
             opt_name: ?[]const u8,
             val: Value,
         ) link.Error!void {
-            return debug.genLocalConstDebugInfoInner(tag, opt_name, val) catch |err| switch (err) {
-                else => |e| e,
+            debug.genLocalConstDebugInfoInner(tag, opt_name, val) catch |err| switch (err) {
+                else => |e| return e,
                 error.WriteFailed => return debug.wip_func.dwarf.reportWriteError(&debug.info_writer),
             };
         }
@@ -964,8 +964,8 @@ pub const WipFunc = struct {
         }
 
         pub fn genVarArgsDebugInfo(debug: *Debug) link.Error!void {
-            return debug.genVarArgsDebugInfoInner() catch |err| switch (err) {
-                else => |e| e,
+            debug.genVarArgsDebugInfoInner() catch |err| switch (err) {
+                else => |e| return e,
                 error.WriteFailed => return debug.wip_func.dwarf.reportWriteError(&debug.info_writer),
             };
         }
@@ -980,7 +980,7 @@ pub const WipFunc = struct {
             delta_pc: u64,
             end: bool,
         ) link.Error!void {
-            return debug.advanceLineAndPcInner(delta_line, delta_pc, end) catch |err| switch (err) {
+            debug.advanceLineAndPcInner(delta_line, delta_pc, end) catch |err| switch (err) {
                 error.WriteFailed => return debug.wip_func.dwarf.reportWriteError(&debug.line_writer),
             };
         }
@@ -1035,7 +1035,7 @@ pub const WipFunc = struct {
         }
 
         pub fn setColumn(debug: *Debug, column: u32) link.Error!void {
-            return debug.setColumnInner(column) catch |err| switch (err) {
+            debug.setColumnInner(column) catch |err| switch (err) {
                 error.WriteFailed => return debug.wip_func.dwarf.reportWriteError(&debug.line_writer),
             };
         }
@@ -1046,7 +1046,7 @@ pub const WipFunc = struct {
         }
 
         pub fn negateStmt(debug: *Debug) link.Error!void {
-            return debug.negateStmtInner() catch |err| switch (err) {
+            debug.negateStmtInner() catch |err| switch (err) {
                 error.WriteFailed => return debug.wip_func.dwarf.reportWriteError(&debug.line_writer),
             };
         }
@@ -1055,7 +1055,7 @@ pub const WipFunc = struct {
         }
 
         pub fn setPrologueEnd(debug: *Debug) link.Error!void {
-            return debug.setPrologueEndInner() catch |err| switch (err) {
+            debug.setPrologueEndInner() catch |err| switch (err) {
                 error.WriteFailed => return debug.wip_func.dwarf.reportWriteError(&debug.line_writer),
             };
         }
@@ -1064,7 +1064,7 @@ pub const WipFunc = struct {
         }
 
         pub fn setEpilogueBegin(debug: *Debug) link.Error!void {
-            return debug.setEpilogueBeginInner() catch |err| switch (err) {
+            debug.setEpilogueBeginInner() catch |err| switch (err) {
                 error.WriteFailed => return debug.wip_func.dwarf.reportWriteError(&debug.line_writer),
             };
         }
@@ -1073,8 +1073,8 @@ pub const WipFunc = struct {
         }
 
         pub fn enterBlock(debug: *Debug, code_offset: usize) link.Error!void {
-            return debug.enterBlockInner(code_offset) catch |err| switch (err) {
-                else => |e| e,
+            debug.enterBlockInner(code_offset) catch |err| switch (err) {
+                else => |e| return e,
                 error.WriteFailed => return debug.wip_func.dwarf.reportWriteError(&debug.info_writer),
             };
         }
@@ -1094,8 +1094,8 @@ pub const WipFunc = struct {
         }
 
         pub fn leaveBlock(debug: *Debug, code_offset: usize) link.Error!void {
-            return debug.leaveBlockInner(code_offset) catch |err| switch (err) {
-                else => |e| e,
+            debug.leaveBlockInner(code_offset) catch |err| switch (err) {
+                else => |e| return e,
                 error.WriteFailed => return debug.wip_func.dwarf.reportWriteError(&debug.info_writer),
             };
         }
@@ -1126,14 +1126,14 @@ pub const WipFunc = struct {
             code_offset: usize,
             line: u32,
             column: u32,
-        ) link.Error!void {
+        ) link.Error!bool {
             return debug.enterInlineFuncInner(
                 func,
                 code_offset,
                 line,
                 column,
             ) catch |err| switch (err) {
-                else => |e| e,
+                else => |e| return e,
                 error.WriteFailed => return debug.wip_func.dwarf.reportWriteError(&debug.info_writer),
             };
         }
@@ -1143,7 +1143,7 @@ pub const WipFunc = struct {
             code_offset: usize,
             line: u32,
             column: u32,
-        ) link.EmitError!void {
+        ) link.EmitError!bool {
             const dwarf = debug.wip_func.dwarf;
             const pt = debug.pt;
             const zcu = pt.zcu;
@@ -1163,17 +1163,17 @@ pub const WipFunc = struct {
             try dwarf.addrSym(di_nw, debug.wip_func.func_si, code_offset);
             block.high_pc_offset = di_w.end;
             try di_w.writeInt(u32, 0, dwarf.endian);
-            try debug.setInlineFunc(func);
             debug.is_empty = true;
+            return debug.setInlineFunc(func);
         }
 
         pub fn leaveInlineFunc(
             debug: *Debug,
             func: InternPool.Index,
             code_offset: usize,
-        ) link.Error!void {
+        ) link.Error!bool {
             return debug.leaveInlineFuncInner(func, code_offset) catch |err| switch (err) {
-                else => |e| e,
+                else => |e| return e,
                 error.WriteFailed => return debug.wip_func.dwarf.reportWriteError(&debug.info_writer),
             };
         }
@@ -1181,7 +1181,7 @@ pub const WipFunc = struct {
             debug: *Debug,
             func: InternPool.Index,
             code_offset: usize,
-        ) link.EmitError!void {
+        ) link.EmitError!bool {
             const dwarf = debug.wip_func.dwarf;
             const block = debug.blocks.pop().?;
 
@@ -1199,21 +1199,23 @@ pub const WipFunc = struct {
                 @intCast(code_offset - block.low_pc),
                 dwarf.endian,
             );
-            try debug.setInlineFunc(func);
             debug.is_empty = false;
+            return debug.setInlineFunc(func);
         }
 
-        pub fn setInlineFunc(debug: *Debug, func: InternPool.Index) link.Error!void {
+        pub fn setInlineFunc(debug: *Debug, func: InternPool.Index) link.Error!bool {
             return debug.setInlineFuncInner(func) catch |err| switch (err) {
-                else => |e| e,
+                else => |e| return e,
                 error.WriteFailed => return debug.wip_func.dwarf.reportWriteError(&debug.line_writer),
             };
         }
-        fn setInlineFuncInner(debug: *Debug, func: InternPool.Index) link.EmitError!void {
+        fn setInlineFuncInner(debug: *Debug, func: InternPool.Index) link.EmitError!bool {
             const zcu = debug.pt.zcu;
             const ip = &zcu.intern_pool;
             const dwarf = debug.wip_func.dwarf;
-            if (debug.wip_func.func == func) return;
+            const old_func = debug.wip_func.func;
+            if (old_func == func) return false;
+            debug.wip_func.func = func;
 
             const dl_nw = &debug.line_writer;
             const dl_w = &dl_nw.interface;
@@ -1222,12 +1224,12 @@ pub const WipFunc = struct {
                 const new_func = try dwarf.getFunc(new_owner_nav);
                 try dl_w.writeByte(DW.LNS.extended_op);
                 try dl_w.writeUleb128(1 + dwarf.secOffsetSize());
-                try dl_w.writeByte(DW.LNE.ZIG_set_decl);
+                try dl_w.writeByte(DW.LNE.ZIG_set_source_decl);
                 try dwarf.secOffset(dl_nw, new_func.get(dwarf).debug_info_ni.unwrap().?, 0);
-                return;
+                return true;
             }
 
-            const old_owner_nav = zcu.funcInfo(debug.wip_func.func).owner_nav;
+            const old_owner_nav = zcu.funcInfo(old_func).owner_nav;
             const old_inst_info = ip.getNav(old_owner_nav).srcInst(ip).resolveFull(ip).?;
             const old_zf = zcu.fileByIndex(old_inst_info.file);
             const new_inst_info = ip.getNav(new_owner_nav).srcInst(ip).resolveFull(ip).?;
@@ -1247,8 +1249,7 @@ pub const WipFunc = struct {
                 try dl_w.writeByte(DW.LNS.advance_line);
                 try dl_w.writeSleb128(new_src_line - old_src_line);
             }
-
-            debug.wip_func.func = func;
+            return false;
         }
     };
 
@@ -1891,7 +1892,7 @@ pub fn genDebugInfoPadding(dwarf: *Dwarf, di_w: *std.Io.Writer, size: u64) std.I
             var block_len_size: u5 = 1;
             while (true) switch (std.math.order(
                 size - abbrev_code_size - block_len_size,
-                @as(u64, 1) << 7 * block_len_size,
+                @as(u64, 1) << (7 * block_len_size),
             )) {
                 .lt => break try di_w.writeUleb128(size - abbrev_code_size - block_len_size),
                 .eq => {
@@ -2023,7 +2024,7 @@ pub fn genDebugLinePadding(dl_w: *std.Io.Writer, size: u64) std.Io.Writer.Error!
             var op_len_size: u5 = 1;
             while (true) switch (std.math.order(
                 size - extended_op_size - op_len_size,
-                @as(u64, 1) << 7 * op_len_size,
+                @as(u64, 1) << (7 * op_len_size),
             )) {
                 .lt => break try dl_w.writeUleb128(size - extended_op_size - op_len_size),
                 .eq => {
@@ -2101,11 +2102,9 @@ pub fn updateExtern(
     dwarf: *Dwarf,
     pt: Zcu.PerThread,
     di_nw: *link.MappedFile.Node.Writer,
-    arch: std.Target.Cpu.Arch,
-    si: link.File.SymbolId,
     global: InternPool.Nav.Index,
 ) link.Error!void {
-    dwarf.updateExternInner(pt, di_nw, arch, si, global) catch |err| switch (err) {
+    dwarf.updateExternInner(pt, di_nw, global) catch |err| switch (err) {
         else => |e| return e,
         error.WriteFailed => return dwarf.reportWriteError(di_nw),
     };
@@ -2114,20 +2113,17 @@ fn updateExternInner(
     dwarf: *Dwarf,
     pt: Zcu.PerThread,
     di_nw: *link.MappedFile.Node.Writer,
-    arch: std.Target.Cpu.Arch,
-    si: link.File.SymbolId,
     global: InternPool.Nav.Index,
 ) link.EmitError!void {
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
     const nav = ip.getNav(global);
     log.debug("updateExtern({f})", .{nav.fqn.fmt(ip)});
-    const nav_align, const nav_const, const nav_threadlocal, const nav_extern = nav_resolved: {
+    const nav_align, const nav_const, const nav_extern = nav_resolved: {
         const nav_resolved = nav.resolved.?;
         break :nav_resolved .{
             nav_resolved.@"align",
             nav_resolved.@"const",
-            nav_resolved.@"threadlocal",
             ip.indexToKey(nav_resolved.value).@"extern",
         };
     };
@@ -2162,7 +2158,7 @@ fn updateExternInner(
             try di_w.writeByte(if (decl.is_pub) DW.ACCESS.public else DW.ACCESS.private);
             try dwarf.strx(di_nw, nav.name.toSlice(ip));
         } else {
-            try dwarf.abbrevCode(di_nw, .decl_var);
+            try dwarf.abbrevCode(di_nw, .decl_extern_var);
             try dwarf.refType(pt, di_nw, .fromInterned(zcu.fileRootType(inst_info.file)));
             try di_w.writeInt(u32, decl.src_line + 1, dwarf.endian);
             try di_w.writeUleb128(decl.src_column + 1);
@@ -2173,7 +2169,6 @@ fn updateExternInner(
     try dwarf.strx(di_nw, nav_extern.name.toSlice(ip));
     if (maybe_func_type) |func_type| {
         try dwarf.refType(pt, di_nw, .fromInterned(func_type.return_type));
-        try dwarf.addrSym(di_nw, si, 0);
         try di_w.writeByte(@intFromBool(Type.fromInterned(func_type.return_type).isNoReturn(zcu)));
         for (func_type.param_types.get(ip)) |param_type| {
             try dwarf.abbrevCode(di_nw, .extern_param);
@@ -2182,23 +2177,13 @@ fn updateExternInner(
         if (func_type.is_var_args) try dwarf.abbrevCode(di_nw, .is_var_args);
         if (!is_empty) try di_w.writeUleb128(@backingInt(AbbrevCode.null));
     } else {
-        const addr: Loc = .{ .addr_sym = .{ .si = si } };
-        const loc: Loc = if (nav_threadlocal) switch (arch) {
-            .x86_64 => .{ .form_tls_address = &addr },
-            else => unreachable,
-        } else addr;
         const type_offset = di_w.end;
         if (nav_const)
             try dwarf.secOffsetPlaceholder(di_w)
         else
             try dwarf.refType(pt, di_nw, .fromInterned(nav_extern.ty));
-        try dwarf.exprLoc(di_nw, loc);
         try di_w.writeUleb128(nav_align.toByteUnits() orelse
             Type.fromInterned(nav_extern.ty).abiAlignment(zcu).toByteUnits().?);
-        switch (nav_extern.source) {
-            .builtin => {},
-            .syntax => try di_w.writeByte(@intFromBool(decl.linkage != .normal)),
-        }
         if (nav_const) {
             try dwarf.secOffsetFinish(di_nw, type_offset, di_nw.ni, di_w.end);
             try dwarf.abbrevCode(di_nw, .is_const);
@@ -2331,7 +2316,7 @@ pub fn updateComptimeGlobal(
         .opt,
         .aggregate,
         .un,
-        .bitpack,
+        .@"bitpack",
         => try dwarf.genComptimeGlobal(pt, global, &decl),
         .struct_type => {
             const loaded_struct = ip.loadStructType(nav_val.toIntern());
@@ -2901,7 +2886,7 @@ fn updateConstInner(
                 _, const fi = try ui.get(dwarf).getFile(zcu.gpa, ui, src_inst.file);
                 try dwarf.abbrevCode(di_nw, switch (loaded_struct.layout) {
                     .auto => if (is_empty) .empty_file else .file,
-                    .@"extern", .@"packed" => unreachable,
+                    .@"extern", .@"bitpack" => unreachable,
                 });
                 try di_w.writeUleb128(@backingInt(fi));
                 try dwarf.strx(di_nw, loaded_struct.name.toSlice(ip));
@@ -2909,17 +2894,17 @@ fn updateConstInner(
                 try dwarf.abbrevCode(di_nw, switch (loaded_struct.name_nav) {
                     else => if (is_empty) switch (loaded_struct.layout) {
                         .auto, .@"extern" => .decl_instance_empty_struct,
-                        .@"packed" => .decl_instance_empty_packed_struct,
+                        .@"bitpack" => .decl_instance_empty_bitpack_struct,
                     } else switch (loaded_struct.layout) {
                         .auto, .@"extern" => .decl_instance_struct,
-                        .@"packed" => .decl_instance_packed_struct,
+                        .@"bitpack" => .decl_instance_bitpack_struct,
                     },
                     .none => if (is_empty) switch (loaded_struct.layout) {
                         .auto, .@"extern" => .type_decl_instance_empty_struct,
-                        .@"packed" => .type_decl_instance_empty_packed_struct,
+                        .@"bitpack" => .type_decl_instance_empty_bitpack_struct,
                     } else switch (loaded_struct.layout) {
                         .auto, .@"extern" => .type_decl_instance_struct,
-                        .@"packed" => .type_decl_instance_packed_struct,
+                        .@"bitpack" => .type_decl_instance_bitpack_struct,
                     },
                 });
                 try dwarf.refType(pt, di_nw, .fromInterned(ip.namespacePtr(
@@ -2931,17 +2916,16 @@ fn updateConstInner(
             } else if (loaded_struct.name_nav.unwrap()) |name_ni| {
                 const name_nav = ip.getNav(name_ni);
                 const decl = zf.zir.?.getDeclaration(name_nav.srcInst(ip).resolve(ip).?);
-                const parent_ni = try dwarf.getConstDecl(pt, ip.namespacePtr(
-                    name_nav.analysis.?.namespace,
-                ).owner_type);
+                const parent_ty: Type =
+                    .fromInterned(ip.namespacePtr(name_nav.analysis.?.namespace).owner_type);
                 try dwarf.abbrevCode(di_nw, if (is_empty) switch (loaded_struct.layout) {
                     .auto, .@"extern" => .decl_empty_struct,
-                    .@"packed" => .decl_empty_packed_struct,
+                    .@"bitpack" => .decl_empty_bitpack_struct,
                 } else switch (loaded_struct.layout) {
                     .auto, .@"extern" => .decl_struct,
-                    .@"packed" => .decl_packed_struct,
+                    .@"bitpack" => .decl_bitpack_struct,
                 });
-                try dwarf.secOffset(di_nw, parent_ni, 0);
+                try dwarf.refType(pt, di_nw, parent_ty);
                 try di_w.writeInt(u32, decl.src_line + 1, dwarf.endian);
                 try di_w.writeUleb128(decl.src_column + 1);
                 try di_w.writeByte(if (decl.is_pub) DW.ACCESS.public else DW.ACCESS.private);
@@ -2953,10 +2937,10 @@ fn updateConstInner(
                 ).owner_type);
                 try dwarf.abbrevCode(di_nw, if (is_empty) switch (loaded_struct.layout) {
                     .auto, .@"extern" => .type_decl_empty_struct,
-                    .@"packed" => .type_decl_empty_packed_struct,
+                    .@"bitpack" => .type_decl_empty_bitpack_struct,
                 } else switch (loaded_struct.layout) {
                     .auto, .@"extern" => .type_decl_struct,
-                    .@"packed" => .type_decl_packed_struct,
+                    .@"bitpack" => .type_decl_bitpack_struct,
                 });
                 try dwarf.secOffset(di_nw, parent_ni, 0);
                 try di_w.writeInt(u32, decl.src_line + 1, dwarf.endian);
@@ -3019,8 +3003,8 @@ fn updateConstInner(
                             try dwarf.refConst(pt, di_nw, .fromInterned(field_default));
                     }
                 },
-                .@"packed" => {
-                    try dwarf.refType(pt, di_nw, .fromInterned(loaded_struct.packed_backing_int_type));
+                .@"bitpack" => {
+                    try dwarf.refType(pt, di_nw, .fromInterned(loaded_struct.bitpack_backing_int_type));
                     try dwarf.genCaptures(pt, di_nw, loaded_struct.captures);
                     var field_bit_offset: u16 = 0;
                     for (0..loaded_struct.field_types.len) |field_index| {
@@ -3049,17 +3033,17 @@ fn updateConstInner(
                 try dwarf.abbrevCode(di_nw, switch (loaded_union.name_nav) {
                     else => if (is_empty) switch (loaded_union.layout) {
                         .auto, .@"extern" => .decl_instance_empty_union,
-                        .@"packed" => .decl_instance_empty_packed_union,
+                        .@"bitpack" => .decl_instance_empty_bitpack_union,
                     } else switch (loaded_union.layout) {
                         .auto, .@"extern" => .decl_instance_union,
-                        .@"packed" => .decl_instance_packed_union,
+                        .@"bitpack" => .decl_instance_bitpack_union,
                     },
                     .none => if (is_empty) switch (loaded_union.layout) {
                         .auto, .@"extern" => .type_decl_instance_empty_union,
-                        .@"packed" => .type_decl_instance_empty_packed_union,
+                        .@"bitpack" => .type_decl_instance_empty_bitpack_union,
                     } else switch (loaded_union.layout) {
                         .auto, .@"extern" => .type_decl_instance_union,
-                        .@"packed" => .type_decl_instance_packed_union,
+                        .@"bitpack" => .type_decl_instance_bitpack_union,
                     },
                 });
                 try dwarf.refType(pt, di_nw, .fromInterned(ip.namespacePtr(
@@ -3071,17 +3055,16 @@ fn updateConstInner(
             } else if (loaded_union.name_nav.unwrap()) |name_ni| {
                 const name_nav = ip.getNav(name_ni);
                 const decl = zf.zir.?.getDeclaration(name_nav.srcInst(ip).resolve(ip).?);
-                const parent_ni = try dwarf.getConstDecl(pt, ip.namespacePtr(
-                    name_nav.analysis.?.namespace,
-                ).owner_type);
+                const parent_ty: Type =
+                    .fromInterned(ip.namespacePtr(name_nav.analysis.?.namespace).owner_type);
                 try dwarf.abbrevCode(di_nw, if (is_empty) switch (loaded_union.layout) {
                     .auto, .@"extern" => .decl_empty_union,
-                    .@"packed" => .decl_empty_packed_union,
+                    .@"bitpack" => .decl_empty_bitpack_union,
                 } else switch (loaded_union.layout) {
                     .auto, .@"extern" => .decl_union,
-                    .@"packed" => .decl_packed_union,
+                    .@"bitpack" => .decl_bitpack_union,
                 });
-                try dwarf.secOffset(di_nw, parent_ni, 0);
+                try dwarf.refType(pt, di_nw, parent_ty);
                 try di_w.writeInt(u32, decl.src_line + 1, dwarf.endian);
                 try di_w.writeUleb128(decl.src_column + 1);
                 try di_w.writeByte(if (decl.is_pub) DW.ACCESS.public else DW.ACCESS.private);
@@ -3093,10 +3076,10 @@ fn updateConstInner(
                 ).owner_type);
                 try dwarf.abbrevCode(di_nw, if (is_empty) switch (loaded_union.layout) {
                     .auto, .@"extern" => .type_decl_empty_union,
-                    .@"packed" => .type_decl_empty_packed_union,
+                    .@"bitpack" => .type_decl_empty_bitpack_union,
                 } else switch (loaded_union.layout) {
                     .auto, .@"extern" => .type_decl_union,
-                    .@"packed" => .type_decl_packed_union,
+                    .@"bitpack" => .type_decl_bitpack_union,
                 });
                 try dwarf.secOffset(di_nw, parent_ni, 0);
                 try di_w.writeInt(u32, decl.src_line + 1, dwarf.endian);
@@ -3164,8 +3147,8 @@ fn updateConstInner(
                             field_ty.abiAlignment(zcu).toByteUnits().?);
                     }
                 },
-                .@"packed" => {
-                    try dwarf.refType(pt, di_nw, .fromInterned(loaded_union.packed_backing_int_type));
+                .@"bitpack" => {
+                    try dwarf.refType(pt, di_nw, .fromInterned(loaded_union.bitpack_backing_int_type));
                     for (0..loaded_union.field_types.len) |field_index| {
                         try dwarf.abbrevCode(di_nw, .packed_field);
                         try dwarf.strx(
@@ -3206,14 +3189,13 @@ fn updateConstInner(
                     } else if (loaded_enum.name_nav.unwrap()) |name_ni| {
                         const name_nav = ip.getNav(name_ni);
                         const decl = zir.getDeclaration(name_nav.srcInst(ip).resolve(ip).?);
-                        const parent_ni = try dwarf.getConstDecl(pt, ip.namespacePtr(
-                            name_nav.analysis.?.namespace,
-                        ).owner_type);
+                        const parent_ty: Type =
+                            .fromInterned(ip.namespacePtr(name_nav.analysis.?.namespace).owner_type);
                         try dwarf.abbrevCode(
                             di_nw,
                             if (is_empty) .decl_empty_enum else .decl_enum,
                         );
-                        try dwarf.secOffset(di_nw, parent_ni, 0);
+                        try dwarf.refType(pt, di_nw, parent_ty);
                         try di_w.writeInt(u32, decl.src_line + 1, dwarf.endian);
                         try di_w.writeUleb128(decl.src_column + 1);
                         try di_w.writeByte(if (decl.is_pub) DW.ACCESS.public else DW.ACCESS.private);
@@ -3445,11 +3427,11 @@ fn updateConstInner(
                 Value.fromInterned(@"const").toBigInt(&big_int_space, zcu),
             );
         },
-        .bitpack => |bitpack| {
+        .@"bitpack" => |@"bitpack"| {
             var big_int_space: Value.BigIntSpace = undefined;
-            const backing_int_val: Value = .fromInterned(bitpack.backing_int_val);
+            const backing_int_val: Value = .fromInterned(@"bitpack".backing_int_val);
             try dwarf.abbrevCode(di_nw, .comptime_value);
-            try dwarf.refType(pt, di_nw, .fromInterned(bitpack.ty));
+            try dwarf.refType(pt, di_nw, .fromInterned(@"bitpack".ty));
             try dwarf.bigIntConstValue(
                 di_w,
                 backing_int_val.typeOf(zcu),
@@ -4772,10 +4754,10 @@ pub const AbbrevCode = enum {
     type_decl_incomplete_struct,
     type_decl_empty_struct,
     type_decl_struct,
-    decl_empty_packed_struct,
-    decl_packed_struct,
-    type_decl_empty_packed_struct,
-    type_decl_packed_struct,
+    decl_empty_bitpack_struct,
+    decl_bitpack_struct,
+    type_decl_empty_bitpack_struct,
+    type_decl_bitpack_struct,
     decl_empty_incomplete_union,
     decl_incomplete_union,
     decl_empty_union,
@@ -4784,10 +4766,10 @@ pub const AbbrevCode = enum {
     type_decl_incomplete_union,
     type_decl_empty_union,
     type_decl_union,
-    decl_empty_packed_union,
-    decl_packed_union,
-    type_decl_empty_packed_union,
-    type_decl_packed_union,
+    decl_empty_bitpack_union,
+    decl_bitpack_union,
+    type_decl_empty_bitpack_union,
+    type_decl_bitpack_union,
     decl_type,
     decl_const,
     decl_const_fully_runtime,
@@ -4800,6 +4782,7 @@ pub const AbbrevCode = enum {
     decl_func_generic,
     decl_extern_empty_func,
     decl_extern_func,
+    decl_extern_var,
     decl_specification_empty_struct,
     decl_specification_struct,
     type_decl_specification_empty_struct,
@@ -4828,20 +4811,20 @@ pub const AbbrevCode = enum {
     decl_instance_struct,
     type_decl_instance_empty_struct,
     type_decl_instance_struct,
-    decl_instance_empty_packed_struct,
-    decl_instance_packed_struct,
-    type_decl_instance_empty_packed_struct,
-    type_decl_instance_packed_struct,
+    decl_instance_empty_bitpack_struct,
+    decl_instance_bitpack_struct,
+    type_decl_instance_empty_bitpack_struct,
+    type_decl_instance_bitpack_struct,
     decl_instance_empty_incomplete_union,
     decl_instance_incomplete_union,
     decl_instance_empty_union,
     decl_instance_union,
     type_decl_instance_empty_union,
     type_decl_instance_union,
-    decl_instance_empty_packed_union,
-    decl_instance_packed_union,
-    type_decl_instance_empty_packed_union,
-    type_decl_instance_packed_union,
+    decl_instance_empty_bitpack_union,
+    decl_instance_bitpack_union,
+    type_decl_instance_empty_bitpack_union,
+    type_decl_instance_bitpack_union,
     decl_instance_type,
     decl_instance_const,
     decl_instance_const_fully_runtime,
@@ -5086,26 +5069,26 @@ pub const AbbrevCode = enum {
                 .{ .alignment, .udata },
             },
         },
-        .decl_empty_packed_struct = .{
+        .decl_empty_bitpack_struct = .{
             .tag = .structure_type,
             .attrs = decl_attrs ++ .{
                 .{ .type, .ref_addr },
             },
         },
-        .decl_packed_struct = .{
+        .decl_bitpack_struct = .{
             .tag = .structure_type,
             .children = true,
             .attrs = decl_attrs ++ .{
                 .{ .type, .ref_addr },
             },
         },
-        .type_decl_empty_packed_struct = .{
+        .type_decl_empty_bitpack_struct = .{
             .tag = .structure_type,
             .attrs = type_decl_attrs ++ .{
                 .{ .type, .ref_addr },
             },
         },
-        .type_decl_packed_struct = .{
+        .type_decl_bitpack_struct = .{
             .tag = .structure_type,
             .children = true,
             .attrs = type_decl_attrs ++ .{
@@ -5160,26 +5143,26 @@ pub const AbbrevCode = enum {
                 .{ .alignment, .udata },
             },
         },
-        .decl_empty_packed_union = .{
+        .decl_empty_bitpack_union = .{
             .tag = .union_type,
             .attrs = decl_attrs ++ .{
                 .{ .type, .ref_addr },
             },
         },
-        .decl_packed_union = .{
+        .decl_bitpack_union = .{
             .tag = .union_type,
             .children = true,
             .attrs = decl_attrs ++ .{
                 .{ .type, .ref_addr },
             },
         },
-        .type_decl_empty_packed_union = .{
+        .type_decl_empty_bitpack_union = .{
             .tag = .union_type,
             .attrs = type_decl_attrs ++ .{
                 .{ .type, .ref_addr },
             },
         },
-        .type_decl_packed_union = .{
+        .type_decl_bitpack_union = .{
             .tag = .union_type,
             .children = true,
             .attrs = type_decl_attrs ++ .{
@@ -5285,7 +5268,6 @@ pub const AbbrevCode = enum {
             .attrs = decl_attrs ++ .{
                 .{ .linkage_name, .strx },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
             },
@@ -5296,9 +5278,17 @@ pub const AbbrevCode = enum {
             .attrs = decl_attrs ++ .{
                 .{ .linkage_name, .strx },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
+            },
+        },
+        .decl_extern_var = .{
+            .tag = .variable,
+            .attrs = decl_attrs ++ .{
+                .{ .linkage_name, .strx },
+                .{ .type, .ref_addr },
+                .{ .alignment, .udata },
+                .{ .external, .flag_present },
             },
         },
         .decl_specification_empty_struct = .{
@@ -5445,26 +5435,26 @@ pub const AbbrevCode = enum {
                 .{ .alignment, .udata },
             },
         },
-        .decl_instance_empty_packed_struct = .{
+        .decl_instance_empty_bitpack_struct = .{
             .tag = .structure_type,
             .attrs = decl_instance_attrs ++ .{
                 .{ .type, .ref_addr },
             },
         },
-        .decl_instance_packed_struct = .{
+        .decl_instance_bitpack_struct = .{
             .tag = .structure_type,
             .children = true,
             .attrs = decl_instance_attrs ++ .{
                 .{ .type, .ref_addr },
             },
         },
-        .type_decl_instance_empty_packed_struct = .{
+        .type_decl_instance_empty_bitpack_struct = .{
             .tag = .structure_type,
             .attrs = type_decl_instance_attrs ++ .{
                 .{ .type, .ref_addr },
             },
         },
-        .type_decl_instance_packed_struct = .{
+        .type_decl_instance_bitpack_struct = .{
             .tag = .structure_type,
             .children = true,
             .attrs = type_decl_instance_attrs ++ .{
@@ -5510,26 +5500,26 @@ pub const AbbrevCode = enum {
                 .{ .alignment, .udata },
             },
         },
-        .decl_instance_empty_packed_union = .{
+        .decl_instance_empty_bitpack_union = .{
             .tag = .union_type,
             .attrs = decl_instance_attrs ++ .{
                 .{ .type, .ref_addr },
             },
         },
-        .decl_instance_packed_union = .{
+        .decl_instance_bitpack_union = .{
             .tag = .union_type,
             .children = true,
             .attrs = decl_instance_attrs ++ .{
                 .{ .type, .ref_addr },
             },
         },
-        .type_decl_instance_empty_packed_union = .{
+        .type_decl_instance_empty_bitpack_union = .{
             .tag = .union_type,
             .attrs = type_decl_instance_attrs ++ .{
                 .{ .type, .ref_addr },
             },
         },
-        .type_decl_instance_packed_union = .{
+        .type_decl_instance_bitpack_union = .{
             .tag = .union_type,
             .children = true,
             .attrs = type_decl_instance_attrs ++ .{
@@ -5995,7 +5985,6 @@ pub const AbbrevCode = enum {
                 .{ .ZIG_parent, .ref_addr },
                 .{ .linkage_name, .strx },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
             },
@@ -6007,7 +5996,6 @@ pub const AbbrevCode = enum {
                 .{ .ZIG_parent, .ref_addr },
                 .{ .linkage_name, .strx },
                 .{ .type, .ref_addr },
-                .{ .low_pc, .addr },
                 .{ .external, .flag_present },
                 .{ .noreturn, .flag },
             },
@@ -6018,7 +6006,6 @@ pub const AbbrevCode = enum {
                 .{ .ZIG_parent, .ref_addr },
                 .{ .linkage_name, .strx },
                 .{ .type, .ref_addr },
-                .{ .location, .exprloc },
                 .{ .alignment, .udata },
                 .{ .external, .flag_present },
             },

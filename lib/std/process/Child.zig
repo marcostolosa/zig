@@ -93,14 +93,21 @@ pub const ResourceUsageStatistics = struct {
 
 pub const Term = union(enum) {
     exited: u8,
-    signal: std.posix.SIG,
-    stopped: std.posix.SIG,
+    signal: Signal,
+    stopped: Signal,
     unknown: u32,
 
-    pub fn success(t: Term) bool {
-        return switch (t) {
-            .exited => |code| code == 0,
-            else => false,
+    // This probably needs some more thought for Windows.
+    const Signal = if (native_os == .windows) std.c.SIG else std.posix.SIG;
+
+    pub const success: Term = .{ .exited = 0 };
+
+    pub fn eql(lhs: Term, rhs: Term) bool {
+        return switch (lhs) {
+            .exited => |lhs_exited| rhs == .exited and lhs_exited == rhs.exited,
+            .signal => |lhs_signal| rhs == .signal and lhs_signal == rhs.signal,
+            .stopped => |lhs_stopped| rhs == .stopped and lhs_stopped == rhs.stopped,
+            .unknown => |lhs_unknown| rhs == .unknown and lhs_unknown == rhs.unknown,
         };
     }
 

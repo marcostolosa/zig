@@ -410,8 +410,8 @@ pub const ResourceDirectoryTable = extern struct {
 };
 
 pub const ResourceDirectoryEntry = extern struct {
-    entry: packed union(u32) {
-        name_offset: packed struct(u32) {
+    entry: bitpack union(u32) {
+        name_offset: bitpack struct(u32) {
             address: u31,
             /// This is undocumented in the PE/COFF spec, but the high bit
             /// is set by cvtres.exe for string addresses
@@ -419,7 +419,7 @@ pub const ResourceDirectoryEntry = extern struct {
         },
         integer_id: u32,
     },
-    offset: packed struct(u32) {
+    offset: bitpack struct(u32) {
         address: u31,
         to_subdirectory: bool,
     },
@@ -877,7 +877,7 @@ const ResourceTree = struct {
             // of $R000001, $R000002, etc. rather than using data offset values.
             var name_buf: [8]u8 = undefined;
             if (relocation.data_offset > std.math.maxInt(u24)) {
-                const name_slice = try std.fmt.allocPrint(allocator, "$R{X}", .{relocation.data_offset});
+                const name_slice = try allocator.print("$R{X}", .{relocation.data_offset});
                 defer allocator.free(name_slice);
                 const string_table_offset: u32 = try coff_string_table.put(allocator, name_slice);
                 std.mem.writeInt(u32, name_buf[0..4], 0, .little);

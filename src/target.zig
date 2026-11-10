@@ -76,19 +76,23 @@ pub fn requiresPic(target: *const std.Target) bool {
     return (target.os.tag == .windows or target.os.tag == .uefi) and (target.cpu.arch == .aarch64 or target.cpu.arch == .x86_64);
 }
 
-pub fn requiresPicForDynamicLink(target: *const std.Target) bool {
+pub fn requiresPicForDynamicLink(target: *const std.Target, output_mode: std.lang.OutputMode) bool {
     assert(canDynamicLink(target));
 
-    return switch (target.os.tag) {
-        .windows => target.cpu.arch == .aarch64 or target.cpu.arch == .x86_64,
-        else => !target.cpu.arch.isWasm(),
+    return switch (output_mode) {
+        .Lib => switch (target.os.tag) {
+            .windows => target.cpu.arch == .aarch64 or target.cpu.arch == .x86_64,
+            else => !target.cpu.arch.isWasm(),
+        },
+        .Exe => target.cpu.arch.isMips(),
+        .Obj => false,
     };
 }
 
 pub fn picLevel(target: *const std.Target) u32 {
     // MIPS always uses PIC level 1; other platforms vary in their default PIC levels, but they
     // support both level 1 and 2, in which case we prefer 2.
-    return if (target.cpu.arch.isMIPS()) 1 else 2;
+    return if (target.cpu.arch.isMips()) 1 else 2;
 }
 
 /// This is not whether the target supports Position Independent Code, but whether the -fPIC
@@ -135,7 +139,7 @@ pub fn useEmulatedTls(target: *const std.Target) bool {
 pub fn hasValgrindSupport(target: *const std.Target, backend: std.lang.CompilerBackend) bool {
     // We can't currently output the necessary Valgrind client request assembly when using the C
     // backend and compiling with an MSVC-like compiler.
-    const ofmt_c_msvc = (target.abi == .msvc or target.abi == .itanium) and target.ofmt == .c;
+    const ofmt_c_msvc = target.abi == .msvc and target.ofmt == .c;
 
     return switch (target.cpu.arch) {
         .arm, .armeb, .thumb, .thumbeb => switch (target.os.tag) {
@@ -163,7 +167,7 @@ pub fn hasValgrindSupport(target: *const std.Target, backend: std.lang.CompilerB
             else => false,
         },
         .x86 => switch (target.os.tag) {
-            .linux, .freebsd, .illumos => true,
+            .linux, .freebsd => true,
             .windows => !ofmt_c_msvc,
             else => false,
         },
@@ -193,6 +197,8 @@ pub fn hasLlvmSupport(target: *const std.Target, ofmt: std.Target.ObjectFormat) 
         .coff,
         .elf,
         .hex,
+        .llvmbc,
+        .llvmir,
         .macho,
         .spirv,
         .raw,
@@ -235,6 +241,7 @@ pub fn hasLlvmSupport(target: *const std.Target, ofmt: std.Target.ObjectFormat) 
         .thumb,
         .thumbeb,
         .x86,
+        .x86c16,
         .x86_64,
         .xcore,
         .nvptx,
@@ -252,6 +259,7 @@ pub fn hasLlvmSupport(target: *const std.Target, ofmt: std.Target.ObjectFormat) 
 
         // Third-party LLVM backend exists.
         .ez80,
+        .z80,
         => false,
 
         // No LLVM backend exists.
@@ -259,7 +267,6 @@ pub fn hasLlvmSupport(target: *const std.Target, ofmt: std.Target.ObjectFormat) 
         .arceb,
         .hppa,
         .hppa64,
-        .kalimba,
         .kvx,
         .m88k,
         .microblaze,
@@ -308,7 +315,7 @@ pub fn hasNewLinker(ofmt: std.Target.ObjectFormat) bool {
 /// than or equal to the number of behavior tests as the respective LLVM backend.
 pub fn selfHostedBackendIsAsRobustAsLlvm(target: *const std.Target) bool {
     if (comptime builtin.cpu.arch.endian() == .big) return false; // https://github.com/ziglang/zig/issues/25961
-    if (target.cpu.arch.isSpirV()) return true;
+    if (target.cpu.arch.isSpirv()) return true;
     if (target.cpu.arch == .x86_64 and target.ptrBitWidth() == 64) {
         if (target.os.tag == .illumos) {
             // https://github.com/ziglang/zig/issues/25699
@@ -335,8 +342,7 @@ pub fn selfHostedBackendIsAsRobustAsLlvm(target: *const std.Target) bool {
 pub fn supportsStackProbing(target: *const std.Target, backend: std.lang.CompilerBackend) bool {
     return switch (backend) {
         .stage2_aarch64, .stage2_x86_64 => true,
-        .stage2_llvm => target.os.tag != .windows and target.os.tag != .uefi and
-            (target.cpu.arch == .x86 or target.cpu.arch == .x86_64),
+        .stage2_llvm => target.os.tag != .windows and target.os.tag != .uefi and (target.cpu.arch.isX86()),
         else => false,
     };
 }
@@ -451,8 +457,8 @@ pub fn canBuildLibCompilerRt(target: *const std.Target) enum { no, yes, llvm_onl
         .amdgcn => return .no,
         else => {},
     }
-    return switch (zigBackend(target, false)) {
-        .stage2_aarch64, .stage2_wasm, .stage2_x86_64 => .yes,
+    return switch (std.zig.compilerBackend(target, false)) {
+        .stage2_aarch64, .stage2_wasm, .stage2_x86_64, .stage2_loongarch => .yes,
         else => .llvm_only,
     };
 }
@@ -465,7 +471,7 @@ pub fn canBuildLibUbsanRt(target: *const std.Target) enum { no, yes, llvm_only, 
         .nvptx, .nvptx64 => return .no,
         else => {},
     }
-    return switch (zigBackend(target, false)) {
+    return switch (std.zig.compilerBackend(target, false)) {
         .stage2_wasm => .yes,
         .stage2_x86_64 => .yes,
         else => .llvm_only,
@@ -488,6 +494,7 @@ pub fn hasRedZone(target: *const std.Target) bool {
         .powerpc64le,
         .x86_64,
         .x86,
+        .x86c16,
         => true,
 
         else => false,
@@ -532,6 +539,8 @@ pub fn clangSupportsTargetCpuArg(target: *const std.Target) bool {
     return switch (target.cpu.arch) {
         .arc,
         .msp430,
+        .spirv32,
+        .spirv64,
         .ve,
         .xcore,
         .xtensa,
@@ -578,22 +587,11 @@ pub fn clangSupportsNoImplicitFloatArg(target: *const std.Target) bool {
         .riscv64,
         .riscv64be,
         .x86,
+        .x86c16,
         .x86_64,
         => true,
         else => false,
     };
-}
-
-pub fn defaultUnwindTables(target: *const std.Target, libunwind: bool, libtsan: bool) std.lang.UnwindTables {
-    if (target.os.tag == .windows) {
-        // The old 32-bit x86 variant of SEH doesn't use tables.
-        return if (target.cpu.arch != .x86) .async else .none;
-    }
-    if (target.os.tag.isDarwin()) return .async;
-    if (libunwind) return .async;
-    if (libtsan) return .async;
-    if (std.debug.Dwarf.supportsUnwinding(target)) return .async;
-    return .none;
 }
 
 pub fn defaultAddressSpace(
@@ -623,7 +621,7 @@ pub fn addrSpaceCastIsValid(
     to: AddressSpace,
 ) bool {
     switch (target.cpu.arch) {
-        .x86_64, .x86 => return target.supportsAddressSpace(from, null) and target.supportsAddressSpace(to, null),
+        .x86_64, .x86, .x86c16 => return target.supportsAddressSpace(from, null) and target.supportsAddressSpace(to, null),
         .nvptx64, .nvptx, .amdgcn => {
             const to_generic = target.supportsAddressSpace(from, null) and to == .generic;
             const from_generic = target.supportsAddressSpace(to, null) and from == .generic;
@@ -633,91 +631,38 @@ pub fn addrSpaceCastIsValid(
     }
 }
 
-/// Returns whether pointer operations (arithmetic, indexing, etc.) should be blocked
-/// for the given address space on the target architecture.
-///
-/// Under SPIR-V with Vulkan
-/// (a) all physical pointers (.physical_storage_buffer, .global) always support pointer operations,
-/// (b) by default logical pointers (.constant, .input, .output, etc.) never support operations
-/// (c) some logical pointers (.storage_buffer, .shared) do support operations when
-///     the VariablePointers capability is enabled (which enables OpPtrAccessChain).
-pub fn shouldBlockPointerOps(target: *const std.Target, as: AddressSpace) bool {
-    if (target.os.tag != .vulkan and target.os.tag != .opengl) return false;
-
-    return switch (as) {
-        // TODO: Vulkan doesn't support pointers in the generic address space, we
-        // should remove this case but this requires a change in defaultAddressSpace().
-        .generic => true,
-        // For now, all global pointers are represented using StorageBuffer or CrossWorkgroup,
-        // so these are real pointers.
-        // Physical pointers always support operations
-        .global, .physical_storage_buffer => false,
-        // Logical pointers that support operations with VariablePointers capability
-        .shared => !target.cpu.features.isEnabled(@backingInt(std.Target.spirv.Feature.variable_pointers)),
-        .storage_buffer => !target.cpu.features.isEnabled(@backingInt(std.Target.spirv.Feature.variable_pointers)),
-        // Logical pointers that never support operations
-        .constant,
-        .local,
-        .private,
-        .input,
-        .output,
-        .uniform,
-        .push_constant,
-        => true,
-        else => unreachable,
+/// Returns true if the given address space memory model is logical (i.e. arithmetic pointer
+/// operations are illegal).
+pub fn addrSpaceIsLogical(target: *const std.Target, as: AddressSpace) bool {
+    const features = &target.cpu.features;
+    return switch (target.os.tag) {
+        .vulkan, .opengl => switch (as) {
+            .generic,
+            .constant,
+            .local,
+            .private,
+            .input,
+            .output,
+            .uniform,
+            .push_constant,
+            => true,
+            .shared => !features.isEnabled(@backingInt(std.Target.spirv.Feature.variable_pointers)),
+            .storage_buffer => !features.isEnabled(@backingInt(std.Target.spirv.Feature.variable_pointers_storage_buffer)),
+            .physical_storage_buffer => false,
+            else => unreachable,
+        },
+        else => false,
     };
-}
-
-pub fn isDynamicAMDGCNFeature(target: *const std.Target, feature: std.Target.Cpu.Feature) bool {
-    if (target.cpu.arch != .amdgcn) return false;
-
-    const sramecc_only = &[_]*const std.Target.Cpu.Model{
-        &std.Target.amdgcn.cpu.gfx1010,
-        &std.Target.amdgcn.cpu.gfx1011,
-        &std.Target.amdgcn.cpu.gfx1012,
-        &std.Target.amdgcn.cpu.gfx1013,
-    };
-    const xnack_or_sramecc = &[_]*const std.Target.Cpu.Model{
-        &std.Target.amdgcn.cpu.gfx1030,
-        &std.Target.amdgcn.cpu.gfx1031,
-        &std.Target.amdgcn.cpu.gfx1032,
-        &std.Target.amdgcn.cpu.gfx1033,
-        &std.Target.amdgcn.cpu.gfx1034,
-        &std.Target.amdgcn.cpu.gfx1035,
-        &std.Target.amdgcn.cpu.gfx1036,
-        &std.Target.amdgcn.cpu.gfx1100,
-        &std.Target.amdgcn.cpu.gfx1101,
-        &std.Target.amdgcn.cpu.gfx1102,
-        &std.Target.amdgcn.cpu.gfx1103,
-        &std.Target.amdgcn.cpu.gfx1150,
-        &std.Target.amdgcn.cpu.gfx1151,
-        &std.Target.amdgcn.cpu.gfx1152,
-        &std.Target.amdgcn.cpu.gfx1153,
-        &std.Target.amdgcn.cpu.gfx1200,
-        &std.Target.amdgcn.cpu.gfx1201,
-    };
-    const feature_tag: std.Target.amdgcn.Feature = @fromBackingInt(@intCast(feature.index));
-
-    if (feature_tag == .sramecc) {
-        if (std.mem.findScalar(
-            *const std.Target.Cpu.Model,
-            sramecc_only ++ xnack_or_sramecc,
-            target.cpu.model,
-        )) |_| return true;
-    }
-    if (feature_tag == .xnack) {
-        if (std.mem.findScalar(
-            *const std.Target.Cpu.Model,
-            xnack_or_sramecc,
-            target.cpu.model,
-        )) |_| return true;
-    }
-
-    return false;
 }
 
 pub fn llvmMachineAbi(target: *const std.Target) ?[:0]const u8 {
     return switch (target.cpu.arch) {
+        .aarch64, .aarch64_be => if (target.abi.float() == .soft)
+            "aapcs-soft"
+        else if (target.os.tag.isDarwin())
+            "darwinpcs"
+        else
+            "aapcs",
         .arm, .armeb, .thumb, .thumbeb => "aapcs",
         .loongarch64 => switch (target.abi) {
             .gnusf, .muslsf => "lp64s",
@@ -775,6 +720,7 @@ pub fn defaultFunctionAlignment(target: *const std.Target) Alignment {
         .powerpc64le,
         .s390x,
         .x86,
+        .x86c16,
         .x86_64,
         => .@"16",
         .loongarch32,
@@ -856,9 +802,9 @@ pub fn supportsFunctionAlignment(target: *const std.Target) bool {
 pub fn functionPointerMask(target: *const std.Target) ?u64 {
     // 32-bit Arm uses the LSB to mean that the target function contains Thumb code.
     // MIPS uses the LSB to mean that the target function contains MIPS16/microMIPS code.
-    return if (target.cpu.arch.isArm() or target.cpu.arch.isMIPS32())
+    return if (target.cpu.arch.isArm() or target.cpu.arch.isMips32())
         ~@as(u32, 1)
-    else if (target.cpu.arch.isMIPS64())
+    else if (target.cpu.arch.isMips64())
         ~@as(u64, 1)
     else
         null;
@@ -909,7 +855,7 @@ pub fn compilerRtFloatAbbrev(target: *const std.Target, float_bits: u16) []const
         32 => "s",
         64 => "d",
         80 => "x",
-        128 => if (target.cpu.arch.isPowerPC()) "k" else "t",
+        128 => if (target.cpu.arch.isPowerpc()) "k" else "t",
         else => unreachable,
     };
 }
@@ -932,25 +878,6 @@ pub fn fnCallConvAllowsZigTypes(cc: std.lang.CallingConvention) bool {
         // integrated CPU/GPU code.
         .nvptx_kernel => true,
         else => false,
-    };
-}
-
-pub fn zigBackend(target: *const std.Target, use_llvm: bool) std.lang.CompilerBackend {
-    if (use_llvm) return .stage2_llvm;
-    if (target.ofmt == .c) return .stage2_c;
-    return switch (target.cpu.arch) {
-        .aarch64, .aarch64_be => .stage2_aarch64,
-        .arm, .armeb, .thumb, .thumbeb => .stage2_arm,
-        .loongarch32, .loongarch64 => .stage2_loongarch,
-        .powerpc, .powerpcle, .powerpc64, .powerpc64le => .stage2_powerpc,
-        .riscv64 => .stage2_riscv64,
-        .sparc64 => .stage2_sparc64,
-        .spirv32, .spirv64 => .stage2_spirv,
-        .wasm32, .wasm64 => .stage2_wasm,
-        .x86 => .stage2_x86,
-        .x86_64 => .stage2_x86_64,
-        .spork8 => .zsf_spork8,
-        else => .other,
     };
 }
 

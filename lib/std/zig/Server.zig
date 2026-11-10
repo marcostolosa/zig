@@ -116,7 +116,7 @@ pub const Message = struct {
         version: u32,
         flags: Flags,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             file_system_watch_supported: bool,
             unused: u31 = 0,
         };
@@ -185,7 +185,7 @@ pub const Message = struct {
         index: u32,
         flags: Flags align(4),
 
-        pub const Flags = packed struct(u64) {
+        pub const Flags = bitpack struct(u64) {
             status: Status,
             fuzz: bool,
             log_err_count: u30,
@@ -202,7 +202,7 @@ pub const Message = struct {
         files_len: u32,
         decls_len: u32,
         flags: Flags,
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             use_llvm: bool,
             unused: u31 = 0,
         };
@@ -213,7 +213,7 @@ pub const Message = struct {
     pub const EmitDigest = extern struct {
         flags: Flags,
 
-        pub const Flags = packed struct(u8) {
+        pub const Flags = bitpack struct(u8) {
             cache_hit: bool,
             reserved: u7 = 0,
         };
@@ -228,17 +228,22 @@ pub const Message = struct {
     };
 
     /// Properties of the output binary target that are decided by the compiler.
+    /// Trailing:
+    /// * the resolved compilation unit name
     pub const Config = extern struct {
         flags: Flags,
 
-        pub const Flags = packed struct(u8) {
-            output_mode: std.lang.OutputMode,
+        pub const Flags = bitpack struct(u16) {
             link_mode: std.lang.LinkMode,
             link_libc: bool,
             link_libcpp: bool,
             link_libunwind: bool,
+            use_llvm: bool,
+            use_lld: bool,
+            use_new_linker: bool,
+            pic: bool,
             pie: bool,
-            unused: u1 = 0,
+            unused: u7 = 0,
         };
     };
 };
@@ -371,7 +376,7 @@ pub fn allocErrorBundle(gpa: Allocator, body: []const u8) error{ OutOfMemory, En
 
 pub const TestMetadata = struct {
     names: []const u32,
-    expected_panic_msgs: []const u32,
+    expected_panic_msgs: ?[]const u32 = null,
     string_bytes: []const u8,
 };
 
@@ -390,16 +395,21 @@ pub fn serveTestMetadata(s: *Server, test_metadata: TestMetadata) !void {
     });
     try s.out.writeStruct(header, .little);
     try s.out.writeSliceEndian(u32, test_metadata.names, .little);
-    try s.out.writeSliceEndian(u32, test_metadata.expected_panic_msgs, .little);
+    if (test_metadata.expected_panic_msgs) |expected_panic_msgs| {
+        try s.out.writeSliceEndian(u32, expected_panic_msgs, .little);
+    } else {
+        try s.out.splatByteAll(0, @sizeOf(u32) * test_metadata.names.len);
+    }
     try s.out.writeAll(test_metadata.string_bytes);
     try s.out.flush();
 }
 
-pub fn serveConfig(s: *Server, config: OutMessage.Config) !void {
+pub fn serveConfig(s: *Server, config: OutMessage.Config, root_name: []const u8) !void {
     try s.serveMessageHeader(.{
         .tag = .config,
-        .bytes_len = @intCast(@sizeOf(OutMessage.Config)),
+        .bytes_len = @intCast(@sizeOf(OutMessage.Config) + root_name.len),
     });
     try s.out.writeStruct(config, .little);
+    try s.out.writeAll(root_name);
     try s.out.flush();
 }

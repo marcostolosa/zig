@@ -224,7 +224,7 @@ pub fn init(self: *ZigObject, elf_file: *Elf, options: InitOptions) !void {
             try dwarf.initMetadata();
             self.dwarf = dwarf;
         },
-        .code_view => unreachable,
+        .code_view, .nsdi => unreachable,
     }
 }
 
@@ -291,7 +291,7 @@ pub fn flush(self: *ZigObject, elf_file: *Elf, tid: Zcu.PerThread.Id) !void {
         if (metadata.rodata_state != .unused) metadata.rodata_state = .flushed;
     }
 
-    if (build_options.enable_logging) {
+    if (build_options.enable_debug_extensions) {
         const active = elf_file.base.comp.zcu.?.activate(tid);
         defer active.deactivate();
         for (self.navs.keys(), self.navs.values()) |nav_index, meta| {
@@ -803,7 +803,7 @@ pub fn initRelaSections(self: *ZigObject, elf_file: *Elf) !void {
         const out_shndx = atom_ptr.output_section_index;
         const out_shdr = elf_file.sections.items(.shdr)[out_shndx];
         if (out_shdr.sh_type == elf.SHT_NOBITS) continue;
-        const rela_sect_name = try std.fmt.allocPrintSentinel(gpa, ".rela{s}", .{
+        const rela_sect_name = try gpa.printSentinel(".rela{s}", .{
             elf_file.getShString(out_shdr.sh_name),
         }, 0);
         defer gpa.free(rela_sect_name);
@@ -824,7 +824,7 @@ pub fn addAtomsToRelaSections(self: *ZigObject, elf_file: *Elf) !void {
         const out_shndx = atom_ptr.output_section_index;
         const out_shdr = elf_file.sections.items(.shdr)[out_shndx];
         if (out_shdr.sh_type == elf.SHT_NOBITS) continue;
-        const rela_sect_name = try std.fmt.allocPrintSentinel(gpa, ".rela{s}", .{
+        const rela_sect_name = try gpa.printSentinel(".rela{s}", .{
             elf_file.getShString(out_shdr.sh_name),
         }, 0);
         defer gpa.free(rela_sect_name);
@@ -1572,7 +1572,7 @@ pub fn updateFunc(
 
         // Create a trampoline to the new location at `old_rva`.
         if (!self.symbol(sym_index).flags.has_trampoline) {
-            const name = try std.fmt.allocPrint(gpa, "{s}$trampoline", .{
+            const name = try gpa.print("{s}$trampoline", .{
                 self.symbol(sym_index).name(elf_file),
             });
             defer gpa.free(name);
@@ -1718,7 +1718,7 @@ fn updateLazySymbol(
     defer aw.deinit();
 
     const name_str_index = blk: {
-        const name = try std.fmt.allocPrint(gpa, "__lazy_{s}_{f}", .{
+        const name = try gpa.print("__lazy_{s}_{f}", .{
             @tagName(sym.kind),
             Type.fromInterned(sym.ty).fmt(zcu),
         });
@@ -1871,6 +1871,17 @@ pub fn updateExports(
 
     for (export_indices) |export_index| {
         const exp = export_index.ptr(zcu);
+        const exp_name = exp.opts.name.toSlice(&zcu.intern_pool);
+
+        const global_sym_index = try self.getGlobalSymbol(elf_file, exp_name, null);
+        const global_sym = self.symbol(global_sym_index);
+        const global_esym = &self.symtab.items(.elf_sym)[global_sym.esym_index];
+
+        if (global_esym.st_shndx != std.elf.SHN_UNDEF and exp.opts.linkage == .weak) {
+            // The symbol is already defined by a previous export, so ignore this weak export.
+            continue;
+        }
+
         const metadata = switch (exp.exported) {
             .nav => |nav| blk: {
                 _ = try self.getOrCreateMetadataForNav(zcu, nav);
@@ -1902,18 +1913,14 @@ pub fn updateExports(
             .weak => elf.STB_WEAK,
         };
         const stt_bits: u8 = @as(u4, @truncate(esym.st_info));
-        const exp_name = exp.opts.name.toSlice(&zcu.intern_pool);
         const name_off = try self.strtab.insert(gpa, exp_name);
-        const global_sym_index = try self.getGlobalSymbol(elf_file, exp_name, null);
         try metadata.exports.append(gpa, global_sym_index);
 
         const value = self.symbol(sym_index).value;
-        const global_sym = self.symbol(global_sym_index);
         global_sym.value = value;
         global_sym.flags.weak = exp.opts.linkage == .weak;
         global_sym.version_index = elf_file.default_sym_version;
         global_sym.ref = .{ .index = esym_shndx, .file = self.index };
-        const global_esym = &self.symtab.items(.elf_sym)[global_sym.esym_index];
         global_esym.st_value = @intCast(value);
         global_esym.st_shndx = esym.st_shndx;
         global_esym.st_info = (stb_bits << 4) | stt_bits;

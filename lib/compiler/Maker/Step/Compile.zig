@@ -45,7 +45,7 @@ pub fn make(
 
     try lowerZigArgs(arena, compile_index, maker, progress_node, &argv, false);
 
-    const incremental = conf_comp.flags4.incremental.toBool() orelse graph.incremental == true;
+    const incremental = conf_comp.flags4.incremental.toBool() orelse graph.incremental orelse false;
 
     const opt_cache_digest = Step.evalZigProcess(
         compile_index,
@@ -224,6 +224,7 @@ fn lowerZigArgs(
     {
         var is_linking_libc = false;
         var is_linking_libcpp = false;
+        var pic: ?bool = null;
 
         // Stores system libraries that have already been seen for at least one
         // module, along with any C compiler arguments that need to be passed
@@ -515,6 +516,16 @@ fn lowerZigArgs(
                 // have the correct parent module, but only if the module is part of
                 // this compilation.
                 if (!my_responsibility) continue;
+
+                if (is_linking_libc and mod.flags2.link_libc == .false)
+                    return step.fail(maker, "modules have conflicting values for link_libc", .{});
+                if (is_linking_libcpp and mod.flags2.link_libcpp == .false)
+                    return step.fail(maker, "modules have conflicting values for link_libcpp", .{});
+                if (mod.flags2.pic.toBool()) |mod_pic| {
+                    if (pic == !mod_pic) return step.fail(maker, "modules have conflicting values for pic", .{});
+                    pic = mod_pic;
+                }
+
                 if (cli_named_modules.modules.getIndex(mod_index)) |module_cli_index| {
                     const module_cli_name = cli_named_modules.names.keys()[module_cli_index];
                     const module_index = cli_named_modules.modules.keys()[module_cli_index];
@@ -575,6 +586,7 @@ fn lowerZigArgs(
         try zig_args.ensureUnusedCapacity(gpa, 2);
         if (is_linking_libcpp) zig_args.appendAssumeCapacity("-lc++");
         if (is_linking_libc) zig_args.appendAssumeCapacity("-lc");
+        try addFlag(gpa, zig_args, "PIC", pic);
     }
 
     if (conf_comp.win32_manifest.value) |manifest_file| {
@@ -608,11 +620,8 @@ fn lowerZigArgs(
 
     try addBool(gpa, zig_args, "--debug-compile-errors", graph.debug_compile_errors);
     try addBool(gpa, zig_args, "--debug-incremental", graph.debug_incremental);
-    try addBool(gpa, zig_args, "--verbose-air", graph.verbose_air);
-    try addBool(gpa, zig_args, "--verbose-llvm-ir", graph.verbose_llvm_ir);
-    try addBool(gpa, zig_args, "--verbose-link", graph.verbose_link or conf_comp.flags.verbose_link);
     try addBool(gpa, zig_args, "--verbose-cc", graph.verbose_cc or conf_comp.flags.verbose_cc);
-    try addBool(gpa, zig_args, "--verbose-llvm-cpu-features", graph.verbose_llvm_cpu_features);
+    try addBool(gpa, zig_args, "--verbose-link", graph.verbose_link or conf_comp.flags.verbose_link);
     try addBool(gpa, zig_args, "--time-report", graph.time_report);
 
     if (conf_comp.generated_bin.value == null) try zig_args.append(gpa, "-fno-emit-bin");
@@ -633,8 +642,8 @@ fn lowerZigArgs(
 
     try addBool(gpa, zig_args, "--eh-frame-hdr", conf_comp.flags.link_eh_frame_hdr);
     try addBool(gpa, zig_args, "--emit-relocs", conf_comp.flags.link_emit_relocs);
-    try addBool(gpa, zig_args, "-ffunction-sections", conf_comp.flags.link_function_sections);
-    try addBool(gpa, zig_args, "-fdata-sections", conf_comp.flags.link_data_sections);
+    try addFlag(gpa, zig_args, "function-sections", conf_comp.flags4.function_sections.toBool());
+    try addFlag(gpa, zig_args, "data-sections", conf_comp.flags4.data_sections.toBool());
 
     if (conf_comp.flags2.link_gc_sections.toBool()) |x|
         try zig_args.append(gpa, if (x) "--gc-sections" else "--no-gc-sections");
@@ -853,6 +862,8 @@ fn lowerZigArgs(
 
     try addFlag(gpa, zig_args, "incremental", conf_comp.flags4.incremental.toBool() orelse graph.incremental);
 
+    try addBool(gpa, zig_args, "-flegalize-all", conf_comp.flags3.legalize_all);
+
     try zig_args.append(gpa, "--listen=-");
 
     // Windows has an argument length limit of 32,766 characters, macOS 262,144 and Linux
@@ -870,7 +881,7 @@ fn lowerZigArgs(
             return step.fail(maker, "failed creating directory {f}: {t}", .{ args_path, err });
 
         const args_to_escape = zig_args.items[2..];
-        var escaped_args = try std.array_list.Managed([]const u8).initCapacity(arena, args_to_escape.len);
+        var escaped_args: std.ArrayList([]const u8) = try .initCapacity(arena, args_to_escape.len);
         arg_blk: for (args_to_escape) |arg| {
             for (arg, 0..) |c, arg_idx| {
                 if (c == '\\' or c == '"') {
@@ -1243,7 +1254,6 @@ fn appendModuleFlags(
     try addFlag(gpa, zig_args, "sanitize-thread", m.flags.sanitize_thread.toBool());
     try addFlag(gpa, zig_args, "fuzz", m.flags.fuzz.toBool());
     try addFlag(gpa, zig_args, "valgrind", m.flags2.valgrind.toBool());
-    try addFlag(gpa, zig_args, "PIC", m.flags2.pic.toBool());
     try addFlag(gpa, zig_args, "no-builtin", m.flags2.no_builtin.toBool());
 
     try addArchFlag(gpa, zig_args, "red-zone", m.flags2.red_zone.toBool());
@@ -1306,7 +1316,7 @@ fn appendModuleFlags(
             if (query.dynamic_linker) |*dynamic_linker| {
                 if (dynamic_linker.get()) |dynamic_linker_path| {
                     zig_args.appendAssumeCapacity("--dynamic-linker");
-                    zig_args.appendAssumeCapacity(dynamic_linker_path);
+                    zig_args.appendAssumeCapacity(try arena.dupe(u8, dynamic_linker_path));
                 } else {
                     zig_args.appendAssumeCapacity("--no-dynamic-linker");
                 }

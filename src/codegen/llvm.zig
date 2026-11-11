@@ -27,6 +27,17 @@ const ccAbiPromoteInt = FuncGen.ccAbiPromoteInt;
 const log = std.log.scoped(.codegen);
 
 pub fn legalizeFeatures(target: *const std.Target) ?*const Air.Legalize.Features {
+    // LLVM miscompiles reductions and bitcasts of bool vectors on Hexagon, so do them one element at a time.
+    // https://github.com/llvm/llvm-project/issues/237727
+    if (target.cpu.arch == .hexagon) return comptime &.init(.{
+        .expand_int_from_float_safe = true,
+        .expand_int_from_float_optimized_safe = true,
+        .scalarize_bit_cast_array = true,
+
+        .expand_int_cast_safe = true,
+        .scalarize_bit_cast_vector_non_elementwise = true,
+        .scalarize_reduce = true,
+    });
     return switch (target.cpu.arch.endian()) {
         inline else => |endian| comptime &.init(.{
             .expand_int_from_float_safe = true,
@@ -45,9 +56,7 @@ pub fn supportsTailCall(target: *const std.Target) bool {
     return switch (target.cpu.arch) {
         .wasm32, .wasm64 => target.cpu.has(.wasm, .tail_call),
         // Although these ISAs support tail calls, LLVM does not support tail calls on them.
-        .mips, .mipsel, .mips64, .mips64el => false,
-        .powerpc, .powerpcle, .powerpc64, .powerpc64le => false,
-        else => true,
+        else => !(target.cpu.arch.isMips() or target.cpu.arch.isPowerpc()),
     };
 }
 
@@ -2043,7 +2052,7 @@ pub const Object = struct {
             // Ideally, we would support something akin to the `-mfloat-abi=softfp` option that GCC
             // and Clang support for Arm32 and CSKY. We don't currently expose such an option in
             // Zig, and using CPU features as the source of truth for this makes for a miserable
-            // user experience since people expect e.g. `arm-linux-gnueabi` to mean full soft float
+            // user experience since people expect e.g. `arm-linux-gnusf` to mean full soft float
             // unless the compiler has explicitly been told otherwise. (And note that our baseline
             // CPU models almost all include FPU features!)
             //

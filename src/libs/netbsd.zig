@@ -78,26 +78,26 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
             var acflags: std.ArrayList([]const u8) = .empty;
             try acflags.appendSlice(arena, &.{
                 // See `Compilation.addCCArgs`.
-                try std.fmt.allocPrint(arena, "-D__NetBSD_Version__={d}", .{(target_version.major * 100_000_000) + (target_version.minor * 1_000_000)}),
+                try arena.print("-D__NetBSD_Version__={d}", .{(target_version.major * 100_000_000) + (target_version.minor * 1_000_000)}),
             });
 
             const csu_march: ?[]const u8 = switch (target.cpu.arch) {
-                .arm => if (target.abi.float() == .hard) "earmhf" else "earm",
-                .armeb => if (target.abi.float() == .hard) "earmhfeb" else "earmeb",
+                .arm => if (target.abi.float() == .soft) "earm" else "earmhf",
+                .armeb => if (target.abi.float() == .soft) "earmeb" else "earmhfeb",
                 else => null,
             };
 
             inline for (.{ &cflags, &acflags }) |flags| {
                 if (csu_march) |march| {
                     try flags.appendSlice(arena, &.{
-                        try std.fmt.allocPrint(arena, "-DELF_NOTE_MARCH_DESC=\"{s}\"", .{march}),
-                        try std.fmt.allocPrint(arena, "-DELF_NOTE_MARCH_DESCSZ={d}", .{march.len + 1}),
+                        try arena.print("-DELF_NOTE_MARCH_DESC=\"{s}\"", .{march}),
+                        try arena.print("-DELF_NOTE_MARCH_DESCSZ={d}", .{march.len + 1}),
                     });
                 }
 
                 try flags.appendSlice(arena, &.{
                     "-I",
-                    try includePath(comp, arena, try std.fmt.allocPrint(arena, "{s}-{s}-{s}", .{
+                    try includePath(comp, arena, try arena.print("{s}-{s}-{s}", .{
                         std.zig.target.netbsdArchNameHeaders(target.cpu.arch),
                         @tagName(target.os.tag),
                         std.zig.target.netbsdAbiNameHeaders(target.abi),
@@ -512,7 +512,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
             };
 
             {
-                const targets = try inc_reader.takeLeb128(u64);
+                const targets = try inc_reader.takeLeb128(u128);
                 var lib_index = try inc_reader.takeByte();
 
                 const is_weak = (lib_index & (1 << 6)) != 0;
@@ -523,7 +523,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
                 // Test whether the inclusion applies to our current library and target.
                 const ok_lib_and_target =
                     (lib_index == lib_i) and
-                    ((targets & (@as(u64, 1) << @as(u6, @intCast(target_targ_index)))) != 0);
+                    ((targets & (@as(u128, 1) << @as(u6, @intCast(target_targ_index)))) != 0);
 
                 while (true) {
                     const byte = try inc_reader.takeByte();
@@ -589,7 +589,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
             };
 
             {
-                const targets = try inc_reader.takeLeb128(u64);
+                const targets = try inc_reader.takeLeb128(u128);
                 const size = try inc_reader.takeLeb128(u16);
                 var lib_index = try inc_reader.takeByte();
 
@@ -601,7 +601,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
                 // Test whether the inclusion applies to our current library and target.
                 const ok_lib_and_target =
                     (lib_index == lib_i) and
-                    ((targets & (@as(u64, 1) << @as(u6, @intCast(target_targ_index)))) != 0);
+                    ((targets & (@as(u128, 1) << @as(u6, @intCast(target_targ_index)))) != 0);
 
                 while (true) {
                     const byte = try inc_reader.takeByte();
@@ -681,7 +681,7 @@ fn queueSharedObjects(comp: *Compilation, so_files: BuiltSharedObjects) std.Io.C
         for (libs) |lib| {
             const so_path: Path = .{
                 .root_dir = so_files.dir_path.root_dir,
-                .sub_path = std.fmt.allocPrint(comp.arena, "{s}{c}lib{s}.so.{d}", .{
+                .sub_path = comp.arena.print("{s}{c}lib{s}.so.{d}", .{
                     so_files.dir_path.sub_path, path.sep, lib.name, lib.sover,
                 }) catch return comp.setAllocFailure(),
             };
@@ -705,7 +705,7 @@ fn buildSharedLib(
     defer tracy.end();
 
     const io = comp.io;
-    const basename = try std.fmt.allocPrint(arena, "lib{s}.so.{d}", .{ lib.name, lib.sover });
+    const basename = try arena.print("lib{s}.so.{d}", .{ lib.name, lib.sover });
     const version: Version = .{ .major = lib.sover, .minor = 0, .patch = 0 };
     const ld_basename = path.basename(comp.getTarget().standardDynamicLinkerPath().get().?);
     const soname = if (mem.eql(u8, lib.name, "ld")) ld_basename else basename;

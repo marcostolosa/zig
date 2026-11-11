@@ -161,7 +161,7 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         const asm_source = switch (target.cpu.arch) {
             .aarch64, .aarch64_be => "tsan_rtl_aarch64.S",
             .loongarch64 => "tsan_rtl_loongarch64.S",
-            .mips64, .mips64el => "tsan_rtl_mips64.S",
+            .mips64, .mips64el, .mips64n8, .mips64n8el, .mips64r6, .mips64r6el => "tsan_rtl_mips64.S",
             .powerpc64, .powerpc64le => "tsan_rtl_ppc64.S",
             .riscv64 => "tsan_rtl_riscv64.S",
             .s390x => "tsan_rtl_s390x.S",
@@ -273,7 +273,7 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
     const skip_linker_dependencies = !target.os.tag.isDarwin();
     const linker_allow_shlib_undefined = target.os.tag.isDarwin();
     const install_name = if (target.os.tag.isDarwin())
-        try std.fmt.allocPrintSentinel(arena, "@rpath/{s}", .{basename}, 0)
+        try arena.printSentinel("@rpath/{s}", .{basename}, 0)
     else
         null;
     // Workaround for https://github.com/llvm/llvm-project/issues/97627

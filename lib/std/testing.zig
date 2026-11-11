@@ -153,7 +153,7 @@ fn expectEqualInner(comptime T: type, expected: T, actual: T) !void {
                 );
             },
             .auto => {
-                const Tag = @"union".tag_type orelse @compileError("byteSwapAllFields expects bitpack, extern, or tagged union");
+                const Tag = @"union".tag_type orelse @compileError("expectEqual expects bitpack, extern, or tagged union");
 
                 try expectEqual(@as(Tag, expected), @as(Tag, actual));
                 switch (expected) {
@@ -662,7 +662,7 @@ pub fn expectFmt(expected: []const u8, comptime template: []const u8, args: anyt
         var buffer: [std.fmt.count(template, args)]u8 = undefined;
         return expectEqualStrings(expected, try std.mem.print(&buffer, template, args));
     }
-    const actual = try std.fmt.allocPrint(allocator, template, args);
+    const actual = try allocator.print(template, args);
     defer allocator.free(actual);
     return expectEqualStrings(expected, actual);
 }

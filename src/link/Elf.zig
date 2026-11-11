@@ -225,8 +225,22 @@ pub fn createEmpty(
         .hexagon,
         .mips,
         .mipsel,
+        .mipsf32,
+        .mipsf32el,
+        .mipsf64,
+        .mipsf64el,
+        .mipsf64n8,
+        .mipsf64n8el,
+        .mipsn8,
+        .mipsn8el,
+        .mipsr6,
+        .mipsr6el,
         .mips64,
         .mips64el,
+        .mips64n8,
+        .mips64n8el,
+        .mips64r6,
+        .mips64r6el,
         .powerpc,
         .powerpcle,
         .powerpc64,
@@ -378,7 +392,7 @@ pub fn createEmpty(
             self.zig_object = zig_object;
             zig_object.* = .{
                 .index = index,
-                .basename = try std.fmt.allocPrint(arena, "{s}.o", .{
+                .basename = try arena.print("{s}.o", .{
                     fs.path.stem(zcu.main_mod.root_src_path),
                 }),
             };
@@ -980,10 +994,10 @@ fn dumpArgvInit(self: *Elf, arena: Allocator) !void {
 
         try argv.appendSlice(gpa, &.{
             "-z",
-            try std.fmt.allocPrint(arena, "stack-size={d}", .{self.base.stack_size}),
+            try arena.print("stack-size={d}", .{self.base.stack_size}),
         });
 
-        try argv.append(gpa, try std.fmt.allocPrint(arena, "--image-base={d}", .{self.image_base}));
+        try argv.append(gpa, try arena.print("--image-base={d}", .{self.image_base}));
 
         if (self.base.gc_sections) {
             try argv.append(gpa, "--gc-sections");
@@ -1447,7 +1461,7 @@ pub fn writeShdrTable(self: *Elf) !void {
                 assert(self.sections.items(.shdr)[i].sh_offset != math.maxInt(u64));
                 shdr.* = shdrTo32(self.sections.items(.shdr)[i]);
                 if (foreign_endian) {
-                    mem.byteSwapAllFields(elf.Elf32_Shdr, shdr);
+                    mem.byteSwap(elf.Elf32_Shdr, shdr);
                 }
             }
             try self.pwriteAll(@ptrCast(buf), self.shdr_table_offset.?);
@@ -1460,7 +1474,7 @@ pub fn writeShdrTable(self: *Elf) !void {
                 assert(self.sections.items(.shdr)[i].sh_offset != math.maxInt(u64));
                 shdr.* = self.sections.items(.shdr)[i];
                 if (foreign_endian) {
-                    mem.byteSwapAllFields(elf.Elf64_Shdr, shdr);
+                    mem.byteSwap(elf.Elf64_Shdr, shdr);
                 }
             }
             try self.pwriteAll(@ptrCast(buf), self.shdr_table_offset.?);
@@ -1487,7 +1501,7 @@ fn writePhdrTable(self: *Elf) !void {
             for (buf, 0..) |*phdr, i| {
                 phdr.* = phdrTo32(self.phdrs.items[i]);
                 if (foreign_endian) {
-                    mem.byteSwapAllFields(elf.Elf32.Phdr, phdr);
+                    mem.byteSwap(elf.Elf32.Phdr, phdr);
                 }
             }
             try self.pwriteAll(@ptrCast(buf), phdr_table.offset);
@@ -1499,7 +1513,7 @@ fn writePhdrTable(self: *Elf) !void {
             for (buf, 0..) |*phdr, i| {
                 phdr.* = self.phdrs.items[i];
                 if (foreign_endian) {
-                    mem.byteSwapAllFields(elf.Elf64.Phdr, phdr);
+                    mem.byteSwap(elf.Elf64.Phdr, phdr);
                 }
             }
             try self.pwriteAll(@ptrCast(buf), phdr_table.offset);
@@ -3306,13 +3320,13 @@ pub fn writeSymtab(self: *Elf) !void {
                     .st_value = @intCast(sym.st_value),
                     .st_size = @intCast(sym.st_size),
                 };
-                if (foreign_endian) mem.byteSwapAllFields(elf.Elf32_Sym, out);
+                if (foreign_endian) mem.byteSwap(elf.Elf32_Sym, out);
             }
             try self.pwriteAll(@ptrCast(buf), symtab_shdr.sh_offset);
         },
         .p64 => {
             if (foreign_endian) {
-                for (self.symtab.items) |*sym| mem.byteSwapAllFields(elf.Elf64_Sym, sym);
+                for (self.symtab.items) |*sym| mem.byteSwap(elf.Elf64_Sym, sym);
             }
             try self.pwriteAll(@ptrCast(self.symtab.items), symtab_shdr.sh_offset);
         },
@@ -4272,10 +4286,7 @@ pub fn sectionSize(self: *Elf, shndx: u32) u64 {
 }
 
 fn defaultEntrySymbolName(cpu_arch: std.Target.Cpu.Arch) []const u8 {
-    return switch (cpu_arch) {
-        .mips, .mipsel, .mips64, .mips64el => "__start",
-        else => "_start",
-    };
+    return if (cpu_arch.isMips()) "__start" else "_start";
 }
 
 fn createThunks(elf_file: *Elf, atom_list: *AtomList) !void {

@@ -43,14 +43,14 @@ export ZIG_LIB_DIR="$PWD/../lib"
 # Simultaneously test building self-hosted without LLVM and with 32-bit arm
 stage3-debug/bin/zig build \
   --maxrss "${ZSF_MAX_RSS:-0}" \
-  -Dtarget=arm-linux-musleabihf \
+  -Dtarget=arm-linux-musl \
   -Dno-lib
 
 stage3-debug/bin/zig build install test docs \
   --maxrss "${ZSF_MAX_RSS:-0}" \
   --prefix stage4-debug \
   --search-prefix "$PREFIX" \
-  --libc-runtimes "$HOME/deps/glibc-2.43-musl-1.2.5" \
+  --libc-runtimes "$HOME/deps/glibc-2.44-musl-1.2.6" \
   --test-timeout 12m \
   -fqemu \
   -fwasmtime \
@@ -67,7 +67,7 @@ stage3-debug/bin/zig build install test docs \
   -Dskip-windows \
   -Dskip-darwin \
   -Denable-superhtml \
-  -Dlldb="$HOME/deps/lldb-zig/Debug-9441ed5ae1/bin/lldb" \
+  -Dlldb="$HOME/deps/lldb-zig/Debug-c003e86788/bin/lldb" \
   -Dlibc-test-path="$HOME/deps/libc-test-b95fe84"
 
 stage4-debug/bin/zig test ../test/behavior.zig

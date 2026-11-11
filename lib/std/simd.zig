@@ -91,7 +91,7 @@ pub fn suggestVectorLength(comptime T: type) ?comptime_int {
 }
 
 test "suggestVectorLengthForCpu works with signed and unsigned values" {
-    comptime var cpu = std.Target.Cpu.baseline(std.Target.Cpu.Arch.x86_64, builtin.os);
+    comptime var cpu = std.Target.Cpu.baseline(std.Target.Cpu.Arch.x86_64, builtin.os, builtin.abi);
     comptime cpu.features.addFeature(@backingInt(std.Target.x86.Feature.avx512f));
     comptime cpu.features.populateDependencies(&std.Target.x86.all_features);
     const expected_len: usize = switch (builtin.zig_backend) {
@@ -225,8 +225,6 @@ pub fn extract(
 }
 
 test "vector patterns" {
-    if (builtin.cpu.arch == .hexagon) return error.SkipZigTest;
-
     const base = @Vector(4, u32){ 10, 20, 30, 40 };
     const other_base = @Vector(4, u32){ 55, 66, 77, 88 };
 

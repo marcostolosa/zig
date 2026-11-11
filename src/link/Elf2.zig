@@ -920,7 +920,7 @@ const Section = struct {
                         .addend = @intCast(old_free_len + 1), // list length
                     };
                     if (elf.targetEndian() != std.lang.Endian.native) {
-                        std.mem.byteSwapAllFields(class.ElfN().Rela, &relas[@backingInt(index)]);
+                        std.mem.byteSwap(class.ElfN().Rela, &relas[@backingInt(index)]);
                     }
                 },
             }
@@ -979,7 +979,7 @@ const Section = struct {
                         .addend = @intCast(opts.addend),
                     };
                     if (elf.targetEndian() != std.lang.Endian.native) {
-                        std.mem.byteSwapAllFields(class.ElfN().Rela, &relas[@backingInt(new_index)]);
+                        std.mem.byteSwap(class.ElfN().Rela, &relas[@backingInt(new_index)]);
                     }
                     return new_index;
                 },
@@ -2678,7 +2678,7 @@ const NodeReloc = struct {
             // Ensure the output relocation is up-to-date.
             const rela_shndx = elf.getNodeShndx(reloc.node.unwrap().?).get(elf).rela.shndx;
             rela_shndx.relaSetOffset(elf, rela_index, elf.getNodeVAddr(node) + reloc.offset);
-            rela_shndx.relaSetAddend(elf, rela_index, elf.getNodeVAddr(node) +% @as(u64, @bitCast(reloc.addend)));
+            rela_shndx.relaSetAddend(elf, rela_index, elf.getNodeVAddr(reloc.target) +% @as(u64, @bitCast(reloc.addend)));
         } else {
             assert(elf.ehdrType() != .REL);
             if (node.hasMoved(&elf.mf) or reloc.target.hasMoved(&elf.mf)) {
@@ -2983,7 +2983,7 @@ fn ensureDynsymHashCapacity(elf: *Elf, max_dynsym_count: u32) Error!void {
 
             header.* = .{ .nbucket = new_nbucket, .nchain = cur_dynsym_count };
             if (elf.targetEndian() != std.lang.Endian.native) {
-                std.mem.byteSwapAllFields(info.Header(), header);
+                std.mem.byteSwap(info.Header(), header);
             }
             const buckets: []info.Int() = trailing[0..@intCast(elf.targetLoad(&header.nbucket))];
             const chains: []info.Int() = trailing[@intCast(elf.targetLoad(&header.nbucket))..][0..@intCast(elf.targetLoad(&header.nchain))];
@@ -3198,7 +3198,7 @@ fn addLocalSymbol(elf: *Elf, opts: AddLocalSymbolOptions) Error!Symbol.LocalInde
                 .shndx = opts.shndx.toSection().?,
             };
             if (elf.targetEndian() != std.lang.Endian.native) {
-                std.mem.byteSwapAllFields(class.ElfN().Sym, target_sym);
+                std.mem.byteSwap(class.ElfN().Sym, target_sym);
             }
 
             return @fromBackingInt(@backingInt(target_index));
@@ -3415,7 +3415,7 @@ fn addGlobalSymbol(elf: *Elf, opts: Symbol.Global.AddOptions) (error{
                 .shndx = std.elf.SHN_UNDEF,
             };
             if (elf.targetEndian() != std.lang.Endian.native) {
-                std.mem.byteSwapAllFields(Sym, sym);
+                std.mem.byteSwap(Sym, sym);
             }
         },
     }
@@ -5767,7 +5767,7 @@ fn initHeaders(
             .ar_size = undefined, // populated by `flushResized` for the `.elf` node
             .ar_fmag = std.elf.ARFMAG.*,
         };
-        const zcu_member_name = try std.fmt.allocPrint(gpa, "{s}_zcu.o", .{comp.root_name});
+        const zcu_member_name = try gpa.print("{s}_zcu.o", .{comp.root_name});
         defer gpa.free(zcu_member_name);
         // After this call returns, `elf_ar_hdr` is invalidated.
         try elf.populateArchiveMemberName(elf_ar_hdr, zcu_member_name);
@@ -5888,10 +5888,10 @@ fn initHeaders(
             ehdr.shoff = 0;
             ehdr.flags = switch (machine) {
                 .LOONGARCH => .{ .loongarch = .{
-                    .base_abi_modifier = switch (comp.getTarget().abi) {
-                        .gnusf, .muslsf => .s,
-                        .gnuf32, .muslf32 => .f,
-                        else => .d,
+                    .base_abi_modifier = switch (comp.getTarget().abi.float()) {
+                        .soft => .s,
+                        .hard32 => .f,
+                        .hard64 => .d,
                     },
                     .abi_extension = .base,
                     .abi_version = 1,
@@ -5915,7 +5915,7 @@ fn initHeaders(
             ehdr.shentsize = @sizeOf(ElfN.Shdr);
             ehdr.shnum = 1; // Only the SHN_UNDEF shdr initially---will be incremented by `addSection`
             ehdr.shstrndx = std.elf.SHN_UNDEF;
-            if (elf.targetEndian() != std.lang.Endian.native) std.mem.byteSwapAllFields(ElfN.Ehdr, ehdr);
+            if (elf.targetEndian() != std.lang.Endian.native) std.mem.byteSwap(ElfN.Ehdr, ehdr);
         },
     }
 
@@ -6091,7 +6091,7 @@ fn initHeaders(
                 .addralign = 0,
                 .entsize = 0,
             };
-            if (target_endian != std.lang.Endian.native) std.mem.byteSwapAllFields(ElfN.Shdr, sh_undef);
+            if (target_endian != std.lang.Endian.native) std.mem.byteSwap(ElfN.Shdr, sh_undef);
 
             elf.symtab.addOneAssumeCapacity().* = .{
                 .node = .none,
@@ -6115,7 +6115,7 @@ fn initHeaders(
                 .other = .{ .visibility = .DEFAULT },
                 .shndx = std.elf.SHN_UNDEF,
             };
-            if (target_endian != std.lang.Endian.native) std.mem.byteSwapAllFields(ElfN.Sym, symtab_null);
+            if (target_endian != std.lang.Endian.native) std.mem.byteSwap(ElfN.Sym, symtab_null);
 
             const ehdr = @field(elf.ehdrPtr(), @tagName(ct_class));
             ehdr.shstrndx = ehdr.shnum;
@@ -6305,7 +6305,7 @@ fn initHeaders(
                         .other = .{ .visibility = .DEFAULT },
                         .shndx = std.elf.SHN_UNDEF,
                     };
-                    if (elf.targetEndian() != std.lang.Endian.native) std.mem.byteSwapAllFields(
+                    if (elf.targetEndian() != std.lang.Endian.native) std.mem.byteSwap(
                         Sym,
                         dynsym_null,
                     );
@@ -6389,7 +6389,7 @@ fn initHeaders(
                     },
                 };
                 if (elf.targetEndian() != std.lang.Endian.native) {
-                    std.mem.byteSwapAllFields(VerdefEntry, entry_ptr);
+                    std.mem.byteSwap(VerdefEntry, entry_ptr);
                 }
             }
 
@@ -6426,7 +6426,7 @@ fn initHeaders(
                     const header: *info.Header() = @ptrCast(hash_slice[0..@sizeOf(info.Header())]);
                     header.* = .{ .nbucket = 8, .nchain = 1 };
                     if (elf.targetEndian() != std.lang.Endian.native) {
-                        std.mem.byteSwapAllFields(info.Header(), header);
+                        std.mem.byteSwap(info.Header(), header);
                     }
                     // The initial bucket and chain values are all 0.
                     @memset(hash_slice[@sizeOf(info.Header())..], 0);
@@ -9465,7 +9465,7 @@ fn prelinkInner(elf: *Elf) Error!void {
             // Self-hosted codegen is logically emitting a relocatable which is then immediately
             // being linked into the output file, so add that fictional Zig object file input.
             try elf.inputs.ensureUnusedCapacity(gpa, 1);
-            const zcu_name = try std.fmt.allocPrint(gpa, "{s}_zcu", .{comp.root_name});
+            const zcu_name = try gpa.print("{s}_zcu", .{comp.root_name});
             defer gpa.free(zcu_name);
             const zcu_file_symbol = try elf.addLocalSymbol(.{
                 .node = .none,
@@ -9855,7 +9855,7 @@ fn flushDynamic(elf: *Elf) void {
 
             assert(dynamic_index == dynamic_entries.len);
             if (elf.targetEndian() != std.lang.Endian.native) for (dynamic_entries) |*dynamic_entry|
-                std.mem.byteSwapAllFields(@TypeOf(dynamic_entry.*), dynamic_entry);
+                std.mem.byteSwap(@TypeOf(dynamic_entry.*), dynamic_entry);
         },
     }
 }
@@ -9970,7 +9970,7 @@ fn addSection(elf: *Elf, segment_ni: MappedFile.Node.Index, opts: struct {
                 .addralign = @intCast(opts.addralign.toByteUnits()),
                 .entsize = opts.entsize,
             };
-            if (elf.targetEndian() != std.lang.Endian.native) std.mem.byteSwapAllFields(class.ElfN().Shdr, shdr);
+            if (elf.targetEndian() != std.lang.Endian.native) std.mem.byteSwap(class.ElfN().Shdr, shdr);
         },
     }
     return shndx;
@@ -9990,7 +9990,7 @@ fn ensureUnusedRelocCapacity(elf: *Elf, node: MappedFile.Node.Index, len: usize)
                 var bfa: std.heap.BufferFirstAllocator = .init(&bfa_buf, gpa);
                 const allocator = bfa.allocator();
 
-                const rela_name = try std.fmt.allocPrint(allocator, ".rela{s}", .{shndx.name(elf).slice(elf)});
+                const rela_name = try allocator.print(".rela{s}", .{shndx.name(elf).slice(elf)});
                 defer allocator.free(rela_name);
 
                 assert(elf.section_by_name.count() == elf.shdrs.items.len);
@@ -10655,11 +10655,10 @@ fn addNodeRelocAssumeCapacity(
                 .rela_index = .none,
                 .result = .ok,
             });
-
-            // Actually apply the new relocation!
-            ri.get(elf).apply(elf);
         },
     }
+
+    ri.get(elf).apply(elf);
 }
 fn updateGotEntry(elf: *Elf, got_index: usize) void {
     assert(elf.ehdrType() != .REL);
@@ -13868,7 +13867,7 @@ fn verdefId(elf: *Elf, version: String(.dynstr)) Error!u15 {
         },
     };
     if (elf.targetEndian() != std.lang.Endian.native) {
-        std.mem.byteSwapAllFields(VerdefEntry, entry_ptr);
+        std.mem.byteSwap(VerdefEntry, entry_ptr);
     }
 
     return version_id;
@@ -13965,7 +13964,7 @@ fn verneedId(elf: *Elf, file: String(.dynstr), version: String(.dynstr)) Error!u
             .next = 0,
         };
         if (elf.targetEndian() != std.lang.Endian.native) {
-            std.mem.byteSwapAllFields(std.elf.Verneed, new_verneed);
+            std.mem.byteSwap(std.elf.Verneed, new_verneed);
         }
         file_gop.key_ptr.* = .{
             .kind = .verneed,
@@ -14028,7 +14027,7 @@ fn verneedId(elf: *Elf, file: String(.dynstr), version: String(.dynstr)) Error!u
         .next = 0,
     };
     if (elf.targetEndian() != std.lang.Endian.native) {
-        std.mem.byteSwapAllFields(std.elf.Vernaux, new_vernaux);
+        std.mem.byteSwap(std.elf.Vernaux, new_vernaux);
     }
 
     return version_id;

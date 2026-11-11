@@ -405,7 +405,7 @@ test dumpHexFallible {
     defer aw.deinit();
 
     try dumpHexFallible(.{ .writer = &aw.writer, .mode = .no_color }, bytes);
-    const expected = try std.fmt.allocPrint(gpa,
+    const expected = try gpa.print(
         \\{x:0>[2]}  00 11 22 33 44 55 66 77  88 99 AA BB CC DD EE FF  .."3DUfw........
         \\{x:0>[2]}  01 12 13                                          ...
         \\
@@ -955,8 +955,22 @@ pub const FpUsability = enum {
             .microblazeel,
             .mips,
             .mipsel,
+            .mipsf32,
+            .mipsf32el,
+            .mipsf64,
+            .mipsf64el,
+            .mipsf64n8,
+            .mipsf64n8el,
+            .mipsn8,
+            .mipsn8el,
+            .mipsr6,
+            .mipsr6el,
             .mips64,
             .mips64el,
+            .mips64n8,
+            .mips64n8el,
+            .mips64r6,
+            .mips64r6el,
             .msp430,
             .sh,
             .sheb,

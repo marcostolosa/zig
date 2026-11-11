@@ -176082,32 +176082,50 @@ fn genCall(cg: *CodeGen, info: union(enum) {
         else => unreachable,
     };
 
+    const CallTarget = union(enum) {
+        nav: InternPool.Nav.Index,
+        reg: Register,
+        extern_func: Mir.NullTerminatedString,
+    };
+    const call_target: CallTarget = target: switch (info) {
+        .air => |callee| {
+            if (callee.toInterned()) |known_callee| known: {
+                const callee_key = ip.indexToKey(known_callee);
+                const nav = switch (switch (callee_key) {
+                    else => callee_key,
+                    .ptr => |ptr| if (ptr.byte_offset == 0) switch (ptr.base_addr) {
+                        .nav => |nav| ip.indexToKey(zcu.navValue(nav).toIntern()),
+                        else => callee_key,
+                    } else callee_key,
+                }) {
+                    .func => |func| func.owner_nav,
+                    .@"extern" => |@"extern"| @"extern".owner_nav,
+                    else => break :known,
+                };
+                break :target .{ .nav = nav };
+            }
+
+            assert(cg.typeOf(callee).zigTypeTag(zcu) == .pointer);
+            const scratch_reg = if (fn_info.is_var_args and fn_info.cc == .x86_64_sysv) scratch: {
+                const param_regs = abi.getCAbiIntParamRegs(fn_info.cc);
+                break :scratch if (call_info.gp_count < param_regs.len)
+                    param_regs[call_info.gp_count]
+                else
+                    .r10;
+            } else abi.getCAbiLinkerScratchReg(fn_info.cc);
+            try cg.genSetReg(scratch_reg, .usize, .{ .air_ref = callee }, opts);
+            break :target .{ .reg = scratch_reg };
+        },
+        .extern_func => |extern_func| .{ .extern_func = try cg.addString(extern_func.sym) },
+    };
+
     if (fn_info.is_var_args and fn_info.cc == .x86_64_sysv)
         try cg.asmRegisterImmediate(.{ ._, .mov }, .al, .u(call_info.fp_count));
 
-    // Due to incremental compilation, how function calls are generated depends
-    // on linking.
-    switch (info) {
-        .air => |callee| if (callee.toInterned()) |func_ip_index| {
-            const func_key = ip.indexToKey(func_ip_index);
-            switch (switch (func_key) {
-                else => func_key,
-                .ptr => |ptr| if (ptr.byte_offset == 0) switch (ptr.base_addr) {
-                    .nav => |nav| ip.indexToKey(zcu.navValue(nav).toIntern()),
-                    else => func_key,
-                } else func_key,
-            }) {
-                else => unreachable,
-                .func => |func| try cg.asmImmediate(.{ ._, .call }, .{ .nav = .{ .index = func.owner_nav } }),
-                .@"extern" => |@"extern"| try cg.asmImmediate(.{ ._, .call }, .{ .nav = .{ .index = @"extern".owner_nav } }),
-            }
-        } else {
-            assert(cg.typeOf(callee).zigTypeTag(zcu) == .pointer);
-            const scratch_reg = abi.getCAbiLinkerScratchReg(fn_info.cc);
-            try cg.genSetReg(scratch_reg, .usize, .{ .air_ref = callee }, opts);
-            try cg.asmRegister(.{ ._, .call }, scratch_reg);
-        },
-        .extern_func => |extern_func| try cg.asmImmediate(.{ ._, .call }, .{ .extern_func = try cg.addString(extern_func.sym) }),
+    switch (call_target) {
+        .nav => |nav| try cg.asmImmediate(.{ ._, .call }, .{ .nav = .{ .index = nav } }),
+        .reg => |reg| try cg.asmRegister(.{ ._, .call }, reg),
+        .extern_func => |extern_func| try cg.asmImmediate(.{ ._, .call }, .{ .extern_func = extern_func }),
     }
     return call_info.return_value.short;
 }
@@ -176551,21 +176569,8 @@ fn lowerSwitchBr(
             condition_index,
             .{ .air_ref = Air.internedToRef(min.?.toIntern()) },
         );
-        const else_reloc = if (switch_br.else_body_len > 0) else_reloc: {
-            var cond_temp = try cg.tempInit(unsigned_condition_ty, condition_index);
-            var table_max_temp = try cg.tempFromValue(try cg.pt.intValue(unsigned_condition_ty, table_len - 1));
-            const cc_temp = cond_temp.cmpInts(.gt, &table_max_temp, cg) catch |err| switch (err) {
-                error.SelectFailed => unreachable,
-                else => |e| return e,
-            };
-            try cond_temp.die(cg);
-            try table_max_temp.die(cg);
-            const else_reloc = try cg.asmJccReloc(cc_temp.tracking(cg).short.eflags, undefined);
-            try cc_temp.die(cg);
-            break :else_reloc else_reloc;
-        } else undefined;
         const table_start: u31 = @intCast(cg.mir_table.items.len);
-        {
+        const else_reloc = dispatch: {
             const condition_index_reg = condition_index_reg: {
                 if (condition_index.isRegister()) {
                     const condition_index_reg = condition_index.getReg().?;
@@ -176576,6 +176581,19 @@ fn lowerSwitchBr(
             const condition_index_lock = cg.register_manager.lockReg(condition_index_reg);
             defer if (condition_index_lock) |lock| cg.register_manager.unlockReg(lock);
             try cg.truncateRegister(unsigned_condition_ty, condition_index_reg);
+            const else_reloc = if (switch_br.else_body_len > 0) else_reloc: {
+                var cond_temp = try cg.tempInit(unsigned_condition_ty, condition_index);
+                var table_max_temp = try cg.tempFromValue(try cg.pt.intValue(unsigned_condition_ty, table_len - 1));
+                const cc_temp = cond_temp.cmpInts(.gt, &table_max_temp, cg) catch |err| switch (err) {
+                    error.SelectFailed => unreachable,
+                    else => |e| return e,
+                };
+                try cond_temp.die(cg);
+                try table_max_temp.die(cg);
+                const reloc = try cg.asmJccReloc(cc_temp.tracking(cg).short.eflags, undefined);
+                try cc_temp.die(cg);
+                break :else_reloc reloc;
+            } else undefined;
             const ptr_size = @divExact(cg.target.ptrBitWidth(), 8);
             try cg.asmMemory(.{ ._mp, .j }, .{
                 .base = .table,
@@ -176586,7 +176604,8 @@ fn lowerSwitchBr(
                     .disp = table_start * ptr_size,
                 } },
             });
-        }
+            break :dispatch else_reloc;
+        };
         const else_reloc_marker: u32 = 0;
         assert(cg.mir_instructions.len > else_reloc_marker);
         try cg.mir_table.appendNTimes(cg.gpa, else_reloc_marker, table_len);
@@ -177849,7 +177868,11 @@ const MoveStrategy = union(enum) {
                     .lea => if (dst_reg.size().bitSize(cg.target) >= 32) dst_reg else dst_reg.to32(),
                 }, src_mem);
             },
-            .load_store_x87 => if (dst_reg != .st0 and cg.register_manager.isKnownRegFree(.st7)) {
+            .load_store_x87 => if (dst_reg == .st0) {
+                try cg.asmRegister(.{ .f_, .free }, .st0);
+                try cg.asmOpOnly(.{ .f_cstp, .in });
+                try cg.asmMemory(.{ .f_, .ld }, src_mem);
+            } else if (cg.register_manager.isKnownRegFree(.st7)) {
                 try cg.asmMemory(.{ .f_, .ld }, src_mem);
                 switch (dst_reg) {
                     .st1, .st2, .st3, .st4, .st5, .st6 => try cg.asmRegister(.{ .f_p, .st }, @fromBackingInt(@intCast(@backingInt(dst_reg) + 1))),
@@ -177859,11 +177882,7 @@ const MoveStrategy = union(enum) {
             } else {
                 try cg.asmRegister(.{ .f_p, .st }, dst_reg);
                 try cg.asmMemory(.{ .f_, .ld }, src_mem);
-                switch (dst_reg) {
-                    .st0 => {},
-                    .st1, .st2, .st3, .st4, .st5, .st6, .st7 => try cg.asmRegister(.{ .f_, .xch }, dst_reg),
-                    else => unreachable,
-                }
+                try cg.asmRegister(.{ .f_, .xch }, dst_reg);
             },
             .insert_extract, .insert_or_extract_through_gpr => |ie| {
                 try cg.asmRegisterRegister(.{ .p_, .xor }, dst_reg, dst_reg);
@@ -178595,7 +178614,8 @@ fn genSetReg(
                     .st0 => try cg.asmRegister(.{ .f_, .st }, dst_reg),
                     .st1, .st2, .st3, .st4, .st5, .st6 => switch (dst_reg) {
                         .st0 => {
-                            try cg.asmRegister(.{ .f_p, .st }, .st0);
+                            try cg.asmRegister(.{ .f_, .free }, .st0);
+                            try cg.asmOpOnly(.{ .f_cstp, .in });
                             try cg.asmRegister(.{ .f_, .ld }, @fromBackingInt(@intCast(@backingInt(src_reg) - 1)));
                         },
                         .st2, .st3, .st4, .st5, .st6 => if (cg.register_manager.isKnownRegFree(.st7)) {

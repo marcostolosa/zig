@@ -187,14 +187,32 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
             const time32 = for (time32_compat_arch_list) |time32_compat_arch| {
                 if (mem.eql(u8, arch_name, time32_compat_arch)) break true;
             } else false;
-            const arch_define = try std.fmt.allocPrint(arena, "-DARCH_{s}", .{arch_name});
+            const arch_define = try arena.print("-DARCH_{s}", .{arch_name});
             const family_define = switch (target.cpu.arch) {
                 .arm, .armeb, .thumb, .thumbeb => "-DFAMILY_arm",
                 .aarch64, .aarch64_be => "-DFAMILY_aarch64",
                 .hexagon => "-DFAMILY_hexagon",
                 .loongarch64 => "-DFAMILY_loongarch",
                 .m68k => "-DFAMILY_m68k",
-                .mips, .mipsel, .mips64, .mips64el => "-DFAMILY_mips",
+                .mips,
+                .mipsel,
+                .mipsf32,
+                .mipsf32el,
+                .mipsf64,
+                .mipsf64el,
+                .mipsf64n8,
+                .mipsf64n8el,
+                .mipsn8,
+                .mipsn8el,
+                .mipsr6,
+                .mipsr6el,
+                .mips64,
+                .mips64el,
+                .mips64n8,
+                .mips64n8el,
+                .mips64r6,
+                .mips64r6el,
+                => "-DFAMILY_mips",
                 .powerpc, .powerpc64, .powerpc64le => "-DFAMILY_powerpc",
                 .riscv32, .riscv64 => "-DFAMILY_riscv",
                 .s390x => "-DFAMILY_s390x",
@@ -381,7 +399,7 @@ fn addCcArgs(
     const target = comp.getTarget();
     const arch_name = std.zig.target.muslArchName(target.cpu.arch, target.abi);
     const os_name = @tagName(target.os.tag);
-    const triple = try std.fmt.allocPrint(arena, "{s}-{s}-{s}", .{
+    const triple = try arena.print("{s}-{s}-{s}", .{
         std.zig.target.muslArchNameHeaders(target.cpu.arch),
         os_name,
         std.zig.target.muslAbiNameHeaders(target.abi),
@@ -1721,6 +1739,7 @@ const src_files = [_][]const u8{
     "musl/src/time/utime.c",
     "musl/src/time/wcsftime.c",
     "musl/src/time/__year_to_secs.c",
+    "musl/src/time/x32/times.c",
     "musl/src/unistd/alarm.c",
     "musl/src/unistd/faccessat.c",
     "musl/src/unistd/fchdir.c",

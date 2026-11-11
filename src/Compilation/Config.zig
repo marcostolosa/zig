@@ -482,6 +482,9 @@ pub fn resolve(options: Options) ResolveError!Config {
 
         if (target_util.preferNewLinkerOverLld(target)) break :b true;
 
+        // Legacy ELF linker does not support LoongArch
+        if (target.cpu.arch.isLoongarch() and target.ofmt == .elf) break :b true;
+
         break :b options.incremental;
     };
 
@@ -621,11 +624,6 @@ pub fn resolve(options: Options) ResolveError!Config {
                 .hexagon,
                 // +/- 32 KiB
                 .m68k,
-                // 256 MiB region
-                .mips,
-                .mipsel,
-                .mips64,
-                .mips64el,
                 // +/- 32 MiB
                 .powerpc,
                 .powerpcle,
@@ -635,7 +633,7 @@ pub fn resolve(options: Options) ResolveError!Config {
                 .thumb,
                 .thumbeb,
                 => true,
-                else => false,
+                else => target.cpu.arch.isMips(), // 256 MiB region
             },
             else => false,
         };

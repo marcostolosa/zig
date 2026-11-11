@@ -1301,7 +1301,7 @@ pub const ErrorMsg = struct {
     pub fn init(gpa: Allocator, src_loc: LazySrcLoc, comptime format: []const u8, args: anytype) !ErrorMsg {
         return .{
             .src_loc = src_loc,
-            .msg = try std.fmt.allocPrint(gpa, format, args),
+            .msg = try gpa.print(format, args),
         };
     }
 
@@ -4136,7 +4136,7 @@ pub fn errNote(
     comptime format: []const u8,
     args: anytype,
 ) error{OutOfMemory}!void {
-    const msg = try std.fmt.allocPrint(zcu.gpa, format, args);
+    const msg = try zcu.gpa.print(format, args);
     errdefer zcu.gpa.free(msg);
 
     parent.notes = try zcu.gpa.realloc(parent.notes, parent.notes.len + 1);
@@ -4157,7 +4157,7 @@ pub fn addGlobalAssembly(zcu: *Zcu, unit: AnalUnit, source: []const u8) !void {
     const gpa = zcu.gpa;
     const gop = try zcu.global_assembly.getOrPut(gpa, unit);
     if (gop.found_existing) {
-        const new_value = try std.fmt.allocPrint(gpa, "{s}\n{s}", .{ gop.value_ptr.*, source });
+        const new_value = try gpa.print("{s}\n{s}", .{ gop.value_ptr.*, source });
         gpa.free(gop.value_ptr.*);
         gop.value_ptr.* = new_value;
     } else {
@@ -4252,6 +4252,10 @@ pub fn atomicPtrAlignment(
 
         .mips64,
         .mips64el,
+        .mips64n8,
+        .mips64n8el,
+        .mips64r6,
+        .mips64r6el,
         => 64, // N32 should be 64, not 32.
 
         .x86_64 => if (target.cpu.has(.x86, .cx16)) 128 else 64, // x32 should be 64 or 128, not 32.

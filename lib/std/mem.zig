@@ -1403,10 +1403,10 @@ test findScalarSentinel {
         memory[memory.len] = '$';
 
         for (0..memory.len) |i| {
-            try testing.expectEqual((&memory).ptr[memory.len - 1 ..], findScalarSentinel(T, '$', memory[i..], 0));
+            try testing.expectEqual(memory.len - 1 - i, findScalarSentinel(T, '$', memory[i..], 0));
         }
 
-        try testing.expectEqual((&memory).ptr[memory.len..], findScalarSentinel(T, '$', &memory, 0x42));
+        try testing.expectEqual(memory.len, findScalarSentinel(T, '$', &memory, 0x42));
     }
 }
 
@@ -1462,7 +1462,7 @@ pub fn findAnySentinel(comptime T: type, comptime sentinel: T, haystack: [*:sent
 }
 
 fn testFindAnySentinel(comptime T: type, comptime s: T, haystack: [*:s]const T, values: [*:s]const T, expected_index: usize) !void {
-    try testing.expectEqual(haystack[expected_index..], findAnySentinel(T, s, haystack, values));
+    try testing.expectEqual(expected_index, findAnySentinel(T, s, haystack, values));
 }
 test findAnySentinel {
     try testFindAnySentinel(u8, 0, "abc123", "123", 3);
@@ -1538,7 +1538,7 @@ pub fn findNoneSentinel(comptime T: type, comptime sentinel: T, haystack: [*:sen
 }
 
 fn testFindNoneSentinel(comptime T: type, comptime s: T, haystack: [*:s]const T, values: [*:s]const T, expected_index: usize) !void {
-    try testing.expectEqual(haystack[expected_index..], findNoneSentinel(T, s, haystack, values));
+    try testing.expectEqual(expected_index, findNoneSentinel(T, s, haystack, values));
 }
 test findNoneSentinel {
     try testFindNoneSentinel(u8, 0, "abc123", "123", 0);

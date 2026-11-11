@@ -61,6 +61,7 @@ test "strpbrk" {
 }
 
 test "strtok_r" {
+    if (builtin.target.os.tag == .windows) return; // strtok_r not available
     const sep: [:0]const c_char = @ptrCast(" |b");
 
     var str = "zig | zag | zog ||abc|     |   |    |def".*;
